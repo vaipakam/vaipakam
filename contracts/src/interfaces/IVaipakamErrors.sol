@@ -1876,6 +1876,9 @@ interface IVaipakamErrors {
     error ServiceCapacityArmingFeeBelowFloor(uint256 rate, uint256 floor);
     /// @notice The arming fee floor is raise-only: `proposed` does not exceed `current`.
     error ServiceCapacityArmingFloorNotRaised(uint256 current, uint256 proposed);
+    /// @notice #2459 r6 — the VPFI token cannot rotate while `held` of provisional compensation awaits its
+    ///         day's broadcast: the hold is in the old token and its record names no asset.
+    error RewardTokenRotationBlockedByProvisional(uint256 held);
     /// @notice An arming fee rate or floor of `value` sits above the knob's ceiling `cap` (the whole newly-armed principal).
     error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
     /// @notice A term the payer bound moved between the quote and the post: `which` names it (0 fee, 1 capacity after, 2 rotation epoch, 3 curve epoch), `bound` what they bound, `actual` what stands.

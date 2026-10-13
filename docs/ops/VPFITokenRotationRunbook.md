@@ -105,6 +105,14 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      never terminates (funding that never arrives, a pause) holds its era's row,
      and the rotation, until it does. Check `getCustodyEra(n)` for every era
      below `getCustodyEraCurrent()` and drive each to finalization first.
+   - **Provisional compensation held awaiting its day's broadcast (#2459 r6).**
+     A compensation that overtook its day's broadcast is held apart — in the
+     custody `Provisional` row, or at the Diamond if it arrived before custody
+     activation — in the old token, and its record names no asset. The token
+     setter refuses the rotation (`RewardTokenRotationBlockedByProvisional`)
+     while `RewardRemittanceLensFacet.getProvisionalFreshHeld()` is non-zero;
+     the day's broadcast settles each hold (confirm or demote), so let pending
+     broadcasts land before rotating.
    - **Service capacity deposit custody (#1219) is enumerated but NOT
      drained**: capacity deposits take the design's **epoch-level archival
      transition, ATOMIC WITH the step-6 rotation transaction itself**

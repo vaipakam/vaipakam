@@ -3945,6 +3945,17 @@
   },
   {
     "type": "error",
+    "name": "RewardTokenRotationBlockedByProvisional",
+    "inputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },

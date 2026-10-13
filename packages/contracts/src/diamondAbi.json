@@ -333,6 +333,7 @@
 {"type":"error","name":"RewardMessengerNotSet","inputs":[]},
 {"type":"error","name":"RewardMigrationFailed","inputs":[]},
 {"type":"error","name":"RewardRoleChangeBlockedByStagedRecords","inputs":[{"name":"encumbered","type":"uint256","internalType":"uint256"}]},
+{"type":"error","name":"RewardTokenRotationBlockedByProvisional","inputs":[{"name":"held","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RiskAndTermsConsentRequired","inputs":[]},
 {"type":"error","name":"RiskTierTooLow","inputs":[{"name":"actor","type":"address","internalType":"address"},{"name":"requiredTier","type":"uint8","internalType":"uint8"},{"name":"actorTier","type":"uint8","internalType":"uint8"}]},
 {"type":"error","name":"SaleAboveHeldCeiling","inputs":[{"name":"maxHeld","type":"uint256","internalType":"uint256"},{"name":"actual","type":"uint256","internalType":"uint256"}]},

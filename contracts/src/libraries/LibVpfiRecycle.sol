@@ -1680,12 +1680,7 @@ library LibVpfiRecycle {
         uint256 cumulative,
         uint256 forDayReported
     ) internal {
-        // AVAILABILITY — monotonic self-healing ratchet.
-        uint256 reported = s.chainReportedRecycled[sourceChainId];
-        if (cumulative > reported) {
-            reported = cumulative;
-            s.chainReportedRecycled[sourceChainId] = cumulative;
-        }
+        uint256 reported = recordChainRecycledCumulative(s, sourceChainId, cumulative);
 
         // DAY ATTRIBUTION — once per (day, chain).
         if (s.chainRecycledDayAccepted[dayId][sourceChainId]) return;
@@ -1713,6 +1708,21 @@ library LibVpfiRecycle {
         emit ChainRecycledReported(
             sourceChainId, dayId, cumulative, forDayReported, accepted
         );
+    }
+
+    /// @notice AVAILABILITY — a chain's reported recycled cumulative, a
+    ///         monotonic self-healing ratchet: chain-wide, never a day's figure,
+    ///         so a report that arrives after its day finalized still applies
+    ///         it (#2459 r6). Returns the cumulative on record.
+    function recordChainRecycledCumulative(LibVaipakam.Storage storage s, uint32 sourceChainId, uint256 cumulative)
+        internal
+        returns (uint256 reported)
+    {
+        reported = s.chainReportedRecycled[sourceChainId];
+        if (cumulative > reported) {
+            reported = cumulative;
+            s.chainReportedRecycled[sourceChainId] = cumulative;
+        }
     }
 
     // ─── #1222 M3 B3 — commitment retirement + availability ────────────────

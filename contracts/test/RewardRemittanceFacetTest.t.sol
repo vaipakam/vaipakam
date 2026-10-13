@@ -198,6 +198,27 @@ contract RewardRemittanceFacetTest is SetupTest {
         rewardMessenger.deliverChainReportB4(77777, 1, 1, 1, 9);
     }
 
+    /// @dev #2459 r6 — a late B4 report still applies what it says about the
+    ///      CHAIN — its recycled availability and its commitment retirement and
+    ///      release cumulatives, one-way ratchets clamped against Base's own
+    ///      instructions — and drops only the closed day's figures, so a chain
+    ///      whose last report lands late (or that then detaches) never leaves
+    ///      retired commitments outstanding.
+    function test_ALateB4Report_AppliesTheChainsCumulatives_NotTheDays() public {
+        TestMutatorFacet(address(diamond)).setChainConsumedRecycledRaw(CHAIN_ARB, 6e18, 6e18);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        agg.forceFinalizeDay(1);
+        rewardMessenger.deliverChainReportB4Full(CHAIN_ARB, 1, 20e18, 10e18, 9e18, 2e18, 4e18, 1e18, 4);
+        (uint256 retired, uint256 released) = agg.getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(retired, 4e18, "the retirement ratchet applies");
+        assertEq(released, 1e18, "and the release ratchet");
+        assertEq(agg.getChainOutstandingRecycledCommit(CHAIN_ARB), 2e18, "retired commitments leave the ledger");
+        (uint256 reported, , , uint256 attributed) = agg.getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 9e18, "the availability ratchet applies");
+        assertEq(attributed, 0, "the closed day's attribution is dropped");
+        assertFalse(agg.isChainReported(1, CHAIN_ARB), "and its figures are not applied");
+    }
+
     /// @dev #1566 PR C revision — a rooted remittance carries the custody era the
     ///      DESTINATION last reported (its B4 day report), never the canonical
     ///      chain's own or a constant; an older report never lowers it.

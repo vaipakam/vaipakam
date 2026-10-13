@@ -2771,6 +2771,14 @@ contract TestMutatorFacet {
         e.openClassification = openClassification;
     }
 
+    /// @dev #2459 r6 test-only — what Base has instructed `chainId` to fund
+    ///      locally, and how much of it is still outstanding.
+    function setChainConsumedRecycledRaw(uint32 chainId, uint256 consumed, uint256 outstanding) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.chainConsumedRecycled[chainId] = consumed;
+        s.chainOutstandingRecycledCommit[chainId] = outstanding;
+    }
+
     /// @dev #2459 r4 test-only — register `adapter` as an aggregator adapter bound to
     ///      `operator` (zero: unbound), as the factory's registration writes it.
     function setAggregatorAdapterRaw(address adapter, address operator) external {

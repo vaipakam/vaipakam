@@ -285,8 +285,9 @@ contract RewardAggregatorFacet is
     event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
 
     /// @notice #2459 r1 — a B4 day report reached the canonical chain after
-    ///         `dayId` had FINALIZED: its figures were NOT applied (the day closed
-    ///         without them), and its custody era `custodyEra` was observed.
+    ///         `dayId` had FINALIZED: its DAY's figures were NOT applied (the day
+    ///         closed without them); its custody era `custodyEra` was observed and
+    ///         its chain-wide cumulative ratchets applied (#2459 r6).
     /// @custom:event-category informational/reward-transport
     event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
 
@@ -311,12 +312,24 @@ contract RewardAggregatorFacet is
             emit ChainCustodyEraReported(sourceChainId, custodyEra);
         }
         // #2459 r1 — the era observation stands on its own. A report reaching
-        // Base after its day FINALIZED cannot add its figures (the day closed
-        // without them); reverting would take the observation back with it and
-        // leave a message no retry could ever deliver, so remittances would keep
-        // the destination's retired era until a later day's report landed. The
-        // late figures are dropped, named by the event; the era stands.
+        // Base after its day FINALIZED cannot add its DAY's figures (the day
+        // closed without them); reverting would take the observation back with
+        // it and leave a message no retry could ever deliver, so remittances
+        // would keep the destination's retired era until a later day's report
+        // landed. The day's figures (interest, the recycled day attribution)
+        // are dropped, named by the event; the era stands.
+        // #2459 r6 — and so do the report's CHAIN-WIDE cumulatives: the recycled
+        // availability and the commitment retirement/release ratchets describe
+        // the chain, not the day, are monotonic and clamped where they are
+        // folded, and are applied through the same two writers the on-time
+        // ingest uses. Dropping them left retired commitments outstanding (and
+        // released availability withheld) until a later report — never, if the
+        // chain detached.
         if (s.dailyGlobalFinalized[dayId]) {
+            LibVpfiRecycle.recordChainRecycledCumulative(s, sourceChainId, recycledCumulative18);
+            LibVpfiRecycle.recordChainCommitRetirement(
+                s, sourceChainId, commitRetiredCumulative18, commitReleasedCumulative18
+            );
             emit ChainReportArrivedAfterFinalization(sourceChainId, dayId, custodyEra);
             return;
         }

@@ -922,6 +922,31 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
+    /// @notice #2459 r6 — a B4 day report carrying the chain's cumulatives too.
+    function deliverChainReportB4Full(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) external {
+        RewardAggregatorFacet(diamond).onChainReportReceived(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18,
+            custodyEra
+        );
+    }
+
     /// @notice Simulate a Base broadcast landing on a mirror reporter.
     ///         Legacy 4-arg shape kept for the pre-PR-3c tests: composition
     ///         halves zero, unarmed.

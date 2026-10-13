@@ -124,6 +124,13 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         // relabel live custody as the new token and leave the old token
         // behind as a "foreign" asset. The token-rotation runbook drains
         // both first; this is the check that makes the runbook a rule.
+        // #2459 r6 — a PROVISIONAL compensation is held in the token it arrived
+        // in (the custody row, or the Diamond before custody activation) until
+        // the day's broadcast settles it, and its record names no asset: a
+        // rotation waits for every such hold to settle, wherever it rests.
+        if (previous != address(0) && s.rewardBudgetFreshProvisional != 0) {
+            revert IVaipakamErrors.RewardTokenRotationBlockedByProvisional(s.rewardBudgetFreshProvisional);
+        }
         if (previous != address(0) && s.rewardCustodyHolder != address(0)) {
             uint256 attributed = LibRewardCustody.attributedTotal(s);
             (bool known, uint256 heldOld) = LibRewardCustody.tryBalance(previous, s.rewardCustodyHolder);

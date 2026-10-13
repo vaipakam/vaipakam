@@ -3230,6 +3230,25 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 9. the token rotation guard ─────────────────────────────────────────
 
+    /// #2459 r6 — a provisional compensation is held in the token it arrived
+    /// in and its record names no asset, so a rotation waits for its day's
+    /// broadcast to settle it — even before custody activation, where the hold
+    /// rests at the Diamond and no custody row describes it (straddle: once the
+    /// broadcast settles the hold, the rotation goes through).
+    function test_SetVPFIToken_WaitsForAProvisionalHoldToSettle() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-rot"));
+        address newToken = address(new VPFIToken());
+        vm.expectRevert(abi.encodeWithSelector(RewardTokenRotationBlockedByProvisional.selector, 5e18));
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // settled: demoted
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "fixture-live: nothing held");
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+        assertEq(VPFITokenFacet(address(diamond)).getVPFIToken(), newToken, "rotated once settled");
+    }
+
     /// The VPFI token cannot be rotated while any row is funded or the holder
     /// still holds the old token; once both are drained it can.
     function test_SetVPFIToken_RefusesRotationWhileCustodyExists() public {
