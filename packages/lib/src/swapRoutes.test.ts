@@ -5,6 +5,7 @@ import {
   packUniV3Data,
   parseOneInchQuote,
   parseZeroExQuote,
+  quoteTestnetMock,
   quoteUniV3,
   rankRoutes,
   readSwapAdapterEntries,
@@ -22,7 +23,11 @@ describe('resolveAdapterRoster', () => {
         { address: A(2), name: 'ZeroEx', disabled: false },
         { address: A(3), name: 'UniswapV3', disabled: false },
       ]),
-    ).toEqual({ oneinch: 0, zeroex: 1, univ3: 2 });
+    ).toEqual({
+      oneinch: { idx: 0, address: A(1) },
+      zeroex: { idx: 1, address: A(2) },
+      univ3: { idx: 2, address: A(3) },
+    });
   });
 
   it('skips a disabled venue, and one whose flag could not be read', () => {
@@ -32,7 +37,7 @@ describe('resolveAdapterRoster', () => {
         { address: A(2), name: 'OneInch', disabled: undefined },
         { address: A(3), name: 'UniswapV3', disabled: false },
       ]),
-    ).toEqual({ univ3: 2 });
+    ).toEqual({ univ3: { idx: 2, address: A(3) } });
   });
 
   it('keeps the earlier of two enabled adapters of one kind', () => {
@@ -41,7 +46,7 @@ describe('resolveAdapterRoster', () => {
         { address: A(1), name: 'ZeroEx', disabled: false },
         { address: A(2), name: 'ZeroEx', disabled: false },
       ]),
-    ).toEqual({ zeroex: 0 });
+    ).toEqual({ zeroex: { idx: 0, address: A(1) } });
   });
 
   it('recognises the testnet mock by its declared address only', () => {
@@ -51,7 +56,7 @@ describe('resolveAdapterRoster', () => {
     ];
     expect(resolveAdapterRoster(entries)).toEqual({});
     expect(resolveAdapterRoster(entries, { testnetMockAdapter: A(7) })).toEqual({
-      testnetMock: 1,
+      testnetMock: { idx: 1, address: A(7) },
     });
   });
 
@@ -162,6 +167,37 @@ describe('quoteUniV3', () => {
   it('returns null on a chain with no V3 venue', async () => {
     const client = { call: async () => ({ data: answer(1n) }) };
     expect(await quoteUniV3(client, 84532, sale)).toBeNull();
+  });
+});
+
+describe('quoteTestnetMock', () => {
+  const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 2n * 10n ** 18n };
+  const client = (prices: Record<string, bigint>, balance: bigint) => ({
+    readContract: async (args: { functionName: string; args?: unknown[] }) => {
+      if (args.functionName === 'shouldRevert') return false;
+      if (args.functionName === 'restrictedTo') return A(0xd);
+      if (args.functionName === 'outputMultiplierBps') return 9_500n;
+      if (args.functionName === 'tokenUsdPrice8') return prices[String(args.args?.[0])] ?? 0n;
+      if (args.functionName === 'balanceOf') return balance;
+      throw new Error('unexpected');
+    },
+  });
+
+  it('prices the payout the way execute does, from the mock own balance', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client({ [A(1)]: 3000n * 10n ** 8n, [A(2)]: 10n ** 8n }, 10n ** 24n) as any;
+    expect(await quoteTestnetMock(c, A(9), A(0xd), sale)).toBe(5700n * 10n ** 18n);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const flat = client({}, 10n ** 24n) as any;
+    expect(await quoteTestnetMock(flat, A(9), A(0xd), sale)).toBe(19n * 10n ** 17n);
+  });
+
+  it('returns null when it could not pay, or a read failed', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(await quoteTestnetMock(client({}, 1n) as any, A(9), A(0xd), sale)).toBeNull();
+    const broken = { readContract: async () => { throw new Error('rpc'); } };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(await quoteTestnetMock(broken as any, A(9), A(0xd), sale)).toBeNull();
   });
 });
 

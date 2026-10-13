@@ -16,7 +16,7 @@
  *     sellToken:  string;   // ERC-20 collateral asset
  *     buyToken:   string;   // ERC-20 principal asset
  *     sellAmount: string;   // Decimal string (no "0x", no scientific)
- *     taker:      string;   // The diamond address that will execute
+ *     taker:      string;   // The swap ADAPTER that will call the swap target
  *     slippageBps?: number; // Default 600 (6% — matches on-chain ceiling)
  *   }
  *
@@ -52,13 +52,17 @@ interface QuoteRequest {
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[1-9][0-9]{0,77}$/;
 
-export async function handle0xQuote(req: Request, env: Env): Promise<Response> {
+export async function handle0xQuote(
+  req: Request,
+  env: Env,
+  corsOrigin: string,
+): Promise<Response> {
   if (!(await checkRateLimit(req, env.QUOTE_0X_RATELIMIT))) {
-    return jsonErr(env, 429, 'rate-limited');
+    return jsonErr(corsOrigin, 429, 'rate-limited');
   }
   const body = await parseBody(req);
-  if (!body) return jsonErr(env, 400, 'invalid-payload');
-  if (!env.ZEROEX_API_KEY) return jsonErr(env, 503, 'zeroex-not-configured');
+  if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
+  if (!env.ZEROEX_API_KEY) return jsonErr(corsOrigin, 503, 'zeroex-not-configured');
 
   // 0x v2 endpoint shape: query-param chainId + tokens + sell amount.
   const url = new URL('https://api.0x.org/swap/allowance-holder/quote');
@@ -78,16 +82,20 @@ export async function handle0xQuote(req: Request, env: Env): Promise<Response> {
       Accept: 'application/json',
     },
   });
-  return passthrough(upstream, env);
+  return passthrough(upstream, corsOrigin);
 }
 
-export async function handle1inchQuote(req: Request, env: Env): Promise<Response> {
+export async function handle1inchQuote(
+  req: Request,
+  env: Env,
+  corsOrigin: string,
+): Promise<Response> {
   if (!(await checkRateLimit(req, env.QUOTE_1INCH_RATELIMIT))) {
-    return jsonErr(env, 429, 'rate-limited');
+    return jsonErr(corsOrigin, 429, 'rate-limited');
   }
   const body = await parseBody(req);
-  if (!body) return jsonErr(env, 400, 'invalid-payload');
-  if (!env.ONEINCH_API_KEY) return jsonErr(env, 503, 'oneinch-not-configured');
+  if (!body) return jsonErr(corsOrigin, 400, 'invalid-payload');
+  if (!env.ONEINCH_API_KEY) return jsonErr(corsOrigin, 503, 'oneinch-not-configured');
 
   // 1inch v6 endpoint shape: chainId in path, tokens + slippage as query.
   const url = new URL(
@@ -111,7 +119,7 @@ export async function handle1inchQuote(req: Request, env: Env): Promise<Response
       Accept: 'application/json',
     },
   });
-  return passthrough(upstream, env);
+  return passthrough(upstream, corsOrigin);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -188,9 +196,16 @@ async function parseBody(req: Request): Promise<QuoteRequest | null> {
   };
 }
 
+/**
+ * `corsOrigin` is the request's own Origin when it is on the
+ * `FRONTEND_ORIGIN` allow-list (the index's shared `resolveAllowedOrigin`).
+ * The browser rejects a response whose `Access-Control-Allow-Origin` is any
+ * other value, even another allowed origin — which is what echoing the
+ * first list entry did to every app origin after it.
+ */
 async function passthrough(
   upstream: Response,
-  env: Env,
+  corsOrigin: string,
 ): Promise<Response> {
   // Decode the JSON body once so we can re-serialize with our CORS
   // header set. Some aggregator endpoints use chunked encoding which
@@ -205,17 +220,17 @@ async function passthrough(
     status: upstream.status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }
 
-function jsonErr(env: Env, status: number, code: string): Response {
+function jsonErr(corsOrigin: string, status: number, code: string): Response {
   return new Response(JSON.stringify({ error: code }), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': env.FRONTEND_ORIGIN.split(',')[0] ?? '*',
+      'Access-Control-Allow-Origin': corsOrigin,
     },
   });
 }

@@ -28,8 +28,9 @@
  *  - **One parser per aggregator response**, so a field rename upstream is
  *    fixed once.
  *  - **One ranking rule.** Best quoted output first; a venue that cannot
- *    quote ahead of time (the testnet mock) goes last rather than being
- *    guessed at.
+ *    quote ahead of time goes last rather than being guessed at. The
+ *    testnet mock is not such a venue: {@link quoteTestnetMock} reads the
+ *    state its `execute` depends on and quotes it like any other.
  *
  * Framework-agnostic: viem only, no browser or Worker globals.
  */
@@ -74,8 +75,20 @@ export interface SwapAdapterEntry {
   disabled: boolean | undefined;
 }
 
-/** Venue kind → index into the Diamond's `swapAdapters` array. */
-export type AdapterRoster = Partial<Record<SwapVenueKind, number>>;
+/** Where one venue sits in the Diamond's adapter list. */
+export interface RosterSlot {
+  /** Index into the Diamond's `swapAdapters` array — what `AdapterCall`
+   *  carries. */
+  idx: number;
+  /** The adapter contract itself. For an aggregator venue this is the
+   *  0x / 1inch TAKER: the adapter, not the Diamond, holds the input and
+   *  calls the swap target, so a quote made for any other address is
+   *  calldata for the wrong caller. */
+  address: Address;
+}
+
+/** Venue kind → its slot in the Diamond's adapter list. */
+export type AdapterRoster = Partial<Record<SwapVenueKind, RosterSlot>>;
 
 /**
  * Work out which index each venue sits at.
@@ -106,7 +119,7 @@ export function resolveAdapterRoster(
           ? undefined
           : ADAPTER_NAME_KIND[entry.name];
     if (kind === undefined || roster[kind] !== undefined) return;
-    roster[kind] = idx;
+    roster[kind] = { idx, address: entry.address };
   });
   return roster;
 }
@@ -340,6 +353,81 @@ export async function quoteUniV3(
     }
   }
   return best;
+}
+
+const TESTNET_MOCK_ABI = [
+  { type: 'function', name: 'shouldRevert', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'restrictedTo', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { type: 'function', name: 'outputMultiplierBps', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'tokenUsdPrice8',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+const BALANCE_OF_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+/**
+ * What the testnet mock adapter would pay for this sale, or `null` when it
+ * would not pay at all.
+ *
+ * The mock has no market: `execute` pays `sellAmount × priceIn / priceOut
+ * × multiplier` (flat `sellAmount × multiplier` when either price is
+ * unset) out of its OWN balance, and reverts when it is switched to
+ * revert or called by anyone but its `restrictedTo`. Each of those is
+ * readable, so this reads them rather than sending the mock on hope — a
+ * mock that would revert or that cannot cover the payout is not a route,
+ * and offering it would hand the lender a close-out that drops into the
+ * full-collateral fallback while the card said a sale was coming.
+ *
+ * `caller` is the address that will call `execute` — the Diamond. Any
+ * failed read means `null`: an unread mock is not evidence of a working
+ * one.
+ */
+export async function quoteTestnetMock(
+  client: Pick<PublicClient, 'readContract'>,
+  mock: Address,
+  caller: Address,
+  sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
+): Promise<bigint | null> {
+  try {
+    const at = { address: mock, abi: TESTNET_MOCK_ABI } as const;
+    const [shouldRevert, restrictedTo, bps, pIn, pOut, balance] = await Promise.all([
+      client.readContract({ ...at, functionName: 'shouldRevert' }),
+      client.readContract({ ...at, functionName: 'restrictedTo' }),
+      client.readContract({ ...at, functionName: 'outputMultiplierBps' }),
+      client.readContract({ ...at, functionName: 'tokenUsdPrice8', args: [sale.sellToken] }),
+      client.readContract({ ...at, functionName: 'tokenUsdPrice8', args: [sale.buyToken] }),
+      client.readContract({
+        address: sale.buyToken,
+        abi: BALANCE_OF_ABI,
+        functionName: 'balanceOf',
+        args: [mock],
+      }),
+    ]);
+    if (shouldRevert) return null;
+    const zero = '0x0000000000000000000000000000000000000000';
+    if (restrictedTo.toLowerCase() !== zero && restrictedTo.toLowerCase() !== caller.toLowerCase()) {
+      return null;
+    }
+    const base = pIn !== 0n && pOut !== 0n ? (sale.sellAmount * pIn) / pOut : sale.sellAmount;
+    const out = (base * bps) / 10_000n;
+    if (out === 0n || out > balance) return null;
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Ranking ────────────────────────────────────────────────────────────

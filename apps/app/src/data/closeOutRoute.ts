@@ -20,7 +20,9 @@
  *    simply not asked.
  *  - **Uniswap V3 is quoted on-chain**, through the chain's QuoterV2.
  *  - **The testnet mock adapter** is used only where the chain's own
- *    deployment record declares it, and goes last because it cannot quote.
+ *    deployment record declares it, and only after reading that it would
+ *    pay: not switched to revert, callable by the Diamond, and holding
+ *    enough of the principal asset to cover what it would owe.
  *  - **Balancer V2 is not asked.** Its only source is a subgraph whose
  *    hosting is in doubt (#2468); a venue we cannot verify is left out
  *    rather than sent on a guess.
@@ -38,6 +40,7 @@ import {
   packUniV3Data,
   parseOneInchQuote,
   parseZeroExQuote,
+  quoteTestnetMock,
   quoteUniV3,
   rankRoutes,
   readSwapAdapterEntries,
@@ -129,8 +132,10 @@ async function agentQuote(
  * what comes back into the try-list.
  *
  * Built fresh each time it is called: aggregator calldata is quoted for a
- * moment and does not keep. `taker` is the Diamond, which is what the
- * keeper sends too.
+ * moment and does not keep. Each aggregator is quoted with ITS ADAPTER as
+ * the taker: the adapter pulls the collateral from the Diamond and calls
+ * the swap target itself, so calldata quoted for the Diamond would be for
+ * a caller that never makes the call.
  */
 export async function buildCloseOutRoute(deps: {
   client: Pick<PublicClient, 'readContract' | 'call'>;
@@ -144,22 +149,21 @@ export async function buildCloseOutRoute(deps: {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
-  const request = {
-    chainId,
-    sellToken: sale.sellToken,
-    buyToken: sale.buyToken,
-    sellAmount: sale.sellAmount.toString(),
-    taker: diamond,
-  };
 
   const attempts = venues.map(async (kind): Promise<RouteCandidate | null> => {
-    const idx = roster[kind];
-    if (idx === undefined) return null;
-    const adapterIdx = BigInt(idx);
+    const slot = roster[kind];
+    if (slot === undefined) return null;
+    const adapterIdx = BigInt(slot.idx);
     switch (kind) {
       case 'zeroex':
       case 'oneinch': {
-        const body = await agentQuote(fetchImpl, agentOrigin!, kind, request);
+        const body = await agentQuote(fetchImpl, agentOrigin!, kind, {
+          chainId,
+          sellToken: sale.sellToken,
+          buyToken: sale.buyToken,
+          sellAmount: sale.sellAmount.toString(),
+          taker: slot.address,
+        });
         const q = kind === 'zeroex' ? parseZeroExQuote(body) : parseOneInchQuote(body);
         if (!q) return null;
         return {
@@ -177,8 +181,11 @@ export async function buildCloseOutRoute(deps: {
           call: { adapterIdx, data: packUniV3Data(q.fee) },
         };
       }
-      case 'testnetMock':
-        return { kind, expectedOutput: null, call: { adapterIdx, data: TESTNET_MOCK_DATA } };
+      case 'testnetMock': {
+        const out = await quoteTestnetMock(client, slot.address, diamond, sale);
+        if (out === null) return null;
+        return { kind, expectedOutput: out, call: { adapterIdx, data: TESTNET_MOCK_DATA } };
+      }
       default:
         return null;
     }

@@ -4,6 +4,7 @@ import { buildCloseOutRoute, quotableVenues } from './closeOutRoute';
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 10n ** 18n };
+const S = (idx: number) => ({ idx, address: A(0x100 + idx) });
 const noChain = {
   readContract: async () => {
     throw new Error('unused');
@@ -26,18 +27,18 @@ function fakeFetch(bodies: Record<string, unknown>) {
 
 describe('quotableVenues', () => {
   it('asks the aggregators only through a configured agent', () => {
-    const roster = { zeroex: 0, oneinch: 1 };
+    const roster = { zeroex: S(0), oneinch: S(1) };
     expect(quotableVenues(roster, 8453, true)).toEqual(['zeroex', 'oneinch']);
     expect(quotableVenues(roster, 8453, false)).toEqual([]);
   });
 
   it('asks Uniswap V3 only where the chain has a quoter', () => {
-    expect(quotableVenues({ univ3: 2 }, 8453, false)).toEqual(['univ3']);
-    expect(quotableVenues({ univ3: 2 }, 84532, false)).toEqual([]);
+    expect(quotableVenues({ univ3: S(2) }, 8453, false)).toEqual(['univ3']);
+    expect(quotableVenues({ univ3: S(2) }, 84532, false)).toEqual([]);
   });
 
   it('offers the testnet mock wherever the roster recognised it', () => {
-    expect(quotableVenues({ testnetMock: 0 }, 84532, false)).toEqual(['testnetMock']);
+    expect(quotableVenues({ testnetMock: S(0) }, 84532, false)).toEqual(['testnetMock']);
   });
 });
 
@@ -51,7 +52,7 @@ describe('buildCloseOutRoute', () => {
       client: noChain,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: 3, oneinch: 1 },
+      roster: { zeroex: S(3), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
@@ -68,8 +69,9 @@ describe('buildCloseOutRoute', () => {
       sellToken: A(1),
       buyToken: A(2),
       sellAmount: (10n ** 18n).toString(),
-      taker: A(0xd),
+      taker: A(0x103),
     });
+    expect(seen[1].body).toMatchObject({ taker: A(0x101) });
   });
 
   it('drops a venue that declines and keeps the rest', async () => {
@@ -80,7 +82,7 @@ describe('buildCloseOutRoute', () => {
       client: noChain,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: 0, oneinch: 1 },
+      roster: { zeroex: S(0), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
@@ -88,27 +90,70 @@ describe('buildCloseOutRoute', () => {
     expect(route.kind === 'route' && route.venues).toEqual(['oneinch']);
   });
 
-  it('builds the testnet mock route last, with empty adapter data', async () => {
+  function mockChain(state: {
+    shouldRevert?: boolean;
+    restrictedTo?: Address;
+    bps?: bigint;
+    balance?: bigint;
+  }) {
+    return {
+      readContract: async (args: { functionName: string }) => {
+        switch (args.functionName) {
+          case 'shouldRevert':
+            return state.shouldRevert ?? false;
+          case 'restrictedTo':
+            return state.restrictedTo ?? A(0xd);
+          case 'outputMultiplierBps':
+            return state.bps ?? 10_000n;
+          case 'tokenUsdPrice8':
+            return 0n;
+          case 'balanceOf':
+            return state.balance ?? 10n ** 21n;
+          default:
+            throw new Error('unexpected');
+        }
+      },
+      call: noChain.call,
+    };
+  }
+
+  const mockRoute = (client: ReturnType<typeof mockChain>) =>
+    buildCloseOutRoute({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client: client as any,
+      chainId: 84532,
+      diamond: A(0xd),
+      roster: { testnetMock: S(0) },
+      sale,
+      agentOrigin: null,
+    });
+
+  it('quotes the testnet mock from its own state and ranks it like any venue', async () => {
     const { impl } = fakeFetch({
       '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '1' },
     });
     const route = await buildCloseOutRoute({
-      client: noChain,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      client: mockChain({ bps: 9_000n }) as any,
       chainId: 84532,
       diamond: A(0xd),
-      roster: { testnetMock: 0, zeroex: 1 },
+      roster: { testnetMock: S(0), zeroex: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
     expect(route).toEqual({
       kind: 'route',
-      venues: ['zeroex', 'testnetMock'],
-      calls: [
-        expect.objectContaining({ adapterIdx: 1n }),
-        { adapterIdx: 0n, data: '0x' },
-      ],
+      venues: ['testnetMock', 'zeroex'],
+      calls: [{ adapterIdx: 0n, data: '0x' }, expect.objectContaining({ adapterIdx: 1n })],
     });
+  });
+
+  it('leaves out a mock that would revert, refuse the Diamond, or could not pay', async () => {
+    expect(await mockRoute(mockChain({ shouldRevert: true }))).toEqual({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ restrictedTo: A(0xe) }))).toEqual({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ balance: 10n ** 17n }))).toEqual({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ restrictedTo: A(0) }))).toMatchObject({ kind: 'route' });
   });
 
   it('says there is no route when nothing quotes, rather than sending an empty list', async () => {
@@ -117,7 +162,7 @@ describe('buildCloseOutRoute', () => {
       client: noChain,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: 0, univ3: 2 },
+      roster: { zeroex: S(0), univ3: S(2) },
       sale,
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,

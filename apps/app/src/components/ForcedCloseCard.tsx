@@ -999,6 +999,14 @@ export function ForcedCloseCard({
           return;
         }
         adapterCalls = found.calls;
+        // Again, because finding the route is not instant: up to an 8-second
+        // quote round-trip per venue, and a sale accepted in that gap would
+        // be stranded by this close exactly as the first check describes.
+        const lateSaleBlock = await preSubmitBlock();
+        if (lateSaleBlock) {
+          setError(lateSaleBlock);
+          return;
+        }
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation

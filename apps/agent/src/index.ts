@@ -295,10 +295,10 @@ export default {
     // injects the operator-held API key server-side and returns the
     // aggregator JSON pass-through.
     if (url.pathname === '/quote/0x' && req.method === 'POST') {
-      return handle0xQuote(req, resolved);
+      return handle0xQuote(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
-      return handle1inchQuote(req, resolved);
+      return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     // T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
     // Dapp posts the orderHash + structured Fusion order + commit
