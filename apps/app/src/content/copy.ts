@@ -2420,11 +2420,16 @@ const copySource = {
     // does, the list is still being read, or the read failed. Each says
     // the position IS eligible, which is the part a lender needs.
     readyNeedsRoute:
-      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it. When you confirm, the app asks the exchanges the protocol uses on this network for a price and sends them with your close-out, best price first and the rest as back-ups. The protocol checks every attempt against its own price feed and will not sell below its minimum.',
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it. When you confirm, the app asks for a price from the exchanges it can reach among those the protocol uses on this network, and sends the routes with your close-out, best price first and the rest as back-ups. The protocol checks every attempt against its own price feed and will not sell below its minimum.',
     // Round 28 P2 still holds here: nothing submits `triggerDefault` on
     // its own, so the sentence must not imply an automated closer.
     readyNeedsRouteNoVenue:
       'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and none of the exchanges the protocol uses on this network is one this app can ask for a price. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    // #2463 round 6: the protocol's own list has no enabled exchange (or
+    // none registered), so the contract refuses EVERY caller — an
+    // operator cannot close it either until governance enables one.
+    readyNeedsRouteNoEnabledVenue:
+      'The grace period has passed and this loan can be closed out, but its collateral has to be sold on an exchange to do it, and the protocol has no exchange enabled on this network. Until governance enables one, the protocol refuses this close-out from anyone, operators included, so there is nothing to submit yet.',
     readyNeedsRouteChecking:
       'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the app is still checking which exchanges it can ask for a price on this network.',
     // The protocol lists an aggregator here, but this deployment of the
@@ -2438,7 +2443,13 @@ const copySource = {
     // Both refusals happen BEFORE the wallet is asked, which is why each
     // can say nothing was spent.
     routeNoQuote:
-      'None of the exchanges gave a usable price for this sale just now, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
+      'None of the exchanges this app asked gave a usable price for this sale just now, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
+    // The re-read at confirm found the list changed since the card
+    // rendered; each mirrors the matching card body.
+    routeNoEnabledVenue:
+      'The protocol has no exchange enabled on this network, so this sale cannot be routed by anyone until governance enables one. Nothing was sent and nothing was spent.',
+    routeNoAskableVenue:
+      'None of the exchanges the protocol uses on this network is one this app can ask for a price, so nothing was sent and nothing was spent. Closing this position needs an operator for now. Contact support rather than waiting for it to happen on its own.',
     routeRosterFailed:
       'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
     // The agent answered for every aggregator asked that this deployment

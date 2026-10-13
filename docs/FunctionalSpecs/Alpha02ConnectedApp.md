@@ -1599,12 +1599,18 @@ is the borrower's own money.
   prices, and a roster the app could not fully read is reported as unread,
   never as "no exchange". The confirmation describes sale proceeds up to what the lender is owed (any
   surplus going to the borrower), the fallback, and a settlement against an
-  opposing position, and names no amount. A successful sale pays whoever
-  submits it a caller incentive out of the proceeds, before they are divided,
-  and not to a wallet the sanctions oracle has flagged; the surface says
-  which of those applies to the viewer, or that it does not yet know.
-- Where none of the exchanges the protocol uses on that network is one the
-  app can ask, the app states that the position is closable, that the sale
+  opposing position, and names no amount. A successful sale may pay whoever
+  submits it a caller incentive out of the proceeds, before they are divided;
+  the incentive is reduced by the sale's realised slippage and can be nothing,
+  and is never paid to a wallet the sanctions oracle has flagged. The surface
+  says which of those applies to the viewer, or that it does not yet know, and
+  names no amount.
+- Where the protocol's own exchange list has no enabled entry on that network
+  (or none is registered), no caller can close the position by sale until
+  governance enables one; the app says that, rather than suggesting an
+  operator could close it, and offers no button.
+- Where the protocol has enabled exchanges on that network but none is one
+  the app can ask, the app states that the position is closable, that the sale
   must be routed by whoever submits it, and that nothing submits it on its own,
   and offers no button it cannot honour. Presenting an action that is certain
   to be refused is worse than presenting none: the user pays a network fee for

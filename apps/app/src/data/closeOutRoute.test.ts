@@ -4,6 +4,8 @@ import {
   buildCloseOutRoute,
   previewCloseOut,
   quotableVenues,
+  readCloseOutRoster,
+  routePosture,
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from './closeOutRoute';
@@ -315,5 +317,55 @@ describe('previewCloseOut', () => {
       'unknown',
     );
     expect(await run(async () => ({ results: [{ status: 'failure', logs: [] }] }))).toBe('unknown');
+  });
+});
+
+describe('routePosture', () => {
+  // Fake chain: each adapter at A(0x100+i) answers its name and the
+  // Diamond answers its disabled flag; `undefined` makes that read fail.
+  function chainOf(entries: { name?: string; disabled?: boolean }[]) {
+    return {
+      readContract: async (args: { functionName: string; address: Address; args?: [Address] }) => {
+        if (args.functionName === 'getSwapAdapters') return entries.map((_, i) => A(0x100 + i));
+        const i = Number(BigInt((args.args?.[0] ?? args.address) as string) - 0x100n);
+        const v = args.functionName === 'adapterName' ? entries[i].name : entries[i].disabled;
+        if (v === undefined) throw new Error('unreadable');
+        return v;
+      },
+    } as unknown as Parameters<typeof readCloseOutRoster>[0];
+  }
+  const posture = async (
+    entries: { name?: string; disabled?: boolean }[],
+    agent = true,
+    chainId = 8453,
+  ) => routePosture(await readCloseOutRoster(chainOf(entries), A(9), undefined), chainId, agent);
+
+  it('is available when an askable venue is enabled', async () => {
+    expect(await posture([{ name: 'UniswapV3', disabled: false }])).toBe('available');
+  });
+  it('is no-enabled-venue for an empty list or an all-disabled one', async () => {
+    expect(await posture([])).toBe('no-enabled-venue');
+    expect(
+      await posture([
+        { name: 'ZeroEx', disabled: true },
+        { name: undefined, disabled: true },
+      ]),
+    ).toBe('no-enabled-venue');
+  });
+  it('is unread when a possibly-usable entry could not be read', async () => {
+    expect(await posture([{ name: 'ZeroEx', disabled: undefined }])).toBe('unread');
+    expect(await posture([{ name: undefined, disabled: false }])).toBe('unread');
+  });
+  it('is proxy-unconfigured when only an aggregator is enabled and no proxy is set', async () => {
+    expect(await posture([{ name: 'OneInch', disabled: false }], false)).toBe(
+      'proxy-unconfigured',
+    );
+  });
+  it('is unsupported when enabled venues exist that this app cannot ask', async () => {
+    expect(await posture([{ name: 'BalancerV2', disabled: false }])).toBe('unsupported');
+    // UniV3 with no quoter on this chain.
+    expect(await posture([{ name: 'UniswapV3', disabled: false }], true, 84532)).toBe(
+      'unsupported',
+    );
   });
 });

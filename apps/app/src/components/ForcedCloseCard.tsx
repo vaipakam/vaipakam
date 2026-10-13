@@ -71,7 +71,8 @@ import {
 import {
   agentQuoteOrigin,
   buildCloseOutRoute,
-  quotableVenues,
+  routePosture,
+  type RoutePosture,
   previewCloseOut,
   readCloseOutRoster,
 } from '../data/closeOutRoute';
@@ -888,18 +889,19 @@ export function ForcedCloseCard({
       readCloseOutRoster(publicClient!, routeDiamond!, testnetMockAdapter),
     staleTime: 60_000,
   });
-  // An empty result from a roster with unread entries is 'unknown', not
-  // 'none': the app could not identify a venue, which is not the same as
-  // the protocol having none it can ask.
-  const routeAvailability: RouteAvailability =
+  // One derived posture (`data/closeOutRoute.routePosture`) drives the
+  // button, the body and the confirm-time refusals alike. An unread roster
+  // is 'unknown', not 'none': absence was not proven.
+  const posture: RoutePosture | undefined =
     rosterQuery.data === undefined || routeChainId === undefined
-      ? 'unknown'
-      : quotableVenues(rosterQuery.data.roster, routeChainId, agentQuoteOrigin() !== null)
-            .length > 0
-        ? 'available'
-        : rosterQuery.data.incomplete
-          ? 'unknown'
-          : 'none';
+      ? undefined
+      : routePosture(rosterQuery.data, routeChainId, agentQuoteOrigin() !== null);
+  const routeAvailability: RouteAvailability =
+    posture === 'available'
+      ? 'available'
+      : posture === undefined || posture === 'unread'
+        ? 'unknown'
+        : 'none';
   /** Set while the confirm is asking exchanges for prices — the one
    *  stretch of a close-out where nothing is on screen otherwise. */
   const [findingRoute, setFindingRoute] = useState(false);
@@ -924,8 +926,7 @@ export function ForcedCloseCard({
     if (!publicClient || routeDiamond === undefined || routeChainId === undefined) {
       return { message: copy.forcedClose.routeRosterFailed };
     }
-    let roster;
-    let rosterIncomplete;
+    let read;
     let sale;
     try {
       const [loan, freshRoster] = await Promise.all([
@@ -941,8 +942,7 @@ export function ForcedCloseCard({
         }>,
         readCloseOutRoster(publicClient, routeDiamond, testnetMockAdapter),
       ]);
-      roster = freshRoster.roster;
-      rosterIncomplete = freshRoster.incomplete;
+      read = freshRoster;
       sale = {
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
@@ -951,18 +951,30 @@ export function ForcedCloseCard({
     } catch {
       return { message: copy.forcedClose.routeRosterFailed };
     }
+    // The list is re-read here, so it can have changed since the card
+    // rendered: the same posture decides what this confirm can claim.
+    const fresh = routePosture(read, routeChainId, agentQuoteOrigin() !== null);
+    if (fresh !== 'available') {
+      return {
+        message:
+          fresh === 'unread'
+            ? copy.forcedClose.routeRosterFailed
+            : fresh === 'no-enabled-venue'
+              ? copy.forcedClose.routeNoEnabledVenue
+              : fresh === 'proxy-unconfigured'
+                ? copy.forcedClose.routeNotConfigured
+                : copy.forcedClose.routeNoAskableVenue,
+      };
+    }
     const route = await buildCloseOutRoute({
       client: publicClient,
       chainId: routeChainId,
       diamond: routeDiamond,
-      roster,
+      roster: read.roster,
       sale,
       agentOrigin: agentQuoteOrigin(),
     });
     if (route.kind === 'no-quote') {
-      // A venue the app could not identify was never asked, so "no
-      // exchange gave a price" would claim more than was checked.
-      if (rosterIncomplete) return { message: copy.forcedClose.routeRosterFailed };
       // Every venue asked was an aggregator this deployment has no key
       // for: a standing configuration, so "try again later" would be
       // untrue.
@@ -1253,20 +1265,17 @@ export function ForcedCloseCard({
    *  (#2463). A failed venue read is said as such rather than as a check
    *  still running, which it no longer is. */
   const needsRouteBody =
-    routeAvailability === 'available'
+    posture === 'available'
       ? copy.forcedClose.readyNeedsRoute
-      : routeAvailability === 'none'
-        ? // An aggregator venue the app would ask but for a missing quote
-          // proxy is this deployment's configuration, not the protocol's
-          // venue list, and is said as such.
-          agentQuoteOrigin() === null &&
-          (rosterQuery.data?.roster.zeroex !== undefined ||
-            rosterQuery.data?.roster.oneinch !== undefined)
+      : posture === 'no-enabled-venue'
+        ? copy.forcedClose.readyNeedsRouteNoEnabledVenue
+        : posture === 'proxy-unconfigured'
           ? copy.forcedClose.readyNeedsRouteNotConfigured
-          : copy.forcedClose.readyNeedsRouteNoVenue
-        : rosterQuery.isError || rosterQuery.data?.incomplete
-          ? copy.forcedClose.readyNeedsRouteUnreadable
-          : copy.forcedClose.readyNeedsRouteChecking;
+          : posture === 'unsupported'
+            ? copy.forcedClose.readyNeedsRouteNoVenue
+            : rosterQuery.isError || posture === 'unread'
+              ? copy.forcedClose.readyNeedsRouteUnreadable
+              : copy.forcedClose.readyNeedsRouteChecking;
 
   const PRESENTATION: Record<
     ForcedCloseReadiness,

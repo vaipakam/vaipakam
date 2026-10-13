@@ -102,6 +102,50 @@ export interface CloseOutRoster {
    *  send — but it also means an empty result is not proof that no usable
    *  venue exists, only that none could be identified. */
   incomplete: boolean;
+  /** How many adapters the Diamond lists whose disabled flag was READ as
+   *  false — of any kind, including ones this app cannot name. Zero, with
+   *  nothing unread, means the contract itself has no venue to try:
+   *  `triggerDefault` reverts `NoEnabledSwapRoute` for every caller,
+   *  operator included, until governance enables one. */
+  enabledCount: number;
+}
+
+/**
+ * Where a needs-route close-out stands on this chain, as ONE derived
+ * value (#2463 round 6). Every card body and confirm-time message keys off
+ * this rather than re-deriving its own subset of the conditions, which is
+ * how three rounds of findings each found a sentence claiming more than
+ * the roster showed.
+ *
+ * - `available` — at least one venue this app can ask.
+ * - `unread` — some entry's name or disabled flag could not be read, and
+ *   nothing askable was found; absence is not proven.
+ * - `no-enabled-venue` — the list was read in full and no adapter is
+ *   enabled (or none is registered). Nobody can close the loan by sale.
+ * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
+ *   but this deployment has no quote proxy to ask it through.
+ * - `unsupported` — enabled venues exist, none of a kind this app can
+ *   ask; another caller with its own route can still close it.
+ */
+export type RoutePosture =
+  | 'available'
+  | 'unread'
+  | 'no-enabled-venue'
+  | 'proxy-unconfigured'
+  | 'unsupported';
+
+export function routePosture(
+  read: CloseOutRoster,
+  chainId: number,
+  agentConfigured: boolean,
+): RoutePosture {
+  if (quotableVenues(read.roster, chainId, agentConfigured).length > 0) return 'available';
+  if (read.incomplete) return 'unread';
+  if (read.enabledCount === 0) return 'no-enabled-venue';
+  if (!agentConfigured && (read.roster.zeroex !== undefined || read.roster.oneinch !== undefined)) {
+    return 'proxy-unconfigured';
+  }
+  return 'unsupported';
 }
 
 /** Read the roster for one chain's Diamond. */
@@ -113,7 +157,12 @@ export async function readCloseOutRoster(
   const entries = await readSwapAdapterEntries(client, diamond);
   return {
     roster: resolveAdapterRoster(entries, { testnetMockAdapter }),
-    incomplete: entries.some((e) => e.name === undefined || e.disabled === undefined),
+    // A disabled entry's name is irrelevant — it is skipped either way —
+    // so only an entry that might be a usable venue makes the read partial.
+    incomplete: entries.some(
+      (e) => e.disabled === undefined || (e.disabled === false && e.name === undefined),
+    ),
+    enabledCount: entries.filter((e) => e.disabled === false).length,
   };
 }
 

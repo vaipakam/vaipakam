@@ -227,7 +227,7 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     cardAfter.getByText(/sold on an exchange/i),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
-    cardAfter.getByText(/asks the exchanges the protocol uses/i),
+    cardAfter.getByText(/exchanges it can reach among those the protocol uses/i),
   ).toBeVisible({ timeout: 30_000 });
   const submit = afterWarp.page.getByTestId('forced-close-submit');
   await expect(submit).toBeVisible({ timeout: 30_000 });
