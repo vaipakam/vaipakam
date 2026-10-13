@@ -327,6 +327,13 @@ contract RewardAggregatorFacet is
         // chain detached.
         if (s.dailyGlobalFinalized[dayId]) {
             LibVpfiRecycle.recordChainRecycledCumulative(s, sourceChainId, recycledCumulative18);
+            // The availability figure's one event, as the on-time ingest emits
+            // it — the cumulative with NO day credit accepted — so a reader of
+            // the cumulative (the indexer's recycle series) sees every advance
+            // (#2459 r7); the retirement writer emits its own.
+            emit LibVpfiRecycle.ChainRecycledReported(
+                sourceChainId, dayId, recycledCumulative18, recycledForDay18, 0
+            );
             LibVpfiRecycle.recordChainCommitRetirement(
                 s, sourceChainId, commitRetiredCumulative18, commitReleasedCumulative18
             );

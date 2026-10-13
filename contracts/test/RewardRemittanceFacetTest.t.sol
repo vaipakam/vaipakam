@@ -97,6 +97,9 @@ contract RewardRemittanceFacetTest is SetupTest {
 
     /// @dev Finalize day `d` with BASE/ARB/OP lender+borrower numerators.
     event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
+    event ChainRecycledReported(
+        uint32 indexed sourceChainId, uint256 indexed dayId, uint256 cumulative, uint256 forDayReported, uint256 dayCreditAccepted
+    );
 
     function _finalizeDay1() internal {
         rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
@@ -208,6 +211,10 @@ contract RewardRemittanceFacetTest is SetupTest {
         TestMutatorFacet(address(diamond)).setChainConsumedRecycledRaw(CHAIN_ARB, 6e18, 6e18);
         RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
         agg.forceFinalizeDay(1);
+        // #2459 r7 — the availability advance is named by its one event (the
+        // indexer's source for the cumulative), with no day credit accepted.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainRecycledReported(CHAIN_ARB, 1, 9e18, 2e18, 0);
         rewardMessenger.deliverChainReportB4Full(CHAIN_ARB, 1, 20e18, 10e18, 9e18, 2e18, 4e18, 1e18, 4);
         (uint256 retired, uint256 released) = agg.getChainRecycledCommitRetirement(CHAIN_ARB);
         assertEq(retired, 4e18, "the retirement ratchet applies");

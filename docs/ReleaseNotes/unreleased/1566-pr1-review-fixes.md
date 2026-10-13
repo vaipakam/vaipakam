@@ -127,3 +127,6 @@ entries.
 **Codex review, round 6 (#2459).**
 - **Token rotation waits for a held compensation.** A held provisional compensation is in the token it arrived in, and its record does not name a token. The reward token can no longer be rotated while any such hold is pending, including a hold made before custody activation, which rests in the platform's own balance. The rotation runbook lists the new precondition.
 - **Late day reports keep the chain-wide figures.** A day report that reaches the canonical chain after its day finalized still drops that day's figures, but now applies the reporting chain's cumulative recycled availability and its commitment retirement and release totals. These describe the chain, not the day, only ever move forward, and are checked against the canonical chain's own records. Before, a chain whose last report arrived late, or that then detached, left already-retired commitments counted as outstanding.
+
+**Codex review, round 7 (#2459).**
+- **Late day reports are visible to the indexer.** When a late report advances a chain's recycled availability, the canonical chain now emits the same availability event an on-time report emits, with no day credit, so the indexer's recycling figures track what the chain holds.
