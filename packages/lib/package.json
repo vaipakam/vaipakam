@@ -84,6 +84,10 @@
     "./d1Maintenance": {
       "types": "./src/d1Maintenance.ts",
       "default": "./src/d1Maintenance.ts"
+    },
+    "./swapRoutes": {
+      "types": "./src/swapRoutes.ts",
+      "default": "./src/swapRoutes.ts"
     }
   },
   "scripts": {

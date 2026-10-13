@@ -2414,17 +2414,29 @@ const copySource = {
       'The network’s sequencer is down or still recovering. Closing out is paused until prices can be trusted again — this usually clears on its own, so it is worth trying later.',
     readyInKind:
       'The grace period has passed, so you can close this loan out now. The collateral moves out of the borrower’s vault as-is rather than being sold, and you claim it afterwards from the Claims page.',
-    // The honest version of "we cannot do this here". It says the
-    // position IS eligible, which is the part a lender needs, and it
-    // does not pretend the app's limitation is the protocol's.
-    // Round 28 P2 — this used to say the state was "handled by the
-    // protocol's automated closers". There are none: the shipped keeper
-    // routes `triggerLiquidation` only, and nothing in the repo submits
-    // `triggerDefault`. Telling a lender an automated service will
-    // collect for them, when none exists, is the one sentence on this
-    // card that could leave a position open indefinitely.
+    // #2463 — the app now builds the sale route itself, at confirm time,
+    // from the Diamond's own adapter list. Four sentences because the
+    // card knows four different things: a venue it can ask exists, none
+    // does, the list is still being read, or the read failed. Each says
+    // the position IS eligible, which is the part a lender needs.
     readyNeedsRoute:
-      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it. When you confirm, the app asks the exchanges the protocol uses on this network for a price and sends them with your close-out, best price first and the rest as back-ups. The protocol checks every attempt against its own price feed and will not sell below its minimum.',
+    // Round 28 P2 still holds here: nothing submits `triggerDefault` on
+    // its own, so the sentence must not imply an automated closer.
+    readyNeedsRouteNoVenue:
+      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and none of the exchanges the protocol uses on this network is one this app can ask for a price. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    readyNeedsRouteChecking:
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the app is still checking which exchanges it can ask for a price on this network.',
+    readyNeedsRouteUnreadable:
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, but the app could not read which exchanges the protocol uses on this network, so it cannot offer the sale from here right now. Reloading the page tries again.',
+    // Shown while the confirm is waiting on the price requests.
+    findingRoute: 'Asking exchanges for a price…',
+    // Both refusals happen BEFORE the wallet is asked, which is why each
+    // can say nothing was spent.
+    routeNoQuote:
+      'None of the exchanges gave a usable price for this sale just now, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
+    routeRosterFailed:
+      'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can
     // settle against an opposing one. `triggerDefault` dispatches that
     // match BEFORE the swap branch, so the app CAN close this today;
@@ -2594,6 +2606,24 @@ const copySource = {
       'If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.',
     outcomeNote:
       'How much comes back depends on what the collateral is worth when the transaction runs, so the amount is not known in advance.',
+    // #2463 — the sale route has an outcome the other notes do not: if
+    // no attempt meets the protocol's minimum, the close-out still
+    // SUCCEEDS, into the full-collateral fallback (FallbackPending). That
+    // is a different recovery from a sale, and the borrower can still
+    // cure it, so it is stated rather than left to the receipt.
+    outcomeNoteSale:
+      'If the sale goes through, the collateral is sold for the asset you lent, and how much comes back depends on the price it gets when the transaction runs — so the amount is not known in advance. If no exchange can sell at the protocol’s minimum at that moment, the close-out still goes through but the sale does not: the loan moves into the protocol’s fallback, where you can claim collateral instead of sale proceeds, and until you do the borrower can still repay or add collateral.',
+    // #2463 — the time-based default pays its caller the same dynamic
+    // incentive as a liquidation, out of the sale proceeds and before
+    // they are divided, and withholds it from a flagged caller (the
+    // withheld part stays in what is divided). Paid only when the sale
+    // succeeds. Three full sentences, like the matcher ones above.
+    saleIncentiveYours:
+      'One part is different: if the sale goes through, the protocol pays whoever submits this transaction a small incentive out of the sale proceeds, sent straight to the submitting wallet before the rest is divided. Submitting this yourself means that part comes to you immediately; it is not added on top of what the sale raised.',
+    saleIncentiveNotPaid:
+      'One part works differently for your wallet. If the sale goes through, the protocol normally pays whoever submits this transaction a small incentive out of the sale proceeds — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs, and that part stays in the proceeds that are divided between you and the borrower.',
+    saleIncentiveUnknown:
+      'One part is not settled yet. If the sale goes through, the protocol pays whoever submits this transaction a small incentive out of the sale proceeds, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
     // The six receipt rows. `youReceive` is the one worth reading
     // twice: every other receipt in the app puts a figure here, and
     // this one cannot, because the contract has not chosen between its
@@ -2626,6 +2656,20 @@ const copySource = {
       // Round 28 P2 — "straight away" was not guaranteed. A partial
       // internal match settles part of the position and leaves the loan
       // Active, and a failed sale leaves it curable in fallback.
+      whenThisEnds:
+        'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
+    },
+    // #2463 — the receipt for a close-out that sells the collateral.
+    // The shared one above leads with the collateral itself, which is
+    // what a sale route delivers only when the sale fails.
+    saleReceipt: {
+      youReceive:
+        'Your share of what the collateral sells for, in the asset you lent — up to what you are owed, with anything above that going back to the borrower. If the sale cannot go through, collateral instead, through the protocol’s fallback. If the protocol settles this position against an opposing one first, the amount you lent, in the asset you lent it in. Which of these happens is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Nothing beyond the network fee.',
+      youCanLose:
+        'If the sale raises less than you are owed, you absorb the shortfall. Where this transaction does end the loan, it ends it for good — the borrower can no longer repay it with interest. Where it only settles part, or the sale cannot go through, the loan stays open and the borrower may still repay or add collateral.',
+      fees: 'The network fee, plus the protocol’s share of the sale proceeds and the incentive paid to whoever submits it.',
       whenThisEnds:
         'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
     },

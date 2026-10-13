@@ -1,5 +1,5 @@
 /**
- * Phase 7a.4 — server-side mirror of `frontend/src/lib/swapQuoteService.ts`.
+ * Phase 7a.4 — server-side liquidation quote orchestration.
  *
  * Fetches quotes from every available DEX venue (0x / 1inch / UniV3 /
  * Balancer V2 — Balancer stubbed pending subgraph integration), ranks
@@ -7,8 +7,10 @@
  * Diamond's `triggerLiquidation(loanId, calls)`.
  *
  * Lives inside the Cloudflare Worker so the operator's API keys never
- * leave the trusted infra (no need to proxy through `/quote/*` like
- * the frontend does).
+ * leave the trusted infra (no need to proxy through the agent's
+ * `/quote/*` routes like the connected app does). The rules both
+ * builders share — wire formats, response parsing, UniV3 venues — are in
+ * `@vaipakam/lib/swapRoutes`.
  *
  * SAFETY: server-side ranking does NOT weaken any on-chain guard. The
  * diamond enforces the oracle-derived `minOutputAmount` per-adapter;
@@ -16,13 +18,15 @@
  * and the next-best entry tries.
  */
 
+import type { Address, Hex, PublicClient } from 'viem';
 import {
-  type Address,
-  type Hex,
-  type PublicClient,
-  encodeAbiParameters,
-  encodeFunctionData,
-} from 'viem';
+  packAggregatorData,
+  packBalancerV2Data,
+  packUniV3Data,
+  parseOneInchQuote,
+  parseZeroExQuote,
+  quoteUniV3,
+} from '@vaipakam/lib/swapRoutes';
 import type { Env } from './env';
 
 export interface ServerQuoteRequest {
@@ -51,7 +55,12 @@ export interface ServerOrchestrationResult {
   failed: ('zeroex' | 'oneinch' | 'univ3' | 'balancerv2')[];
 }
 
-// ─── Per-chain registry. Mirror of frontend/swapRegistry.ts. ───────────
+// ─── Per-chain registry. ───────────────────────────────────────────────
+//
+// Wire formats, response parsing and the UniV3 quoter venues live in
+// `@vaipakam/lib/swapRoutes`, shared with the connected app's forced
+// close-out (#2463). The adapter INDEXES below are still hand-kept; #2468
+// replaces them with the on-chain roster that module resolves.
 
 type AdapterIdxMap = {
   zeroex: number | null;
@@ -61,65 +70,47 @@ type AdapterIdxMap = {
 };
 
 interface ChainSwap {
-  uniV3Quoter: Address | null;
   balancerVault: Address;
   /** Balancer V2 subgraph URL — null disables the venue. Hosted-
    *  service URLs by default; production deployments override via
    *  env to point at a paid / decentralized-network endpoint. */
   balancerV2SubgraphUrl: string | null;
-  uniV3FeeTiers: readonly number[];
   adapters: AdapterIdxMap;
 }
 
-const COMMON_FEE_TIERS = [500, 3000, 10000] as const;
-// PancakeSwap V3 uses different fee tiers than Uniswap V3 (0.25% instead of
-// 0.3%): 0.01% / 0.05% / 0.25% / 1%. Used on chains routed through PancakeSwap.
-const PANCAKE_V3_FEE_TIERS = [100, 500, 2500, 10000] as const;
 const BALANCER_V2_VAULT_CANONICAL =
   '0xBA12222222228d8Ba445958a75a0704d566BF2C8' as const;
 
 const CHAIN_SWAP: Record<number, ChainSwap> = {
   1: {
-    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2',
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   8453: {
-    uniV3Quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-base-v2',
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   42161: {
-    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2',
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   10: {
-    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-optimism-v2',
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
   },
   1101: {
-    uniV3Quoter: null,
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-zk-v2',
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
   },
   56: {
-    uniV3Quoter: null,
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     // Balancer V2 not deployed on BNB Chain.
     balancerV2SubgraphUrl: null,
-    uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
   },
   // BNB testnet — 0x/1inch have NO testnet backend (0x's API covers BNB
@@ -133,54 +124,13 @@ const CHAIN_SWAP: Record<number, ChainSwap> = {
   // V3 QuoterV2 (factory-matched to the oracle's UNISWAP_V3_FACTORY) over
   // Pancake's fee tiers. Balancer V2 not on BNB.
   97: {
-    uniV3Quoter: '0xbC203d7f83677c7ed3F7acEc959963E7F4ECC5C2',
     balancerVault: BALANCER_V2_VAULT_CANONICAL,
     balancerV2SubgraphUrl: null,
-    uniV3FeeTiers: PANCAKE_V3_FEE_TIERS,
     adapters: { zeroex: null, oneinch: null, univ3: 0, balancerv2: null },
   },
 };
 
 // ─── Aggregator API helpers. ───────────────────────────────────────────
-
-interface ZeroExResp {
-  transaction?: { to?: string; data?: string };
-  buyAmount?: string;
-}
-interface OneInchResp {
-  tx?: { to?: string; data?: string };
-  dstAmount?: string;
-  toAmount?: string;
-}
-
-/**
- * Pack `(swapTarget, swapCalldata)` for the diamond's
- * `AggregatorAdapterBase`. On-chain decoder is
- * `abi.decode(adapterData, (address, bytes))` so the wire format must
- * match the keeper-bot and frontend equivalents — centralised here so
- * 0x and 1inch can't drift.
- *
- * 0x v2 / Settler / AllowanceHolder splits the approve recipient
- * (immutable AllowanceHolder pinned at adapter construction) from the
- * swap-call destination (rotating Settler, allowlist-gated). The
- * watcher passes `transaction.to` here; the adapter rejects anything
- * not in the allowlist before forwarding the calldata. 1inch v6 uses
- * AggregationRouterV6 for both today, but the same packing keeps the
- * adapter's allowlist defending against a rogue `tx.to` and is
- * forward-compat with a future v7 split.
- */
-function packAdapterData(swapTarget: Address, swapCalldata: Hex): Hex {
-  return encodeAbiParameters(
-    [{ type: 'address' }, { type: 'bytes' }],
-    [swapTarget, swapCalldata],
-  ) as Hex;
-}
-
-const ADDRESS_HEX_LEN = 42; // 0x + 40 hex chars
-
-function isAddressLike(s: string | undefined): s is Address {
-  return typeof s === 'string' && s.startsWith('0x') && s.length === ADDRESS_HEX_LEN;
-}
 
 async function fetchZeroEx(
   env: Env,
@@ -205,17 +155,14 @@ async function fetchZeroEx(
       },
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as ZeroExResp;
-    const swapTo = body.transaction?.to;
-    const data = body.transaction?.data;
-    const out = body.buyAmount;
-    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !out) return null;
+    const q = parseZeroExQuote(await res.json());
+    if (!q) return null;
     return {
       kind: 'zeroex',
-      expectedOutput: BigInt(out),
+      expectedOutput: q.expectedOutput,
       call: {
         adapterIdx: BigInt(cs.adapters.zeroex),
-        data: packAdapterData(swapTo, data as Hex),
+        data: packAggregatorData(q.swapTarget, q.swapCalldata),
       },
     };
   } catch {
@@ -247,17 +194,14 @@ async function fetchOneInch(
       },
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as OneInchResp;
-    const swapTo = body.tx?.to;
-    const data = body.tx?.data;
-    const amount = body.dstAmount ?? body.toAmount;
-    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !amount) return null;
+    const q = parseOneInchQuote(await res.json());
+    if (!q) return null;
     return {
       kind: 'oneinch',
-      expectedOutput: BigInt(amount),
+      expectedOutput: q.expectedOutput,
       call: {
         adapterIdx: BigInt(cs.adapters.oneinch),
-        data: packAdapterData(swapTo, data as Hex),
+        data: packAggregatorData(q.swapTarget, q.swapCalldata),
       },
     };
   } catch {
@@ -265,72 +209,20 @@ async function fetchOneInch(
   }
 }
 
-// QuoterV2.quoteExactInputSingle minimal ABI.
-const QUOTER_V2_ABI = [
-  {
-    inputs: [
-      {
-        components: [
-          { internalType: 'address', name: 'tokenIn', type: 'address' },
-          { internalType: 'address', name: 'tokenOut', type: 'address' },
-          { internalType: 'uint256', name: 'amountIn', type: 'uint256' },
-          { internalType: 'uint24', name: 'fee', type: 'uint24' },
-          { internalType: 'uint160', name: 'sqrtPriceLimitX96', type: 'uint160' },
-        ],
-        internalType: 'struct IQuoterV2.QuoteExactInputSingleParams',
-        name: 'params',
-        type: 'tuple',
-      },
-    ],
-    name: 'quoteExactInputSingle',
-    outputs: [
-      { internalType: 'uint256', name: 'amountOut', type: 'uint256' },
-      { internalType: 'uint160', name: 'sqrtPriceX96After', type: 'uint160' },
-      { internalType: 'uint32', name: 'initializedTicksCrossed', type: 'uint32' },
-      { internalType: 'uint256', name: 'gasEstimate', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-] as const;
-
 async function fetchUniV3(
   client: PublicClient,
   req: ServerQuoteRequest,
 ): Promise<ServerRankedQuote | null> {
   const cs = CHAIN_SWAP[req.chainId];
-  if (!cs?.uniV3Quoter || cs.adapters.univ3 == null) return null;
-  let best: { fee: number; out: bigint } | null = null;
-  for (const fee of cs.uniV3FeeTiers) {
-    try {
-      const data = encodeFunctionData({
-        abi: QUOTER_V2_ABI,
-        functionName: 'quoteExactInputSingle',
-        args: [
-          {
-            tokenIn: req.sellToken,
-            tokenOut: req.buyToken,
-            amountIn: req.sellAmount,
-            fee,
-            sqrtPriceLimitX96: 0n,
-          },
-        ],
-      });
-      const result = await client.call({ to: cs.uniV3Quoter, data });
-      if (!result.data) continue;
-      const out = BigInt('0x' + result.data.slice(2, 66));
-      if (out > 0n && (!best || out > best.out)) best = { fee, out };
-    } catch {
-      continue;
-    }
-  }
+  if (cs?.adapters.univ3 == null) return null;
+  const best = await quoteUniV3(client, req.chainId, req);
   if (!best) return null;
   return {
     kind: 'univ3',
-    expectedOutput: best.out,
+    expectedOutput: best.expectedOutput,
     call: {
       adapterIdx: BigInt(cs.adapters.univ3),
-      data: encodeAbiParameters([{ type: 'uint24' }], [best.fee]) as Hex,
+      data: packUniV3Data(best.fee),
     },
   };
 }
@@ -416,10 +308,7 @@ async function fetchBalancerV2(
   const out = (req.sellAmount * buyBal) / sellBal;
   if (out === 0n) return null;
 
-  const data = encodeAbiParameters(
-    [{ type: 'bytes32' }],
-    [poolId as `0x${string}`],
-  ) as Hex;
+  const data = packBalancerV2Data(poolId as Hex);
   return {
     kind: 'balancerv2',
     expectedOutput: out,

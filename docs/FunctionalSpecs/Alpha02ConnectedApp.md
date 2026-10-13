@@ -1573,10 +1573,35 @@ is the borrower's own money.
   the lender's own asset exactly where it is, and makes the rent paid up front
   claimable less fees. Nothing belonging to the borrower moves, and no
   valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
-  the app states that the position is closable and that the sale must be routed
-  by whoever submits it, and offers no button it cannot honour. Presenting an
-  action that is certain to be refused is worse than presenting none: the user
-  pays a network fee for the refusal.
+  the app routes the sale itself and offers the action directly. When the
+  lender confirms, it asks every exchange it can reach for a price on selling
+  the loan's whole collateral for the lent asset, and sends the answers with
+  the close-out, best price first and the rest as back-ups. Which exchanges
+  the protocol can use, and how it refers to each, is read from the protocol
+  at that moment, never from a list the app keeps, because governance can add,
+  remove, disable or reorder them. Prices are asked for at confirmation rather
+  than when the page loads, because they do not keep. The app never protects
+  the sale price itself and does not claim to: the protocol checks each
+  attempt against its own price feed and will not sell below its minimum.
+- That route has an outcome the lender must be told before confirming: if no
+  attempt can sell at the protocol's minimum when the transaction runs, the
+  close-out still goes through but the sale does not, and the loan moves into
+  the protocol's fallback — the lender can claim collateral instead of sale
+  proceeds, and until they do the borrower can still repay or add collateral.
+  The confirmation describes sale proceeds up to what the lender is owed (any
+  surplus going to the borrower), the fallback, and a settlement against an
+  opposing position, and names no amount. A successful sale pays whoever
+  submits it a caller incentive out of the proceeds, before they are divided,
+  and not to a wallet the sanctions oracle has flagged; the surface says
+  which of those applies to the viewer, or that it does not yet know.
+- Where none of the exchanges the protocol uses on that network is one the
+  app can ask, the app states that the position is closable, that the sale
+  must be routed by whoever submits it, and that nothing submits it on its own,
+  and offers no button it cannot honour. Presenting an action that is certain
+  to be refused is worse than presenting none: the user pays a network fee for
+  the refusal. While the list of exchanges has not been read, the surface says
+  it is still checking; when the read failed, it says so. A confirmation that
+  gets no usable price sends nothing and says that nothing was sent or spent.
 - A third route is available where the protocol can settle the overdue
   position against an opposing one instead of selling anything. The app
   can perform that close-out directly, and says so — it is distinguished

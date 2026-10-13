@@ -13,8 +13,8 @@
  *  - the collateral really is LIQUID (`checkLiquidity`), which is what
  *    makes `ready-needs-route` the correct expectation here. `flows.ts`
  *    posts against `MOCKS.liquidToken`; if that ever changes to an
- *    illiquid asset the expected UI flips to the one WITH a button, and
- *    this test must fail rather than quietly assert the wrong arm.
+ *    illiquid asset the card lands on the in-kind arm instead, and this
+ *    test must fail rather than quietly assert the wrong arm.
  *  - the loan really is defaultable after the warp
  *    (`isLoanDefaultable`), so a grace bucket longer than the warp
  *    fails here instead of downstream as a confusing UI mismatch.
@@ -25,10 +25,16 @@
  *    arm — WITH a button — and every assertion below would fail on a
  *    wording mismatch instead of naming the reason.
  *
+ *  It also DRIVES the close-out (#2463): the fixture registers the
+ *  testnet `MockSwapAdapter` and records it in the deployment bundle, so
+ *  the app builds a one-venue route from the Diamond's own adapter list
+ *  and sends `triggerDefault(loanId, [route])`. The chain must then show
+ *  the loan no longer Active.
+ *
  *  What this does NOT cover, and the attempt that established why: the
- *  in-kind SUBMIT path, the only case where the app actually sends
- *  `triggerDefault(loanId, [])`. Reaching it needs unpriced collateral,
- *  since liquid collateral is precisely the arm with no button. A test
+ *  in-kind SUBMIT path, the case where the app sends
+ *  `triggerDefault(loanId, [])`. Reaching it needs unpriced collateral.
+ *  A test
  *  posting against `MOCKS.illiquidToken` got as far as the LENDER
  *  successfully publishing the offer, then failed on CI at the
  *  BORROWER's accept: "Borrow this now" never enabled inside
@@ -214,14 +220,17 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     cardAfter.getByText(/borrower still has time/i),
   ).toHaveCount(0);
   // Liquid collateral: the card says the position is closable and that
-  // the sale needs routing, and offers NO button. A button here would
-  // spend the lender's gas reaching `NoEnabledSwapRoute`.
+  // the collateral is sold on an exchange, priced when the lender
+  // confirms (#2463). The button exists because the Diamond lists a
+  // venue the app can ask — here the fixture's testnet mock.
   await expect(
     cardAfter.getByText(/sold on an exchange/i),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
-    afterWarp.page.getByTestId('forced-close-submit'),
-  ).toHaveCount(0);
+    cardAfter.getByText(/asks the exchanges the protocol uses/i),
+  ).toBeVisible({ timeout: 30_000 });
+  const submit = afterWarp.page.getByTestId('forced-close-submit');
+  await expect(submit).toBeVisible({ timeout: 30_000 });
   // Never promises exclusivity — a keeper may close it first.
   await expect(
     cardAfter.getByText(/anyone can close out an overdue loan/i),
@@ -234,6 +243,33 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     'ready-needs-route',
   );
   await expectDeclaredBlock(cardAfter, pub);
+
+  // ---- The lender closes it out, with a route the app built ----
+  await expect(submit).toBeEnabled({ timeout: 30_000 });
+  await submit.click();
+  const confirm = cardAfter.getByTestId('confirm-receipt-confirm');
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await confirm.click();
+  // The chain is the judge, not the copy. Defaulted (2) when the mock's
+  // sale meets the protocol's minimum; anything else — FallbackPending
+  // (4) above all — means the route was sent but the sale did not take,
+  // which this fixture's prices should never produce.
+  await expect
+    .poll(
+      async () =>
+        Number(
+          (
+            (await pub.readContract({
+              address: DIAMOND,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getLoanDetails',
+              args: [loanId],
+            })) as { status: number }
+          ).status,
+        ),
+      { timeout: 120_000 },
+    )
+    .toBe(2);
   await afterWarp.ctx.close();
 
   // ---- The borrower is not offered their own default ----
