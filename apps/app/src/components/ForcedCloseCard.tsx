@@ -895,13 +895,29 @@ export function ForcedCloseCard({
     // behind it. The confirm reads the list afresh regardless.
     refetchInterval: 60_000,
   });
+  /** Whether the connected account originates its own transactions — 0x
+   *  can be asked only for one that does (`no-origin`). */
+  const originQuery = useQuery({
+    queryKey: ['forcedClose', 'txOrigin', routeChainId, address],
+    enabled: readiness === 'ready-needs-route' && publicClient !== undefined && !!address,
+    queryFn: () => transactionOrigin(publicClient!, address!),
+    staleTime: 60_000,
+  });
   // One derived posture (`data/closeOutRoute.routePosture`) drives the
   // button, the body and the confirm-time refusals alike. An unread roster
-  // is 'unknown', not 'none': absence was not proven.
+  // is 'unknown', not 'none': absence was not proven. So is one whose
+  // latest refresh FAILED: TanStack keeps the previous data beside the
+  // error, and a posture derived from it would claim a venue list the app
+  // can no longer substantiate (round 12).
   const posture: RoutePosture | undefined =
-    rosterQuery.data === undefined || routeChainId === undefined
+    rosterQuery.data === undefined || rosterQuery.isError || routeChainId === undefined
       ? undefined
-      : routePosture(rosterQuery.data, routeChainId, agentQuoteOrigin() !== null);
+      : routePosture(
+          rosterQuery.data,
+          routeChainId,
+          agentQuoteOrigin() !== null,
+          originQuery.isSuccess ? originQuery.data !== null : undefined,
+        );
   const routeAvailability: RouteAvailability =
     posture === 'available'
       ? 'available'
@@ -959,7 +975,8 @@ export function ForcedCloseCard({
     }
     // The list is re-read here, so it can have changed since the card
     // rendered: the same posture decides what this confirm can claim.
-    const fresh = routePosture(read, routeChainId, agentQuoteOrigin() !== null);
+    const origin = address ? await transactionOrigin(publicClient, address) : null;
+    const fresh = routePosture(read, routeChainId, agentQuoteOrigin() !== null, origin !== null);
     if (fresh !== 'available') {
       return {
         message:
@@ -979,7 +996,7 @@ export function ForcedCloseCard({
       roster: read.roster,
       sale,
       agentOrigin: agentQuoteOrigin(),
-      txOrigin: address ? await transactionOrigin(publicClient, address) : null,
+      txOrigin: origin,
     });
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only

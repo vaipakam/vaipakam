@@ -1608,7 +1608,18 @@ is the borrower's own money.
   reached instead, and that route pays its submitter a matcher incentive
   straight to the submitting wallet, the surface also states that payment as
   conditional on the match, for the viewer's own wallet, wherever it says a
-  match may appear and the viewer can submit.
+  match may appear and the viewer can submit. That incentive is a share of the
+  settled amount and can round down to nothing, which the surface says rather
+  than promising a payment.
+- Aggregator prices are requested with the protocol's own effective
+  liquidation slippage ceiling, read from the protocol at confirm time, not
+  with a figure the app or its quote service assumes. When that ceiling cannot
+  be read, no aggregator is asked.
+- The card's own judgement of whether a route can be offered follows the
+  same rules as the confirmation: an exchange the viewer's wallet cannot use
+  (0x for a contract wallet) does not count as one the app can ask, and a
+  refresh of the exchange list that failed leaves the card saying the list
+  could not be read, not repeating the last answer.
 - An aggregator that binds its liquidity to the account originating the
   transaction is asked only when the app knows that account. Where the
   connected account is a contract wallet, whose transactions an owner or a

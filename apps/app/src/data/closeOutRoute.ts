@@ -185,9 +185,12 @@ export function quotableVenues(
   roster: AdapterRoster,
   chainId: number,
   agentConfigured: boolean,
+  /** Whether the account that will originate the transaction is known
+   *  (`transactionOrigin`). 0x is askable only when it is: see `no-origin`. */
+  originKnown: boolean,
 ): SwapVenueKind[] {
   const out: SwapVenueKind[] = [];
-  if (agentConfigured && roster.zeroex !== undefined) out.push('zeroex');
+  if (agentConfigured && originKnown && roster.zeroex !== undefined) out.push('zeroex');
   if (agentConfigured && roster.oneinch !== undefined) out.push('oneinch');
   if (roster.univ3 !== undefined && UNIV3_VENUES[chainId] !== undefined) out.push('univ3');
   if (roster.testnetMock !== undefined) out.push('testnetMock');
@@ -224,8 +227,10 @@ export interface CloseOutRoster {
  *   enabled (or none is registered). Nobody can close the loan by sale.
  * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
  *   but this deployment has no quote proxy to ask it through.
- * - `unsupported` — enabled venues exist, none of a kind this app can
- *   ask; another caller with its own route can still close it.
+ * - `unsupported` — enabled venues exist, none this app can ask from
+ *   here (of a kind it cannot price, or 0x for a wallet whose transaction
+ *   origin is unknown); another caller with its own route can still
+ *   close it.
  */
 export type RoutePosture =
   | 'available'
@@ -238,9 +243,19 @@ export function routePosture(
   read: CloseOutRoster,
   chainId: number,
   agentConfigured: boolean,
+  /** `transactionOrigin` resolved to an account (`true`), to unknown
+   *  (`false`), or not yet (`undefined`). */
+  originKnown: boolean | undefined,
 ): RoutePosture {
-  if (quotableVenues(read.roster, chainId, agentConfigured).length > 0) return 'available';
+  if (quotableVenues(read.roster, chainId, agentConfigured, originKnown === true).length > 0) {
+    return 'available';
+  }
   if (read.incomplete) return 'unread';
+  // 0x would be askable but whether this wallet originates its own
+  // transactions has not been read: not proven either way.
+  if (originKnown === undefined && agentConfigured && read.roster.zeroex !== undefined) {
+    return 'unread';
+  }
   if (read.enabledCount === 0) return 'no-enabled-venue';
   if (!agentConfigured && (read.roster.zeroex !== undefined || read.roster.oneinch !== undefined)) {
     return 'proxy-unconfigured';
@@ -267,6 +282,22 @@ export async function readCloseOutRoster(
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
+
+/** `ConfigFacet.getLiquidationConfig` — the EFFECTIVE values, with the
+ *  defaults applied for any knob governance left unset. */
+const LIQUIDATION_CONFIG_ABI = [
+  {
+    type: 'function',
+    name: 'getLiquidationConfig',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'handlingFeeBps', type: 'uint256' },
+      { name: 'maxSlippageBps', type: 'uint256' },
+      { name: 'maxIncentiveBps', type: 'uint256' },
+    ],
+  },
+] as const;
 
 const SWAP_TARGET_ALLOWED_ABI = [
   {
@@ -347,7 +378,9 @@ export async function buildCloseOutRoute(deps: {
 }): Promise<CloseOutRoute> {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const venues = quotableVenues(roster, chainId, agentOrigin !== null);
+  // 0x is kept here even for an unknown origin, so its slot is recorded as
+  // `no-origin` rather than vanishing from the outcomes.
+  const venues = quotableVenues(roster, chainId, agentOrigin !== null, true);
 
   // Every enabled instance of a venue is asked, in the Diamond's order:
   // two adapters of one kind (an adapter replacement in progress) each
@@ -357,18 +390,41 @@ export async function buildCloseOutRoute(deps: {
   type Attempt = { outcome: SlotOutcome; candidates: RouteCandidate[] };
   const none = (outcome: SlotOutcome): Attempt => ({ outcome, candidates: [] });
 
+  // The aggregators are quoted with the protocol's OWN slippage ceiling, read
+  // from the Diamond, not with the proxy's default: calldata built for a
+  // tighter limit than the protocol allows can revert on movement the
+  // oracle floor would accept, and send the close-out into the fallback for
+  // nothing. Unread, no aggregator is asked: a quote built on a guessed
+  // limit is not one this app can stand behind.
+  const needsSlippage = slots.some((s) => s.kind === 'zeroex' || s.kind === 'oneinch');
+  let slippageBps: number | null = null;
+  if (needsSlippage) {
+    try {
+      const [, maxSlippageBps] = await client.readContract({
+        address: diamond,
+        abi: LIQUIDATION_CONFIG_ABI,
+        functionName: 'getLiquidationConfig',
+      });
+      slippageBps = Number(maxSlippageBps);
+    } catch {
+      slippageBps = null;
+    }
+  }
+
   const attempt = async ({ kind, slot }: (typeof slots)[number]): Promise<Attempt> => {
     const adapterIdx = BigInt(slot.idx);
     switch (kind) {
       case 'zeroex':
       case 'oneinch': {
         if (kind === 'zeroex' && deps.txOrigin === null) return none('no-origin');
+        if (slippageBps === null) return none('unanswered');
         const answer = await agentQuote(fetchImpl, agentOrigin!, kind, {
           chainId,
           sellToken: sale.sellToken,
           buyToken: sale.buyToken,
           sellAmount: sale.sellAmount.toString(),
           taker: slot.address,
+          slippageBps,
           ...(deps.txOrigin ? { txOrigin: deps.txOrigin } : {}),
         });
         if (typeof answer === 'string') return none(answer);

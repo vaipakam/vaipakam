@@ -2631,7 +2631,7 @@ const copySource = {
     // rule the match-race paragraph follows, and for the same reason
     // (a join character that is wrong in Japanese and Chinese).
     matcherIncentiveYours:
-      'One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the same settled amount rather than on top of it, so submitting this yourself moves that part to you immediately and reduces what you claim later by the same amount.',
+      'One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It is a share of the settled amount, so on a small amount, or a token with few decimal places, it can round down to nothing. It comes out of the same settled amount rather than on top of it, so submitting this yourself moves any such part to you immediately and reduces what you claim later by the same amount.',
     // Deliberately precise about WHERE the money goes instead, because
     // "you do not get the incentive" would overstate the loss. Zeroing
     // it folds each leg's share back into that leg's lender: the part
@@ -2646,13 +2646,13 @@ const copySource = {
     // to the wallet by itself states this exception beside it. One
     // sentence per eligibility case, for the reasons above.
     matchRaceIncentiveYours:
-      'If it is settled against an opposing position instead, there is one more difference: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the settled amount rather than on top of it, so in that case submitting this yourself does move that part to you immediately, and what you claim later is smaller by the same amount.',
+      'If it is settled against an opposing position instead, there is one more difference: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It is a share of the settled amount, so on a small amount it can round down to nothing. It comes out of the settled amount rather than on top of it, so in that case submitting this yourself moves any such part to you immediately, and what you claim later is smaller by the same amount.',
     matchRaceIncentiveNotPaid:
       'If it is settled against an opposing position instead, the protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, but not to a wallet the sanctions oracle has flagged, and yours is flagged. The part that would have been taken from this position then stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.',
     matchRaceIncentiveUnknown:
-      'If it is settled against an opposing position instead, the protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet. The check on yours has not come back, so we cannot yet tell you which of those applies.',
+      'If it is settled against an opposing position instead, the protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet. The check on yours has not come back, so we cannot yet tell you which of those applies. Either way it is a share of the settled amount, and on a small amount it can round down to nothing.',
     matcherIncentiveUnknown:
-      'One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
+      'One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you. Either way it is a share of the settled amount, and on a small amount it can round down to nothing.',
     // Round 40 P2 — the shared note names a collateral valuation, and
     // neither of these two routes has one. A rental makes the FIXED
     // prepaid rent claimable after the treasury split; an internal match

@@ -21,16 +21,18 @@ const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 10n ** 18n };
 const S = (idx: number) => [{ idx, address: A(0x100 + idx) }];
 type RouteClient = Parameters<typeof buildCloseOutRoute>[0]['client'];
+// Every aggregator target is on its adapter's allowlist unless a test
+// says otherwise.
+const chainReads = async (args: { functionName: string }): Promise<unknown> => {
+  if (args.functionName === 'swapTargetAllowed') return true;
+  // Every UniV3 adapter's router shares the quoter's factory.
+  if (args.functionName === 'ROUTER') return A(0x77);
+  if (args.functionName === 'factory') return A(0xfa);
+  if (args.functionName === 'getLiquidationConfig') return [0n, 600n, 0n];
+  throw new Error('unused');
+};
 const noChain = {
-  // Every aggregator target is on its adapter's allowlist unless a test
-  // says otherwise.
-  readContract: async (args: { functionName: string }) => {
-    if (args.functionName === 'swapTargetAllowed') return true;
-    // Every UniV3 adapter's router shares the quoter's factory.
-    if (args.functionName === 'ROUTER') return A(0x77);
-    if (args.functionName === 'factory') return A(0xfa);
-    throw new Error('unused');
-  },
+  readContract: chainReads,
   // No pool at any tier: the quoter reverts.
   call: async () => {
     throw new RawContractError({ data: '0x' });
@@ -52,17 +54,17 @@ function fakeFetch(bodies: Record<string, unknown>) {
 describe('quotableVenues', () => {
   it('asks the aggregators only through a configured agent', () => {
     const roster = { zeroex: S(0), oneinch: S(1) };
-    expect(quotableVenues(roster, 8453, true)).toEqual(['zeroex', 'oneinch']);
-    expect(quotableVenues(roster, 8453, false)).toEqual([]);
+    expect(quotableVenues(roster, 8453, true, true)).toEqual(['zeroex', 'oneinch']);
+    expect(quotableVenues(roster, 8453, false, true)).toEqual([]);
   });
 
   it('asks Uniswap V3 only where the chain has a quoter', () => {
-    expect(quotableVenues({ univ3: S(2) }, 8453, false)).toEqual(['univ3']);
-    expect(quotableVenues({ univ3: S(2) }, 84532, false)).toEqual([]);
+    expect(quotableVenues({ univ3: S(2) }, 8453, false, true)).toEqual(['univ3']);
+    expect(quotableVenues({ univ3: S(2) }, 84532, false, true)).toEqual([]);
   });
 
   it('offers the testnet mock wherever the roster recognised it', () => {
-    expect(quotableVenues({ testnetMock: S(0) }, 84532, false)).toEqual(['testnetMock']);
+    expect(quotableVenues({ testnetMock: S(0) }, 84532, false, true)).toEqual(['testnetMock']);
   });
 });
 
@@ -95,6 +97,7 @@ describe('buildCloseOutRoute', () => {
       buyToken: A(2),
       sellAmount: (10n ** 18n).toString(),
       taker: A(0x103),
+      slippageBps: 600,
       txOrigin: A(0xe0a),
     });
     expect(seen[1].body).toMatchObject({ taker: A(0x101) });
@@ -108,7 +111,9 @@ describe('buildCloseOutRoute', () => {
     // its replacement does.
     const client = {
       readContract: async (args: { functionName: string; address: Address }) =>
-        args.functionName === 'swapTargetAllowed' ? args.address === A(0x101) : undefined,
+        args.functionName === 'swapTargetAllowed'
+          ? args.address === A(0x101)
+          : chainReads(args),
       call: noChain.call,
     } as unknown as RouteClient;
     const route = await buildCloseOutRoute({
@@ -151,6 +156,8 @@ describe('buildCloseOutRoute', () => {
     return {
       readContract: async (args: { functionName: string }) => {
         switch (args.functionName) {
+          case 'getLiquidationConfig':
+            return [0n, 600n, 0n];
           case 'shouldRevert':
             return state.shouldRevert ?? false;
           case 'restrictedTo':
@@ -397,7 +404,14 @@ describe('routePosture', () => {
     entries: { name?: string; disabled?: boolean }[],
     agent = true,
     chainId = 8453,
-  ) => routePosture(await readCloseOutRoster(chainOf(entries), A(9), undefined), chainId, agent);
+    origin: 'known' | 'unknown' | 'unread' = 'known',
+  ) =>
+    routePosture(
+      await readCloseOutRoster(chainOf(entries), A(9), undefined),
+      chainId,
+      agent,
+      origin === 'unread' ? undefined : origin === 'known',
+    );
 
   it('is available when an askable venue is enabled', async () => {
     expect(await posture([{ name: 'UniswapV3', disabled: false }])).toBe('available');
@@ -418,6 +432,14 @@ describe('routePosture', () => {
   it('is proxy-unconfigured when only an aggregator is enabled and no proxy is set', async () => {
     expect(await posture([{ name: 'OneInch', disabled: false }], false)).toBe(
       'proxy-unconfigured',
+    );
+  });
+  it('does not count 0x as askable for a wallet whose origin is unknown', async () => {
+    const zeroexOnly = [{ name: 'ZeroEx', disabled: false }];
+    expect(await posture(zeroexOnly, true, 8453, 'unknown')).toBe('unsupported');
+    expect(await posture(zeroexOnly, true, 8453, 'unread')).toBe('unread');
+    expect(await posture([...zeroexOnly, { name: 'OneInch', disabled: false }], true, 8453, 'unknown')).toBe(
+      'available',
     );
   });
   it('is unsupported when enabled venues exist that this app cannot ask', async () => {
@@ -539,6 +561,39 @@ describe('buildCloseOutRoute — route checks', () => {
       A(0xe0a),
       A(0xe0a),
     ]);
+  });
+
+  it('quotes the aggregators with the protocol slippage ceiling, and asks none when it is unread', async () => {
+    const withCfg = (cfg: unknown) =>
+      ({
+        readContract: async (args: { functionName: string }) => {
+          if (args.functionName === 'getLiquidationConfig') {
+            if (cfg instanceof Error) throw cfg;
+            return cfg;
+          }
+          return chainReads(args);
+        },
+        call: noChain.call,
+      }) as unknown as RouteClient;
+    const go = async (client: RouteClient) => {
+      const { impl, seen } = fakeFetch({});
+      const route = await buildCloseOutRoute({
+        client,
+        chainId: 8453,
+        diamond: A(0xd),
+        roster: { oneinch: S(1) },
+        sale,
+        agentOrigin: 'https://agent.example',
+        txOrigin: A(0xe0a),
+        fetchImpl: impl,
+      });
+      return { route, seen };
+    };
+    const tuned = await go(withCfg([0n, 900n, 0n]));
+    expect((tuned.seen[0].body as { slippageBps: number }).slippageBps).toBe(900);
+    const unread = await go(withCfg(new Error('rpc')));
+    expect(unread.seen).toHaveLength(0);
+    expect(unread.route).toMatchObject({ outcomes: [{ kind: 'oneinch', outcome: 'unanswered' }] });
   });
 
   it('does not ask 0x when the originating account is unknown, and still asks 1inch', async () => {
