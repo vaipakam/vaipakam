@@ -1615,9 +1615,12 @@ is the borrower's own money.
   liquidation slippage ceiling, read from the protocol at confirm time, not
   with a figure the app or its quote service assumes. When that ceiling cannot
   be read, no aggregator is asked.
-- The card's own judgement of whether a route can be offered follows the
-  same rules as the confirmation: an exchange the viewer's wallet cannot use
-  (0x for a contract wallet) does not count as one the app can ask, and a
+- The card's own judgement of whether a route can be offered is the same
+  per-exchange judgement the confirmation uses, made from the same reads: an
+  exchange the viewer's wallet cannot use (0x for a contract wallet), or one
+  the app cannot price on that network (a Uniswap V3 adapter trading another
+  set of pools than the app's quoter), does not count as one the app can
+  ask, and a
   refresh of the exchange list that failed leaves the card saying the list
   could not be read, not repeating the last answer.
 - An aggregator that binds its liquidity to the account originating the

@@ -72,11 +72,9 @@ import {
   agentQuoteOrigin,
   buildCloseOutRoute,
   noQuoteReason,
-  routePosture,
   type RoutePosture,
   previewCloseOut,
-  readCloseOutRoster,
-  transactionOrigin,
+  readRouteStanding,
 } from '../data/closeOutRoute';
 
 /** How long a close-out may go unaccounted for before the card SAYS SO.
@@ -882,42 +880,36 @@ export function ForcedCloseCard({
   const testnetMockAdapter = getDeployment(routeChainId)?.testnetMocks
     ?.mockSwapAdapter as Address | undefined;
   const rosterQuery = useQuery({
-    queryKey: ['forcedClose', 'routeRoster', routeChainId, routeDiamond],
+    queryKey: ['forcedClose', 'routeStanding', routeChainId, routeDiamond, address],
     enabled:
       readiness === 'ready-needs-route' &&
       publicClient !== undefined &&
-      routeDiamond !== undefined,
+      routeDiamond !== undefined &&
+      routeChainId !== undefined,
     queryFn: () =>
-      readCloseOutRoster(publicClient!, routeDiamond!, testnetMockAdapter),
+      readRouteStanding({
+        client: publicClient!,
+        diamond: routeDiamond!,
+        chainId: routeChainId!,
+        testnetMockAdapter,
+        agentConfigured: agentQuoteOrigin() !== null,
+        account: address,
+      }),
     staleTime: 60_000,
     // Re-read while the card is open: governance can enable or register a
     // venue at any time, and a refusal must not outlive the condition
     // behind it. The confirm reads the list afresh regardless.
     refetchInterval: 60_000,
   });
-  /** Whether the connected account originates its own transactions — 0x
-   *  can be asked only for one that does (`no-origin`). */
-  const originQuery = useQuery({
-    queryKey: ['forcedClose', 'txOrigin', routeChainId, address],
-    enabled: readiness === 'ready-needs-route' && publicClient !== undefined && !!address,
-    queryFn: () => transactionOrigin(publicClient!, address!),
-    staleTime: 60_000,
-  });
-  // One derived posture (`data/closeOutRoute.routePosture`) drives the
-  // button, the body and the confirm-time refusals alike. An unread roster
-  // is 'unknown', not 'none': absence was not proven. So is one whose
-  // latest refresh FAILED: TanStack keeps the previous data beside the
-  // error, and a posture derived from it would claim a venue list the app
-  // can no longer substantiate (round 12).
+  // One derived posture (`data/closeOutRoute.readRouteStanding`) drives the
+  // button, the body and the confirm-time refusals alike, judged per slot
+  // by the same rule the confirm uses. An unread roster is 'unknown', not
+  // 'none': absence was not proven. So is one whose latest refresh FAILED:
+  // TanStack keeps the previous data beside the error, and a posture
+  // derived from it would claim a venue list the app can no longer
+  // substantiate (round 12).
   const posture: RoutePosture | undefined =
-    rosterQuery.data === undefined || rosterQuery.isError || routeChainId === undefined
-      ? undefined
-      : routePosture(
-          rosterQuery.data,
-          routeChainId,
-          agentQuoteOrigin() !== null,
-          originQuery.isSuccess ? originQuery.data !== null : undefined,
-        );
+    rosterQuery.data === undefined || rosterQuery.isError ? undefined : rosterQuery.data.posture;
   const routeAvailability: RouteAvailability =
     posture === 'available'
       ? 'available'
@@ -948,10 +940,10 @@ export function ForcedCloseCard({
     if (!publicClient || routeDiamond === undefined || routeChainId === undefined) {
       return { message: copy.forcedClose.routeRosterFailed };
     }
-    let read;
+    let standing;
     let sale;
     try {
-      const [loan, freshRoster] = await Promise.all([
+      const [loan, fresh] = await Promise.all([
         publicClient.readContract({
           address: routeDiamond,
           abi: DIAMOND_ABI_VIEM,
@@ -962,9 +954,16 @@ export function ForcedCloseCard({
           principalAsset: Address;
           collateralAmount: bigint;
         }>,
-        readCloseOutRoster(publicClient, routeDiamond, testnetMockAdapter),
+        readRouteStanding({
+          client: publicClient,
+          diamond: routeDiamond,
+          chainId: routeChainId,
+          testnetMockAdapter,
+          agentConfigured: agentQuoteOrigin() !== null,
+          account: address,
+        }),
       ]);
-      read = freshRoster;
+      standing = fresh;
       sale = {
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
@@ -973,10 +972,9 @@ export function ForcedCloseCard({
     } catch {
       return { message: copy.forcedClose.routeRosterFailed };
     }
-    // The list is re-read here, so it can have changed since the card
+    // Everything is re-read here, so it can have changed since the card
     // rendered: the same posture decides what this confirm can claim.
-    const origin = address ? await transactionOrigin(publicClient, address) : null;
-    const fresh = routePosture(read, routeChainId, agentQuoteOrigin() !== null, origin !== null);
+    const fresh = standing.posture;
     if (fresh !== 'available') {
       return {
         message:
@@ -993,15 +991,15 @@ export function ForcedCloseCard({
       client: publicClient,
       chainId: routeChainId,
       diamond: routeDiamond,
-      roster: read.roster,
+      slots: standing.slots,
       sale,
       agentOrigin: agentQuoteOrigin(),
-      txOrigin: origin,
+      txOrigin: standing.txOrigin,
     });
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only
       // what this confirm actually checked.
-      const reason = noQuoteReason(route, read.incomplete);
+      const reason = noQuoteReason(route, standing.read.incomplete);
       return {
         message:
           reason === 'unread'

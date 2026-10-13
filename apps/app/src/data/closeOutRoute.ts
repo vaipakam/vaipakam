@@ -50,6 +50,7 @@ import {
   UNIV3_VENUES,
   type AdapterCall,
   type AdapterRoster,
+  type RosterSlot,
   type RouteCandidate,
   type SwapVenueKind,
 } from '@vaipakam/lib/swapRoutes';
@@ -86,6 +87,8 @@ export interface CloseOutSale {
  *    for the wrong origin is one the close-out may not be able to use.
  *  - `other-pools` — a UniV3 adapter whose router belongs to a different
  *    V3 factory from the quoter this app knows, so this app cannot price it.
+ *  - `unpriceable` — a venue this app has no way to price on this chain at
+ *    all (no quoter for it here, or a kind it does not quote).
  */
 export type SlotOutcome =
   | 'quoted'
@@ -94,7 +97,8 @@ export type SlotOutcome =
   | 'no-proxy'
   | 'unconfigured'
   | 'no-origin'
-  | 'other-pools';
+  | 'other-pools'
+  | 'unpriceable';
 
 export type CloseOutRoute =
   | { kind: 'route'; calls: AdapterCall[]; venues: SwapVenueKind[] }
@@ -134,7 +138,7 @@ export function noQuoteReason(
   const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
   if (has('unanswered')) return 'unanswered';
   const configGap = has('no-proxy') || has('unconfigured');
-  const unaskable = has('other-pools') || has('no-origin');
+  const unaskable = has('other-pools') || has('no-origin') || has('unpriceable');
   const leftOut = configGap || unaskable;
   if (!has('declined')) {
     return configGap && !unaskable ? 'unconfigured' : 'unreachable';
@@ -177,24 +181,81 @@ export function agentQuoteOrigin(): string | null {
 }
 
 /**
- * The venues this app could ask for a price on this chain, given the
- * Diamond's roster. Empty means the card has no route to offer — said as
- * such, never as a button.
+ * Whether this app can ask one adapter slot for a price at all — decided
+ * from facts that hold for the visit, never from a quote.
+ *
+ * THE ONE RULE for askability (#2463 round 13). The card's posture and the
+ * confirm's route both read it, so the card can no longer offer a button
+ * on a slot the confirm is certain to skip: rounds 11, 12 and 13 each found
+ * one such slot (a Safe asking 0x, a wallet origin never read, a UniV3
+ * router on another factory), because the card judged availability from
+ * the roster's kinds while the confirm judged each slot.
+ *
+ *  - `askable` — the confirm will ask it for a price.
+ *  - `no-proxy` — an aggregator, and this deployment has no quote proxy.
+ *  - `no-origin` — 0x, and the transaction's origin is not known.
+ *  - `other-pools` — a UniV3 adapter whose router is on another factory.
+ *  - `unpriceable` — no way to price this kind on this chain.
+ *  - `unread` — a fact this depends on could not be read.
  */
-export function quotableVenues(
-  roster: AdapterRoster,
-  chainId: number,
-  agentConfigured: boolean,
-  /** Whether the account that will originate the transaction is known
-   *  (`transactionOrigin`). 0x is askable only when it is: see `no-origin`. */
-  originKnown: boolean,
-): SwapVenueKind[] {
-  const out: SwapVenueKind[] = [];
-  if (agentConfigured && originKnown && roster.zeroex !== undefined) out.push('zeroex');
-  if (agentConfigured && roster.oneinch !== undefined) out.push('oneinch');
-  if (roster.univ3 !== undefined && UNIV3_VENUES[chainId] !== undefined) out.push('univ3');
-  if (roster.testnetMock !== undefined) out.push('testnetMock');
-  return out;
+export type SlotAskability =
+  | 'askable'
+  | 'no-proxy'
+  | 'no-origin'
+  | 'other-pools'
+  | 'unpriceable'
+  | 'unread';
+
+export interface ClassifiedSlot {
+  kind: SwapVenueKind;
+  slot: RosterSlot;
+  askability: SlotAskability;
+}
+
+/** The roster's kinds in the order the confirm asks them. */
+const VENUE_ORDER: readonly SwapVenueKind[] = [
+  'zeroex',
+  'oneinch',
+  'univ3',
+  'balancerv2',
+  'testnetMock',
+];
+
+export async function classifySlots(deps: {
+  client: Pick<PublicClient, 'readContract'>;
+  chainId: number;
+  roster: AdapterRoster;
+  agentConfigured: boolean;
+  /** `transactionOrigin`'s answer: the originating account, or `null`. */
+  txOrigin: Address | null;
+}): Promise<ClassifiedSlot[]> {
+  const { client, chainId, roster, agentConfigured, txOrigin } = deps;
+  const judge = async (kind: SwapVenueKind, slot: RosterSlot): Promise<SlotAskability> => {
+    switch (kind) {
+      case 'zeroex':
+        if (!agentConfigured) return 'no-proxy';
+        return txOrigin === null ? 'no-origin' : 'askable';
+      case 'oneinch':
+        return agentConfigured ? 'askable' : 'no-proxy';
+      case 'univ3': {
+        if (UNIV3_VENUES[chainId] === undefined) return 'unpriceable';
+        // The adapter's router is governance's choice; price it only where
+        // it trades the same pools as the quoter this app knows.
+        const match = await univ3AdapterMatchesQuoter(client, slot.address, chainId).catch(
+          () => 'unanswered' as const,
+        );
+        return match === 'match' ? 'askable' : match === 'mismatch' ? 'other-pools' : 'unread';
+      }
+      case 'testnetMock':
+        return 'askable';
+      default:
+        return 'unpriceable';
+    }
+  };
+  const slots = VENUE_ORDER.flatMap((kind) => (roster[kind] ?? []).map((slot) => ({ kind, slot })));
+  return Promise.all(
+    slots.map(async ({ kind, slot }) => ({ kind, slot, askability: await judge(kind, slot) })),
+  );
 }
 
 /** One read of a Diamond's adapter list. */
@@ -220,9 +281,9 @@ export interface CloseOutRoster {
  * how three rounds of findings each found a sentence claiming more than
  * the roster showed.
  *
- * - `available` — at least one venue this app can ask.
- * - `unread` — some entry's name or disabled flag could not be read, and
- *   nothing askable was found; absence is not proven.
+ * - `available` — at least one slot `classifySlots` judged askable.
+ * - `unread` — some entry, or a fact a slot's askability depends on, could
+ *   not be read, and nothing askable was found; absence is not proven.
  * - `no-enabled-venue` — the list was read in full and no adapter is
  *   enabled (or none is registered). Nobody can close the loan by sale.
  * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
@@ -239,27 +300,12 @@ export type RoutePosture =
   | 'proxy-unconfigured'
   | 'unsupported';
 
-export function routePosture(
-  read: CloseOutRoster,
-  chainId: number,
-  agentConfigured: boolean,
-  /** `transactionOrigin` resolved to an account (`true`), to unknown
-   *  (`false`), or not yet (`undefined`). */
-  originKnown: boolean | undefined,
-): RoutePosture {
-  if (quotableVenues(read.roster, chainId, agentConfigured, originKnown === true).length > 0) {
-    return 'available';
-  }
-  if (read.incomplete) return 'unread';
-  // 0x would be askable but whether this wallet originates its own
-  // transactions has not been read: not proven either way.
-  if (originKnown === undefined && agentConfigured && read.roster.zeroex !== undefined) {
-    return 'unread';
-  }
+export function routePosture(read: CloseOutRoster, slots: readonly ClassifiedSlot[]): RoutePosture {
+  const has = (a: SlotAskability) => slots.some((x) => x.askability === a);
+  if (has('askable')) return 'available';
+  if (read.incomplete || has('unread')) return 'unread';
   if (read.enabledCount === 0) return 'no-enabled-venue';
-  if (!agentConfigured && (read.roster.zeroex !== undefined || read.roster.oneinch !== undefined)) {
-    return 'proxy-unconfigured';
-  }
+  if (has('no-proxy')) return 'proxy-unconfigured';
   return 'unsupported';
 }
 
@@ -279,6 +325,45 @@ export async function readCloseOutRoster(
     ),
     enabledCount: entries.filter((e) => e.disabled === false).length,
   };
+}
+
+/** Everything the posture is derived from, read together. */
+export interface RouteStanding {
+  read: CloseOutRoster;
+  slots: ClassifiedSlot[];
+  /** `transactionOrigin`'s answer, carried so the confirm quotes 0x for the
+   *  same origin the slots were judged with. */
+  txOrigin: Address | null;
+  posture: RoutePosture;
+}
+
+/**
+ * Read the roster, the submitting wallet's transaction origin and every
+ * slot's askability, and derive the posture from them. The card's poll and
+ * the confirm both call this, so the card cannot offer what the confirm
+ * would then refuse for a reason knowable in advance.
+ */
+export async function readRouteStanding(deps: {
+  client: Pick<PublicClient, 'readContract' | 'getCode'>;
+  diamond: Address;
+  chainId: number;
+  testnetMockAdapter: Address | undefined;
+  agentConfigured: boolean;
+  /** The connected account, or undefined when none is connected. */
+  account: Address | undefined;
+}): Promise<RouteStanding> {
+  const [read, txOrigin] = await Promise.all([
+    readCloseOutRoster(deps.client, deps.diamond, deps.testnetMockAdapter),
+    deps.account ? transactionOrigin(deps.client, deps.account) : Promise.resolve(null),
+  ]);
+  const slots = await classifySlots({
+    client: deps.client,
+    chainId: deps.chainId,
+    roster: read.roster,
+    agentConfigured: deps.agentConfigured,
+    txOrigin,
+  });
+  return { read, slots, txOrigin, posture: routePosture(read, slots) };
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
@@ -366,7 +451,9 @@ export async function buildCloseOutRoute(deps: {
   client: Pick<PublicClient, 'readContract' | 'call'>;
   chainId: number;
   diamond: Address;
-  roster: AdapterRoster;
+  /** `classifySlots`' answer for this confirm: only `askable` slots are
+   *  asked, and every other slot is recorded as an outcome. */
+  slots: readonly ClassifiedSlot[];
   sale: CloseOutSale;
   agentOrigin: string | null;
   /** The account that will originate the close-out transaction. The
@@ -376,17 +463,13 @@ export async function buildCloseOutRoute(deps: {
   txOrigin: Address | null;
   fetchImpl?: typeof fetch;
 }): Promise<CloseOutRoute> {
-  const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
+  const { client, chainId, diamond, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
-  // 0x is kept here even for an unknown origin, so its slot is recorded as
-  // `no-origin` rather than vanishing from the outcomes.
-  const venues = quotableVenues(roster, chainId, agentOrigin !== null, true);
-
   // Every enabled instance of a venue is asked, in the Diamond's order:
   // two adapters of one kind (an adapter replacement in progress) each
   // have their own taker and allowlist, so one refusing says nothing
   // about the other.
-  const slots = venues.flatMap((kind) => (roster[kind] ?? []).map((slot) => ({ kind, slot })));
+  const slots = deps.slots.filter((s) => s.askability === 'askable');
   type Attempt = { outcome: SlotOutcome; candidates: RouteCandidate[] };
   const none = (outcome: SlotOutcome): Attempt => ({ outcome, candidates: [] });
 
@@ -416,7 +499,6 @@ export async function buildCloseOutRoute(deps: {
     switch (kind) {
       case 'zeroex':
       case 'oneinch': {
-        if (kind === 'zeroex' && deps.txOrigin === null) return none('no-origin');
         if (slippageBps === null) return none('unanswered');
         const answer = await agentQuote(fetchImpl, agentOrigin!, kind, {
           chainId,
@@ -461,11 +543,7 @@ export async function buildCloseOutRoute(deps: {
         };
       }
       case 'univ3': {
-        // The adapter's router is governance's choice; price it only where
-        // it trades the same pools as the quoter this app knows.
-        const match = await univ3AdapterMatchesQuoter(client, slot.address, chainId);
-        if (match === 'unanswered') return none('unanswered');
-        if (match === 'mismatch') return none('other-pools');
+        // Its router was matched to this chain's quoter in `classifySlots`.
         // One candidate per quoting pool: the same adapter index may appear
         // more than once, and a second tier is a real back-up if the best
         // pool moves below the minimum before the transaction runs.
@@ -499,17 +577,20 @@ export async function buildCloseOutRoute(deps: {
   );
   const candidates = results.flatMap((r) => r.candidates);
   if (candidates.length === 0) {
-    // Aggregators the roster lists that were never asked for want of a
-    // quote proxy are outcomes too: protocol-enabled routes left out.
-    const noProxy: { kind: SwapVenueKind; outcome: SlotOutcome }[] =
-      agentOrigin === null
-        ? (['zeroex', 'oneinch'] as const).flatMap((k) =>
-            (roster[k] ?? []).map(() => ({ kind: k, outcome: 'no-proxy' as const })),
-          )
-        : [];
+    // Slots that were never asked are outcomes too: protocol-enabled routes
+    // left out, each for the reason `classifySlots` gave.
+    const notAsked = deps.slots
+      .filter((s) => s.askability !== 'askable')
+      .map((s) => ({
+        kind: s.kind,
+        outcome: (s.askability === 'unread' ? 'unanswered' : s.askability) as SlotOutcome,
+      }));
     return {
       kind: 'no-quote',
-      outcomes: [...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })), ...noProxy],
+      outcomes: [
+        ...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })),
+        ...notAsked,
+      ],
     };
   }
   const ranked = rankRoutes(candidates);
