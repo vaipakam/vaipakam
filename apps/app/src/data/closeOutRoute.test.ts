@@ -119,7 +119,6 @@ describe('buildCloseOutRoute', () => {
 
   const mockRoute = (client: ReturnType<typeof mockChain>) =>
     buildCloseOutRoute({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client: client as any,
       chainId: 84532,
       diamond: A(0xd),
@@ -133,7 +132,6 @@ describe('buildCloseOutRoute', () => {
       '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '1' },
     });
     const route = await buildCloseOutRoute({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client: mockChain({ bps: 9_000n }) as any,
       chainId: 84532,
       diamond: A(0xd),
