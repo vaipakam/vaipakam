@@ -72,6 +72,7 @@ import {
   agentQuoteOrigin,
   buildCloseOutRoute,
   quotableVenues,
+  previewCloseOut,
   readCloseOutRoster,
 } from '../data/closeOutRoute';
 
@@ -887,13 +888,18 @@ export function ForcedCloseCard({
       readCloseOutRoster(publicClient!, routeDiamond!, testnetMockAdapter),
     staleTime: 60_000,
   });
+  // An empty result from a roster with unread entries is 'unknown', not
+  // 'none': the app could not identify a venue, which is not the same as
+  // the protocol having none it can ask.
   const routeAvailability: RouteAvailability =
     rosterQuery.data === undefined || routeChainId === undefined
       ? 'unknown'
-      : quotableVenues(rosterQuery.data, routeChainId, agentQuoteOrigin() !== null)
+      : quotableVenues(rosterQuery.data.roster, routeChainId, agentQuoteOrigin() !== null)
             .length > 0
         ? 'available'
-        : 'none';
+        : rosterQuery.data.incomplete
+          ? 'unknown'
+          : 'none';
   /** Set while the confirm is asking exchanges for prices — the one
    *  stretch of a close-out where nothing is on screen otherwise. */
   const [findingRoute, setFindingRoute] = useState(false);
@@ -934,7 +940,7 @@ export function ForcedCloseCard({
         }>,
         readCloseOutRoster(publicClient, routeDiamond, testnetMockAdapter),
       ]);
-      roster = freshRoster;
+      roster = freshRoster.roster;
       sale = {
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
@@ -951,7 +957,18 @@ export function ForcedCloseCard({
       sale,
       agentOrigin: agentQuoteOrigin(),
     });
-    if (route.kind === 'no-quote') return { message: copy.forcedClose.routeNoQuote };
+    if (route.kind === 'no-quote') {
+      // Every venue asked was an aggregator this deployment has no key
+      // for: a standing configuration, so "try again later" would be
+      // untrue.
+      const allUnconfigured =
+        route.asked.length > 0 && route.asked.every((v) => route.unconfigured.includes(v));
+      return {
+        message: allUnconfigured
+          ? copy.forcedClose.routeNotConfigured
+          : copy.forcedClose.routeNoQuote,
+      };
+    }
     return { calls: route.calls };
   }
 
@@ -1024,6 +1041,25 @@ export function ForcedCloseCard({
       // this decision does not model: `whenNotPaused`, the lender KYC
       // check on an enforcement-enabled deployment, and a consent flag
       // read a moment too early.
+      // A sale route is previewed first, for the one outcome the ordinary
+      // simulation cannot see: every attempt refused and the close-out
+      // succeeding into the fallback anyway (`previewCloseOut` says why).
+      // The card promised a sale; a close-out that would not be one is not
+      // sent on that promise. A node that cannot preview leaves the
+      // disclosure on the card as the whole of what is known.
+      if (readiness === 'ready-needs-route' && publicClient && address && routeDiamond) {
+        const preview = await previewCloseOut({
+          client: publicClient,
+          diamond: routeDiamond,
+          account: address,
+          loanId: BigInt(loanId),
+          calls: adapterCalls,
+        });
+        if (preview === 'fallback') {
+          setError(copy.forcedClose.routeWouldFallBack);
+          return;
+        }
+      }
       if (publicClient && address) {
         await publicClient.simulateContract({
           address: walletChain!.diamondAddress,
@@ -1212,7 +1248,7 @@ export function ForcedCloseCard({
       ? copy.forcedClose.readyNeedsRoute
       : routeAvailability === 'none'
         ? copy.forcedClose.readyNeedsRouteNoVenue
-        : rosterQuery.isError
+        : rosterQuery.isError || rosterQuery.data?.incomplete
           ? copy.forcedClose.readyNeedsRouteUnreadable
           : copy.forcedClose.readyNeedsRouteChecking;
 
@@ -1387,6 +1423,14 @@ export function ForcedCloseCard({
     },
   };
   const view = PRESENTATION[readiness];
+  /** A sale's caller incentive is only worth stating when this app can
+   *  actually submit the sale. Where it cannot (no venue it can ask, or a
+   *  roster it could not read) the card says an operator is needed, and
+   *  "submitting this yourself" would describe a button that is not there. */
+  const incentive =
+    readiness === 'ready-needs-route' && routeAvailability !== 'available'
+      ? null
+      : view.incentive;
   const receipt =
     view.receipt === 'rental'
       ? copy.forcedClose.rentalReceipt
@@ -1659,9 +1703,9 @@ export function ForcedCloseCard({
               flagged. Rendering it beside the claim note rather than
               inside it is what lets the two vary independently without
               composing a sentence at runtime. */}
-          {view.incentive !== null ? (
+          {incentive !== null ? (
             <p className="field-hint" data-testid="forced-close-incentive">
-              {view.incentive === 'matcher' ? matcherIncentiveNote : saleIncentiveNote}
+              {incentive === 'matcher' ? matcherIncentiveNote : saleIncentiveNote}
             </p>
           ) : null}
         </>

@@ -34,7 +34,7 @@
  * close-out then succeeds into the protocol's full-collateral fallback.
  * The card says so; this module only builds the list.
  */
-import type { Address, PublicClient } from 'viem';
+import { encodeFunctionData, toEventSelector, type Address, type Hex, type PublicClient } from 'viem';
 import {
   packAggregatorData,
   packUniV3Data,
@@ -63,8 +63,11 @@ export interface CloseOutSale {
 
 export type CloseOutRoute =
   | { kind: 'route'; calls: AdapterCall[]; venues: SwapVenueKind[] }
-  /** Every venue this app could ask declined to quote. Nothing to send. */
-  | { kind: 'no-quote' };
+  /** Every venue this app could ask declined to quote. Nothing to send.
+   *  `unconfigured` names the aggregators the agent answered for with
+   *  "no API key here": a standing posture of this deployment, not a
+   *  passing lack of prices, so the card says which it was. */
+  | { kind: 'no-quote'; asked: SwapVenueKind[]; unconfigured: SwapVenueKind[] };
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
 export function agentQuoteOrigin(): string | null {
@@ -91,24 +94,51 @@ export function quotableVenues(
   return out;
 }
 
+/** One read of a Diamond's adapter list. */
+export interface CloseOutRoster {
+  roster: AdapterRoster;
+  /** True when some adapter's name or disabled flag could not be read.
+   *  Such an entry is left out of `roster` — an unread venue is not one to
+   *  send — but it also means an empty result is not proof that no usable
+   *  venue exists, only that none could be identified. */
+  incomplete: boolean;
+}
+
 /** Read the roster for one chain's Diamond. */
 export async function readCloseOutRoster(
   client: Pick<PublicClient, 'readContract'>,
   diamond: Address,
   testnetMockAdapter: Address | undefined,
-): Promise<AdapterRoster> {
+): Promise<CloseOutRoster> {
   const entries = await readSwapAdapterEntries(client, diamond);
-  return resolveAdapterRoster(entries, { testnetMockAdapter });
+  return {
+    roster: resolveAdapterRoster(entries, { testnetMockAdapter }),
+    incomplete: entries.some((e) => e.name === undefined || e.disabled === undefined),
+  };
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
+
+const SWAP_TARGET_ALLOWED_ABI = [
+  {
+    type: 'function',
+    name: 'swapTargetAllowed',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+
+/** The agent's answer: the aggregator's body, "this deployment has no key
+ *  for that aggregator", or nothing usable. */
+type AgentAnswer = { body: unknown } | 'unconfigured' | null;
 
 async function agentQuote(
   fetchImpl: typeof fetch,
   origin: string,
   venue: 'zeroex' | 'oneinch',
   body: Record<string, unknown>,
-): Promise<unknown> {
+): Promise<AgentAnswer> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), QUOTE_TIMEOUT_MS);
   try {
@@ -118,8 +148,14 @@ async function agentQuote(
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (res.ok) return { body: await res.json() };
+    // `quoteProxy.ts` answers 503 `<venue>-not-configured` when its key is
+    // absent. Anything else non-OK is a passing failure.
+    if (res.status === 503) {
+      const err = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
+      if (typeof err === 'string' && err.endsWith('-not-configured')) return 'unconfigured';
+    }
+    return null;
   } catch {
     return null;
   } finally {
@@ -149,6 +185,7 @@ export async function buildCloseOutRoute(deps: {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
+  const unconfigured: SwapVenueKind[] = [];
 
   const attempts = venues.map(async (kind): Promise<RouteCandidate | null> => {
     const slot = roster[kind];
@@ -157,15 +194,32 @@ export async function buildCloseOutRoute(deps: {
     switch (kind) {
       case 'zeroex':
       case 'oneinch': {
-        const body = await agentQuote(fetchImpl, agentOrigin!, kind, {
+        const answer = await agentQuote(fetchImpl, agentOrigin!, kind, {
           chainId,
           sellToken: sale.sellToken,
           buyToken: sale.buyToken,
           sellAmount: sale.sellAmount.toString(),
           taker: slot.address,
         });
-        const q = kind === 'zeroex' ? parseZeroExQuote(body) : parseOneInchQuote(body);
+        if (answer === 'unconfigured') {
+          unconfigured.push(kind);
+          return null;
+        }
+        if (answer === null) return null;
+        const q =
+          kind === 'zeroex' ? parseZeroExQuote(answer.body) : parseOneInchQuote(answer.body);
         if (!q) return null;
+        // The adapter calls only swap targets governance has allowed on it
+        // (`AggregatorAdapterBase.swapTargetAllowed`). A quote naming any
+        // other target — a router the aggregator has rotated to — is an
+        // attempt the adapter is certain to refuse.
+        const allowed = await client.readContract({
+          address: slot.address,
+          abi: SWAP_TARGET_ALLOWED_ABI,
+          functionName: 'swapTargetAllowed',
+          args: [q.swapTarget],
+        });
+        if (!allowed) return null;
         return {
           kind,
           expectedOutput: q.expectedOutput,
@@ -194,7 +248,93 @@ export async function buildCloseOutRoute(deps: {
   const candidates = (await Promise.all(attempts.map((p) => p.catch(() => null)))).filter(
     (c): c is RouteCandidate => c !== null,
   );
-  if (candidates.length === 0) return { kind: 'no-quote' };
+  if (candidates.length === 0) return { kind: 'no-quote', asked: venues, unconfigured };
   const ranked = rankRoutes(candidates);
   return { kind: 'route', calls: ranked.map((c) => c.call), venues: ranked.map((c) => c.kind) };
+}
+
+/**
+ * What this close-out would do if it were sent now, read from the chain
+ * rather than from the quotes.
+ *
+ *  - `'sale'` — the simulated close-out ran and no adapter-failure event
+ *    came out of it: some route met the protocol's minimum.
+ *  - `'fallback'` — it ran and emitted `LibSwap.SwapAllAdaptersFailed` for
+ *    this loan. Every route was refused, and the close-out would succeed
+ *    into the full-collateral fallback instead of a sale.
+ *  - `'unknown'` — the node could not run the preview (`eth_simulateV1`
+ *    unsupported, or the call reverted, which the ordinary simulation
+ *    that follows reports in its own words).
+ *
+ * This is the check that makes every way a route can fail the same case.
+ * A quote can be for the wrong caller, name a router the adapter does not
+ * allow, point at an index governance has just moved, or simply come in
+ * under the minimum; a plain `eth_call` passes all of them, because
+ * `triggerDefault` catches each attempt and SUCCEEDS into the fallback.
+ * Only the logs tell the two endings apart, and `eth_simulateV1` is the
+ * read that returns logs.
+ */
+export type CloseOutPreview = 'sale' | 'fallback' | 'unknown';
+
+const TRIGGER_DEFAULT_ABI = [
+  {
+    type: 'function',
+    name: 'triggerDefault',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'loanId', type: 'uint256' },
+      {
+        name: 'adapterCalls',
+        type: 'tuple[]',
+        components: [
+          { name: 'adapterIdx', type: 'uint256' },
+          { name: 'data', type: 'bytes' },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** `LibSwap.SwapAllAdaptersFailed(uint256 indexed loanId)`. */
+export const SWAP_ALL_ADAPTERS_FAILED_TOPIC = toEventSelector(
+  'SwapAllAdaptersFailed(uint256)',
+);
+
+export async function previewCloseOut(deps: {
+  client: Pick<PublicClient, 'simulateCalls'>;
+  diamond: Address;
+  account: Address;
+  loanId: bigint;
+  calls: readonly AdapterCall[];
+}): Promise<CloseOutPreview> {
+  const { client, diamond, account, loanId, calls } = deps;
+  let results;
+  try {
+    ({ results } = await client.simulateCalls({
+      account,
+      calls: [
+        {
+          to: diamond,
+          data: encodeFunctionData({
+            abi: TRIGGER_DEFAULT_ABI,
+            functionName: 'triggerDefault',
+            args: [loanId, calls],
+          }),
+        },
+      ],
+    }));
+  } catch {
+    return 'unknown';
+  }
+  const result = results[0];
+  if (!result || result.status !== 'success') return 'unknown';
+  const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
+  const failed = (result.logs ?? []).some(
+    (log) =>
+      log.address.toLowerCase() === diamond.toLowerCase() &&
+      log.topics[0] === SWAP_ALL_ADAPTERS_FAILED_TOPIC &&
+      log.topics[1]?.toLowerCase() === loanTopic,
+  );
+  return failed ? 'fallback' : 'sale';
 }

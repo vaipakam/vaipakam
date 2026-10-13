@@ -271,7 +271,7 @@ export interface UniV3Venue {
   feeTiers: readonly number[];
 }
 
-const UNISWAP_FEE_TIERS = [500, 3000, 10000] as const;
+const UNISWAP_FEE_TIERS = [100, 500, 3000, 10000] as const;
 /** PancakeSwap V3 uses 0.25% where Uniswap uses 0.3%. */
 const PANCAKE_FEE_TIERS = [100, 500, 2500, 10000] as const;
 

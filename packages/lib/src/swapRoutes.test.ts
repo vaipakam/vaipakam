@@ -161,7 +161,7 @@ describe('quoteUniV3', () => {
         return { data: answer(call === 2 ? 7n : 9n) };
       },
     };
-    expect(await quoteUniV3(client, 8453, sale)).toEqual({ fee: 10000, expectedOutput: 9n });
+    expect(await quoteUniV3(client, 8453, sale)).toEqual({ fee: 3000, expectedOutput: 9n });
   });
 
   it('returns null on a chain with no V3 venue', async () => {

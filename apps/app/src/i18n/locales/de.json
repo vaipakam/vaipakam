@@ -2692,7 +2692,9 @@
         "youCanLose": "Erbringt der Verkauf weniger als Ihre Forderung, tragen Sie die Differenz. Wo diese Transaktion den Kredit tatsächlich beendet, beendet sie ihn endgültig — der Kreditnehmer kann ihn nicht mehr mit Zinsen zurückzahlen. Wo sie nur einen Teil abwickelt oder der Verkauf nicht zustande kommt, bleibt der Kredit offen und der Kreditnehmer kann weiterhin zurückzahlen oder Sicherheit nachlegen.",
         "fees": "Die Netzwerkgebühr sowie der Anteil des Protokolls am Verkaufserlös und die Prämie für denjenigen, der die Transaktion sendet.",
         "whenThisEnds": "Normalerweise sofort – diese Transaktion beendet den Kredit in der Regel. Kann das Protokoll nur einen Teil abwickeln oder der Verkauf der Sicherheit nicht durchgeführt werden, bleibt der Kredit offen und Sie können ihn später erneut schließen."
-      }
+      },
+      "routeNotConfigured": "Diese App ist nicht dafür eingerichtet, die Börsen in diesem Netzwerk nach einem Preis zu fragen. Sie kann den Verkauf daher nicht routen, und es wurde nichts gesendet oder ausgegeben. Diese Position zu schließen erfordert vorerst einen Betreiber. Wende dich an den Support, statt darauf zu warten, dass es von selbst geschieht.",
+      "routeWouldFallBack": "Die Preise kamen zurück, aber gegen den aktuellen Stand der Chain geprüft würde keine der Börsen das Minimum des Protokolls für diesen Verkauf erreichen. Das Senden würde den Kredit in den Fallback statt in einen Verkauf schließen, daher wurde nichts gesendet und nichts ausgegeben. Preise werden jedes Mal neu abgefragt, daher lohnt sich ein späterer Versuch."
     }
   },
   "contractError": {

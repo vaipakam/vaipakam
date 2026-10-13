@@ -2692,7 +2692,9 @@
         "youCanLose": "Si la venta obtiene menos de lo que se te debe, asumes la diferencia. Cuando esta transacción sí termina el préstamo, lo termina de forma definitiva: el prestatario ya no puede devolverlo con intereses. Cuando solo liquida una parte, o la venta no puede realizarse, el préstamo sigue abierto y el prestatario aún puede pagar o añadir garantía.",
         "fees": "La comisión de red, más la parte del protocolo sobre el producto de la venta y el incentivo pagado a quien envía la transacción.",
         "whenThisEnds": "Normalmente de inmediato: esta transacción suele terminar el préstamo. Si el protocolo solo puede liquidar una parte, o la venta de la garantía no puede realizarse, el préstamo sigue abierto y podrás cerrarlo de nuevo más adelante."
-      }
+      },
+      "routeNotConfigured": "Esta aplicación no está configurada para pedir precio a los exchanges en esta red, así que no puede enrutar la venta y no se envió ni se gastó nada. Por ahora, cerrar esta posición requiere un operador. Contacta con soporte en lugar de esperar a que ocurra por sí solo.",
+      "routeWouldFallBack": "Los precios llegaron, pero comprobados contra el estado actual de la cadena, ninguno de los exchanges alcanzaría el mínimo del protocolo para esta venta. Enviarlo cerraría el préstamo en el mecanismo de respaldo en lugar de en una venta, así que no se envió ni se gastó nada. Los precios se piden de nuevo cada vez, así que vale la pena intentarlo más tarde."
     }
   },
   "contractError": {

@@ -1,18 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, type Address } from 'viem';
-import { buildCloseOutRoute, quotableVenues } from './closeOutRoute';
+import {
+  buildCloseOutRoute,
+  previewCloseOut,
+  quotableVenues,
+  SWAP_ALL_ADAPTERS_FAILED_TOPIC,
+} from './closeOutRoute';
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 10n ** 18n };
 const S = (idx: number) => ({ idx, address: A(0x100 + idx) });
+type RouteClient = Parameters<typeof buildCloseOutRoute>[0]['client'];
 const noChain = {
-  readContract: async () => {
+  // Every aggregator target is on its adapter's allowlist unless a test
+  // says otherwise.
+  readContract: async (args: { functionName: string }) => {
+    if (args.functionName === 'swapTargetAllowed') return true;
     throw new Error('unused');
   },
   call: async () => {
     throw new Error('no quoter');
   },
-};
+} as unknown as RouteClient;
 
 function fakeFetch(bodies: Record<string, unknown>) {
   const seen: { url: string; body: unknown }[] = [];
@@ -109,6 +118,8 @@ describe('buildCloseOutRoute', () => {
             return 0n;
           case 'balanceOf':
             return state.balance ?? 10n ** 21n;
+          case 'swapTargetAllowed':
+            return true;
           default:
             throw new Error('unexpected');
         }
@@ -148,9 +159,9 @@ describe('buildCloseOutRoute', () => {
   });
 
   it('leaves out a mock that would revert, refuse the Diamond, or could not pay', async () => {
-    expect(await mockRoute(mockChain({ shouldRevert: true }))).toEqual({ kind: 'no-quote' });
-    expect(await mockRoute(mockChain({ restrictedTo: A(0xe) }))).toEqual({ kind: 'no-quote' });
-    expect(await mockRoute(mockChain({ balance: 10n ** 17n }))).toEqual({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ shouldRevert: true }))).toMatchObject({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ restrictedTo: A(0xe) }))).toMatchObject({ kind: 'no-quote' });
+    expect(await mockRoute(mockChain({ balance: 10n ** 17n }))).toMatchObject({ kind: 'no-quote' });
     expect(await mockRoute(mockChain({ restrictedTo: A(0) }))).toMatchObject({ kind: 'route' });
   });
 
@@ -165,6 +176,90 @@ describe('buildCloseOutRoute', () => {
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
-    expect(route).toEqual({ kind: 'no-quote' });
+    expect(route).toEqual({ kind: 'no-quote', asked: ['zeroex', 'univ3'], unconfigured: [] });
+  });
+
+  it('drops a quote whose swap target the adapter does not allow', async () => {
+    const { impl } = fakeFetch({
+      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+    });
+    const route = await buildCloseOutRoute({
+      client: {
+        readContract: async (args: { functionName: string; args?: unknown[] }) =>
+          args.functionName === 'swapTargetAllowed' && args.args?.[0] !== A(0xa),
+        call: noChain.call,
+      } as any,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(0) },
+      sale,
+      agentOrigin: 'https://agent.example',
+      fetchImpl: impl,
+    });
+    expect(route.kind).toBe('no-quote');
+  });
+
+  it('names the aggregators the agent has no key for', async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ error: 'zeroex-not-configured' }), {
+        status: 503,
+      })) as unknown as typeof fetch;
+    const route = await buildCloseOutRoute({
+      client: noChain,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(0) },
+      sale,
+      agentOrigin: 'https://agent.example',
+      fetchImpl: impl,
+    });
+    expect(route).toEqual({ kind: 'no-quote', asked: ['zeroex'], unconfigured: ['zeroex'] });
+  });
+});
+
+describe('previewCloseOut', () => {
+  const diamond = A(0xd);
+  const loanTopic = `0x${(21).toString(16).padStart(64, '0')}`;
+  const run = (simulateCalls: () => Promise<unknown>) =>
+    previewCloseOut({
+      client: { simulateCalls } as any,
+      diamond,
+      account: A(0xe),
+      loanId: 21n,
+      calls: [{ adapterIdx: 0n, data: '0x' }],
+    });
+
+  it('reads a fallback from the adapters-failed event for this loan', async () => {
+    expect(
+      await run(async () => ({
+        results: [
+          {
+            status: 'success',
+            logs: [{ address: diamond, topics: [SWAP_ALL_ADAPTERS_FAILED_TOPIC, loanTopic] }],
+          },
+        ],
+      })),
+    ).toBe('fallback');
+  });
+
+  it('reads a sale when no such event came out, even if another loan failed', async () => {
+    const other = `0x${(22).toString(16).padStart(64, '0')}`;
+    expect(
+      await run(async () => ({
+        results: [
+          {
+            status: 'success',
+            logs: [{ address: diamond, topics: [SWAP_ALL_ADAPTERS_FAILED_TOPIC, other] }],
+          },
+        ],
+      })),
+    ).toBe('sale');
+  });
+
+  it('says unknown when the node cannot preview or the call reverts', async () => {
+    expect(await run(async () => Promise.reject(new Error('eth_simulateV1 unsupported')))).toBe(
+      'unknown',
+    );
+    expect(await run(async () => ({ results: [{ status: 'failure', logs: [] }] }))).toBe('unknown');
   });
 });

@@ -2692,7 +2692,9 @@
         "youCanLose": "Si la vente rapporte moins que ce qui vous est dû, vous absorbez la différence. Lorsque cette transaction met effectivement fin au prêt, elle y met fin définitivement : l’emprunteur ne peut plus le rembourser avec intérêts. Lorsqu’elle ne règle qu’une partie, ou que la vente n’aboutit pas, le prêt reste ouvert et l’emprunteur peut encore rembourser ou ajouter de la garantie.",
         "fees": "Les frais de réseau, plus la part du protocole sur le produit de la vente et la prime versée à celui qui envoie la transaction.",
         "whenThisEnds": "Généralement tout de suite — cette transaction met normalement fin au prêt. Si le protocole ne peut en régler qu’une partie, ou si la vente de la garantie n’aboutit pas, le prêt reste ouvert et vous pourrez le clôturer à nouveau plus tard."
-      }
+      },
+      "routeNotConfigured": "Cette application n'est pas configurée pour demander un prix aux plateformes d'échange sur ce réseau. Elle ne peut donc pas acheminer la vente, et rien n'a été envoyé ni dépensé. Pour l'instant, clôturer cette position nécessite un opérateur. Contactez le support plutôt que d'attendre que cela se fasse tout seul.",
+      "routeWouldFallBack": "Les prix sont revenus, mais vérifiés à l'instant sur la chaîne, aucune plateforme d'échange n'atteindrait le minimum du protocole pour cette vente. L'envoyer clôturerait le prêt dans le mécanisme de repli plutôt que par une vente, donc rien n'a été envoyé ni dépensé. Les prix sont redemandés à chaque fois, il vaut donc la peine de réessayer plus tard."
     }
   },
   "contractError": {

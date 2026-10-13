@@ -2437,6 +2437,16 @@ const copySource = {
       'None of the exchanges gave a usable price for this sale just now, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
     routeRosterFailed:
       'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
+    // The agent answered for every aggregator asked that this deployment
+    // has no key for it — standing configuration, not a passing lack of
+    // prices, so it does not say "try again later".
+    routeNotConfigured:
+      'This app is not set up to ask the exchanges for a price on this network, so it cannot route the sale and nothing was sent or spent. Closing this position needs an operator for now. Contact support rather than waiting for it to happen on its own.',
+    // The preview ran the close-out against the chain as it is now and
+    // every exchange route was refused, so it would end in the fallback
+    // rather than the sale the card describes.
+    routeWouldFallBack:
+      'The prices came back, but checked against the chain just now none of the exchanges would meet the protocol\'s minimum for this sale. Sending it would close the loan into the fallback rather than a sale, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can
     // settle against an opposing one. `triggerDefault` dispatches that
     // match BEFORE the swap branch, so the app CAN close this today;

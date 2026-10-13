@@ -1588,7 +1588,16 @@ is the borrower's own money.
   close-out still goes through but the sale does not, and the loan moves into
   the protocol's fallback — the lender can claim collateral instead of sale
   proceeds, and until they do the borrower can still repay or add collateral.
-  The confirmation describes sale proceeds up to what the lender is owed (any
+  Before sending, the app runs the close-out against the chain as it stands
+  and, where the network can show it, checks whether that run would end in a
+  sale or in the fallback. If it would end in the fallback, nothing is sent
+  and the lender is told why; the card described a sale, and a close-out that
+  would not be one is not sent on that description. Where the network cannot
+  run that check, the disclosure on the card is the whole of what is known.
+  Where the app cannot ask any exchange because the deployment is not set up
+  to, it says so as a standing condition rather than as a passing lack of
+  prices, and a roster the app could not fully read is reported as unread,
+  never as "no exchange". The confirmation describes sale proceeds up to what the lender is owed (any
   surplus going to the borrower), the fallback, and a settlement against an
   opposing position, and names no amount. A successful sale pays whoever
   submits it a caller incentive out of the proceeds, before they are divided,
