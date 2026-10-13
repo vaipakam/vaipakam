@@ -80,6 +80,7 @@ import {
 import { is, optional } from './expectedPayload.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
+import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
@@ -698,12 +699,16 @@ try {
       // stays open. With nothing left for the borrower the claim must settle
       // the loan; with an unclaimed borrower residual it stays InternalMatched.
       // Read at the claim's own block; an unreadable read is UNDETERMINED.
+      // `readPinned` asks again while the node has not yet seen that block,
+      // which is what made both #2427 re-run claims UNDETERMINED.
       try {
         const at = { blockNumber: receipt.blockNumber };
-        const [after, [, bAmount, bClaimed]] = await Promise.all([
-          pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [LOAN_ID], ...at }),
-          pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getClaimableAmount', args: [LOAN_ID, false], ...at }),
-        ]);
+        const [after, [, bAmount, bClaimed]] = await readPinned(() =>
+          Promise.all([
+            pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [LOAN_ID], ...at }),
+            pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getClaimableAmount', args: [LOAN_ID, false], ...at }),
+          ]),
+        );
         const borrowerHasNothing = bAmount === 0n || bClaimed;
         const want = borrowerHasNothing ? SETTLED : INTERNAL_MATCHED;
         check(
