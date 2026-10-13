@@ -1110,7 +1110,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         // §3.1-3.3 — previewMatch admits with the forced/pinned values.
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this));
         assertEq(uint8(mr.errorCode), uint8(LibOfferMatch.MatchError.Ok), "admitted");
         assertEq(mr.matchAmount, LOAN_PRINCIPAL, "matchAmount = borrower full amount");
         assertEq(mr.reqCollateral, LOAN_COLLATERAL, "reqCollateral pinned to carried");
@@ -1139,7 +1139,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             _refiLenderOfferId(400, LOAN_COLLATERAL + 100 ether);
 
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this));
         assertEq(
             uint8(mr.errorCode),
             uint8(LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall),
@@ -1187,7 +1187,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _admin().setAutoRefinanceEnabled(false);
 
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this));
         assertEq(
             uint8(mr.errorCode),
             uint8(LibOfferMatch.MatchError.RefinanceTagged),

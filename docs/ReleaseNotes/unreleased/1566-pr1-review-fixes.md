@@ -109,3 +109,8 @@ entries.
 - **Late B4 reports.** A day report that reaches the canonical chain after its day finalized still updates that chain's custody era. Its figures are dropped and named by an event, instead of the whole message failing for good.
 - **Claim Center rewards.** A paused or held claim now shows as unavailable, never as "nothing owed".
 - **Clean-up.** The transport-epoch release entries were documented as still shut, though this PR opens them. The text is corrected, and the interim error they used to raise is removed.
+
+**Codex review, round 2 (#2459).**
+- **Match preview.** The match preview now takes the matcher as an explicit input and checks that account's capacity. Before, it checked whoever made the call, and a call from an off-chain tool carries no caller, so an exhausted matcher was told a doomed match would succeed. The app passes the connected wallet and the keeper passes itself.
+- **Capacity curves.** A curve's refill rate and the deposit at which capacity reaches four times the free tier are now bounded, so no accepted curve can make a capacity calculation fail. The arming fee is computed in full precision.
+- **Sanctions oracle.** Its documentation now says that switching it off, on a chain that ever configured one, freezes capacity deposits until an oracle is installed again.

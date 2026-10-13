@@ -311,15 +311,20 @@ contract BorrowerPartialFillTest is SetupTest {
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo1, bo).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo1, bo, address(this)).errorCode),
             uint8(LibOfferMatch.MatchError.Ok),
             "straddle: the one free action covers the first match"
         );
         OfferMatchFacet(address(diamond)).matchOffers(lo1, bo);
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, address(this)).errorCode),
             uint8(LibOfferMatch.MatchError.CapacityExhausted),
             "an exhausted matcher previews the refusal"
+        );
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, makeAddr("fresh-matcher")).errorCode),
+            uint8(LibOfferMatch.MatchError.Ok),
+            "#2459 r2: the preview reads the NAMED matcher's bucket, not its caller's"
         );
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, address(this), 1e18, 0));
         OfferMatchFacet(address(diamond)).matchOffers(lo2, bo);
@@ -579,7 +584,7 @@ contract BorrowerPartialFillTest is SetupTest {
 
         // previewMatch surfaces the structured error.
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId);
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.AmountNoOverlap),
@@ -621,7 +626,7 @@ contract BorrowerPartialFillTest is SetupTest {
         });
 
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId);
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.RateNoOverlap),

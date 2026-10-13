@@ -43,7 +43,7 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
-import { createPublicClient, http, type Abi, type Address, type Hex } from 'viem';
+import { createPublicClient, http, zeroAddress, type Abi, type Address, type Hex } from 'viem';
 import {
   MetricsFacetABI,
   OfferCreateFacetABI,
@@ -421,11 +421,11 @@ function partitionByBucket(offers: readonly OfferLite[]): {
 }
 
 /**
- * The `previewMatch` read, made FROM the keeper's own account. The preview's
- * service-capacity check keys on the caller (`msg.sender`), and an `eth_call`
- * with no `from` reads as the zero address — whose never-seen bucket always
- * reads covered — so without the account an exhausted keeper never sees
- * `CapacityExhausted` and spends a reverting gas estimate per pair instead.
+ * The `previewMatch` read for THIS keeper: the preview checks the service
+ * capacity of the matcher it is NAMED (#2459 r2 made it an explicit argument),
+ * so the keeper names itself — the account `matchOffers` would charge. Before,
+ * the preview keyed on `msg.sender`, and an `eth_call` with no `from` read as
+ * the zero address, whose never-seen bucket always reads covered.
  */
 export function previewMatchRequest(
   ctx: Pick<KeeperContext, 'diamond' | 'wallet'>,
@@ -436,8 +436,7 @@ export function previewMatchRequest(
     address: ctx.diamond,
     abi: MATCHER_ABI,
     functionName: 'previewMatch' as const,
-    args: [lenderId, borrowerId] as const,
-    account: ctx.wallet.account,
+    args: [lenderId, borrowerId, ctx.wallet.account?.address ?? zeroAddress] as const,
   };
 }
 

@@ -406,13 +406,13 @@ contract RefinanceRequestGuardTest is SetupTest {
             _params(LibVaipakam.OfferType.Lender, 400, LibVaipakam.FillMode.Partial, 0, 0)
         );
         assertTrue(
-            OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1).errorCode
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1, address(this)).errorCode
                 != LibOfferMatch.MatchError.RefinanceTagged,
             "the recorded carry-over request is admissible"
         );
         vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1, address(this)).errorCode),
             uint8(LibOfferMatch.MatchError.RefinanceTagged)
         );
     }

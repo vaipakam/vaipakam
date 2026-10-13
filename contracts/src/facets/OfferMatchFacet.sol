@@ -19,7 +19,7 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
  * @author Vaipakam Developer Team
  * @notice Range Orders Phase 1 — bot-driven offer matching surface.
  *         Hosts the two entry points the keeper-bot consumes:
- *           - `previewMatch(L, B)` — pure preview that runs the
+ *           - `previewMatch(L, B, matcher)` — pure preview that runs the
  *             validity matrix + computes the midpoint match terms
  *             so bots filter candidate pairs without paying for
  *             reverting txs.
@@ -73,17 +73,23 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         struct also carries the concrete (matchAmount,
     ///         matchRateBps, reqCollateral, lenderRemainingPostMatch)
     ///         values so the bot can estimate gain pre-submission.
-    function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId)
+    /// @param  matcher The account that would call `matchOffers` — the one its
+    ///         service-capacity charge falls on. Named, never read from
+    ///         `msg.sender` (#2459 r2): an off-chain `eth_call` carries no sender
+    ///         unless set, and the zero address's never-seen bucket always reads
+    ///         covered, so a sender-keyed preview told an exhausted keeper (and the
+    ///         app's matcher) that a doomed match would succeed.
+    function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher)
         external
         view
         returns (LibOfferMatch.MatchResult memory result)
     {
         result = LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
         // #1219 review — the match's capacity charge is its last step, so it is
-        // this preview's last check: the caller is the matcher `matchOffers` charges.
+        // this preview's last check, for the matcher `matchOffers` would charge.
         if (
             result.errorCode == LibOfferMatch.MatchError.Ok
-                && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), msg.sender)
+                && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), matcher)
         ) result.errorCode = LibOfferMatch.MatchError.CapacityExhausted;
     }
 

@@ -3185,7 +3185,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testPreviewMatchFlagsSaleVehicle() public {
         uint256 saleOfferId = _listSaleOffer();
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId);
+            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId, address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.SaleVehicleTagged),

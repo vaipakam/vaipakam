@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -173,9 +174,15 @@ library LibServiceCapacity {
         // to swallow a meaningful share of an action (e.g. one unit per action)
         // would make armed principal buy nothing until a threshold, the minimum
         // the curve exists not to have, while the arming fee was still charged.
+        // ...and ARITHMETIC bounds (#2459 r2): with `freeTier` and `freeRatePerSec`
+        // at most a quarter of 2^128 and `bondAt4x` at most 2^128, every product
+        // {curveAt} forms — a figure times `bondAt4x + 3 × bond`, at most four
+        // knees — stays under 2^256, so no accepted curve can make a preview,
+        // a post or a charged action panic.
         if (
             freeTier == 0 || freeRatePerSec < CURVE_RESOLUTION || bondAt4x == 0 || classCost < CURVE_RESOLUTION
                 || freeTier < classCost || freeTier > type(uint128).max / 4
+                || freeRatePerSec > type(uint128).max / 4 || bondAt4x > type(uint128).max
         ) {
             revert IVaipakamErrors.ServiceCapacityCurveInvalid(role);
         }
@@ -467,7 +474,9 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        fee = granted == 0 ? 0 : (granted * s.armingFeeRate + 1e18 - 1) / 1e18;
+        // Full precision (#2459 r2): the rate has no upper bound, so the product
+        // must not be able to overflow; rounded up as before.
+        fee = granted == 0 ? 0 : Math.mulDiv(granted, s.armingFeeRate, 1e18, Math.Rounding.Ceil);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 

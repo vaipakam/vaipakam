@@ -300,7 +300,7 @@ contract OfferExpiryTest is SetupTest {
         vm.warp(uint256(deadline) + 1);
 
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId);
+            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this));
         assertEq(
             uint256(r.errorCode),
             uint256(LibOfferMatch.MatchError.OfferExpired),
@@ -316,7 +316,7 @@ contract OfferExpiryTest is SetupTest {
         vm.warp(uint256(deadline) + 1);
 
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId);
+            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this));
         assertEq(
             uint256(r.errorCode),
             uint256(LibOfferMatch.MatchError.OfferExpired),

@@ -82,6 +82,24 @@ contract ServiceCapacityLimiterTest is SetupTest {
         assertFalse(_f().getCapacityBucket(SOLVER, op).seen, "nothing recorded");
     }
 
+    /// @dev #2459 r2 — a curve's arithmetic never overflows: the refill rate and the
+    ///      knee are bounded (one past each bound refuses), so every product the curve
+    ///      forms fits — a curve set AT the bounds still previews instead of panicking.
+    ///      (A refill rate near 2^200 used to be accepted and made every preview,
+    ///      post and charged action for the role panic.)
+    function test_SetCurve_ArithmeticBounds_AndAnExtremeCurveStillPreviews() public {
+        uint256 q = type(uint128).max / 4;
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));
+        _f().setCapacityCurve(SOLVER, FREE, q + 1, AT4X, COST); // refill rate one past the bound
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));
+        _f().setCapacityCurve(SOLVER, FREE, RATE, uint256(type(uint128).max) + 1, COST); // knee one past the bound
+        _f().setCapacityCurve(SOLVER, q, q, type(uint128).max, COST); // at the bounds: accepted
+        (, uint256 rate, uint256 ceiling, bool dark) = _f().previewCapacity(SOLVER, makeAddr("extreme-actor"));
+        assertFalse(dark, "fixture-live: the curve is lit");
+        assertEq(rate, q, "a zero deposit refills at the free rate");
+        assertEq(ceiling, q, "and holds the free tier");
+    }
+
     /// @dev #2459 r1 — the resolution floor: a per-action cost or a free refill rate
     ///      under a million units would let whole-unit rounding swallow a meaningful
     ///      share of an action (armed principal buying nothing until a threshold).

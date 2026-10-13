@@ -74,6 +74,17 @@ contract ServiceCapacityArmingTest is SetupTest {
         _f().setArmingFeeRate(FEE);
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
+
+    /// @dev #2459 r2 — the arming fee is computed in full precision: an extreme (but
+    ///      accepted) rate prices the fee exactly, rounded up, instead of overflowing the
+    ///      product (a panic in every post and preview once rate x granted passed 2^256).
+    function test_ArmingQuote_AnExtremeRate_NeverOverflows() public {
+        _ready();
+        _f().setArmingFeeRate(2 ** 200);
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 1e18);
+        assertEq(granted, 1e18, "fixture-live: the post arms its whole principal");
+        assertEq(fee, 2 ** 200, "fee = granted x rate / 1e18, exactly");
+    }
     function _ready() internal {
         _arm();
         _curve(SOLVER);

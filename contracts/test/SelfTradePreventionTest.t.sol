@@ -224,7 +224,7 @@ contract SelfTradePreventionTest is SetupTest {
         LibOfferMatch.MatchResult memory r =
             OfferMatchFacet(address(diamond)).previewMatch(
                 lenderOfferId,
-                borrowerOfferId
+                borrowerOfferId, address(this)
             );
         assertEq(
             uint8(r.errorCode),

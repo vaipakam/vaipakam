@@ -11484,15 +11484,23 @@ library LibVaipakam {
 
     /// @notice Emitted when the chain's sanctions oracle address changes.
     ///         Off-chain monitoring should alert on a transition to or
-    ///         from `address(0)`: zero disables the check globally, so
-    ///         the event is worth a human review either way.
+    ///         from `address(0)`: zero disables the Tier-1 check, and on a
+    ///         chain that has ever configured an oracle it FREEZES the
+    ///         service-capacity deposit surface (see {setSanctionsOracle}),
+    ///         so the event is worth a human review either way.
     /// @custom:event-category informational/config
     event SanctionsOracleSet(address indexed previous, address indexed next);
 
     /// @notice Installs the chain's sanctions oracle address (any
     ///         `ISanctionsList`). Owner-only — timelock-gated after the
-    ///         governance handover. Setting to `address(0)` disables
-    ///         sanctions screening across the chain. Never set it to
+    ///         governance handover. Setting to `address(0)` disables the
+    ///         Tier-1 sanctions screen (it fails open). The service-capacity
+    ///         deposit surface is the exception, and it fails CLOSED: once any
+    ///         oracle has been installed (the never-cleared
+    ///         `sanctionsOracleEverSet` latch, #2459), a zero oracle reads as an
+    ///         outage there, so every deposit post and withdrawal defers until an
+    ///         oracle — a vendor's, or governance's attested snapshot — is
+    ///         installed again. Never set it to
     ///         Chainalysis's retired on-chain oracle (#2443): it still
     ///         answers but no longer updates.
     /// @param oracle The sanctions oracle contract address, or zero.

@@ -162,7 +162,7 @@ export function MatchBand({
       // re-sync the band with what the chain just said (it hides or
       // re-renders on fresh data).
       const [livePreview, liveRisk, livePartialFill] = await Promise.all([
-        readMatchPreviewLive(publicClient, walletChain.diamondAddress, pair!),
+        readMatchPreviewLive(publicClient, walletChain.diamondAddress, pair!, address),
         readMatchRiskBlockLive(publicClient, walletChain.diamondAddress, pair!),
         (
           publicClient.readContract({
