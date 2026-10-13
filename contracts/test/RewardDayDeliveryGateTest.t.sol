@@ -105,7 +105,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
         uint32 chunkCount;
         uint256 chunksIndexed;
         bool batched;
-        bool quarantined;
         bool classificationFinal;
         uint256 disposed;
     }
@@ -183,7 +182,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
             v.chunkCount,
             v.chunksIndexed,
             v.batched,
-            v.quarantined,
             v.classificationFinal,
             v.disposed
         ) = _rlens().getPacketDeliveryProof(h);
@@ -1104,84 +1102,50 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_claim(), NEED, "landed: pays");
     }
 
-    // ─────────────────────── cell 10: era quarantine ───────────────────────
+    // ───────────────── cell 10: a retired era's delivery lands ─────────────────
 
     /**
-     * @notice Cell 10 -- QUARANTINED packets fund nothing: a legacy delivery
-     *         listing a retired-era day and a d6 dispatched for a retired era
-     *         are refused by BOTH proof entries and by the rollout admission,
-     *         by name, and the day stays held. Classified final -- the
-     *         quarantine's own exit -- the flat proof lands the day.
-     * @dev    Mutations: drop the proof entries' quarantine refusal, or the
-     *         rollout clause (`ROLLOUT_ERA_QUARANTINED`), and the matching
-     *         expectation fails; the admission would open the epoch the
-     *         ingress refused and land the day through its index.
+     * @notice Cell 10 (#1566 PR C revision) -- a delivery for a RETIRED custody era
+     *         is not held: a list-bearing delivery naming a retired-era day opens its
+     *         epoch in that day's era, so the day LANDS through the epoch's index and
+     *         the flat proof names the epoch route (`DeliveryProofRouteIsBatch`). An
+     *         earlier revision quarantined such a packet until an administrator
+     *         classified it; the custody-era revision removed every manual step.
+     * @dev    Mutation: re-admit a quarantine (refuse the retired-era packet's
+     *         epoch) and the day never lands.
      */
-    function test_1944_10_AQuarantinedPacket_IsRefused_UntilClassifiedFinal() public {
+    function test_1944_10_ARetiredErasDelivery_LandsThroughItsEpoch() public {
         _armGate(1);
         _owedDay1();
         _detach();
         _reattach();
-        uint64 era = _eraF().getCustodyEraCurrent();
-        assertEq(era, 2, "fixture: two effective role changes after arming");
+        assertEq(_eraF().getCustodyEraCurrent(), 2, "fixture: two effective role changes after arming");
         assertTrue(_awaits(0, 1), "fixture: day 1 still owes fresh and waits");
 
-        bytes32 hQ = _untyped(4e18, _one(1), 101, keccak256("gate-q-legacy"));
-        (bytes32 hD, bytes32[] memory leaves) = _d6(10e18, _one(1), 102, keccak256("gate-q-d6"), 0, 1);
-        GatePacket memory pq = _gp(hQ);
-        assertTrue(pq.quarantined && !pq.classificationFinal && !pq.batched, "fixture: the legacy packet is quarantined");
-        GatePacket memory pd = _gp(hD);
-        assertTrue(pd.quarantined && !pd.batched, "fixture: the retired-era d6 is quarantined");
-
-        vm.expectRevert(abi.encodeWithSelector(TransportPacketEraQuarantined.selector, hQ));
-        _epoch().proveDeliveryDayList(hQ, _one(1));
-        vm.expectRevert(abi.encodeWithSelector(TransportPacketEraQuarantined.selector, hQ));
-        _epoch().admitLegacyTransportBatch(hQ, _one(1));
-        vm.expectRevert(abi.encodeWithSelector(TransportPacketEraQuarantined.selector, hD));
-        _epoch().proveDeliveryDayChunk(hD, 0, _one(1), MerkleFixture.proof(leaves, 0));
-
+        bytes32 h = _untyped(4e18, _one(1), 101, keccak256("gate-retired-era"));
+        assertTrue(_gp(h).batched, "the retired-era delivery opened its epoch");
+        vm.expectRevert(abi.encodeWithSelector(DeliveryProofRouteIsBatch.selector, h));
+        _epoch().proveDeliveryDayList(h, _one(1));
         GateDay memory g = _gd(1);
-        assertFalse(g.landed, "nothing landed");
-        assertEq(g.epochCount, 0, "no epoch was opened");
-        assertTrue(g.awaitsLender, "held");
-        _expectHeld(1);
-
-        AdminFacet(address(diamond)).pause();
-        RewardReconciliationFacet(address(diamond)).classifyLegacyPacket(hQ, 0, 4e18, keccak256("gate-q-final"));
-        AdminFacet(address(diamond)).unpause();
-        assertTrue(_gp(hQ).classificationFinal, "stored: classified final");
-
-        vm.expectEmit(true, true, false, true, address(diamond));
-        emit DayDeliveryProved(1, hQ, 101, ROUTE_LIST);
-        _epoch().proveDeliveryDayList(hQ, _one(1));
-        g = _gd(1);
-        assertTrue(g.landed, "the final packet lands the day");
-        assertEq(g.provedBy, hQ, "stored: its stamp");
-        assertFalse(g.awaitsLender, "open");
-        _assertNotTheGate("once landed the claim is never held by the gate");
+        assertTrue(g.landed, "its epoch's index lands the day");
+        assertGt(g.epochCount, 0, "an epoch lists it");
     }
 
     /**
-     * @notice Cell 10b (S2-R1) -- the setter refuses a mirror past custody era
-     *         zero (every d6 would land quarantined with no fresh exit), and a
-     *         non-Mirror between the two role changes. Straddle: at era zero
-     *         the same arming succeeds.
-     * @dev    Mutation: drop the era check and the arming succeeds at era 2.
+     * @notice Cell 10b -- the setter refuses a non-Mirror, and ARMS a mirror past
+     *         custody era zero (#1566 PR C revision: Base stamps the destination's
+     *         reported era and a retired era's delivery opens its epoch, so arming
+     *         there wedges nothing). Straddle: detached between the two role
+     *         changes, the same arming is refused.
      */
-    function test_1944_10b_TheSetter_RefusesAMirrorPastEraZero() public {
-        uint256 snap = vm.snapshotState();
-        _armGate(1);
-        vm.revertToState(snap);
-
+    function test_1944_10b_TheSetter_ArmsAMirrorPastEraZero() public {
         _detach();
         vm.expectRevert(DeliveryGateNotMirror.selector);
         _remit().setDayDeliveryGateFromDay(1);
         _reattach();
-        uint64 era = _eraF().getCustodyEraCurrent();
-        assertGt(era, 0, "fixture: a mirror again, past era zero");
-        vm.expectRevert(abi.encodeWithSelector(DeliveryGateEraRegistryPending.selector, era));
+        assertGt(_eraF().getCustodyEraCurrent(), 0, "fixture: a mirror again, past era zero");
         _remit().setDayDeliveryGateFromDay(1);
-        assertFalse(_gd(1).gateArmed, "stored: the gate stays dark");
+        assertTrue(_gd(1).gateArmed, "stored: the gate armed");
     }
 
     /**

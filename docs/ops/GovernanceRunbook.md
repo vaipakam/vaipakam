@@ -1810,13 +1810,13 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
 - **Arming.** `RewardRemittanceFacet.setDayDeliveryGateFromDay(fromDay)` —
   `ADMIN_ROLE`, one-shot, Mirror-only (`DeliveryGateNotMirror`,
   `DeliveryGateAlreadyArmed`), emits `DayDeliveryGateArmed`. Arm ONLY when
-  (1) the keeper proves day lists on that mirror after every
-  `RewardBudgetReceived` / `RewardBudgetRootReceived` — **no such step exists in
-  `apps/keeper` today, so the gate stays dark until one ships** (arming earlier
-  makes every funded day wait on a human); and (2) the mirror is FRESH: the setter
-  refuses while `custodyEraCurrent != 0` (`DeliveryGateEraRegistryPending`),
-  because Base still dispatches the pre-registry era and every d6 would then land
-  era-quarantined with no fresh exit. The setter also refuses a `fromDay` at or
+  the keeper's `deliveryProof` pass is armed on that mirror
+  (`REWARD_DELIVERY_PROOF_ENABLED`): every few minutes it indexes each epoch
+  delivery's days and proves the list of each delivery that holds no epoch
+  (arming the gate without it makes every funded day wait on a human). A mirror past custody era 0 may arm:
+  Base stamps every remittance with the destination's own reported era and a
+  retired era's delivery opens its epoch (the custody-era revision), so no
+  delivery is held inert. The setter refuses a `fromDay` at or
   below either fold cursor (`DeliveryGateBelowFold(fromDay, lenderCursor,
   borrowerCursor)`): the fold priced those days without the gate and the walk may
   already have paid them. Arm with `fromDay = 1` before the mirror's first
@@ -1833,13 +1833,10 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RewardRemittanceLensFacet.dayAwaitsFreshDelivery` does the same to every
   claim, sweep and staging call. `RefreshAllFacetsInPlace` refreshes them
   together; never refresh a subset.
-- **Never perform an effective reward-role change on a gate-armed mirror before
-  the custody era registry (PR C) lands** — `RewardReporterFacet.setBaseChainId`
-  or `setIsCanonicalRewardChain` moving it out of, or back into, the Mirror role.
-  With reward custody active, the change bumps the custody era, every later d6
-  lands quarantined, and every included day then waits mesh-wide. The setter
-  refuses to ARM after such a change; nothing refuses the change after arming, so
-  this line is the guard (see also the CCIP cutover runbook's era rotation).
+- **A reward-role change on a gate-armed mirror is safe** since the custody-era
+  revision: the change bumps the custody era, Base stamps later remittances with
+  the era the mirror reports, and a delivery still in flight for the retired era
+  opens its epoch in that era and lands its days through the epoch route.
 - **Proving — permissionless, on the mirror.**
   `RewardEpochFacet.materializeTransportBatchChunk` for a delivery that carries a
   transport epoch (unchanged: indexing the day's chunk IS the landing);
@@ -1848,7 +1845,6 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   activation); `RewardEpochFacet.proveDeliveryDayList(packetHash, dayIds)` for a
   flat-list (d5 or legacy) delivery. Refusals by name:
   `DeliveryProofRouteIsBatch` (use the epoch route), `DeliveryProofNotBudget`,
-  `TransportPacketEraQuarantined` (classify the packet to final first),
   `DeliveryPacketDisposed`, `TransportPacketHasNoDayList` (a pre-3a delivery
   carries no provable list). Each newly proven day emits
   `DayDeliveryProved(dayId, packetHash, remitId, route)`; the first delivery to

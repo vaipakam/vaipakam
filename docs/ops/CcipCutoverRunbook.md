@@ -436,15 +436,10 @@ flight, in this order when **lowering**:
   gate's first day through the latest applied day and confirm none reports
   `awaitsLender` or `awaitsBorrower`. A day still awaiting delivery is proven
   first (the GovernanceRunbook's day-delivery-gate steps) or repaired on Base by
-  release and re-remit; otherwise it waits across the rotation. And do **not**
-  perform an effective reward-role change on a gate-armed mirror
-  (`RewardReporterFacet.setBaseChainId` / `setIsCanonicalRewardChain` moving it out
-  of or back into the Mirror role) before the custody era registry (PR C) lands:
-  with reward custody active the change bumps `custodyEraCurrent`, every later d6
-  delivery lands era-quarantined with no fresh exit while Base still dispatches the
-  pre-registry era, and every included day then waits mesh-wide. The gate refuses
-  to ARM on a mirror whose era has already moved (`DeliveryGateEraRegistryPending`);
-  nothing refuses the role change after arming, so this step is the guard.
+  release and re-remit; otherwise it waits across the rotation. A reward-role
+  change on a gate-armed mirror is safe since the custody-era revision: Base stamps
+  later remittances with the era the mirror reports, and a delivery in flight for
+  the retired era opens its epoch there and lands its days through the epoch route.
 - **Mirror-era registry on Base** (#1434 P2-w3, Codex #1636 r2/r3) —
   the RECIPROCAL registration: Base's compensation-quote (kind-11)
   ingress authenticates every arriving quote's sending-Diamond word
