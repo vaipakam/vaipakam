@@ -579,11 +579,6 @@
         "name": "marginBps",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "tariffK",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1350,19 +1345,6 @@
         "name": "keeperBps",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRecycleTariffKPer1e18EthDay",
-    "inputs": [
-      {
-        "name": "newKPer1e18EthDay",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -2213,19 +2195,6 @@
   },
   {
     "type": "event",
-    "name": "RecycleTariffKSet",
-    "inputs": [
-      {
-        "name": "newKPer1e18EthDay",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RewardClaimHorizonDaysSet",
     "inputs": [
       {
@@ -2910,27 +2879,6 @@
     "inputs": [
       {
         "name": "bps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxAllowed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidRecycleTariffK",
-    "inputs": [
-      {
-        "name": "k",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minAllowed",
         "type": "uint256",
         "internalType": "uint256"
       },
