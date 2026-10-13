@@ -1332,7 +1332,8 @@ try {
     const borrowerTop = bidsNow.find(
       (r) => Number(r.interestRateBpsMax) === bestBidBps,
     );
-    const preview = await diamondRead('previewMatch', [lenderTop.id, borrowerTop.id]);
+    // The connected wallet is the matcher the app's band names (#2459).
+    const preview = await diamondRead('previewMatch', [lenderTop.id, borrowerTop.id, lenderAddr]);
     if (Number(preview.errorCode) !== 0) {
       throw new Error(
         `a .desk-match-band rendered but previewMatch(${lenderTop.id}, ` +

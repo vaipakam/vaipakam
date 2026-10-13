@@ -101,17 +101,19 @@ async function fundBorrowerMusdc(decimals: number): Promise<void> {
   await confirm(hash, 'mint (rate-desk seeding)');
 }
 
-/** `OfferMatchFacet.previewMatch(L, B)` — the contract's own verdict
- *  the band must obey (§5.2). */
+/** `OfferMatchFacet.previewMatch(L, B, matcher)` — the contract's own
+ *  verdict the band must obey (§5.2), for the wallet the page is connected
+ *  as: the app's own preview names that wallet as the matcher (#2459). */
 async function previewMatch(
   lenderOfferId: bigint,
   borrowerOfferId: bigint,
+  matcher: `0x${string}`,
 ): Promise<{ errorCode: number; matchAmount: bigint; matchRateBps: bigint }> {
   return (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'previewMatch',
-    args: [lenderOfferId, borrowerOfferId],
+    args: [lenderOfferId, borrowerOfferId, matcher],
   })) as { errorCode: number; matchAmount: bigint; matchRateBps: bigint };
 }
 
@@ -178,7 +180,7 @@ test('§5.2 honesty inverse: a crossed-but-unmatchable book renders NO match ban
   // The contract's own verdict FIRST, so the DOM assert below can't
   // false-pass on a differently-broken pair. MatchError.AmountNoOverlap
   // is ordinal 4 in LibOfferMatch.MatchError.
-  const preview = await previewMatch(lenderOfferId, borrowerOfferId);
+  const preview = await previewMatch(lenderOfferId, borrowerOfferId, accountFor('newLender').address);
   expect(preview.errorCode).not.toBe(0);
   expect(preview.errorCode).toBe(4); // AmountNoOverlap — pins the seed shape
 
@@ -245,7 +247,7 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
 
   // The contract confirms Ok BEFORE any DOM assert — if this fails the
   // seed shape regressed, not the band.
-  const preview = await previewMatch(lenderOfferId, borrowerOfferId);
+  const preview = await previewMatch(lenderOfferId, borrowerOfferId, accountFor('newLender').address);
   expect(preview.errorCode).toBe(0);
   expect(Number(preview.matchRateBps)).toBe(750); // midpoint of 600/900
   expect(preview.matchAmount).toBe(parseEther('0.002'));
