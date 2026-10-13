@@ -56,8 +56,8 @@ import {
   newestOfferIdFor,
   newestLoanIdFor,
 } from '../lib/flows';
-import { increaseTime } from '../lib/anvil';
-import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
+import { anvilRpc, increaseTime, setBalance } from '../lib/anvil';
+import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS, WETH } from '../lib/chain';
 
 /** How far past maturity to step, and how many steps to allow.
  *
@@ -245,6 +245,37 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   await expectDeclaredBlock(cardAfter, pub);
 
   // ---- The lender closes it out, with a route the app built ----
+  //
+  // Precondition 4 — the venue can PAY in the lent asset. The fixture's
+  // `MockSwapAdapter` pays proceeds from its own balance and is seeded
+  // with the faucet tokens only, not with the canonical WETH this loan
+  // lends. Without this the sale reverts inside the adapter and the
+  // close-out lands in the protocol's fallback instead, which is the
+  // outcome the card discloses but not the one this spec is proving.
+  // The first run of this spec found exactly that (FallbackPending).
+  const lent = (
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getLoanDetails',
+      args: [loanId],
+    })) as { principalAsset: `0x${string}` }
+  ).principalAsset;
+  expect(lent.toLowerCase()).toBe(WETH.toLowerCase());
+  const venue = MOCKS!.mockSwapAdapter as `0x${string}`;
+  expect(venue).toMatch(/^0x[0-9a-fA-F]{40}$/);
+  await setBalance(venue, 1_000n * 10n ** 18n);
+  await anvilRpc('anvil_impersonateAccount', [venue]);
+  await anvilRpc('eth_sendTransaction', [
+    {
+      from: venue,
+      to: WETH,
+      value: `0x${(500n * 10n ** 18n).toString(16)}`,
+      data: '0xd0e30db0', // WETH9.deposit()
+    },
+  ]);
+  await anvilRpc('anvil_stopImpersonatingAccount', [venue]);
+
   await expect(submit).toBeEnabled({ timeout: 30_000 });
   await submit.click();
   const confirm = cardAfter.getByTestId('confirm-receipt-confirm');
