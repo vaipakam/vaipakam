@@ -1389,13 +1389,13 @@
           "waiting": "En attente du wallet…"
         },
         "loanBetweenAmountUnknown": "Un prêt entre deux autres wallets — le montant prêté est indisponible pour le moment",
-        "nothingLockedClosed": "Plus rien n’est bloqué — ce prêt est clôturé.",
-        "nothingLockedInternalMatch": "Plus rien n’est bloqué — l’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation.",
         "receiveInternalMatchProceeds": "Le produit que l’appariement interne a enregistré pour le prêteur de ce prêt.",
         "positionBorrowed": "Votre position d’emprunteur · {{principal}} empruntés au démarrage de ce prêt",
         "positionLent": "Votre position de prêteur · {{principal}} prêtés au démarrage de ce prêt",
         "positionBorrowedAmountUnknown": "Votre position d’emprunteur · le montant emprunté au démarrage de ce prêt est indisponible pour le moment",
-        "positionLentAmountUnknown": "Votre position de prêteur · le montant prêté au démarrage de ce prêt est indisponible pour le moment"
+        "positionLentAmountUnknown": "Votre position de prêteur · le montant prêté au démarrage de ce prêt est indisponible pour le moment",
+        "collateralSettledClosed": "Ce prêt est clôturé — son collatéral est réglé via les réclamations, il n’est plus bloqué pour le prêt.",
+        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation."
       },
       "loading": "Chargement de vos positions…",
       "openOffers": "Offres ouvertes",

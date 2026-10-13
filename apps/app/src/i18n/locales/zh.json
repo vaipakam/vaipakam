@@ -1389,13 +1389,13 @@
           "waiting": "等待钱包…"
         },
         "loanBetweenAmountUnknown": "另外两个钱包之间的一笔贷款 — 借出金额目前无法显示",
-        "nothingLockedClosed": "目前没有锁定任何资产 — 这笔贷款已结束。",
-        "nothingLockedInternalMatch": "目前没有锁定任何资产 — 内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。",
         "receiveInternalMatchProceeds": "内部撮合为这笔贷款的出借人记录的所得款项。",
         "positionBorrowed": "你的借款头寸 · 这笔贷款开始时借入 {{principal}}",
         "positionLent": "你的出借头寸 · 这笔贷款开始时借出 {{principal}}",
         "positionBorrowedAmountUnknown": "你的借款头寸 · 这笔贷款开始时的借入金额目前无法显示",
-        "positionLentAmountUnknown": "你的出借头寸 · 这笔贷款开始时的借出金额目前无法显示"
+        "positionLentAmountUnknown": "你的出借头寸 · 这笔贷款开始时的借出金额目前无法显示",
+        "collateralSettledClosed": "这笔贷款已结束 — 其抵押品通过领取结算，不再为这笔贷款锁定。",
+        "collateralSettledInternalMatch": "内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。"
       },
       "loading": "正在加载您的持仓…",
       "openOffers": "开放 offers",

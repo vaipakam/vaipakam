@@ -4184,12 +4184,16 @@ export async function processLoanLogs(
             // mirror note above), acceptor side from the read-back party.
             lenderOwner,
             borrowerOwner,
-            // Immutable initiation-term snapshot — the read-back runs in
-            // the LoanInitiated scan window, so the loan's current terms
-            // ARE its initiation terms here (no mutation event can
-            // precede this insert; same-window mutations dispatch AFTER
-            // this handler in scan order).
-            loanDetail.principal.toString(),
+            // Immutable initiation-term snapshot. The principal comes from
+            // the bare LoanInitiated itself, as on every other insert path
+            // (#2461 r3): this read-back is UNPINNED (chain head), so when
+            // the indexer is catching up a partial repayment or a match may
+            // already have reduced `loanDetail.principal`, and stamping that
+            // would serve the remainder as what the loan started with. The
+            // rate and duration below still come from the read-back — the
+            // event does not carry them — with the same catch-up caveat the
+            // stub heal states for an extension.
+            principal,
             Number(loanDetail.interestRateBps),
             Number(loanDetail.durationDays),
             Number(log.blockNumber),

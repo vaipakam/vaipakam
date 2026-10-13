@@ -1267,7 +1267,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // data: once the indexed row is terminal the query stops, and its last
   // cached result is the pre-transition snapshot.
   const liveAmounts =
-    liveStatusEnabled && liveStatus.data
+    // #2461 r3 — a failed refetch keeps the last good `data`; folding that
+    // in would pin amounts older than the indexed row, so an errored read
+    // falls back to the indexed figures (the same guard the other
+    // consumers of this query apply).
+    liveStatusEnabled && liveStatus.data && !liveStatus.isError
       ? {
           principal: liveStatus.data.principal.toString(),
           collateralAmount: liveStatus.data.collateralAmount.toString(),

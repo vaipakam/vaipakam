@@ -30,50 +30,41 @@ describe('initiatedPrincipal (#2453)', () => {
   });
 });
 
-describe('lockedCollateralLine (#2454)', () => {
+describe('lockedCollateralLine (#2454, #2461 r3)', () => {
   const labels: LockedLineLabels = {
     lockedCollateralBorrower: (c) => `${c} collateral (borrower’s)`,
     noCollateral: 'No collateral',
-    nothingLockedClosed: 'CLOSED',
-    nothingLockedInternalMatch: 'MATCHED',
+    collateralSettledClosed: 'CLOSED',
+    collateralSettledInternalMatch: 'MATCHED',
   };
   const line = (hasCollateral: boolean, status: IndexedLoanStatus) =>
     lockedCollateralLine({ hasCollateral, status, collateral: '4,000 mUSDC', labels });
+  const closed: IndexedLoanStatus[] = ['repaid', 'defaulted', 'liquidated', 'settled'];
 
-  it('names the held collateral whenever some is held, whatever the status', () => {
-    for (const s of ['active', 'fallback_pending', 'internal_matched', 'repaid', 'settled'] as const) {
-      expect(line(true, s)).toBe('4,000 mUSDC collateral (borrower’s)');
-    }
-  });
-
-  it('never puts the empty placeholder inside the held-collateral sentence', () => {
-    const all: IndexedLoanStatus[] = [
-      'active',
-      'repaid',
-      'defaulted',
-      'liquidated',
-      'settled',
-      'fallback_pending',
-      'internal_matched',
-    ];
-    for (const s of all) {
-      expect(line(false, s)).not.toMatch(/collateral \(borrower’s\)/);
-    }
-  });
-
-  it('says where an internal match took the collateral', () => {
-    expect(line(false, 'internal_matched')).toBe('MATCHED');
-  });
-
-  it('says a closed loan holds nothing any more, rather than that it never had collateral', () => {
-    for (const s of ['repaid', 'defaulted', 'liquidated', 'settled'] as const) {
-      expect(line(false, s)).toBe('CLOSED');
-    }
+  it('names the held collateral only for an open loan', () => {
+    expect(line(true, 'active')).toBe('4,000 mUSDC collateral (borrower’s)');
+    expect(line(true, 'fallback_pending')).toBe('4,000 mUSDC collateral (borrower’s)');
   });
 
   it('keeps "No collateral" for an open loan that holds none', () => {
     expect(line(false, 'active')).toBe('No collateral');
     expect(line(false, 'fallback_pending')).toBe('No collateral');
+  });
+
+  it('never states an amount as held once a loan has closed, whatever the record still says', () => {
+    // A borrower claim withdraws the collateral without clearing the field.
+    for (const s of closed) {
+      expect(line(true, s)).toBe('CLOSED');
+      expect(line(false, s)).toBe('CLOSED');
+    }
+    expect(line(true, 'internal_matched')).toBe('MATCHED');
+    expect(line(false, 'internal_matched')).toBe('MATCHED');
+  });
+
+  it('never puts the empty placeholder inside the held-collateral sentence', () => {
+    for (const s of ['active', 'fallback_pending', 'internal_matched', ...closed] as IndexedLoanStatus[]) {
+      expect(line(false, s)).not.toMatch(/collateral \(borrower’s\)/);
+    }
   });
 });
 

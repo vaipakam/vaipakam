@@ -1389,13 +1389,13 @@
           "waiting": "ウォレットを待機中…"
         },
         "loanBetweenAmountUnknown": "他の2つのウォレット間のローン — 貸し出された金額は現在表示できません",
-        "nothingLockedClosed": "現在ロックされているものはありません — このローンは終了しています。",
-        "nothingLockedInternalMatch": "現在ロックされているものはありません — 内部マッチングにより、借り手の担保はマッチ相手のローンの貸し手に支払われました。余剰分があれば、借り手の請求を通じて借り手に返還されます。",
         "receiveInternalMatchProceeds": "内部マッチングがこのローンの貸し手のために記録した受取額。",
         "positionBorrowed": "あなたの借り手ポジション · このローン開始時に {{principal}} を借入",
         "positionLent": "あなたの貸し手ポジション · このローン開始時に {{principal}} を貸出",
         "positionBorrowedAmountUnknown": "あなたの借り手ポジション · このローン開始時の借入額は現在表示できません",
-        "positionLentAmountUnknown": "あなたの貸し手ポジション · このローン開始時の貸出額は現在表示できません"
+        "positionLentAmountUnknown": "あなたの貸し手ポジション · このローン開始時の貸出額は現在表示できません",
+        "collateralSettledClosed": "このローンは終了しています — 担保は請求を通じて精算され、ローンのためにロックされてはいません。",
+        "collateralSettledInternalMatch": "内部マッチングにより、借り手の担保はマッチ相手のローンの貸し手に支払われました。余剰分があれば、借り手の請求を通じて借り手に返還されます。"
       },
       "loading": "ポジションを読み込み中…",
       "openOffers": "未決済オファー",

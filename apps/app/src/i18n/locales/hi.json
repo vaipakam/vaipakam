@@ -1389,13 +1389,13 @@
           "waiting": "वॉलेट का इंतजार…"
         },
         "loanBetweenAmountUnknown": "दो दूसरे wallets के बीच एक loan — lend किया गया amount अभी उपलब्ध नहीं है",
-        "nothingLockedClosed": "अभी कुछ भी locked नहीं है — यह loan बंद हो चुका है।",
-        "nothingLockedInternalMatch": "अभी कुछ भी locked नहीं है — internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।",
         "receiveInternalMatchProceeds": "Internal matching ने इस loan के lender के लिए जो proceeds record किए।",
         "positionBorrowed": "आपकी borrowing position · इस loan की शुरुआत में {{principal}} borrow किया गया",
         "positionLent": "आपकी lending position · इस loan की शुरुआत में {{principal}} lend किया गया",
         "positionBorrowedAmountUnknown": "आपकी borrowing position · इस loan की शुरुआत में borrow किया गया amount अभी उपलब्ध नहीं है",
-        "positionLentAmountUnknown": "आपकी lending position · इस loan की शुरुआत में lend किया गया amount अभी उपलब्ध नहीं है"
+        "positionLentAmountUnknown": "आपकी lending position · इस loan की शुरुआत में lend किया गया amount अभी उपलब्ध नहीं है",
+        "collateralSettledClosed": "यह loan बंद हो चुका है — इसका collateral claims के ज़रिए settle होता है, loan के लिए locked नहीं रहता।",
+        "collateralSettledInternalMatch": "Internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।"
       },
       "loading": "आपकी positions लोड हो रही हैं…",
       "openOffers": "Open offers",

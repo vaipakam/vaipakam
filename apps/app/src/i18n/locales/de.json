@@ -1389,13 +1389,13 @@
           "waiting": "Warten auf die Wallet…"
         },
         "loanBetweenAmountUnknown": "Ein Kredit zwischen zwei anderen Wallets — der verliehene Betrag ist gerade nicht verfügbar",
-        "nothingLockedClosed": "Derzeit ist nichts gesperrt — dieser Kredit ist abgeschlossen.",
-        "nothingLockedInternalMatch": "Derzeit ist nichts gesperrt — das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück.",
         "receiveInternalMatchProceeds": "Die Erlöse, die das interne Matching für den Kreditgeber dieses Kredits erfasst hat.",
         "positionBorrowed": "Ihre Kreditnehmerposition · {{principal}} beim Start dieses Kredits geliehen",
         "positionLent": "Ihre Kreditgeberposition · {{principal}} beim Start dieses Kredits verliehen",
         "positionBorrowedAmountUnknown": "Ihre Kreditnehmerposition · der beim Start dieses Kredits geliehene Betrag ist gerade nicht verfügbar",
-        "positionLentAmountUnknown": "Ihre Kreditgeberposition · der beim Start dieses Kredits verliehene Betrag ist gerade nicht verfügbar"
+        "positionLentAmountUnknown": "Ihre Kreditgeberposition · der beim Start dieses Kredits verliehene Betrag ist gerade nicht verfügbar",
+        "collateralSettledClosed": "Dieser Kredit ist abgeschlossen — seine Sicherheit wird über die Claims abgewickelt und ist nicht mehr für den Kredit gesperrt.",
+        "collateralSettledInternalMatch": "Das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück."
       },
       "loading": "Ihre Positionen werden geladen…",
       "openOffers": "Offene Angebote",

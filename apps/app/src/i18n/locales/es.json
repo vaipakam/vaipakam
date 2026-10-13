@@ -1389,13 +1389,13 @@
           "waiting": "Esperando la billetera…"
         },
         "loanBetweenAmountUnknown": "Un préstamo entre otras dos wallets — el importe prestado no está disponible ahora mismo",
-        "nothingLockedClosed": "Ahora no hay nada bloqueado — este préstamo se ha cerrado.",
-        "nothingLockedInternalMatch": "Ahora no hay nada bloqueado — el emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación.",
         "receiveInternalMatchProceeds": "Los fondos que el emparejamiento interno registró para el prestamista de este préstamo.",
         "positionBorrowed": "Tu posición prestataria · {{principal}} tomados cuando empezó este préstamo",
         "positionLent": "Tu posición prestamista · {{principal}} prestados cuando empezó este préstamo",
         "positionBorrowedAmountUnknown": "Tu posición prestataria · el importe tomado cuando empezó este préstamo no está disponible ahora mismo",
-        "positionLentAmountUnknown": "Tu posición prestamista · el importe prestado cuando empezó este préstamo no está disponible ahora mismo"
+        "positionLentAmountUnknown": "Tu posición prestamista · el importe prestado cuando empezó este préstamo no está disponible ahora mismo",
+        "collateralSettledClosed": "Este préstamo se ha cerrado — su colateral se liquida mediante las reclamaciones, no queda bloqueado para el préstamo.",
+        "collateralSettledInternalMatch": "El emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación."
       },
       "loading": "Cargando tus posiciones…",
       "openOffers": "Ofertas abiertas",

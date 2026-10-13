@@ -1389,13 +1389,13 @@
           "waiting": "지갑 대기 중…"
         },
         "loanBetweenAmountUnknown": "다른 두 지갑 사이의 대출 — 대여된 금액은 지금 표시할 수 없습니다",
-        "nothingLockedClosed": "지금은 잠긴 것이 없습니다 — 이 대출은 종료되었습니다.",
-        "nothingLockedInternalMatch": "지금은 잠긴 것이 없습니다 — 내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다.",
         "receiveInternalMatchProceeds": "내부 매칭이 이 대출의 대여자를 위해 기록한 수령액.",
         "positionBorrowed": "내 차입 포지션 · 이 대출 시작 시 {{principal}} 차입",
         "positionLent": "내 대여 포지션 · 이 대출 시작 시 {{principal}} 대여",
         "positionBorrowedAmountUnknown": "내 차입 포지션 · 이 대출 시작 시 차입한 금액은 지금 표시할 수 없습니다",
-        "positionLentAmountUnknown": "내 대여 포지션 · 이 대출 시작 시 대여한 금액은 지금 표시할 수 없습니다"
+        "positionLentAmountUnknown": "내 대여 포지션 · 이 대출 시작 시 대여한 금액은 지금 표시할 수 없습니다",
+        "collateralSettledClosed": "이 대출은 종료되었습니다 — 담보는 청구를 통해 정산되며 대출을 위해 잠겨 있지 않습니다.",
+        "collateralSettledInternalMatch": "내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다."
       },
       "loading": "포지션 불러오는 중…",
       "openOffers": "열린 제안",

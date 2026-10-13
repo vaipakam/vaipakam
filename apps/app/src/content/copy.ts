@@ -3131,11 +3131,12 @@ const copySource = {
       titleLoan: 'Loan',
       titleRental: 'Rental',
       noCollateral: 'No collateral',
-      // #2454 — the "Locked" row once a loan holds no collateral any more.
-      // Never substituted into lockedCollateralBorrower.
-      nothingLockedClosed: 'Nothing is locked now — this loan has closed.',
-      nothingLockedInternalMatch:
-        'Nothing is locked now — internal matching paid the borrower’s collateral to the lender of the loan it was matched against. Any surplus goes back to the borrower through their claim.',
+      // #2454 / #2461 r3 — the "Locked" row of a CLOSED loan. It names no
+      // amount as held: once a loan closes, the loan record's collateral
+      // figure is not custody (a claim withdraws it without clearing it).
+      collateralSettledClosed: 'This loan has closed — its collateral is settled through the claims, not locked for the loan.',
+      collateralSettledInternalMatch:
+        'Internal matching paid the borrower’s collateral to the lender of the loan it was matched against. Any surplus goes back to the borrower through their claim.',
       owedRentalPrepaid: 'Nothing to repay — rental fees were prepaid (late fees only if closed past the due date).',
       healthChecking: 'Checking this loan’s health…',
       healthReadFailed: 'We couldn’t read this loan’s health right now — retrying. Liquidation protection still applies on-chain.',

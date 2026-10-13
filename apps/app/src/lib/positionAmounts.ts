@@ -53,34 +53,37 @@ export function withIndexedInitPrincipal<T extends Pick<IndexedLoan, 'loanId' | 
 
 /** The labels {@link lockedCollateralLine} chooses from. */
 export interface LockedLineLabels {
-  /** "{{collateral}} collateral (borrower's)" — collateral is still held. */
+  /** "{{collateral}} collateral (borrower's)" — held for an open loan. */
   lockedCollateralBorrower: (collateral: string) => string;
-  /** No collateral held on a loan that is still open. */
+  /** An open loan that holds no collateral. */
   noCollateral: string;
-  /** Nothing held because the loan has closed. */
-  nothingLockedClosed: string;
-  /** Nothing held because internal matching used the collateral. */
-  nothingLockedInternalMatch: string;
+  /** A closed loan: its collateral is settled through the claims. */
+  collateralSettledClosed: string;
+  /** An internally matched loan: what the match did with the collateral. */
+  collateralSettledInternalMatch: string;
 }
 
-/** The "Locked" row of an ERC-20 loan: what collateral is held NOW.
+/** The "Locked" row of an ERC-20 loan.
  *
- *  `collateralAmount` is a live figure too — internal matching pays the
- *  borrower's collateral to the matched loan's lender and leaves only any
- *  surplus, and a close-out releases it. So an empty amount on a closed loan
- *  means "nothing is held any more", not "this loan had no collateral", and
- *  it is never substituted into the held-collateral sentence (which is how
- *  "No collateral collateral (borrower's)" was produced). */
+ *  Only an OPEN loan (active, or in the fallback) states an amount as locked.
+ *  The struct's `collateralAmount` is not custody state once a loan closes:
+ *  internal matching pays the collateral away and leaves only any surplus,
+ *  and a borrower's claim withdraws the collateral without clearing the
+ *  field (#2461 r3). So a closed loan says how its collateral was settled
+ *  and never names an amount as still held — and an empty amount is never
+ *  substituted into the held-collateral sentence (which is how "No
+ *  collateral collateral (borrower's)" was produced, #2454). */
 export function lockedCollateralLine(args: {
   hasCollateral: boolean;
   status: IndexedLoanStatus;
-  /** The formatted held amount; used only when `hasCollateral`. */
+  /** The formatted held amount; used only for an open loan. */
   collateral: string;
   labels: LockedLineLabels;
 }): string {
   const { hasCollateral, status, collateral, labels } = args;
-  if (hasCollateral) return labels.lockedCollateralBorrower(collateral);
-  if (status === 'internal_matched') return labels.nothingLockedInternalMatch;
-  if (status === 'active' || status === 'fallback_pending') return labels.noCollateral;
-  return labels.nothingLockedClosed;
+  if (status === 'active' || status === 'fallback_pending') {
+    return hasCollateral ? labels.lockedCollateralBorrower(collateral) : labels.noCollateral;
+  }
+  if (status === 'internal_matched') return labels.collateralSettledInternalMatch;
+  return labels.collateralSettledClosed;
 }
