@@ -45,9 +45,11 @@ main() {
     *) echo "unsupported CPU architecture $(uname -m)" >&2; exit 1 ;;
   esac
   local base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  # Global, not local: the EXIT trap runs after main() has returned, when a
+  # local would be out of scope (and `set -u` would fail the install).
+  INSTALL_TMP="$(mktemp -d)"
+  trap 'rm -rf "${INSTALL_TMP:-}"' EXIT
+  local tmp="$INSTALL_TMP"
   curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
   local file
   file="$(grep -oE "node-v${NODE_MAJOR}\.[0-9]+\.[0-9]+-linux-${arch}\.tar\.xz" "$tmp/SHASUMS256.txt" | head -1)"
@@ -91,11 +93,25 @@ main() {
   install -m 755 -o root -g root "$kit/update.sh" "$ROOT/update.sh"
   install -m 755 -o root -g root "$kit/build.sh" "$ROOT/build.sh"
 
-  install -d -m 750 /etc/vaipakam
+  if [ -L /etc/vaipakam ] || [ -L /etc/vaipakam/keeper.env ]; then
+    echo "/etc/vaipakam and its keeper.env must not be links; fix them by hand and re-run" >&2
+    exit 1
+  fi
+  install -d -o root -g root -m 750 /etc/vaipakam
   if [ ! -e /etc/vaipakam/keeper.env ]; then
     install -m 600 -o root -g root "$kit/keeper.env.example" /etc/vaipakam/keeper.env
     log "created /etc/vaipakam/keeper.env from the template; fill it in before the cutover"
   fi
+  # Enforced on every run, not only at creation: a file or directory made
+  # earlier by hand or by other tooling keeps its contents but not looser
+  # access. The file holds the signing key and an account-wide D1 token.
+  if [ ! -f /etc/vaipakam/keeper.env ]; then
+    echo "/etc/vaipakam/keeper.env must be a regular file; fix it by hand and re-run" >&2
+    exit 1
+  fi
+  chown root:root /etc/vaipakam /etc/vaipakam/keeper.env
+  chmod 750 /etc/vaipakam
+  chmod 600 /etc/vaipakam/keeper.env
 
   local unit
   for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do

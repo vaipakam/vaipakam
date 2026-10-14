@@ -9,8 +9,9 @@
 #   2. stops if `current` is already that commit's release;
 #   3. exports exactly that commit with `git archive` and builds it in a
 #      throwaway sandbox (build.sh): a fresh dynamic user that cannot read
-#      the env file or write the releases, and that runs the new bundle with
-#      --check, so a build that cannot even load is never installed;
+#      the env file or write the releases, keeps nothing once it ends (so no
+#      build can leave tooling behind for the next), and runs the new bundle
+#      with --check, so a build that cannot even load is never installed;
 #   4. copies the bundle into releases/<commit> and switches `current` to it
 #      in one rename. Root chose the commit and built that commit's own
 #      export, so the release is bound to it; nothing another account wrote
@@ -20,7 +21,8 @@
 #      the keeper), which needs no restart.
 #
 # Any failure exits non-zero before `current` moves, so the running keeper is
-# untouched and the next run retries. The only state is `current` itself, so
+# untouched and the next run retries. A restart that cannot be queued puts
+# `current` back, so that is retried too. The only state is `current` itself, so
 # there is no record of "already built" to fall out of step with it.
 #
 # What this cannot protect against is stated in docs/ops/KeeperMachine.md
@@ -45,29 +47,44 @@ if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
 fi
 
 log "building $BRANCH at $target"
+prev="$(readlink "$ROOT/current" 2>/dev/null || true)"
 tmp="$(mktemp -d)"
 incoming=""
 # A run that fails part-way leaves neither its scratch nor a half-written
 # release behind (the glob that prunes releases skips dot-directories).
 trap 'rm -rf "$tmp" ${incoming:+"$incoming"}' EXIT
-chmod 755 "$tmp"
 git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
 chmod 644 "$tmp/src.tar"
+# The one directory the sandbox may write. `$tmp` itself stays 0700, so no
+# other account on the machine can reach it; the sandbox sees only the
+# bind-mounted paths below.
+mkdir "$tmp/out"
+chmod 777 "$tmp/out"
+# One fixed unit name: systemd refuses to start a second unit of the same
+# name, so two builds can never run at once, even one orphaned by a stopped
+# or timed-out updater. PartOf stops the build when the updater stops.
 systemd-run --quiet --wait --pipe --collect \
-  --unit="vaipakam-keeper-build-${target:0:12}" \
+  --unit=vaipakam-keeper-build \
+  -p PartOf=vaipakam-keeper-update.service \
   -p DynamicUser=yes \
-  -p CacheDirectory=vaipakam-keeper-build \
   -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $ROOT/build.sh:/run/keeper-build.sh" \
+  -p BindPaths="$tmp/out:/run/keeper-out" \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
   -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
   -p Nice=10 \
-  -E HOME=/var/cache/vaipakam-keeper-build \
-  -E COREPACK_HOME=/var/cache/vaipakam-keeper-build/corepack \
+  -E HOME=/tmp/home \
+  -E COREPACK_HOME=/tmp/corepack \
   -E COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   -E PATH=/usr/local/bin:/usr/bin:/bin \
-  /bin/bash /run/keeper-build.sh /run/keeper-src.tar /var/cache/vaipakam-keeper-build/keeper-host.mjs
-built="/var/cache/vaipakam-keeper-build/keeper-host.mjs"
+  /bin/bash /run/keeper-build.sh /run/keeper-src.tar /run/keeper-out
+built="$tmp/out/keeper-host.mjs"
+# The sandbox wrote this file and is gone now. Take only a regular file, never
+# a link, so the build cannot point root at something else to copy.
+if [ -L "$built" ] || [ ! -f "$built" ]; then
+  echo "[keeper-update] the build left no regular keeper-host.mjs" >&2
+  exit 1
+fi
 
 incoming="$(mktemp -d "$ROOT/releases/.incoming.XXXXXX")"
 install -m 644 -o root -g root "$built" "$incoming/keeper-host.mjs"
@@ -80,11 +97,21 @@ fi
 rm -rf "$release"
 mv -T "$incoming" "$release"
 incoming=""
-ln -sfn "$release" "$ROOT/current.next"
-mv -Tf "$ROOT/current.next" "$ROOT/current"
+switch_current() {
+  ln -sfn "$1" "$ROOT/current.next"
+  mv -Tf "$ROOT/current.next" "$ROOT/current"
+}
+switch_current "$release"
 if [ "$restart" = yes ]; then
+  if ! systemctl try-restart --no-block vaipakam-keeper.service; then
+    # Put `current` back, so this commit is still undeployed and the next
+    # run rebuilds it and tries the restart again, rather than seeing its
+    # release in place and stopping with the old bundle still running.
+    if [ -n "$prev" ]; then switch_current "$prev"; else rm -f "$ROOT/current"; fi
+    echo "[keeper-update] could not queue the keeper restart; the next run retries $target" >&2
+    exit 1
+  fi
   log "deployed $target; a running keeper restarts onto it after its current tick"
-  systemctl try-restart --no-block vaipakam-keeper.service
 else
   log "deployed $target; the keeper is byte-identical to the running one, so no restart"
 fi

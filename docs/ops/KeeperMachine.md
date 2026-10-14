@@ -32,15 +32,23 @@ A merge to `main` is the deploy. Each run of `update.sh` does the following:
 Any failure leaves the running keeper untouched, and the next run retries.
 The only state is `current`.
 
-No account holds everything. The build user is new for every build, and it
-can read neither the env file nor write the releases. Root chose the commit
-and built that commit's own export, so a release is always bound to its
-commit. The keeper's dynamic user is the only one that sees the env file.
+The build user is new for every build. It can read neither the env file nor
+write the releases, and nothing it writes survives the build: its source
+tree, Corepack's copy of pnpm and pnpm's package store all live in its private
+`/tmp`, which systemd deletes with it. So a build cannot leave tooling behind
+for a later one to run. Each build downloads its packages afresh, checked
+against the lockfile's integrity hashes, and Corepack checks pnpm against
+npm's signing keys. Builds run one at a time under one fixed unit name. Root
+chose the commit and built that commit's own export, so a release is always
+bound to its commit. Of the service accounts, only the keeper's dynamic user
+sees the env file.
 
-Trust, stated plainly: whoever can merge to `main`, or tamper with a
-dependency the build fetches, controls what the keeper runs. The package
-store is kept between builds in the build cache, and pnpm checks every
-package against the lockfile's integrity hashes. This is the same trust the
+Trust, stated plainly. **Root on this machine is fully trusted**: it can read
+`/etc/vaipakam/keeper.env`, and with it the signing key and the D1 token, and
+it runs the updater. The sandboxing above keeps the build away from the
+secrets; it does nothing to limit root, so anyone with root or `sudo` here
+holds the keeper key. Whoever can merge to `main`, or tamper with a dependency
+the build fetches, controls what the keeper runs. This is the same trust the
 Workers' auto-deploy carries. Node comes from nodejs.org, verified against
 the release's published SHA-256 over TLS.
 

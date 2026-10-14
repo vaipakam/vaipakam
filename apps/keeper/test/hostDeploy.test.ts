@@ -62,12 +62,14 @@ describe('host deploy kit paths', () => {
     expect(pkg.scripts['build:host']).toContain('--outfile=dist/keeper-host.mjs');
     const build = read('build.sh');
     expect(build).toContain('apps/keeper/dist/keeper-host.mjs --check');
-    expect(build).toContain('install -m 644 apps/keeper/dist/keeper-host.mjs "$out"');
+    expect(build).toContain('install -m 644 apps/keeper/dist/keeper-host.mjs "$out_dir/keeper-host.mjs"');
     const update = read('update.sh');
-    expect(update).toContain('/bin/bash /run/keeper-build.sh /run/keeper-src.tar /var/cache/vaipakam-keeper-build/keeper-host.mjs');
-    expect(update).toContain('built="/var/cache/vaipakam-keeper-build/keeper-host.mjs"');
+    expect(update).toContain('-p BindPaths="$tmp/out:/run/keeper-out"');
+    expect(update).toContain('/bin/bash /run/keeper-build.sh /run/keeper-src.tar /run/keeper-out');
+    expect(update).toContain('built="$tmp/out/keeper-host.mjs"');
     expect(update).toContain('"$incoming/keeper-host.mjs"');
     expect(update).toContain('mv -Tf "$ROOT/current.next" "$ROOT/current"');
+    expect(update).toContain('switch_current "$release"');
     expect(read('vaipakam-keeper.service')).toContain('/opt/vaipakam-keeper/current/keeper-host.mjs');
   });
 
@@ -75,6 +77,11 @@ describe('host deploy kit paths', () => {
     const update = read('update.sh');
     expect(update).toContain('git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"');
     expect(update).toContain('-p DynamicUser=yes');
+    // Ephemeral: no cache survives a build, so no build can plant tooling.
+    expect(update).not.toContain('CacheDirectory');
+    expect(update).toContain('-p PrivateTmp=yes');
+    // One fixed name, so two builds cannot run at once.
+    expect(update).toMatch(/--unit=vaipakam-keeper-build \\$/m);
     expect(update).toContain('-p ProtectSystem=strict');
     expect(update).toContain('release="$ROOT/releases/$target"');
     expect(update).toContain('systemctl try-restart --no-block vaipakam-keeper.service');
