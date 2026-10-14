@@ -10,6 +10,13 @@
  *     running (BOTH parties, per the design table: the borrower can
  *     still repay with the late fee; the current lender-position holder
  *     learns a default — and their claim — may be near).
+ *   - `grace_ended` — the grace window has CLOSED (BOTH parties, #2463
+ *     follow-up): on the contract's own rule (`isLoanDefaultable`,
+ *     strictly past `maturity + grace`) the loan can now be defaulted, so
+ *     the lender can close it out and the borrower has lost the ordinary
+ *     repay window. Fires for the first 7 days past grace end, then goes
+ *     quiet — a loan that stays open longer is not re-announced, and a
+ *     default, once triggered, arrives through its own event.
  *
  * Runs at the ingest scan tail (chainIndexer.ts), same fail-open
  * discipline as the event materializer: derived convenience rows must
@@ -152,7 +159,7 @@ export function graceCaseSql(buckets: GraceBucketJson[] | null): string {
   return `CASE ${whens.join(' ')} ELSE ${Math.floor(elseG)} END`;
 }
 
-/** Fail-loud sweep bound: the maturity window (matured within max-grace,
+/** Fail-loud sweep bound: the maturity window (matured within max-grace + the grace_ended week,
  *  or due within 7d) should hold at most a few hundred loans per chain;
  *  if it ever exceeds this, log the truncation rather than silently
  *  skipping the tail (no-silent-caps rule). The window keeps shifting,
@@ -182,25 +189,51 @@ export interface CalendarLoanRow {
 interface Milestone {
   kind: NotifKind;
   /** Window start relative to maturity (seconds; negative = before). */
-  fromOffset: number;
+  fromOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   /** Window end relative to maturity (exclusive). */
   toOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   recipients: 'borrower' | 'both';
+  /** Which clock opens the window. A reminder (`wall`) is advice and may
+   *  run on the Worker's clock; a lifecycle claim (`chain`) states what the
+   *  CONTRACT now holds, so it is judged on the chain's own clock — the
+   *  settled head's timestamp — and is withheld when that is unknown. */
+  clock: 'wall' | 'chain';
 }
 
-/** The three calendar milestones. Each fires once per (loan, maturity):
+/** How long past grace end `grace_ended` stays emittable. Bounds the
+ *  sweep's look-back: without it every long-overdue open loan would sit in
+ *  the window forever. A week covers a sweep outage of days; a loan still
+ *  open after that has already been announced. */
+export const GRACE_ENDED_WINDOW_SECONDS = 7 * DAY;
+
+/** The four calendar milestones. Each fires once per (loan, maturity):
  *  T-7d and T-1d while the loan is still live; grace_entered from the
- *  due date until the grace window closes (past grace end the loan is
- *  liquidatable — a "grace running" nudge would be stale advice, and
- *  the terminal row arrives via the default/liquidation events). */
+ *  due date until the grace window closes (past grace end a "grace
+ *  running" nudge would be stale advice); grace_ended once the window has
+ *  closed — STRICTLY after `maturity + grace`, the same comparison
+ *  `DefaultedFacet.isLoanDefaultable` makes, so the row never says the
+ *  window closed one second before the contract agrees. The terminal row
+ *  for an actual default arrives via the default/liquidation events. */
 const MILESTONES: Milestone[] = [
-  { kind: 'maturity_7d', fromOffset: -7 * DAY, toOffset: () => 0, recipients: 'borrower' },
-  { kind: 'maturity_1d', fromOffset: -1 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  { kind: 'maturity_7d', fromOffset: () => -7 * DAY, toOffset: () => 0, recipients: 'borrower', clock: 'wall' },
+  { kind: 'maturity_1d', fromOffset: () => -1 * DAY, toOffset: () => 0, recipients: 'borrower', clock: 'wall' },
   {
     kind: 'grace_entered',
-    fromOffset: 0,
+    fromOffset: () => 0,
     toOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets),
     recipients: 'both',
+    clock: 'wall',
+  },
+  {
+    kind: 'grace_ended',
+    fromOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets) + 1,
+    toOffset: (durationDays, buckets) =>
+      effectiveGraceSeconds(durationDays, buckets) + GRACE_ENDED_WINDOW_SECONDS,
+    recipients: 'both',
+    // "Grace has ended" is the contract's own predicate, so it is read
+    // against chain time: a wall clock that has run ahead of the chain (a
+    // block gap, a stalled sequencer) must not announce it early.
+    clock: 'chain',
   },
 ];
 
@@ -216,6 +249,9 @@ export function planCalendarRows(
   nowSec: number,
   headBlock: number,
   graceBuckets: GraceBucketJson[] | null = null,
+  /** The settled head's block timestamp, for `chain`-clock milestones.
+   *  `null` withholds them: no lifecycle claim without the chain's time. */
+  chainNowSec: number | null = null,
 ): NotifRow[] {
   const rows: NotifRow[] = [];
   for (const loan of loans) {
@@ -230,9 +266,11 @@ export function planCalendarRows(
       isSaleVehicle: false,
     };
     for (const m of MILESTONES) {
-      const from = maturity + m.fromOffset;
+      const clockNow = m.clock === 'chain' ? chainNowSec : nowSec;
+      if (clockNow === null) continue;
+      const from = maturity + m.fromOffset(loan.duration_days, graceBuckets);
       const to = maturity + m.toOffset(loan.duration_days, graceBuckets);
-      if (nowSec < from || nowSec >= to) continue;
+      if (clockNow < from || clockNow >= to) continue;
       const sides: ('lender' | 'borrower')[] =
         m.recipients === 'both' ? ['lender', 'borrower'] : ['borrower'];
       const seen = new Set<string>();
@@ -312,9 +350,10 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
   // starve the un-notified tail. Each probe reconstructs a dedup key
   // (`chain:recipient:kind:loan:maturity`) for the most advanced kind
-  // due NOW (past maturity → grace_entered, within a day → maturity_1d,
-  // else maturity_7d); a stage crossing changes the computed kind, so a
-  // loan re-enters the window exactly when it has something new to emit.
+  // due NOW (past grace end → grace_ended, past maturity → grace_entered,
+  // within a day → maturity_1d, else maturity_7d); a stage crossing
+  // changes the computed kind, so a loan re-enters the window exactly when
+  // it has something new to emit.
   //
   // Every outer-column reference inside the correlated subqueries MUST
   // be `loans.`-qualified (Codex #1298 r6): notifications has its own
@@ -330,9 +369,21 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // grace-stage loan stays selectable until the CURRENT holder's key
   // exists (the zero/absent-lender guard keeps burned sides, which can
   // never be notified, from re-selecting the loan forever). Maturity
-  // stages are borrower-only, so the borrower key suffices there.
+  // stages are borrower-only, so the borrower key suffices there. Both
+  // grace stages are two-sided, so the lender leg probes the CURRENT
+  // stage's kind rather than a fixed one — a fixed 'grace_entered' would
+  // read as satisfied for a past-grace loan and suppress its grace_ended.
+  //
+  // The grace_ended arm compares against the CHAIN clock (its own bind,
+  // NULL when the settled head's timestamp is unknown, which makes the arm
+  // never match), the other arms against wall time — the same split the
+  // planner's `Milestone.clock` makes (#2479 r2 `4267041963`). Deciding the
+  // stage by wall time while the planner emits by chain time would suppress
+  // a lagging chain's loan as "already announced" on its grace_entered rows,
+  // or select it for a stage the planner then refuses to emit.
   const maturity = `(loans.start_time + loans.duration_days * 86400)`;
-  const stageKind = `(CASE WHEN ${maturity} <= ? THEN 'grace_entered'
+  const stageKind = `(CASE WHEN ${maturity} + ${graceCase} < ? THEN 'grace_ended'
+                      WHEN ${maturity} <= ? THEN 'grace_entered'
                       WHEN ${maturity} - ? <= 86400 THEN 'maturity_1d'
                       ELSE 'maturity_7d' END)`;
   const borrowerRcpt = `LOWER(COALESCE(loans.borrower_current_owner, loans.borrower))`;
@@ -359,7 +410,7 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
             ${withQuarantine ? `AND ${quarantineExclusionSql('loans')}` : ''}
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
-            AND (${maturity} + ${graceCase}) > ?
+            AND (${maturity} + ${graceCase} + ${GRACE_ENDED_WINDOW_SECONDS}) > ?
             AND (
               NOT EXISTS (
                 SELECT 1 FROM notifications n
@@ -371,8 +422,8 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
                 AND ${lenderRcpt} <> '0x0000000000000000000000000000000000000000'
                 AND NOT EXISTS (
                   SELECT 1 FROM notifications n2
-                  WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} ||
-                    ':grace_entered:' || loans.loan_id || ':' || ${maturity}
+                  WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} || ':' ||
+                    ${stageKind} || ':' || loans.loan_id || ':' || ${maturity}
                 )
               )
             )
@@ -409,6 +460,8 @@ export async function sweepCalendarNotifications(
    * their holders should hear about them.
    */
   excludeLoanIds: ReadonlySet<number> = new Set(),
+  /** The settled head's block timestamp (see `planCalendarRows`). */
+  chainNowSec: number | null = null,
 ): Promise<CalendarSweepResult> {
   try {
     // The effective grace schedule — snapshotted governance buckets
@@ -445,8 +498,8 @@ export async function sweepCalendarNotifications(
     }
 
     // Window: every real active loan whose maturity is within 7d ahead
-    // (T-7d arm) or within the WIDEST possible grace behind
-    // (grace_entered arm — bucket-derived so a custom longer-than-30d
+    // (T-7d arm) or within the WIDEST possible grace plus the grace_ended
+    // week behind (grace arms — bucket-derived so a custom longer-than-30d
     // grace can't fall out early). The arithmetic runs in SQLite so the
     // scan never loads the whole active set. Sale-vehicle/stub rows are
     // excluded (bookkeeping, not user loans); there is no loans-side
@@ -461,8 +514,9 @@ export async function sweepCalendarNotifications(
     // and those have days of window left before their reminder is
     // late. A loan-id order would starve a fixed tail instead.
     //
-    // The `maturity + <per-loan grace> > now` leg (Codex #1298 r2) drops
-    // loans already past their OWN grace end IN SQL: they emit nothing,
+    // The `maturity + <per-loan grace> + <grace_ended week> > now` leg
+    // (Codex #1298 r2, widened for grace_ended) drops loans already past
+    // their OWN last emittable moment IN SQL: they emit nothing,
     // so letting them occupy LIMIT slots (e.g. 30d loans 4–30 days
     // overdue under the default 3d grace, which the broad max-grace
     // look-back otherwise keeps selecting) would starve the emitting
@@ -513,22 +567,30 @@ export async function sweepCalendarNotifications(
           `migration; no redeploy is needed.`,
       );
     }
+    const windowClock = chainNowSec === null ? nowSec : Math.min(nowSec, chainNowSec);
     const res = await db
       .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
       .bind(
         chainId,
-        nowSec - maxGraceSeconds(graceBuckets),
+        // The look-back floor and the expiry leg run on the EARLIER of the
+        // two clocks (#2479 r2 `4267041963`): grace_ended's week is judged on
+        // chain time, so on a chain whose settled head lags wall time a
+        // wall-clock expiry would age a loan out before its chain-clock
+        // window opened — and no later tick would select it again.
+        windowClock - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS,
         nowSec + 7 * DAY,
+        windowClock,
+        // Suppression-probe binds (r5/r6), in SQL text order: the three
+        // comparisons that pick the borrower probe's current-stage kind
+        // (grace_ended on the chain clock, the other two on `now`), the
+        // grace-stage check guarding the lender-key leg, then the lender
+        // probe's own three. The keys' chain/loan/maturity segments concat
+        // the row's own INTEGER columns — a BOUND number can arrive as REAL
+        // (driver-dependent) and render '84532.0', silently missing every
+        // stored key.
+        chainNowSec, nowSec, nowSec,
         nowSec,
-        // Suppression-probe binds (r5/r6): the two `now` comparisons
-        // that pick the current-stage kind, then the grace-stage check
-        // guarding the lender-key leg. The keys' chain/loan/maturity
-        // segments concat the row's own INTEGER columns — a BOUND number
-        // can arrive as REAL (driver-dependent) and render '84532.0',
-        // silently missing every stored key.
-        nowSec,
-        nowSec,
-        nowSec,
+        chainNowSec, nowSec, nowSec,
       )
       .all<CalendarLoanRow>();
     const loans = res.results ?? [];
@@ -557,7 +619,7 @@ export async function sweepCalendarNotifications(
       );
     }
     if (eligible.length === 0) return EMPTY_SWEEP;
-    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets);
+    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets, chainNowSec);
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);
     if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new

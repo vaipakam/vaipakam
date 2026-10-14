@@ -1201,6 +1201,9 @@ export async function _sweepCalendarIfEstablished(
   nowSec: number,
   headBlock: number,
   outcome: ReconcilePassOutcome,
+  /** The settled head's block timestamp: lifecycle notices (grace ended)
+   *  are judged on chain time, never on this Worker's clock. */
+  chainNowSec: number,
 ): Promise<CalendarSweepResult> {
   if (!outcome.established) {
     console.warn(
@@ -1241,6 +1244,7 @@ export async function _sweepCalendarIfEstablished(
     nowSec,
     headBlock,
     new Set(outcome.unestablishedLoanIds),
+    chainNowSec,
   );
 }
 
@@ -2070,6 +2074,7 @@ async function runChainPass(
       Math.floor(Date.now() / 1000),
       blockToNumber(lastBlock),
       quietOutcome,
+      Number(settledHead.timestamp),
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
@@ -2425,6 +2430,7 @@ async function runChainPass(
     now,
     blockToNumber(scanTo),
     reconcileOutcome,
+    Number(settledHead.timestamp),
   );
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark

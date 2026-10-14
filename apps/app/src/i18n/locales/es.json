@@ -325,7 +325,8 @@
         "hf_warn": "La salud de un préstamo bajó de 1.5 — ábrelo para ver cómo está.",
         "hf_alert": "La salud de un préstamo bajó de 1.2 — ábrelo para ver cómo está.",
         "hf_critical": "La salud de un préstamo bajó de 1.05, cerca de la línea de liquidación 1.0 — ábrelo para actuar.",
-        "generic": "Hay una novedad sobre tu préstamo."
+        "generic": "Hay una novedad sobre tu préstamo.",
+        "grace_ended": "El periodo de gracia de un préstamo terminó — ábrelo para ver cómo está."
       },
       "loanRef": "Préstamo #{{loanId}} · toca para ver",
       "unreadBadgeTitle_zero": "{{count}} notificaciones sin leer",

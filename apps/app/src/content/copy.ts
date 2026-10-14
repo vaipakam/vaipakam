@@ -773,6 +773,10 @@ const copySource = {
       maturity_7d: 'A loan was a week from its due date — open it to see where it stands.',
       maturity_1d: 'A loan was a day from its due date — open it to see where it stands.',
       grace_entered: 'A loan went past its due date — open it to see where it stands.',
+      // #2463 follow-up — stated as of the notice, like the rows above: the
+      // grace window closing is a fact that stays true; whether the loan was
+      // then closed out is the position page's to say.
+      grace_ended: 'A loan’s grace period ended — open it to see where it stands.',
       // HF-band rows (#1213 PR 2b) — the keeper's loan-health crossings.
       // Same durable-history rule: each states the dip AS OF the notice
       // ("dipped") and defers the live number to the position page.

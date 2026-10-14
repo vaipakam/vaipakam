@@ -325,7 +325,8 @@
         "hf_warn": "एक loan की health 1.5 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_alert": "एक loan की health 1.2 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_critical": "एक loan की health 1.05 से नीचे गई, 1.0 liquidation line के करीब — action लेने के लिए खोलें।",
-        "generic": "आपके loan पर update है।"
+        "generic": "आपके loan पर update है।",
+        "grace_ended": "एक loan की grace period ख़त्म हो गई — उसकी स्थिति देखने के लिए खोलें।"
       },
       "loanRef": "Loan #{{loanId}} · देखने के लिए tap करें",
       "unreadBadgeTitle_zero": "{{count}} unread notifications",

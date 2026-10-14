@@ -340,6 +340,7 @@
         "maturity_7d": "A loan was a week from its due date — open it to see where it stands.",
         "maturity_1d": "A loan was a day from its due date — open it to see where it stands.",
         "grace_entered": "A loan went past its due date — open it to see where it stands.",
+        "grace_ended": "A loan’s grace period ended — open it to see where it stands.",
         "hf_warn": "A loan’s health dipped below 1.5 — open it to see where it stands.",
         "hf_alert": "A loan’s health dipped below 1.2 — open it to see where it stands.",
         "hf_critical": "A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.",

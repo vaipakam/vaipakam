@@ -54,6 +54,10 @@ export const NOTIF_KINDS = [
   'maturity_7d',
   'maturity_1d',
   'grace_entered',
+  // #2463 follow-up — the grace window CLOSED: on the contract's own
+  // clock the loan can now be defaulted (lender close-out). Time-derived
+  // like the three above, from the calendar sweep.
+  'grace_ended',
   // HF-band crossings (#1213 PR 2b) — produced by apps/keeper's
   // liquidator piggyback (hfBandNotifications.ts), NOT by this Worker;
   // listed here because this array is the taxonomy's source of truth
@@ -808,45 +812,62 @@ export interface RepairFingerprint {
 }
 
 /**
- * Chunked idempotent INSERT of planned inbox rows — shared by the
+ * Set-based idempotent INSERT of planned inbox rows — shared by the
  * event materializer above and the cron calendar sweep
  * (calendarNotifications.ts). Throws on a D1 failure; callers wrap in
  * their own fail-open try/catch. Returns the number of rows actually
  * inserted (INSERT OR IGNORE re-runs count 0).
+ *
+ * ONE STATEMENT PER CHUNK, NOT ONE PER ROW (#2479 r2 `4267041957`). D1
+ * counts every statement inside a `batch()` against its per-invocation
+ * query ceiling (50 on the free tier — see `subrequestBudget.ts`), so a
+ * statement per recipient row let one busy tick (a backlog of two-sided
+ * grace rows, a catch-up scan) submit thousands of queries and have the
+ * whole batch refused before any dedup key landed — retried, and refused,
+ * on every later tick. Each chunk is instead a single
+ * `INSERT … SELECT FROM json_each(?)` over a JSON array of row tuples: one
+ * bound parameter, one query, whatever the row count. The chunk bounds
+ * the size of that one parameter, not the statement count.
+ *
+ * All chunks go in one `batch()`, so the write is one subrequest and is
+ * all-or-nothing, which INSERT OR IGNORE makes safe to retry.
  */
 export async function insertNotificationRows(
   db: D1Database,
   rows: NotifRow[],
 ): Promise<number> {
-  let inserted = 0;
+  if (rows.length === 0) return 0;
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO notifications
        (chain_id, recipient, kind, loan_id, event_kind,
         block_number, log_index, created_at, dedup_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'),
+            json_extract(value, '$[2]'), json_extract(value, '$[3]'),
+            json_extract(value, '$[4]'), json_extract(value, '$[5]'),
+            json_extract(value, '$[6]'), json_extract(value, '$[7]'),
+            json_extract(value, '$[8]')
+       FROM json_each(?)`,
   );
-  // Chunk the batch: each row binds 9 params and D1 caps a Worker
-  // invocation at ~5000 bindings, so a busy catch-up scan with hundreds
-  // of recipient rows would blow the limit, throw, and (fail-open) skip
-  // that scan's rows forever. 500 rows × 9 = 4500 binds stays under
-  // (Codex #1292 r4).
+  // ~200 bytes a row, so 500 rows keep each bound JSON parameter near
+  // 100 KB — far inside D1's 2 MB value ceiling. 4,000 rows is 8 queries.
   const INSERT_CHUNK = 500;
+  const batch = [];
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
-      stmt.bind(
-        r.chainId,
-        r.recipient,
-        r.kind,
-        r.loanId,
-        r.eventKind,
-        r.blockNumber,
-        r.logIndex,
-        r.createdAt,
-        r.dedupKey,
-      ),
-    );
-    const results = await db.batch(batch);
-    for (const res of results) inserted += res.meta?.changes ?? 0;
+    const tuples = rows.slice(i, i + INSERT_CHUNK).map((r) => [
+      r.chainId,
+      r.recipient,
+      r.kind,
+      r.loanId,
+      r.eventKind,
+      r.blockNumber,
+      r.logIndex,
+      r.createdAt,
+      r.dedupKey,
+    ]);
+    batch.push(stmt.bind(JSON.stringify(tuples)));
   }
+  const results = await db.batch(batch);
+  let inserted = 0;
+  for (const res of results) inserted += res.meta?.changes ?? 0;
   return inserted;
 }

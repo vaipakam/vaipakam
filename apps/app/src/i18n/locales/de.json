@@ -325,7 +325,8 @@
         "hf_warn": "Die Gesundheit eines Kredits fiel unter 1,5 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_alert": "Die Gesundheit eines Kredits fiel unter 1,2 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_critical": "Die Gesundheit eines Kredits fiel unter 1,05, nahe an der Liquidationslinie 1,0 — öffnen Sie ihn, um zu handeln.",
-        "generic": "Es gibt ein Update zu Ihrem Kredit."
+        "generic": "Es gibt ein Update zu Ihrem Kredit.",
+        "grace_ended": "Die Nachfrist eines Kredits ist abgelaufen — öffnen Sie ihn, um den Stand zu sehen."
       },
       "loanRef": "Kredit #{{loanId}} · antippen zum Anzeigen",
       "unreadBadgeTitle_zero": "{{count}} ungelesene Benachrichtigungen",
