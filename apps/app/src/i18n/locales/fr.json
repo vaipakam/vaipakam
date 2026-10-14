@@ -1440,7 +1440,7 @@
       "graceUnknownLender": "Ce prêt est en retard — impossible de lire l'échéance exacte de la grâce pour le moment. Une fois la fenêtre de grâce terminée et le défaut enregistré, le retrait de garantie apparaîtra ici.",
       "graceUnknownViewer": "Ce prêt est en retard. Une fois sa fenêtre de grâce terminée, le prêteur pourra réclamer la garantie.",
       "graceOverBorrower": "La période de grâce est terminée — le protocole n'accepte plus le remboursement, et le prêteur peut prendre la garantie à tout moment. Une fois réclamée, le résultat apparaîtra ici.",
-      "graceOverLender": "La période de grâce est terminée — ce prêt peut maintenant être marqué en défaut. Cela se produit normalement automatiquement peu après ; une fois le défaut enregistré, le retrait de garantie apparaîtra ici.",
+      "graceOverLender": "La période de grâce est terminée — ce prêt peut maintenant être clôturé en défaut. Ne comptez pas sur une clôture automatique : vous pouvez le faire vous-même depuis la carte du prêt en retard sur cette page lorsqu’elle apparaît, et n’importe qui d’autre peut le faire avant vous. Une fois le prêt clôturé, le retrait de garantie apparaîtra ici.",
       "fallbackCureBorrower": "Ce prêt a dépassé sa période de grâce et un défaut est en cours de règlement. Vous pouvez encore rembourser intégralement pour le régulariser et récupérer votre garantie — mais seulement jusqu'à ce que le prêteur finalise le défaut, ce qui peut arriver à tout moment.",
       "owedRepaid": "Rien — {{principal}} plus les intérêts ont été remboursés en totalité.",
       "owedDefaulted": "Plus rien à rembourser — ce prêt s'est terminé en défaut et la garantie le couvre.",

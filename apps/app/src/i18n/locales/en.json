@@ -1552,7 +1552,7 @@
       "graceUnknownLender": "This loan is past due — we couldn’t read the exact grace deadline right now. Once the grace window ends and the default is recorded, the collateral claim appears here.",
       "graceUnknownViewer": "This loan is past due. Once its grace window ends, the lender can claim the collateral.",
       "graceOverBorrower": "The grace period has ended — the protocol no longer accepts repayment, and the lender can take the collateral at any moment. Once they claim it, the outcome will show here.",
-      "graceOverLender": "The grace period has ended — this loan can now be marked defaulted. That normally happens automatically shortly after; once the default is recorded, the collateral claim appears here.",
+      "graceOverLender": "The grace period has ended — this loan can now be closed out as a default. Don’t count on that happening automatically: you can do it yourself from the overdue-loan card on this page when it appears, and anyone else may do it first. Once the loan is closed, the collateral claim appears here.",
       "fallbackCureBorrower": "This loan is past its grace period and a default is being settled. You can still repay in full to cure it and get your collateral back — but only until the lender finalizes the default, which can happen at any moment.",
       "owedRepaid": "Nothing — {{principal}} plus interest was repaid in full.",
       "owedRepaidAmountUnknown": "Nothing — this loan was repaid in full.",
