@@ -16,49 +16,12 @@
  * outage, a KYC gate), so copy built on it says the close-out "may" be
  * possible and defers to the position page.
  */
-import { useState, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 import { focusManager, onlineManager, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { idleAware } from '../lib/idle';
-
-type GraceAnswer = { defaultable: boolean; requestedAt: number };
-
-function useLoanPastGraceQuery(loanId: number, enabled: boolean) {
-  const { readChain } = useActiveChain();
-  const publicClient = usePublicClient({ chainId: readChain.chainId });
-  return useQuery({
-    queryKey: ['loanPastGrace', readChain.chainId, loanId],
-    enabled: enabled && Boolean(publicClient),
-    // Polled in BOTH states. A `true` is not final: governance can lengthen
-    // the grace schedule (`setGraceBuckets` / `clearGraceBuckets`), which
-    // re-derives an open loan's deadline and can reopen ordinary repayment.
-    // A minute is fine-grained enough for a list badge, stretched once the
-    // session goes idle so an unattended Positions tab does not keep every
-    // mounted row reading forever.
-    refetchInterval: idleAware(60_000),
-    // The verdict is withheld after a refocus, reconnect or remount until a
-    // read sent after it lands (see `graceVerdictFrom`), so this query opts
-    // back into the revalidation the app turns off globally; one read per
-    // mounted open row (rows are windowed).
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchOnMount: true,
-    // The answer carries when its request was SENT, so freshness can be
-    // judged by when the chain was asked, not by when the reply landed.
-    queryFn: async (): Promise<GraceAnswer> => {
-      const requestedAt = Date.now();
-      const defaultable = (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'isLoanDefaultable',
-        args: [BigInt(loanId)],
-      })) as boolean;
-      return { defaultable, requestedAt };
-    },
-  });
-}
+import { idleAware, onActivityResume } from '../lib/idle';
 
 /** What a row may say about grace right now. `verdict` is set ONLY when the
  *  chain's answer is current; otherwise `read` says why it is not. */
@@ -67,70 +30,91 @@ export type GraceVerdict =
   | { read: 'checking' | 'unavailable'; verdict: undefined };
 
 /**
- * The single rule for when a cached answer may be shown. Review rounds r2,
- * r8, r9, r10 and r11 on #2475 each found another way a stale answer
- * outlived its moment: an error, a paused fetch, a disconnect, a reconnect,
- * a late reply, a remount. They share one cause, so they share one rule,
- * about the REQUEST: an answer is current only if the chain was asked after
- * the row's current observation began (`validSince`): the later of when
- * this row mounted and when the device last regained connectivity or
- * focus. TanStack serves cached `data` at each of those moments while it
- * revalidates, and governance may have changed the grace schedule in
- * between. +Infinity means offline, and an errored or paused latest read is
- * unavailable whatever it last returned.
+ * Root fix for #2475 review rounds 2 and 8–12. Each round found another
+ * moment where a cached answer outlived the session that read it (an
+ * error, a pause, a disconnect, a reconnect, a late reply, a remount, an
+ * in-flight request reused, a chain switched away and back). They share
+ * one cause: the answer lived in a cache whose lifetime was longer than
+ * the observation that justified showing it. So the answer no longer
+ * outlives that observation:
+ *
+ * - The query key carries a RESUME EPOCH that advances whenever the device
+ *   regains connectivity or focus, or the session resumes from idle. A resume is a new key: no cached data,
+ *   no shared in-flight request, a fresh read sent after the resume.
+ * - `gcTime: 0` drops a key's answer as soon as nothing observes it, so a
+ *   remounted row, or a chain switched away from and back to, starts from
+ *   "checking" with a fresh read rather than from a remembered answer.
+ *
+ * What remains is a plain rule over one live query.
  */
 export function graceVerdictFrom(q: {
-  answer: { defaultable: boolean; requestedAt: number } | undefined;
+  data: boolean | undefined;
   isError: boolean;
   isPaused: boolean;
-  validSince: number;
+  online: boolean;
 }): GraceVerdict {
-  if (q.isError || q.isPaused || q.validSince === Number.POSITIVE_INFINITY) {
-    return { read: 'unavailable', verdict: undefined };
-  }
-  if (q.answer === undefined || q.answer.requestedAt < q.validSince) {
-    // Not asked yet in this observation: the revalidating read is in
-    // flight or due (stale-on-mount / on-focus / on-reconnect refetch).
-    return { read: 'checking', verdict: undefined };
-  }
-  return { read: 'current', verdict: q.answer.defaultable };
+  if (q.isError || q.isPaused || !q.online) return { read: 'unavailable', verdict: undefined };
+  if (q.data === undefined) return { read: 'checking', verdict: undefined };
+  return { read: 'current', verdict: q.data };
 }
 
-// When the device last RESUMED: regained connectivity or window focus
-// (0 = neither lost in this session). Tracked directly, because TanStack
-// keeps showing cached `data` through both transitions until its
-// revalidating read lands.
-let lastResumeAt = 0;
+// Advances on every regain of connectivity, window focus or activity. Tracked here
+// because TanStack would otherwise keep serving the pre-resume answer
+// until its revalidating read lands.
+let resumeEpoch = 0;
 let wasOnline = onlineManager.isOnline();
 let wasFocused = focusManager.isFocused();
 onlineManager.subscribe((online) => {
-  if (online && !wasOnline) lastResumeAt = Date.now();
+  if (online && !wasOnline) resumeEpoch += 1;
   wasOnline = online;
 });
 focusManager.subscribe((focused) => {
-  if (focused && !wasFocused) lastResumeAt = Date.now();
+  if (focused && !wasFocused) resumeEpoch += 1;
   wasFocused = focused;
+});
+// The first interaction after an idle stretch is a resume too: the poll had
+// been stretched, so the answer in hand may be minutes old.
+onActivityResume(() => {
+  resumeEpoch += 1;
 });
 function subscribeResume(cb: () => void) {
   const offOnline = onlineManager.subscribe(cb);
   const offFocus = focusManager.subscribe(cb);
+  const offActivity = onActivityResume(cb);
   return () => {
     offOnline();
     offFocus();
+    offActivity();
   };
 }
-function resumedSince() {
-  return onlineManager.isOnline() ? lastResumeAt : Number.POSITIVE_INFINITY;
-}
+const getResumeEpoch = () => resumeEpoch;
+const getOnline = () => onlineManager.isOnline();
 
 export function useLoanPastGrace(loanId: number, enabled: boolean): GraceVerdict {
-  const q = useLoanPastGraceQuery(loanId, enabled);
-  const [mountedAt] = useState(() => Date.now());
-  const resumed = useSyncExternalStore(subscribeResume, resumedSince, resumedSince);
-  return graceVerdictFrom({
-    answer: q.data,
-    isError: q.isError,
-    isPaused: q.isPaused,
-    validSince: Math.max(mountedAt, resumed),
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const epoch = useSyncExternalStore(subscribeResume, getResumeEpoch, getResumeEpoch);
+  const online = useSyncExternalStore(subscribeResume, getOnline, getOnline);
+  const q = useQuery({
+    queryKey: ['loanPastGrace', readChain.chainId, loanId, epoch],
+    enabled: enabled && Boolean(publicClient),
+    // See the block comment above: an answer lives only as long as the
+    // observation that read it.
+    gcTime: 0,
+    // Polled in BOTH states. A `true` is not final: governance can lengthen
+    // the grace schedule (`setGraceBuckets` / `clearGraceBuckets`), which
+    // re-derives an open loan's deadline and can reopen ordinary repayment.
+    // A minute is fine-grained enough for a list badge, stretched once the
+    // session goes idle so an unattended Positions tab does not keep every
+    // mounted row reading forever.
+    refetchInterval: idleAware(60_000),
+    queryFn: () =>
+      publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'isLoanDefaultable',
+        args: [BigInt(loanId)],
+      }) as Promise<boolean>,
   });
+  return graceVerdictFrom({ data: q.data, isError: q.isError, isPaused: q.isPaused, online });
 }
