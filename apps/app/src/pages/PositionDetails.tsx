@@ -791,9 +791,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // loading render and called on the next one — "Rendered more hooks
   // than during the previous render", on every page load. It needs
   // nothing from the reconciled row, so it belongs up here.
-  const assertSaleSettlementSafe = useCallback(async (): Promise<
-    string | null
-  > => {
+  const assertSaleSettlementSafe = useCallback(async (
+    /** Judge the sale at this block rather than the latest, so a caller
+     *  can pair the verdict with its own reads from the same block. */
+    atBlock?: bigint,
+  ): Promise<string | null> => {
     // A loan that can never be listed (non-ERC-20 principal or
     // collateral) has nothing to probe (Codex #1511 r7).
     if (!saleEligible) return null;
@@ -807,6 +809,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loanId,
         loan.data.lenderTokenId,
         address ?? undefined,
+        atBlock,
       );
       if (state === 'accepted') {
         // Block ONLY while the loan is genuinely Active. A sale
@@ -820,6 +823,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           publicClient,
           walletChain.diamondAddress,
           loanId,
+          atBlock,
         );
         return Number(live.status) === LOAN_STATUS_ACTIVE
           ? copy.saleHold.completionPaused

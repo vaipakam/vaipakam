@@ -15,17 +15,18 @@
  * exactly as long as nothing drew it. A card that explains what it is
  * waiting on is worth more here than a clean empty space.
  *
- * ## The one state that shows no button on purpose
+ * ## The state that needs a sale route
  *
- * `ready-needs-route` is genuinely closable on-chain — a keeper could
- * do it this second — but the app cannot build the `AdapterCall[]` the
- * contract requires for liquid collateral, and `swapWithFailover`
+ * `ready-needs-route` — liquid collateral that has not collapsed — is
+ * closable only with a non-empty `AdapterCall[]`: `swapWithFailover`
  * reverts `NoEnabledSwapRoute` on an empty try-list rather than falling
- * back. So there is no submit button: offering one would sell the
- * lender a guaranteed revert at their own expense. The card says the
- * position is eligible and that the app is the limitation, because
- * blaming the protocol for an app gap would send them to the wrong
- * place for help.
+ * back. Until #2463 the app could not build one and showed no button.
+ * It now asks for prices at confirm time (`data/closeOutRoute`) and
+ * sends the ranked list. The button appears only where the Diamond's own
+ * adapter list holds a venue the app can ask; where it holds none, the
+ * card still says the position is eligible and that the app is the
+ * limitation, because blaming the protocol for an app gap would send
+ * the lender to the wrong place for help.
  *
  * ## What this card never says
  *
@@ -40,6 +41,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { Address } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import { AlertTriangle } from 'lucide-react';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
@@ -62,7 +66,17 @@ import {
   canSubmitFromApp,
   shouldRenderForcedClose,
   type ForcedCloseReadiness,
+  type RouteAvailability,
 } from '../data/forcedClose';
+import {
+  agentQuoteOrigin,
+  buildCloseOutRoute,
+  noQuoteReason,
+  type RoutePosture,
+  previewCloseOut,
+  readRouteStanding,
+  routeMissingAnswers,
+} from '../data/closeOutRoute';
 
 /** How long a close-out may go unaccounted for before the card SAYS SO.
  *
@@ -189,7 +203,7 @@ export function ForcedCloseCard({
    *  all, so a close-out that would strand an accepted sale's manual
    *  completion simulates and executes perfectly (round 32 P1). This is
    *  a product-level interlock, and it has to be asked as one. */
-  preSubmitBlock: () => Promise<string | null>;
+  preSubmitBlock: (atBlock?: bigint) => Promise<string | null>;
 }) {
   const { write, ready } = useDiamondWrite();
   const { walletChain, address } = useActiveChain();
@@ -856,6 +870,60 @@ export function ForcedCloseCard({
     loanId,
   ]);
 
+  /** Which venues the Diamond lists that this app can ask for a sale
+   *  price (#2463). Read only where a route is needed. It decides whether
+   *  the button exists; the route itself is built fresh at confirm time,
+   *  from a fresh read, because quotes do not keep and governance can
+   *  change the list in between. Under the `forcedClose` prefix so the
+   *  post-submit refresh re-reads it with everything else. */
+  const routeChainId = walletChain?.chainId;
+  const routeDiamond = walletChain?.diamondAddress as Address | undefined;
+  const testnetMockAdapter = getDeployment(routeChainId)?.testnetMocks
+    ?.mockSwapAdapter as Address | undefined;
+  const rosterQuery = useQuery({
+    queryKey: ['forcedClose', 'routeStanding', routeChainId, routeDiamond],
+    enabled:
+      readiness === 'ready-needs-route' &&
+      publicClient !== undefined &&
+      routeDiamond !== undefined &&
+      routeChainId !== undefined,
+    queryFn: () =>
+      readRouteStanding({
+        client: publicClient!,
+        diamond: routeDiamond!,
+        chainId: routeChainId!,
+        testnetMockAdapter,
+        agentOrigin: agentQuoteOrigin(),
+      }),
+    staleTime: 60_000,
+    // Re-read while the card is open: governance can enable or register a
+    // venue at any time, and a refusal must not outlive the condition
+    // behind it. The confirm reads the list afresh regardless.
+    refetchInterval: 60_000,
+  });
+  // One derived posture (`data/closeOutRoute.readRouteStanding`) drives the
+  // button, the body and the confirm-time refusals alike, judged per slot
+  // by the same rule the confirm uses. An unread roster is 'unknown', not
+  // 'none': absence was not proven. So is one whose latest refresh FAILED:
+  // TanStack keeps the previous data beside the error, and a posture
+  // derived from it would claim a venue list the app can no longer
+  // substantiate (round 12).
+  const posture: RoutePosture | undefined =
+    rosterQuery.data === undefined || rosterQuery.isError ? undefined : rosterQuery.data.posture;
+  const routeAvailability: RouteAvailability =
+    posture === 'available'
+      ? 'available'
+      : posture === undefined || posture === 'unread'
+        ? 'unknown'
+        : 'none';
+  /** Set while the confirm is asking exchanges for prices — the one
+   *  stretch of a close-out where nothing is on screen otherwise. */
+  const [findingRoute, setFindingRoute] = useState(false);
+  /** Set while a route built without some venue's answer is on its way to
+   *  the wallet (#2463 round 15): its back-ups are fewer than they might
+   *  be, and the lender can still reject it there. */
+  const [routeShort, setRouteShort] = useState(false);
+
   if (!shouldRenderForcedClose(readiness)) return null;
 
   // The hold, and every reason its arms differ, is computed above and
@@ -863,7 +931,101 @@ export function ForcedCloseCard({
   // history lives with the case table rather than beside the render,
   // because arguing this predicate from a comment instead of from cases
   // is what broke it four rounds running.
-  const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
+  const submittable =
+    canSubmitFromApp(readiness, routeAvailability) && !holdingAfterSubmit;
+
+  /** The try-list for THIS confirm (#2463): the loan's collateral as the
+   *  chain holds it now, and the Diamond's adapter list as it stands now,
+   *  quoted now. Returns the calls, or the sentence to show instead —
+   *  never an empty list, which the contract would refuse. */
+  async function findCloseOutRoute(): Promise<
+    | { calls: readonly AdapterCall[]; quotedAmount: bigint; missingAnswers: boolean }
+    | { message: string }
+  > {
+    if (!publicClient || routeDiamond === undefined || routeChainId === undefined) {
+      return { message: copy.forcedClose.routeRosterFailed };
+    }
+    let standing;
+    let sale;
+    try {
+      const [loan, fresh] = await Promise.all([
+        publicClient.readContract({
+          address: routeDiamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [BigInt(loanId)],
+        }) as Promise<{
+          collateralAsset: Address;
+          principalAsset: Address;
+          collateralAmount: bigint;
+        }>,
+        readRouteStanding({
+          client: publicClient,
+          diamond: routeDiamond,
+          chainId: routeChainId,
+          testnetMockAdapter,
+          agentOrigin: agentQuoteOrigin(),
+        }),
+      ]);
+      standing = fresh;
+      sale = {
+        sellToken: loan.collateralAsset,
+        buyToken: loan.principalAsset,
+        sellAmount: loan.collateralAmount,
+      };
+    } catch {
+      return { message: copy.forcedClose.routeRosterFailed };
+    }
+    // Everything is re-read here, so it can have changed since the card
+    // rendered: the same posture decides what this confirm can claim.
+    const fresh = standing.posture;
+    if (fresh !== 'available') {
+      return {
+        message:
+          fresh === 'unread'
+            ? copy.forcedClose.routeRosterFailed
+            : fresh === 'no-enabled-venue'
+              ? copy.forcedClose.routeNoEnabledVenue
+              : fresh === 'proxy-unconfigured'
+                ? copy.forcedClose.routeNotConfigured
+                : copy.forcedClose.routeNoAskableVenue,
+      };
+    }
+    const route = await buildCloseOutRoute({
+      client: publicClient,
+      chainId: routeChainId,
+      diamond: routeDiamond,
+      slots: standing.slots,
+      sale,
+      agentOrigin: agentQuoteOrigin(),
+    });
+    if (route.kind === 'no-quote') {
+      // One decision for the sentence (`noQuoteReason`), so it claims only
+      // what this confirm actually checked.
+      const reason = noQuoteReason(route, standing.read.incomplete);
+      return {
+        message:
+          reason === 'unread'
+            ? copy.forcedClose.routeRosterFailed
+            : reason === 'unanswered'
+              ? copy.forcedClose.routeUnverified
+              : reason === 'unanswered-partly-reached'
+                ? copy.forcedClose.routeUnverifiedPartlyConfigured
+              : reason === 'unconfigured'
+                ? copy.forcedClose.routeNotConfigured
+                : reason === 'unreachable'
+                  ? copy.forcedClose.routeNoAskableVenue
+                  : reason === 'partly-reached'
+                    ? copy.forcedClose.routeNoQuotePartlyConfigured
+                    : copy.forcedClose.routeNoQuote,
+      };
+    }
+    return {
+      calls: route.calls,
+      quotedAmount: sale.sellAmount,
+      missingAnswers: routeMissingAnswers(route),
+    };
+  }
 
   async function closeOut() {
     // Belt and braces on a money path: no render path may reach a
@@ -874,14 +1036,15 @@ export function ForcedCloseCard({
     setError(null);
     setBusy(true);
     try {
-      // The empty try-list is correct for both submittable states, and
-      // for different reasons. `ready-in-kind` — NFT rentals, illiquid
+      // The empty try-list is correct for every submittable state except
+      // `ready-needs-route`, and for different reasons. `ready-in-kind` — NFT rentals, illiquid
       // collateral, >110% LTV collapses — is routed to in-kind
       // disposition without a swap adapter ever being consulted.
       // `ready-internal-match` never reaches the swap branch either:
       // `attemptInternalMatchAutoDispatch` runs first and returns.
-      // Anywhere else this array reverts `NoEnabledSwapRoute`, which is
-      // why the button does not exist there.
+      // A needs-route close gets a quoted list instead, built below once
+      // the interlock has passed — an empty one there reverts
+      // `NoEnabledSwapRoute`.
       // The sale interlock FIRST, because it is the one the chain will
       // not enforce for us: `triggerDefault` terminalizes the loan
       // regardless of an accepted sale awaiting completion, so the
@@ -891,6 +1054,27 @@ export function ForcedCloseCard({
       if (saleBlock) {
         setError(saleBlock);
         return;
+      }
+      // The sale route, where one is needed (#2463). Every other
+      // submittable state sends the empty list, for the reasons above.
+      let adapterCalls: readonly AdapterCall[] = [];
+      /** The collateral amount the route was quoted for, on a sale. */
+      let quotedAmount: bigint | null = null;
+      if (readiness === 'ready-needs-route') {
+        setFindingRoute(true);
+        let found;
+        try {
+          found = await findCloseOutRoute();
+        } finally {
+          setFindingRoute(false);
+        }
+        if ('message' in found) {
+          setError(found.message);
+          return;
+        }
+        adapterCalls = found.calls;
+        quotedAmount = found.quotedAmount;
+        setRouteShort(found.missingAnswers);
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -908,14 +1092,98 @@ export function ForcedCloseCard({
       // this decision does not model: `whenNotPaused`, the lender KYC
       // check on an enforcement-enabled deployment, and a consent flag
       // read a moment too early.
+      // A sale route is previewed first, for the one outcome the ordinary
+      // simulation cannot see: every attempt refused and the close-out
+      // succeeding into the fallback anyway (`previewCloseOut` says why).
+      // The card promised a sale; a close-out that would not be one is not
+      // sent on that promise. A node that cannot preview leaves the
+      // disclosure on the card as the whole of what is known.
+      if (readiness === 'ready-needs-route' && publicClient && address && routeDiamond) {
+        const preview = await previewCloseOut({
+          client: publicClient,
+          diamond: routeDiamond,
+          account: address,
+          loanId: BigInt(loanId),
+          calls: adapterCalls,
+        });
+        if (preview === 'fallback') {
+          setError(copy.forcedClose.routeWouldFallBack);
+          return;
+        }
+        if (preview === 'other') {
+          setError(copy.forcedClose.routeEndingChanged);
+          return;
+        }
+      }
       if (publicClient && address) {
         await publicClient.simulateContract({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'triggerDefault',
-          args: [BigInt(loanId), []],
+          args: [BigInt(loanId), adapterCalls],
           account: address,
         });
+      }
+      // THE FINAL GATE: the last reads before the wallet is asked, both
+      // PINNED TO ONE BLOCK (round 11), so they describe a single state of
+      // the chain. Started together was not enough: either read could come
+      // back first, and a sale accepted or collateral added in the gap
+      // would then pass as a pair no block ever held. Two facts the chain
+      // will not check for us:
+      //
+      //  - An accepted sale of this lender position. `triggerDefault` does
+      //    not inspect sale linkage (#2078), so closing out after a buyer
+      //    accepted strands the buyer's principal. Everything above awaits
+      //    the network — quotes, preview, simulation — and none of it looks
+      //    at sale linkage.
+      //  - The collateral the quotes were made for. `triggerDefault` sells
+      //    the loan's LIVE collateral, but an aggregator's calldata is for
+      //    the quoted amount; after a top-up the adapter can sell only the
+      //    old amount, hand the rest back and still report a sale, leaving
+      //    the remainder in neither party's claim (#2472).
+      //
+      // Judged only once both are in, so no network await sits between
+      // either read and the write. What stays uncovered is the blocks
+      // between this one and inclusion, and the wallet prompt: no read from
+      // the app can close those, and the on-chain guards that would are
+      // #2078 and #2472.
+      let gateBlock: bigint | undefined;
+      if (publicClient) {
+        try {
+          gateBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
+        } catch {
+          setError(copy.saleHold.checkFailed);
+          return;
+        }
+      }
+      const [lateSaleBlock, liveCollateral] = await Promise.all([
+        preSubmitBlock(gateBlock),
+        quotedAmount !== null && publicClient && routeDiamond
+          ? (
+              publicClient.readContract({
+                address: routeDiamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getLoanDetails',
+                args: [BigInt(loanId)],
+                blockNumber: gateBlock,
+              }) as Promise<{ collateralAmount: bigint }>
+            ).then(
+              (loan) => loan.collateralAmount,
+              () => 'unread' as const,
+            )
+          : Promise.resolve(null),
+      ]);
+      if (lateSaleBlock) {
+        setError(lateSaleBlock);
+        return;
+      }
+      if (liveCollateral === 'unread') {
+        setError(copy.forcedClose.routeRosterFailed);
+        return;
+      }
+      if (liveCollateral !== null && liveCollateral !== quotedAmount) {
+        setError(copy.forcedClose.routeCollateralChanged);
+        return;
       }
       // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
       //
@@ -977,7 +1245,7 @@ export function ForcedCloseCard({
         return;
       }
 
-      await write('triggerDefault', [BigInt(loanId), []], {
+      await write('triggerDefault', [BigInt(loanId), adapterCalls], {
         onSubmitted: (hash) => {
           const record = { at: Date.now(), hash };
           setSubmissions((prev) => ({ ...prev, [key]: record }));
@@ -1008,6 +1276,7 @@ export function ForcedCloseCard({
       setError(captureTxError(err));
     } finally {
       setBusy(false);
+      setRouteShort(false);
     }
   }
 
@@ -1088,6 +1357,22 @@ export function ForcedCloseCard({
    *  The cost being avoided is ten property reads per render on a card
    *  that renders once per position view. That is not worth a silent
    *  localization regression. */
+  /** The needs-route body, by whether a sale route can be offered here
+   *  (#2463). A failed venue read is said as such rather than as a check
+   *  still running, which it no longer is. */
+  const needsRouteBody =
+    posture === 'available'
+      ? copy.forcedClose.readyNeedsRoute
+      : posture === 'no-enabled-venue'
+        ? copy.forcedClose.readyNeedsRouteNoEnabledVenue
+        : posture === 'proxy-unconfigured'
+          ? copy.forcedClose.readyNeedsRouteNotConfigured
+          : posture === 'unsupported'
+            ? copy.forcedClose.readyNeedsRouteNoVenue
+            : rosterQuery.isError || posture === 'unread'
+              ? copy.forcedClose.readyNeedsRouteUnreadable
+              : copy.forcedClose.readyNeedsRouteChecking;
+
   const PRESENTATION: Record<
     ForcedCloseReadiness,
     {
@@ -1107,7 +1392,13 @@ export function ForcedCloseCard({
       /** Null where `actionBlock` is false. */
       outcomeNote: string | null;
       claimNote: string | null;
-      rentalReceipt: boolean;
+      /** Which confirmation receipt describes this state's economics. */
+      receipt: 'standard' | 'rental' | 'sale';
+      /** Which submitter-incentive note applies, if any. Only the
+       *  internal match pays a matcher incentive, and only a successful
+       *  sale pays the caller one; every other route pays the submitter
+       *  nothing. */
+      incentive: 'matcher' | 'sale' | null;
     }
   > = {
     'ready-in-kind': {
@@ -1117,18 +1408,22 @@ export function ForcedCloseCard({
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNote,
       claimNote: copy.forcedClose.claimNote,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     'ready-needs-route': {
-      body: copy.forcedClose.readyNeedsRoute,
+      // Which sentence depends on whether the app can route the sale on
+      // this chain — `needsRouteBody` above, one per availability.
+      body: needsRouteBody,
       overdue: true,
-      // No button here, but its whole message is that a sale must be
-      // routed — which a match appearing makes wrong too.
+      // Its whole message is that a sale must be routed — which a match
+      // appearing makes wrong too.
       matchRace: true,
       actionBlock: true,
-      outcomeNote: copy.forcedClose.outcomeNote,
-      claimNote: copy.forcedClose.claimNote,
-      rentalReceipt: false,
+      outcomeNote: copy.forcedClose.outcomeNoteSale,
+      claimNote: copy.forcedClose.claimNoteSale,
+      receipt: 'sale',
+      incentive: 'sale',
     },
     'ready-internal-match': {
       body: copy.forcedClose.readyInternalMatch,
@@ -1139,7 +1434,8 @@ export function ForcedCloseCard({
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNoteInternalMatch,
       claimNote: copy.forcedClose.claimNoteInternalMatch,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: 'matcher',
     },
     'ready-rental': {
       body: copy.forcedClose.readyRental,
@@ -1169,7 +1465,8 @@ export function ForcedCloseCard({
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNoteRental,
       claimNote: copy.forcedClose.claimNote,
-      rentalReceipt: true,
+      receipt: 'rental',
+      incentive: null,
     },
     'blocked-no-consent': {
       body: copy.forcedClose.blockedNoConsent,
@@ -1181,7 +1478,8 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     'not-yet': {
       body: copy.forcedClose.notYet,
@@ -1190,7 +1488,8 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     'blocked-sequencer': {
       body: copy.forcedClose.blockedSequencer,
@@ -1209,7 +1508,8 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     'blocked-paused': {
       body: copy.forcedClose.blockedPaused,
@@ -1218,7 +1518,8 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     unknown: {
       body: copy.forcedClose.unknown,
@@ -1227,7 +1528,8 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
     // Never rendered — `shouldRenderForcedClose` returns false.
     'not-applicable': {
@@ -1237,13 +1539,25 @@ export function ForcedCloseCard({
       actionBlock: false,
       outcomeNote: null,
       claimNote: null,
-      rentalReceipt: false,
+      receipt: 'standard',
+      incentive: null,
     },
   };
   const view = PRESENTATION[readiness];
-  const receipt = view.rentalReceipt
-    ? copy.forcedClose.rentalReceipt
-    : copy.forcedClose.receipt;
+  /** A sale's caller incentive is only worth stating when this app can
+   *  actually submit the sale. Where it cannot (no venue it can ask, or a
+   *  roster it could not read) the card says an operator is needed, and
+   *  "submitting this yourself" would describe a button that is not there. */
+  const incentive =
+    readiness === 'ready-needs-route' && routeAvailability !== 'available'
+      ? null
+      : view.incentive;
+  const receipt =
+    view.receipt === 'rental'
+      ? copy.forcedClose.rentalReceipt
+      : view.receipt === 'sale'
+        ? copy.forcedClose.saleReceipt
+        : copy.forcedClose.receipt;
   const outcomeNote = view.outcomeNote ?? copy.forcedClose.outcomeNote;
   const claimNote = view.claimNote ?? copy.forcedClose.claimNote;
 
@@ -1263,6 +1577,30 @@ export function ForcedCloseCard({
     : sanctions.flagged
       ? copy.forcedClose.matcherIncentiveNotPaid
       : copy.forcedClose.matcherIncentiveYours;
+
+  /** The matcher incentive again, for a row where a match is only a
+   *  possibility (`matchRace`): the claim note there says nothing moves to
+   *  the wallet by itself, which a match makes untrue for the submitter.
+   *  Withheld exactly where the row's own incentive is, for the same
+   *  reason: no button, so no submitter to describe. */
+  const matchRaceIncentiveNote =
+    !view.matchRace || (readiness === 'ready-needs-route' && routeAvailability !== 'available')
+      ? null
+      : !sanctions.ready
+        ? copy.forcedClose.matchRaceIncentiveUnknown
+        : sanctions.flagged
+          ? copy.forcedClose.matchRaceIncentiveNotPaid
+          : copy.forcedClose.matchRaceIncentiveYours;
+
+  /** The same three cases for the caller incentive a successful sale
+   *  pays (#2463). `triggerDefault` pays it to `msg.sender` out of the
+   *  proceeds and withholds it from a flagged caller, leaving it in the
+   *  proceeds the waterfall divides. */
+  const saleIncentiveNote = !sanctions.ready
+    ? copy.forcedClose.saleIncentiveUnknown
+    : sanctions.flagged
+      ? copy.forcedClose.saleIncentiveNotPaid
+      : copy.forcedClose.saleIncentiveYours;
 
   /** ROUND 50 P1 — the hold now outlives the wait, so the card has to
    *  say why. "Close-out submitted, give the page a moment" is true for
@@ -1495,14 +1833,19 @@ export function ForcedCloseCard({
           <p className="field-hint">{outcomeNote}</p>
           <p className="field-hint">{claimNote}</p>
           {/* ROUND 50 P2 — its own paragraph, and its own eligibility.
-              Only the internal-match route pays a matcher incentive at
-              all, and only to a wallet the sanctions oracle has not
+              Which incentive, if any, is the table's `incentive` column;
+              either is paid only to a wallet the sanctions oracle has not
               flagged. Rendering it beside the claim note rather than
               inside it is what lets the two vary independently without
               composing a sentence at runtime. */}
-          {readiness === 'ready-internal-match' ? (
+          {incentive !== null ? (
             <p className="field-hint" data-testid="forced-close-incentive">
-              {matcherIncentiveNote}
+              {incentive === 'matcher' ? matcherIncentiveNote : saleIncentiveNote}
+            </p>
+          ) : null}
+          {matchRaceIncentiveNote !== null ? (
+            <p className="field-hint" data-testid="forced-close-match-race-incentive">
+              {matchRaceIncentiveNote}
             </p>
           ) : null}
         </>
@@ -1533,6 +1876,16 @@ export function ForcedCloseCard({
               being told. */}
           {swapToRepayPossible !== false ? (
             <p className="field-hint">{copy.forcedClose.intentNote}</p>
+          ) : null}
+          {findingRoute ? (
+            <p className="field-hint" role="status" data-testid="forced-close-finding-route">
+              {copy.forcedClose.findingRoute}
+            </p>
+          ) : null}
+          {routeShort ? (
+            <p className="field-hint" role="status" data-testid="forced-close-route-short">
+              {copy.forcedClose.routeMissingAnswers}
+            </p>
           ) : null}
           {error ? (
             <div

@@ -79,8 +79,10 @@ export type ForcedCloseReadiness =
    *  `adapterCalls` reverts `NoEnabledSwapRoute(loanId)` rather than
    *  falling back, deliberately, so that a permissionless caller cannot
    *  push an eligible loan into full-collateral disposition with zero
-   *  DEX attempts (`LibSwap.swapWithFailover`, #1005 S9). A one-click
-   *  button here would burn gas to reach a guaranteed revert. */
+   *  DEX attempts (`LibSwap.swapWithFailover`, #1005 S9). So the card
+   *  submits this state only with a route the app has built and quoted
+   *  (#2463, `data/closeOutRoute`), and only where the Diamond lists a
+   *  venue the app can ask — see {@link canSubmitFromApp}. */
   | 'ready-needs-route'
   /** Past grace, liquid non-collapsed collateral — so the swap branch
    *  WOULD demand a try-list — but the protocol has an opposing
@@ -404,24 +406,45 @@ function inKindIfConsented(
   return consentFromBoth ? 'ready-in-kind' : 'blocked-no-consent';
 }
 
-/** Whether this readiness can be submitted from the app as-is.
+/** Whether this readiness can be submitted with an EMPTY try-list.
  *
- *  `ready-in-kind` and `ready-internal-match`. The second is NOT an
- *  in-kind close — the protocol settles against an opposing position
- *  and pays in the lent asset — but it shares the property that
- *  matters here: `triggerDefault(loanId, [])` succeeds, because the
- *  match is dispatched before the swap branch is ever reached.
- *  `ready-needs-route` is genuinely
- *  eligible on-chain — a keeper can close it this second — but the app
- *  cannot build the `AdapterCall[]` the contract requires, so offering
- *  a submit button for it would be offering a revert. The card still
- *  SHOWS that state; it just does not pretend to act on it. */
-export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
+ *  `ready-in-kind`, `ready-internal-match` and `ready-rental`. The
+ *  internal match is NOT an in-kind close — the protocol settles against
+ *  an opposing position and pays in the lent asset — but it shares the
+ *  property that matters here: `triggerDefault(loanId, [])` succeeds,
+ *  because the match is dispatched before the swap branch is ever
+ *  reached. `ready-needs-route` is not in this set: an empty list there
+ *  reverts `NoEnabledSwapRoute`. Whether it can be submitted WITH a route
+ *  is {@link canSubmitFromApp}'s question. */
+export function canSubmitWithoutRoute(readiness: ForcedCloseReadiness): boolean {
   return (
     readiness === 'ready-in-kind' ||
     readiness === 'ready-internal-match' ||
     readiness === 'ready-rental'
   );
+}
+
+/** Whether the app can ask for a sale price on this chain at all (#2463).
+ *
+ *  `available` — at least one venue in the Diamond's own adapter list is
+ *  one this app can quote. `none` — the list was read and none is.
+ *  `unknown` — the list has not been read, or the read failed. Kept
+ *  three-valued for the reason every input to {@link decideForcedClose}
+ *  is: an unread list is neither a button nor a refusal. */
+export type RouteAvailability = 'available' | 'none' | 'unknown';
+
+/** Whether the card may offer its submit button.
+ *
+ *  Every {@link canSubmitWithoutRoute} state, plus `ready-needs-route`
+ *  when a route can be asked for. `available` is a statement about
+ *  venues, not about prices: the route is quoted fresh at confirm time,
+ *  and a confirm that gets no quote sends nothing. */
+export function canSubmitFromApp(
+  readiness: ForcedCloseReadiness,
+  routeAvailability: RouteAvailability = 'unknown',
+): boolean {
+  if (canSubmitWithoutRoute(readiness)) return true;
+  return readiness === 'ready-needs-route' && routeAvailability === 'available';
 }
 
 /** Whether the card should render at all.

@@ -1573,10 +1573,99 @@ is the borrower's own money.
   the lender's own asset exactly where it is, and makes the rent paid up front
   claimable less fees. Nothing belonging to the borrower moves, and no
   valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
-  the app states that the position is closable and that the sale must be routed
-  by whoever submits it, and offers no button it cannot honour. Presenting an
-  action that is certain to be refused is worse than presenting none: the user
-  pays a network fee for the refusal.
+  the app routes the sale itself and offers the action directly. When the
+  lender confirms, it asks every exchange it can reach for a price on selling
+  the loan's whole collateral for the lent asset, and sends the answers with
+  the close-out, best price first and the rest as back-ups. Which exchanges
+  the protocol can use, and how it refers to each, is read from the protocol
+  at that moment, never from a list the app keeps, because governance can add,
+  remove, disable or reorder them. Prices are asked for at confirmation rather
+  than when the page loads, because they do not keep. The app never protects
+  the sale price itself and does not claim to: the protocol checks each
+  attempt against its own price feed and will not sell below its minimum.
+- That route has an outcome the lender must be told before confirming: if no
+  attempt can sell at the protocol's minimum when the transaction runs, the
+  close-out still goes through but the sale does not, and the loan moves into
+  the protocol's fallback — the lender can claim collateral instead of sale
+  proceeds, and until they do the borrower can still repay or add collateral.
+  Before sending, the app runs the close-out against the chain as it stands
+  and, where the network can show it, checks whether that run would end in a
+  sale or in the fallback. If it would end in the fallback, nothing is sent
+  and the lender is told why; the card described a sale, and a close-out that
+  would not be one is not sent on that description. Where the network cannot
+  run that check, the disclosure on the card is the whole of what is known.
+  Where the app cannot ask any exchange because the deployment is not set up
+  to, it says so as a standing condition rather than as a passing lack of
+  prices, and a roster the app could not fully read is reported as unread,
+  never as "no exchange". The confirmation describes sale proceeds up to what the lender is owed (any
+  surplus going to the borrower), the fallback, and a settlement against an
+  opposing position, and names no amount. A successful sale may pay whoever
+  submits it a caller incentive out of the proceeds, before they are divided;
+  the incentive is reduced by the sale's realised slippage and can be nothing,
+  and is never paid to a wallet the sanctions oracle has flagged. The surface
+  says which of those applies to the viewer, or that it does not yet know, and
+  names no amount. Because a settlement against an opposing position may be
+  reached instead, and that route pays its submitter a matcher incentive
+  straight to the submitting wallet, the surface also states that payment as
+  conditional on the match, for the viewer's own wallet, wherever it says a
+  match may appear and the viewer can submit. That incentive is a share of the
+  settled amount and can round down to nothing, which the surface says rather
+  than promising a payment.
+- Aggregator prices are requested with the protocol's own effective
+  liquidation slippage ceiling, read from the protocol at confirm time, not
+  with a figure the app or its quote service assumes. When that ceiling cannot
+  be read, no aggregator is asked.
+- The card's own judgement of whether a route can be offered is the same
+  per-exchange judgement the confirmation uses, made from the same reads: an
+  exchange the app does not ask at all (0x, below), or one
+  the app cannot price on that network (a Uniswap V3 adapter trading another
+  set of pools than the app's quoter), does not count as one the app can
+  ask, and a
+  refresh of the exchange list that failed leaves the card saying the list
+  could not be read, not repeating the last answer.
+- An aggregator that may bind its liquidity to the account originating the
+  transaction (0x) is never asked by the app. The account that originates the
+  transaction cannot be known for every wallet the app supports (a Safe, a
+  smart account sent through a relayer, one not yet deployed), so asking on a
+  guess could return a price the protocol then cannot use. A confirmation that
+  then finds no price says some exchanges could not be asked from here, and,
+  when another exchange also gave no reliable answer, that a retry may help
+  but the unasked exchanges stay unasked.
+- Whether an aggregator can be asked is judged from what the quote service
+  says it can quote, not from the service merely being configured: an
+  aggregator the service holds no key for is not counted as available, and
+  the card says an operator is needed rather than offering a sale every
+  confirmation would refuse. When the service's answer cannot be read, the
+  card says the exchanges could not be read.
+- A route that is sent although some exchange the app asked never answered
+  says so before the wallet is asked: it carries fewer back-ups than it
+  might, and if its prices fail when it runs the close-out goes to the
+  fallback. The lender can still reject it in the wallet.
+- An answer from the quote service that carries an error, even with a success
+  status, counts as no answer from that exchange rather than as a refusal.
+- The sale disclosure also states the in-kind outcome: if, before the
+  transaction runs, the protocol comes to treat the collateral as illiquid or
+  its value collapses past the protocol's threshold, the collateral is handed
+  over directly and the loan ends at once, or, where the loan's terms do not
+  allow that, nothing happens beyond the network fee.
+- The last checks before the wallet is asked (that no buyer has accepted a
+  sale of the position, and that the collateral is still the amount the
+  prices were collected for) are read at one block, so they describe one
+  state of the chain. They cannot cover the time between that block and the
+  transaction running; the app says what it checked, not that the race is
+  closed.
+- Where the protocol's own exchange list has no enabled entry on that network
+  (or none is registered), no caller can close the position by sale until
+  governance enables one; the app says that, rather than suggesting an
+  operator could close it, and offers no button.
+- Where the protocol has enabled exchanges on that network but none is one
+  the app can ask, the app states that the position is closable, that the sale
+  must be routed by whoever submits it, and that nothing submits it on its own,
+  and offers no button it cannot honour. Presenting an action that is certain
+  to be refused is worse than presenting none: the user pays a network fee for
+  the refusal. While the list of exchanges has not been read, the surface says
+  it is still checking; when the read failed, it says so. A confirmation that
+  gets no usable price sends nothing and says that nothing was sent or spent.
 - A third route is available where the protocol can settle the overdue
   position against an opposing one instead of selling anything. The app
   can perform that close-out directly, and says so — it is distinguished

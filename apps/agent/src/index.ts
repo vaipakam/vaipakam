@@ -38,6 +38,7 @@
  *   GET  /frames/active-loans/image         — Frame SVG image
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
+ *   GET  /quote/readiness                   — which aggregator keys this Worker holds
  *   POST /intent/fusion/post                — 1inch Fusion resolver-pickup
  *                                             proxy (T-090 v1.1 Sub 3)
  *   POST /opensea/listing                   — OpenSea Listings API proxy
@@ -89,7 +90,7 @@ import {
   maintenanceSkipNotice,
 } from '@vaipakam/lib/d1Maintenance';
 import { runPeriodicPreNotify } from './periodicPreNotify';
-import { handle0xQuote, handle1inchQuote } from './quoteProxy';
+import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
@@ -295,10 +296,13 @@ export default {
     // injects the operator-held API key server-side and returns the
     // aggregator JSON pass-through.
     if (url.pathname === '/quote/0x' && req.method === 'POST') {
-      return handle0xQuote(req, resolved);
+      return handle0xQuote(req, resolved, resolveAllowedOrigin(req, resolved));
+    }
+    if (url.pathname === '/quote/readiness' && req.method === 'GET') {
+      return handleQuoteReadiness(resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
-      return handle1inchQuote(req, resolved);
+      return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     // T-090 v1.1 (#389) Sub 3 (#418) — Fusion resolver-pickup proxy.
     // Dapp posts the orderHash + structured Fusion order + commit

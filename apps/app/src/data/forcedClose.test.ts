@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canSubmitFromApp,
+  canSubmitWithoutRoute,
   decideForcedClose,
   forcedCloseWithoutMatch,
   resolveForcedCloseActive,
@@ -324,12 +325,15 @@ describe('canSubmitFromApp', () => {
     expect(canSubmitFromApp('ready-in-kind')).toBe(true);
   });
 
-  it('refuses the swap path, which the app cannot build a try-list for', () => {
-    // `ready-needs-route` is genuinely eligible on-chain — this is not
-    // "not ready yet". The app simply cannot produce the
-    // `AdapterCall[]` the contract requires, and an empty array reverts
-    // `NoEnabledSwapRoute`. A submit button here would be a paid revert.
+  it('offers the swap path only when a venue can be asked for a price', () => {
+    // An empty try-list reverts `NoEnabledSwapRoute` (#1005 S9), so the
+    // button exists only where the app can build a route (#2463). An
+    // unread venue list is not a yes.
     expect(canSubmitFromApp('ready-needs-route')).toBe(false);
+    expect(canSubmitFromApp('ready-needs-route', 'unknown')).toBe(false);
+    expect(canSubmitFromApp('ready-needs-route', 'none')).toBe(false);
+    expect(canSubmitFromApp('ready-needs-route', 'available')).toBe(true);
+    expect(canSubmitWithoutRoute('ready-needs-route')).toBe(false);
   });
 
   it('accepts the internal-match route too', () => {
@@ -352,7 +356,7 @@ describe('canSubmitFromApp', () => {
       'unknown',
       'not-applicable',
     ] as const) {
-      expect(canSubmitFromApp(s)).toBe(false);
+      expect(canSubmitFromApp(s, 'available')).toBe(false);
     }
   });
 });
