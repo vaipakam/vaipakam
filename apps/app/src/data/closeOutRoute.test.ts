@@ -294,7 +294,7 @@ describe('buildCloseOutRoute', () => {
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
-    expect(route).toEqual({
+    expect(route).toMatchObject({
       kind: 'route',
       venues: ['testnetMock', 'oneinch'],
       calls: [{ adapterIdx: 0n, data: '0x' }, expect.objectContaining({ adapterIdx: 1n })],

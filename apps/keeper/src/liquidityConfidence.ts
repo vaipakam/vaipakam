@@ -387,7 +387,8 @@ async function aggregatorConfirmedTier(
   client: PublicClient,
   chain: ChainConfig,
   diamond: Address,
-  taker: Address,
+  /** The keeper EOA, when configured — 0x is asked only with an origin. */
+  txOrigin: Address | undefined,
   asset: Address,
   slippageBps: bigint,
   sizesPad: readonly [bigint, bigint, bigint, bigint],
@@ -436,7 +437,8 @@ async function aggregatorConfirmedTier(
           sellToken: asset,
           buyToken: quote,
           sellAmount,
-          taker,
+          diamond,
+          txOrigin,
           slippageBps: Number(slippageBps),
         });
       } catch {
@@ -774,12 +776,13 @@ async function runRelayForChain(
   const cfg = await loadConfig(client, diamond, env);
   if (!cfg) return; // facet not cut / RPC error / degenerate config
 
-  // The keeper EOA: used as the quote `taker` (read-only here) and the
-  // `setKeeperTier` signer. Reads work even without the key (taker
-  // falls back to the diamond); writes need `isKeeperEnabled`.
+  // The keeper EOA: the quotes' transaction origin (read-only here) and
+  // the `setKeeperTier` signer. Reads work without the key (0x is then
+  // not asked; each aggregator's taker is its adapter either way); writes
+  // need `isKeeperEnabled`.
   const ctx = buildKeeperContext(env, chain, client);
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
-  const taker = (ctx?.wallet.account?.address ?? diamond) as Address;
+  const txOrigin = ctx?.wallet.account?.address as Address | undefined;
 
   const assets = await activeCollateralAssets(client, diamond);
   if (assets.length === 0) return;
@@ -813,7 +816,7 @@ async function runRelayForChain(
       client,
       chain,
       diamond,
-      taker,
+      txOrigin,
       asset,
       cfg.slippageBps,
       cfg.sizesPad,

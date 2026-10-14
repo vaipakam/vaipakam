@@ -410,14 +410,16 @@ export async function maybeAutonomousLiquidate(
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount: loan.collateralAmount,
-        taker: ctx.diamond,
+        diamond: ctx.diamond,
+        txOrigin: ctx.wallet.account?.address,
       }),
       orchestrateServerQuotes(env, publicClient, {
         chainId: chain.id,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount: halfAmount,
-        taker: ctx.diamond,
+        diamond: ctx.diamond,
+        txOrigin: ctx.wallet.account?.address,
       }),
       // Skip the third quote when partial isn't viable — keeps the
       // hot-path RPC volume the same as before in the common "full
@@ -430,7 +432,8 @@ export async function maybeAutonomousLiquidate(
             sellToken: loan.collateralAsset,
             buyToken: loan.principalAsset,
             sellAmount: partialAmount,
-            taker: ctx.diamond,
+            diamond: ctx.diamond,
+        txOrigin: ctx.wallet.account?.address,
           })
         : Promise.resolve(null),
     ]);
@@ -517,7 +520,8 @@ export async function maybeAutonomousLiquidate(
           sellToken: loan.collateralAsset,
           buyToken: loan.principalAsset,
           sellAmount,
-          taker: ctx.diamond,
+          diamond: ctx.diamond,
+        txOrigin: ctx.wallet.account?.address,
         });
         return q.calls.length > 0 ? q : null;
       };
@@ -1111,12 +1115,12 @@ async function tryFlashLoanDiscountedPath(
   if (!account) return false;
 
   // ── DEX-direct quote fetch ────────────────────────────────────
-  // Re-fetch with the FlashLoanLiquidator receiver as taker (not
-  // the diamond), so the aggregator builds calldata + allowance
-  // target tailored to the receiver's call shape. We can't reuse
-  // the `quotes` bundle from the main flow because that was
-  // built with `taker = diamond` for the diamond-LibSwap-adapter
-  // path; the aggregator's response is taker-specific.
+  // Re-fetch with the FlashLoanLiquidator receiver as taker, so the
+  // aggregator builds calldata + allowance target tailored to the
+  // receiver's call shape. We can't reuse the `quotes` bundle from the
+  // main flow: that one is quoted for each Diamond swap ADAPTER as taker
+  // (the LibSwap path, #2468), and an aggregator's response is
+  // taker-specific.
   const directQuotes = await orchestrateDexDirectQuotes(env, publicClient, {
     chainId: chain.id,
     sellToken: loan.collateralAsset,
