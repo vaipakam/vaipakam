@@ -163,13 +163,27 @@ jobs:
           { echo "The condition changed (was: ${last:-unrecorded})."; echo; cat "$RUNNER_TEMP/alert.md"; } > "$RUNNER_TEMP/update.md"
           gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/update.md"
           echo "notify=true" >> "$GITHUB_OUTPUT"
-      - name: Close recovered alerts
+      # The probe is running again as soon as the checker produced ANY verdict
+      # — healthy or not — so the broken-probe issue closes then, even while a
+      # stall keeps the run red (#2482 r4).
+      - name: Close a recovered probe alert
+        if: always() && (steps.check.outcome == 'success' || steps.check.outputs.keys != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+              --search "in:title \"$BROKEN_TITLE\"" --json number,title \
+              -q ".[] | select(.title == \"$BROKEN_TITLE\") | .number"); do
+            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The probe is producing verdicts again: $RUN_URL"
+          done
+      - name: Close a recovered stall alert
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          for title in "$STALL_TITLE" "$BROKEN_TITLE"; do
+          for title in "$STALL_TITLE"; do
             for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
                 --search "in:title \"$title\"" --json number,title \
                 -q ".[] | select(.title == \"$title\") | .number"); do
