@@ -430,6 +430,63 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
+    /**
+     * #2457 — content discovery parses nothing over 1 MiB, so a large ignored
+     * JSON (a local `graphify-out/graph.json` runs to ~150 MB) cannot exhaust
+     * the heap. Pinned by a STRADDLE on the cap with a body that WOULD be
+     * reported if read (a deployable config without `keep_vars`), so the cell
+     * fails if the cap moves, disappears, or starts swallowing named configs.
+     */
+    const CAP = 1024 * 1024;
+    /** A deployable config without `keep_vars`, padded to exactly `bytes`. */
+    function paddedConfig(bytes: number): string {
+      const head = `{"name": "vaipakam-agent", "compatibility_date": "2026-01-01", "pad": "`;
+      const tail = '"}';
+      return head + 'x'.repeat(bytes - head.length - tail.length) + tail;
+    }
+
+    it('reads a content candidate AT the cap (reported) and passes over one a byte past it, listed (#2457, straddle)', () => {
+      withSeeded('configs/at-cap.json', paddedConfig(CAP), (r) => {
+        expect(r.ok, 'a candidate at the cap was not read').toBe(false);
+        expect(r.out).toContain('configs/at-cap.json');
+      });
+      withSeeded('configs/over-cap.json', paddedConfig(CAP + 1), (r) => {
+        expect(r.ok, r.out).toBe(true);
+        // Passed over in the open, never silently.
+        expect(r.out).toContain('Not read as candidates');
+        expect(r.out).toContain('configs/over-cap.json');
+      });
+    });
+
+    it('in a git work tree, an IGNORED file is never read, and an untracked unignored one still is (#2457)', () => {
+      const root = copiedRoot();
+      try {
+        execFileSync('git', ['init', '-q'], { cwd: root });
+        writeFileSync(join(root, '.gitignore'), 'tool-out/\n');
+        const body = `${JSON.stringify(OUTSIDE_BODY)}\n`; // deployable, no keep_vars
+        mkdirSync(join(root, 'tool-out'), { recursive: true });
+        writeFileSync(join(root, 'tool-out/cfg.json'), body);
+        const ignored = runCheck(root);
+        expect(ignored.ok, `an ignored file was read: ${ignored.out}`).toBe(true);
+        // The same file where git does not ignore it — untracked, never added.
+        mkdirSync(join(root, 'fresh'), { recursive: true });
+        writeFileSync(join(root, 'fresh/cfg.json'), body);
+        const fresh = runCheck(root);
+        expect(fresh.ok, 'an untracked, unignored config was missed').toBe(false);
+        expect(fresh.out).toContain('fresh/cfg.json');
+        expect(fresh.out).not.toContain('tool-out/cfg.json');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('a file NAMED `wrangler*` is read and asserted at any size (#2457)', () => {
+      withSeeded('apps/agent/wrangler.big.jsonc', paddedConfig(CAP + 1), (r) => {
+        expect(r.ok, 'an oversized config named `wrangler*` was passed over').toBe(false);
+        expect(r.out).toContain('apps/agent/wrangler.big.jsonc');
+      });
+    });
+
     it('bounds guard: vendored trees are not walked for content either', () => {
       withSeeded(
         'apps/agent/node_modules/pkg/config.jsonc',
