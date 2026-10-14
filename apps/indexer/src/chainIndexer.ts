@@ -2236,6 +2236,7 @@ async function runChainPass(
     blockTimestamps,
     client,
     diamond,
+    fallbackTimestampBlocks,
   );
   // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
   // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
@@ -3900,6 +3901,10 @@ export async function processLoanLogs(
   blockTimestamps: Map<bigint, number>,
   client: PublicClient,
   diamond: Address,
+  /** Blocks whose `blockTimestamps` entry is the wall-clock SENTINEL (the
+   *  block read failed), not chain time. A value persisted as a fact about
+   *  WHEN something happened must treat these as unknown (#2476 r2). */
+  fallbackTimestampBlocks: ReadonlySet<bigint> = new Set(),
 ): Promise<{
   newLoans: number;
   statusUpdates: number;
@@ -4923,9 +4928,12 @@ export async function processLoanLogs(
           // #2476 r1 — WHEN it settled is the event's block time, not the
           // scan's (a catch-up after downtime would otherwise date the
           // settlement by when the indexer noticed it). Null when the block
-          // time is not in hand: unknown, never a guess. Matches 0057, which
-          // dates re-projected rows by the same event.
-          blockTimestamps.get(log.blockNumber) ?? null,
+          // time is not in hand — absent, or the scan's wall-clock SENTINEL
+          // for a block whose read failed (#2476 r2): unknown, never a guess.
+          // Matches 0057, which dates re-projected rows by the same event.
+          fallbackTimestampBlocks.has(log.blockNumber)
+            ? null
+            : (blockTimestamps.get(log.blockNumber) ?? null),
           Math.floor(Date.now() / 1000),
           chainId,
           Number(a.loanId as bigint),

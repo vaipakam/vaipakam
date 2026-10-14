@@ -366,6 +366,27 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
     expect(at(47)).toEqual({ b: 999, t: null });
   });
 
+  it('treats the scan’s wall-clock SENTINEL for a failed block read as unknown, not as the settlement time', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 48, 'internal_matched');
+    // What the production caller does when getBlock fails: the map holds
+    // now() for the block, and the block is named in the fallback set.
+    await processLoanLogs(
+      [settledLog(48, 100, 0)] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[100n, 1_999_999_999]]),
+      stubClient,
+      DIAMOND,
+      new Set([100n]),
+    );
+    const r = h.db.prepare('SELECT status, terminal_at AS t FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, 48) as {
+      status: string;
+      t: number | null;
+    };
+    expect(r).toEqual({ status: 'settled', t: null });
+  });
+
   it('still settles the terminal statuses it always did, and is idempotent on an already-settled row', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     for (const [id, st] of [
