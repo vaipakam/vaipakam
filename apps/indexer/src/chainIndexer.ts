@@ -2080,7 +2080,18 @@ async function runChainPass(
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
-    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock, settledHead.settled);
+    // #2476 r11 — the ledger heal reads the chain AT the cursor, so it needs
+    // that block to be settled, not merely some settled head below it (the
+    // reconciliation pass refuses the same `lastBlock > settledHead.block`).
+    const quietHeal = await runHealLanes(
+      client,
+      diamond,
+      chainId,
+      env,
+      budget,
+      lastBlock,
+      settledHead.settled && lastBlock <= settledHead.block,
+    );
     // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
@@ -2476,7 +2487,7 @@ async function runChainPass(
     env,
     budget,
     scanTo,
-    settledHead.settled,
+    settledHead.settled && scanTo <= settledHead.block,
   );
 
   const hintStats = pushHintStats(allLogs);
@@ -3409,8 +3420,9 @@ async function runHealLanes(
   env: Env,
   budget: TickBudget,
   atBlock: bigint,
-  /** #2476 r9 — whether `atBlock` is a block the chain itself called settled
-   *  (`SettledHead.settled`), rather than the `latest - N` guess. */
+  /** #2476 r9/r11 — whether `atBlock` is AT OR BELOW a block the chain itself
+   *  called settled (`SettledHead.settled`), rather than the `latest - N`
+   *  guess or a block above a settled head that regressed. */
   headSettled: boolean,
 ): Promise<{ detailRefreshes: number; loanDetailRefreshes: number; ledgerSettledLoanIds: number[] }> {
   let detailRefreshes = 0;
@@ -3754,11 +3766,14 @@ const LOAN_TOKEN_ID_BATCH = 50;
  * heal for an event the projection missed. One writer, so the two cannot
  * disagree about what a settled row records.
  *
- * - `block` is the event's block — always known, and never NULL here. That
- *   is what tells this write apart from the reconciliation repair's, which
- *   leaves `terminal_block` NULL; the repair's notice checks for exactly
- *   that (notifications.ts), so a row written here never passes for one the
- *   repair corrected (#2476 r3).
+ * - `block` is the event's block. The event handler always knows it, which
+ *   is what tells its writes apart from the reconciliation repair's (that
+ *   leaves `terminal_block` NULL, and the repair's notice checks for exactly
+ *   that — notifications.ts, #2476 r3). The ledger heal may pass NULL when no
+ *   ledgered event is confirmed (#2476 r11); it never collides with the
+ *   repair's fingerprint because the two touch disjoint rows — the heal only
+ *   rows already terminal, the repair only rows still active or
+ *   fallback_pending.
  * - `at` is that block's chain time, or NULL when it is not known — never
  *   the time of the write.
  * - A row already settled is left alone, EXCEPT that a settlement still
@@ -3772,7 +3787,7 @@ export async function settleLoanRow(
   env: Env,
   chainId: number,
   loanId: number,
-  block: number,
+  block: number | null,
   at: number | null,
 ): Promise<boolean> {
   const r = await env.DB.prepare(
@@ -3909,13 +3924,22 @@ export async function settleFromLedger(
         blockNumber: atBlock,
       })) as { status: number | bigint };
       if (Number(detail.status) !== CHAIN_STATUS_SETTLED) continue;
-      const block = await canonicalSettlementBlock(client, diamond, env, chainId, row.loan_id, budget);
-      if (block === null) continue; // no ledgered event confirmed — next lap
-      let at: number | null;
-      try {
-        at = Number((await client.getBlock({ blockNumber: BigInt(block) })).timestamp);
-      } catch {
-        at = null;
+      const provenance = await canonicalSettlementBlock(client, diamond, env, chainId, row.loan_id, budget);
+      if (provenance === null) continue; // a candidate could not be read — next lap
+      // #2476 r11 — every candidate was read and none is confirmed (the node
+      // prunes old receipts, or the ledgered event was reorganised away and
+      // its replacement is not ledgered yet). The STATUS is still what the
+      // chain says at the settled head, so it lands; the block and time stay
+      // unknown rather than taken from an unconfirmed event, and a later
+      // replay of a confirmed LoanSettled fills them (settleLoanRow).
+      const block = provenance === 'unconfirmed' ? null : provenance;
+      let at: number | null = null;
+      if (block !== null) {
+        try {
+          at = Number((await client.getBlock({ blockNumber: BigInt(block) })).timestamp);
+        } catch {
+          at = null;
+        }
       }
       // #2476 r10 — re-check the LIVE budget before the one write that takes
       // the row out of this selection for good. The row's reservation is a
@@ -3969,8 +3993,12 @@ const LOAN_SETTLED_TOPIC = toEventSelector(
  * `LoanSettled` topic and this loan id (#2476 r9). A transaction re-included
  * at the same height against different state need not emit it any more.
  * Newest first, because a replacement after a reorg is the later row.
- * `null` when no candidate is confirmed (or none could be read) — the
- * caller then writes nothing.
+ *
+ * Three answers (#2476 r11): the confirmed block; `'unconfirmed'` when every
+ * candidate was READ and none is confirmed (receipt not found, or found
+ * without the event) — the caller then settles with the provenance unknown;
+ * and `null` when a candidate could not be read at all (a transport error, or
+ * the budget ran out first) — the caller then writes nothing this lap.
  *
  * The first receipt is in the row's reserved cost. Each further candidate
  * is tried only while the budget still covers it AND the rest of the row
@@ -3985,7 +4013,7 @@ async function canonicalSettlementBlock(
   chainId: number,
   loanId: number,
   budget: TickBudget,
-): Promise<number | null> {
+): Promise<number | 'unconfirmed' | null> {
   const candidates = await env.DB.prepare(
     `SELECT block_number, tx_hash FROM activity_events
       WHERE chain_id = ? AND loan_id = ? AND kind = 'LoanSettled'
@@ -3999,21 +4027,25 @@ async function canonicalSettlementBlock(
     // receipt + block read + settle write + pointer write
     if (!first && budget.subrequests.remaining < 4) return null;
     first = false;
+    let receipt;
     try {
-      const receipt = await client.getTransactionReceipt({ hash: c.tx_hash as `0x${string}` });
-      if (receipt.status !== 'success' || Number(receipt.blockNumber) !== c.block_number) continue;
-      const carries = receipt.logs.some(
-        (log) =>
-          log.address.toLowerCase() === diamond.toLowerCase() &&
-          log.topics[0]?.toLowerCase() === LOAN_SETTLED_TOPIC.toLowerCase() &&
-          log.topics[1]?.toLowerCase() === loanTopic,
-      );
-      if (carries) return c.block_number;
-    } catch {
-      // Not found (reorganised away) or unreadable — try the next candidate.
+      receipt = await client.getTransactionReceipt({ hash: c.tx_hash as `0x${string}` });
+    } catch (err) {
+      // Not found is an ANSWER (reorganised away, or pruned); anything else is
+      // a read that failed, which decides nothing.
+      if ((err as { name?: string })?.name === 'TransactionReceiptNotFoundError') continue;
+      return null;
     }
+    if (receipt.status !== 'success' || Number(receipt.blockNumber) !== c.block_number) continue;
+    const carries = receipt.logs.some(
+      (log) =>
+        log.address.toLowerCase() === diamond.toLowerCase() &&
+        log.topics[0]?.toLowerCase() === LOAN_SETTLED_TOPIC.toLowerCase() &&
+        log.topics[1]?.toLowerCase() === loanTopic,
+    );
+    if (carries) return c.block_number;
   }
-  return null;
+  return 'unconfirmed';
 }
 
 /**

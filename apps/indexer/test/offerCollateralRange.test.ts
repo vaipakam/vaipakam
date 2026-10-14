@@ -250,6 +250,9 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
     const calls = pass.split('await runHealLanes(').slice(1).map((c) => c.slice(0, c.indexOf(');')));
     expect(calls).toHaveLength(2);
     for (const c of calls) expect(c).toContain('settledHead.settled');
+    // #2476 r11 — and the block it reads at may not be above that head.
+    expect(calls[0]).toMatch(/lastBlock <= settledHead\.block/);
+    expect(calls[1]).toMatch(/scanTo <= settledHead\.block/);
   });
 
   it('settles from the ledger BEFORE the metadata heals, in its own try (#2476 r4)', () => {

@@ -448,12 +448,19 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     discarded: Set<number> = new Set(),
     /** Blocks whose re-included transaction no longer emits LoanSettled. */
     noLog: Set<number> = new Set(),
+    /** Blocks whose receipt read fails in transport. */
+    unreadable: Set<number> = new Set(),
   ) =>
     ({
       getTransactionReceipt: async ({ hash }: { hash: string }) => {
         const loanId = parseInt(hash.slice(2, 34), 16);
         const block = parseInt(hash.slice(34), 16);
-        if (discarded.has(block)) throw new Error('transaction receipt not found');
+        if (discarded.has(block)) {
+          const e = new Error('Transaction receipt not found'); // viem's own error name
+          e.name = 'TransactionReceiptNotFoundError';
+          throw e;
+        }
+        if (unreadable.has(block)) throw new Error('fetch failed');
         return {
           status: 'success',
           blockNumber: BigInt(block),
@@ -553,12 +560,31 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(row(h, 70)).toEqual({ status: 'settled', terminal_block: 1005, terminal_at: 15 });
   });
 
-  it('refuses a receipt that no longer carries this loan’s LoanSettled from the Diamond (#2476 r9)', async () => {
+  it('takes no provenance from a receipt that no longer carries this loan’s LoanSettled (#2476 r9, r11)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 73, 'internal_matched');
     ledger(h, 73, 'LoanSettled', 1400, 1);
-    expect(await heal(h, chain({ 1400: 1 }, () => 3, undefined, new Set(), new Set([1400])))).toEqual([]);
-    expect(row(h, 73).status).toBe('internal_matched');
+    // The chain says Settled, so the status lands — with block and time unknown.
+    expect(await heal(h, chain({ 1400: 1 }, () => 3, undefined, new Set(), new Set([1400])))).toEqual([73]);
+    expect(row(h, 73)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
+  });
+
+  it('writes nothing this lap when a receipt read fails in transport (#2476 r11)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 77, 'internal_matched');
+    ledger(h, 77, 'LoanSettled', 1800, 1);
+    expect(await heal(h, chain({ 1800: 1 }, () => 3, undefined, new Set(), new Set(), new Set([1800])))).toEqual([]);
+    expect(row(h, 77).status).toBe('internal_matched');
+  });
+
+  it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 78, 'internal_matched');
+    ledger(h, 78, 'LoanSettled', 1900, 1);
+    await heal(h, chain({}, () => 3, undefined, new Set([1900])));
+    expect(row(h, 78)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
+    expect(await settleLoanRow(env(h), CHAIN, 78, 1950, 4242)).toBe(true);
+    expect(row(h, 78)).toEqual({ status: 'settled', terminal_block: 1950, terminal_at: 4242 });
   });
 
   it('tries a second candidate only while the budget still covers the rest of the row (#2476 r9)', async () => {
@@ -598,12 +624,12 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(row(h, 74).terminal_block).toBe(1500);
   });
 
-  it('writes nothing when no ledgered event is confirmed, even though the chain says Settled', async () => {
+  it('settles the chain-confirmed status with UNKNOWN provenance when no receipt can be found (pruned) (#2476 r11)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 71, 'internal_matched');
     ledger(h, 71, 'LoanSettled', 1100, 1);
-    expect(await heal(h, chain({ 1100: 1 }, () => 3, undefined, new Set([1100])))).toEqual([]);
-    expect(row(h, 71).status).toBe('internal_matched');
+    expect(await heal(h, chain({ 1100: 1 }, () => 3, undefined, new Set([1100])))).toEqual([71]);
+    expect(row(h, 71)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
   });
 
   it('still reports what it settled when the rotation pointer cannot be saved (#2476 r7)', async () => {
