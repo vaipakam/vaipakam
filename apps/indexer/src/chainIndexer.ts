@@ -3463,8 +3463,14 @@ async function runHealLanes(
     // #2461 r4 — provenance of `init_principal` is DERIVED from the
     // LoanInitiated ledger, not trusted from whoever wrote the row: clear
     // the flag wherever the ledger now confirms the value. D1 only, no RPC.
-    await reverifyInitPrincipal(env, chainId);
-    await reverifyInitTerms(env, chainId);
+    // #2476 r13 — one D1 query each, and only while the budget still has
+    // them: the ledger heal above may have committed rows whose report rides
+    // this function's return, and a query past the ceiling could end the
+    // invocation before it. Skipped work just runs next tick.
+    if (budget.subrequests.remaining >= 2 && budget.d1Queries.remaining >= 2) {
+      await reverifyInitPrincipal(env, chainId);
+      await reverifyInitTerms(env, chainId);
+    }
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
@@ -3859,7 +3865,10 @@ const CHAIN_STATUS_SETTLED = 3;
  *
  * SCOPE, deliberately narrow. Only rows already in a terminal, unsettled
  * status — repaid, defaulted, liquidated, internal_matched — whose
- * `LoanSettled` the append-only ledger holds. For these the terminal
+ * `LoanSettled` the append-only ledger holds; and rows already SETTLED whose
+ * block or time is still unknown (#2476 r13), which `settleLoanRow` only
+ * ever fills, so a provenance unreadable today is enriched once a receipt
+ * read succeeds. An unprovable one costs a visit per lap, never the batch. For these the terminal
  * handler has already done everything a close does (amounts, side tables;
  * calendar reminders only ever read `active` rows), so settling is a status
  * and date change and nothing more. An ACTIVE row with a ledgered
@@ -3918,18 +3927,32 @@ export async function settleFromLedger(
         .bind(chainId, SETTLE_HEAL_CURSOR_KIND)
         .first<{ last_block: number }>()
     )?.last_block ?? 0;
+  // Each branch is driven by its own index, and the ledger probe by the
+  // per-loan one, so a tick costs the CANDIDATES, never a walk over every
+  // loan or every ledgered settlement on the chain (#2476 r13). INDEXED BY
+  // pins the plan: on a database without ANALYZE statistics SQLite would
+  // otherwise range-scan the primary key from the pointer.
   const res = await env.DB.prepare(
-    `SELECT l.loan_id AS loan_id
-       FROM loans l
-      WHERE l.chain_id = ?
-        AND l.status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
-        AND l.loan_id > ?
-        AND EXISTS (
-          SELECT 1 FROM activity_events ae
-           WHERE ae.chain_id = l.chain_id AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
-        )
-      ORDER BY l.loan_id
-      LIMIT ?`,
+    `SELECT c.loan_id AS loan_id FROM (
+       SELECT loan_id FROM loans INDEXED BY idx_loans_chain_status
+        WHERE chain_id = ?1
+          AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
+          AND loan_id > ?2
+       UNION
+       -- #2476 r13 — and a settlement whose block or time is still unknown
+       -- (an unreadable receipt, or a repair): it stays eligible for the
+       -- provenance the ledger and the chain can later substantiate.
+       SELECT loan_id FROM loans INDEXED BY idx_loans_settled_unknown_provenance
+        WHERE chain_id = ?1
+          AND status = 'settled' AND (terminal_block IS NULL OR terminal_at IS NULL)
+          AND loan_id > ?2
+     ) c
+     WHERE EXISTS (
+       SELECT 1 FROM activity_events ae INDEXED BY idx_activity_chain_loan
+        WHERE ae.chain_id = ?1 AND ae.loan_id = c.loan_id AND ae.kind = 'LoanSettled'
+     )
+     ORDER BY c.loan_id
+     LIMIT ?3`,
   )
     .bind(chainId, pointer, SETTLE_HEAL_BATCH)
     .all<{ loan_id: number }>();

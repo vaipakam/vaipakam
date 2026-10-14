@@ -13,3 +13,11 @@
 -- Additive: DEFAULT 0, and the deployed code neither reads nor writes it.
 -- Plain ALTER TABLE ADD COLUMN per the repo idiom.
 ALTER TABLE loans ADD COLUMN terminal_by_repair INTEGER NOT NULL DEFAULT 0;
+
+-- #2476 r13 — the ledger heal also revisits SETTLED rows whose terminal block
+-- or time is still unknown, to fill them once the chain can substantiate
+-- them. A partial index keeps that a probe of the (normally tiny) set rather
+-- than a walk over every settled loan.
+CREATE INDEX IF NOT EXISTS idx_loans_settled_unknown_provenance
+  ON loans(chain_id, loan_id)
+  WHERE status = 'settled' AND (terminal_block IS NULL OR terminal_at IS NULL);

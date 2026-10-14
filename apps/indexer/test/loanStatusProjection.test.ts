@@ -577,6 +577,38 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(row(h, 77).status).toBe('internal_matched');
   });
 
+  it('revisits an undated settlement and fills it once a receipt can be read (#2476 r13)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 79, 'internal_matched');
+    ledger(h, 79, 'LoanSettled', 2100, 1);
+    await heal(h, chain({ 2100: 9 }, () => 3, undefined, new Set([2100]))); // receipt unavailable
+    expect(row(h, 79)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
+    // A later lap, the receipt is readable: the same lane fills the provenance.
+    expect(await heal(h, chain({ 2100: 9 }))).toEqual([79]);
+    expect(row(h, 79)).toEqual({ status: 'settled', terminal_block: 2100, terminal_at: 9 });
+    // A fully dated settlement is not selected again.
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({ 2100: 9 }, () => 3, seen));
+    expect(seen.reads.map((r) => r.id)).not.toContain(79);
+  });
+
+  it('selects candidates through their indexes, never a walk over every loan (#2476 r13)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const seen: string[] = [];
+    const d1 = h.d1 as { prepare(sql: string): unknown };
+    const spy = { DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)) } } as unknown as Env;
+    await settleFromLedger(chain({}) as never, DIAMOND, spy, CHAIN, budget(), 777n);
+    const select = seen.find((q) => q.includes('UNION'));
+    expect(select).toBeDefined();
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20) as { detail: string }[])
+      .map((r) => r.detail)
+      .join('\n');
+    expect(plan).toMatch(/USING INDEX idx_loans_chain_status/);
+    expect(plan).toMatch(/USING INDEX idx_loans_settled_unknown_provenance/);
+    expect(plan).toMatch(/USING INDEX idx_activity_chain_loan/);
+    expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
+  });
+
   it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 78, 'internal_matched');
