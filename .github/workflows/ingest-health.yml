@@ -1,0 +1,111 @@
+name: Indexer ingest health
+
+# WHY THIS EXISTS (#2469). A stalled indexer ingest is silent: when a build
+# was published ahead of migration 0056, the schema gate declined every
+# scheduled tick by name, in the Worker's logs, and the stall was found by a
+# stale screen. This probe reads the indexer's own `GET /health/ingest` from
+# outside the Worker every 15 minutes and FAILS when a watched chain's ingest
+# has stopped, when the schema gate is waiting on a migration (naming it), or
+# when the route cannot be read. A failed scheduled run is how GitHub notifies
+# the owner; the Telegram step below is optional on top of that.
+#
+# Why a workflow and not a Worker: every Cloudflare cron trigger on the
+# account is spoken for (docs/ops/CloudflareCronSlots.md), and a watcher
+# inside the indexer could not report the indexer's own crash.
+#
+# GitHub runs scheduled workflows on a best-effort schedule, so a check can
+# start late at busy times. The STALENESS itself is measured by the indexer
+# against its own cursor, so a late run judges the same facts.
+#
+# The judging rules and their fixtures live in
+# .github/scripts/check-ingest-health.mjs (`--selftest`).
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *' # every 15 min, off the hour marks
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/scripts/check-ingest-health.mjs'
+      - '.github/workflows/ingest-health.yml'
+
+permissions:
+  contents: read
+  actions: read # the Telegram step reads this workflow's previous run
+
+concurrency:
+  group: ingest-health
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node .github/scripts/check-ingest-health.mjs --selftest
+
+  probe:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      INDEXER_ORIGIN: https://indexer.vaipakam.com
+      # The chains in active testing (owner, 2026-10-14). Sepolia and BSC
+      # testnet are still reported by the route but no longer scanned; their
+      # cursors stand still for good, so watching them would alert forever.
+      INGEST_CHAINS: '84532,421614'
+      # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
+      # old; 15 min of standing still is a stall, not a slow tick.
+      INGEST_STALE_SECONDS: '900'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - id: check
+        run: node .github/scripts/check-ingest-health.mjs
+      - name: Summary
+        if: failure()
+        env:
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+        run: |
+          {
+            echo "## Indexer ingest is NOT healthy"
+            echo
+            printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
+      # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
+      # also post to the ops chat. Only on a TRANSITION into failure (the
+      # previous completed run succeeded), so a long stall posts once rather
+      # than every 15 minutes; the failed runs themselves keep showing it.
+      - name: Telegram (optional)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_OPS_CHAT_ID }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+            echo "Telegram secrets not set — GitHub's own failure notification is the alert."
+            exit 0
+          fi
+          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ingest-health.yml \
+            --status completed --limit 1 --json conclusion -q '.[0].conclusion // ""')
+          if [ "$prev" = "failure" ]; then
+            echo "The previous run already failed — not posting again."
+            exit 0
+          fi
+          text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
+          curl -sS -o /dev/null -w '%{http_code}\n' \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=${text}" \
+            --data-urlencode "disable_web_page_preview=true"
