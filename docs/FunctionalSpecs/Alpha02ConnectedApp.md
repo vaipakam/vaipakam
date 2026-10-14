@@ -1410,6 +1410,13 @@ Thin-market honesty rules apply.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
+- A position row whose loan is past its grace period says so ("Past grace"),
+  distinct from a loan that is past due but still inside grace. Whether grace
+  has ended is the protocol's own answer, judged by chain time against the
+  live grace schedule, never the device clock; until that answer is read the
+  row says only that the loan is past due. Its explanation is by side: the
+  lender can close the position out, anyone else may do so first, and the
+  borrower can no longer repay in the ordinary way.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.

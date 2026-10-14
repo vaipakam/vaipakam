@@ -2230,7 +2230,8 @@
       "dueInDays_two": "{{count}} 日後に期限",
       "dueInDays_few": "{{count}} 日後に期限",
       "dueInDays_many": "{{count}} 日後に期限",
-      "dueInDays_other": "{{count}} 日後に期限"
+      "dueInDays_other": "{{count}} 日後に期限",
+      "pastGrace": "猶予期間終了"
     },
     "activity": {
       "loading": "アクティビティを読み込み中…",
@@ -2450,7 +2451,10 @@
     },
     "loanRow": {
       "youRent": "あなたが借りる",
-      "youRentOut": "あなたが貸し出す"
+      "youRentOut": "あなたが貸し出す",
+      "pastGraceLender": "猶予期間が終了しました。このポジションはそのページからクローズできます。他の誰かが先に行うこともあります。",
+      "pastGraceBorrower": "猶予期間が終了したため、ローンは通常の方法では返済できなくなり、誰でも担保を対象にクローズできるようになりました。",
+      "pastGraceRenter": "レンタルとその猶予期間が終了しました。誰でもクローズでき、クローズされると NFT へのアクセスが終了します。"
     },
     "settingsPage": {
       "title": "設定",

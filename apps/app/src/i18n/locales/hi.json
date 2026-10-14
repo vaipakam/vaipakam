@@ -2230,7 +2230,8 @@
       "dueInDays_two": "{{count}} days में due",
       "dueInDays_few": "{{count}} days में due",
       "dueInDays_many": "{{count}} days में due",
-      "dueInDays_other": "{{count}} days में due"
+      "dueInDays_other": "{{count}} days में due",
+      "pastGrace": "ग्रेस अवधि समाप्त"
     },
     "activity": {
       "loading": "आपकी गतिविधि लोड हो रही है…",
@@ -2450,7 +2451,10 @@
     },
     "loanRow": {
       "youRent": "आप rent करते हैं",
-      "youRentOut": "आप rent पर देते हैं"
+      "youRentOut": "आप rent पर देते हैं",
+      "pastGraceLender": "ग्रेस अवधि समाप्त हो चुकी है। आप इस पोज़िशन को इसके पेज से बंद कर सकते हैं; कोई और भी इसे पहले कर सकता है।",
+      "pastGraceBorrower": "ग्रेस अवधि समाप्त हो चुकी है, इसलिए लोन अब सामान्य तरीके से चुकाया नहीं जा सकता और अब कोई भी इसे कोलैटरल के बदले बंद कर सकता है।",
+      "pastGraceRenter": "किराया और उसकी ग्रेस अवधि समाप्त हो चुकी है। अब कोई भी इसे बंद कर सकता है, जिससे NFT तक आपकी पहुँच समाप्त हो जाएगी।"
     },
     "settingsPage": {
       "title": "Settings",

@@ -4965,6 +4965,9 @@ const copySource = {
     closed: 'Closed',
     beingSettled: 'Being settled',
     pastDue: 'Past due',
+    // #2463 follow-up — shown only when the chain says the grace period
+    // has ended (`isLoanDefaultable`), never from a client-side clock.
+    pastGrace: 'Past grace',
     dueToday: 'Due today',
     dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
   },
@@ -5347,6 +5350,14 @@ const copySource = {
   loanRow: {
     youRent: 'You rent',
     youRentOut: 'You rent out',
+    // #2463 follow-up — the hover text on a "Past grace" badge, by side.
+    // Closing out is permissionless, so neither says only the lender can.
+    pastGraceLender:
+      'The grace period has ended. You can close out this position from its page; anyone else may also do it first.',
+    pastGraceBorrower:
+      'The grace period has ended, so the loan can no longer be repaid in the ordinary way and anyone may now close it out against the collateral.',
+    pastGraceRenter:
+      'The rental and its grace period have ended. Anyone may now close it out, which ends your access to the NFT.',
   },
   settingsPage: {
     title: 'Settings',

@@ -2230,7 +2230,8 @@
       "dueInDays_two": "{{count}} 天后到期",
       "dueInDays_few": "{{count}} 天后到期",
       "dueInDays_many": "{{count}} 天后到期",
-      "dueInDays_other": "{{count}} 天后到期"
+      "dueInDays_other": "{{count}} 天后到期",
+      "pastGrace": "宽限期已过"
     },
     "activity": {
       "loading": "正在加载您的活动…",
@@ -2450,7 +2451,10 @@
     },
     "loanRow": {
       "youRent": "您租用",
-      "youRentOut": "您出租"
+      "youRentOut": "您出租",
+      "pastGraceLender": "宽限期已结束。您可以在该仓位的页面上将其平仓；其他任何人也可能抢先这样做。",
+      "pastGraceBorrower": "宽限期已结束，因此这笔贷款已无法按常规方式偿还，现在任何人都可以针对抵押品将其平仓。",
+      "pastGraceRenter": "租赁及其宽限期已结束。现在任何人都可以将其平仓，平仓后您对该 NFT 的使用权将终止。"
     },
     "settingsPage": {
       "title": "设置",

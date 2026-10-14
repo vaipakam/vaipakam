@@ -3,7 +3,8 @@
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { formatBpsAsPercent, formatTokenAmount, shortAddress } from '../lib/format';
-import { loanStateView, loanStateLabel } from '../lib/loanState';
+import { loanStateView, loanStateLabel, withGraceVerdict } from '../lib/loanState';
+import { useLoanPastGrace } from '../data/pastGrace';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
@@ -26,7 +27,21 @@ export function LoanRow({
   const payout = useClaimPayoutText(claim);
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
-  const view = loanStateView(loan);
+  const timeView = loanStateView(loan);
+  // #2463 follow-up — an open row asks the chain whether grace has ended;
+  // only its `true` turns the time-based badge into "Past grace". Asked
+  // for every open loan, not only past-due ones by this device's clock,
+  // because the chain's clock is the one the contract uses.
+  const pastGrace = useLoanPastGrace(loan.loanId, loan.status === 'active');
+  const view = withGraceVerdict(timeView, pastGrace.data);
+  const pastGraceTitle =
+    view.labelKey !== 'pastGrace'
+      ? undefined
+      : loan.role === 'lender'
+        ? copy.loanRow.pastGraceLender
+        : isRental
+          ? copy.loanRow.pastGraceRenter
+          : copy.loanRow.pastGraceBorrower;
   // UX-003 — the time-based badge alone can show a reassuring green on
   // a loan hovering at the liquidation line. For active priced loans,
   // let a WORSE health state override the badge (never a better one —
@@ -98,7 +113,14 @@ export function LoanRow({
           {loanStateLabel(view, copy.loanState)} · {copy.risk.listChecking}
         </span>
       ) : (
-        <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
+        <span
+          className={`badge badge-${view.badge}`}
+          title={pastGraceTitle}
+          data-testid="loan-row-state"
+          data-state-key={view.labelKey}
+        >
+          {loanStateLabel(view, copy.loanState)}
+        </span>
       )}
       {claim ? <span className="btn btn-primary btn-sm">{copy.claims.claim}</span> : null}
     </Link>

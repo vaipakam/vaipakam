@@ -2230,7 +2230,8 @@
       "dueInDays_two": "Échéance dans {{count}} jours",
       "dueInDays_few": "Échéance dans {{count}} jours",
       "dueInDays_many": "Échéance dans {{count}} jours",
-      "dueInDays_other": "Échéance dans {{count}} jours"
+      "dueInDays_other": "Échéance dans {{count}} jours",
+      "pastGrace": "Délai de grâce écoulé"
     },
     "activity": {
       "loading": "Chargement de votre activité…",
@@ -2450,7 +2451,10 @@
     },
     "loanRow": {
       "youRent": "Vous louez",
-      "youRentOut": "Vous mettez en location"
+      "youRentOut": "Vous mettez en location",
+      "pastGraceLender": "Le délai de grâce est écoulé. Vous pouvez clôturer cette position depuis sa page ; quelqu’un d’autre peut aussi le faire avant vous.",
+      "pastGraceBorrower": "Le délai de grâce est écoulé : le prêt ne peut plus être remboursé de la manière habituelle et n’importe qui peut désormais le clôturer contre la garantie.",
+      "pastGraceRenter": "La location et son délai de grâce sont terminés. N’importe qui peut désormais la clôturer, ce qui met fin à votre accès au NFT."
     },
     "settingsPage": {
       "title": "Paramètres",

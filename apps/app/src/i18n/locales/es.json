@@ -2230,7 +2230,8 @@
       "dueInDays_two": "Vence en {{count}} días",
       "dueInDays_few": "Vence en {{count}} días",
       "dueInDays_many": "Vence en {{count}} días",
-      "dueInDays_other": "Vence en {{count}} días"
+      "dueInDays_other": "Vence en {{count}} días",
+      "pastGrace": "Gracia vencida"
     },
     "activity": {
       "loading": "Cargando tu actividad…",
@@ -2450,7 +2451,10 @@
     },
     "loanRow": {
       "youRent": "Alquilas",
-      "youRentOut": "Das en alquiler"
+      "youRentOut": "Das en alquiler",
+      "pastGraceLender": "El periodo de gracia ha terminado. Puedes cerrar esta posición desde su página; cualquier otra persona también puede hacerlo antes.",
+      "pastGraceBorrower": "El periodo de gracia ha terminado, así que el préstamo ya no se puede devolver de la forma habitual y cualquiera puede cerrarlo ahora contra la garantía.",
+      "pastGraceRenter": "El alquiler y su periodo de gracia han terminado. Cualquiera puede cerrarlo ahora, lo que pone fin a tu acceso al NFT."
     },
     "settingsPage": {
       "title": "Configuración",

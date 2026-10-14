@@ -27,6 +27,7 @@ export type LoanStateLabelKey =
   | 'closed'
   | 'beingSettled'
   | 'pastDue'
+  | 'pastGrace'
   | 'dueToday'
   | 'dueInDays';
 
@@ -50,6 +51,7 @@ export interface LoanStateLabels {
   closed: string;
   beingSettled: string;
   pastDue: string;
+  pastGrace: string;
   dueToday: string;
   dueInDays: (n: number) => string;
 }
@@ -85,6 +87,29 @@ export function loanStateView(loan: IndexedLoan): LoanStateView {
       return { state: 'on-track', labelKey: 'dueInDays', daysRemaining: remaining, label: `Due in ${remaining} days`, badge: 'ok' };
     }
   }
+}
+
+/**
+ * Sharpen a past-due loan's view with the CHAIN's verdict on whether its
+ * grace period has ended (#2463 follow-up). Past grace is the point where
+ * the loan can be closed out against the borrower, so it is worth a badge
+ * of its own — but only on the chain's word: the grace length is
+ * governance-configurable (`s.graceBuckets`), so a client-side ladder
+ * would be wrong in whichever direction an operator tuned it. Pass
+ * `isLoanDefaultable`'s answer; `undefined` (not read yet, or the read
+ * failed) leaves the time-based "Past due" in place, which is true either
+ * way.
+ */
+export function withGraceVerdict(
+  view: LoanStateView,
+  defaultable: boolean | undefined,
+): LoanStateView {
+  // Any open loan, not only one the local clock calls overdue: the chain's
+  // clock decides, and a device clock running behind would otherwise hide
+  // the badge exactly when it matters.
+  const open = view.state === 'overdue' || view.state === 'due-soon' || view.state === 'on-track';
+  if (!open || defaultable !== true) return view;
+  return { ...view, labelKey: 'pastGrace', label: 'Past grace', badge: 'danger' };
 }
 
 /** Resolve a state view to its translated badge label. The `dueInDays`

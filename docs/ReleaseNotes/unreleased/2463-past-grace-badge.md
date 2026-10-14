@@ -1,0 +1,3 @@
+## Positions — "Past grace" badge (#2463 follow-up)
+
+A loan on the Positions page whose grace period has ended now shows a "Past grace" badge instead of the generic "Past due", so a lender can see which positions they can close out and a borrower can see which loans can no longer be repaid the ordinary way. The answer comes from the protocol itself, read for each open loan, because the grace length is set by governance and judged by the chain's clock; a device clock that runs behind cannot hide the badge, and until the protocol's answer arrives the row keeps saying only "Past due". Hovering the badge explains what it means for the viewer's side, and never implies only the lender may close the loan out. Follow-up to #2463.

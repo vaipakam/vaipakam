@@ -2331,6 +2331,7 @@
       "closed": "Closed",
       "beingSettled": "Being settled",
       "pastDue": "Past due",
+      "pastGrace": "Past grace",
       "dueToday": "Due today",
       "dueInDays_zero": "Due in {{count}} days",
       "dueInDays_one": "Due in {{count}} day",
@@ -2557,7 +2558,10 @@
     },
     "loanRow": {
       "youRent": "You rent",
-      "youRentOut": "You rent out"
+      "youRentOut": "You rent out",
+      "pastGraceLender": "The grace period has ended. You can close out this position from its page; anyone else may also do it first.",
+      "pastGraceBorrower": "The grace period has ended, so the loan can no longer be repaid in the ordinary way and anyone may now close it out against the collateral.",
+      "pastGraceRenter": "The rental and its grace period have ended. Anyone may now close it out, which ends your access to the NFT."
     },
     "settingsPage": {
       "title": "Settings",
