@@ -145,6 +145,7 @@ const CLOSE_ONLY = [
     checks: {
       outcome: 'the confirm step carries copy.forcedClose.outcomeNoteSale',
       receipt: "the confirmation's own receipt is the SALE receipt (saleReceipt.youReceive), not the standard or rental one",
+      preview: 'the exact request the app asks to sign previews (eth_simulateV1, logs) as a SALE — SwapAdapterSucceeded for this loan — before the gate allows it',
     },
   },
   {
@@ -281,12 +282,15 @@ async function eligibleAt(blockNumber) {
   // no single block supports.
   const pinned = blockNumber ?? (await pub.getBlockNumber());
   const at = { blockNumber: pinned };
-  const [l, b, paused] = await Promise.all([
+  const [l, b, paused, sequencerOk] = await Promise.all([
     read('getLoanDetails', [LOAN_ID], at),
     pub.getBlock({ blockNumber: pinned }),
     // triggerDefault is whenNotPaused: an emergency pause is a moved
     // precondition like any other (#2481 r4).
     read('paused', [], at),
+    // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
+    // its recovery window) — another operational precondition (#2481 r5).
+    read('sequencerHealthy', [], at),
   ]);
   // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
   // an admin retune between startup and the inspected block changes what
@@ -298,6 +302,7 @@ async function eligibleAt(blockNumber) {
   const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
   if (paused) why.push('the protocol is paused');
+  if (!sequencerOk) why.push('the sequencer is not healthy');
   if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
   if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
   if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
@@ -342,6 +347,23 @@ const PLAN = SUBMIT
     ])
   : null;
 let gasFloor = 0n;
+/** The gate's own preview of the request it was asked to sign. */
+let previewVerdict = null;
+async function previewSale(tx) {
+  try {
+    const { results } = await pub.simulateCalls({ account: WALLET, calls: [{ to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) }] });
+    const r = results?.[0];
+    if (!r || r.status !== 'success' || r.logs === undefined) return 'unknown';
+    const ours = (name) =>
+      parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: r.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()) })
+        .some((l) => l.args.loanId === LOAN_ID);
+    if (ours('SwapAdapterSucceeded')) return 'sale';
+    if (ours('SwapAllAdaptersFailed')) return 'fallback';
+    return 'other';
+  } catch {
+    return 'unknown';
+  }
+}
 const abiFor = (to) => (typeof to === 'string' && to.toLowerCase() === DIAMOND.toLowerCase() ? DIAMOND_ABI : null);
 const step = () => PLAN?.steps()[0];
 const wrote = () => step()?.status === 'consumed';
@@ -370,6 +392,18 @@ async function gate(method, params) {
       gasFloor = 0n;
       console.log(`GATE  could not estimate the requested call: ${err.shortMessage ?? err.message}`);
     }
+  }
+  // #2481 r5 — PREVIEW the exact request independently (the same log-returning
+  // simulation the app's own guard uses) and require that it SELLS: an
+  // estimate succeeds even for a route every adapter rejects, because
+  // triggerDefault then completes into the fallback. A preview that ends in
+  // the fallback means the app sent what it should have refused — a FAIL;
+  // a node that cannot run the preview leaves the sale unproven — BLOCKED.
+  if (kind === 'tx' && PLAN.armed() !== null) {
+    const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
+    previewVerdict = await previewSale(tx);
+    console.log(`GATE  independent preview of the requested route: ${previewVerdict}`);
+    if (previewVerdict !== 'sale') PLAN.close();
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
   // refused request recorded meanwhile must still withhold the one-shot send.
@@ -536,6 +570,13 @@ async function judgeOutcome(hash) {
 try {
   resetWindow();
   await visit(page, `/positions/${LOAN_ID}`);
+  // The page must still BE this loan's (#2481 r5): a redirect to another
+  // position would pair that card with this loan's chain checks.
+  const landed = new URL(page.url()).pathname.replace(/\/$/, '');
+  if (landed !== `/positions/${LOAN_ID}`) {
+    check('card', 'mounted', `the page stayed on loan ${LOAN_ID}`, false, `landed on ${landed}`);
+    throw new Error(`navigation left /positions/${LOAN_ID} for ${landed}`);
+  }
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
     await blocked(`the page renders in "${lang}", not English — the expected labels come from the en catalogue`, null, done);
@@ -668,7 +709,10 @@ try {
     // the app working, on a sale not routable right now: BLOCKED, not a FAIL
     // (#2481 r4).
     const refusals = Object.entries(FC)
-      .filter(([k, v]) => /^route[A-Z]/.test(k) && typeof v === 'string')
+      // ONLY the messages that mean nothing was sent (#2481 r5):
+      // `routeMissingAnswers` is a warning shown while the shorter route IS
+      // sent, and must not read as a refusal.
+      .filter(([k, v]) => /^route[A-Z]/.test(k) && typeof v === 'string' && /nothing was (sent|spent)/i.test(v))
       .map(([k, v]) => [k, v]);
     let settled = false;
     let refusedWith = null;
@@ -685,6 +729,16 @@ try {
         break;
       }
       await page.waitForTimeout(1_000);
+    }
+    if (!wrote() && previewVerdict === 'unknown') {
+      PLAN.close();
+      await blocked('the node could not run the independent preview of the requested route, so a sale could not be established before signing', null, done);
+    }
+    if (previewVerdict === 'sale') {
+      check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', true, 'independent preview: SwapAdapterSucceeded');
+    }
+    if (!wrote() && (previewVerdict === 'fallback' || previewVerdict === 'other')) {
+      check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', false, `independent preview: ${previewVerdict} — the app should have refused this route`);
     }
     if (refusedWith && !wrote()) {
       PLAN.close();
