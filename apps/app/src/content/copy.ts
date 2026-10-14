@@ -5361,7 +5361,7 @@ const copySource = {
     pastGraceBorrower:
       'The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.',
     pastGraceRenter:
-      'The rental and its grace period have ended, so anyone may now be able to close it out, which would end your access to the NFT; its page shows where it stands.',
+      'The rental and its grace period have ended; your use of the NFT ended with the rental. Anyone may now be able to close it out, which settles the rental; its page shows where it stands.',
   },
   settingsPage: {
     title: 'Settings',

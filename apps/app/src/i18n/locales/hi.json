@@ -2454,7 +2454,7 @@
       "youRentOut": "आप rent पर देते हैं",
       "pastGraceLender": "Grace period ख़त्म हो गई है, इसलिए इस position को अब close out किया जा सकता है; उसका page बताता है कि अभी यह हो सकता है या नहीं। कोई भी इसे पहले close out कर सकता है।",
       "pastGraceBorrower": "Grace period ख़त्म हो गई है, इसलिए सामान्य repay window समाप्त है और अब कोई भी collateral के बदले loan को close out कर सकता है; उसका page उसकी स्थिति बताता है।",
-      "pastGraceRenter": "Rental और उसकी grace period ख़त्म हो गई हैं, इसलिए अब कोई भी इसे close out कर सकता है, जिससे NFT तक आपकी पहुँच ख़त्म हो जाएगी; उसका page उसकी स्थिति बताता है।"
+      "pastGraceRenter": "Rental और उसकी grace period ख़त्म हो गई हैं; NFT का आपका उपयोग rental के साथ ही ख़त्म हो गया। अब कोई भी इसे close out कर सकता है, जिससे rental settle हो जाता है; उसका page उसकी स्थिति बताता है।"
     },
     "settingsPage": {
       "title": "Settings",

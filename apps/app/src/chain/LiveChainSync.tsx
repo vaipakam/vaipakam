@@ -164,6 +164,10 @@ const RESUME_EXTRA_KEYS: ReadonlySet<string> = new Set([
   // reach the past-due/grace banner on the first interaction —
   // HTTP-only chains have no block nudge to carry it.
   'graceBannerTerms',
+  // #2463 follow-up — the Positions "Past grace" verdict is idle-stretched
+  // and outside LIVE_KEYS (no per-block need); a returning user must see a
+  // grace that ended, or a schedule that lengthened, on first interaction.
+  'loanPastGrace',
 ]);
 
 /** Floor between block-driven invalidations. Base Sepolia mines ~every

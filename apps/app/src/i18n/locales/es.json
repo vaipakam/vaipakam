@@ -2454,7 +2454,7 @@
       "youRentOut": "Das en alquiler",
       "pastGraceLender": "El periodo de gracia terminó, así que esta posición ya podría cerrarse; su página muestra si se puede hacer ahora mismo. Cualquiera puede cerrarla antes.",
       "pastGraceBorrower": "El periodo de gracia terminó, así que la ventana de pago ordinaria se acabó y cualquiera podría ya cerrar el préstamo contra la garantía; su página muestra cómo está.",
-      "pastGraceRenter": "El alquiler y su periodo de gracia terminaron, así que cualquiera podría ya cerrarlo, lo que pondría fin a tu acceso al NFT; su página muestra cómo está."
+      "pastGraceRenter": "El alquiler y su periodo de gracia terminaron; tu uso del NFT terminó con el alquiler. Cualquiera podría ya cerrarlo, lo que liquida el alquiler; su página muestra cómo está."
     },
     "settingsPage": {
       "title": "Configuración",
