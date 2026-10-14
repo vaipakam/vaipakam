@@ -217,6 +217,12 @@ test('the close-out card tracks the grace boundary for the lender', async ({
       .locator(`a[href="/positions/${loanId}"]`)
       .getByTestId('loan-row-state'),
   ).toHaveAttribute('data-state-key', 'pastGrace', { timeout: 30_000 });
+  // Its explanation is on the row itself, not only in a hover title.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-past-grace'),
+  ).toBeVisible();
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
   });

@@ -6,9 +6,15 @@
  *
  * Read for every open loan row (rows are windowed, so a list costs one
  * read per visible open position), and not only for rows this device's
- * clock calls overdue: the contract uses the chain's clock. A failed read is an ERROR, never `false`:
- * the row then keeps its time-based "Past due" badge, which is true either
- * way, rather than asserting the loan is still in grace.
+ * clock calls overdue: the contract uses the chain's clock. A failed or
+ * pending read is an ERROR, never `false`: the row then keeps its
+ * time-based badge (by this device's clock), rather than asserting either
+ * way what the chain has not said.
+ *
+ * What a `true` establishes is TIME eligibility only. `triggerDefault` can
+ * still refuse for reasons this read does not see (a pause, a sequencer
+ * outage, a KYC gate), so copy built on it says the close-out "may" be
+ * possible and defers to the position page.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -21,9 +27,11 @@ export function useLoanPastGrace(loanId: number, enabled: boolean) {
   return useQuery({
     queryKey: ['loanPastGrace', readChain.chainId, loanId],
     enabled: enabled && Boolean(publicClient),
-    // Grace ends once and does not come back, so a `true` stops polling;
-    // until then a minute is fine-grained enough for a list badge.
-    refetchInterval: (query) => (query.state.data === true ? false : 60_000),
+    // Polled in BOTH states. A `true` is not final: governance can lengthen
+    // the grace schedule (`setGraceBuckets` / `clearGraceBuckets`), which
+    // re-derives an open loan's deadline and can reopen ordinary repayment.
+    // A minute is fine-grained enough for a list badge.
+    refetchInterval: 60_000,
     queryFn: () =>
       publicClient!.readContract({
         address: readChain.diamondAddress,

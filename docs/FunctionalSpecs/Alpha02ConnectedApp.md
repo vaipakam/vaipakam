@@ -1414,9 +1414,15 @@ Thin-market honesty rules apply.
   distinct from a loan that is past due but still inside grace. Whether grace
   has ended is the protocol's own answer, judged by chain time against the
   live grace schedule, never the device clock; until that answer is read the
-  row says only that the loan is past due. Its explanation is by side: the
-  lender can close the position out, anyone else may do so first, and the
-  borrower can no longer repay in the ordinary way.
+  row keeps its ordinary time-based label, and it is re-read periodically
+  because governance can lengthen the grace schedule and reopen repayment.
+  That answer establishes TIME eligibility only — a close-out can still be
+  refused for reasons the row does not read, such as a pause — so the row's
+  explanation says a close-out may now be possible and points at the
+  position page. The explanation is visible on the row (not only on hover)
+  and is by side: for the lender the position may now be closed out and
+  anyone may do it first; for the borrower the ordinary repay window is over
+  and the loan may be closed out against the collateral.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.

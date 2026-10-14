@@ -2452,9 +2452,9 @@
     "loanRow": {
       "youRent": "Sie mieten",
       "youRentOut": "Sie vermieten",
-      "pastGraceLender": "Die Nachfrist ist abgelaufen. Sie können diese Position auf ihrer Seite schließen; jemand anderes kann es auch zuerst tun.",
-      "pastGraceBorrower": "Die Nachfrist ist abgelaufen, daher kann der Kredit nicht mehr auf dem üblichen Weg zurückgezahlt werden, und jeder kann ihn jetzt gegen die Sicherheit schließen.",
-      "pastGraceRenter": "Die Miete und ihre Nachfrist sind abgelaufen. Jeder kann sie jetzt schließen, wodurch Ihr Zugriff auf das NFT endet."
+      "pastGraceLender": "Die Nachfrist ist abgelaufen, daher kann diese Position jetzt möglicherweise geschlossen werden; ihre Seite zeigt, ob das gerade möglich ist. Jeder kann sie zuerst schließen.",
+      "pastGraceBorrower": "Die Nachfrist ist abgelaufen, daher ist das reguläre Rückzahlungsfenster vorbei und jeder kann den Kredit jetzt möglicherweise gegen die Sicherheit schließen; seine Seite zeigt den Stand.",
+      "pastGraceRenter": "Die Miete und ihre Nachfrist sind abgelaufen, daher kann jeder sie jetzt möglicherweise schließen, was Ihren Zugriff auf das NFT beenden würde; ihre Seite zeigt den Stand."
     },
     "settingsPage": {
       "title": "Einstellungen",

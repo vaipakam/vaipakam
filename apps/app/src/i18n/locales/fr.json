@@ -2452,9 +2452,9 @@
     "loanRow": {
       "youRent": "Vous louez",
       "youRentOut": "Vous mettez en location",
-      "pastGraceLender": "Le délai de grâce est écoulé. Vous pouvez clôturer cette position depuis sa page ; quelqu’un d’autre peut aussi le faire avant vous.",
-      "pastGraceBorrower": "Le délai de grâce est écoulé : le prêt ne peut plus être remboursé de la manière habituelle et n’importe qui peut désormais le clôturer contre la garantie.",
-      "pastGraceRenter": "La location et son délai de grâce sont terminés. N’importe qui peut désormais la clôturer, ce qui met fin à votre accès au NFT."
+      "pastGraceLender": "Le délai de grâce a pris fin : cette position peut désormais être clôturée ; sa page indique si c’est possible dès maintenant. N’importe qui peut la clôturer en premier.",
+      "pastGraceBorrower": "Le délai de grâce a pris fin : la fenêtre de remboursement ordinaire est close et n’importe qui pourrait désormais clôturer le prêt contre la garantie ; sa page indique où il en est.",
+      "pastGraceRenter": "La location et son délai de grâce ont pris fin : n’importe qui pourrait désormais la clôturer, ce qui mettrait fin à votre accès au NFT ; sa page indique où elle en est."
     },
     "settingsPage": {
       "title": "Paramètres",

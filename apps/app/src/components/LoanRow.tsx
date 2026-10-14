@@ -90,6 +90,16 @@ export function LoanRow({
             ? copy.positions.rowRental(loan.loanId)
             : copy.positions.rowLoan(loan.loanId, formatBpsAsPercent(loan.interestRateBps))}
         </span>
+        {pastGraceTitle ? (
+          <>
+            <br />
+            {/* Visible, not only the badge's `title`: a touch screen has no
+                hover and keyboard focus lands on the row's link. */}
+            <span className="row-sub" data-testid="loan-row-past-grace">
+              {pastGraceTitle}
+            </span>
+          </>
+        ) : null}
         {payout ? (
           <>
             <br />

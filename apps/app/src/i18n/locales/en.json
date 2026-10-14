@@ -2559,9 +2559,9 @@
     "loanRow": {
       "youRent": "You rent",
       "youRentOut": "You rent out",
-      "pastGraceLender": "The grace period has ended. You can close out this position from its page; anyone else may also do it first.",
-      "pastGraceBorrower": "The grace period has ended, so the loan can no longer be repaid in the ordinary way and anyone may now close it out against the collateral.",
-      "pastGraceRenter": "The rental and its grace period have ended. Anyone may now close it out, which ends your access to the NFT."
+      "pastGraceLender": "The grace period has ended, so this position may now be closed out; its page shows whether that can be done right now. Anyone may close it out first.",
+      "pastGraceBorrower": "The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.",
+      "pastGraceRenter": "The rental and its grace period have ended, so anyone may now be able to close it out, which would end your access to the NFT; its page shows where it stands."
     },
     "settingsPage": {
       "title": "Settings",

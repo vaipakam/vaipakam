@@ -5350,14 +5350,18 @@ const copySource = {
   loanRow: {
     youRent: 'You rent',
     youRentOut: 'You rent out',
-    // #2463 follow-up — the hover text on a "Past grace" badge, by side.
-    // Closing out is permissionless, so neither says only the lender can.
+    // #2463 follow-up — the line under a "Past grace" row, by side (also the
+    // badge's hover text). Grace having ended is a TIME fact; whether the
+    // close-out can run right now also depends on things this row does not
+    // read (a pause, an outage), so none says it CAN — each says it may and
+    // points at the page. Closing out is permissionless, so none says only
+    // the lender may.
     pastGraceLender:
-      'The grace period has ended. You can close out this position from its page; anyone else may also do it first.',
+      'The grace period has ended, so this position may now be closed out; its page shows whether that can be done right now. Anyone may close it out first.',
     pastGraceBorrower:
-      'The grace period has ended, so the loan can no longer be repaid in the ordinary way and anyone may now close it out against the collateral.',
+      'The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.',
     pastGraceRenter:
-      'The rental and its grace period have ended. Anyone may now close it out, which ends your access to the NFT.',
+      'The rental and its grace period have ended, so anyone may now be able to close it out, which would end your access to the NFT; its page shows where it stands.',
   },
   settingsPage: {
     title: 'Settings',
