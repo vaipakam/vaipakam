@@ -2159,11 +2159,6 @@ library LibRewardCustody {
     uint8 internal constant ROLLOUT_NO_DAY_LIST = 3;
     uint8 internal constant ROLLOUT_WIRE_TYPED = 4;
     uint8 internal constant ROLLOUT_NOTHING_UNTYPED = 5;
-    /// @dev #1944 c1 — an era-quarantined packet not yet classified final. The
-    ///      ingress quarantines it precisely so it holds NO epoch; admitting it
-    ///      here would open the epoch the ingress refused, and the delivery
-    ///      gate would then read its days as landed through the batch index.
-    uint8 internal constant ROLLOUT_ERA_QUARANTINED = 6;
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — whether the
     ///         ROLLOUT admission could still open an epoch over this packet,
@@ -2196,11 +2191,6 @@ library LibRewardCustody {
         returns (uint8)
     {
         if (p.arrivedAt == 0) return ROLLOUT_UNKNOWN_PACKET;
-        // #1944 c1 — the ingress's own rule, read where both consumers read
-        // it: quarantine means "no epoch" until classification is final, so
-        // the admission refuses by name and the classification gate lets
-        // `classifyLegacyPacket` reach the packet directly, its stated route.
-        if (p.eraQuarantined && !p.classificationFinal) return ROLLOUT_ERA_QUARANTINED;
         if (p.batchId != bytes32(0)) return ROLLOUT_ALREADY_ADMITTED;
         if (p.dayListHash == bytes32(0) || p.dayCount == 0) return ROLLOUT_NO_DAY_LIST;
         // This clause carries a SECOND guarantee beyond the one-accounting-path
@@ -2230,9 +2220,6 @@ library LibRewardCustody {
         }
         if (status == ROLLOUT_WIRE_TYPED) {
             revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
-        }
-        if (status == ROLLOUT_ERA_QUARANTINED) {
-            revert IVaipakamErrors.TransportPacketEraQuarantined(packetHash);
         }
         revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);
     }
@@ -4812,7 +4799,6 @@ library LibRewardCustody {
         if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
         if (p.kind != PACKET_KIND_BUDGET) revert IVaipakamErrors.DeliveryProofNotBudget(h, p.kind);
         if (p.batchId != bytes32(0)) revert IVaipakamErrors.DeliveryProofRouteIsBatch(h);
-        if (p.eraQuarantined && !p.classificationFinal) revert IVaipakamErrors.TransportPacketEraQuarantined(h);
         if (p.disposed != 0) revert IVaipakamErrors.DeliveryPacketDisposed(h, p.disposed);
     }
 

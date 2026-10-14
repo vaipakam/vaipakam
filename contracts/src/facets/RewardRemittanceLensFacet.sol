@@ -439,8 +439,9 @@ contract RewardRemittanceLensFacet {
      *         and whether it is refused: `batched` → the batch materializers;
      *         else `dayListRoot != 0` → {RewardEpochFacet.proveDeliveryDayChunk};
      *         else `dayListHash != 0` → {RewardEpochFacet.proveDeliveryDayList};
-     *         neither → a pre-3a packet with no provable list. `quarantined`
-     *         without `classificationFinal`, or `disposed != 0`, is refused.
+     *         neither → a pre-3a packet with no provable list. `disposed != 0`
+     *         is refused. (No packet is quarantined since the custody-era
+     *         revision, so the flag that read it is gone.)
      * @dev    A narrow read of existing packet fields rather than the whole
      *         {getIngressPacket} record: the keeper's proof step needs only
      *         these, and a fixed tuple keeps its decode stable when the
@@ -450,7 +451,6 @@ contract RewardRemittanceLensFacet {
      * @return chunkCount          The rooted list's chunk count.
      * @return chunksIndexed       Bit `i` set = chunk `i` proven.
      * @return batched             The packet holds a transport batch.
-     * @return quarantined         The packet landed era-quarantined.
      * @return classificationFinal Its classification is final.
      * @return disposed            Value disposed of by a non-classification exit.
      */
@@ -463,7 +463,6 @@ contract RewardRemittanceLensFacet {
             uint32 chunkCount,
             uint256 chunksIndexed,
             bool batched,
-            bool quarantined,
             bool classificationFinal,
             uint256 disposed
         )
@@ -475,7 +474,6 @@ contract RewardRemittanceLensFacet {
             p.chunkCount,
             p.chunksIndexed,
             p.batchId != bytes32(0),
-            p.eraQuarantined,
             p.classificationFinal,
             p.disposed
         );

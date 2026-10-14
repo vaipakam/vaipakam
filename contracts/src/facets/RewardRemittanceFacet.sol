@@ -950,12 +950,6 @@ contract RewardRemittanceFacet is
      *             funds itself and an unconfigured or detached chain has no
      *             delivery to wait for;
      *           - already armed (`DeliveryGateAlreadyArmed`);
-     *           - `custodyEraCurrent != 0` (`DeliveryGateEraRegistryPending`)
-     *             — Base still dispatches the PRE_REGISTRY era
-     *             (`REMIT_INTENDED_ERA_PRE_REGISTRY`), so on a mirror past
-     *             era 0 every rooted delivery lands quarantined with no fresh
-     *             exit and every armed day would wait forever. A role change
-     *             AFTER arming re-opens that until the era registry ships;
      *           - `fromDay` at or below either cumulative fold cursor
      *             (`DeliveryGateBelowFold`). WHY: the hold is sound only while
      *             it is monotone — a day a fold passed is never later found
@@ -978,7 +972,6 @@ contract RewardRemittanceFacet is
         if (fromDay == 0) revert InvalidAmount();
         if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) revert DeliveryGateNotMirror();
         if (s.dayDeliveryGateFromDay != 0) revert DeliveryGateAlreadyArmed(s.dayDeliveryGateFromDay);
-        if (s.custodyEraCurrent != 0) revert DeliveryGateEraRegistryPending(s.custodyEraCurrent);
         if (fromDay <= s.cumLenderCursor || fromDay <= s.cumBorrowerCursor) {
             revert DeliveryGateBelowFold(fromDay, s.cumLenderCursor, s.cumBorrowerCursor);
         }

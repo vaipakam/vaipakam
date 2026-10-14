@@ -1809,16 +1809,10 @@ interface IVaipakamErrors {
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
     /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
     error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice #1944 c1 — the packet is era-quarantined and not yet classified final: it holds no epoch and
-    ///         funds no day until evidence classifies it (the ingress's own stated intent).
-    error TransportPacketEraQuarantined(bytes32 packetHash);
     /// @notice #1944 c1 — the delivery gate exists only on a reward-mesh MIRROR: Base funds itself.
     error DeliveryGateNotMirror();
     /// @notice #1944 c1 — the delivery gate is one-shot and already armed from day `current`.
     error DeliveryGateAlreadyArmed(uint256 current);
-    /// @notice #1944 c1 — the mirror's custody era is past zero while Base still dispatches the pre-registry era:
-    ///         every d6 would land quarantined with no fresh exit, so arming would wedge every day.
-    error DeliveryGateEraRegistryPending(uint64 current);
     /// @notice #1944 c1 — arming from `fromDay` would re-hold days a cumulative fold already passed (lender
     ///         cursor `lenderCursor`, borrower `borrowerCursor`): the hold must stay monotone, so the gate only
     ///         ever arms ahead of both folds.

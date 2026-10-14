@@ -7960,13 +7960,14 @@ library LibVaipakam {
         ///      priced day-side on every chain). One-shot (0 → non-zero once) and
         ///      Mirror-only, so a wrong value is a `--fresh` matter, never a re-opening
         ///      of gated days. WHY a latch and not role alone: (a) the wait ends on a
-        ///      PROVEN delivery and nothing in `apps/keeper` proves day lists yet, so
-        ///      arming before that step exists makes every funded day wait on a human;
+        ///      PROVEN delivery, which the keeper's `deliveryProof` pass supplies, so
+        ///      arming before that pass runs on the mirror makes every funded day wait
+        ///      on a human;
         ///      (b) one SLOAD short-circuits Base/Unconfigured and every pre-upgrade day
-        ///      whose pre-3a packet carries no provable list. The setter refuses a
-        ///      mirror whose `custodyEraCurrent != 0` while Base still dispatches the
-        ///      PRE_REGISTRY era (RewardRemittanceFacet.REMIT_INTENDED_ERA_PRE_REGISTRY):
-        ///      there every d6 lands quarantined and no fresh exit exists (PR C fixes it).
+        ///      whose pre-3a packet carries no provable list. A mirror past custody era 0
+        ///      may arm it: Base stamps the destination's own reported era and a
+        ///      retired era's delivery opens its epoch (#1566 PR C revision), so no
+        ///      delivery is held inert.
         uint256 dayDeliveryGateFromDay;
         /// @dev #1944 consequence 1 — the ingress stamp of the FIRST non-quarantined,
         ///      undisposed budget packet PROVEN to list `day`, for packets holding NO
