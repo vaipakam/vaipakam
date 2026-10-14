@@ -16,6 +16,13 @@ quoted for the protocol contract itself, which is calldata for a caller
 that never makes the call. Aggregator quotes use the protocol's own
 slippage ceiling.
 
+A split liquidation now uses only aggregator routes as its legs. The
+protocol checks a split's legs only in total, so each leg has to carry
+its own price limit, which aggregator routes do and direct pool routes
+do not. When an enabled adapter has a name the keeper does not
+recognise, the keeper now says so in its log instead of leaving it out
+silently.
+
 Balancer V2 is no longer asked. Its only quote source was a hosted
 subgraph service whose availability could not be confirmed, so the venue
 is left out rather than sent on a guess. Using it again needs a decision

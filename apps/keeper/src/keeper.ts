@@ -43,6 +43,7 @@ import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
+  readKeeperRouteStanding,
   type ServerOrchestrationResult,
   type ServerRankedQuote,
 } from './serverQuotes';
@@ -178,15 +179,22 @@ function pickSplitLegs(
   fullQuotes: ServerOrchestrationResult,
   minImprovementBps: number,
 ): { a: ServerRankedQuote; b: ServerRankedQuote; totalExpected: bigint; gainBps: number } | null {
-  if (halfQuotes.ranked.length < 2) return null;
   if (fullQuotes.ranked.length === 0) return null;
+  // AGGREGATOR LEGS ONLY (#2480 r1 `4267324333`). `swapSplit` gives every
+  // leg `minOutputAmount = 0` and checks only the total, so a leg must
+  // carry its own slippage bound — which aggregator calldata does and a raw
+  // UniV3 / mock call does not (`LibSwap.sol`, swapSplit's dev note). And
+  // two UniV3 adapters during an adapter replacement quote the SAME pools,
+  // so their half-size quotes are not independent liquidity.
+  const legs = halfQuotes.ranked.filter((q) => q.kind === 'zeroex' || q.kind === 'oneinch');
+  if (legs.length < 2) return null;
   // Find the top-2 quotes with distinct `adapterIdx`. `ranked` is
   // already best-first by expectedOutput.
-  const a = halfQuotes.ranked[0];
+  const a = legs[0];
   let b: ServerRankedQuote | null = null;
-  for (let i = 1; i < halfQuotes.ranked.length; i++) {
-    if (halfQuotes.ranked[i].call.adapterIdx !== a.call.adapterIdx) {
-      b = halfQuotes.ranked[i];
+  for (let i = 1; i < legs.length; i++) {
+    if (legs[i].call.adapterIdx !== a.call.adapterIdx) {
+      b = legs[i];
       break;
     }
   }
@@ -404,6 +412,17 @@ export async function maybeAutonomousLiquidate(
     // always also fetch the half-size quote for that branch.
     const halfAmount = loan.collateralAmount / 2n;
     const otherHalf = loan.collateralAmount - halfAmount;
+    // ONE roster read for this loan's builds — the same moment for the
+    // full, half and partial quotes and any re-size below (#2480 r1). A
+    // failed read is left to each build, which reports it.
+    const txOrigin = ctx.wallet.account?.address;
+    const standing = await readKeeperRouteStanding(
+      env,
+      publicClient,
+      chain.id,
+      ctx.diamond,
+      txOrigin,
+    ).catch(() => undefined);
     const [quotes, halfQuotes, partialQuotes] = await Promise.all([
       orchestrateServerQuotes(env, publicClient, {
         chainId: chain.id,
@@ -411,16 +430,16 @@ export async function maybeAutonomousLiquidate(
         buyToken: loan.principalAsset,
         sellAmount: loan.collateralAmount,
         diamond: ctx.diamond,
-        txOrigin: ctx.wallet.account?.address,
-      }),
+        txOrigin,
+      }, standing),
       orchestrateServerQuotes(env, publicClient, {
         chainId: chain.id,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
         sellAmount: halfAmount,
         diamond: ctx.diamond,
-        txOrigin: ctx.wallet.account?.address,
-      }),
+        txOrigin,
+      }, standing),
       // Skip the third quote when partial isn't viable — keeps the
       // hot-path RPC volume the same as before in the common "full
       // liquidation" case. When partial IS viable, all three run in
@@ -433,8 +452,8 @@ export async function maybeAutonomousLiquidate(
             buyToken: loan.principalAsset,
             sellAmount: partialAmount,
             diamond: ctx.diamond,
-        txOrigin: ctx.wallet.account?.address,
-          })
+        txOrigin,
+          }, standing)
         : Promise.resolve(null),
     ]);
     if (quotes.calls.length === 0) {
@@ -521,8 +540,8 @@ export async function maybeAutonomousLiquidate(
           buyToken: loan.principalAsset,
           sellAmount,
           diamond: ctx.diamond,
-        txOrigin: ctx.wallet.account?.address,
-        });
+        txOrigin,
+        }, standing);
         return q.calls.length > 0 ? q : null;
       };
       // Read the live close-factor cap; default to BPS (no cap) on any failure.

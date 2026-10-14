@@ -30,6 +30,7 @@
  */
 import { encodeFunctionData, toEventSelector, type Address, type Hex, type PublicClient } from 'viem';
 import {
+  ADAPTER_NAME_KIND,
   packAggregatorData,
   packUniV3Data,
   parseOneInchQuote,
@@ -306,6 +307,13 @@ export interface CloseOutRoster {
    *  a liquid `triggerDefault` reverts `NoEnabledSwapRoute` for every
    *  caller until governance enables one. */
   enabledCount: number;
+  /** How many of those enabled adapters have a READABLE name this module
+   *  does not recognise (a new venue, a renamed implementation) and are not
+   *  the declared testnet mock. They are absent from `roster` — there is
+   *  no wire format to send them — but they are venues that exist, and a
+   *  caller reporting why it found no route must not let them vanish
+   *  (#2480 r1 `4267324316`). */
+  unrecognized: number;
 }
 
 /**
@@ -353,6 +361,13 @@ export async function readCloseOutRoster(
       (e) => e.disabled === undefined || (e.disabled === false && e.name === undefined),
     ),
     enabledCount: entries.filter((e) => e.disabled === false).length,
+    unrecognized: entries.filter(
+      (e) =>
+        e.disabled === false &&
+        e.name !== undefined &&
+        ADAPTER_NAME_KIND[e.name] === undefined &&
+        e.address.toLowerCase() !== testnetMockAdapter?.toLowerCase(),
+    ).length,
   };
 }
 

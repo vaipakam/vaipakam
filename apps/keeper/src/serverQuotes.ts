@@ -49,6 +49,7 @@ import {
   type CloseOutRoute,
 } from '@vaipakam/lib/routeBuilder';
 import type { AdapterCall, SwapVenueKind } from '@vaipakam/lib/swapRoutes';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
 
 export interface ServerQuoteRequest {
@@ -89,48 +90,39 @@ export interface ServerOrchestrationResult {
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
-/** How long one chain's roster read is reused. A roster changes only by
- *  governance action, and a stale read can only send an attempt the
- *  contract refuses or skips; what it saves is three reads per adapter on
- *  every quote of every pass. */
-const ROSTER_TTL_MS = 60_000;
 
-interface RosterStanding {
+/**
+ * One read of the Diamond's adapter list and each slot's askability.
+ *
+ * NOT cached across builds (#2480 r1 `4267324307`). The positions it
+ * carries are what the try-list's `adapterIdx` values are made of, and a
+ * governance removal or reorder between the read and the submit would send
+ * calldata to a different adapter, or an index the contract rejects. A
+ * caller that builds several try-lists for ONE close (the liquidator's
+ * full, half and partial quotes for one loan) reads it once and passes it
+ * to each — the same moment, not a remembered one.
+ */
+export interface RosterStanding {
   read: CloseOutRoster;
   slots: ClassifiedSlot[];
 }
 
-/** Roster AND each slot's askability, per chain + Diamond + whether an
- *  origin is known (the only caller-side fact askability reads). The
- *  UniV3 router check costs three reads per adapter, so it rides the same
- *  cache as the roster rather than running on every quote. */
-const standingCache = new Map<string, { at: number; standing: Promise<RosterStanding> }>();
-
-/** Test seam. */
-export function _resetRosterCache(): void {
-  standingCache.clear();
-}
-
-function standingFor(
+export async function readKeeperRouteStanding(
+  env: Env,
   client: PublicClient,
   chainId: number,
   diamond: Address,
-  aggregators: AggregatorSource,
-  originKnown: boolean,
+  txOrigin: Address | undefined,
 ): Promise<RosterStanding> {
-  const key = `${chainId}:${diamond.toLowerCase()}:${originKnown ? 'origin' : 'no-origin'}`;
-  const hit = standingCache.get(key);
-  if (hit && Date.now() - hit.at < ROSTER_TTL_MS) return hit.standing;
   const mock = getDeployment(chainId)?.testnetMocks?.mockSwapAdapter as Address | undefined;
-  const standing = (async () => {
-    const read = await readCloseOutRoster(client, diamond, mock);
-    const slots = await classifySlots({ client, chainId, roster: read.roster, aggregators });
-    return { read, slots };
-  })();
-  // A failed read is not cached: the next quote asks again.
-  standing.catch(() => standingCache.delete(key));
-  standingCache.set(key, { at: Date.now(), standing });
-  return standing;
+  const read = await readCloseOutRoster(client, diamond, mock);
+  const slots = await classifySlots({
+    client,
+    chainId,
+    roster: read.roster,
+    aggregators: keeperAggregatorSource(env, txOrigin),
+  });
+  return { read, slots };
 }
 
 async function directAnswer(url: string, headers: Record<string, string>): Promise<AggregatorAnswer> {
@@ -198,16 +190,22 @@ export async function orchestrateServerQuotes(
   env: Env,
   client: PublicClient,
   req: ServerQuoteRequest,
+  /** A standing read for THIS close, shared by its several builds; read
+   *  fresh when omitted. Must have been read with the same `txOrigin`. */
+  given?: RosterStanding,
 ): Promise<ServerOrchestrationResult> {
   const aggregators = keeperAggregatorSource(env, req.txOrigin);
   let standing: RosterStanding;
   try {
-    standing = await standingFor(client, req.chainId, req.diamond, aggregators, !!req.txOrigin);
+    standing =
+      given ?? (await readKeeperRouteStanding(env, client, req.chainId, req.diamond, req.txOrigin));
   } catch (err) {
+    // Described, never stringified: a viem transport error carries the
+    // request URL, and this Worker's RPC URLs carry API keys (#2480 r1).
     return {
       ranked: [],
       calls: [],
-      failed: [`roster-unread:${String(err).slice(0, 80)}`],
+      failed: [`roster-unread:${describeFailure(err)}`],
       route: null,
     };
   }
@@ -225,6 +223,9 @@ export async function orchestrateServerQuotes(
     .filter((o) => o.outcome !== 'quoted')
     .map((o) => `${o.kind}:${o.outcome}`);
   if (read.incomplete) failed.push('roster-incomplete');
+  // An enabled adapter this module cannot name is a venue that exists and
+  // was not asked — said, not dropped (#2480 r1 `4267324316`).
+  if (read.unrecognized > 0) failed.push(`unrecognized-adapters:${read.unrecognized}`);
   if (route.kind === 'no-quote') return { ranked: [], calls: [], failed, route };
   const ranked: ServerRankedQuote[] = route.candidates.flatMap((c) =>
     c.expectedOutput === null ? [] : [{ kind: c.kind, expectedOutput: c.expectedOutput, call: c.call }],

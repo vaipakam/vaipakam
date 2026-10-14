@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeAbiParameters, type Address, type PublicClient } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { _resetRosterCache, orchestrateServerQuotes } from '../src/serverQuotes';
+import { orchestrateServerQuotes } from '../src/serverQuotes';
 import type { Env } from '../src/env';
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
@@ -60,7 +60,6 @@ const sale = { sellToken: SELL, buyToken: BUY, sellAmount: 10n ** 18n };
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  _resetRosterCache();
 });
 
 describe('orchestrateServerQuotes (#2468)', () => {
@@ -124,10 +123,21 @@ describe('orchestrateServerQuotes (#2468)', () => {
     expect(out.failed).toEqual(['zeroex:origin-bound']);
   });
 
-  it('reports an unreadable roster instead of throwing', async () => {
+  it('says an enabled adapter it cannot name exists, rather than dropping it', async () => {
+    const client = chain([[A(0xab), 'SomeNewVenue']]);
+    const out = await orchestrateServerQuotes({} as Env, client, {
+      chainId: BASE_SEPOLIA,
+      diamond: DIAMOND,
+      ...sale,
+    });
+    expect(out.calls).toEqual([]);
+    expect(out.failed).toEqual(['unrecognized-adapters:1']);
+  });
+
+  it('reports an unreadable roster instead of throwing, without the RPC URL', async () => {
     const client = {
       readContract: async () => {
-        throw new Error('rpc down');
+        throw new Error('HTTP request failed. URL: https://rpc.example/v2/SECRET_KEY');
       },
     } as unknown as PublicClient;
     const out = await orchestrateServerQuotes({} as Env, client, {
@@ -137,5 +147,6 @@ describe('orchestrateServerQuotes (#2468)', () => {
     });
     expect(out.calls).toEqual([]);
     expect(out.failed[0]).toMatch(/^roster-unread:/);
+    expect(out.failed[0]).not.toContain('SECRET_KEY');
   });
 });
