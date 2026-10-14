@@ -1781,7 +1781,8 @@
         "loading": "正在加载您的历史…",
         "roleLender": "出借人",
         "roleBorrower": "借款人",
-        "started": "已开始"
+        "started": "已开始",
+        "termsUnknown": "初始条款不可用"
       },
       "ticket": {
         "rateBpsNote": "利率以基点存储（1% = 100 bps）",

@@ -92,6 +92,10 @@ interface LoanRow {
   // `LoanInitiated` ledger does not back. The candles still read the value
   // (a frozen best figure); the app is never told it as history.
   init_principal_unbacked: number;
+  // 0058 — the initiation terms (0032) and whether the ledger backs them.
+  init_rate_bps: number | null;
+  init_duration_days: number | null;
+  init_terms_unbacked: number;
   collateral_amount: string;
   asset_type: number;
   collateral_asset_type: number;
@@ -133,6 +137,11 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     // null = not recorded for this row, or recorded but not backed by the
     // chain's initiation event (0056); the app says so rather than guess.
     initPrincipal: row.init_principal_unbacked === 1 ? null : (row.init_principal ?? null),
+    // #2467 — the rate and duration the loan EXECUTED at, as opposed to the
+    // live `interestRateBps` / `durationDays`, which `LoanExtended` rewrites.
+    // Null unless the ledger backs both (0058) — never the live terms.
+    initRateBps: row.init_terms_unbacked === 1 ? null : (row.init_rate_bps ?? null),
+    initDurationDays: row.init_terms_unbacked === 1 ? null : (row.init_duration_days ?? null),
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,

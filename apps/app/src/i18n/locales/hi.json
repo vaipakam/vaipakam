@@ -1781,7 +1781,8 @@
         "loading": "आपकी history load हो रही है…",
         "roleLender": "Lender",
         "roleBorrower": "Borrower",
-        "started": "started"
+        "started": "started",
+        "termsUnknown": "शुरुआती terms उपलब्ध नहीं"
       },
       "ticket": {
         "rateBpsNote": "Rates basis points में store होती हैं (1% = 100 bps)",

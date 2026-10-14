@@ -4144,6 +4144,9 @@ const copySource = {
       roleLender: 'Lender',
       roleBorrower: 'Borrower',
       started: 'started',
+      // #2467 — a fill's executed rate and term, when the indexer cannot
+      // back them against the loan's initiation event.
+      termsUnknown: 'terms at the start not available',
     },
     ticket: {
       rateBpsNote: 'Rates are stored in basis points (1% = 100 bps)',

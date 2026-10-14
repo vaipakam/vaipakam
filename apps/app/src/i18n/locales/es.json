@@ -1781,7 +1781,8 @@
         "loading": "Cargando tu historial…",
         "roleLender": "Prestamista",
         "roleBorrower": "Prestatario",
-        "started": "iniciado"
+        "started": "iniciado",
+        "termsUnknown": "condiciones iniciales no disponibles"
       },
       "ticket": {
         "rateBpsNote": "Las tasas se guardan en puntos básicos (1% = 100 bps)",

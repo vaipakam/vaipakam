@@ -1781,7 +1781,8 @@
         "loading": "Verlauf wird geladen…",
         "roleLender": "Kreditgeber",
         "roleBorrower": "Kreditnehmer",
-        "started": "gestartet"
+        "started": "gestartet",
+        "termsUnknown": "Konditionen zu Beginn nicht verfügbar"
       },
       "ticket": {
         "rateBpsNote": "Sätze werden in Basispunkten gespeichert (1% = 100 bps)",
