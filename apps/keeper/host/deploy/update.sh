@@ -1,68 +1,99 @@
 #!/usr/bin/env bash
-# Builds the keeper from the deploy branch and stages it for promotion.
+# Deploys the deploy branch's tip to this machine, if it is not running yet.
 #
-# Run by vaipakam-keeper-update.service every five minutes, as the
-# unprivileged build user. It can write only its own home
-# (/var/lib/vaipakam-build): the running releases under /opt/vaipakam-keeper
-# are root's, so this account can never replace the code that runs with the
-# signing key. One run:
+# Run as root by vaipakam-keeper-update.service, every five minutes from its
+# timer, never two at once (a oneshot unit does not overlap itself). One run:
 #
-#   1. fetches the deploy branch (main unless install.sh was told otherwise);
-#   2. if it has not moved since the last build, stops;
-#   3. checks it out, installs the keeper's dependencies from the lockfile
-#      and builds the single-file bundle;
-#   4. runs the new bundle with --check, so a build that cannot even load is
-#      never offered for promotion;
-#   5. if the bundle is byte-identical to the running one (a merge that did
-#      not touch the keeper), records the commit and stops;
-#   6. otherwise stages it and rewrites staging/ready, which makes root's
-#      promote.sh (vaipakam-keeper-promote.path) take it.
+#   1. fetches the deploy branch into root's own checkout, so no other
+#      account can redirect where the code comes from;
+#   2. stops if `current` is already that commit's release;
+#   3. exports exactly that commit with `git archive` and builds it in a
+#      throwaway sandbox (build.sh): a fresh dynamic user that cannot read
+#      the env file or write the releases, and that runs the new bundle with
+#      --check, so a build that cannot even load is never installed;
+#   4. copies the bundle into releases/<commit> and switches `current` to it
+#      in one rename. Root chose the commit and built that commit's own
+#      export, so the release is bound to it; nothing another account wrote
+#      can be installed;
+#   5. restarts a running keeper onto it gracefully, unless the bundle is
+#      byte-identical to the one already running (a merge that did not touch
+#      the keeper), which needs no restart.
 #
-# Any failure exits non-zero with nothing staged, so the running keeper is
-# untouched and the next run retries. Comparing bundles rather than changed
-# paths means there is no list of "keeper files" to keep in step.
+# Any failure exits non-zero before `current` moves, so the running keeper is
+# untouched and the next run retries. The only state is `current` itself, so
+# there is no record of "already built" to fall out of step with it.
+#
+# What this cannot protect against is stated in docs/ops/KeeperMachine.md
+# §1: whoever can merge to the branch, or tamper with a dependency the build
+# fetches, controls what runs, as with the Workers' auto-deploy.
 set -euo pipefail
 
 ROOT=/opt/vaipakam-keeper
-HOME_DIR=/var/lib/vaipakam-build
-REPO="$HOME_DIR/repo"
-STAGING="$HOME_DIR/staging"
+REPO="$ROOT/repo"
 BRANCH="$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)"
-NODE=/usr/local/bin/node
+KEEP_RELEASES=5
 
 log() { echo "[keeper-update] $*"; }
 
-cd "$REPO"
-git fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-target="$(git rev-parse "origin/$BRANCH")"
-built="$(cat "$HOME_DIR/built-sha" 2>/dev/null || true)"
-if [ "$target" = "$built" ]; then
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
+
+git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+target="$(git -C "$REPO" rev-parse "origin/$BRANCH")"
+release="$ROOT/releases/$target"
+if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
   exit 0
 fi
 
-log "building $BRANCH at $target (last built: ${built:-none})"
-git checkout --quiet --force --detach "$target"
-git clean -fdxq -e node_modules
-corepack pnpm install --frozen-lockfile --filter '@vaipakam/keeper...' >/dev/null
-corepack pnpm --filter @vaipakam/keeper run build:host >/dev/null
-bundle="$REPO/apps/keeper/dist/keeper-host.mjs"
-"$NODE" "$bundle" --check
+log "building $BRANCH at $target"
+tmp="$(mktemp -d)"
+incoming=""
+# A run that fails part-way leaves neither its scratch nor a half-written
+# release behind (the glob that prunes releases skips dot-directories).
+trap 'rm -rf "$tmp" ${incoming:+"$incoming"}' EXIT
+chmod 755 "$tmp"
+git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
+chmod 644 "$tmp/src.tar"
+systemd-run --quiet --wait --pipe --collect \
+  --unit="vaipakam-keeper-build-${target:0:12}" \
+  -p DynamicUser=yes \
+  -p CacheDirectory=vaipakam-keeper-build \
+  -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $ROOT/build.sh:/run/keeper-build.sh" \
+  -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+  -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
+  -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
+  -p Nice=10 \
+  -E HOME=/var/cache/vaipakam-keeper-build \
+  -E COREPACK_HOME=/var/cache/vaipakam-keeper-build/corepack \
+  -E COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+  -E PATH=/usr/local/bin:/usr/bin:/bin \
+  /bin/bash /run/keeper-build.sh /run/keeper-src.tar /var/cache/vaipakam-keeper-build/keeper-host.mjs
+built="/var/cache/vaipakam-keeper-build/keeper-host.mjs"
 
-new_hash="$(sha256sum "$bundle" | cut -d' ' -f1)"
-cur_hash=""
-if [ -f "$ROOT/current/keeper-host.mjs" ]; then
-  cur_hash="$(sha256sum "$ROOT/current/keeper-host.mjs" | cut -d' ' -f1)"
+incoming="$(mktemp -d "$ROOT/releases/.incoming.XXXXXX")"
+install -m 644 -o root -g root "$built" "$incoming/keeper-host.mjs"
+echo "$target" > "$incoming/SOURCE_COMMIT"
+chmod 755 "$incoming"
+restart=yes
+if [ -f "$ROOT/current/keeper-host.mjs" ] && cmp -s "$incoming/keeper-host.mjs" "$ROOT/current/keeper-host.mjs"; then
+  restart=no
 fi
-if [ "$new_hash" = "$cur_hash" ]; then
-  log "$target builds the keeper that is already running; nothing to promote"
-  echo "$target" > "$HOME_DIR/built-sha"
-  exit 0
+rm -rf "$release"
+mv -T "$incoming" "$release"
+incoming=""
+ln -sfn "$release" "$ROOT/current.next"
+mv -Tf "$ROOT/current.next" "$ROOT/current"
+if [ "$restart" = yes ]; then
+  log "deployed $target; a running keeper restarts onto it after its current tick"
+  systemctl try-restart --no-block vaipakam-keeper.service
+else
+  log "deployed $target; the keeper is byte-identical to the running one, so no restart"
 fi
 
-mkdir -p "$STAGING"
-install -m 644 "$bundle" "$STAGING/keeper-host.mjs.next"
-mv -f "$STAGING/keeper-host.mjs.next" "$STAGING/keeper-host.mjs"
-echo "$target" > "$STAGING/SOURCE_COMMIT"
-echo "$target" > "$HOME_DIR/built-sha"
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $target" > "$STAGING/ready"
-log "staged $target for promotion"
+# Keep the last few releases for a manual rollback, never the one in use.
+# Release names are commit hashes, so `ls` is safe here.
+in_use="$(readlink -f "$ROOT/current")"
+# shellcheck disable=SC2012
+ls -1dt "$ROOT"/releases/*/ 2>/dev/null | tail -n +"$((KEEP_RELEASES + 1))" | while read -r dir; do
+  dir="${dir%/}"
+  [ "$dir" = "$in_use" ] || rm -rf "$dir"
+done

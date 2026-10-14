@@ -16,37 +16,43 @@ landed, so §2 holds by procedure only. Read §2 before starting anything.
 | Unit | Runs as | Does |
 | --- | --- | --- |
 | `vaipakam-keeper.service` | a dynamic user, with the env file as a private credential | the keeper itself: one tick every UTC minute |
-| `vaipakam-keeper-update.timer` → `.service` | `vaipakam-build`, which can write only its own home | every 5 minutes: fetch `main`, build, check, stage (`update.sh`) |
-| `vaipakam-keeper-promote.path` → `.service` | root | copies a staged build into the root-owned releases and restarts a running keeper onto it (`promote.sh`) |
+| `vaipakam-keeper-update.timer` → `.service` | root, building in a throwaway sandbox | every 5 minutes: deploy the branch's latest commit if it is not running (`update.sh`) |
 
-A merge to `main` is the deploy. `update.sh` builds the single-file bundle,
-runs it with `--check` to prove it loads, and compares it with the running
-one. A merge that does not change the keeper produces the same bundle and
-does not restart it. Any failure leaves the running keeper untouched, and the
-next run retries.
+A merge to `main` is the deploy. Each run of `update.sh` does the following:
 
-Three accounts, so no one of them holds everything. The build user can read
-neither the env file nor write the releases. It can only OFFER a build, and
-root promotes it only when the commit it names is the branch's current tip on
-GitHub. The keeper's dynamic user is the only one that sees the env file.
+1. It fetches `main` into root's own checkout.
+2. If `current` is already that commit's release, it stops there.
+3. Otherwise it exports exactly that commit and builds it in a sandbox, as a
+   fresh dynamic user that systemd deletes afterwards (`build.sh`). The build
+   runs the new bundle with `--check`, to prove it loads.
+4. It installs the bundle as `releases/<commit>` and switches `current` to it.
+5. It restarts a running keeper, unless the new bundle is byte-identical to
+   the running one (a merge that did not touch the keeper).
 
-Trust, stated plainly: whoever can merge to `main`, or tamper with the build
-(a compromised dependency, or the build account), controls what the keeper
-runs. Promotion stops a build being swapped in at an arbitrary time. It cannot
-prove a bundle is its commit's build. This is the same trust the Workers'
-auto-deploy carries. Node comes from nodejs.org, verified against the
-release's published SHA-256 over TLS.
+Any failure leaves the running keeper untouched, and the next run retries.
+The only state is `current`.
 
-Files on the machine:
+No account holds everything. The build user is new for every build, and it
+can read neither the env file nor write the releases. Root chose the commit
+and built that commit's own export, so a release is always bound to its
+commit. The keeper's dynamic user is the only one that sees the env file.
 
-| Path | Owner | What |
-| --- | --- | --- |
-| `/etc/vaipakam/keeper.env` | root, `0600` | settings and secrets. Never overwritten by the kit |
-| `/opt/vaipakam-keeper/current` | root | the running release (symlink into `releases/<commit>`) |
-| `/opt/vaipakam-keeper/releases/` | root | the last five promoted builds, for rollback |
-| `/opt/vaipakam-keeper/deploy-branch` | root | the branch followed (default `main`) |
-| `/var/lib/vaipakam-build/repo` | build user | the build checkout |
-| `/var/lib/vaipakam-build/staging/` | build user | the latest build offered for promotion |
+Trust, stated plainly: whoever can merge to `main`, or tamper with a
+dependency the build fetches, controls what the keeper runs. The package
+store is kept between builds in the build cache, and pnpm checks every
+package against the lockfile's integrity hashes. This is the same trust the
+Workers' auto-deploy carries. Node comes from nodejs.org, verified against
+the release's published SHA-256 over TLS.
+
+Files on the machine, all root's:
+
+| Path | What |
+| --- | --- |
+| `/etc/vaipakam/keeper.env` | settings and secrets, `0600`. Never overwritten by the kit |
+| `/opt/vaipakam-keeper/current` | the running release (a symlink into `releases/<commit>`) |
+| `/opt/vaipakam-keeper/releases/` | the last five deployed builds, for rollback |
+| `/opt/vaipakam-keeper/deploy-branch` | the branch followed (default `main`) |
+| `/opt/vaipakam-keeper/repo` | the checkout the code comes from |
 
 ## 2. One keeper at a time (read first)
 
@@ -68,18 +74,27 @@ write to the database and send alerts, so two of them double-notify.
 
 ## 3. Install
 
-On the machine, as a user with sudo:
+On the machine, as a user with sudo. Download first, then run, so a transfer
+cut short can never run part of the script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vaipakam/vaipakam/main/apps/keeper/host/deploy/install.sh | sudo bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/vaipakam/vaipakam/main/apps/keeper/host/deploy/install.sh
+sudo bash install.sh
 ```
 
-It installs Node 22, creates `vaipakam-build`, clones the repository, installs
-the units, enables the update timer, runs and promotes the first build, and
-creates `/etc/vaipakam/keeper.env` from the template if there is none. It
-does NOT start the keeper. Running it again is safe. It brings the units and
-scripts up to date (the timer does not update them) and moves Node to the
-latest 22.x release, so re-run it to take Node security releases.
+The script does the following:
+
+- installs Node 22 and clones the repository as root;
+- installs the units and enables the update timer;
+- deploys the first build;
+- creates `/etc/vaipakam/keeper.env` from the template, if there is none.
+
+It never enables or starts the keeper. That is the cutover in §5, so a
+machine that is installed but not cut over cannot start a second keeper at
+its next boot. Running it again is safe. Each run brings the units and
+scripts up to date (the timer does not update them). It also moves Node to
+the latest 22.x release and restarts a running keeper onto it. So re-run it
+to take Node security releases.
 
 ## 4. Configure
 
@@ -103,8 +118,11 @@ line (§5).
 
 ## 5. Start disarmed, validate, then arm
 
+The cutover. Confirm §2 first, because enabling the unit also starts it at
+every boot:
+
 ```bash
-sudo systemctl start vaipakam-keeper
+sudo systemctl enable --now vaipakam-keeper
 journalctl -u vaipakam-keeper -f
 ```
 
@@ -134,23 +152,27 @@ empty.
 - **Stop:** `sudo systemctl stop vaipakam-keeper`. The tick in flight finishes
   first and the process exits. There is deliberately no stop timeout: systemd
   never kills a keeper that is mid-pass, because a kill can cut a pass off
-  between sending a transaction and recording it. A promotion leaves a stopped
+  between sending a transaction and recording it. A deploy leaves a stopped
   keeper stopped. Stopping does NOT survive a reboot; see "Move hosts".
 - **A stop that hangs** means a pass is waiting on a network call that is not
   returning. Find out which one from the log before deciding. Killing it
   (`sudo systemctl kill -s KILL vaipakam-keeper`) is an operator decision,
   and afterwards check the keeper address on each chain for a transaction
   the database does not record.
-- **Pause deploys:** `sudo systemctl stop vaipakam-keeper-update.timer`.
-- **Roll back:** stop the update timer, point `current` at an earlier release
-  (`sudo ln -sfn /opt/vaipakam-keeper/releases/<commit>
-  /opt/vaipakam-keeper/current`), then `sudo systemctl restart
-  vaipakam-keeper`. **To return to `main`**, run `sudo
-  /opt/vaipakam-keeper/promote.sh`, which promotes the latest build again,
-  then restart the timer. Restarting the timer alone does not move the keeper
-  back, because the latest commit is already built.
+- **Pause deploys:** `sudo systemctl disable --now vaipakam-keeper-update.timer`,
+  then `sudo systemctl stop vaipakam-keeper-update.service`. The second
+  command waits for a deploy already running to finish. Stopping only the
+  timer would let that deploy finish and switch `current` anyway. `disable`
+  keeps the timer off across a reboot. Resume with `sudo systemctl enable
+  --now vaipakam-keeper-update.timer`.
+- **Roll back:** pause deploys (above) first. Then point `current` at an
+  earlier release (`sudo ln -sfn /opt/vaipakam-keeper/releases/<commit>
+  /opt/vaipakam-keeper/current`) and run `sudo systemctl restart
+  vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
+  sees that `current` is not `main`'s release and deploys it.
 - **Move hosts:** on the old machine run `sudo systemctl disable --now
-  vaipakam-keeper vaipakam-keeper-update.timer`. `disable` matters: a unit
+  vaipakam-keeper vaipakam-keeper-update.timer`. Then enable the new machine
+  with the §5 cutover. `disable` matters: a unit
   that is only stopped starts again at the next boot, which would put a
   second keeper on the same key. Confirm the process has exited (`systemctl
   is-active vaipakam-keeper` prints `inactive`), then start the new machine.

@@ -1,32 +1,16 @@
-# Builds the keeper from the latest main and stages it (update.sh). Runs as
-# the unprivileged build user, which can write only its own home: it can
-# never read the keeper's env file or touch the releases the keeper runs.
-# It cannot promote or restart anything itself: it rewrites a marker that
-# vaipakam-keeper-promote.path watches.
+# Deploys the latest commit of the deploy branch (update.sh). Runs as root
+# because it installs releases and restarts the keeper; the build itself runs
+# in a throwaway sandbox as a fresh dynamic user (build.sh), which can read
+# neither the keeper's env file nor its releases. A oneshot unit never runs
+# twice at once, so two deploys cannot interleave.
 
 [Unit]
-Description=Vaipakam keeper: build and stage the latest main
+Description=Vaipakam keeper: deploy the latest commit
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-User=vaipakam-build
-Group=vaipakam-build
-Environment=HOME=/var/lib/vaipakam-build
-Environment=COREPACK_HOME=/var/lib/vaipakam-build/corepack
-Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ExecStart=/opt/vaipakam-keeper/update.sh
-# A build on a small machine can take a while; never let two overlap.
+# A build on a small machine can take a while.
 TimeoutStartSec=1800
-Nice=10
-
-NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/vaipakam-build
-ProtectHome=yes
-PrivateTmp=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes

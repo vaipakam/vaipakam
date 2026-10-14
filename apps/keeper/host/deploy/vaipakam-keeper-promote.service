@@ -1,9 +1,0 @@
-# Copies the staged build into the root-owned release area and restarts the
-# keeper onto it (promote.sh).
-
-[Unit]
-Description=Vaipakam keeper: promote the staged build
-
-[Service]
-Type=oneshot
-ExecStart=/opt/vaipakam-keeper/promote.sh

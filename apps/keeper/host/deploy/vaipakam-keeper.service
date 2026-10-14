@@ -1,7 +1,8 @@
 # The keeper, as one long-running process (docs/ops/KeeperMachine.md).
 #
-# install.sh installs this unit and enables it but does not start it: start
-# it once /etc/vaipakam/keeper.env is filled in. Logs:
+# install.sh installs this unit but never enables or starts it. Enabling it
+# (`systemctl enable --now`) is the cutover in the runbook's §5, done only
+# once the env file is filled in and no other keeper runs. Logs:
 #   journalctl -u vaipakam-keeper -f
 #
 # The env file stays root-only (0600). LoadCredential hands a copy to this
