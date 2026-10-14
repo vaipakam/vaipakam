@@ -214,10 +214,16 @@ jobs:
             echo "notify=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Already open: the LATEST recorded condition (the body, or the last
-          # comment that updated it) decides whether anything changed.
-          last=$(gh issue view "$open" --repo "$GITHUB_REPOSITORY" --json body,comments \
-            -q '[.body] + [.comments[].body] | map(capture("<!-- ingest-keys: (?<k>[^ ]*) -->").k) | last // ""')
+          # Already open: the LATEST recorded condition decides whether anything
+          # changed — read ONLY from what this workflow wrote (#2482 r7). The
+          # issue is public, so anyone can comment a marker; a forged one must
+          # not be able to suppress the next notification. The body counts
+          # only when the issue was opened by the workflow's bot, comments only
+          # when the bot wrote them.
+          last=$(gh issue view "$open" --repo "$GITHUB_REPOSITORY" --json author,body,comments \
+            -q '([if .author.login == "github-actions" or .author.login == "app/github-actions" then .body else empty end]
+                 + [.comments[] | select(.author.login == "github-actions" or .author.login == "app/github-actions") | .body])
+                | map(capture("<!-- ingest-keys: (?<k>[^ ]*) -->").k) | last // ""')
           if [ "$last" = "$KEYS" ]; then
             echo "#$open already records this condition ($KEYS) — not notifying again."
             echo "notify=false" >> "$GITHUB_OUTPUT"

@@ -70,7 +70,10 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
         'Apply them (cd apps/indexer && npx wrangler d1 migrations apply vaipakam-warm --remote); ingest resumes on the next tick.',
     );
   } else if (schema.state === 'unknown') {
-    add('gate-unknown', 'schema gate UNKNOWN — the indexer could not read d1_migrations, so scheduled ingest is declining.');
+    // Unknown to THIS request, not a confirmed outage (#2482 r7): the route's
+    // own d1_migrations read failed, and a separate cron invocation may have
+    // read it fine. The cursor ages below say whether ingest actually stopped.
+    add('gate-unknown', 'schema gate UNCONFIRMED — this health request could not read d1_migrations, so whether scheduled ingest is declining is not known from it; the per-chain cursor ages are the evidence.');
   } else if (schema.state !== 'current') {
     add('gate-state', `schema gate state "${String(schema.state).replace(/[^0-9A-Za-z_-]/g, '?').slice(0, 40)}" is not one this probe knows`);
   }
