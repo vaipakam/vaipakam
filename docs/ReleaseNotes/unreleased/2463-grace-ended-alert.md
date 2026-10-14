@@ -1,4 +1,4 @@
-## Thread — Grace-ended inbox alert (PR #<n>)
+## Thread — Grace-ended inbox alert (PR #2479)
 
 The inbox now tells both parties when an open loan's grace window has
 closed. Until now the calendar reminders stopped at "a loan went past its
