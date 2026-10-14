@@ -87,6 +87,10 @@ export const THREE_VERDICT_DRIVERS = new Set([
   'live-desk-i18n-capture.mjs',
   'live-dryrun-review.mjs',
   'live-killswitch-regression.mjs',
+  // Exits 2 only on a build mismatch, an unreadable indexer, a wallet with no
+  // loans to judge, or the shared harness failing — preconditions; every row
+  // it reads is judged PASS/FAIL (#2467).
+  'live-desk-history-terms.mjs',
   'live-position-observe.mjs',
   'live-rate-desk.mjs',
   'live-recover.mjs',
