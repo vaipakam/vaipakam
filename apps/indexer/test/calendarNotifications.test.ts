@@ -709,6 +709,51 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(straggler.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']); // tick 2: served
   });
 
+  it('keeps a lagging chain`s loan selectable until its CHAIN-clock grace_ended week opens (#2479 r2)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    // 30d loan, 3d grace. By WALL time it is an hour past its grace_ended
+    // week; by the chain's settled head, two hours behind, it is inside it.
+    seedLoan(h, 31, NOW - 30 * DAY - 3 * DAY - 7 * DAY - 3_600, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW - 7_200);
+    expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
+  });
+
+  it('decides the SQL stage on the chain clock, then emits once the chain agrees (#2479 r2)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    seedLoan(h, 32, NOW - 30 * DAY - 2 * DAY, 30); // in grace
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
+    // Wall time is now past grace; the chain is not. Nothing new.
+    const later = NOW + DAY + 60;
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, later, HEAD + 5, new Set(), later - 120);
+    expect(rowsInDb(h)).toHaveLength(2);
+    // The chain catches up.
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, later + 60, HEAD + 10, new Set(), later + 60);
+    expect(rowsInDb(h).filter((r) => r.kind === 'grace_ended')).toHaveLength(2);
+  });
+
+  it('writes a saturated window in a handful of D1 queries, not one per row (#2479 r2)', async () => {
+    // D1 counts each statement in a batch against its per-invocation query
+    // ceiling (50 on the free tier). 2,000 two-sided grace_ended loans plan
+    // 4,000 rows; a statement per row would be refused wholesale.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h);
+    for (let i = 1; i <= 2000; i++) seedLoan(h, i, NOW - 4 * DAY - (i % 1000) - 30 * DAY, 30);
+    const d1 = h.d1 as { batch: (s: unknown[]) => Promise<unknown> };
+    const realBatch = d1.batch.bind(d1);
+    const batchSizes: number[] = [];
+    d1.batch = async (stmts: unknown[]) => {
+      batchSizes.push(stmts.length);
+      return realBatch(stmts);
+    };
+    const out = await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(out.inserted).toBe(4000);
+    expect(rowsInDb(h).filter((r) => r.kind === 'grace_ended')).toHaveLength(4000);
+    expect(batchSizes).toEqual([8]); // one subrequest, eight queries
+  });
+
   it('range-scans idx_loans_calendar_maturity; dedup probes stay indexed lookups (Codex #1298 r4/r6)', () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     // EXPLAIN QUERY PLAN over the EXACT production SQL (default and

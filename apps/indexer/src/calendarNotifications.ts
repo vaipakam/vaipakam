@@ -373,6 +373,14 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // grace stages are two-sided, so the lender leg probes the CURRENT
   // stage's kind rather than a fixed one — a fixed 'grace_entered' would
   // read as satisfied for a past-grace loan and suppress its grace_ended.
+  //
+  // The grace_ended arm compares against the CHAIN clock (its own bind,
+  // NULL when the settled head's timestamp is unknown, which makes the arm
+  // never match), the other arms against wall time — the same split the
+  // planner's `Milestone.clock` makes (#2479 r2 `4267041963`). Deciding the
+  // stage by wall time while the planner emits by chain time would suppress
+  // a lagging chain's loan as "already announced" on its grace_entered rows,
+  // or select it for a stage the planner then refuses to emit.
   const maturity = `(loans.start_time + loans.duration_days * 86400)`;
   const stageKind = `(CASE WHEN ${maturity} + ${graceCase} < ? THEN 'grace_ended'
                       WHEN ${maturity} <= ? THEN 'grace_entered'
@@ -559,21 +567,30 @@ export async function sweepCalendarNotifications(
           `migration; no redeploy is needed.`,
       );
     }
+    const windowClock = chainNowSec === null ? nowSec : Math.min(nowSec, chainNowSec);
     const res = await db
       .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
       .bind(
         chainId,
-        nowSec - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS,
+        // The look-back floor and the expiry leg run on the EARLIER of the
+        // two clocks (#2479 r2 `4267041963`): grace_ended's week is judged on
+        // chain time, so on a chain whose settled head lags wall time a
+        // wall-clock expiry would age a loan out before its chain-clock
+        // window opened — and no later tick would select it again.
+        windowClock - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS,
         nowSec + 7 * DAY,
-        nowSec,
+        windowClock,
         // Suppression-probe binds (r5/r6), in SQL text order: the three
-        // `now` comparisons that pick the borrower probe's current-stage
-        // kind, the grace-stage check guarding the lender-key leg, then
-        // the lender probe's own three. Every one is `now`. The keys'
-        // chain/loan/maturity segments concat the row's own INTEGER
-        // columns — a BOUND number can arrive as REAL (driver-dependent)
-        // and render '84532.0', silently missing every stored key.
-        ...Array<number>(7).fill(nowSec),
+        // comparisons that pick the borrower probe's current-stage kind
+        // (grace_ended on the chain clock, the other two on `now`), the
+        // grace-stage check guarding the lender-key leg, then the lender
+        // probe's own three. The keys' chain/loan/maturity segments concat
+        // the row's own INTEGER columns — a BOUND number can arrive as REAL
+        // (driver-dependent) and render '84532.0', silently missing every
+        // stored key.
+        chainNowSec, nowSec, nowSec,
+        nowSec,
+        chainNowSec, nowSec, nowSec,
       )
       .all<CalendarLoanRow>();
     const loans = res.results ?? [];

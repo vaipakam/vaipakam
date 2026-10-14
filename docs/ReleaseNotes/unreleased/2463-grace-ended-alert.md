@@ -8,7 +8,8 @@ entry fires once per due date, during the first week after grace ends, for
 both the borrower and the current holder of the lender position.
 
 It is timed by the protocol's own rule rather than an approximation of it:
-strictly after the due date plus the loan's grace length, which follows the
+strictly after the due date plus the loan's grace length, measured on the
+chain's own clock rather than the indexer's, which follows the
 protocol's configured grace schedule (the default unless governance has set
 custom tiers). So the inbox never announces that grace has ended before the contract
 considers it ended. Grace ending is a time fact only: a close-out can
@@ -22,5 +23,13 @@ from the loan's dates alone.
 The reminder sweep's look-back widened by that one week, and an
 already-announced past-grace loan is dropped from each tick's working set
 the same way the earlier reminders are, so it cannot crowd out loans that
-still have something to say. A follow-up to #2463 (the lender close-out);
+still have something to say.
+
+Inbox rows are now written in a few database statements per tick rather
+than one per row. A busy tick (many loans crossing a two-sided milestone
+together) could previously exceed the database's per-run statement limit,
+have the whole write refused, and retry it — and be refused — every tick
+after. This applies to event-driven inbox rows as well as reminders.
+
+A follow-up to #2463 (the lender close-out);
 no schema change.
