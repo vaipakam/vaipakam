@@ -4920,7 +4920,12 @@ export async function processLoanLogs(
       )
         .bind(
           Number(log.blockNumber),
-          Math.floor(Date.now() / 1000),
+          // #2476 r1 — WHEN it settled is the event's block time, not the
+          // scan's (a catch-up after downtime would otherwise date the
+          // settlement by when the indexer noticed it). Null when the block
+          // time is not in hand: unknown, never a guess. Matches 0057, which
+          // dates re-projected rows by the same event.
+          blockTimestamps.get(log.blockNumber) ?? null,
           Math.floor(Date.now() / 1000),
           chainId,
           Number(a.loanId as bigint),

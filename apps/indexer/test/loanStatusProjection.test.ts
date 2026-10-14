@@ -351,6 +351,21 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
     expect(statusOf(h, 40)).toBe('settled');
   });
 
+  it('dates the settlement by the event block, not the scan time, and leaves it unknown without one', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 46, 'internal_matched');
+    seedLoan(h, 47, 'internal_matched');
+    // Block 100 has a known time (500, from `run`); block 999 does not.
+    await run(h, [settledLog(46, 100, 0), settledLog(47, 999, 0)]);
+    const at = (id: number) =>
+      (h.db.prepare('SELECT terminal_block AS b, terminal_at AS t FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as {
+        b: number;
+        t: number | null;
+      });
+    expect(at(46)).toEqual({ b: 100, t: 500 });
+    expect(at(47)).toEqual({ b: 999, t: null });
+  });
+
   it('still settles the terminal statuses it always did, and is idempotent on an already-settled row', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     for (const [id, st] of [
