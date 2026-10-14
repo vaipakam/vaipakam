@@ -125,6 +125,7 @@ import {
   AssetType,
   reconcileIndexedStatus,
   LoanStatus,
+  isLiveReadUsable,
   usableLiveStatus,
 } from '../lib/types';
 import { tipAware } from '../chain/railHealth';
@@ -1208,10 +1209,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // #2470 — ONE live status for every reconciliation on this page (the
   // claim reads here, the badge and action gate below): never a stopped
   // query's cached snapshot, never data kept across a failed refetch.
-  const liveStatusForReconcile = usableLiveStatus({
+  const liveReadState = {
     enabled: liveStatusEnabled,
-    status: liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
     isError: liveStatus.isError,
+    isPaused: liveStatus.isPaused,
+    failureCount: liveStatus.failureCount,
+  };
+  const liveStatusForReconcile = usableLiveStatus({
+    ...liveReadState,
+    status: liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
   });
   const claimLoan = loan.data
     ? {
@@ -1274,11 +1280,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // data: once the indexed row is terminal the query stops, and its last
   // cached result is the pre-transition snapshot.
   const liveAmounts =
-    // #2461 r3 — a failed refetch keeps the last good `data`; folding that
-    // in would pin amounts older than the indexed row, so an errored read
-    // falls back to the indexed figures (the same guard the other
-    // consumers of this query apply).
-    liveStatusEnabled && liveStatus.data && !liveStatus.isError
+    // #2461 r3 / #2477 r1 — a failed, retrying or paused read keeps its last
+    // `data`; folding that in would pin amounts older than the indexed row.
+    // The same predicate the status reconciliation uses.
+    isLiveReadUsable(liveReadState) && liveStatus.data
       ? {
           principal: liveStatus.data.principal.toString(),
           collateralAmount: liveStatus.data.collateralAmount.toString(),

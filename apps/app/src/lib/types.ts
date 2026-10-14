@@ -48,19 +48,36 @@ export const LIVE_STATUS_TO_INDEXED = {
  *  page has already moved past. */
 /** #2470 — the live status the page may reconcile with, or `undefined`.
  *
- *  Only a read that is RUNNING and did not error counts. The page reads the
- *  live status only while the indexed row is still open (active or in the
+ *  Only a read that is RUNNING and HEALTHY counts. The page reads the live
+ *  status only while the indexed row is still open (active or in the
  *  fallback); once the indexer catches up to a terminal status the query
  *  stops, and React Query keeps its last result — a pre-transition snapshot.
- *  Reconciling with that would map an old `Repaid` over an indexed
- *  `settled` and regress the page until a reload. A failed refetch likewise
- *  keeps stale data. Same gate the page's amount fold uses (#2461). */
-export function usableLiveStatus(read: {
+ *  Reconciling with that would map an old `Repaid` over an indexed `settled`
+ *  and regress the page until a reload.
+ *
+ *  #2477 r1 — "healthy" is more than `!isError`. React Query keeps the last
+ *  data, with `isError` still false, while a query is PAUSED (offline) and
+ *  while a failed attempt waits for its retry (`failureCount > 0`). Both are
+ *  the same stale snapshot, so both are refused. Same gate as the page's
+ *  amount fold (#2461). */
+export interface LiveReadState {
   enabled: boolean;
-  status: number | undefined;
   isError: boolean;
-}): number | undefined {
-  return read.enabled && !read.isError ? read.status : undefined;
+  isPaused: boolean;
+  failureCount: number;
+}
+
+/** Whether a live read's data describes the chain NOW: the query is
+ *  running, and its last attempt neither failed, is retrying, nor is
+ *  paused. The ONE predicate for every use of the page's live loan read —
+ *  status reconciliation and the amount fold alike — so they cannot again
+ *  disagree about when the cache is stale. */
+export function isLiveReadUsable(read: LiveReadState): boolean {
+  return read.enabled && !read.isError && !read.isPaused && read.failureCount === 0;
+}
+
+export function usableLiveStatus(read: LiveReadState & { status: number | undefined }): number | undefined {
+  return isLiveReadUsable(read) ? read.status : undefined;
 }
 
 export function reconcileIndexedStatus<S extends string>(
