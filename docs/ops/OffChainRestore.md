@@ -1759,10 +1759,18 @@ caught at the cheapest stage.
       deletes a secret and its value cannot be read back, so "it should be
       false" is unverifiable. `( cd apps/keeper && wrangler secret put
       KEEPER_ENABLED )`, enter `false`.
-   2. Restore `"crons": ["* * * * *"]` in `apps/keeper/wrangler.jsonc` **and
-      commit it** — an edit living only in your checkout leaves `[]` on the
-      branch, and the next clean-checkout deploy re-unschedules the keeper
-      after this procedure has declared success.
+   2. Put `"crons": ["* * * * *"]` back in `apps/keeper/wrangler.jsonc`.
+      **How depends on where the `[]` came from.** In a normal restore it is
+      §1 step 9's TEMPORARY, uncommitted edit, so discard it —
+      `git checkout -- apps/keeper/wrangler.jsonc` — and confirm
+      `git diff apps/keeper/wrangler.jsonc` prints nothing: the committed
+      file already carries the schedule, so there is nothing to commit. Only
+      if the COMMITTED file itself carries `[]` (a hold was reinstated after
+      2026-10-14) do you edit it **and commit the edit**, since a change
+      living only in your checkout leaves `[]` on the branch and the next
+      clean-checkout deploy re-unschedules the keeper after this procedure
+      has declared success. Either way, finish with the schedule present and
+      `git status apps/keeper/wrangler.jsonc` reporting nothing to commit.
    3. Confirm a cron trigger is free on the FRESH account — cap is five per
       account. Check the ACCOUNT, not a comment.
 
@@ -1873,7 +1881,12 @@ caught at the cheapest stage.
       2 gives about the schedule: a working-tree change that passes `--live`
       and is never committed leaves the branch carrying the pre-re-arm
       inventory, so the next clean checkout restores exactly the staleness
-      this step exists to prevent.
+      this step exists to prevent. **On a normal restore there may be
+      nothing to edit:** since 2026-10-14 the committed authority already
+      lists the keeper as live, so this step is a CHECK that the file still
+      says so. Edit and commit only what no longer matches; when nothing
+      does, record that in the restore log instead of making an empty
+      commit.
 
       This step is easy to skip and hard to notice skipped: the conversion
       leaves the derived totals unchanged, so the offline CI check keeps
@@ -1972,8 +1985,11 @@ caught at the cheapest stage.
 
    ```bash
    ( cd apps/keeper
-     # put "triggers": { "crons": ["* * * * *"] } back in wrangler.jsonc
-     # — and COMMIT that edit, or the next clean-checkout deploy undoes it
+     # put "triggers": { "crons": ["* * * * *"] } back in wrangler.jsonc:
+     # normal restore — discard §1 step 9's temporary edit (nothing to commit):
+     git checkout -- wrangler.jsonc && git diff --exit-code wrangler.jsonc
+     # reinstated committed hold only — edit the file and COMMIT that edit,
+     # or the next clean-checkout deploy undoes it (see step 2 above)
      wrangler deploy --keep-vars
      wrangler deployments list | head )
    ```
