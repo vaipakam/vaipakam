@@ -133,8 +133,14 @@ export const MAX_ATTEMPTS_PER_RUN = 1;
  *  cost (chains, the book, governance's adapter roster) are not this pass's
  *  to bound, and three review rounds found three of them. A run that
  *  reaches it stops before sending and says so; the loan is tried again on
- *  a later visit. 40 of the invocation's 50 leaves the rest for the passes
- *  sharing the tick. */
+ *  a later visit.
+ *
+ *  What it bounds is THIS pass's share. The invocation's 50 are shared by
+ *  every pass due on the tick, and the other passes' requests are not
+ *  counted here, so this cap cannot keep the invocation as a whole under
+ *  the ceiling; the CPU bench shows several existing passes past it on
+ *  their own. One budget per invocation, shared by every due pass, is
+ *  #2490. */
 export const SUBREQUEST_BUDGET = 40;
 
 /** The pass's cadence, in ms — the rotation moves one batch per run.

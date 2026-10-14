@@ -17,6 +17,10 @@
  *
  * Fail-closed for a sending pass: the send is the last request an attempt
  * makes, so a run that hits the cap earlier stops before it.
+ *
+ * Scope: a budget counts only the requests routed through it. Today one
+ * pass (graceDefault) has one, so it bounds that pass and not the
+ * invocation; sharing one budget across every due pass is #2490.
  */
 export class SubrequestBudgetExhausted extends Error {
   constructor(readonly limit: number) {

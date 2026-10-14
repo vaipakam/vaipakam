@@ -1455,7 +1455,7 @@ assembled from two existing levers, in this order:
    liquidation or user claims. This is the proportionate first move for
    a ledger-relation breach: it stops the books being written to while
    the discrepancy is understood.
-   > Remember §3's scope note on `KEEPER_ENABLED`: it stops six jobs
+   > Remember §3's scope note on `KEEPER_ENABLED`: it stops seven jobs
    > and leaves four running, **including the watchers that message
    > users.** If the incident is one where users should not be hearing
    > from the system, stopping the keeper's schedule is the lever, not
