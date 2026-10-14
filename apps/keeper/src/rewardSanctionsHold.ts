@@ -16,11 +16,14 @@
 // the block with it) runs on. Nothing on chain observes by itself — this pass
 // does:
 //
-//   1. CANDIDATES — wallets with sanctions evidence, read from the indexer's
-//      record of the chain's own events (`activity_events`): every wallet
-//      whose latest evidence event starts a chain, plus every wallet whose
-//      chain was cleared recently (its record may still be Resolving from the
-//      hold, and the claimant is owed the payout).
+//   1. CANDIDATES — read from the indexer's record of the chain's own events
+//      (`activity_events`), each decided per wallet or per record and never
+//      by age or by a row count (Codex #2489 r1): every wallet whose LATEST
+//      evidence event starts a chain (an open chain), and every owner of an
+//      OPEN staging record or domain — opened, with no close event since. The
+//      second set is what carries a cleared wallet (its record may still be
+//      Resolving from the hold, and the claimant is owed the payout) and a
+//      claimant held with no chain at all, however long either waits.
 //   2. CLASSIFY — `getRewardSanctionsStatus`, the contract's ONE classifier
 //      read without writing, batched. Its deadlines (`observeBy`,
 //      `forfeitableAt`) are the contract's, never restated here.
@@ -59,12 +62,10 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
 import {
-  listSanctionsEvidenceEvents,
-  listStagingRecordKeysForUser,
+  listOpenSanctionsChains,
+  listOpenStagingOwners,
+  listOpenStagingRecordKeysForUser,
   listOpsAlertKeys,
-  listStagingRecordOwners,
-  SANCTIONS_EVIDENCE_ROW_LIMIT,
-  type SanctionsEvidenceRow,
 } from './db';
 import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 
@@ -88,9 +89,6 @@ export const DECISION_CONFIRMED = 2;
 export const OBSERVE_AFTER_SEC = 6 * 3600;
 /** This pass's cadence in seconds (passSchedule). Alert margins are one cadence. */
 export const PASS_CADENCE_SEC = 60 * 60;
-/** A wallet whose chain was cleared stays a candidate this long, so a staging
- *  record it left `Resolving` during the hold is still resolved. */
-export const CLEARED_CANDIDATE_SEC = 30 * 86_400;
 
 /** `LibVaipakam.StagingPhase.Resolving` / `DomainPhase.Resolving`. */
 const PHASE_RESOLVING = 3;
@@ -105,9 +103,6 @@ const MAX_SETTLE_CALLS_PER_OWNER = 4;
 const ALERT_REPEAT_SEC = 6 * 3600;
 /** How long one send may take to be mined before this tick's sends stop. */
 const RECEIPT_TIMEOUT_MS = 30_000;
-/** How far back staging-record owners join the candidates (#2450 review):
- *  a held claimant whose chain never started emits no evidence event. */
-const STAGING_OWNER_LOOKBACK_SEC = 30 * 86_400;
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
 /** One candidate's classification, as `getRewardSanctionsStatus` returns it. */
@@ -142,19 +137,13 @@ export interface SanctionsHoldPlan {
 }
 
 /**
- * The wallets worth classifying, from the chain's own evidence events (oldest
- * first): every wallet whose LATEST event starts a chain, plus every wallet
- * whose chain was cleared within `CLEARED_CANDIDATE_SEC`.
+ * The wallets worth classifying: every wallet with an open evidence chain and
+ * every owner of an open staging record or domain, once each, lowercased. Pure;
+ * the two reads ({@link listOpenSanctionsChains}, {@link listOpenStagingOwners})
+ * decide openness on the chain's own events, so nothing here filters by age.
  */
-export function candidateOwners(rows: readonly SanctionsEvidenceRow[], nowSec: number): Address[] {
-  const latest = new Map<string, SanctionsEvidenceRow>();
-  for (const r of rows) latest.set(r.who, r); // rows are oldest first: the last one wins
-  const out: Address[] = [];
-  for (const [who, r] of latest) {
-    if (r.kind === 'RewardSanctionsEvidenceRecorded') out.push(who as Address);
-    else if (nowSec - r.block_at <= CLEARED_CANDIDATE_SEC) out.push(who as Address);
-  }
-  return out;
+export function candidateOwners(openChains: readonly string[], stagingOwners: readonly string[]): Address[] {
+  return [...new Set([...openChains, ...stagingOwners].map((w) => w.toLowerCase() as Address))];
 }
 
 /** What to do for each classified candidate. Pure: the contract's verdict and
@@ -217,17 +206,13 @@ export async function runRewardSanctionsHold(env: Env): Promise<void> {
 
 async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
-  const rows = await listSanctionsEvidenceEvents(env.DB, chain.id);
-  if (rows.length >= SANCTIONS_EVIDENCE_ROW_LIMIT) {
-    console.warn(
-      `[keeper] rewardSanctionsHold chain=${chain.id}: ${rows.length} evidence rows hit the read bound — the newest may be unread`,
-    );
-  }
-  // Owners of recent staging records join the candidates: a claimant held with
-  // NO chain (the oracle was unavailable when its page ran, a flag marker set)
+  // Owners of open staging work join the open chains: a claimant held with NO
+  // chain (the oracle was unavailable when its page ran, a flag marker set)
   // emits no evidence event, so the events alone never surface it.
-  const recordOwners = await listStagingRecordOwners(env.DB, chain.id, nowSec - STAGING_OWNER_LOOKBACK_SEC);
-  const owners = [...new Set([...candidateOwners(rows, nowSec), ...recordOwners.map((o) => o.toLowerCase() as Address)])];
+  const owners = candidateOwners(
+    await listOpenSanctionsChains(env.DB, chain.id),
+    await listOpenStagingOwners(env.DB, chain.id),
+  );
   if (owners.length === 0) return;
 
   const client = createPublicClient({ transport: http(chain.rpc) });
@@ -356,35 +341,44 @@ async function resolveOwnerRecords(
   owner: Address,
 ): Promise<void> {
   if (budget.writes <= 0) return;
-  const keys = await listStagingRecordKeysForUser(env.DB, ctx.chainId, owner);
-  const reads = await batchedRead(
-    ctx.client as never,
-    [
-      ...keys.map((key) => ({
+  // The owner's OPEN records only, however old (Codex #2489 r1); read in
+  // bounded chunks, each record's own phase deciding whether a page is due.
+  const keys = await listOpenStagingRecordKeysForUser(env.DB, ctx.chainId, owner);
+  for (let c = 0; c < keys.length && budget.writes > 0; c += STATUS_CHUNK) {
+    const chunk = keys.slice(c, c + STATUS_CHUNK);
+    // eslint-disable-next-line no-await-in-loop
+    const reads = await batchedRead(
+      ctx.client as never,
+      chunk.map((key) => ({
         address: ctx.diamond,
         abi: ABI,
         functionName: 'getStagingRecord' as const,
         args: [key as Hex] as const,
       })),
-      ...[0, 1].map((side) => ({
-        address: ctx.diamond,
-        abi: ABI,
-        functionName: 'getStagingDomain' as const,
-        args: [owner, side] as const,
-      })),
-    ],
-    `rewardSanctionsHold records ${owner}`,
-  );
-  for (let i = 0; i < keys.length && budget.writes > 0; i++) {
-    const r = reads[i];
-    if (r?.status !== 'success') continue;
-    const view = r.result as { phase: number };
-    if (Number(view.phase) !== PHASE_RESOLVING) continue;
-    // eslint-disable-next-line no-await-in-loop
-    await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [keys[i] as Hex], () => true, owner);
+      `rewardSanctionsHold records ${owner} ${c}/${keys.length}`,
+    );
+    for (let i = 0; i < chunk.length && budget.writes > 0; i++) {
+      const r = reads[i];
+      if (r?.status !== 'success') continue;
+      const view = r.result as { phase: number };
+      if (Number(view.phase) !== PHASE_RESOLVING) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [chunk[i] as Hex], () => true, owner);
+    }
   }
+  if (budget.writes <= 0) return;
+  const domains = await batchedRead(
+    ctx.client as never,
+    [0, 1].map((side) => ({
+      address: ctx.diamond,
+      abi: ABI,
+      functionName: 'getStagingDomain' as const,
+      args: [owner, side] as const,
+    })),
+    `rewardSanctionsHold domains ${owner}`,
+  );
   for (let side = 0; side < 2 && budget.writes > 0; side++) {
-    const r = reads[keys.length + side];
+    const r = domains[side];
     if (r?.status !== 'success') continue;
     const t = r.result as readonly [Hex, number];
     if (Number(t[1]) !== PHASE_RESOLVING) continue;

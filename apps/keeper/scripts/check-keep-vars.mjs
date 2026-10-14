@@ -294,7 +294,17 @@ const SKIP_BASENAMES = new Set([
  * These hold vendored submodules and build artifacts; each is named in full so
  * a same-named directory of ours elsewhere stays in scope.
  */
-const SKIP_PATHS = new Set(['contracts/lib', 'contracts/out', 'contracts/cache']);
+const SKIP_PATHS = new Set([
+  'contracts/lib',
+  'contracts/out',
+  'contracts/cache',
+  // The knowledge graph CLAUDE.md has every session regenerate (`graphify
+  // update .`): gitignored, never a Worker config, and its `graph.json` runs
+  // to ~150 MB — parsing it as a candidate exhausted Node's heap, so the
+  // keeper's typecheck died locally while CI, which never has the directory,
+  // passed.
+  'graphify-out',
+]);
 
 /** Wrangler's own config filename convention — a total test on the name. */
 const CONFIG_NAME = /^wrangler[^/]*\.(jsonc|json|toml)$/;

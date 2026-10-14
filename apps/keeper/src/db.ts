@@ -674,103 +674,116 @@ export async function markReconciledDayConsumed(
 
 // ─── #2450 — the sanctions-hold observer's reads, and ops-alert de-dup ──────
 
-/** One sanctions-evidence event as the indexer recorded it in `activity_events`. */
-export interface SanctionsEvidenceRow {
-  /** The observed wallet, lowercased. */
-  who: string;
-  kind: 'RewardSanctionsEvidenceRecorded' | 'RewardSanctionsEvidenceCleared';
-  block_number: number;
-  log_index: number;
-  /** Block timestamp, unix seconds. */
-  block_at: number;
-}
-
-/** Upper bound on evidence rows read per chain per tick. Evidence is written
- *  only on an authoritative Flagged read (a chain start) or a Clean read that
- *  ends a chain, so the count tracks flagged wallets, not traffic; the bound is
- *  a guard, and the pass logs when it binds. */
-export const SANCTIONS_EVIDENCE_ROW_LIMIT = 5000;
-
 /**
- * Every sanctions-evidence event the indexer holds for `chainId`, oldest
- * first. The indexer decodes every Diamond event into `activity_events`, so
- * the observer reads the chain's own record of who was flagged instead of
- * scanning logs itself (no keeper pass scans logs).
+ * The wallets whose sanctions-evidence chain is OPEN on `chainId`: those whose
+ * LATEST evidence event is a `RewardSanctionsEvidenceRecorded` (a chain start
+ * no clean read has ended since), lowercased. The indexer decodes every
+ * Diamond event into `activity_events`, so the observer reads the chain's own
+ * record of who was flagged instead of scanning logs itself.
+ *
+ * One row per wallet, decided per wallet, so nothing bounds it but the number
+ * of open chains (Codex #2489 r1). The earlier read took the newest 5,000 rows
+ * and decided from those, so a wallet whose chain started before the newest
+ * 5,000 events dropped out while its chain still stood. A wallet whose chain
+ * was CLEARED is not listed here: what it can still be owed by the pass is the
+ * resolution of a staging record or domain, and {@link listOpenStagingOwners}
+ * lists every owner of one of those, however old.
  */
-export async function listSanctionsEvidenceEvents(
-  db: D1Database,
-  chainId: number,
-): Promise<SanctionsEvidenceRow[]> {
+export async function listOpenSanctionsChains(db: D1Database, chainId: number): Promise<string[]> {
   const rows = await db
     .prepare(
-      `SELECT lower(json_extract(args_json, '$.who')) AS who, kind, block_number, log_index, block_at
-         FROM activity_events
-        WHERE chain_id = ?1
-          AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
-        ORDER BY block_number DESC, log_index DESC
-        LIMIT ?2`,
+      `SELECT who FROM (
+         SELECT lower(json_extract(args_json, '$.who')) AS who, kind,
+                ROW_NUMBER() OVER (
+                  PARTITION BY lower(json_extract(args_json, '$.who'))
+                  ORDER BY block_number DESC, log_index DESC
+                ) AS rn
+           FROM activity_events
+          WHERE chain_id = ?1
+            AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
+       )
+        WHERE rn = 1 AND kind = 'RewardSanctionsEvidenceRecorded'
+        ORDER BY who`,
     )
-    .bind(chainId, SANCTIONS_EVIDENCE_ROW_LIMIT)
-    .all<SanctionsEvidenceRow>();
-  // Read NEWEST first, so the bound drops the oldest rows, never the newest
-  // flags (#2450 review); returned oldest first, as the callers expect.
-  return (rows.results ?? [])
-    .filter((r) => typeof r.who === 'string' && /^0x[0-9a-f]{40}$/.test(r.who))
-    .reverse();
-}
-
-/** Distinct owners of staging records opened on `chainId` since `sinceSec` —
- *  candidates the sanctions-hold pass classifies even when no evidence event
- *  names them (a claimant held with no observation chain). Newest first, so
- *  the bound drops the owners least likely to still hold an open record. */
-export async function listStagingRecordOwners(
-  db: D1Database,
-  chainId: number,
-  sinceSec: number,
-  limit = 500,
-): Promise<string[]> {
-  const rows = await db
-    .prepare(
-      `SELECT lower(json_extract(args_json, '$.user')) AS who
-         FROM activity_events
-        WHERE chain_id = ?1
-          AND kind = 'StagingRecordOpened'
-          AND block_at >= ?2
-        GROUP BY who
-        ORDER BY MAX(block_number) DESC
-        LIMIT ?3`,
-    )
-    .bind(chainId, sinceSec, limit)
+    .bind(chainId)
     .all<{ who: string | null }>();
   return (rows.results ?? [])
     .map((r) => r.who)
     .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
 }
 
-/** Staging-record keys opened for `user` on `chainId`, newest first. A record
- *  key is the input to the permissionless resolution page; the record's own
- *  phase, read on chain, decides whether there is anything to resolve. */
-export async function listStagingRecordKeysForUser(
+/**
+ * The open staging work the indexer's event log records on `chainId`, decided
+ * per record and per domain (Codex #2489 r1): a record is open when its latest
+ * `StagingRecordOpened` has no later `StagingRecordClosed`, a domain when its
+ * latest `StagingDomainOpened` has no later `StagingDomainCleared`. Every close
+ * path emits the close event (`LibRewardStaging._close`, both domain clears);
+ * a record that is deleted without one was never announced as opened.
+ *
+ * Nothing bounds this by age or count: a Resolving record stays work until the
+ * chain closes it, however long a held claimant waits. The earlier read took
+ * the owners of records opened in the last 30 days, so a record still waiting
+ * past that dropped out of the pass with its page never run.
+ *
+ * Positions compare `(block_number, log_index)` as one integer; a block's log
+ * index is far below the multiplier.
+ */
+const OPEN_STAGING_SQL = `
+  WITH ev AS (
+    SELECT kind,
+           lower(json_extract(args_json, '$.user')) AS who,
+           lower(COALESCE(json_extract(args_json, '$.key'), json_extract(args_json, '$.domainKey'))) AS k,
+           block_number * 1000000 + log_index AS pos
+      FROM activity_events
+     WHERE chain_id = ?1
+       AND kind IN ('StagingRecordOpened', 'StagingRecordClosed', 'StagingDomainOpened', 'StagingDomainCleared')
+  ),
+  opened AS (
+    SELECT CASE kind WHEN 'StagingRecordOpened' THEN 'record' ELSE 'domain' END AS what, k, who, MAX(pos) AS pos
+      FROM ev WHERE kind IN ('StagingRecordOpened', 'StagingDomainOpened')
+     GROUP BY what, k
+  ),
+  closed AS (
+    SELECT CASE kind WHEN 'StagingRecordClosed' THEN 'record' ELSE 'domain' END AS what, k, MAX(pos) AS pos
+      FROM ev WHERE kind IN ('StagingRecordClosed', 'StagingDomainCleared')
+     GROUP BY what, k
+  )
+  SELECT o.what AS what, o.k AS k, o.who AS who, o.pos AS pos
+    FROM opened o LEFT JOIN closed c ON c.what = o.what AND c.k = o.k
+   WHERE c.pos IS NULL OR c.pos < o.pos`;
+
+/** Distinct owners of an open staging record or domain on `chainId` —
+ *  candidates the sanctions-hold pass classifies even when no evidence event
+ *  names them (a claimant held with no observation chain, a cleared one). */
+export async function listOpenStagingOwners(db: D1Database, chainId: number): Promise<string[]> {
+  const rows = await db
+    .prepare(`SELECT DISTINCT who FROM (${OPEN_STAGING_SQL}) ORDER BY who`)
+    .bind(chainId)
+    .all<{ who: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.who)
+    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
+}
+
+/** The keys of `user`'s OPEN staging records on `chainId`, oldest first. A
+ *  record key is the input to the permissionless resolution page; the record's
+ *  own phase, read on chain, decides whether there is anything to resolve. */
+export async function listOpenStagingRecordKeysForUser(
   db: D1Database,
   chainId: number,
   user: string,
-  limit = 100,
 ): Promise<string[]> {
   const rows = await db
     .prepare(
-      `SELECT DISTINCT json_extract(args_json, '$.key') AS record_key
-         FROM activity_events
-        WHERE chain_id = ?1
-          AND kind = 'StagingRecordOpened'
-          AND lower(json_extract(args_json, '$.user')) = ?2
-        ORDER BY block_number DESC
-        LIMIT ?3`,
+      `SELECT k FROM (${OPEN_STAGING_SQL})
+        WHERE what = 'record' AND who = ?2
+        ORDER BY pos`,
     )
-    .bind(chainId, user.toLowerCase(), limit)
-    .all<{ record_key: string | null }>();
+    .bind(chainId, user.toLowerCase())
+    .all<{ k: string | null }>();
   return (rows.results ?? [])
-    .map((r) => r.record_key)
-    .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-fA-F]{64}$/.test(k));
+    .map((r) => r.k)
+    .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-f]{64}$/.test(k));
 }
 
 // The reads above are SHARED (the indexer's `activity_events`); the ops-alert
@@ -836,17 +849,19 @@ export interface BudgetDeliveryRow {
 const PACKET_KIND_BUDGET = 1;
 
 /**
- * Budget deliveries recorded on `chainId` since `sinceSec`, newest first, at
- * most `limit`: each packet joined (same transaction) to the event that carries
- * its day list — the flat list itself, or the rooted wire's marker. The indexer
- * decodes every Diamond event into `activity_events`, so no log scan is needed.
+ * EVERY budget delivery recorded on `chainId`, oldest first: each packet joined
+ * (same transaction) to the event that carries its day list — the flat list
+ * itself, or the rooted wire's marker. The indexer decodes every Diamond event
+ * into `activity_events`, so no log scan is needed.
+ *
+ * No age and no count bound (Codex #2489 r1): a delivery is work until the
+ * chain shows it whole, and the earlier 45-day / 200-row window let one still
+ * waiting on its proof drop out for good. What keeps a tick's chain work
+ * bounded is the keeper's DONE set ({@link listWorkDone}): the pass skips every
+ * packet it has seen finished, so only open deliveries are read on chain. The
+ * rows read here grow by one per delivery ever made to this mirror.
  */
-export async function listRecentBudgetDeliveries(
-  db: D1Database,
-  chainId: number,
-  sinceSec: number,
-  limit = 200,
-): Promise<BudgetDeliveryRow[]> {
+export async function listBudgetDeliveries(db: D1Database, chainId: number): Promise<BudgetDeliveryRow[]> {
   const rows = await db
     .prepare(
       `SELECT json_extract(p.args_json, '$.packetHash') AS packet_hash,
@@ -866,11 +881,9 @@ export async function listRecentBudgetDeliveries(
         WHERE p.chain_id = ?1
           AND p.kind = 'IngressPacketRecorded'
           AND CAST(json_extract(p.args_json, '$.kind') AS INTEGER) = ?2
-          AND p.block_at >= ?3
-        ORDER BY p.block_number DESC, p.log_index DESC
-        LIMIT ?4`,
+        ORDER BY p.block_number ASC, p.log_index ASC`,
     )
-    .bind(chainId, PACKET_KIND_BUDGET, sinceSec, limit)
+    .bind(chainId, PACKET_KIND_BUDGET)
     .all<{ packet_hash: string | null; remit_id: string | number | null; day_kind: string | null; day_ids: string | null; block_at: number }>();
   const out: BudgetDeliveryRow[] = [];
   for (const r of rows.results ?? []) {
@@ -899,22 +912,74 @@ export async function listRecentBudgetDeliveries(
 
 // ─── #1461 — released remittances whose delivery may still land ─────────────
 
-/** Remit ids the canonical chain RELEASED, newest first, at most `limit`, from
- *  the indexer's record of `RemitReservationReleased`. The ack pass's frontier
- *  scan treats a released reservation as terminal, so a delivery that executes
- *  after its release is found here instead. */
-export async function listReleasedRemitIds(db: D1Database, chainId: number, limit = 50): Promise<number[]> {
+/** EVERY remit id the canonical chain RELEASED, oldest first, from the
+ *  indexer's record of `RemitReservationReleased`. The ack pass's frontier scan
+ *  treats a released reservation as terminal, so a delivery that executes after
+ *  its release is found here instead.
+ *
+ *  No count bound (Codex #2489 r1): the earlier newest-50 read let a release
+ *  still awaiting its late acknowledgement drop out behind 50 newer ones. The
+ *  pass skips every release in the keeper's DONE set ({@link listWorkDone}), so
+ *  only open ones are read on chain. */
+export async function listReleasedRemitIds(db: D1Database, chainId: number): Promise<number[]> {
   const rows = await db
     .prepare(
-      `SELECT DISTINCT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
+      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
          FROM activity_events
         WHERE chain_id = ?1 AND kind = 'RemitReservationReleased'
-        ORDER BY block_number DESC
-        LIMIT ?2`,
+        GROUP BY remit_id
+        ORDER BY MIN(block_number)`,
     )
-    .bind(chainId, limit)
+    .bind(chainId)
     .all<{ remit_id: number | null }>();
   return (rows.results ?? [])
     .map((r) => r.remit_id)
     .filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+}
+
+// ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────
+
+/** The passes that keep a done set, by the `kind` each records under. */
+export type WorkKind = 'delivery_proof' | 'late_ack';
+
+/**
+ * The items `kind` has CONFIRMED DONE on chain for `(chainId, diamond)`. A pass
+ * reads every candidate the shared event log holds and skips these, so an item
+ * stays a candidate until the chain shows it finished, never until it ages out
+ * of a window. Keyed by the Diamond too: a fresh redeploy restarts the ids a
+ * pass records (remit ids count from 1 again).
+ */
+export async function listWorkDone(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+): Promise<Set<string>> {
+  const rows = await db
+    .prepare(`SELECT item FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3`)
+    .bind(chainId, diamond.toLowerCase(), kind)
+    .all<{ item: string }>();
+  return new Set((rows.results ?? []).map((r) => r.item));
+}
+
+/** Record `items` as done — only on an on-chain read that shows them finished.
+ *  Idempotent; one statement per item, all in one batch. */
+export async function markWorkDone(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  items: readonly string[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch(
+    items.map((item) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO keeper_work_done (chain_id, diamond, kind, item, done_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+        )
+        .bind(chainId, diamond.toLowerCase(), kind, item, now),
+    ),
+  );
 }

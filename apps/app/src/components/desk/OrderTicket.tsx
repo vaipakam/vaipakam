@@ -576,6 +576,13 @@ export function OrderTicket({
   // Gasless posting additionally needs the order-book service (there
   // is nowhere else to publish the signed row) and the signing wallet.
   const gaslessReady = indexerConfigured() && signedOffer.canSign;
+  // #1949 (Codex #2489 r1 P1) — a maker's Full opt-in that cannot complete at
+  // a fill (blocked by the quote/liquidity refresh, or no ceiling) is NEVER
+  // signed, and is never quietly signed as "Full off" either: the order would
+  // carry different fee terms from the ones the maker chose. ONE predicate for
+  // the button, the blocker text and the submit, so they cannot disagree.
+  const makerFullInvalid =
+    postMode === 'gasless' && makerFull.full && (makerFull.blocked || makerFull.maxCStar <= 0n);
 
   const canPost =
     fieldsComplete &&
@@ -598,6 +605,7 @@ export function OrderTicket({
     onSupportedChain &&
     !killed &&
     !busy &&
+    !makerFullInvalid &&
     (postMode === 'onchain' || gaslessReady);
 
   // ---- submit — same sequence as OfferFlow.submitPost -----------------
@@ -973,16 +981,21 @@ export function OrderTicket({
           ? payload.expiresAt
           : (await liveChainTimestamp(publicClient)) +
             BigInt(GASLESS_GTC_DEADLINE_SECONDS);
-      // #1949 — the maker's Full opt-in rides the signed artifact; absent
-      // (unticked) signs the order with Full off, exactly as before.
-      const makerFullIntent =
-        makerFull.full && !makerFull.blocked && makerFull.maxCStar > 0n
-          ? {
-              full: true,
-              maxCStar: makerFull.maxCStar,
-              allowDowngrade: makerFull.allowDowngrade,
-            }
-          : undefined;
+      // #1949 — the maker's Full opt-in rides the signed artifact; unticked
+      // signs the order with Full off, exactly as before. A ticked choice
+      // that is not valid is refused, never downgraded (Codex #2489 r1 P1).
+      if (makerFullInvalid) {
+        throw new Error(
+          makerFull.blocked ? copy.tariff.fullUnavailableNow : copy.tariff.maxCStarRequired,
+        );
+      }
+      const makerFullIntent = makerFull.full
+        ? {
+            full: true,
+            maxCStar: makerFull.maxCStar,
+            allowDowngrade: makerFull.allowDowngrade,
+          }
+        : undefined;
       const order = wireFromCreatePayload(payload, address, nonce, deadline, makerFullIntent);
       const signature = await signedOffer.sign(order);
       const res = await postSignedOffer(
@@ -1039,9 +1052,8 @@ export function OrderTicket({
     // #1949 — a maker's Full opt-in that cannot complete at a fill is never
     // signed; the user unticks it or waits. A ceiling below today's quote is
     // NOT a block for a resting order (the control warns instead).
-    if (postMode === 'gasless' && makerFull.full) {
-      if (makerFull.blocked) return copy.tariff.fullUnavailableNow;
-      if (makerFull.maxCStar <= 0n) return copy.tariff.maxCStarRequired;
+    if (makerFullInvalid) {
+      return makerFull.blocked ? copy.tariff.fullUnavailableNow : copy.tariff.maxCStarRequired;
     }
     if (!consent) return text.blockConsent;
     return null;

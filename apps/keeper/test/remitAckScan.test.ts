@@ -114,11 +114,11 @@ function reservation(status: number): string {
   return enc(F.reservation, out.length === 1 ? vals[0] : vals);
 }
 
-type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[] };
+type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[]; reads: Map<number, number> };
 
 /** @param failId reservation id whose batched read comes back as a failure. */
 function install(failId?: number): { seen: Seen; restore: () => void } {
-  const seen: Seen = { serialReservations: 0, batches: [] };
+  const seen: Seen = { serialReservations: 0, batches: [], reads: new Map() };
   const real = globalThis.fetch;
 
   const answerOne = (data: string): string | null => {
@@ -140,6 +140,7 @@ function install(failId?: number): { seen: Seen; restore: () => void } {
         data: data as `0x${string}`,
       });
       const id = Number((args as readonly unknown[])[0]);
+      seen.reads.set(id, (seen.reads.get(id) ?? 0) + 1);
       if (failId !== undefined && id === failId) return null;
       return reservation(TERMINAL_STATUS);
     }
@@ -298,5 +299,65 @@ describe('remitAck reservation scan (#1896)', () => {
 
     // And the operator can see which id stopped it.
     expect(warned.join('\n')).toMatch(/scan aborted at remit=3/);
+  });
+});
+
+/**
+ * A D1 stub that answers by statement text: `answers` maps a substring of the
+ * SQL to the rows that statement returns, and every bound statement is kept
+ * (with its binds) so a write can be asserted by what it wrote.
+ */
+function answeringDb(answers: [string, unknown[]][]): { handle: unknown; bound: { sql: string; binds: unknown[] }[] } {
+  const bound: { sql: string; binds: unknown[] }[] = [];
+  const handle = {
+    prepare: (q: string) => {
+      const stmt: Record<string, unknown> = { sql: q, binds: [] as unknown[] };
+      const rows = () => answers.find(([k]) => q.includes(k))?.[1] ?? [];
+      stmt.bind = (...b: unknown[]) => {
+        stmt.binds = b;
+        bound.push({ sql: q, binds: b });
+        return stmt;
+      };
+      stmt.all = async () => ({ results: rows(), success: true, meta: {} });
+      stmt.first = async () => rows()[0] ?? null;
+      stmt.run = async () => ({ results: [], success: true, meta: {} });
+      return stmt;
+    },
+    batch: async (stmts: { all?: () => Promise<unknown> }[]) => Promise.all(stmts.map((s) => s.all?.())),
+    exec: async () => ({}),
+  };
+  return { handle, bound };
+}
+
+describe('remitAck late deliveries — every release until the chain shows it finished (Codex #2489 r1)', () => {
+  it('reads every open release however many are newer, skips the done set, and records the finished ones', async () => {
+    const { seen, restore } = install();
+    // 60 releases: the old read took the newest 50, so ids 1..10 never got a look.
+    const released = Array.from({ length: 60 }, (_, i) => ({ remit_id: i + 1 }));
+    const shared = answeringDb([['RemitReservationReleased', released]]);
+    // id 7 was recorded done on an earlier tick.
+    const keeper = answeringDb([['FROM keeper_work_done', [{ item: '7' }]]]);
+    const quiet = ['error', 'warn', 'log'].map((m) => vi.spyOn(console, m as 'log').mockImplementation(() => {}));
+    try {
+      await run(shared.handle, keeper.handle);
+    } finally {
+      restore();
+      quiet.forEach((s) => s.mockRestore());
+    }
+    // Past the main scan's window (ids 1..6), every release is read once — the
+    // oldest included — except the one already done.
+    expect(seen.reads.get(8), 'an old release, outside the newest 50').toBe(1);
+    expect(seen.reads.get(60), 'the newest').toBe(1);
+    expect(seen.reads.get(7) ?? 0, 'done: never read again').toBe(0);
+    // Each one read as released with nothing stranded is recorded done, in the
+    // keeper's own database.
+    const recorded = keeper.bound
+      .filter((b) => b.sql.includes('INSERT OR IGNORE INTO keeper_work_done'))
+      .map((b) => b.binds[3]);
+    expect(recorded).toHaveLength(59);
+    expect(recorded).toContain('8');
+    expect(recorded).not.toContain('7');
+    expect(keeper.bound.every((b) => !b.sql.includes('keeper_work_done') || b.binds[2] === 'late_ack')).toBe(true);
+    expect(shared.bound.filter((b) => b.sql.includes('keeper_work_done')), 'never the shared database').toEqual([]);
   });
 });

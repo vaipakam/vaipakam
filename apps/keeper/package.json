@@ -9,6 +9,7 @@
     "migrate": "wrangler d1 migrations apply vaipakam-keeper-db --remote",
     "deploy": "node scripts/deploy-keeper.mjs",
     "deploy:dry": "wrangler deploy --dry-run",
+    "cutover": "node scripts/keeper-cutover.mjs",
     "build": "pnpm run typecheck",
     "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-keep-vars.mjs",
     "test": "vitest run",

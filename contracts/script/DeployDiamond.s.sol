@@ -2552,11 +2552,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RewardClaimFacet.claimInteractionRewards.selector;
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         s[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii: preview by execution
         s[3] = RewardClaimFacet.settleSanctionedInteractionRewards.selector; // #1566 sanctions rule: the owner settlement
+        s[4] = RewardClaimFacet.claimHeldInteractionRewards.selector; // #1566 (Codex #2489 r1): the held balance alone
     }
 
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now

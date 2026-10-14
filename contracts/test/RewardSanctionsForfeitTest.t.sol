@@ -1448,6 +1448,87 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _assertOneWindow(alice, F, L);
     }
 
+    /// @notice R1a (Codex #2489 r1 P1) - a claim that reads CLEAN commits the
+    ///         clear. A wallet first flagged (a chain starts, the #1123 marker
+    ///         set) and then delisted claims while clean: its claim's gate is an
+    ///         OBSERVATION, so the stored chain and the marker go (straddle:
+    ///         both stand before the claim). A re-flag minutes later therefore
+    ///         starts a NEW chain, and observations every gap up to the instant
+    ///         the OLD chain would have confirmed still read Hold - the old
+    ///         chain is never continued across the revocation into a window
+    ///         that spans it.
+    /// @dev   Mutation: the claim gate back to the view check
+    ///        (`assertRecipientNotBarred`) -> the claim clears nothing, the
+    ///        re-flag's observation continues the chain from the first flag,
+    ///        and the observation at that chain's window end confirms.
+    function test_sanc_R1a_aClaimThatReadsClean_commitsTheClear_soAReflagStartsANewChain() public {
+        _seed(alice, LOAN_A);
+        oracle.setFlagged(alice, true);
+        uint256 t0 = _now();
+        assertEq(_observe(alice), HOLD, "fixture: a first flag holds and starts a chain");
+        oracle.setFlagged(alice, false);
+        vm.warp(t0 + 1 hours);
+        (, , , , , address ev0, bool marker0) = _status(alice);
+        assertEq(ev0, address(oracle), "fixture LIVE: the chain's evidence stands before the claim");
+        assertTrue(marker0, "fixture LIVE: and so does the marker");
+
+        assertGt(_claimWallet(alice), 0, "the delisted wallet claims");
+        (, , , , , address ev1, bool marker1) = _status(alice);
+        assertEq(ev1, address(0), "the claim's Clean read deleted the chain");
+        assertFalse(marker1, "and cleared the marker");
+
+        oracle.setFlagged(alice, true);
+        vm.warp(t0 + 2 hours);
+        assertEq(_observe(alice), HOLD, "a re-flag holds");
+        uint256 t1 = _now();
+        assertEq(uint256(_flaggedAt(alice)), t1, "and starts a NEW chain");
+        uint256 t = t1;
+        while (t + G < t0 + W) {
+            t += G;
+            vm.warp(t);
+            assertEq(_observe(alice), HOLD, "held inside the new window");
+        }
+        vm.warp(t0 + W);
+        assertEq(_observe(alice), HOLD, "the old chain's window end confirms nothing");
+        _assertNoWindow(alice);
+    }
+
+    /// @notice R1b (Codex #2489 r1 P1) - the HELD balance is claimable ALONE.
+    ///         With the pool exhausted, the ordinary claim of a delisted wallet
+    ///         that is also owed new fresh reward reverts - and takes its
+    ///         release with it (straddle: the balance is still held after it).
+    ///         The release-only entry then pays the held balance by itself,
+    ///         settling nothing else. A still-flagged wallet is refused it.
+    /// @dev   Kills a release that can only ride the ordinary claim: the held
+    ///        balance would be stranded for as long as the new legs revert.
+    function test_sanc_R1b_theHeldBalanceIsClaimableAlone_whenTheClaimsOwnLegsRevert() public {
+        (uint256[4] memory ids, uint256 vPre, ) = _legacyWindowScene();
+        (, uint256 heldApart) = _settleOwner(alice);
+        assertEq(heldApart, vPre, "fixture: day F - 1 set apart");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
+        RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Wallet);
+
+        vm.warp(_dayStart(L + 1) + 1);
+        oracle.setFlagged(alice, false);
+        _finalize(L, L + 1);
+        vm.warp(_dayStart(L + 2));
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        vm.prank(alice);
+        vm.expectRevert(InteractionPoolExhausted.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        assertEq(_held(alice), vPre, "fixture LIVE: the claim's revert took its release with it");
+
+        vm.prank(alice);
+        uint256 paid =
+            RewardClaimFacet(address(diamond)).claimHeldInteractionRewards(LibVaipakam.RewardDelivery.Wallet);
+        assertEq(paid, vPre, "the held balance, alone");
+        assertEq(vpfi.balanceOf(alice), vPre, "to the wallet");
+        assertEq(_held(alice), 0, "released");
+        assertEq(_heldTotal(), 0, "the total with it");
+        assertFalse(_entry(ids[3]).processed, "nothing else was settled");
+    }
+
     /// @dev L1/L2's scene: one-day entries of alice on days F - 1, F, L, L + 1
     ///      (each on its own loan), day F - 1 finalized and shown payable to a
     ///      clean owner, then the flag confirmed by {_confirm} (window [F, L])

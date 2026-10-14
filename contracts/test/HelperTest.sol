@@ -2163,11 +2163,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = RewardClaimFacet.claimInteractionRewards.selector;
         selectors[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         selectors[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii
         selectors[3] = RewardClaimFacet.settleSanctionedInteractionRewards.selector; // #1566 sanctions rule
+        selectors[4] = RewardClaimFacet.claimHeldInteractionRewards.selector; // #1566 (Codex #2489 r1): the held balance alone
         return selectors;
     }
 

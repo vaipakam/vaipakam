@@ -648,10 +648,12 @@ keeper's `deploy` applies these itself** (`apps/keeper/scripts/deploy-keeper.mjs
 verifies them in the database, and then hands the shared schema to
 `deploy-shared-d1.mjs verify` exactly as before; keep a keeper migration
 additive like any other (the old keeper is still serving when it lands).
-The one-time move of the live rows is in `docs/ops/DeploymentRunbook.md`
-("Keeper private D1 — one-time cutover"), and the deploy REFUSES to publish
-while that copy is pending (a monotone keeper cursor table with rows only in
-the shared copy).
+The one-time move of the live rows is `pnpm --filter @vaipakam/keeper run
+cutover` (`docs/ops/DeploymentRunbook.md`, "Keeper private D1 — one-time
+cutover"). It records completion only when all five moved tables match on
+both sides by row count and latest write time, and the deploy REFUSES to
+publish while the shared copies hold rows and that record is missing or no
+longer matches them.
 
 **Rule**: a table any other Worker, the app or the nightly backup reads
 stays in the SHARED database, and every schema change to it — even for a

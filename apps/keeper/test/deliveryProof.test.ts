@@ -12,9 +12,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
-import { canonicalChainOf, packetMayNeedWork, planDelivery, type PacketState } from '../src/deliveryProof';
+import { canonicalChainOf, deliveryComplete, packetMayNeedWork, planDelivery, type PacketState } from '../src/deliveryProof';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
-import { listRecentBudgetDeliveries } from '../src/db';
+import { listBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
@@ -116,8 +116,8 @@ describe('planDelivery — flat', () => {
   });
 });
 
-describe('listRecentBudgetDeliveries (real schema)', () => {
-  it('joins each budget packet to its day-list event in the same transaction, newest first', async () => {
+describe('listBudgetDeliveries (real schema)', () => {
+  it('joins each budget packet to its day-list event in the same transaction, EVERY one oldest first — no age window (Codex #2489 r1)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     let block = 10;
     const seed = (tx: string, kind: string, args: Record<string, unknown>, at: number) =>
@@ -136,12 +136,13 @@ describe('listRecentBudgetDeliveries (real schema)', () => {
     seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8', sourceChainId: S }, 6_000);
     seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H, remitId: '8', sourceChainId: S }, 6_000);
     seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9', sourceChainId: S }, 7_000); // compensation: not a budget
-    seed('0xt0', 'IngressPacketRecorded', { packetHash: `0x${'4'.repeat(64)}`, kind: 1, remitId: '6', sourceChainId: S }, 100); // too old
+    seed('0xt0', 'IngressPacketRecorded', { packetHash: `0x${'4'.repeat(64)}`, kind: 1, remitId: '6', sourceChainId: S }, 100); // 'old': still listed
     seed('0xt0', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '6', sourceChainId: S }, 100);
-    const rows = await listRecentBudgetDeliveries(h.d1 as D1Database, 421614, 1_000);
+    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614);
     expect(rows.map((r) => [r.packetHash, r.remitId, r.rooted, r.flatDayIds])).toEqual([
-      [P2, '8', true, null],
       [P1, '7', false, ['4', '5']],
+      [P2, '8', true, null],
+      [`0x${'4'.repeat(64)}`, '6', false, ['1']],
     ]);
   });
 
@@ -161,10 +162,10 @@ describe('listRecentBudgetDeliveries (real schema)', () => {
     seed('RewardBudgetReceived', { dayIds: ['1', '2'], remitId: '11', sourceChainId: '84532' });
     seed('IngressPacketRecorded', { packetHash: B, kind: 1, remitId: '12', sourceChainId: '84532' });
     seed('RewardBudgetReceived', { dayIds: ['3'], remitId: '12', sourceChainId: '84532' });
-    const rows = await listRecentBudgetDeliveries(h.d1 as D1Database, 421614, 1_000);
+    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614);
     expect(rows.map((r) => [r.packetHash, r.flatDayIds])).toEqual([
-      [B, ['3']],
       [A, ['1', '2']],
+      [B, ['3']],
     ]);
   });
 });
@@ -188,5 +189,32 @@ describe('the pass wiring', () => {
     expect(packetMayNeedWork({ ...base, kind: 2 })).toBe(false);
     expect(packetMayNeedWork({ ...base, dayListRoot: Z, dayListHash: H })).toBe(true); // a flat list: the planner decides
     expect(packetMayNeedWork({ ...base, dayListRoot: Z })).toBe(false); // a pre-3a packet: no provable list
+  });
+});
+
+describe('deliveryComplete — the done set takes only what the chain shows finished', () => {
+  const root = d6Root(d6Leaves(days(40)));
+  it('rooted: done only when every chunk has landed (straddle on the last bit)', () => {
+    expect(deliveryComplete({ packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b011n }), batch: null, flatAllLanded: false })).toBe(false);
+    expect(deliveryComplete({ packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b111n }), batch: null, flatAllLanded: false })).toBe(true);
+  });
+
+  it("an epoch's flat list: done only when the batch index is whole; an unread batch is not done", () => {
+    const p = packet({ dayListHash: H, batchId: BATCH });
+    expect(deliveryComplete({ packet: p, batch: { dayCount: 3, indexedDays: 2 }, flatAllLanded: false })).toBe(false);
+    expect(deliveryComplete({ packet: p, batch: { dayCount: 3, indexedDays: 3 }, flatAllLanded: false })).toBe(true);
+    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: true }), 'batch unread').toBe(false);
+  });
+
+  it('a no-epoch flat list: done only when every day reads as landed', () => {
+    const p = packet({ dayListHash: H });
+    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: false })).toBe(false);
+    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: true })).toBe(true);
+  });
+
+  it('nothing provable left is done: disposed, not a budget, no list', () => {
+    expect(deliveryComplete({ packet: packet({ dayListHash: H, disposed: 1n }), batch: null, flatAllLanded: false })).toBe(true);
+    expect(deliveryComplete({ packet: packet({ dayListHash: H, kind: 2 }), batch: null, flatAllLanded: false })).toBe(true);
+    expect(deliveryComplete({ packet: packet(), batch: null, flatAllLanded: false })).toBe(true);
   });
 });

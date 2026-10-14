@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "claimHeldInteractionRewards",
+    "inputs": [
+      {
+        "name": "deliverTo",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardDelivery"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimInteractionRewards",
     "inputs": [],
     "outputs": [

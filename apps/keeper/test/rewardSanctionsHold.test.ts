@@ -13,7 +13,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  CLEARED_CANDIDATE_SEC,
   DECISION_DELIVER,
   DECISION_CONFIRMED,
   DECISION_HOLD,
@@ -26,10 +25,9 @@ import {
 } from '../src/rewardSanctionsHold';
 import {
   getOpsAlert,
-  listSanctionsEvidenceEvents,
-  listStagingRecordKeysForUser,
-  listStagingRecordOwners,
-  type SanctionsEvidenceRow,
+  listOpenSanctionsChains,
+  listOpenStagingOwners,
+  listOpenStagingRecordKeysForUser,
 } from '../src/db';
 import { sendOpsAlert } from '../src/opsAlert';
 import type { Env } from '../src/env';
@@ -51,10 +49,6 @@ const B = '0x00000000000000000000000000000000000000bb' as const;
 const NOW = 1_800_000_000;
 const DAY = 86_400;
 
-function row(who: string, kind: SanctionsEvidenceRow['kind'], block: number, at: number): SanctionsEvidenceRow {
-  return { who, kind, block_number: block, log_index: 0, block_at: at };
-}
-
 function held(over: Partial<OwnerSanctionsStatus> = {}): OwnerSanctionsStatus {
   const lastSeenAt = NOW - 3600;
   return {
@@ -69,30 +63,10 @@ function held(over: Partial<OwnerSanctionsStatus> = {}): OwnerSanctionsStatus {
 }
 
 describe('candidateOwners', () => {
-  it('takes every wallet whose LATEST evidence starts a chain, in event order', () => {
-    const rows = [
-      row(A, 'RewardSanctionsEvidenceRecorded', 10, NOW - 9 * DAY),
-      row(A, 'RewardSanctionsEvidenceCleared', 11, NOW - 200 * DAY),
-      row(A, 'RewardSanctionsEvidenceRecorded', 12, NOW - 200 * DAY), // a later chain: live again
-    ];
-    expect(candidateOwners(rows, NOW)).toEqual([A]);
-  });
-
-  it('keeps a cleared wallet exactly CLEARED_CANDIDATE_SEC, then drops it (straddle)', () => {
-    const at = (age: number) => [
-      row(B, 'RewardSanctionsEvidenceRecorded', 1, NOW - age - DAY),
-      row(B, 'RewardSanctionsEvidenceCleared', 2, NOW - age),
-    ];
-    expect(candidateOwners(at(CLEARED_CANDIDATE_SEC), NOW), 'at the bound: still owed a resolution').toEqual([B]);
-    expect(candidateOwners(at(CLEARED_CANDIDATE_SEC + 1), NOW), 'one second past it').toEqual([]);
-  });
-
-  it('a clear AFTER a start drops the live chain to the cleared rule', () => {
-    const rows = [
-      row(A, 'RewardSanctionsEvidenceRecorded', 1, NOW - 400 * DAY),
-      row(A, 'RewardSanctionsEvidenceCleared', 2, NOW - 400 * DAY),
-    ];
-    expect(candidateOwners(rows, NOW)).toEqual([]);
+  it('unions the open chains and the open-staging owners, once each, lowercased', () => {
+    expect(candidateOwners([A, B], ['0x00000000000000000000000000000000000000AA'])).toEqual([A, B]);
+    expect(candidateOwners([], [B]), 'a held claimant with no chain').toEqual([B]);
+    expect(candidateOwners([], [])).toEqual([]);
   });
 });
 
@@ -163,44 +137,66 @@ describe('the D1 reads, on the real schema', () => {
       .run(CHAIN, block, `0x${block.toString(16).padStart(64, '0')}`, kind, JSON.stringify(args), at);
   }
 
-  it('lists sanctions evidence oldest first, lowercased, and nothing else', async () => {
+  it("lists a wallet while its LATEST evidence starts a chain, however many events follow (Codex #2489 r1)", async () => {
     h = createSqliteD1(ALL_MIGRATIONS);
-    seed('RewardSanctionsEvidenceCleared', 7, { who: '0x00000000000000000000000000000000000000AA' });
-    seed('RewardSanctionsEvidenceRecorded', 5, { who: '0x00000000000000000000000000000000000000AA' });
-    seed('StagingRecordOpened', 6, { key: `0x${'1'.repeat(64)}`, user: A });
-    const rows = await listSanctionsEvidenceEvents(h.d1 as D1Database, CHAIN);
-    expect(rows.map((r) => [r.who, r.kind, r.block_number])).toEqual([
-      [A, 'RewardSanctionsEvidenceRecorded', 5],
-      [A, 'RewardSanctionsEvidenceCleared', 7],
-    ]);
-    expect(await listSanctionsEvidenceEvents(h.d1 as D1Database, CHAIN + 1), 'another chain').toEqual([]);
+    const C = '0x00000000000000000000000000000000000000cc';
+    seed('RewardSanctionsEvidenceRecorded', 5, { who: '0x00000000000000000000000000000000000000AA' }, NOW - 400 * DAY);
+    // 6,000 newer events for other wallets: more than the old 5,000-row window,
+    // which dropped A here while its chain still stood.
+    const ins = h.db.prepare(
+      `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+       VALUES (?, ?, 0, ?, 'RewardSanctionsEvidenceRecorded', ?, ?)`,
+    );
+    for (let i = 0; i < 6000; i++) {
+      ins.run(CHAIN, 100 + i, `0x${(100 + i).toString(16).padStart(64, '0')}`, JSON.stringify({ who: `0x${(i + 0x1000).toString(16).padStart(40, '0')}` }), NOW);
+    }
+    const open = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN);
+    expect(open.includes(A), 'the old chain is still open').toBe(true);
+    expect(open.length).toBe(6001);
+    // B: started, then cleared — closed. C: cleared, then started again — open.
+    seed('RewardSanctionsEvidenceRecorded', 7000, { who: B });
+    seed('RewardSanctionsEvidenceCleared', 7001, { who: B });
+    seed('RewardSanctionsEvidenceCleared', 7002, { who: C });
+    seed('RewardSanctionsEvidenceRecorded', 7003, { who: C });
+    const again = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN);
+    expect(again.includes(B), 'a cleared chain is closed').toBe(false);
+    expect(again.includes(C), 'a later start reopens').toBe(true);
+    expect(await listOpenSanctionsChains(h.d1 as D1Database, CHAIN + 1), 'another chain').toEqual([]);
   });
 
-  it("lists one user's staging-record keys, case-insensitively, newest first", async () => {
+  it("lists one user's OPEN staging-record keys, case-insensitively, oldest first — a closed one never", async () => {
     h = createSqliteD1(ALL_MIGRATIONS);
     const k1 = `0x${'1'.repeat(64)}`;
     const k2 = `0x${'2'.repeat(64)}`;
-    seed('StagingRecordOpened', 3, { key: k1, user: '0x00000000000000000000000000000000000000AA' });
+    const k3 = `0x${'3'.repeat(64)}`;
+    seed('StagingRecordOpened', 3, { key: k1, user: '0x00000000000000000000000000000000000000AA' }, NOW - 400 * DAY);
     seed('StagingRecordOpened', 4, { key: k2, user: A });
-    seed('StagingRecordOpened', 5, { key: `0x${'3'.repeat(64)}`, user: B });
-    expect(await listStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k2, k1]);
+    seed('StagingRecordOpened', 5, { key: k3, user: A });
+    seed('StagingRecordClosed', 6, { key: k3, paid: true });
+    seed('StagingRecordOpened', 7, { key: `0x${'4'.repeat(64)}`, user: B });
+    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k1, k2]);
+    // Reopened after its close: open again (positions, not presence, decide).
+    seed('StagingRecordOpened', 8, { key: k3, user: A });
+    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k1, k2, k3]);
   });
 
-  it('lists staging-record owners once each, lowercased, newest first, inside the lookback (straddle)', async () => {
+  it('lists the owners of open records AND open domains, however old; a closed one drops (straddle on the close)', async () => {
     h = createSqliteD1(ALL_MIGRATIONS);
     const C = '0x00000000000000000000000000000000000000cc';
+    const D = '0x00000000000000000000000000000000000000dd';
     const k = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
-    seed('StagingRecordOpened', 3, { key: k(1), user: '0x00000000000000000000000000000000000000AA' }, NOW - 100);
-    seed('StagingRecordOpened', 9, { key: k(2), user: B }, NOW - 100); // B newest
-    seed('StagingRecordOpened', 4, { key: k(3), user: A }, NOW - 100); // A again
-    seed('StagingRecordOpened', 2, { key: k(4), user: C }, NOW - 101); // one second outside
-    seed('RewardSanctionsEvidenceRecorded', 8, { who: C }, NOW); // not a staging record
-    const since = NOW - 100;
-    // B's newest record is newer than A's newest: B first, though A sorts first by address.
-    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since)).toEqual([B, A]);
-    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since - 1), 'one second wider').toEqual([B, A, C]);
-    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since, 1), 'the bound keeps the newest').toEqual([B]);
-    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN + 1, 0), 'another chain').toEqual([]);
+    seed('StagingRecordOpened', 3, { key: k(1), user: '0x00000000000000000000000000000000000000AA' }, NOW - 400 * DAY); // old, open
+    seed('StagingRecordOpened', 9, { key: k(2), user: B }, NOW - 100);
+    seed('StagingRecordClosed', 10, { key: k(2), paid: false }); // B's only record closed
+    seed('StagingDomainOpened', 11, { domainKey: k(3), user: C, side: 0, firstDay: 1, lastDay: 9, chunks: 1 }, NOW - 400 * DAY);
+    seed('StagingDomainOpened', 12, { domainKey: k(4), user: D, side: 0, firstDay: 1, lastDay: 9, chunks: 1 });
+    seed('StagingDomainCleared', 13, { domainKey: k(4), paid: true });
+    seed('RewardSanctionsEvidenceRecorded', 14, { who: D }); // not staging work
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN)).toEqual([A, C]);
+    // B's record reopened AFTER its close: B is back.
+    seed('StagingRecordOpened', 15, { key: k(2), user: B });
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN)).toEqual([A, B, C]);
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN + 1), 'another chain').toEqual([]);
   });
 });
 

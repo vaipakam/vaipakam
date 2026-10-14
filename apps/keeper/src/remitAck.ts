@@ -44,6 +44,8 @@ import {
   recordRemitAckAttempt,
   markRemitAcked,
   listReleasedRemitIds,
+  listWorkDone,
+  markWorkDone,
 } from './db';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
@@ -301,8 +303,10 @@ async function sendAckFromMirror(
   return true;
 }
 
-/** Released reservations examined per tick for a late delivery. */
-const MAX_LATE_CANDIDATES = 50;
+/** Reservation reads per `aggregate3` (#1946). */
+const LATE_READ_CHUNK = 100;
+/** The late-ack pass's done-set kind (`keeper_work_done.kind`). */
+const LATE_DONE_KIND = 'late_ack' as const;
 
 /**
  * #1461 — a RELEASED reservation whose delivery executed after all still
@@ -312,6 +316,10 @@ const MAX_LATE_CANDIDATES = 50;
  * ack branch resolves the share once. So: for each recent release that still
  * holds a stranded share, ack it from the mirror once the receipt shows the
  * delivery landed — under the same per-reservation backoff as the main scan.
+ *
+ * Every release is a candidate until the chain shows it needs nothing more
+ * ({@link lateAckDone}), when it joins the keeper's done set and is never read
+ * again (Codex #2489 r1: the newest-50 window let an open one drop out).
  */
 async function ackLateDeliveries(
   env: Env,
@@ -321,18 +329,30 @@ async function ackLateDeliveries(
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
 ): Promise<void> {
-  const ids = await listReleasedRemitIds(env.DB, baseChainId, MAX_LATE_CANDIDATES);
+  const done = await listWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
+  const ids = (await listReleasedRemitIds(env.DB, baseChainId)).filter((id) => !done.has(String(id)));
   if (ids.length === 0) return;
-  const res = await batchedRead(
-    publicClient as never,
-    ids.map((id) => ({
-      address: diamond,
-      abi: REMIT_ABI,
-      functionName: 'getRemitReservation' as const,
-      args: [BigInt(id)] as const,
-    })),
-    'remitAck late deliveries',
-  );
+  const res: Awaited<ReturnType<typeof batchedRead>> = [];
+  for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
+    // eslint-disable-next-line no-await-in-loop
+    const part = await batchedRead(
+      publicClient as never,
+      ids.slice(i, i + LATE_READ_CHUNK).map((id) => ({
+        address: diamond,
+        abi: REMIT_ABI,
+        functionName: 'getRemitReservation' as const,
+        args: [BigInt(id)] as const,
+      })),
+      `remitAck late deliveries ${i}/${ids.length}`,
+    );
+    res.push(...part);
+  }
+  // Recorded before any send, so a failed send cannot lose them.
+  const finished = ids.filter((id, i) => {
+    const r = res[i];
+    return r?.status === 'success' && lateAckDone(r.result as RemitReservationView);
+  });
+  await markWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, finished.map(String));
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
   let sent = 0;
@@ -371,6 +391,20 @@ async function ackLateDeliveries(
  *  branch; a provisional one waits for its day's broadcast to settle it. */
 export function lateAckUseful(classification: number | bigint): boolean {
   return Number(classification) !== 2;
+}
+
+/** Whether a RELEASED reservation is finished for the late-ack pass: it reads
+ *  as released (status 3) and is no longer a {@link isLateDeliveryCandidate} —
+ *  its stranded share resolved, or its classification stamped. Neither undoes
+ *  itself on a released reservation, so the pass never needs to read it again.
+ *  Any other status is not taken as finished: read again next tick. */
+export function lateAckDone(v: {
+  status: number | bigint;
+  strandedRecycled?: bigint;
+  consumedAcked?: boolean;
+  quarantineAcked?: boolean;
+}): boolean {
+  return Number(v.status) === 3 && !isLateDeliveryCandidate(v);
 }
 
 export function isLateDeliveryCandidate(v: {

@@ -176,15 +176,21 @@ then deploy.
    ```
 
    `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
-   cursors, completion markers, remit-ack log, HF-band edge state and
-   ops-alert de-dup, which nothing else reads. **The archive does not carry
+   cursors, completion markers, remit-ack log, HF-band edge state,
+   ops-alert de-dup, the passes' record of finished work (`keeper_work_done`)
+   and the cutover's completion record, which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
    restore it starts EMPTY, exactly as these tables always did (none was
    ever archived; their restore treatment is #1481). Expect the keeper to
    rescan its remit-ack and commitment frontiers from the start, re-send an
    acknowledgement for each reservation still Pending on Base (paid CCIP
    messages, rate-limited per reservation from then on), and re-mint one
-   HF-band inbox row per currently-degraded loan.
+   HF-band inbox row per currently-degraded loan. The delivery-proof and
+   late-acknowledgement passes re-read every delivery and release once and
+   record each finished one again — reads only, since that record is written
+   only from what the chain shows. The cutover record is not needed: the
+   restored shared copies of the moved tables are empty, and the deploy asks
+   for the record only while they hold rows.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP

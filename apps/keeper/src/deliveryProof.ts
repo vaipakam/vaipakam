@@ -39,7 +39,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { listRecentBudgetDeliveries, type BudgetDeliveryRow } from './db';
+import { listBudgetDeliveries, listWorkDone, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 
 const ABI = [
@@ -48,15 +48,14 @@ const ABI = [
   ...(RewardReporterFacetABI as Abi),
 ] as Abi;
 
-/** Deliveries this far back are re-checked each tick: long enough to cover a
- *  delayed CCIP execution and a keeper outage, short enough to stay bounded. */
-export const LOOKBACK_SEC = 45 * 86_400;
 /** Transactions per chain per tick (each indexes one page or one chunk). */
 const MAX_WRITES_PER_TICK = 20;
 /** How long one send may take to be mined before this tick's sends stop. */
 const RECEIPT_TIMEOUT_MS = 30_000;
 /** Reads per `aggregate3` (#1946). */
 const READ_CHUNK = 100;
+/** This pass's done-set kind (`keeper_work_done.kind`). */
+const DONE_KIND = 'delivery_proof' as const;
 
 /** What a packet's ingress recorded, as the pass reads it. */
 export interface PacketState {
@@ -151,7 +150,9 @@ export function canonicalChainOf(cfg: readonly [Address, number, number, boolean
 }
 
 /** Whether a packet can still need a write — checked BEFORE any read of its
- *  batch or its rooted list, so a finished one costs nothing. */
+ *  batch or its rooted list, so a finished one costs nothing. A flat list's
+ *  answer needs those reads, so a flat packet always "may" — see
+ *  {@link deliveryComplete} for the verdict once they are made. */
 export function packetMayNeedWork(packet: PacketState): boolean {
   if (packet.kind !== 1 || packet.disposed !== 0n) return false;
   if (packet.dayListRoot !== ZERO32) {
@@ -159,6 +160,29 @@ export function packetMayNeedWork(packet: PacketState): boolean {
     return packet.chunkCount > 0 && (packet.chunksIndexed & all) !== all;
   }
   return packet.dayListHash !== ZERO32;
+}
+
+/**
+ * Whether a delivery is FINISHED on chain, so the pass may record it in its
+ * done set and never read it again (Codex #2489 r1). Pure; true only on
+ * evidence the chain itself gives:
+ *   - nothing provable is left: disposed, not a budget packet, no list, or a
+ *     rooted list whose every chunk has landed;
+ *   - an EPOCH's flat list: the batch's index is whole;
+ *   - a no-epoch flat list: every listed day reads as landed.
+ * Anything unread (a batch read that failed, a list that could not be had) is
+ * NOT finished — it is read again next tick.
+ */
+export function deliveryComplete(args: {
+  packet: PacketState;
+  batch: BatchProgress | null;
+  flatAllLanded: boolean;
+}): boolean {
+  const { packet, batch } = args;
+  if (!packetMayNeedWork(packet)) return true;
+  if (packet.dayListRoot !== ZERO32) return false; // a rooted chunk is still out
+  if (packet.batchId !== ZERO32) return batch !== null && batch.dayCount > 0 && batch.indexedDays >= batch.dayCount;
+  return args.flatAllLanded;
 }
 
 export async function runDeliveryProof(env: Env): Promise<void> {
@@ -185,43 +209,64 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const baseChainId = canonicalChainOf(cfg);
   if (baseChainId === null) return; // the canonical chain funds itself: nothing is delivered to it
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const rows = await listRecentBudgetDeliveries(env.DB, chain.id, nowSec - LOOKBACK_SEC);
+  // Every delivery the log holds, less the ones already seen finished: work is
+  // dropped only on the chain's word, never by its age.
+  const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
+  const rows = (await listBudgetDeliveries(env.DB, chain.id)).filter((r) => !done.has(r.packetHash.toLowerCase()));
   if (rows.length === 0) return;
 
   const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex));
+  // Packets read as finished are recorded however the tick ends (a failed
+  // send, no key to send with), so they are never read again.
+  const finished = new Set<string>();
   const base = byId.get(baseChainId);
   const baseClient = base ? createPublicClient({ transport: http(base.rpc) }) : null;
   const ctx = buildKeeperContext(env, chain, client as never);
-  if (!ctx?.wallet.account) {
-    console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
-    return;
-  }
-  const budget = { writes: MAX_WRITES_PER_TICK };
+  const canSend = Boolean(ctx?.wallet.account);
+  if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
+  const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
   const seen = new Set<string>();
-  for (const row of rows) {
-    if (budget.writes <= 0) break;
-    const key = row.packetHash.toLowerCase();
-    if (seen.has(key)) continue; // one pass per packet, whatever the join returned
-    seen.add(key);
-    const packet = packets.get(key);
-    if (!packet || !packetMayNeedWork(packet)) continue;
-    // One row's failed read (a canonical RPC outage, say) skips that row, never
-    // the chain's whole pass.
-    let actions: ProofAction[];
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      actions = await actionsFor(client, diamond, chain.id, row, packet, base, baseClient);
-    } catch (err) {
-      console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
-      continue;
+  try {
+    for (const row of rows) {
+      const key = row.packetHash.toLowerCase();
+      if (seen.has(key)) continue; // one pass per packet, whatever the join returned
+      seen.add(key);
+      const packet = packets.get(key);
+      if (!packet) continue; // unread, or not arrived: read again next tick
+      if (!packetMayNeedWork(packet)) {
+        finished.add(key);
+        continue;
+      }
+      if (budget.writes <= 0) continue; // the rest wait for a tick with budget
+      // One row's failed read (a canonical RPC outage, say) skips that row, never
+      // the chain's whole pass.
+      let plan: DeliveryPlan;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        plan = await actionsFor(client, diamond, chain.id, row, packet, base, baseClient);
+      } catch (err) {
+        console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
+        continue;
+      }
+      if (plan.complete) {
+        finished.add(key);
+        continue;
+      }
+      for (const a of plan.actions) {
+        if (budget.writes <= 0) break;
+        // eslint-disable-next-line no-await-in-loop
+        await send(ctx!, budget, a);
+      }
     }
-    for (const a of actions) {
-      if (budget.writes <= 0) break;
-      // eslint-disable-next-line no-await-in-loop
-      await send(ctx, budget, a);
-    }
+  } finally {
+    await markWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND, [...finished]);
   }
+}
+
+/** What one delivery still needs, and whether it is already finished. */
+interface DeliveryPlan {
+  actions: ProofAction[];
+  complete: boolean;
 }
 
 async function actionsFor(
@@ -232,7 +277,7 @@ async function actionsFor(
   packet: PacketState,
   base: ChainConfig | undefined,
   baseClient: PublicClient | null,
-): Promise<ProofAction[]> {
+): Promise<DeliveryPlan> {
   const packetHash = row.packetHash as Hex;
   let batch: BatchProgress | null = null;
   if (packet.batchId !== ZERO32) {
@@ -248,17 +293,18 @@ async function actionsFor(
   if (packet.dayListRoot !== ZERO32) {
     if (!base || !baseClient) {
       console.warn(`[keeper] deliveryProof packet=${packetHash}: no RPC for the canonical chain — cannot rebuild its list`);
-      return [];
+      return { actions: [], complete: false };
     }
     rootedDays = await rebuildRootedList(baseClient, base.diamond as Address, chainId, BigInt(row.remitId), packet.dayListRoot);
-    if (!rootedDays) return [];
+    if (!rootedDays) return { actions: [], complete: false };
   }
   const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
   let flatAllLanded = false;
   if (flatDays && packet.batchId === ZERO32 && packet.dayListRoot === ZERO32) {
     flatAllLanded = await allLanded(client, diamond, flatDays);
   }
-  return planDelivery({ packetHash, packet, batch, flatDays, rootedDays, flatAllLanded });
+  if (deliveryComplete({ packet, batch, flatAllLanded })) return { actions: [], complete: true };
+  return { actions: planDelivery({ packetHash, packet, batch, flatDays, rootedDays, flatAllLanded }), complete: false };
 }
 
 /**

@@ -113,8 +113,9 @@ contract RewardClaimFacet is
         // this predicate. A confirmed-flagged owner's reward settles through
         // {settleSanctionedInteractionRewards} instead. Screened at each PUBLIC
         // entry rather than in {_claimFor}, because that settlement runs the
-        // same body for a barred owner by design.
-        LibVaipakam.assertRecipientNotBarred(msg.sender);
+        // same body for a barred owner by design — and screened by an
+        // OBSERVATION ({_requireNotBarredObserved}), so a clean read commits.
+        _requireNotBarredObserved(msg.sender);
         return _claimFor(msg.sender, LibVaipakam.RewardDelivery.Default);
     }
 
@@ -156,7 +157,7 @@ contract RewardClaimFacet is
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
         _requireSelectableVenue(deliverTo);
-        LibVaipakam.assertRecipientNotBarred(msg.sender); // as {claimInteractionRewards}
+        _requireNotBarredObserved(msg.sender); // as {claimInteractionRewards}
         return _claimFor(msg.sender, deliverTo);
     }
 
@@ -190,7 +191,7 @@ contract RewardClaimFacet is
         whenNotPaused
     {
         _requireSelectableVenue(deliverTo);
-        LibVaipakam.assertRecipientNotBarred(user); // the claim's own refusal is the preview's answer
+        _requireNotBarredObserved(user); // the claim's own refusal is the preview's answer (its writes revert with it)
         (uint256 paid, uint256 fromDay, uint256 toDay) = _claimFor(user, deliverTo);
         revert InteractionRewardsSimulation(paid, fromDay, toDay);
     }
@@ -268,6 +269,54 @@ contract RewardClaimFacet is
                 user, freshBudget, LibInteractionRewards.legacyFreshOf(res), windowReward, backingRoom, deliverTo
             )
         );
+    }
+
+    /**
+     * @notice #1566 sanctions rule (Codex #2489 r1 P1) — pay the caller's HELD
+     *         balance alone: reward set apart while it was flagged, released
+     *         once it is no longer barred, WITHOUT settling anything newly owed.
+     *         The ordinary claim releases it too; this entry exists so a revert
+     *         in the claim's other legs (an exhausted pool is permanent) can
+     *         never strand reward that was already set apart.
+     * @dev    The same gate and venue rules as {claimInteractionRewardsTo}. The
+     *         held balance was charged to the pool and the delivered ledger when
+     *         it was set apart, so nothing is charged here; the release moves
+     *         it out of its custody row (activated) to the Diamond, and the
+     *         Diamond delivers it.
+     * @param  deliverTo Delivery venue selector (never `SanctionsHeld`).
+     * @return paid VPFI wei released and delivered.
+     */
+    function claimHeldInteractionRewards(LibVaipakam.RewardDelivery deliverTo)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 paid)
+    {
+        _requireSelectableVenue(deliverTo);
+        _requireNotBarredObserved(msg.sender);
+        address vpfi = LibVaipakam.storageSlot().vpfiToken;
+        if (vpfi == address(0)) revert VPFITokenNotSet();
+        paid = LibRewardCustody.callReleaseSanctionsHeld(msg.sender);
+        if (paid == 0) revert NoInteractionRewardsToClaim();
+        (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
+        _deliverFromDiamond(msg.sender, vpfi, paid, _toVault(msg.sender, deliverTo), today);
+        emit InteractionRewardsClaimed(msg.sender, 0, 0, paid);
+    }
+
+    /// @dev #1566 (Codex #2489 r1 P1) — the public entries' sanctions gate,
+    ///      as an OBSERVATION that commits rather than a read: an authoritative
+    ///      Clean read clears the classifier's chain and the #1123 marker (and
+    ///      records the window of a confirmed chain it ends), so a wallet that
+    ///      claims while clean and is re-flagged later starts a NEW chain — the
+    ///      old one can never be continued across the revocation and confirm a
+    ///      window spanning it. Deliver is exactly "not barred" (the classifier's
+    ///      invariant), so this refuses precisely what
+    ///      `LibVaipakam.assertRecipientNotBarred` refused, with its error; a
+    ///      refusal reverts the observation with it, as the read wrote nothing.
+    function _requireNotBarredObserved(address user) private {
+        if (LibRewardSanctions.callObserve(user) != LibRewardSanctions.Decision.Deliver) {
+            revert LibVaipakam.SanctionedAddress(user);
+        }
     }
 
     /// @dev The held-apart venue is the settlement's alone: every public entry

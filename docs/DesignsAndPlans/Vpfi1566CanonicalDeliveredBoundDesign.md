@@ -7381,7 +7381,14 @@ on the live era alone.
 >   barred: the held balance leaves its row and is delivered with the
 >   claim, to the venue the claim names. It was charged to the pool and the
 >   delivered ledger when it was set apart, so the release spends neither
->   again.
+>   again. A release-only claim pays the held balance by itself (#2489
+>   r1), so a claim whose other legs cannot complete — an exhausted pool,
+>   say — never strands it; it refuses a barred caller like every claim.
+> - *The claim gate observes* (#2489 r1). Every public claim entry
+>   refuses through the classifier's committing observation, not the view
+>   check: a Clean reading at a claim commits the clear (marker and chain
+>   end), so a later flag starts a new chain rather than extending one the
+>   clean reading should have ended.
 > - *Custody.* Activated: setting apart is three in-holder moves (live
 >   fresh, recycled, epoch-paid) into `SanctionsHeld` — the live-fresh
 >   move records the payout once, as a delivery would — and a release is

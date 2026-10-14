@@ -14,7 +14,9 @@
  *     CONTRACT's own hash of that order equals the stub's, so the three
  *     fields are part of what the maker signed. This is the
  *     discriminating leg: a ticket that dropped the choice would sign
- *     `creatorFull = false` and fail here.
+ *     `creatorFull = false` and fail here. Before posting, the straddle
+ *     (Codex #2489 r1 P1): a ticked Full choice with no ceiling keeps Post
+ *     disabled, with consent given, rather than signing the order Full-off.
  *
  *  The fill-time charge itself (the maker's C* taken at materialization,
  *  the pro-rata ceiling) is pinned by the contract suite
@@ -91,6 +93,23 @@ test('signed-order maker Full tariff: dark hides it; enabled signs the maker’s
     await card.getByRole('checkbox').nth(1).check();
 
     const post = maker.page.getByRole('button', { name: 'Sign and post' });
+    await consentAndWaitEnabled(maker.page, post);
+
+    // Codex #2489 r1 P1 — the straddle: a ticked Full choice that is not valid
+    // (here, no ceiling) is never signed, and never quietly signed as "Full
+    // off". With consent given again, Post stays DISABLED and the ticket names
+    // the reason; restoring the ceiling enables it. (Editing a Full field
+    // clears consent, so it is re-ticked first — only the Full gate can then
+    // keep the button disabled.)
+    const seeded = await ceilingInput.inputValue();
+    await ceilingInput.fill('');
+    const consent = maker.page.locator('input[type="checkbox"]:visible').first();
+    if (!(await consent.isChecked())) await consent.check();
+    await expect(
+      maker.page.getByText(/before opting in — a Full opt-in without a ceiling can’t be signed\./),
+    ).toBeVisible();
+    await expect(post).toBeDisabled();
+    await ceilingInput.fill(seeded);
     await consentAndWaitEnabled(maker.page, post);
     await post.click();
     await expect(
