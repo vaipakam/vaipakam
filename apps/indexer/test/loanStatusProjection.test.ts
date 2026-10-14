@@ -451,21 +451,21 @@ describe('settleFromLedger — settle what the ledger shows settled (#2464, #247
     seedLoan(h, 28, 'internal_matched'); // still unclaimed — no LoanSettled
     ledger(h, 28, 'OwedAtInternalMatchRecorded', 48059980, 1791888248);
     seedLoan(h, 30, 'active');
-    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toBe(1);
+    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toEqual([24]);
     expect(row(h, 24)).toEqual({ status: 'settled', terminal_block: 48004228, terminal_at: 1791775970 });
     expect(row(h, 28).status).toBe('internal_matched');
     expect(row(h, 30).status).toBe('active');
     // Idempotent: nothing left to settle.
-    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toBe(0);
+    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toEqual([]);
   });
 
   it('leaves the row for the next tick, never settled undated, when the block read fails', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 25, 'internal_matched');
     ledger(h, 25, 'LoanSettled', 700, 1_999_999_999);
-    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toBe(0);
+    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([]);
     expect(row(h, 25).status).toBe('internal_matched');
-    expect(await settleFromLedger(blocks({ 700: 1234 }), env(h), CHAIN, budget())).toBe(1);
+    expect(await settleFromLedger(blocks({ 700: 1234 }), env(h), CHAIN, budget())).toEqual([25]);
     expect(row(h, 25)).toEqual({ status: 'settled', terminal_block: 700, terminal_at: 1234 });
   });
 

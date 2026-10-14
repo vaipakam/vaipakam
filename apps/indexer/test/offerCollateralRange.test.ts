@@ -237,10 +237,18 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   };
 
   it('runHealLanes runs both lanes inside one try, offers first', () => {
-    const t = at(heal, 'try {');
+    const t = heal.lastIndexOf('try {', at(heal, 'await refreshStubOffers('));
+    expect(t).toBeGreaterThan(-1);
     expect(at(heal, 'await refreshStubOffers(')).toBeGreaterThan(t);
     expect(at(heal, 'await refreshStubLoans(')).toBeGreaterThan(at(heal, 'await refreshStubOffers('));
-    expect(at(heal, '} catch')).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
+    expect(at(heal, '} catch', at(heal, 'await refreshStubLoans('))).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
+  });
+
+  it('settles from the ledger BEFORE the metadata heals, in its own try (#2476 r4)', () => {
+    const settle = at(heal, 'await settleFromLedger(');
+    expect(settle).toBeLessThan(at(heal, 'await refreshStubOffers('));
+    // Its own try/catch closes before the metadata lanes' try opens.
+    expect(heal.indexOf('} catch', settle)).toBeLessThan(at(heal, 'await refreshStubOffers('));
   });
 
   it('the scanning tail heals after the cursor write and every once-per-scan step, pinned to scanTo', () => {

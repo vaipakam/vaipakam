@@ -2086,7 +2086,8 @@ async function runChainPass(
       statusUpdates: 0,
       detailRefreshes: quietHeal.detailRefreshes,
       newLoans: 0,
-      loanStatusUpdates: 0,
+      // #2476 r4 — a ledger-settled loan IS a status change, just late.
+      loanStatusUpdates: quietHeal.ledgerSettledLoanIds.length,
       loanDetailRefreshes: quietHeal.loanDetailRefreshes,
       activityEvents: 0,
       // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
@@ -2106,13 +2107,17 @@ async function runChainPass(
       // A repair additionally TRUNCATES the set — see the scanned path's
       // note: a refreshed owner is a holder whose cache cannot contain this
       // old loan, so only a coarse frame reaches them (#2190 r6).
+      // A ledger-settled loan rides them the same way, truncated too: like a
+      // repair it is an OLD loan whose holders the frame cannot enumerate.
       hints:
-        quietCal.inserted > 0 || quietReconciledIds.length > 0
+        quietCal.inserted > 0 ||
+        quietReconciledIds.length > 0 ||
+        quietHeal.ledgerSettledLoanIds.length > 0
           ? mergeHintLoanIds(
-              quietReconciledIds.length > 0
+              quietReconciledIds.length > 0 || quietHeal.ledgerSettledLoanIds.length > 0
                 ? { ...emptyHints(), truncated: true }
                 : emptyHints(),
-              [...quietCal.loanIds, ...quietReconciledIds],
+              [...quietCal.loanIds, ...quietReconciledIds, ...quietHeal.ledgerSettledLoanIds],
             )
           : undefined,
       headBlock: head,
@@ -2461,7 +2466,7 @@ async function runChainPass(
   // D1 counts queries separately from subrequests, so any fixed per-row
   // figure is a guess. A failure, including the platform refusing a request
   // past the invocation ceiling, is logged and the remaining rows wait.
-  const { detailRefreshes, loanDetailRefreshes } = await runHealLanes(
+  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } = await runHealLanes(
     client,
     diamond,
     chainId,
@@ -2510,7 +2515,9 @@ async function runChainPass(
     statusUpdates: offerStats.statusUpdates,
     detailRefreshes,
     newLoans: loanStats.newLoans,
-    loanStatusUpdates: loanStats.statusUpdates,
+    // #2476 r4 — plus the loans the ledger heal settled: late, but status
+    // changes all the same.
+    loanStatusUpdates: loanStats.statusUpdates + ledgerSettledLoanIds.length,
     loanDetailRefreshes,
     activityEvents,
     signedOfferUpdates,
@@ -2540,11 +2547,16 @@ async function runChainPass(
     // one person who most needs it. Truncation makes the frame coarse,
     // which is the same answer a stub heal already takes for the same
     // reason: the scan cannot enumerate who is affected.
+    // A ledger-settled loan is old for the same reason a repaired one is
+    // (#2476 r4): merged in, and the set truncated.
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 || loanDetailRefreshes > 0 || reconciledLoanIds.length > 0
+      detailRefreshes > 0 ||
+        loanDetailRefreshes > 0 ||
+        reconciledLoanIds.length > 0 ||
+        ledgerSettledLoanIds.length > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
-      [...cal.loanIds, ...reconciledLoanIds],
+      [...cal.loanIds, ...reconciledLoanIds, ...ledgerSettledLoanIds],
     ),
   };
 }
@@ -3393,9 +3405,21 @@ async function runHealLanes(
   env: Env,
   budget: TickBudget,
   atBlock: bigint,
-): Promise<{ detailRefreshes: number; loanDetailRefreshes: number }> {
+): Promise<{ detailRefreshes: number; loanDetailRefreshes: number; ledgerSettledLoanIds: number[] }> {
   let detailRefreshes = 0;
   let loanDetailRefreshes = 0;
+  // #2464 / #2476 r3-r4 — FIRST, and in its own try: a loan the ledger proves
+  // settled but the projection does not is a wrong lifecycle state on screen,
+  // which outranks the metadata heals below. Run after them, a deep stub
+  // backlog could spend the budget every tick and leave it unhealed for good.
+  // Every tick, not a one-shot migration: an older Worker can ledger the
+  // event without settling the row at any time it is still serving.
+  let ledgerSettledLoanIds: number[] = [];
+  try {
+    ledgerSettledLoanIds = await settleFromLedger(client, env, chainId, budget);
+  } catch (err) {
+    console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, err);
+  }
   try {
     detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, atBlock);
     // Bootstrap loan position-NFT token IDs (lender_token_id /
@@ -3408,15 +3432,10 @@ async function runHealLanes(
     // LoanInitiated ledger, not trusted from whoever wrote the row: clear
     // the flag wherever the ledger now confirms the value. D1 only, no RPC.
     await reverifyInitPrincipal(env, chainId);
-    // #2464 / #2476 r3 — settle every loan whose `LoanSettled` the ledger
-    // holds but the projection missed. Every tick, not a one-shot migration:
-    // an older Worker can ledger the event without settling the row at any
-    // time it is still serving, and a migration applies once.
-    await settleFromLedger(client, env, chainId, budget);
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
-  return { detailRefreshes, loanDetailRefreshes };
+  return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }
 
 /** Subrequests one `refreshOfferDetails` normally spends — the details
@@ -3777,14 +3796,18 @@ const SETTLE_HEAL_COST = 2;
  *
  * Bounded by the projection's open rows (`status <> 'settled'`, served by
  * the `(chain_id, status)` index), not by the ledger's history.
+ *
+ * Returns the ids it settled: the caller reports them as status updates and
+ * hints them like a reconciliation repair (#2476 r4), or connected holders
+ * would keep the stale status until a poll.
  */
 export async function settleFromLedger(
   client: PublicClient,
   env: Env,
   chainId: number,
   budget: TickBudget,
-): Promise<number> {
-  if (!healRowAffordable(budget, 1)) return 0;
+): Promise<number[]> {
+  if (!healRowAffordable(budget, 1)) return [];
   const res = await env.DB.prepare(
     `SELECT l.loan_id AS loan_id,
             (SELECT ae.block_number FROM activity_events ae
@@ -3801,7 +3824,7 @@ export async function settleFromLedger(
   )
     .bind(chainId, SETTLE_HEAL_BATCH)
     .all<{ loan_id: number; block: number }>();
-  let healed = 0;
+  const healed: number[] = [];
   for (const row of res.results ?? []) {
     if (!healRowAffordable(budget, SETTLE_HEAL_COST)) break;
     let at: number;
@@ -3811,10 +3834,10 @@ export async function settleFromLedger(
     } catch {
       continue; // retried next tick — never settled with a guessed time
     }
-    if (await settleLoanRow(env, chainId, row.loan_id, row.block, at)) healed++;
+    if (await settleLoanRow(env, chainId, row.loan_id, row.block, at)) healed.push(row.loan_id);
   }
-  if (healed > 0) {
-    console.log(`[chainIndexer] settled ${healed} loan(s) on chain ${chainId} from their ledgered LoanSettled`);
+  if (healed.length > 0) {
+    console.log(`[chainIndexer] settled ${healed.length} loan(s) on chain ${chainId} from their ledgered LoanSettled`);
   }
   return healed;
 }
