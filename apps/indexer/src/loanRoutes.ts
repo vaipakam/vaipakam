@@ -122,6 +122,9 @@ interface LoanRow {
   start_at: number;
   terminal_block: number | null;
   terminal_at: number | null;
+  // 0059 — 1 when a settled row's `terminal_at` is the chain's time for its
+  // settlement block. Absent on a database 0059 has not reached.
+  terminal_at_verified?: number;
   updated_at: number;
 }
 
@@ -170,7 +173,11 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     startBlock: row.start_block,
     startAt: row.start_at,
     terminalBlock: row.terminal_block,
-    terminalAt: row.terminal_at,
+    // #2476 r15 — a SETTLED row's time is served only when verified (0059):
+    // an unverified one may be a previous Worker's scan clock, and stating
+    // when the indexer noticed a settlement as when it happened is the claim
+    // this withholds. Other terminal statuses are served as stored.
+    terminalAt: row.status === 'settled' && row.terminal_at_verified !== 1 ? null : row.terminal_at,
     updatedAt: row.updated_at,
   };
 }
@@ -693,6 +700,10 @@ export async function handleClaimables(
     // a CAPPED list and pushed genuinely recent claims out of it. Fixing the
     // column I was writing and not the claim the reader makes is what let
     // this survive the first fix.
+    //
+    // (Since #2476 a settled row's time can also be NULL when its block read
+    // failed or its provenance could not be confirmed — again a time that is
+    // genuinely unknown, which is the class this ordering demotes.)
     //
     // NULL here means a REPAIRED row and nothing else: `terminal_at` has
     // existed since migration 0005 created this table (never added later, so

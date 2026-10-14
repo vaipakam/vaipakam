@@ -1891,6 +1891,8 @@ async function runChainPass(
   // transport sends through a counted `fetch`, so each attempt is one request,
   // which is what the platform also thinks.
   const client = createChainClient(chain.rpc, env.fetchFn);
+  // #2476 r15 — the ledger heal's own NON-RETRYING client (see runHealLanes).
+  const healClient = createChainClient(chain.rpc, env.fetchFn, { retryCount: 0 });
 
   // One-time activity_events backfills, run BEFORE every return out of
   // this function — including the identity aborts just below (Codex
@@ -2096,6 +2098,7 @@ async function runChainPass(
       budget,
       lastBlock,
       settledHead.settled && lastBlock <= settledHead.block,
+      healClient,
     );
     // (Both one-time backfills already ran above, before this branch.)
     return {
@@ -2494,6 +2497,7 @@ async function runChainPass(
     budget,
     scanTo,
     settledHead.settled && scanTo <= settledHead.block,
+    healClient,
   );
 
   const hintStats = pushHintStats(allLogs);
@@ -3430,6 +3434,10 @@ async function runHealLanes(
    *  called settled (`SettledHead.settled`), rather than the `latest - N`
    *  guess or a block above a settled head that regressed. */
   headSettled: boolean,
+  /** #2476 r15 — a NON-RETRYING client for the ledger heal, for the reason
+   *  the reconciliation pass has its own (`reconcileClient`): its per-row
+   *  cost is then a bound, not a figure a retrying read can exceed. */
+  settleClient: PublicClient,
 ): Promise<{ detailRefreshes: number; loanDetailRefreshes: number; ledgerSettledLoanIds: number[] }> {
   let detailRefreshes = 0;
   let loanDetailRefreshes = 0;
@@ -3445,7 +3453,7 @@ async function runHealLanes(
   let ledgerSettledLoanIds: number[] = [];
   try {
     if (headSettled) {
-      ledgerSettledLoanIds = await settleFromLedger(client, diamond, env, chainId, budget, atBlock);
+      ledgerSettledLoanIds = await settleFromLedger(settleClient, diamond, env, chainId, budget, atBlock);
     } else {
       console.warn(`[chainIndexer] ledger settlement heal NOT RUNNING on chain ${chainId}: the head is a guess, not a settled block`);
     }
@@ -3787,11 +3795,16 @@ const LOAN_TOKEN_ID_BATCH = 50;
  *   in the same second.
  * - `at` is that block's chain time, or NULL when it is not known — never
  *   the time of the write.
- * - A row already settled is left alone, EXCEPT that what it does not know
- *   is filled (#2476 r3, r12): an unknown block takes the event's block even
- *   when that block's time is still unknown, and an unknown time is filled
- *   only from the block the row already names (or the one now supplied).
- *   Known values are never overwritten. Idempotent either way.
+ * - `at`, when given, is the chain's own time for `block` — never a scan
+ *   clock — and the write records that as `terminal_at_verified = 1`
+ *   (migration 0059). That marker, not the row's shape, is what says a
+ *   settlement time is known (#2476 r15).
+ * - A row already settled is left alone, EXCEPT where this write knows more
+ *   (#2476 r3, r12, r15): a supplied block replaces a missing or DIFFERENT
+ *   one (the supplied block is the confirmed canonical event), with its time
+ *   or with the time unknown; and on the same block, a verified time
+ *   replaces an unverified one (NULL, or a previous Worker's scan clock).
+ *   A verified time is never overwritten. Idempotent either way.
  * - ONLY FROM A TERMINAL STATUS (#2476 r12). A row still `active` or
  *   `fallback_pending` that meets `LoanSettled` missed its whole terminal
  *   transition: its amounts and side tables are as stale as its status, and
@@ -3812,21 +3825,31 @@ export async function settleLoanRow(
 ): Promise<boolean> {
   // SET expressions read the row as it WAS, so `status` in each CASE is the
   // prior status.
+  // `fresh` = this write supplies a block the row does not already name
+  // (none recorded, or a different one: the supplied block is the confirmed
+  // canonical event, so it replaces an unconfirmed one — #2476 r15).
   const r = await env.DB.prepare(
     `UPDATE loans
-        SET terminal_block = CASE WHEN status <> 'settled' THEN ?1 ELSE COALESCE(terminal_block, ?1) END,
+        SET terminal_block = CASE WHEN status <> 'settled' OR ?1 IS NOT NULL THEN ?1 ELSE terminal_block END,
             terminal_at = CASE
               WHEN status <> 'settled' THEN ?2
-              WHEN terminal_at IS NULL AND COALESCE(terminal_block, ?1) = ?1 THEN ?2
+              WHEN ?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1) THEN ?2
+              WHEN terminal_at_verified = 0 AND ?2 IS NOT NULL THEN ?2
               ELSE terminal_at
+            END,
+            terminal_at_verified = CASE
+              WHEN status <> 'settled' THEN (?2 IS NOT NULL)
+              WHEN ?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1) THEN (?2 IS NOT NULL)
+              WHEN terminal_at_verified = 0 AND ?2 IS NOT NULL THEN 1
+              ELSE terminal_at_verified
             END,
             status = 'settled', terminal_by_repair = 0, updated_at = ?3
       WHERE chain_id = ?4 AND loan_id = ?5
         AND status NOT IN ('active', 'fallback_pending')
         AND (
           status <> 'settled'
-          OR (terminal_block IS NULL AND ?1 IS NOT NULL)
-          OR (terminal_at IS NULL AND ?2 IS NOT NULL AND COALESCE(terminal_block, ?1) = ?1)
+          OR (?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1))
+          OR (?1 IS NOT NULL AND terminal_block = ?1 AND terminal_at_verified = 0 AND ?2 IS NOT NULL)
         )`,
   )
     .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId)
@@ -3934,17 +3957,18 @@ export async function settleFromLedger(
   // otherwise range-scan the primary key from the pointer.
   const res = await env.DB.prepare(
     `SELECT c.loan_id AS loan_id FROM (
-       SELECT loan_id FROM loans INDEXED BY idx_loans_chain_status
+       SELECT loan_id FROM loans INDEXED BY idx_loans_chain_status_loan
         WHERE chain_id = ?1
           AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
           AND loan_id > ?2
        UNION
-       -- #2476 r13 — and a settlement whose block or time is still unknown
-       -- (an unreadable receipt, or a repair): it stays eligible for the
-       -- provenance the ledger and the chain can later substantiate.
-       SELECT loan_id FROM loans INDEXED BY idx_loans_settled_unknown_provenance
+       -- #2476 r13, r15 — and a settlement whose time is not VERIFIED (an
+       -- unreadable receipt, a repair, or a previous Worker's scan clock,
+       -- including one written after the migration): it stays eligible for
+       -- the provenance the ledger and the chain can later substantiate.
+       SELECT loan_id FROM loans INDEXED BY idx_loans_settled_unverified
         WHERE chain_id = ?1
-          AND status = 'settled' AND (terminal_block IS NULL OR terminal_at IS NULL)
+          AND status = 'settled' AND terminal_at_verified = 0
           AND loan_id > ?2
      ) c
      WHERE EXISTS (

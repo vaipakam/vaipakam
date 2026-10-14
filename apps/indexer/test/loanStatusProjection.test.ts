@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { processLoanLogs, settleFromLedger, settleLoanRow } from '../src/chainIndexer';
+import { handleLoanById } from '../src/loanRoutes';
 import { createBudget } from '../src/subrequestBudget';
 import { pad, toHex, toEventSelector } from 'viem';
 
@@ -403,7 +404,7 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
     seedLoan(h, 44, 'settled');
     // Already settled AND dated: left alone (an undated one would take the
     // event's time — see settleLoanRow).
-    h.db.prepare('UPDATE loans SET terminal_block = 90, terminal_at = 400 WHERE chain_id = ? AND loan_id = 44').run(CHAIN);
+    h.db.prepare('UPDATE loans SET terminal_block = 100, terminal_at = 500, terminal_at_verified = 1 WHERE chain_id = ? AND loan_id = 44').run(CHAIN);
     const res = await run(h, [settledLog(41, 100, 0), settledLog(42, 100, 1), settledLog(43, 100, 2), settledLog(44, 100, 3)]);
     expect(res.statusUpdates).toBe(3);
     for (const id of [41, 42, 43, 44]) expect(statusOf(h, id)).toBe('settled');
@@ -603,30 +604,28 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20) as { detail: string }[])
       .map((r) => r.detail)
       .join('\n');
-    expect(plan).toMatch(/USING INDEX idx_loans_chain_status/);
-    expect(plan).toMatch(/USING INDEX idx_loans_settled_unknown_provenance/);
-    expect(plan).toMatch(/USING INDEX idx_activity_chain_loan/);
+    // Both branches SEEK on the rotation bound, not just on the chain.
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?\)/);
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_settled_unverified \(chain_id=\? AND loan_id>\?\)/);
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_activity_chain_loan/);
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
-  it('0059 marks a previous Worker’s scan-time settlement unknown, and the heal re-dates it from the chain (#2476 r14)', async () => {
-    const FILES = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
-    const BEFORE = FILES.filter((f) => f < '0059').map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
-    const M0059 = readFileSync(new URL('0059_terminal_by_repair.sql', MIGRATIONS_DIR), 'utf8');
-    const h = createSqliteD1(BEFORE);
-    // What the old handler wrote: the right block, the scan's clock.
+  it('a previous Worker’s scan-time settlement — even one written after 0059 — is re-dated from the chain (#2476 r15)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // What the old handler writes, before OR after the migration: the right
+    // block, the scan's clock, and (being old code) no verification marker.
     seedLoan(h, 81, 'settled');
     h.db.prepare('UPDATE loans SET terminal_block = 2200, terminal_at = 1_999_999_999 WHERE chain_id = ? AND loan_id = 81').run(CHAIN);
     ledger(h, 81, 'LoanSettled', 2200, 1_999_999_999);
-    // A repair-settled row (no block) and a settled row with no ledger event.
-    seedLoan(h, 82, 'settled');
-    seedLoan(h, 83, 'settled');
-    h.db.prepare('UPDATE loans SET terminal_block = 2300, terminal_at = 77 WHERE chain_id = ? AND loan_id = 83').run(CHAIN);
-    h.db.exec(M0059);
-    expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: null });
-    expect(row(h, 83).terminal_at).toBe(77);
     expect(await heal(h, chain({ 2200: 1_234 }))).toEqual([81]);
     expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: 1_234 });
+    const v = h.db.prepare('SELECT terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = 81').get(CHAIN) as { v: number };
+    expect(v.v).toBe(1);
+    // Verified now: not selected again.
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({ 2200: 1_234 }, () => 3, seen));
+    expect(seen.reads.map((r) => r.id)).not.toContain(81);
   });
 
   it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
@@ -785,16 +784,40 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     expect((at(h, 52) as { status: string }).status).toBe('fallback_pending');
   });
 
-  it('fills an unknown block even while its time stays unknown, and never overwrites a known one (#2476 r12)', async () => {
+  it('fills what it does not know: a missing or different block, an unverified time — never a verified one (#2476 r12, r15)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
+    const ver = (id: number) =>
+      (h.db.prepare('SELECT terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as { v: number }).v;
     seedLoan(h, 53, 'internal_matched');
     expect(await settleLoanRow(env(h), CHAIN, 53, null, null)).toBe(true);
     expect(at(h, 53)).toEqual({ status: 'settled', b: null, t: null });
     expect(await settleLoanRow(env(h), CHAIN, 53, 300, null)).toBe(true); // block known, time still not
     expect(at(h, 53)).toEqual({ status: 'settled', b: 300, t: null });
-    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 7)).toBe(false); // a different block never dates it
-    expect(await settleLoanRow(env(h), CHAIN, 53, 300, 42)).toBe(true); // its own block does
-    expect(at(h, 53)).toEqual({ status: 'settled', b: 300, t: 42 });
+    expect(ver(53)).toBe(0);
+    // A DIFFERENT confirmed block replaces the one recorded (an orphaned
+    // event's block, say), with its own time.
+    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 7)).toBe(true);
+    expect(at(h, 53)).toEqual({ status: 'settled', b: 999, t: 7 });
+    expect(ver(53)).toBe(1);
+    // A verified time is never rewritten, and an undated replay changes nothing.
+    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 42)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 53, null, null)).toBe(false);
+    expect(at(h, 53)).toEqual({ status: 'settled', b: 999, t: 7 });
+  });
+
+  it('the loan route serves a settled time only when it is verified (#2476 r15)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 55, 'settled');
+    h.db.prepare('UPDATE loans SET terminal_block = 400, terminal_at = 1_999_999_999 WHERE chain_id = ? AND loan_id = 55').run(CHAIN);
+    const served = async () => {
+      const res = await handleLoanById(new Request(`https://idx/loans/55?chainId=${CHAIN}`), { DB: h.d1 } as unknown as Env, '55');
+      return ((await res.json()) as { loan?: { terminalAt: number | null }; terminalAt?: number | null });
+    };
+    const first = await served();
+    expect((first.loan ?? first).terminalAt).toBeNull(); // a scan clock is not stated as the settlement time
+    await settleLoanRow(env(h), CHAIN, 55, 400, 1_234);
+    const second = await served();
+    expect((second.loan ?? second).terminalAt).toBe(1_234);
   });
 
   it('clears the repair marker: a settlement from the chain is not the repair’s (#2476 r12)', async () => {
