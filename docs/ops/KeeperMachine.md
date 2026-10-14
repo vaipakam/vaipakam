@@ -144,8 +144,8 @@ schedule stayed empty throughout.
 
 ## 7. Things that are not yet true
 
-- **No lease** (design step 4). §2 is enforced by procedure only until it
-  lands.
+- **No lease** (design step 4). It lives in the keeper's private database,
+  so it follows #2497. §2 is enforced by procedure only until it lands.
 - **D1 `batch` atomicity over HTTP is unverified, and nothing relies on it**
   (the design doc says why). Before adding a `batch` call that needs
   all-or-nothing behaviour, verify on a SCRATCH database, never on

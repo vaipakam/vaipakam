@@ -83,8 +83,28 @@ be missed. So the tick takes a **lease** before any pass runs: a single D1 row
 `keeper_lease(holder, expires_at)`, claimed with a compare-and-set
 (`UPDATE … WHERE holder = ?self OR expires_at < now`) and renewed every tick. A
 host that does not hold the lease skips the tick and says which holder does.
-This needs a migration (owned by `apps/indexer/migrations/`, per the D1 schema
-rule). It lands in its own step, before any machine is armed.
+**Where the lease lives: the keeper's PRIVATE database, not the shared one.**
+Nothing but the keeper reads or writes it, and #2497 (#2450) gives the keeper
+its own D1 (`KEEPER_DB`, schema in `apps/keeper/migrations/`) for exactly that
+class of table. Putting it in the shared `vaipakam-warm` now would mean moving
+it again when #2497 lands. So the lease is sequenced AFTER #2497. It lands
+before any machine is armed.
+
+Three rules for the lease, so they are not re-derived:
+
+- **One clock.** Expiry is computed and compared with the DATABASE's time
+  (`strftime('%s','now')` in the statement), never a host's. The Worker and a
+  machine can disagree about the time; D1 cannot disagree with itself.
+- **One statement.** The claim is a single upsert with a `WHERE holder = ?self
+  OR expires_at <= now` guard and `RETURNING`. No row back means another host
+  holds the lease. No read-then-write window.
+- **A tick never outlives its lease.** The machine renews on a heartbeat while
+  a tick is in flight, not only at tick start. A tick that finds it has lost
+  the lease starts no further passes. A graceful stop releases the lease, and
+  a crash leaves it to expire. The Worker renews per invocation, since its
+  wall time is already bounded.
+- **Fail closed.** If the lease cannot be read or claimed (no table, an API
+  error), the tick runs NO pass and says why.
 
 ## Steps
 
@@ -98,11 +118,13 @@ rule). It lands in its own step, before any machine is armed.
    and a `Dockerfile` (`machine/deploy/`), and `machine/.env.machine.example`
    listing every variable.
    Plus a runbook: `docs/ops/KeeperMachine.md`.
-4. **Lease** (migration + tick guard), then the batch-atomicity check.
+4. **Lease** (a keeper-private migration + the tick guard + the machine's
+   heartbeat), after #2497 lands. Batch atomicity needs no step; see above.
 5. **Cutover** when the machine exists: deploy the runner disarmed, validate
    ticks (the same step-8 discipline as `apps/keeper/wrangler.jsonc`), arm, and
    retire the Worker's schedule reservation.
 
 #2497 (the keeper's private D1 and the parked passes) adds a second database.
-The adapter takes a database id, so the runner gains a second `D1HttpDatabase`
-when that lands.
+The adapter takes a database id, so when #2497 lands the runner gains a second
+`D1HttpDatabase` bound as `KEEPER_DB`, plus a variable for that database's id.
+`.env.machine.example` and its test change with it.
