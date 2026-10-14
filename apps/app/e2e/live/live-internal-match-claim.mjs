@@ -577,6 +577,12 @@ try {
     if (owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) break;
     await page.waitForTimeout(1_000);
   }
+  // Neither line within the wait, and the page's own RPC answered nothing in
+  // that window: the page never had the facts, so nothing was observed —
+  // BLOCKED, never a FAIL on the copy (#2481 r1).
+  if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
+    await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
+  }
   check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
   check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   await shot(`internal-match-owed-${LOAN_ID}`);

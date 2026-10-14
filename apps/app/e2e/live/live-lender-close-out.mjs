@@ -103,8 +103,14 @@ const CHAIN_ID = 84532;
 const ACTIVE = 0;
 const DEFAULTED = 2;
 const FALLBACK_PENDING = 4;
-/** States in which the card offers the lender a close-out to confirm. */
-const READY_STATES = new Set(['ready', 'ready-needs-route']);
+/** The one state this drive judges: a liquid-collateral close-out that the
+ *  app must route as a SALE (#2463). */
+const SALE_STATE = 'ready-needs-route';
+/** The card's other ready states. Each is a valid answer for a loan of a
+ *  different shape, so meeting one is a missing precondition (BLOCKED),
+ *  never a product failure (#2481 r1). */
+const OTHER_READY_STATES = new Set(['ready-in-kind', 'ready-internal-match', 'ready-rental']);
+const INTERNAL_MATCHED = 5;
 
 function readJson(rel) {
   const file = path.join(REPO, rel);
@@ -121,13 +127,18 @@ if (typeof DIAMOND !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(DIAMOND)) {
 const DIAMOND_ABI = readJson('packages/contracts/src/diamondAbi.json');
 const COPY = readJson('apps/app/src/i18n/locales/en.json')?.copy ?? {};
 const FC = COPY.forcedClose ?? {};
-for (const k of ['submit']) {
+for (const k of ['submit', 'readyNeedsRoute', 'outcomeNoteSale']) {
   if (typeof FC[k] !== 'string') blockedSync(`en.json no longer carries copy.forcedClose.${k}`);
 }
 
 // ── The outcome manifest and the write plan ────────────────────────────
 const OUTCOME = ['closedOut'];
 const CLOSE_ONLY = [
+  {
+    id: 'confirmSale',
+    claim: 'the confirmation the lender signs under describes the sale',
+    checks: { outcome: 'the confirm step carries copy.forcedClose.outcomeNoteSale' },
+  },
   {
     id: 'closedOut',
     claim: 'the close-out executed and the loan left Active — Defaulted (sale cleared) or FallbackPending (sale did not), never a revert',
@@ -146,12 +157,14 @@ const MANIFEST = createManifest({
   verifiable: [
     {
       id: 'card',
-      claim: 'the overdue card offers this lender a close-out, states which route it takes, and names no amount',
+      claim: 'the overdue card offers this lender a close-out, says the collateral is SOLD through a route the app builds, and names no amount',
       checks: {
         mounted: 'the forced-close card renders on the position page',
-        ready: `the card declares a ready state (${[...READY_STATES].join(' / ')})`,
+        ready: `the card declares ${SALE_STATE}`,
+        saleBody: 'the card carries copy.forcedClose.readyNeedsRoute (the sale explanation for a routable venue)',
         noAmount: 'the card text states no monetary amount',
         submit: 'the card shows its close-out button, enabled',
+        fresh: 'the chain at the block the card declares, and again at the latest block, still shows this loan Active, past grace and held by this wallet',
       },
     },
     ...(SUBMIT ? CLOSE_ONLY : []),
@@ -245,6 +258,22 @@ if (nowSec <= graceEnd) {
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
 
+/** The facts the card's readiness rests on, at one block: still Active,
+ *  past grace, and the lender position held by this wallet. */
+async function eligibleAt(blockNumber) {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const [l, b] = await Promise.all([
+    read('getLoanDetails', [LOAN_ID], at),
+    blockNumber === undefined ? pub.getBlock() : pub.getBlock({ blockNumber }),
+  ]);
+  const holder = await read('ownerOf', [l.lenderTokenId], at);
+  const why = [];
+  if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
+  if (b.timestamp <= graceEnd) why.push(`not past grace (chain time ${b.timestamp})`);
+  if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
+  return { ok: why.length === 0, why: why.join(', '), block: b.number };
+}
+
 // ── Wallet posture ─────────────────────────────────────────────────────
 const asBig = (v) => {
   try {
@@ -273,25 +302,43 @@ const PLAN = SUBMIT
             call: { functionName: 'triggerDefault', args: { loanId: LOAN_ID, adapterCalls: is(ROUTES_RULE, routesOk) } },
             chainId: CHAIN_ID,
           }),
-          gas: optional(is('a positive limit', (v) => asBig(v) > 0n)),
+          // Bounded below by a fresh estimate of the EXACT call the page asks
+          // to sign (#2481 r1): a lower limit only buys an out-of-gas revert
+          // that spends the funded wallet's ETH. Computed in the gate, before
+          // the plan judges the request.
+          gas: optional(is('≥ a fresh estimate of this exact call', (v) => gasFloor > 0n && asBig(v) >= gasFloor)),
         },
       },
     ])
   : null;
+let gasFloor = 0n;
 const abiFor = (to) => (typeof to === 'string' && to.toLowerCase() === DIAMOND.toLowerCase() ? DIAMOND_ABI : null);
 const step = () => PLAN?.steps()[0];
 const wrote = () => step()?.status === 'consumed';
-function gate(method, params) {
+async function gate(method, params) {
   if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
   const kind = method === 'eth_sendTransaction' ? 'tx' : method;
+  if (kind === 'tx' && PLAN.armed() !== null) {
+    const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
+    try {
+      gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
+      console.log(`GATE  fresh estimate for the requested call: ${gasFloor} gas`);
+    } catch (err) {
+      // The plan then refuses any request carrying a gas limit, and one with
+      // none is signed with the wallet's own estimate — which would fail the
+      // same way, before anything is broadcast.
+      gasFloor = 0n;
+      console.log(`GATE  could not estimate the requested call: ${err.shortMessage ?? err.message}`);
+    }
+  }
   const actual = kind === 'tx' ? decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor) : params;
   const v = PLAN.offer(ROLE, kind, actual);
   if (!v.ok) {
     console.log(`GATE  refused ${method}: ${v.why}`);
-    return Promise.resolve({ ok: false, why: v.why });
+    return { ok: false, why: v.why };
   }
   console.log(`GATE  allowed ${v.step.purpose}`);
-  return Promise.resolve({
+  return {
     ok: true,
     onResult: (hash) => {
       PLAN.record(v.index, { hash, outcome: 'hash returned' });
@@ -300,7 +347,7 @@ function gate(method, params) {
     onError: (err) => {
       PLAN.record(v.index, { outcome: `provider rejected: ${String(err?.shortMessage ?? err?.message ?? err).slice(0, 160)}` });
     },
-  });
+  };
 }
 const sentHash = () => step()?.record?.hash ?? null;
 const session = await launch(
@@ -326,6 +373,8 @@ const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
 let stopped = null;
 let armedOnce = false;
+/** This wallet's pending nonce just before the arm. */
+let nonceBefore = null;
 /** The outcome, read from the chain by the hash the wallet returned. */
 async function judgeOutcome(hash) {
   let receipt;
@@ -336,7 +385,42 @@ async function judgeOutcome(hash) {
     return;
   }
   if (receipt.status === 'reverted') {
-    check('closedOut', 'receipt', 'the close-out executed', false, `reverted — ${hash} in block ${receipt.blockNumber}`);
+    // A revert is a defect only if the close-out's preconditions still held
+    // at that block. Another keeper closing the loan first, or the position
+    // moving, is an intrinsic race the drive cannot prevent (#2481 r1).
+    let moved = null;
+    try {
+      const e = await readPinned(() => eligibleAt(receipt.blockNumber));
+      if (!e.ok) moved = e.why;
+    } catch (err) {
+      unsettled('closedOut', 'receipt', `reverted (${hash}), and the direct RPC could not read the loan at that block (${err.message})`);
+      return;
+    }
+    if (moved) {
+      unsettled('closedOut', 'receipt', `reverted (${hash}, block ${receipt.blockNumber}) after its precondition moved — ${moved} — a race, not a defect`);
+    } else {
+      check('closedOut', 'receipt', 'the close-out executed', false, `reverted with its preconditions intact — ${hash} in block ${receipt.blockNumber}`);
+    }
+    return;
+  }
+  // The card warns that an opposing position may appear before the
+  // transaction runs: triggerDefault then settles by INTERNAL MATCHING
+  // instead (full → InternalMatched, partial → still Active). A valid raced
+  // outcome, not the sale under test (#2481 r1).
+  const matched = parseEventLogs({
+    abi: DIAMOND_ABI,
+    eventName: 'InternalMatchExecuted',
+    logs: receipt.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()),
+  }).some((l) => [l.args.loanIdA, l.args.loanIdB, l.args.loanIdC].includes(LOAN_ID));
+  if (matched) {
+    let status = '?';
+    try {
+      status = String((await readPinned(() => read('getLoanDetails', [LOAN_ID], { blockNumber: receipt.blockNumber }))).status);
+    } catch {
+      /* stated below as unread */
+    }
+    const shape = status === String(INTERNAL_MATCHED) ? 'fully matched (InternalMatched)' : status === String(ACTIVE) ? 'partly matched (still Active)' : `status ${status}`;
+    unsettled('closedOut', 'receipt', `the close-out raced an internal match and settled that way — ${shape}, ${hash}; the sale route under test did not run`);
     return;
   }
   const ours = (name) =>
@@ -376,12 +460,35 @@ try {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     state = await card.getAttribute('data-forced-close-state');
-    if (state && READY_STATES.has(state)) break;
+    if (state === SALE_STATE || OTHER_READY_STATES.has(state ?? '')) break;
     await page.waitForTimeout(1_000);
   }
-  check('card', 'ready', 'the card offers a close-out', READY_STATES.has(state ?? ''), `declared state ${state}`);
+  if (OTHER_READY_STATES.has(state ?? '')) {
+    await blocked(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`, null, done);
+  }
+  check('card', 'ready', `the card declares ${SALE_STATE}`, state === SALE_STATE, `declared state ${state}`);
   const text = (await card.innerText()).replace(/\s+/g, ' ');
   console.log(`card: ${text.slice(0, 600)}`);
+  check('card', 'saleBody', 'the card says the collateral is sold through a route the app builds', text.includes(FC.readyNeedsRoute));
+  // Revalidate the snapshot (#2481 r1): the card declares the block its
+  // readiness was resolved at; the chain must show the same facts there AND
+  // now. A move in between is a race, BLOCKED — never certified as a PASS.
+  const declared = await card.getAttribute('data-forced-close-block');
+  try {
+    const [then, now] = await Promise.all([
+      /^\d+$/.test(declared ?? '') ? readPinned(() => eligibleAt(BigInt(declared))) : Promise.resolve({ ok: false, why: `no declared block (${declared})` }),
+      eligibleAt(),
+    ]);
+    if (!/^\d+$/.test(declared ?? '')) {
+      check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
+    } else if (!then.ok || !now.ok) {
+      await blocked(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${then.ok ? 'eligible' : then.why}; now: ${now.ok ? 'eligible' : now.why}`, null, done);
+    } else {
+      check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
+    }
+  } catch (err) {
+    await blocked('the direct RPC could not re-read the loan at the card\'s declared block', err, done);
+  }
   const amounts = monetaryAmountsIn(text, { locale: 'en' });
   check('card', 'noAmount', 'the card states no amount', amounts.length === 0, amounts.join(', '));
   const submit = page.getByTestId('forced-close-submit');
@@ -419,7 +526,16 @@ try {
       { timeout: 120_000 },
     );
     await shot(`lender-close-out-confirm-${LOAN_ID}`);
+    const confirmText = (await card.innerText()).replace(/\s+/g, ' ');
+    check('confirmSale', 'outcome', 'the confirmation describes the sale', confirmText.includes(FC.outcomeNoteSale));
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
+    // The wallet's nonce before the arm: the only evidence that ties a later
+    // state change to THIS wallet rather than to a keeper (#2481 r1).
+    try {
+      nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+    } catch (err) {
+      await blocked('the direct RPC could not read the wallet nonce before the close-out', err, done);
+    }
     PLAN.arm(ROLE);
     armedOnce = true;
     await confirm.click();
@@ -459,17 +575,28 @@ check(
 if (armedOnce) {
   check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
 }
-// A close-out that bypassed the plan: armed, nothing sent through it, yet the
-// loan left Active.
+// A send that bypassed the plan: armed, nothing sent through it, yet THIS
+// WALLET's nonce moved. The loan's status alone proves nothing — any keeper
+// may close an overdue loan (#2481 r1) — so a status change without a nonce
+// change is a race, stated, not an escape.
 let escaped = false;
 let escapeUnknown = null;
 if (armedOnce && !wrote()) {
   try {
-    escaped = Number((await read('getLoanDetails', [LOAN_ID])).status) !== ACTIVE;
-    if (escaped) console.log(`ESCAPE loan ${LOAN_ID} left Active, but the write plan never allowed a send`);
-    else escapeUnknown = 'the driver confirmed and the plan allowed no send; the loan is still Active, but a send through another connector may still be pending — check by hand';
+    const [nonceAfter, status] = await Promise.all([
+      pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
+      read('getLoanDetails', [LOAN_ID]).then((l) => Number(l.status)),
+    ]);
+    escaped = nonceBefore !== null && nonceAfter > nonceBefore;
+    if (escaped) {
+      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
+    } else if (status !== ACTIVE) {
+      escapeUnknown = `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status} — closed by someone else in the meantime (a race)`;
+    } else {
+      escapeUnknown = 'the driver confirmed and the plan allowed no send; the wallet nonce did not move and the loan is still Active';
+    }
   } catch (err) {
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the loan (${err.message})`;
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message})`;
   }
 }
 const wroteAny = wrote() || armedOnce;
@@ -489,7 +616,7 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the close-out's hash and what its receipt showed; check the loan by hand if neither does",
-    escape: 'the loan left Active, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)',
+    escape: "this wallet's nonce moved, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)",
   },
 });
 console.log(VERDICT.line);
