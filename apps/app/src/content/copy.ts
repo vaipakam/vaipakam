@@ -5362,8 +5362,8 @@ const copySource = {
       'The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.',
     pastGraceRenter:
       'The rental and its grace period have ended; your use of the NFT ended with the rental. Anyone may now be able to close it out, which settles the rental; its page shows where it stands.',
-    // Shown beside "Past due" while the chain's grace answer is unread or
-    // failed: the loan may already be past grace, and the row must not
+    // Shown beside an open row's time label while the chain's grace answer
+    // is unread or failed: the loan may already be past grace, and the row must not
     // present the clock-derived label as the whole story.
     graceChecking: 'checking grace',
     graceCheckingTitle:
