@@ -3776,6 +3776,18 @@ const SETTLE_HEAL_BATCH = 20;
 /** Per healed row: the canonical status read, the event lookup, its receipt,
  *  the block read, the write. */
 const SETTLE_HEAL_COST = 5;
+/** D1 queries per healed row (event lookup, settle write), plus one for the
+ *  rotation-pointer write the loop reserves. */
+const SETTLE_HEAL_D1_QUERIES = 3;
+
+/** Whether a heal row may START: its own reads and writes, and still the
+ *  rotation-pointer write after it, in both meters. */
+function settleRowAffordable(budget: TickBudget): boolean {
+  return (
+    budget.subrequests.remaining >= SETTLE_HEAL_COST + 1 &&
+    budget.d1Queries.remaining >= SETTLE_HEAL_D1_QUERIES
+  );
+}
 /** `indexer_cursor.kind` of the heal's rotation pointer (a loan id). */
 export const SETTLE_HEAL_CURSOR_KIND = 'settle_heal_rotation';
 /** The chain's `LoanStatus.Settled` (see loanStatusProjection.ts). */
@@ -3858,7 +3870,10 @@ export async function settleFromLedger(
   const healed: number[] = [];
   let reached = pointer;
   for (const row of rows) {
-    if (!healRowAffordable(budget, SETTLE_HEAL_COST)) break;
+    // #2476 r8 — the row AND the pointer write after the loop. Running out of
+    // budget at that write could end the invocation before this returns, and
+    // a row settled here is never selected again, so its report would be lost.
+    if (!settleRowAffordable(budget)) break;
     reached = row.loan_id;
     try {
       const detail = (await client.readContract({

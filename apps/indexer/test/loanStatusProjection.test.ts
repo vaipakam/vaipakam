@@ -571,6 +571,16 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(got).toHaveLength(20);
   });
 
+  it('never starts a row it could not also write the rotation pointer after (#2476 r8)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 80, 'internal_matched');
+    ledger(h, 80, 'LoanSettled', 1300, 1);
+    // Exactly one row's cost left: no room for the pointer write after it.
+    expect(await settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(5, 'test', 1_000), 777n)).toEqual([]);
+    expect(row(h, 80).status).toBe('internal_matched');
+    expect(await settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(6, 'test', 1_000), 777n)).toEqual([80]);
+  });
+
   it('reports the ids it already settled when a later row throws', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     for (const id of [60, 61, 62]) {
