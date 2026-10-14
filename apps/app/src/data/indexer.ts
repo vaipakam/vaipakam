@@ -271,6 +271,13 @@ export interface IndexedLoan {
    *  same reason). Read through `initiatedPrincipal`, never `principal`, for
    *  what was lent or borrowed. */
   initPrincipal?: string | null;
+  /** #2467 — the rate and duration the loan EXECUTED at, as opposed to the
+   *  live `interestRateBps` / `durationDays` that `LoanExtended` rewrites.
+   *  `null` unless the indexer can back both against the chain's own
+   *  initiation event; optional because older workers omit them. Read
+   *  through `initiatedTerms`. */
+  initRateBps?: number | null;
+  initDurationDays?: number | null;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;

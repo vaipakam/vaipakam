@@ -1781,7 +1781,8 @@
         "loading": "جارٍ تحميل سجلك…",
         "roleLender": "مُقرِض",
         "roleBorrower": "مقترض",
-        "started": "بدأ"
+        "started": "بدأ",
+        "termsUnknown": "شروط البداية غير متاحة"
       },
       "ticket": {
         "rateBpsNote": "تُخزن المعدلات بنقاط الأساس (1% = 100 bps)",

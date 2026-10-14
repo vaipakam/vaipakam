@@ -3407,6 +3407,7 @@ async function runHealLanes(
     // LoanInitiated ledger, not trusted from whoever wrote the row: clear
     // the flag wherever the ledger now confirms the value. D1 only, no RPC.
     await reverifyInitPrincipal(env, chainId);
+    await reverifyInitTerms(env, chainId);
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
@@ -3747,6 +3748,41 @@ export async function reverifyInitPrincipal(env: Env, chainId: number): Promise<
   return res.meta?.changes ?? 0;
 }
 
+/**
+ * #2467 — clear `init_terms_unbacked` on every row of `chainId` whose
+ * `init_rate_bps` AND `init_duration_days` the ledger's
+ * `LoanInitiatedDetails` for that loan now carries. The rate/duration twin
+ * of {@link reverifyInitPrincipal}: it can only CLEAR the flag, and only to
+ * values the chain's own initiation event carries, so a value stamped from a
+ * chain-head read after an extension never becomes "backed". The details
+ * rows carry the loan id inside `args_json` (no `loan_id` ref), the shape
+ * 0032 reads. Bounded by the partial index on flagged rows; each flagged row
+ * is one probe of `idx_activity_initiated_details_loan` (0058), whose
+ * expression the loan-id comparison below must keep matching exactly.
+ */
+export async function reverifyInitTerms(env: Env, chainId: number): Promise<number> {
+  const res = await env.DB.prepare(
+    `UPDATE loans
+        SET init_terms_unbacked = 0
+      WHERE chain_id = ?
+        AND init_terms_unbacked = 1
+        AND init_rate_bps IS NOT NULL
+        AND init_duration_days IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM activity_events ae
+           WHERE ae.chain_id = loans.chain_id
+             AND ae.kind = 'LoanInitiatedDetails'
+             AND CAST(json_extract(ae.args_json, '$.loanId') AS INTEGER) = loans.loan_id
+             AND CAST(json_extract(ae.args_json, '$.details.interestRateBps') AS INTEGER) = loans.init_rate_bps
+             AND CAST(json_extract(ae.args_json, '$.details.durationDays') AS INTEGER) = loans.init_duration_days
+        )`,
+  )
+    .bind(chainId)
+    .run();
+  return res.meta?.changes ?? 0;
+}
+
 async function refreshStubLoans(
   client: PublicClient,
   diamond: Address,
@@ -4043,6 +4079,10 @@ export async function processLoanLogs(
             borrowerOwner = offerRow.creator_current_owner;
           }
         }
+        // #2467 — `init_terms_unbacked = 0`: this path takes the rate and
+        // duration from the `LoanInitiatedDetails` event itself, so the
+        // initiation terms are backed. The other insert paths leave the
+        // DEFAULT 1 for `reverifyInitTerms` to clear against the ledger.
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -4055,8 +4095,8 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at, init_principal_unbacked)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+             start_block, start_at, updated_at, init_principal_unbacked, init_terms_unbacked)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
         )
           .bind(
             chainId,

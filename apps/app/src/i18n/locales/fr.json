@@ -1781,7 +1781,8 @@
         "loading": "Chargement de votre historique…",
         "roleLender": "Prêteur",
         "roleBorrower": "Emprunteur",
-        "started": "démarré"
+        "started": "démarré",
+        "termsUnknown": "conditions de départ indisponibles"
       },
       "ticket": {
         "rateBpsNote": "Les taux sont stockés en points de base (1 % = 100 bps)",

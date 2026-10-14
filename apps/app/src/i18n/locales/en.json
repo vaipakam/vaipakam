@@ -1888,7 +1888,8 @@
         "loading": "Loading your history…",
         "roleLender": "Lender",
         "roleBorrower": "Borrower",
-        "started": "started"
+        "started": "started",
+        "termsUnknown": "terms at the start not available"
       },
       "ticket": {
         "rateBpsNote": "Rates are stored in basis points (1% = 100 bps)",

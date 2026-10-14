@@ -19,7 +19,7 @@ import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { loanStateView, loanStateLabel } from '../../lib/loanState';
 import type { IndexedParticipantLoan } from '../../data/indexer';
-import { initiatedPrincipal } from '../../lib/positionAmounts';
+import { initiatedPrincipal, initiatedTerms } from '../../lib/positionAmounts';
 import {
   formatBpsAsPercent,
   formatDate,
@@ -34,6 +34,7 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const initPrincipal = initiatedPrincipal(loan);
+  const terms = initiatedTerms(loan);
   const state = loanStateView(loan);
   const pairLabel = `${lendingMeta.data?.symbol ?? shortAddress(loan.lendingAsset)} / ${
     collateralMeta.data?.symbol ?? shortAddress(loan.collateralAsset)
@@ -45,10 +46,17 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
           {/* Position-id link convention — same target the Positions
               panel and alert deep links use. */}
           <Link to={`/positions/${loan.loanId}`}>{copy.activity.loanRef(loan.loanId)}</Link>{' '}
-          · {pairLabel} · {formatDurationDays(loan.durationDays)} ·{' '}
-          <span title={`${loan.interestRateBps} bps`}>
-            {formatBpsAsPercent(loan.interestRateBps)}
-          </span>
+          · {pairLabel} ·{' '}
+          {/* #2467 — the terms the fill executed at, never the live ones an
+              extension rewrites; said to be unknown rather than substituted. */}
+          {terms === null ? (
+            text.termsUnknown
+          ) : (
+            <>
+              {formatDurationDays(terms.durationDays)} ·{' '}
+              <span title={`${terms.rateBps} bps`}>{formatBpsAsPercent(terms.rateBps)}</span>
+            </>
+          )}
         </span>
         <br />
         <span className="row-sub">

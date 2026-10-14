@@ -1781,7 +1781,8 @@
         "loading": "회원님의 이력을 불러오는 중…",
         "roleLender": "대출자",
         "roleBorrower": "차입자",
-        "started": "시작됨"
+        "started": "시작됨",
+        "termsUnknown": "시작 시 조건을 표시할 수 없음"
       },
       "ticket": {
         "rateBpsNote": "금리는 basis points로 저장됩니다(1% = 100 bps)",

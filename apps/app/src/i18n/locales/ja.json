@@ -1781,7 +1781,8 @@
         "loading": "履歴を読み込み中…",
         "roleLender": "貸し手",
         "roleBorrower": "借り手",
-        "started": "開始"
+        "started": "開始",
+        "termsUnknown": "開始時の条件は表示できません"
       },
       "ticket": {
         "rateBpsNote": "レートはベーシスポイントで保存されます (1% = 100 bps)",
