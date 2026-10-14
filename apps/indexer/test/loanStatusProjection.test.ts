@@ -459,14 +459,22 @@ describe('settleFromLedger — settle what the ledger shows settled (#2464, #247
     expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toEqual([]);
   });
 
-  it('leaves the row for the next tick, never settled undated, when the block read fails', async () => {
+  it('settles with the time unknown — never the ledger sentinel — when the block read fails, so the row leaves the batch', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 25, 'internal_matched');
     ledger(h, 25, 'LoanSettled', 700, 1_999_999_999);
-    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([]);
-    expect(row(h, 25).status).toBe('internal_matched');
-    expect(await settleFromLedger(blocks({ 700: 1234 }), env(h), CHAIN, budget())).toEqual([25]);
-    expect(row(h, 25)).toEqual({ status: 'settled', terminal_block: 700, terminal_at: 1234 });
+    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([25]);
+    expect(row(h, 25)).toEqual({ status: 'settled', terminal_block: 700, terminal_at: null });
+  });
+
+  it('unreadable blocks cannot hold the window: later rows are reached on the next tick (#2476 r5)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (let id = 100; id < 125; id++) {
+      seedLoan(h, id, 'internal_matched');
+      ledger(h, id, 'LoanSettled', id, 1);
+    }
+    await settleFromLedger(blocks({}), env(h), CHAIN, budget()); // first batch, all unreadable
+    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([120, 121, 122, 123, 124]);
   });
 
   it('settles an event an older Worker ledgered without settling — the deploy gap a one-shot migration missed', async () => {

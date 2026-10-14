@@ -472,6 +472,28 @@ describe('reconcileAfterScan against a real database', () => {
     expect(notif.n).toBe(2);
   });
 
+  it('stands aside for a loan whose LoanSettled the ledger holds (#2476 r5)', async () => {
+    // `settleFromLedger` settles it from the event, with its block and time;
+    // a repair first would write it undated and announce it as found by
+    // checking.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 21);
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+         VALUES (?, 900, 0, '0x1', 'LoanSettled', 21, '{}', 1)`,
+      )
+      .run(CHAIN);
+    const report = await runRepair(h);
+    expect(report.repaired).toEqual([]);
+    const row = h.db.prepare('SELECT status FROM loans WHERE loan_id = ?').get(21) as { status: string };
+    expect(row.status).toBe('active');
+    const notif = h.db
+      .prepare('SELECT COUNT(*) AS n FROM notifications WHERE chain_id = ? AND loan_id = ?')
+      .get(CHAIN, 21) as { n: number };
+    expect(notif.n).toBe(0);
+  });
+
   it('leaves a loan the chain still calls running completely untouched', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedActiveLoan(h, 22);

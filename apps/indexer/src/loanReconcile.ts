@@ -633,9 +633,18 @@ export async function reconcileAfterScan(
     async activeRowsInLap(chainId, after, lapEnd, limit) {
       const rows = await ctx.db
         .prepare(
+          // #2476 r5 — a loan whose `LoanSettled` the ledger already holds
+          // is not this pass's to repair: `settleFromLedger` settles it from
+          // that event, with its block and time. Repairing it here first
+          // would write it undated, as found-by-checking, and lose both.
           `SELECT loan_id, status FROM loans
             WHERE chain_id = ? AND status IN ('active', 'fallback_pending')
               AND loan_id > ? AND loan_id <= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM activity_events ae
+                 WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+                   AND ae.kind = 'LoanSettled'
+              )
             ORDER BY loan_id ASC LIMIT ?`,
         )
         .bind(chainId, after, lapEnd, limit)
@@ -776,8 +785,16 @@ export async function reconcileAfterScan(
               SET status = ?, ${repair.mutable.assignments.join(', ')},
                   terminal_block = NULL, terminal_at = NULL, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
-              AND status IN ('active', 'fallback_pending')`,
+              AND status IN ('active', 'fallback_pending')
+              AND NOT EXISTS (
+                SELECT 1 FROM activity_events ae
+                 WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+                   AND ae.kind = 'LoanSettled'
+              )`,
         )
+        // #2476 r5 — the CAS refuses a ledger-proven settlement too, in case
+        // the event was ledgered between selection and this batch; the
+        // notice then self-gates out with it (its fingerprint never forms).
         .bind(repair.status, ...repair.mutable.values, at, chainId, loanId);
       // The inbox rows go in the SAME batch. Written afterwards they could
       // be lost for good: the repair takes the row out of the live set the

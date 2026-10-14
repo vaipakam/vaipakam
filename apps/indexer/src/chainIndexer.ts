@@ -3789,10 +3789,12 @@ const SETTLE_HEAL_COST = 2;
  *
  * The settlement is dated by a fresh read of the event's block, never by the
  * ledger's `block_at`: that column holds the scan's wall-clock sentinel when
- * the original block read failed, with nothing durable to say so. If the
- * read fails again the row is left for the next tick rather than settled
- * undated — the handler's own unknown-time case is for a failure inside a
- * scan, which cannot wait.
+ * the original block read failed, with nothing durable to say so. If that
+ * read fails too, the row is settled with its time unknown (#2476 r5) — every
+ * selected row leaves the selection, so none can hold the batch.
+ *
+ * The reconciliation repair stands aside for these rows (loanReconcile.ts),
+ * so it never settles one first as undated and found-by-checking.
  *
  * Bounded by the projection's open rows (`status <> 'settled'`, served by
  * the `(chain_id, status)` index), not by the ledger's history.
@@ -3827,12 +3829,17 @@ export async function settleFromLedger(
   const healed: number[] = [];
   for (const row of res.results ?? []) {
     if (!healRowAffordable(budget, SETTLE_HEAL_COST)) break;
-    let at: number;
+    // #2476 r5 — a failed read settles the row with its time UNKNOWN rather
+    // than skipping it: a skipped row stays first in this fixed window, and
+    // rows whose blocks a node will not serve would hold the window for
+    // good, starving every later settlement. Unknown is honest; the status
+    // is what the ledger proves. Never the ledger's `block_at`.
+    let at: number | null;
     try {
       const block = await client.getBlock({ blockNumber: BigInt(row.block) });
       at = Number(block.timestamp);
     } catch {
-      continue; // retried next tick — never settled with a guessed time
+      at = null;
     }
     if (await settleLoanRow(env, chainId, row.loan_id, row.block, at)) healed.push(row.loan_id);
   }
