@@ -68,6 +68,9 @@ export interface ServerQuoteRequest {
    *  liquidity-confidence pass, which only measures a price, passes its
    *  own. */
   slippageBps?: number;
+  /** The fetch aggregator quotes go through. Omitted, the global one; a
+   *  pass that caps its requests passes its budget's. */
+  fetchFn?: typeof fetch;
 }
 
 export type ServerAdapterCall = AdapterCall;
@@ -125,11 +128,15 @@ export async function readKeeperRouteStanding(
   return { read, slots };
 }
 
-async function directAnswer(url: string, headers: Record<string, string>): Promise<AggregatorAnswer> {
+async function directAnswer(
+  url: string,
+  headers: Record<string, string>,
+  fetchFn: typeof fetch,
+): Promise<AggregatorAnswer> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), QUOTE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json', ...headers }, signal: ctrl.signal });
+    const res = await fetchFn(url, { headers: { Accept: 'application/json', ...headers }, signal: ctrl.signal });
     if (!res.ok) return aggregatorAnswerForStatus(res.status);
     const body = await res.json().catch(() => undefined);
     return body === undefined ? 'unanswered' : { body };
@@ -142,7 +149,11 @@ async function directAnswer(url: string, headers: Record<string, string>): Promi
 
 /** The keeper's {@link AggregatorSource}: 0x and 1inch called directly
  *  with the Worker's own keys. */
-export function keeperAggregatorSource(env: Env, txOrigin: Address | undefined): AggregatorSource {
+export function keeperAggregatorSource(
+  env: Env,
+  txOrigin: Address | undefined,
+  fetchFn: typeof fetch = (input, init) => fetch(input, init),
+): AggregatorSource {
   return {
     askability(kind: AggregatorKind) {
       if (kind === 'zeroex') {
@@ -162,7 +173,7 @@ export function keeperAggregatorSource(env: Env, txOrigin: Address | undefined):
         url.searchParams.set('taker', req.taker);
         url.searchParams.set('txOrigin', txOrigin);
         url.searchParams.set('slippageBps', String(req.slippageBps));
-        return directAnswer(url.toString(), { '0x-api-key': env.ZEROEX_API_KEY, '0x-version': 'v2' });
+        return directAnswer(url.toString(), { '0x-api-key': env.ZEROEX_API_KEY, '0x-version': 'v2' }, fetchFn);
       }
       if (!env.ONEINCH_API_KEY) return Promise.resolve('unconfigured');
       const url = new URL(`https://api.1inch.dev/swap/v6.0/${req.chainId}/swap`);
@@ -175,7 +186,7 @@ export function keeperAggregatorSource(env: Env, txOrigin: Address | undefined):
       // The adapter does not hold the input until the Diamond moves it, so
       // 1inch's own balance/allowance simulation would refuse the quote.
       url.searchParams.set('disableEstimate', 'true');
-      return directAnswer(url.toString(), { Authorization: `Bearer ${env.ONEINCH_API_KEY}` });
+      return directAnswer(url.toString(), { Authorization: `Bearer ${env.ONEINCH_API_KEY}` }, fetchFn);
     },
   };
 }
@@ -194,7 +205,7 @@ export async function orchestrateServerQuotes(
    *  fresh when omitted. Must have been read with the same `txOrigin`. */
   given?: RosterStanding,
 ): Promise<ServerOrchestrationResult> {
-  const aggregators = keeperAggregatorSource(env, req.txOrigin);
+  const aggregators = keeperAggregatorSource(env, req.txOrigin, req.fetchFn);
   let standing: RosterStanding;
   try {
     standing =

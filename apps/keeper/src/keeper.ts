@@ -966,6 +966,9 @@ export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
+  /** The fetch the wallet's requests go through — a pass that caps its
+   *  requests passes its budget's (see subrequestBudget.ts). */
+  fetchFn?: typeof fetch,
 ): KeeperContext | null {
   if (!env.KEEPER_PRIVATE_KEY) return null;
   // The same call the gate makes, so a key that logged `start` cannot be
@@ -978,7 +981,7 @@ export function buildKeeperContext(
   const { account } = resolved;
   const wallet = createWalletClient({
     account,
-    transport: http(chain.rpc),
+    transport: http(chain.rpc, fetchFn ? { fetchFn } : undefined),
   });
   return {
     wallet,

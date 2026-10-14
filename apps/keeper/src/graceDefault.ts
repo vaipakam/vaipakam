@@ -95,6 +95,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
+import { createSubrequestBudget } from './subrequestBudget';
 import { HF_LIQUIDATION_THRESHOLD } from './liquidator';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
 import type { PassTick } from './passSchedule';
@@ -119,14 +120,22 @@ export const SCAN_WINDOW = 400;
 const READ_CHUNK = 100;
 
 /** Candidates attempted per run. One attempt costs about eighteen
- *  subrequests plus two per enabled swap adapter (the roster is read one
- *  adapter at a time) plus the aggregator quotes — the pending-send check,
- *  loan, health factor and sale reads, the final gate's reads and preview,
- *  and the send's own preparation; the CPU bench measures 24 RPC calls with
- *  three adapters. With the scan's eight that is about 32 of the 50-request
- *  allowance the whole invocation shares with the other passes due on the
- *  same tick, independent of how many chains or loans there are. */
+ *  requests plus two per enabled swap adapter (the roster is read one
+ *  adapter at a time) plus the aggregator quotes. The CPU bench measures 28
+ *  for a whole run (scan included) with three adapters. A longer roster can
+ *  push an attempt past {@link SUBREQUEST_BUDGET}; the cap then stops it
+ *  before the send. */
 export const MAX_ATTEMPTS_PER_RUN = 1;
+
+/** Requests one run may make, all told: the scan, the attempt (its route
+ *  build and quotes included) and the send. A HARD cap, enforced on the
+ *  run's transport rather than estimated per input: the inputs that drive
+ *  cost (chains, the book, governance's adapter roster) are not this pass's
+ *  to bound, and three review rounds found three of them. A run that
+ *  reaches it stops before sending and says so; the loan is tried again on
+ *  a later visit. 40 of the invocation's 50 leaves the rest for the passes
+ *  sharing the tick. */
+export const SUBREQUEST_BUDGET = 40;
 
 /** The pass's cadence, in ms — the rotation moves one batch per run.
  *  Mirrors `cadenceMinutes` in passSchedule.ts. */
@@ -194,13 +203,26 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
 }
 
 async function processChain(env: Env, chain: ChainConfig, visit: number): Promise<void> {
-  const client = createPublicClient({ transport: http(chain.rpc) }) as PublicClient;
-  const ctx = buildKeeperContext(env, chain, client);
+  // Every request below goes through this one budget — reads, quotes and
+  // the wallet's send alike.
+  const budget = createSubrequestBudget(SUBREQUEST_BUDGET);
+  const client = createPublicClient({
+    transport: http(chain.rpc, { fetchFn: budget.fetch }),
+  }) as PublicClient;
+  const ctx = buildKeeperContext(env, chain, client, budget.fetch);
   if (!ctx) return;
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
+  const spent = () => `requests=${budget.spent()}/${budget.limit}`;
 
-  const scan = await findDefaultable(client, ctx.diamond, chain.id, visit);
+  let scan: Awaited<ReturnType<typeof findDefaultable>>;
+  try {
+    scan = await findDefaultable(client, ctx.diamond, chain.id, visit);
+  } catch (err) {
+    if (!budget.exhausted()) throw err;
+    console.log(`[keeper] graceDefault chain=${chain.id} scan stopped: ${BUDGET_SPENT} ${spent()}`);
+    return;
+  }
   const { defaultable: candidates, unread, window } = scan;
   const where = `chain=${chain.id} window=${window.index + 1}/${window.count} active=${window.total}`;
   if (unread.length > 0) {
@@ -226,6 +248,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
         buyToken: loan.principalAsset,
         sellAmount: loan.collateralAmount,
         txOrigin: keeper,
+        fetchFn: budget.fetch,
       }),
   };
 
@@ -246,6 +269,13 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     } catch (err) {
       outcome = { kind: 'skipped', reason: `error:${describeFailure(err)}` };
     }
+    // Whatever step the cap interrupted — a read that threw, or a route
+    // build that swallowed its failures and came back empty — the attempt
+    // was cut short, and that is what the log says. Nothing was sent: the
+    // send would have needed a request the budget refused.
+    if (budget.exhausted() && outcome.kind === 'skipped') {
+      outcome = { kind: 'skipped', reason: BUDGET_SPENT };
+    }
     if (outcome.kind === 'submitted') {
       submitted += 1;
       console.log(
@@ -258,9 +288,12 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     }
   }
   console.log(
-    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted}`,
+    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted} ${spent()}`,
   );
 }
+
+/** The skip reason for a run the subrequest cap cut short. */
+export const BUDGET_SPENT = `subrequest-budget-spent (cap ${SUBREQUEST_BUDGET}; tried again on a later visit)`;
 
 /** Where a scan looked: window `index` of `count` over `total` active loans. */
 export interface ScanWindow {
