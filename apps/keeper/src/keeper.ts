@@ -43,6 +43,7 @@ import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
+  readKeeperRouteStanding,
   type ServerOrchestrationResult,
   type ServerRankedQuote,
 } from './serverQuotes';
@@ -178,15 +179,25 @@ function pickSplitLegs(
   fullQuotes: ServerOrchestrationResult,
   minImprovementBps: number,
 ): { a: ServerRankedQuote; b: ServerRankedQuote; totalExpected: bigint; gainBps: number } | null {
-  if (halfQuotes.ranked.length < 2) return null;
   if (fullQuotes.ranked.length === 0) return null;
-  // Find the top-2 quotes with distinct `adapterIdx`. `ranked` is
+  // AGGREGATOR LEGS ONLY (#2480 r1 `4267324333`). `swapSplit` gives every
+  // leg `minOutputAmount = 0` and checks only the total, so a leg must
+  // carry its own slippage bound — which aggregator calldata does and a raw
+  // UniV3 / mock call does not (`LibSwap.sol`, swapSplit's dev note). And
+  // two UniV3 adapters during an adapter replacement quote the SAME pools,
+  // so their half-size quotes are not independent liquidity — and the same
+  // holds for two instances of ONE aggregator (an old and a new 0x adapter
+  // during a replacement route to the same venue), so the two legs must be
+  // different aggregators, not merely different indexes (#2480 r2).
+  const legs = halfQuotes.ranked.filter((q) => q.kind === 'zeroex' || q.kind === 'oneinch');
+  if (legs.length < 2) return null;
+  // Find the top-2 quotes from distinct aggregators. `ranked` is
   // already best-first by expectedOutput.
-  const a = halfQuotes.ranked[0];
+  const a = legs[0];
   let b: ServerRankedQuote | null = null;
-  for (let i = 1; i < halfQuotes.ranked.length; i++) {
-    if (halfQuotes.ranked[i].call.adapterIdx !== a.call.adapterIdx) {
-      b = halfQuotes.ranked[i];
+  for (let i = 1; i < legs.length; i++) {
+    if (legs[i].kind !== a.kind) {
+      b = legs[i];
       break;
     }
   }
@@ -404,34 +415,51 @@ export async function maybeAutonomousLiquidate(
     // always also fetch the half-size quote for that branch.
     const halfAmount = loan.collateralAmount / 2n;
     const otherHalf = loan.collateralAmount - halfAmount;
+    // ONE roster read for this loan's builds — the same moment for the
+    // full, half and partial quotes and any re-size below (#2480 r1). A
+    // failed read is left to each build, which reports it.
+    const txOrigin = ctx.wallet.account?.address;
+    const standing = await readKeeperRouteStanding(
+      env,
+      publicClient,
+      chain.id,
+      ctx.diamond,
+      txOrigin,
+    ).catch(() => undefined);
+    // EVERY build for this loan goes through here, so a venue lost from any
+    // try-list that may be sent — full, half, partial or a re-sized partial
+    // — is logged, even when a back-up venue makes the route usable. 0x
+    // quoting a swap target its adapter is not allowed to call is the
+    // runbook's allowlist-rotation signal (#2480 r5, r7).
+    const buildRoute = async (
+      sellAmount: bigint,
+      label: string,
+    ): Promise<ServerOrchestrationResult> => {
+      const res = await orchestrateServerQuotes(env, publicClient, {
+        chainId: chain.id,
+        sellToken: loan.collateralAsset,
+        buyToken: loan.principalAsset,
+        sellAmount,
+        diamond: ctx.diamond,
+        txOrigin,
+      }, standing);
+      if (res.calls.length > 0 && res.failed.length > 0) {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} route-degraded size=${label} (failed: ${res.failed.join(',')})`,
+        );
+      }
+      return res;
+    };
     const [quotes, halfQuotes, partialQuotes] = await Promise.all([
-      orchestrateServerQuotes(env, publicClient, {
-        chainId: chain.id,
-        sellToken: loan.collateralAsset,
-        buyToken: loan.principalAsset,
-        sellAmount: loan.collateralAmount,
-        taker: ctx.diamond,
-      }),
-      orchestrateServerQuotes(env, publicClient, {
-        chainId: chain.id,
-        sellToken: loan.collateralAsset,
-        buyToken: loan.principalAsset,
-        sellAmount: halfAmount,
-        taker: ctx.diamond,
-      }),
+      buildRoute(loan.collateralAmount, 'full'),
+      buildRoute(halfAmount, 'half'),
       // Skip the third quote when partial isn't viable — keeps the
       // hot-path RPC volume the same as before in the common "full
       // liquidation" case. When partial IS viable, all three run in
       // parallel so per-loan latency stays at the max of the three
       // rather than serializing.
       partialEligible && partialAmount !== halfAmount
-        ? orchestrateServerQuotes(env, publicClient, {
-            chainId: chain.id,
-            sellToken: loan.collateralAsset,
-            buyToken: loan.principalAsset,
-            sellAmount: partialAmount,
-            taker: ctx.diamond,
-          })
+        ? buildRoute(partialAmount, 'partial')
         : Promise.resolve(null),
     ]);
     if (quotes.calls.length === 0) {
@@ -512,13 +540,7 @@ export async function maybeAutonomousLiquidate(
           fractionBps,
         );
         if (sellAmount === 0n) return null;
-        const q = await orchestrateServerQuotes(env, publicClient, {
-          chainId: chain.id,
-          sellToken: loan.collateralAsset,
-          buyToken: loan.principalAsset,
-          sellAmount,
-          taker: ctx.diamond,
-        });
+        const q = await buildRoute(sellAmount, `partial-${fractionBps}bps`);
         return q.calls.length > 0 ? q : null;
       };
       // Read the live close-factor cap; default to BPS (no cap) on any failure.
@@ -1111,12 +1133,12 @@ async function tryFlashLoanDiscountedPath(
   if (!account) return false;
 
   // ── DEX-direct quote fetch ────────────────────────────────────
-  // Re-fetch with the FlashLoanLiquidator receiver as taker (not
-  // the diamond), so the aggregator builds calldata + allowance
-  // target tailored to the receiver's call shape. We can't reuse
-  // the `quotes` bundle from the main flow because that was
-  // built with `taker = diamond` for the diamond-LibSwap-adapter
-  // path; the aggregator's response is taker-specific.
+  // Re-fetch with the FlashLoanLiquidator receiver as taker, so the
+  // aggregator builds calldata + allowance target tailored to the
+  // receiver's call shape. We can't reuse the `quotes` bundle from the
+  // main flow: that one is quoted for each Diamond swap ADAPTER as taker
+  // (the LibSwap path, #2468), and an aggregator's response is
+  // taker-specific.
   const directQuotes = await orchestrateDexDirectQuotes(env, publicClient, {
     chainId: chain.id,
     sellToken: loan.collateralAsset,

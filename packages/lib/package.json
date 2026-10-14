@@ -88,6 +88,10 @@
     "./swapRoutes": {
       "types": "./src/swapRoutes.ts",
       "default": "./src/swapRoutes.ts"
+    },
+    "./routeBuilder": {
+      "types": "./src/routeBuilder.ts",
+      "default": "./src/routeBuilder.ts"
     }
   },
   "scripts": {

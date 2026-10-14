@@ -166,8 +166,7 @@ contract DeployUniV3Adapter is Script {
                     )
                 );
                 console.log("  Already registered UniswapV3 adapter (same router):", existing[i]);
-                console.log("  Index (keeper CHAIN_SWAP.adapters.univ3 must match):", i);
-                _assertOrWarnSlot(i, existing.length);
+                console.log("  Index:", i);
                 console.log("  Nothing to do.");
                 return;
             }
@@ -180,13 +179,11 @@ contract DeployUniV3Adapter is Script {
 
         console.log("  UniV3Adapter:", address(adapter));
 
-        // Readback — fail loud if the registration didn't take, and surface the
-        // adapter's INDEX. The keeper's swap-quote registry (serverQuotes
-        // CHAIN_SWAP.adapters.univ3) is a static index into this on-chain list;
-        // it MUST equal the index logged here. On a no-aggregator chain (BNB
-        // testnet) the UniV3 adapter is the sole/first entry → index 0. Warn
-        // loudly if it landed elsewhere so the operator updates the keeper
-        // (otherwise the keeper would submit UniV3 routing to the wrong adapter).
+        // Readback — fail loud if the registration didn't take. The index is
+        // logged for the operator's record only: the keeper and the app read
+        // each adapter's position from `getSwapAdapters()` + `adapterName()` at
+        // route-build time (#2468), so no slot is reserved for UniV3 and no
+        // off-chain table has to be updated to match it.
         address[] memory registered = AdminFacet(diamond).getSwapAdapters();
         uint256 idx = type(uint256).max;
         for (uint256 i = 0; i < registered.length; i++) {
@@ -196,61 +193,8 @@ contract DeployUniV3Adapter is Script {
 
         console.log("");
         console.log("Done. Diamond.getSwapAdapters() length:", registered.length);
-        console.log("  UniV3 adapter index (keeper CHAIN_SWAP.adapters.univ3 must match):", idx);
-        _assertOrWarnSlot(idx, registered.length);
+        console.log("  UniV3 adapter index:", idx);
         console.log("Record the adapter under `swapAdapters.uniV3` in the chain's addresses.json.");
-    }
-
-    /// @dev Guard the UniV3 adapter's slot against the keeper's per-chain
-    ///      `CHAIN_SWAP.adapters.univ3` index.
-    ///
-    ///      On a NO-0x-backend chain (BNB testnet 97) the UniV3 adapter is the
-    ///      SOLE liquidation route and the keeper hard-codes `univ3=0`, so slot 0
-    ///      is not a preference — it's a correctness invariant. #862: any non-zero
-    ///      slot there means a stale adapter (an aggregator that shouldn't exist
-    ///      on a no-0x chain, or a prior mis-registration) sits ahead of UniV3;
-    ///      ConfigureOracle now only WARNS, so if this passed too the diamond
-    ///      could be "marked configured" while the keeper silently misroutes.
-    ///      HARD-FAIL instead and tell the operator to clean the stale adapter(s).
-    ///
-    ///      On a with-0x chain the aggregators legitimately own slots 0/1 and
-    ///      UniV3 is expected at 2 — a non-zero index is fine, so only warn.
-    function _assertOrWarnSlot(uint256 idx, uint256 total) internal view {
-        if (_isNo0xBackendChain()) {
-            require(
-                idx == 0,
-                string.concat(
-                    "DeployUniV3Adapter: no-0x chain requires the UniV3 adapter at index 0 (keeper univ3=0), but it is at index ",
-                    vm.toString(idx),
-                    " of ",
-                    vm.toString(total),
-                    " - a stale adapter sits ahead of it (no aggregators should exist on a no-0x chain). Remove it via AdminFacet.removeSwapAdapter, then re-run."
-                )
-            );
-            return;
-        }
-        // With-0x chain: DeploySwapAdapters always registers the 0x + 1inch pair,
-        // so the keeper/frontend registries expect 0x=slot0, 1inch=slot1,
-        // UniV3=slot2. The DANGEROUS case is UniV3 landing in an aggregator slot
-        // (0 or 1) — happens if this deploy ran before the aggregators, or
-        // INITIAL_SETTLERS was omitted — because the keeper would then send 0x/
-        // 1inch calldata to the UniV3 adapter. Warn LOUDLY there (idx == 0 must
-        // NOT be silent on a with-0x chain); an unexpected slot >2 is a softer note.
-        if (idx < 2) {
-            console.log("  WARNING: on a with-0x chain UniV3 is expected at slot 2 (0x=0, 1inch=1), but");
-            console.log("  it landed at an aggregator slot - the keeper would misroute aggregator calldata");
-            console.log("  to UniV3. Deploy the 0x/1inch adapters FIRST, or fix serverQuotes CHAIN_SWAP.");
-        } else if (idx != 2) {
-            console.log("  Note: UniV3 at slot != 2 - confirm serverQuotes CHAIN_SWAP.adapters.univ3 matches.");
-        }
-    }
-
-    /// @dev Chains where 0x has NO backend, so the on-chain UniV3/PancakeSwap
-    ///      adapter is the only liquidation route and MUST sit at index 0. Mirror
-    ///      of ConfigureOracle._isNo0xBackendChain (BNB testnet 97; 0x covers BNB
-    ///      mainnet 56, so that is NOT here).
-    function _isNo0xBackendChain() internal view returns (bool) {
-        return block.chainid == 97;
     }
 
     /// @dev Resolve the SwapRouter: chain-prefixed `<CHAIN>_UNISWAP_V3_ROUTER`

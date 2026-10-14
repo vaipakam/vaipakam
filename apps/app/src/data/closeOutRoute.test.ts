@@ -294,7 +294,7 @@ describe('buildCloseOutRoute', () => {
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
-    expect(route).toEqual({
+    expect(route).toMatchObject({
       kind: 'route',
       venues: ['testnetMock', 'oneinch'],
       calls: [{ adapterIdx: 0n, data: '0x' }, expect.objectContaining({ adapterIdx: 1n })],
@@ -555,45 +555,52 @@ describe('noQuoteReason', () => {
     kind: 'no-quote' as const,
     outcomes: o.map(([kind, outcome]) => ({ kind: kind as 'zeroex', outcome })),
   });
+  const R = { incomplete: false, unrecognized: 0 };
   it('says unread before anything else', () => {
-    expect(noQuoteReason(nq(['zeroex', 'unanswered']), true)).toBe('unread');
+    expect(noQuoteReason(nq(['zeroex', 'unanswered']), { ...R, incomplete: true })).toBe('unread');
   });
   it('keeps a left-out venue in the answer when another gave no answer', () => {
-    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['oneinch', 'unconfigured']), false)).toBe(
+    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['oneinch', 'unconfigured']), R)).toBe(
       'unanswered-partly-reached',
     );
-    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['zeroex', 'origin-bound']), false)).toBe(
+    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['zeroex', 'origin-bound']), R)).toBe(
       'unanswered-partly-reached',
     );
   });
   it('says unanswered when any venue gave no answer it could judge', () => {
-    expect(noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'unanswered']), false)).toBe(
+    expect(noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'unanswered']), R)).toBe(
       'unanswered',
     );
   });
   it('says unconfigured when nothing declined and only the proxy was missing', () => {
-    expect(noQuoteReason(nq(['zeroex', 'unconfigured'], ['oneinch', 'no-proxy']), false)).toBe(
+    expect(noQuoteReason(nq(['zeroex', 'unconfigured'], ['oneinch', 'no-proxy']), R)).toBe(
       'unconfigured',
     );
   });
   it('says unreachable when nothing declined and a venue cannot be priced here', () => {
-    expect(noQuoteReason(nq(['univ3', 'other-pools']), false)).toBe('unreachable');
+    expect(noQuoteReason(nq(['univ3', 'other-pools']), R)).toBe('unreachable');
   });
   it('says unreachable, not unconfigured, when 0x was left out', () => {
-    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['oneinch', 'unconfigured']), false)).toBe(
+    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['oneinch', 'unconfigured']), R)).toBe(
       'unreachable',
     );
-    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['univ3', 'declined']), false)).toBe(
+    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['univ3', 'declined']), R)).toBe(
       'partly-reached',
     );
   });
   it('says partly-reached when venues declined and others were left out', () => {
-    expect(noQuoteReason(nq(['univ3', 'declined'], ['oneinch', 'no-proxy']), false)).toBe(
+    expect(noQuoteReason(nq(['univ3', 'declined'], ['oneinch', 'no-proxy']), R)).toBe(
       'partly-reached',
     );
   });
+  it('counts an enabled adapter it could not name as left out (#2480 r6)', () => {
+    expect(
+      noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'declined']), { ...R, unrecognized: 1 }),
+    ).toBe('partly-reached');
+    expect(noQuoteReason(nq(), { ...R, unrecognized: 1 })).toBe('unreachable');
+  });
   it('says declined only when every venue was asked and declined', () => {
-    expect(noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'declined']), false)).toBe(
+    expect(noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'declined']), R)).toBe(
       'declined',
     );
   });
