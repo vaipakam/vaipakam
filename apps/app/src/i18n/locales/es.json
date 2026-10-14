@@ -2455,9 +2455,7 @@
       "pastGraceLender": "El periodo de gracia terminó, así que esta posición ya podría cerrarse; su página muestra si se puede hacer ahora mismo. Cualquiera puede cerrarla antes.",
       "pastGraceBorrower": "El periodo de gracia terminó, así que la ventana de pago ordinaria se acabó y cualquiera podría ya cerrar el préstamo contra la garantía; su página muestra cómo está.",
       "pastGraceRenter": "El alquiler y su periodo de gracia terminaron; tu uso del NFT terminó con el alquiler. Cualquiera podría ya cerrarlo, lo que liquida el alquiler; su página muestra cómo está.",
-      "graceChecking": "comprobando el periodo de gracia",
       "graceCheckingTitle": "Consultando al protocolo si el periodo de gracia de este préstamo ha terminado.",
-      "graceUnknown": "estado del periodo de gracia no disponible",
       "graceUnknownTitle": "No se pudo consultar al protocolo si el periodo de gracia de este préstamo terminó, así que puede que ya haya terminado; abre el préstamo para ver cómo está."
     },
     "settingsPage": {

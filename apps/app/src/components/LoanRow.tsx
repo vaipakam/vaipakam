@@ -42,12 +42,14 @@ export function LoanRow({
   // grace — the device clock can run behind the chain's, so "On track" or
   // "Due soon" is no safer than "Past due" here. Say the answer is pending
   // or unavailable instead of letting the time label read as the whole
-  // lifecycle state (#2475 r6).
-  const graceUnread =
+  // lifecycle state (#2475 r6). Rendered as its own line, not inside the
+  // badge, so no badge branch (health override, health checking) can hide
+  // it (#2475 r7).
+  const graceUnreadNote =
     loan.status === 'active' && view.labelKey !== 'pastGrace' && verdict === undefined
       ? pastGrace.isError
-        ? { note: copy.loanRow.graceUnknown, title: copy.loanRow.graceUnknownTitle }
-        : { note: copy.loanRow.graceChecking, title: copy.loanRow.graceCheckingTitle }
+        ? copy.loanRow.graceUnknownTitle
+        : copy.loanRow.graceCheckingTitle
       : null;
   const pastGraceTitle =
     view.labelKey !== 'pastGrace'
@@ -115,6 +117,14 @@ export function LoanRow({
             </span>
           </>
         ) : null}
+        {graceUnreadNote ? (
+          <>
+            <br />
+            <span className="row-sub" data-testid="loan-row-grace-unread">
+              {graceUnreadNote}
+            </span>
+          </>
+        ) : null}
         {payout ? (
           <>
             <br />
@@ -140,12 +150,11 @@ export function LoanRow({
       ) : (
         <span
           className={`badge badge-${view.badge}`}
-          title={pastGraceTitle ?? graceUnread?.title}
+          title={pastGraceTitle}
           data-testid="loan-row-state"
           data-state-key={view.labelKey}
         >
           {loanStateLabel(view, copy.loanState)}
-          {graceUnread ? ` · ${graceUnread.note}` : null}
         </span>
       )}
       {claim ? <span className="btn btn-primary btn-sm">{copy.claims.claim}</span> : null}

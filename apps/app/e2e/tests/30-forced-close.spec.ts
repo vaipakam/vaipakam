@@ -223,6 +223,12 @@ test('the close-out card tracks the grace boundary for the lender', async ({
       .locator(`a[href="/positions/${loanId}"]`)
       .getByTestId('loan-row-past-grace'),
   ).toBeVisible();
+  // With the chain's answer in hand, the "still checking" line is gone.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-grace-unread'),
+  ).toHaveCount(0);
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
   });

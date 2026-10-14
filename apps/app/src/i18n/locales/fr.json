@@ -2455,9 +2455,7 @@
       "pastGraceLender": "Le délai de grâce a pris fin : cette position pourrait désormais être clôturée ; sa page indique si c’est possible dès maintenant. N’importe qui peut la clôturer en premier.",
       "pastGraceBorrower": "Le délai de grâce a pris fin : la fenêtre de remboursement ordinaire est close et n’importe qui pourrait désormais clôturer le prêt contre la garantie ; sa page indique où il en est.",
       "pastGraceRenter": "La location et son délai de grâce ont pris fin ; votre usage du NFT a pris fin avec la location. N’importe qui pourrait désormais la clôturer, ce qui règle la location ; sa page indique où elle en est.",
-      "graceChecking": "vérification du délai de grâce",
       "graceCheckingTitle": "Nous demandons au protocole si le délai de grâce de ce prêt a pris fin.",
-      "graceUnknown": "statut du délai de grâce indisponible",
       "graceUnknownTitle": "Le protocole n’a pas pu être interrogé sur la fin du délai de grâce de ce prêt ; il a peut-être déjà pris fin. Ouvrez le prêt pour voir où il en est."
     },
     "settingsPage": {
