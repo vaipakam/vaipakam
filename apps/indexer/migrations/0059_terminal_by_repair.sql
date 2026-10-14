@@ -42,3 +42,25 @@ CREATE INDEX IF NOT EXISTS idx_loans_chain_status_loan
 CREATE INDEX IF NOT EXISTS idx_loans_settled_unverified
   ON loans(chain_id, loan_id)
   WHERE status = 'settled' AND terminal_at_verified = 0;
+
+-- #2476 r16 — a settlement closed by a prepay collateral sale emits no
+-- LoanSettled, so the ledger heal can never date it; its handler now stamps
+-- the marker itself. Rows it wrote before this migration are marked verified
+-- here when their time equals their own ledgered PrepayCollateralSaleSettled
+-- event's block time at the same block. Residual, stated: if that block's
+-- read had failed at the time, both carry the same scan-clock value and it is
+-- marked verified too — no record distinguishes it. (None existed on the
+-- testnet database when this was written.)
+UPDATE loans
+   SET terminal_at_verified = 1
+ WHERE status = 'settled'
+   AND terminal_at_verified = 0
+   AND terminal_block IS NOT NULL
+   AND terminal_at IS NOT NULL
+   AND EXISTS (
+     SELECT 1 FROM activity_events ae
+      WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+        AND ae.kind = 'PrepayCollateralSaleSettled'
+        AND ae.block_number = loans.terminal_block
+        AND ae.block_at = loans.terminal_at
+   );

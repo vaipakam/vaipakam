@@ -2502,6 +2502,9 @@ async function runChainPass(
 
   const hintStats = pushHintStats(allLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
+  // #2476 r16 — a ledger heal truncates the frame too (its loans are old and
+  // their holders cannot be enumerated), so it counts here as it does there.
+  const ledgerHealForcedTruncation = ledgerSettledLoanIds.length > 0;
   // Emit when the scan touched ids OR truncated for ANY reason (Codex
   // #1289 r1): a scan of only unmappable events (Transfer /
   // SignedOffer* lifecycle) or a stub-heal-only truncation carries
@@ -2510,7 +2513,7 @@ async function runChainPass(
   // sample toward size-driven frames.
   const touched =
     hintStats.loanIdCount + hintStats.offerIdCount + hintStats.linkCount > 0;
-  if (touched || hintStats.truncated || stubHealForcedTruncation) {
+  if (touched || hintStats.truncated || stubHealForcedTruncation || ledgerHealForcedTruncation) {
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,
@@ -2519,8 +2522,8 @@ async function runChainPass(
         offerIdCount: hintStats.offerIdCount,
         linkCount: hintStats.linkCount,
         cap: HINT_CAP,
-        truncated: hintStats.truncated || stubHealForcedTruncation,
-        causes: { ...hintStats.causes, stubHeal: stubHealForcedTruncation },
+        truncated: hintStats.truncated || stubHealForcedTruncation || ledgerHealForcedTruncation,
+        causes: { ...hintStats.causes, stubHeal: stubHealForcedTruncation, ledgerHeal: ledgerHealForcedTruncation },
       })}`,
     );
   }
@@ -3859,6 +3862,12 @@ export async function settleLoanRow(
 
 /** Rows `settleFromLedger` takes per tick; the rest wait for the next. */
 const SETTLE_HEAL_BATCH = 20;
+/** #2476 r16 — at most this many ALREADY-SETTLED rows (dating enrichment)
+ *  are worked per tick. Their status is already right; a row whose
+ *  provenance can never be confirmed (pruned receipts) would otherwise spend
+ *  the budget every lap, starving rows whose status is wrong and the
+ *  metadata lanes that run after this one. */
+const SETTLE_ENRICH_PER_TICK = 3;
 /** Per healed row: the canonical status read, the event lookup, its receipt,
  *  the block read, the write. */
 const SETTLE_HEAL_COST = 5;
@@ -3956,8 +3965,8 @@ export async function settleFromLedger(
   // pins the plan: on a database without ANALYZE statistics SQLite would
   // otherwise range-scan the primary key from the pointer.
   const res = await env.DB.prepare(
-    `SELECT c.loan_id AS loan_id FROM (
-       SELECT loan_id FROM loans INDEXED BY idx_loans_chain_status_loan
+    `SELECT c.loan_id AS loan_id, c.settled AS settled FROM (
+       SELECT loan_id, 0 AS settled FROM loans INDEXED BY idx_loans_chain_status_loan
         WHERE chain_id = ?1
           AND status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
           AND loan_id > ?2
@@ -3966,7 +3975,7 @@ export async function settleFromLedger(
        -- unreadable receipt, a repair, or a previous Worker's scan clock,
        -- including one written after the migration): it stays eligible for
        -- the provenance the ledger and the chain can later substantiate.
-       SELECT loan_id FROM loans INDEXED BY idx_loans_settled_unverified
+       SELECT loan_id, 1 AS settled FROM loans INDEXED BY idx_loans_settled_unverified
         WHERE chain_id = ?1
           AND status = 'settled' AND terminal_at_verified = 0
           AND loan_id > ?2
@@ -3979,10 +3988,11 @@ export async function settleFromLedger(
      LIMIT ?3`,
   )
     .bind(chainId, pointer, SETTLE_HEAL_BATCH)
-    .all<{ loan_id: number }>();
+    .all<{ loan_id: number; settled: number }>();
   const rows = res.results ?? [];
   const healed: number[] = [];
   let reached = pointer;
+  let enrichments = 0;
   for (const row of rows) {
     // #2476 r8 — the row AND the pointer write after the loop. Running out of
     // budget at that write could end the invocation before this returns, and
@@ -3990,6 +4000,10 @@ export async function settleFromLedger(
     if (!settleRowAffordable(budget)) break;
     const before = reached;
     reached = row.loan_id;
+    // Dating an already-settled row is capped per tick (#2476 r16); one past
+    // the cap is passed over this lap (the pointer moves on) and met again on
+    // the next, so terminal rows in the same page are never held up by it.
+    if (row.settled === 1 && enrichments++ >= SETTLE_ENRICH_PER_TICK) continue;
     try {
       const detail = (await client.readContract({
         address: diamond,
@@ -5900,15 +5914,23 @@ export async function processLoanLogs(
       // A CLOSE, not a listing end — the loan goes Active→Settled in this
       // same call — so the shared close-out cleanup applies.
       await _clearClosedLoanSideTables(env, chainId, loanId);
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // #2476 r16 — the event block's chain time, VERIFIED (0059), or unknown
+      // when that block's read failed — never the scan's clock. This close
+      // emits no LoanSettled, so the ledger heal can never date it later; a
+      // time written here is the only one it will get.
+      const blockAt = fallbackTimestampBlocks.has(log.blockNumber)
+        ? null
+        : (blockTimestamps.get(log.blockNumber) ?? null);
       const r = await env.DB.prepare(
         `UPDATE loans
-           SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
+           SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
+               terminal_by_repair = 0, updated_at = ?
          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
       )
         .bind(
           Number(log.blockNumber),
           blockAt,
+          blockAt === null ? 0 : 1,
           now,
           chainId,
           loanId,

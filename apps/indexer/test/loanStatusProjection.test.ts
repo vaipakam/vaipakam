@@ -628,6 +628,24 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(seen.reads.map((r) => r.id)).not.toContain(81);
   });
 
+  it('works at most a few already-settled rows per tick, so a wrong status keeps priority (#2476 r16)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // Eight settled rows whose provenance cannot be confirmed (receipts gone)…
+    for (let id = 300; id < 308; id++) {
+      seedLoan(h, id, 'settled');
+      ledger(h, id, 'LoanSettled', id, 1);
+    }
+    // …and one terminal row whose STATUS is wrong, later in the same page.
+    seedLoan(h, 310, 'internal_matched');
+    ledger(h, 310, 'LoanSettled', 310, 1);
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    const discarded = new Set([300, 301, 302, 303, 304, 305, 306, 307]);
+    expect(await heal(h, chain({ 310: 9 }, () => 3, seen, discarded))).toEqual([310]);
+    // Only three settled rows were worked; the terminal row still was.
+    expect(seen.reads.filter((r) => r.id < 310)).toHaveLength(3);
+    expect(row(h, 310).status).toBe('settled');
+  });
+
   it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 78, 'internal_matched');
@@ -752,6 +770,35 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const c = chain({ 60: 1, 61: 1, 62: 1 }, (id) => (id === 61 ? new Error('rpc') : 3));
     expect(await heal(h, c)).toEqual([60, 62]);
     expect(row(h, 61).status).toBe('internal_matched');
+  });
+});
+
+describe('PrepayCollateralSaleSettled — a close the ledger heal can never date (#2476 r16)', () => {
+  const prepayLog = (loanId: number, block: number) => ({
+    eventName: 'PrepayCollateralSaleSettled',
+    args: { loanId: BigInt(loanId) },
+    blockNumber: BigInt(block),
+    transactionHash: `0x${'ab'.repeat(32)}`,
+    logIndex: 0,
+  });
+  const verified = (h: SqliteD1, id: number) =>
+    h.db.prepare('SELECT terminal_at AS t, terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id);
+
+  it('stamps the block time as verified, and a failed block read as unknown — never the scan clock', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 60, 'active');
+    seedLoan(h, 61, 'active');
+    await processLoanLogs(
+      [prepayLog(60, 100), prepayLog(61, 200)] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[100n, 500], [200n, 1_999_999_999]]),
+      stubClient,
+      DIAMOND,
+      new Set([200n]),
+    );
+    expect(verified(h, 60)).toEqual({ t: 500, v: 1 });
+    expect(verified(h, 61)).toEqual({ t: null, v: 0 });
   });
 });
 
