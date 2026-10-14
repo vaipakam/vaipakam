@@ -307,6 +307,21 @@ describe('a notice is written only for a repair this pass made', () => {
     seedLoan(h, 40, 'active');
     expect(await insertGated(h, FP())).toBe(0);
   });
+
+  it('writes NOTHING for an event write whose time is unknown, even in the same second (#2476 r3)', async () => {
+    // The `LoanSettled` writer records a NULL time when the block read
+    // failed, so a null time alone no longer marks a repair. Its block is
+    // always known, and that is what the fingerprint reads.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'active');
+    h.db
+      .prepare(
+        `UPDATE loans SET status = 'settled', terminal_block = 481, terminal_at = NULL, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+      .run(1_700_000_000, CHAIN, 40);
+    expect(await insertGated(h, FP({ status: 'settled' }))).toBe(0);
+  });
 });
 
 describe('a failed party lookup is not "no recipients"', () => {

@@ -12,7 +12,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { processLoanLogs } from '../src/chainIndexer';
+import { processLoanLogs, settleFromLedger, settleLoanRow } from '../src/chainIndexer';
+import { createBudget } from '../src/subrequestBudget';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -397,6 +398,9 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
       seedLoan(h, id, st);
     }
     seedLoan(h, 44, 'settled');
+    // Already settled AND dated: left alone (an undated one would take the
+    // event's time — see settleLoanRow).
+    h.db.prepare('UPDATE loans SET terminal_block = 90, terminal_at = 400 WHERE chain_id = ? AND loan_id = 44').run(CHAIN);
     const res = await run(h, [settledLog(41, 100, 0), settledLog(42, 100, 1), settledLog(43, 100, 2), settledLog(44, 100, 3)]);
     expect(res.statusUpdates).toBe(3);
     for (const id of [41, 42, 43, 44]) expect(statusOf(h, id)).toBe('settled');
@@ -412,11 +416,7 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
   });
 });
 
-describe('migration 0057 — settle rows the ledger shows settled (#2464)', () => {
-  const FILES = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
-  const TARGET = '0057_settle_from_ledger.sql';
-  const BEFORE = FILES.filter((f) => f < TARGET).map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
-  const MIGRATION = readFileSync(new URL(TARGET, MIGRATIONS_DIR), 'utf8');
+describe('settleFromLedger — settle what the ledger shows settled (#2464, #2476 r3)', () => {
   const ledger = (h: SqliteD1, loanId: number, kind: string, block: number, at: number) =>
     h.db
       .prepare(
@@ -430,19 +430,72 @@ describe('migration 0057 — settle rows the ledger shows settled (#2464)', () =
       terminal_block: number | null;
       terminal_at: number | null;
     };
+  const budget = () => createBudget(1_000, 'test', 1_000);
+  /** A client whose block reads answer from `times`, and throw for any other block. */
+  const blocks = (times: Record<number, number>) =>
+    ({
+      getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
+        const t = times[Number(blockNumber)];
+        if (t === undefined) throw new Error('block read failed');
+        return { timestamp: BigInt(t) };
+      },
+    }) as never;
+  const env = (h: SqliteD1) => ({ DB: h.d1 }) as unknown as Env;
 
-  it('settles a stuck row from its ledger event, dated by that event, and touches nothing else', () => {
-    const h = createSqliteD1(BEFORE);
+  it('settles a stuck row, dated by a fresh read of its event block, and touches nothing else', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 24, 'internal_matched'); // settled on chain — ledger has it
-    ledger(h, 24, 'LoanSettled', 48004228, 1791775970);
+    // The ledger's block_at is the scan's wall-clock sentinel here; the heal
+    // must not trust it.
+    ledger(h, 24, 'LoanSettled', 48004228, 1_999_999_999);
     seedLoan(h, 28, 'internal_matched'); // still unclaimed — no LoanSettled
     ledger(h, 28, 'OwedAtInternalMatchRecorded', 48059980, 1791888248);
     seedLoan(h, 30, 'active');
-    h.db.exec(MIGRATION);
+    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toBe(1);
     expect(row(h, 24)).toEqual({ status: 'settled', terminal_block: 48004228, terminal_at: 1791775970 });
     expect(row(h, 28).status).toBe('internal_matched');
     expect(row(h, 30).status).toBe('active');
-    h.db.exec(MIGRATION); // idempotent
-    expect(row(h, 24).status).toBe('settled');
+    // Idempotent: nothing left to settle.
+    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toBe(0);
+  });
+
+  it('leaves the row for the next tick, never settled undated, when the block read fails', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 25, 'internal_matched');
+    ledger(h, 25, 'LoanSettled', 700, 1_999_999_999);
+    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toBe(0);
+    expect(row(h, 25).status).toBe('internal_matched');
+    expect(await settleFromLedger(blocks({ 700: 1234 }), env(h), CHAIN, budget())).toBe(1);
+    expect(row(h, 25)).toEqual({ status: 'settled', terminal_block: 700, terminal_at: 1234 });
+  });
+
+  it('settles an event an older Worker ledgered without settling — the deploy gap a one-shot migration missed', async () => {
+    // The old handler recorded the ledger row and advanced the cursor but
+    // left the loan internally matched; the next scan will not replay it.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 26, 'internal_matched');
+    ledger(h, 26, 'LoanSettled', 900, 1);
+    await settleFromLedger(blocks({ 900: 5555 }), env(h), CHAIN, budget());
+    expect(row(h, 26).status).toBe('settled');
+  });
+});
+
+describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)', () => {
+  const at = (h: SqliteD1, id: number) =>
+    h.db.prepare('SELECT status, terminal_block AS b, terminal_at AS t FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id);
+  const env = (h: SqliteD1) => ({ DB: h.d1 }) as unknown as Env;
+
+  it('lets a replay that now has the block time date a settlement recorded undated', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 50, 'internal_matched');
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null)).toBe(true);
+    expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: null });
+    // Replay after a partial pass, block read succeeded this time.
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 500)).toBe(true);
+    expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: 500 });
+    // A dated settlement is never rewritten, and an undated replay changes nothing.
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, 777)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 50, 100, null)).toBe(false);
+    expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: 500 });
   });
 });

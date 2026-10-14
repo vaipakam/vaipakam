@@ -3408,6 +3408,11 @@ async function runHealLanes(
     // LoanInitiated ledger, not trusted from whoever wrote the row: clear
     // the flag wherever the ledger now confirms the value. D1 only, no RPC.
     await reverifyInitPrincipal(env, chainId);
+    // #2464 / #2476 r3 — settle every loan whose `LoanSettled` the ledger
+    // holds but the projection missed. Every tick, not a one-shot migration:
+    // an older Worker can ledger the event without settling the row at any
+    // time it is still serving, and a migration applies once.
+    await settleFromLedger(client, env, chainId, budget);
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
@@ -3710,6 +3715,110 @@ const LOAN_TOKEN_ID_BATCH = 50;
  * stub only happens if that event was somehow absent in the scan
  * window — vanishingly rare belt-and-suspenders coverage.
  */
+/**
+ * #2464 — THE write that settles a loan row from a `LoanSettled` event, for
+ * both callers: the event handler during a scan, and the `settleFromLedger`
+ * heal for an event the projection missed. One writer, so the two cannot
+ * disagree about what a settled row records.
+ *
+ * - `block` is the event's block — always known, and never NULL here. That
+ *   is what tells this write apart from the reconciliation repair's, which
+ *   leaves `terminal_block` NULL; the repair's notice checks for exactly
+ *   that (notifications.ts), so a row written here never passes for one the
+ *   repair corrected (#2476 r3).
+ * - `at` is that block's chain time, or NULL when it is not known — never
+ *   the time of the write.
+ * - A row already settled is left alone, EXCEPT that a settlement still
+ *   undated takes a known time (#2476 r3): a replay of the same block after
+ *   a partial pass, whose block read now succeeded, converges instead of
+ *   keeping the unknown for good. Idempotent either way.
+ *
+ * Returns whether the row changed.
+ */
+export async function settleLoanRow(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  block: number,
+  at: number | null,
+): Promise<boolean> {
+  const r = await env.DB.prepare(
+    `UPDATE loans SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
+      WHERE chain_id = ? AND loan_id = ?
+        AND (status <> 'settled' OR (terminal_at IS NULL AND ? IS NOT NULL))`,
+  )
+    .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId, at)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
+}
+
+/** Rows `settleFromLedger` takes per tick; the rest wait for the next. */
+const SETTLE_HEAL_BATCH = 20;
+/** One block read and one write per healed row. */
+const SETTLE_HEAL_COST = 2;
+
+/**
+ * #2464 / #2476 r3 — settle every row of `chainId` whose `LoanSettled` the
+ * append-only ledger holds but the projection does not show settled.
+ *
+ * This replaces a one-shot data migration, and the recurrence is the point:
+ * the deploy applies migrations BEFORE it publishes the new Worker, and the
+ * previous Worker — whose handler did not settle an internally matched loan
+ * — keeps ledgering events and advancing the cursor in between (or for as
+ * long as a failed publish leaves it serving). A one-shot pass cannot see
+ * those; a per-tick lane converges whenever they appear.
+ *
+ * The settlement is dated by a fresh read of the event's block, never by the
+ * ledger's `block_at`: that column holds the scan's wall-clock sentinel when
+ * the original block read failed, with nothing durable to say so. If the
+ * read fails again the row is left for the next tick rather than settled
+ * undated — the handler's own unknown-time case is for a failure inside a
+ * scan, which cannot wait.
+ *
+ * Bounded by the projection's open rows (`status <> 'settled'`, served by
+ * the `(chain_id, status)` index), not by the ledger's history.
+ */
+export async function settleFromLedger(
+  client: PublicClient,
+  env: Env,
+  chainId: number,
+  budget: TickBudget,
+): Promise<number> {
+  if (!healRowAffordable(budget, 1)) return 0;
+  const res = await env.DB.prepare(
+    `SELECT l.loan_id AS loan_id,
+            (SELECT ae.block_number FROM activity_events ae
+              WHERE ae.chain_id = l.chain_id AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
+              ORDER BY ae.block_number ASC, ae.log_index ASC LIMIT 1) AS block
+       FROM loans l
+      WHERE l.chain_id = ? AND l.status <> 'settled'
+        AND EXISTS (
+          SELECT 1 FROM activity_events ae
+           WHERE ae.chain_id = l.chain_id AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
+        )
+      ORDER BY l.loan_id
+      LIMIT ?`,
+  )
+    .bind(chainId, SETTLE_HEAL_BATCH)
+    .all<{ loan_id: number; block: number }>();
+  let healed = 0;
+  for (const row of res.results ?? []) {
+    if (!healRowAffordable(budget, SETTLE_HEAL_COST)) break;
+    let at: number;
+    try {
+      const block = await client.getBlock({ blockNumber: BigInt(row.block) });
+      at = Number(block.timestamp);
+    } catch {
+      continue; // retried next tick — never settled with a guessed time
+    }
+    if (await settleLoanRow(env, chainId, row.loan_id, row.block, at)) healed++;
+  }
+  if (healed > 0) {
+    console.log(`[chainIndexer] settled ${healed} loan(s) on chain ${chainId} from their ledgered LoanSettled`);
+  }
+  return healed;
+}
+
 /**
  * #2461 r4 — clear `init_principal_unbacked` on every row of `chainId` whose
  * `init_principal` the append-only `LoanInitiated` ledger now confirms.
@@ -4917,29 +5026,24 @@ export async function processLoanLogs(
       // contract emits `LoanSettled` only where it moves the loan to
       // Settled, some of them via `transitionFromAny`, so a hand list of
       // prior states is a second copy of the contract's rules that can only
-      // drift. Migration 0057 re-projects rows the ledger already shows
-      // settled.
-      const r = await env.DB.prepare(
-        `UPDATE loans SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
-         WHERE chain_id = ? AND loan_id = ? AND status <> 'settled'`,
-      )
-        .bind(
-          Number(log.blockNumber),
-          // #2476 r1 — WHEN it settled is the event's block time, not the
-          // scan's (a catch-up after downtime would otherwise date the
-          // settlement by when the indexer noticed it). Null when the block
-          // time is not in hand — absent, or the scan's wall-clock SENTINEL
-          // for a block whose read failed (#2476 r2): unknown, never a guess.
-          // Matches 0057, which dates re-projected rows by the same event.
-          fallbackTimestampBlocks.has(log.blockNumber)
-            ? null
-            : (blockTimestamps.get(log.blockNumber) ?? null),
-          Math.floor(Date.now() / 1000),
-          chainId,
-          Number(a.loanId as bigint),
-        )
-        .run();
-      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+      // drift. Rows the ledger shows settled but the projection does not —
+      // indexed before this, or by an older Worker — are settled by the
+      // `settleFromLedger` heal lane through the same writer.
+      const settled = await settleLoanRow(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        Number(log.blockNumber),
+        // #2476 r1 — WHEN it settled is the event's block time, not the
+        // scan's (a catch-up after downtime would otherwise date the
+        // settlement by when the indexer noticed it). Null when the block
+        // time is not in hand — absent, or the scan's wall-clock SENTINEL
+        // for a block whose read failed (#2476 r2): unknown, never a guess.
+        fallbackTimestampBlocks.has(log.blockNumber)
+          ? null
+          : (blockTimestamps.get(log.blockNumber) ?? null),
+      );
+      if (settled) statusUpdates++;
     } else if (
       log.eventName === 'PeriodicInterestSettled' ||
       log.eventName === 'PeriodicInterestAutoLiquidated' ||

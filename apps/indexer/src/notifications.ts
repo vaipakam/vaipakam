@@ -758,7 +758,8 @@ export function notificationInsertStatement(
         WHERE EXISTS (
           SELECT 1 FROM loans
            WHERE chain_id = ? AND loan_id = ?
-             AND status = ? AND terminal_at IS NULL AND updated_at = ?
+             AND status = ? AND terminal_block IS NULL AND terminal_at IS NULL
+             AND updated_at = ?
         )`,
     )
     .bind(
@@ -788,12 +789,14 @@ export function notificationInsertStatement(
  * D1 offers no "did the previous statement in this batch match" primitive,
  * and splitting the batch would give back the atomicity round 3 established.
  * So the insert self-gates on the fingerprint the CAS writes: the status,
- * a NULL `terminal_at` — which only a repair leaves, since every event
- * handler stamps a real one — and this pass's own `updated_at` second. The
- * residual is stated rather than hidden: another writer would have to have
- * set the same status, left the terminal time unknown, and done it in the
- * same second. In that coincidence the notice is still substantively right;
- * only its provenance would be.
+ * a NULL `terminal_block` AND a NULL `terminal_at`, and this pass's own
+ * `updated_at` second. The NULL BLOCK is the provenance marker: an event
+ * writer always knows the block it read the event in, while its TIME can be
+ * unknown too (the `LoanSettled` writer records NULL rather than a guess
+ * when the block read failed — #2476 r3), so a null time alone no longer
+ * says "the repair wrote this". The residual is stated rather than hidden:
+ * another writer would have to leave both unknown, set the same status, and
+ * do it in the same second; none in this Worker leaves the block unknown.
  */
 export interface RepairFingerprint {
   chainId: number;
