@@ -963,6 +963,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
     - it never closes a loan whose lender position has an accepted sale, or whose sale state it cannot establish, because the default would strand the buyer's payment;
     - for liquid collateral it sends a real, quoted swap route, and it does not send a route the chain shows would fail into the in-kind fallback — such a loan is left for the lender, or for a later attempt when a venue answers;
     - it does not send when the collateral changed after the route was quoted;
+    - it does not send while an earlier keeper transaction on that network is still unconfirmed, so a close-out still waiting to be mined is never sent a second time;
     - it works a small number of loans per run across all networks together, so it stays within the hosting platform's per-run request allowance that it shares with the keeper's other duties; a backlog is worked through over successive runs rather than at once;
     - every past-grace loan it sees is logged — attempted with the outcome, waiting its turn in a later batch, or unreadable — so an operator can say why a past-grace loan is still open.
     It is armed by its own deployment setting, separate from the keeper-wide switch. While that setting is off, nothing closes a past-grace loan automatically, and no surface may say that something does.

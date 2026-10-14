@@ -94,6 +94,7 @@ import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
 import { HF_LIQUIDATION_THRESHOLD } from './liquidator';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
+import type { PassTick } from './passSchedule';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
@@ -109,10 +110,11 @@ const SCAN_PAGE = 200n;
 const READ_CHUNK = 100;
 
 /** Candidates worked per RUN, across every chain. One attempt costs about
- *  sixteen subrequests plus two per enabled swap adapter (the roster is read
- *  one adapter at a time) plus the aggregator quotes — loan, health factor
- *  and sale reads, the simulation, the final gate's reads and the send's own
- *  preparation; the CPU bench measures 22 RPC calls with three adapters, on
+ *  eighteen subrequests plus two per enabled swap adapter (the roster is read
+ *  one adapter at a time) plus the aggregator quotes — the pending-send
+ *  check, loan, health factor and sale reads, the simulation, the final
+ *  gate's reads and the send's own preparation; the CPU bench measures 24
+ *  RPC calls with three adapters, on
  *  top of about four per chain for the scan. That is against a
  *  50-subrequest allowance the whole invocation shares with the other passes
  *  due on the same tick. The rest are reached
@@ -139,7 +141,10 @@ export interface GraceLoan {
 
 /** What happened to one candidate — the log line, and what tests assert. */
 export type GraceDefaultOutcome =
-  | { kind: 'submitted'; tx: string; preview: CloseOutPreview; route: 'swap' | 'none' }
+  // `preview` is the ending the chain showed — `sale` is the only one that
+  // swaps — and `calls` is the try-list sent, which an `other` ending (an
+  // internal match, an in-kind close) may not use at all.
+  | { kind: 'submitted'; tx: string; preview: CloseOutPreview; calls: number }
   | { kind: 'skipped'; reason: string };
 
 /** Everything one loan's attempt needs, injected so the decision is
@@ -162,7 +167,7 @@ interface ChainRun {
   submitted: number;
 }
 
-export async function runGraceDefault(env: Env): Promise<void> {
+export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
 
   // Scan every chain first: the scan is a handful of subrequests per chain,
@@ -184,9 +189,13 @@ export async function runGraceDefault(env: Env): Promise<void> {
   }
 
   const queue = runs.flatMap((run) => run.candidates.map((loanId) => ({ run, loanId })));
+  // The rotation reads the tick's SCHEDULED time, not the clock: a late
+  // delivery must not land on the previous run's index and retry its batch
+  // (or skip one). Only an invocation that is not a cron tick reads the clock.
+  const tickMs = tick?.scheduledTimeMs ?? Date.now();
   const { picked, deferred } = pickBatch(
     queue,
-    Math.floor(Date.now() / ROTATION_STEP_MS),
+    Math.floor(tickMs / ROTATION_STEP_MS),
     MAX_ATTEMPTS_PER_RUN,
   );
   for (const run of runs) {
@@ -212,7 +221,7 @@ export async function runGraceDefault(env: Env): Promise<void> {
     if (outcome.kind === 'submitted') {
       run.submitted += 1;
       console.log(
-        `[keeper] graceDefault chain=${run.chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} route=${outcome.route}`,
+        `[keeper] graceDefault chain=${run.chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls}`,
       );
     } else {
       console.log(
@@ -349,6 +358,19 @@ export async function attemptGraceDefault(
   const keeper = wallet.account?.address;
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
+  // A send from an earlier run may still be pending — on this loan, or on
+  // another pass's. The loan then still reads Active and defaultable, and a
+  // second `triggerDefault` would queue behind the first only to revert once
+  // it lands. Nothing persists between runs, so the chain is asked: while
+  // the keeper's pending nonce is ahead of its mined one, this run waits.
+  const [pendingNonce, minedNonce] = await Promise.all([
+    client.getTransactionCount({ address: keeper, blockTag: 'pending' }),
+    client.getTransactionCount({ address: keeper, blockTag: 'latest' }),
+  ]);
+  if (pendingNonce > minedNonce) {
+    return { kind: 'skipped', reason: `keeper-tx-pending (${pendingNonce - minedNonce} unmined)` };
+  }
+
   const loan = await readLoan(client, diamond, loanId);
 
   // A past-grace loan that is ALSO under water: any SWAP close of it belongs
@@ -429,7 +451,7 @@ export async function attemptGraceDefault(
     chain: undefined,
     account: wallet.account ?? null,
   } as never);
-  return { kind: 'submitted', tx, preview, route: calls.length > 0 ? 'swap' : 'none' };
+  return { kind: 'submitted', tx, preview, calls: calls.length };
 }
 
 async function readLoan(

@@ -39,6 +39,17 @@ const REPS = Number(process.env.BENCH_REPS ?? 5);
 /** Seconds one pass may take before it is recorded as hung rather than slow. */
 const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
 
+/**
+ * A FIXED scheduled tick, so a pass that rotates on it measures the same
+ * candidate every run. graceDefault's rotation index is
+ * floor(scheduledTime / 5 min) = 1 here, which selects the second loan of
+ * the first chain — loan 2, an EVEN id, which the RPC mock keeps above the
+ * liquidation line, so the run reaches the route, preview, gate and send
+ * rather than the under-water skip (Codex #2485 r4). The wall clock picked
+ * an odd id about half the time.
+ */
+const BENCH_TICK = { scheduledTimeMs: 5 * 60_000 } as const;
+
 
 /**
  * ARMED on purpose. The gated passes return immediately at `passIsArmed`
@@ -223,7 +234,7 @@ async function main(): Promise<void> {
     // is still marked.
     resetPages();
     resetD1();
-    const warmed = await cpuMs(() => pass.run(makeEnv()));
+    const warmed = await cpuMs(() => pass.run(makeEnv(), BENCH_TICK));
     if (warmed === null) {
       // The warm-up TIMED OUT and its abandoned work (a pending RPC retry on a
       // backoff timer) is still on the shared event loop / fixtures. This
@@ -276,7 +287,7 @@ async function main(): Promise<void> {
       resetD1();
       const env = makeEnv();
       // eslint-disable-next-line no-await-in-loop
-      const ms = await cpuMs(() => pass.run(env));
+      const ms = await cpuMs(() => pass.run(env, BENCH_TICK));
       if (ms === null) {
         hung += 1;
         break; // a hung pass will hang again; do not spend REPS × timeout on it

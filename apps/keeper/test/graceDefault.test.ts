@@ -55,6 +55,8 @@ interface Scene {
   /** The preview's ending; null makes the node fail the simulation. */
   ending?: 'sale' | 'fallback' | 'other' | null;
   calls?: number;
+  /** Unmined keeper transactions on the chain (pending − latest nonce). */
+  unmined?: number;
   /** Health factor; a function to compute it per read, or to throw (e.g.
    *  illiquid collateral). */
   hf?: bigint | (() => bigint);
@@ -67,6 +69,8 @@ function harness(scene: Scene) {
   const loans = scene.loans ?? [LIQUID];
   const client = {
     getBlockNumber: async () => 100n,
+    getTransactionCount: async (args: { blockTag: string }) =>
+      args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
     readContract: async (args: { functionName: string }) => {
       switch (args.functionName) {
         case 'getLoanDetails': {
@@ -139,7 +143,7 @@ describe('attemptGraceDefault', () => {
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
     const h = harness({ ending: 'sale', calls: 2 });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'sale', route: 'swap' });
+    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'sale', calls: 2 });
     expect(h.routes).toEqual([LIQUID]);
     expect(h.writes).toHaveLength(1);
     const w = h.writes[0] as { functionName: string; args: [bigint, unknown[]] };
@@ -167,7 +171,7 @@ describe('attemptGraceDefault', () => {
     const nft: GraceLoan = { ...LIQUID, collateralAssetType: 1 };
     const h = harness({ loans: [nft], ending: 'other' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'other', route: 'none' });
+    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'other', calls: 0 });
     expect(h.routes).toHaveLength(0);
     expect((h.writes[0] as { args: [bigint, unknown[]] }).args[1]).toEqual([]);
   });
@@ -272,6 +276,22 @@ describe('attemptGraceDefault', () => {
   });
 });
 
+describe('a send still pending from an earlier run', () => {
+  it('waits while the keeper has an unmined transaction — no duplicate triggerDefault', async () => {
+    const h = harness({ unmined: 1, ending: 'sale' });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'keeper-tx-pending (1 unmined)' });
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('reports an in-kind ending as such even when a try-list was sent', async () => {
+    const h = harness({ ending: 'other', calls: 3 });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 3 });
+  });
+});
+
 describe('the liquidator boundary', () => {
   it('leaves an under-water loan to the HF liquidator — no competing sale is quoted', async () => {
     // The empty list a liquid loan cannot close with: the chain refuses it.
@@ -290,7 +310,7 @@ describe('the liquidator boundary', () => {
     // in kind with an empty list, which the quote-bound liquidator cannot do.
     const h = harness({ hf: 9n * 10n ** 17n, ending: 'other' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', route: 'none' });
+    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 0 });
     expect(h.routes).toHaveLength(0);
   });
 

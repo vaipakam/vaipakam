@@ -62,7 +62,16 @@ export interface KeeperPass {
   readonly dailyWindow?: boolean;
   /** One line, for the log, on why this cadence and not every tick. */
   readonly why: string;
-  readonly run: (env: Env) => Promise<void>;
+  readonly run: (env: Env, tick: PassTick) => Promise<void>;
+}
+
+/** What a pass knows about the tick that launched it. */
+export interface PassTick {
+  /** The tick's SCHEDULED epoch (`controller.scheduledTime`), so a pass that
+   *  derives anything from the tick — a rotation, a window — agrees with the
+   *  cadence gate on which tick this is even when delivery is late.
+   *  Undefined only for an invocation that is not a cron tick. */
+  readonly scheduledTimeMs: number | undefined;
 }
 
 export const KEEPER_PASSES: readonly KeeperPass[] = [
@@ -142,10 +151,11 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     name: 'graceDefault',
     // Every loan it acts on is already past a grace period measured in
     // days, so a few minutes' delay changes nothing material, and each
-    // candidate costs a quote round and an eth_simulateV1. The per-tick cap
-    // is rotated rather than urgency-ordered (graceDefault.ts) — at five a
-    // run that drains sixty candidates an hour per chain, which a testnet
-    // backlog never approaches; revisit both together if a mainnet one does.
+    // candidate costs a quote round, an eth_simulateV1 and a send. The cap is
+    // one attempt per run across every chain — the invocation's subrequest
+    // allowance is shared — rotated rather than urgency-ordered
+    // (graceDefault.ts): twelve candidates an hour, which a testnet backlog
+    // never strains; revisit cadence and cap together if a mainnet one does.
     cadenceMinutes: 5,
     offsetMinutes: 3,
     why: 'acts on loans already days past grace; each attempt costs quotes and a simulation',
