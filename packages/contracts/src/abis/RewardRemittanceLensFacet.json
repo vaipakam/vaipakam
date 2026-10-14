@@ -1008,6 +1008,11 @@
             "name": "recycledBooked",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "fundedDayBits",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
           }
         ]
       }
