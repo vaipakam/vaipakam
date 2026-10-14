@@ -15,6 +15,8 @@
  *
  * Run:  pnpm --filter @vaipakam/keeper run bench:cpu
  * Knobs: BENCH_ARRAY_LEN (array size in results, default 25)
+ *        BENCH_ADAPTERS  (swap-adapter roster size, default 3; the first is
+ *                         Base Sepolia's quotable testnet mock)
  *        BENCH_REPS      (repetitions per pass, default 5)
  *        BENCH_VERBOSE   (print the errors a pass logged)
  *
@@ -38,6 +40,18 @@ import { d1Stub, resetD1, d1Stats, ROWS } from './d1Stub';
 const REPS = Number(process.env.BENCH_REPS ?? 5);
 /** Seconds one pass may take before it is recorded as hung rather than slow. */
 const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
+
+/**
+ * A FIXED scheduled tick, so a pass that rotates on it measures the same
+ * candidate every run. graceDefault's run index is
+ * floor(scheduledTime / 5 min) = 3 here; with the fixture's three chains
+ * that is the first chain's second visit, whose single window yields its
+ * second candidate — loan 2, an EVEN id, which the RPC mock keeps above the
+ * liquidation line, so the run reaches the route, gate and send rather than
+ * the under-water skip (Codex #2485 r4). The wall clock picked an odd id
+ * about half the time. Re-derive this if the fixture's chain count changes.
+ */
+const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000 } as const;
 
 
 /**
@@ -64,6 +78,7 @@ function makeEnv(): Env {
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     REWARD_COMMIT_ENABLED: 'true',
+    GRACE_DEFAULT_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     TG_BOT_TOKEN: 'test:token',
@@ -222,7 +237,7 @@ async function main(): Promise<void> {
     // is still marked.
     resetPages();
     resetD1();
-    const warmed = await cpuMs(() => pass.run(makeEnv()));
+    const warmed = await cpuMs(() => pass.run(makeEnv(), BENCH_TICK));
     if (warmed === null) {
       // The warm-up TIMED OUT and its abandoned work (a pending RPC retry on a
       // backoff timer) is still on the shared event loop / fixtures. This
@@ -275,7 +290,7 @@ async function main(): Promise<void> {
       resetD1();
       const env = makeEnv();
       // eslint-disable-next-line no-await-in-loop
-      const ms = await cpuMs(() => pass.run(env));
+      const ms = await cpuMs(() => pass.run(env, BENCH_TICK));
       if (ms === null) {
         hung += 1;
         break; // a hung pass will hang again; do not spend REPS × timeout on it

@@ -57,7 +57,7 @@ const HF_MULTICALL_CHUNK = 100;
  *  loans can't burn the whole allowance in one cron pass. */
 const MAX_LIQUIDATIONS_PER_TICK = 12;
 /** HF below which the loan is autonomously liquidatable on-chain. */
-const HF_LIQUIDATION_THRESHOLD = 10n ** 18n;
+export const HF_LIQUIDATION_THRESHOLD = 10n ** 18n;
 
 export async function runLiquidator(env: Env): Promise<void> {
   if (!passIsArmed(env, 'liquidator')) return;

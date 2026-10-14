@@ -643,14 +643,19 @@ export const SWAP_ALL_ADAPTERS_FAILED_TOPIC = toEventSelector(
   'SwapAllAdaptersFailed(uint256)',
 );
 
-export async function previewCloseOut(deps: {
+export interface PreviewCloseOutDeps {
   client: Pick<PublicClient, 'simulateCalls'>;
   diamond: Address;
   account: Address;
   loanId: bigint;
   calls: readonly AdapterCall[];
-}): Promise<CloseOutPreview> {
-  const { client, diamond, account, loanId, calls } = deps;
+  /** Simulate at this block rather than the node's latest — so a preview
+   *  can be judged together with reads pinned to the same block. */
+  blockNumber?: bigint;
+}
+
+export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseOutPreview> {
+  const { client, diamond, account, loanId, calls, blockNumber } = deps;
   let results;
   try {
     ({ results } = await client.simulateCalls({
@@ -665,6 +670,7 @@ export async function previewCloseOut(deps: {
           }),
         },
       ],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
     }));
   } catch {
     return 'unknown';

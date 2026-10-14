@@ -1,5 +1,5 @@
 /**
- * The keeper's ten passes, as data (#1896).
+ * The keeper's passes, as data (#1896).
  *
  * ── Why a table ──────────────────────────────────────────────────────
  *
@@ -39,6 +39,7 @@ import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
+import { runGraceDefault } from './graceDefault';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -61,7 +62,16 @@ export interface KeeperPass {
   readonly dailyWindow?: boolean;
   /** One line, for the log, on why this cadence and not every tick. */
   readonly why: string;
-  readonly run: (env: Env) => Promise<void>;
+  readonly run: (env: Env, tick: PassTick) => Promise<void>;
+}
+
+/** What a pass knows about the tick that launched it. */
+export interface PassTick {
+  /** The tick's SCHEDULED epoch (`controller.scheduledTime`), so a pass that
+   *  derives anything from the tick — a rotation, a window — agrees with the
+   *  cadence gate on which tick this is even when delivery is late.
+   *  Undefined only for an invocation that is not a cron tick. */
+  readonly scheduledTimeMs: number | undefined;
 }
 
 export const KEEPER_PASSES: readonly KeeperPass[] = [
@@ -136,6 +146,21 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 4,
     why: 'warns inside a 24h window with a repeat throttle — minutes are not material',
     run: runPreGraceWatcher,
+  },
+  {
+    name: 'graceDefault',
+    // Every loan it acts on is already past a grace period measured in
+    // days, so a few minutes' delay changes nothing material, and each
+    // candidate costs a quote round, an eth_simulateV1 and a send. The cap is
+    // one chain, one bounded scan window and one attempt per run — the
+    // invocation's subrequest allowance is shared — rotated rather than
+    // urgency-ordered (graceDefault.ts): twelve attempts an hour across all
+    // chains, which a testnet backlog never strains; revisit cadence and cap
+    // together if a mainnet one does.
+    cadenceMinutes: 5,
+    offsetMinutes: 3,
+    why: 'acts on loans already days past grace; each attempt costs quotes and a simulation',
+    run: runGraceDefault,
   },
   {
     name: 'rewardBudgetRemit',

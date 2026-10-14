@@ -86,3 +86,18 @@ function hasRevertName(x: unknown): boolean {
 export function isRevert(e: unknown): boolean {
   return isWalkable(e) && e.walk(hasRevertName) !== null;
 }
+
+/** The decoded custom-error name of a contract revert, or null when the
+ *  failure is not a revert or its data did not decode against the ABI the
+ *  call was made with. Structural for the same reason as `isRevert`. */
+export function revertErrorName(e: unknown): string | null {
+  if (!isWalkable(e)) return null;
+  const revert = e.walk(
+    (x) =>
+      typeof x === 'object' &&
+      x !== null &&
+      (x as { name?: unknown }).name === 'ContractFunctionRevertedError',
+  ) as { data?: { errorName?: unknown } } | null;
+  const name = revert?.data?.errorName;
+  return typeof name === 'string' ? name : null;
+}
