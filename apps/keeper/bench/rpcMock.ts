@@ -27,7 +27,45 @@ import {
   type AbiParameter,
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { SWAP_ADAPTER_SUCCEEDED_TOPIC } from '@vaipakam/lib/routeBuilder';
+
+/**
+ * The swap-adapter roster every Diamond answers: Base Sepolia's declared
+ * testnet mock adapter first, then distinct placeholders. A REAL, quotable
+ * venue, so a close-out builds a non-empty try-list and the grace-default
+ * preview and send run on a route the contract would accept (Codex #2485
+ * r11). Sized by `BENCH_ADAPTERS` (default 3, a testnet-sized roster), NOT
+ * by ARRAY_LEN: at 25 the roster read alone is fifty requests, and a pass
+ * with a request cap never reaches the path the profile exists to measure.
+ */
+const BENCH_ADAPTERS = Number(process.env.BENCH_ADAPTERS ?? 3);
+const MOCK_SWAP_ADAPTER = (getDeployment(84532)?.testnetMocks?.mockSwapAdapter ??
+  '0x5C53E308C3bBDB6ee3A99B9A5aD4Cf1a8E369B29') as `0x${string}`;
+const ADAPTER_ROSTER = Array.from({ length: BENCH_ADAPTERS }, (_, i) =>
+  i === 0 ? MOCK_SWAP_ADAPTER : (`0x${(0xad00 + i).toString(16).padStart(40, '0')}` as `0x${string}`),
+);
+
+/** The testnet mock adapter's read surface, answered as an open mock that
+ *  pays at par: not reverting, unrestricted, 100% output, equal prices. */
+const MOCK_ADAPTER_ABI = [
+  { type: 'function', name: 'shouldRevert', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'restrictedTo', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  { type: 'function', name: 'outputMultiplierBps', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'tokenUsdPrice8',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const;
+const MOCK_ADAPTER_ANSWERS: Record<string, unknown> = {
+  shouldRevert: false,
+  restrictedTo: '0x0000000000000000000000000000000000000000',
+  outputMultiplierBps: 10_000n,
+  tokenUsdPrice8: 100_000_000n,
+};
 
 /** How many entries every dynamic array result carries. */
 export const ARRAY_LEN = Number(process.env.BENCH_ARRAY_LEN ?? 25);
@@ -222,7 +260,7 @@ const QUOTER_V2_ABI = [
  * read could ever show up in the numbers.
  */
 const BY_SELECTOR = new Map<string, AbiFunction>();
-for (const abi of [erc20Abi, DIAMOND_ABI_VIEM, QUOTER_V2_ABI] as readonly Abi[]) {
+for (const abi of [erc20Abi, DIAMOND_ABI_VIEM, QUOTER_V2_ABI, MOCK_ADAPTER_ABI] as readonly Abi[]) {
   for (const item of abi as readonly AbiFunction[]) {
     if (item.type !== 'function') continue;
     try {
@@ -487,6 +525,23 @@ function answerCall(data: string, chainKey = ''): string {
   const fn = BY_SELECTOR.get(selector);
   if (!fn || fn.outputs.length === 0) return '0x';
 
+  // The roster and its venue, answered as a real deployment would rather
+  // than by the name heuristics below — `isSwapAdapterDisabled` reads as an
+  // `is…` flag there and came back TRUE, disabling every adapter.
+  if (fn.name === 'getSwapAdapters') {
+    return encodeFunctionResult({ abi: [fn], functionName: fn.name, result: ADAPTER_ROSTER } as never);
+  }
+  if (fn.name === 'isSwapAdapterDisabled') {
+    return encodeFunctionResult({ abi: [fn], functionName: fn.name, result: false } as never);
+  }
+  if (fn.name in MOCK_ADAPTER_ANSWERS) {
+    return encodeFunctionResult({
+      abi: [fn],
+      functionName: fn.name,
+      result: MOCK_ADAPTER_ANSWERS[fn.name],
+    } as never);
+  }
+
   // Size the TOP-LEVEL array output. Pagination is identified by a
   // cursor/offset-shaped INPUT — a non-paginated array such as
   // `getUserActiveLoans(address)` is a whole per-user list, not a page, and
@@ -699,10 +754,31 @@ function answer(
       const [{ blockStateCalls = [] } = {}] = params as [
         { blockStateCalls?: { calls?: { to?: string; data?: string }[] }[] }?,
       ];
+      // A liquid close-out with an EMPTY try-list is what the contract
+      // refuses (`NoEnabledSwapRoute`), so it is answered as a revert, not
+      // a sale: a fixture that blessed an empty list measured a send the
+      // chain would reject (Codex #2485 r11).
+      const triesNothing = (data: string | undefined): boolean => {
+        try {
+          const { functionName, args } = decodeFunctionData({
+            abi: DIAMOND_ABI_VIEM,
+            data: (data ?? '0x') as `0x${string}`,
+          });
+          return functionName === 'triggerDefault' && (args?.[1] as unknown[]).length === 0;
+        } catch {
+          return false;
+        }
+      };
       return ok(
         blockStateCalls.map((b) => ({
           ...simBlock(),
-          calls: (b.calls ?? []).map((c) => ({
+          calls: (b.calls ?? []).map((c) => triesNothing(c.data) ? {
+            status: '0x0',
+            returnData: '0x',
+            gasUsed: HEX(50_000),
+            logs: [],
+            error: { code: 3, message: 'execution reverted' },
+          } : {
             status: '0x1',
             returnData: '0x',
             gasUsed: HEX(400_000),
@@ -723,7 +799,7 @@ function answer(
                 removed: false,
               },
             ],
-          })),
+          }),
         })),
       );
     }

@@ -15,6 +15,8 @@
  *
  * Run:  pnpm --filter @vaipakam/keeper run bench:cpu
  * Knobs: BENCH_ARRAY_LEN (array size in results, default 25)
+ *        BENCH_ADAPTERS  (swap-adapter roster size, default 3; the first is
+ *                         Base Sepolia's quotable testnet mock)
  *        BENCH_REPS      (repetitions per pass, default 5)
  *        BENCH_VERBOSE   (print the errors a pass logged)
  *

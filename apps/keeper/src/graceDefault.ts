@@ -123,8 +123,9 @@ const READ_CHUNK = 100;
 
 /** Candidates attempted per run. One attempt costs about eighteen
  *  requests plus two per enabled swap adapter (the roster is read one
- *  adapter at a time) plus the aggregator quotes. The CPU bench measures 28
- *  for a whole run (scan included) with three adapters. A longer roster can
+ *  adapter at a time) plus the aggregator quotes. The CPU bench measures 35
+ *  for a whole run (scan, a quoted route, preview and send) with three
+ *  adapters. A longer roster can
  *  push an attempt past {@link SUBREQUEST_BUDGET}; the cap then stops it
  *  before the send. */
 export const MAX_ATTEMPTS_PER_RUN = 1;
