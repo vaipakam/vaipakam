@@ -114,7 +114,7 @@ describe('activity feed labels are translatable (extraction guard)', () => {
       'SwapToRepayExecuted', 'SwapToRepayIntentCancelled', 'SwapToRepayIntentCommitted',
       'SwapToRepayIntentFilled', 'SwapToRepayIntentForceCancelled', 'SwapToRepayPartialExecuted',
       'Transfer', 'VPFIDepositedToVault', 'VPFIWithdrawnFromVault', 'VaultVpfiDebited',
-      'FallbackCustodyMoved', 'SwapToRepayIntentLotPulled', 'RewardEntryForfeitSettled',
+      'RewardEntryForfeitSettled',
     ];
     for (const kind of ATTRIBUTED) {
       expect(ACTIVITY_LABELS[kind], `no activity label for indexer kind ${kind}`).toBeDefined();

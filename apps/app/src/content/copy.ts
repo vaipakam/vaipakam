@@ -4973,8 +4973,6 @@ const copySource = {
       SwapToRepayIntentFilled: 'Swap-to-repay filled',
       SwapToRepayIntentCancelled: 'Swap-to-repay cancelled',
       SwapToRepayIntentForceCancelled: 'Swap-to-repay cancelled',
-      SwapToRepayIntentLotPulled: 'Swap-to-repay collateral taken',
-      FallbackCustodyMoved: 'Collateral custody updated',
       PeriodicInterestSettled: 'Interest settled',
       PeriodicInterestAutoLiquidated: 'Auto-liquidated for interest',
       RepayPartialPeriodAdvanced: 'Interest period advanced',

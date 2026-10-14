@@ -325,7 +325,9 @@
         "hf_warn": "La salud de un préstamo bajó de 1.5 — ábrelo para ver cómo está.",
         "hf_alert": "La salud de un préstamo bajó de 1.2 — ábrelo para ver cómo está.",
         "hf_critical": "La salud de un préstamo bajó de 1.05, cerca de la línea de liquidación 1.0 — ábrelo para actuar.",
-        "generic": "Hay una novedad sobre tu préstamo."
+        "generic": "Hay una novedad sobre tu préstamo.",
+        "reward_final_notice": "Una de tus recompensas de interacción ha entrado en su período de aviso final: reclámala en el Centro de Reclamaciones antes de que vuelva al programa de recompensas.",
+        "reward_expired": "Una recompensa de interacción tuya sin reclamar llegó al final de su plazo de reclamación y volvió al programa de recompensas."
       },
       "loanRef": "Préstamo #{{loanId}} · toca para ver",
       "unreadBadgeTitle_zero": "{{count}} notificaciones sin leer",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}} notificaciones sin leer",
       "unreadBadgeTitle_few": "{{count}} notificaciones sin leer",
       "unreadBadgeTitle_many": "{{count}} notificaciones sin leer",
-      "unreadBadgeTitle_other": "{{count}} notificaciones sin leer"
+      "unreadBadgeTitle_other": "{{count}} notificaciones sin leer",
+      "rewardRef": "Recompensa n.º {{entryId}} · toca para abrir el Centro de Reclamaciones"
     },
     "errorBoundary": {
       "detailAria": "Detalle del error",
@@ -1954,7 +1957,9 @@
       "modeFull": "tarifa Completa pagada",
       "tariffPaidLine": "{{amount}} VPFI de tarifa absorbidos",
       "precloseNoRefundWarn": "Este préstamo lleva una tarifa Completa pagada. Se calculó sobre el plazo completo al abrirse el préstamo y no se reembolsa en un cierre anticipado.",
-      "nftTravelNote": "El modo de comisión Completa del prestamista está ligado a la posición en sí: viaja con el NFT de la posición hasta el comprador de esta posición."
+      "nftTravelNote": "El modo de comisión Completa del prestamista está ligado a la posición en sí: viaja con el NFT de la posición hasta el comprador de esta posición.",
+      "makerCeilingBelowQuote": "La cotización actual de la tarifa para el tamaño completo de esta orden es de {{quote}} VPFI, por encima del límite de {{ceiling}} VPFI que vas a firmar. Un llenado con un precio superior a tu límite no puede cobrar la tarifa Full, así que se rechazaría, o se llenaría sin Full si lo permitiste más abajo. Los llenados parciales más pequeños aún pueden quedar por debajo. Puedes publicarla de todos modos: lo que cuenta es la cotización en el momento en que se produce un llenado, y puede bajar.",
+      "makerSignedNote": "Esta elección se firma en tu orden, así que no se puede cambiar después de publicarla: cancélala y vuelve a publicarla para cambiarla. Cada llenado paga su propia tarifa cuando se produce, nunca más que la parte de tu límite que corresponde a ese llenado."
     },
     "vpfi": {
       "nothing": "Nada.",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "Swap-para-reembolsar llenado",
         "SwapToRepayIntentCancelled": "Swap-para-reembolsar cancelado",
         "SwapToRepayIntentForceCancelled": "Swap-para-reembolsar cancelado",
-        "SwapToRepayIntentLotPulled": "Garantía tomada para swap-para-reembolsar",
-        "FallbackCustodyMoved": "Custodia de la garantía actualizada",
         "PeriodicInterestSettled": "Intereses liquidados",
         "PeriodicInterestAutoLiquidated": "Autoliquidado por intereses",
         "RepayPartialPeriodAdvanced": "Período de intereses avanzado",
@@ -2329,7 +2332,9 @@
       "empty": "Aún no hay recompensas. Las recompensas aparecen después de actividad de prestar o pedir prestado.",
       "waiting": "Tus recompensas se están finalizando — un día de recompensa cierra en todas las cadenas antes de que pueda reclamarse. Vuelve pronto.",
       "claim": "Reclamar recompensas",
-      "readyToClaim": "{{amount}} VPFI listos para reclamar."
+      "readyToClaim": "{{amount}} VPFI listos para reclamar.",
+      "expiryCountdown": "Reclama antes del {{date}}: una recompensa que se deja sin reclamar durante todo su plazo de reclamación vuelve al programa de recompensas. La fecha solo puede retrasarse: el tiempo en que tu recompensa no se puede reclamar no cuenta.",
+      "expiryFinalNotice": "Aviso final: reclama antes del {{date}}, o esta recompensa volverá al programa de recompensas. El tiempo en que tu recompensa no se puede reclamar no cuenta para la fecha."
     },
     "sanctions": {
       "title": "Esta billetera está marcada por el control de sanciones de Vaipakam.",

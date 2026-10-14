@@ -100,7 +100,7 @@ export function useRewardExpiryCountdown() {
         const entries: { id: bigint; expiresAt: number }[] = [];
         for (let i = 0; i < ids.length; i += ENTRY_CHUNK) {
           const chunk = ids.slice(i, i + ENTRY_CHUNK);
-          // eslint-disable-next-line no-await-in-loop
+          // Sequential by design: one bounded multicall per chunk.
           const res = (await client.multicall({
             allowFailure: true,
             contracts: chunk.map((id) => ({

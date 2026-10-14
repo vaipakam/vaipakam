@@ -325,7 +325,9 @@
         "hf_warn": "ローンの健全性が 1.5 を下回りました — 開いて状況を確認してください。",
         "hf_alert": "ローンの健全性が 1.2 を下回りました — 開いて状況を確認してください。",
         "hf_critical": "ローンの健全性が 1.05 を下回り、1.0 の清算ラインに近づいています — 開いて対応してください。",
-        "generic": "ローンに更新があります。"
+        "generic": "ローンに更新があります。",
+        "reward_final_notice": "インタラクション報酬の1つが最終通知期間に入りました。報酬プログラムに戻る前に、請求センターで請求してください。",
+        "reward_expired": "未請求のインタラクション報酬が請求期間の終了に達し、報酬プログラムに戻りました。"
       },
       "loanRef": "ローン #{{loanId}} · タップして表示",
       "unreadBadgeTitle_zero": "未読通知 {{count}} 件",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "未読通知 {{count}} 件",
       "unreadBadgeTitle_few": "未読通知 {{count}} 件",
       "unreadBadgeTitle_many": "未読通知 {{count}} 件",
-      "unreadBadgeTitle_other": "未読通知 {{count}} 件"
+      "unreadBadgeTitle_other": "未読通知 {{count}} 件",
+      "rewardRef": "報酬 #{{entryId}} · タップして請求センターを開く"
     },
     "errorBoundary": {
       "detailAria": "エラー詳細",
@@ -1954,7 +1957,9 @@
       "modeFull": "フル料金支払い済み",
       "tariffPaidLine": "{{amount}} VPFI の料金を負担済み",
       "precloseNoRefundWarn": "このローンには支払済みのフル料金が付いています。ローン開始時に全期間に基づいて算定されており、早期終了しても返金されません。",
-      "nftTravelNote": "貸し手のフル手数料モードはポジション自体に紐づいており、ポジション NFT とともにこのポジションの買い手へ引き継がれます。"
+      "nftTravelNote": "貸し手のフル手数料モードはポジション自体に紐づいており、ポジション NFT とともにこのポジションの買い手へ引き継がれます。",
+      "makerCeilingBelowQuote": "この注文の全量に対する現在の料金見積もりは {{quote}} VPFI で、これから署名する上限 {{ceiling}} VPFI を上回っています。上限を超える価格の約定では Full 料金を請求できないため、拒否されるか、下で許可した場合は Full なしで約定されます。より小さな部分約定は上限内に収まることがあります。どちらの場合でも投稿できます。基準になるのは実際に約定するときの見積もりで、下がることもあります。",
+      "makerSignedNote": "この選択は注文に署名されるため、投稿後に変更することはできません。変更するには、キャンセルして再投稿してください。各約定は発生時に独自の料金が課され、その約定に対応する上限の割合を超えることはありません。"
     },
     "vpfi": {
       "nothing": "なし。",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "返済用スワップが約定",
         "SwapToRepayIntentCancelled": "返済用スワップを取消",
         "SwapToRepayIntentForceCancelled": "返済用スワップを取消",
-        "SwapToRepayIntentLotPulled": "返済用スワップの担保を引き出し",
-        "FallbackCustodyMoved": "担保の保管を更新",
         "PeriodicInterestSettled": "利息決済済み",
         "PeriodicInterestAutoLiquidated": "利息のため自動清算",
         "RepayPartialPeriodAdvanced": "利息期間を進行",
@@ -2329,7 +2332,9 @@
       "empty": "まだ報酬はありません。報酬は貸付または借入アクティビティ後に表示されます。",
       "waiting": "報酬を確定中です — 報酬日は全チェーンで終了してから請求可能になります。後でもう一度確認してください。",
       "claim": "報酬を請求",
-      "readyToClaim": "{{amount}} VPFI を請求できます。"
+      "readyToClaim": "{{amount}} VPFI を請求できます。",
+      "expiryCountdown": "{{date}} までに請求してください。請求期間のあいだずっと未請求のままの報酬は、報酬プログラムに戻ります。日付は後ろにずれることしかありません。報酬を請求できない期間は数えられません。",
+      "expiryFinalNotice": "最終通知：{{date}} までに請求しないと、この報酬は報酬プログラムに戻ります。報酬を請求できない期間はこの日付に数えられません。"
     },
     "sanctions": {
       "title": "このウォレットは Vaipakam の制裁スクリーニングでフラグが付いています。",

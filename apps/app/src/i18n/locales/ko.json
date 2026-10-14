@@ -325,7 +325,9 @@
         "hf_warn": "대출의 건강도가 1.5 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_alert": "대출의 건강도가 1.2 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_critical": "대출의 건강도가 1.05 아래로 떨어져 청산 기준선 1.0에 근접했습니다 — 열어서 조치하세요.",
-        "generic": "대출에 업데이트가 있습니다."
+        "generic": "대출에 업데이트가 있습니다.",
+        "reward_final_notice": "상호작용 보상 중 하나가 최종 안내 기간에 들어갔습니다. 보상 프로그램으로 돌아가기 전에 청구 센터에서 청구하세요.",
+        "reward_expired": "청구하지 않은 상호작용 보상이 청구 기간의 끝에 도달하여 보상 프로그램으로 돌아갔습니다."
       },
       "loanRef": "Loan #{{loanId}} · 탭하여 보기",
       "unreadBadgeTitle_zero": "{{count}}개의 unread notifications",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}}개의 unread notifications",
       "unreadBadgeTitle_few": "{{count}}개의 unread notifications",
       "unreadBadgeTitle_many": "{{count}}개의 unread notifications",
-      "unreadBadgeTitle_other": "{{count}}개의 unread notifications"
+      "unreadBadgeTitle_other": "{{count}}개의 unread notifications",
+      "rewardRef": "보상 #{{entryId}} · 탭하여 청구 센터 열기"
     },
     "errorBoundary": {
       "detailAria": "오류 세부 정보",
@@ -1954,7 +1957,9 @@
       "modeFull": "전액 수수료 납부",
       "tariffPaidLine": "{{amount}} VPFI 수수료 부담함",
       "precloseNoRefundWarn": "이 대출에는 납부된 전액 수수료가 있습니다. 대출 개시 시 전체 기간 기준으로 산정되었으며 조기 종료 시 환불되지 않습니다.",
-      "nftTravelNote": "대출자의 전액 수수료 모드는 포지션 자체에 연결되어 있어, 포지션 NFT 와 함께 이 포지션의 매수자에게 이전됩니다."
+      "nftTravelNote": "대출자의 전액 수수료 모드는 포지션 자체에 연결되어 있어, 포지션 NFT 와 함께 이 포지션의 매수자에게 이전됩니다.",
+      "makerCeilingBelowQuote": "이 주문 전체 규모에 대한 현재 요율 견적은 {{quote}} VPFI로, 서명하려는 {{ceiling}} VPFI 한도보다 높습니다. 한도보다 높은 가격의 체결은 Full 요율을 부과할 수 없으므로 거부되거나, 아래에서 허용했다면 Full 없이 체결됩니다. 더 작은 부분 체결은 여전히 한도 아래로 책정될 수 있습니다. 어느 경우든 게시할 수 있습니다. 중요한 것은 실제로 체결이 일어날 때의 견적이며, 견적은 내려갈 수 있습니다.",
+      "makerSignedNote": "이 선택은 주문에 서명되므로 게시한 후에는 변경할 수 없습니다. 변경하려면 취소한 뒤 다시 게시하세요. 각 체결은 발생할 때 자체 요율이 부과되며, 해당 체결에 해당하는 한도 몫을 넘지 않습니다."
     },
     "vpfi": {
       "nothing": "없음.",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "swap-to-repay filled",
         "SwapToRepayIntentCancelled": "swap-to-repay cancelled",
         "SwapToRepayIntentForceCancelled": "swap-to-repay cancelled",
-        "SwapToRepayIntentLotPulled": "swap-to-repay collateral 인출됨",
-        "FallbackCustodyMoved": "collateral 보관 업데이트됨",
         "PeriodicInterestSettled": "interest settled",
         "PeriodicInterestAutoLiquidated": "interest로 auto-liquidated",
         "RepayPartialPeriodAdvanced": "interest period advanced",
@@ -2329,7 +2332,9 @@
       "empty": "아직 리워드가 없습니다. 리워드는 대출 또는 차입 활동 이후에 표시됩니다.",
       "waiting": "리워드가 확정되는 중입니다 — 청구하기 전에 모든 체인에서 리워드 데이가 마감됩니다. 잠시 후 다시 확인하세요.",
       "claim": "리워드 청구",
-      "readyToClaim": "{{amount}} VPFI claim 가능."
+      "readyToClaim": "{{amount}} VPFI claim 가능.",
+      "expiryCountdown": "{{date}} 전에 청구하세요. 청구 기간 내내 청구하지 않은 보상은 보상 프로그램으로 돌아갑니다. 날짜는 뒤로만 미뤄질 수 있으며, 보상을 청구할 수 없는 시간은 계산되지 않습니다.",
+      "expiryFinalNotice": "최종 안내: {{date}} 전에 청구하지 않으면 이 보상은 보상 프로그램으로 돌아갑니다. 보상을 청구할 수 없는 시간은 이 날짜에 포함되지 않습니다."
     },
     "sanctions": {
       "title": "이 지갑은 Vaipakam의 제재 검사에 의해 플래그되었습니다.",

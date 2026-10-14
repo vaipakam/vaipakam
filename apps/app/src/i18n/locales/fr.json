@@ -325,7 +325,9 @@
         "hf_warn": "La santé d'un prêt est passée sous 1.5 — ouvrez-le pour voir où il en est.",
         "hf_alert": "La santé d'un prêt est passée sous 1.2 — ouvrez-le pour voir où il en est.",
         "hf_critical": "La santé d'un prêt est passée sous 1.05, proche de la ligne de liquidation 1.0 — ouvrez-le pour agir.",
-        "generic": "Il y a une mise à jour sur votre prêt."
+        "generic": "Il y a une mise à jour sur votre prêt.",
+        "reward_final_notice": "L’une de vos récompenses d’interaction est entrée dans sa période de dernier avis : réclamez-la dans le Centre de réclamation avant qu’elle ne retourne au programme de récompenses.",
+        "reward_expired": "Une de vos récompenses d’interaction non réclamées a atteint la fin de sa période de réclamation et est retournée au programme de récompenses."
       },
       "loanRef": "Prêt n°{{loanId}} · toucher pour voir",
       "unreadBadgeTitle_zero": "{{count}} notifications non lues",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}} notifications non lues",
       "unreadBadgeTitle_few": "{{count}} notifications non lues",
       "unreadBadgeTitle_many": "{{count}} notifications non lues",
-      "unreadBadgeTitle_other": "{{count}} notifications non lues"
+      "unreadBadgeTitle_other": "{{count}} notifications non lues",
+      "rewardRef": "Récompense n° {{entryId}} · touchez pour ouvrir le Centre de réclamation"
     },
     "errorBoundary": {
       "detailAria": "Détail de l’erreur",
@@ -1954,7 +1957,9 @@
       "modeFull": "tarif Complet payé",
       "tariffPaidLine": "{{amount}} VPFI de tarif absorbés",
       "precloseNoRefundWarn": "Ce prêt porte un tarif Complet payé. Il a été calculé sur la durée complète à l'ouverture du prêt et n'est pas remboursé en cas de clôture anticipée.",
-      "nftTravelNote": "Le mode de frais Complet du prêteur est attaché à la position elle-même — il voyage avec le NFT de position jusqu'à l'acheteur de cette position."
+      "nftTravelNote": "Le mode de frais Complet du prêteur est attaché à la position elle-même — il voyage avec le NFT de position jusqu'à l'acheteur de cette position.",
+      "makerCeilingBelowQuote": "La cotation actuelle du tarif pour la taille complète de cet ordre est de {{quote}} VPFI, au-dessus du plafond de {{ceiling}} VPFI que vous êtes sur le point de signer. Une exécution dont le prix dépasse votre plafond ne peut pas facturer le tarif Full : elle serait donc rejetée, ou exécutée sans Full si vous l’avez autorisé plus bas. Des exécutions partielles plus petites peuvent encore passer en dessous. Vous pouvez publier cet ordre dans tous les cas : c’est la cotation au moment où une exécution a lieu qui compte, et elle peut baisser.",
+      "makerSignedNote": "Ce choix est signé dans votre ordre et ne peut donc pas être modifié après sa publication : annulez-le et publiez-le à nouveau pour le changer. Chaque exécution paie son propre tarif au moment où elle a lieu, jamais plus que la part de votre plafond correspondant à cette exécution."
     },
     "vpfi": {
       "nothing": "Rien.",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "Swap-pour-rembourser rempli",
         "SwapToRepayIntentCancelled": "Swap-pour-rembourser annulé",
         "SwapToRepayIntentForceCancelled": "Swap-pour-rembourser annulé",
-        "SwapToRepayIntentLotPulled": "Garantie prélevée pour swap-pour-rembourser",
-        "FallbackCustodyMoved": "Garde de la garantie mise à jour",
         "PeriodicInterestSettled": "Intérêts réglés",
         "PeriodicInterestAutoLiquidated": "Liquidé automatiquement pour intérêts",
         "RepayPartialPeriodAdvanced": "Période d'intérêts avancée",
@@ -2329,7 +2332,9 @@
       "empty": "Aucune récompense pour l'instant. Les récompenses apparaissent après une activité de prêt ou d'emprunt.",
       "waiting": "Vos récompenses sont en cours de finalisation — un jour de récompense se clôture sur toutes les chaînes avant de pouvoir être retiré. Revenez bientôt.",
       "claim": "Retirer les récompenses",
-      "readyToClaim": "{{amount}} VPFI prêts à réclamer."
+      "readyToClaim": "{{amount}} VPFI prêts à réclamer.",
+      "expiryCountdown": "Réclamez avant le {{date}} : une récompense laissée non réclamée pendant toute sa période de réclamation retourne au programme de récompenses. La date ne peut que reculer : le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas.",
+      "expiryFinalNotice": "Dernier avis : réclamez avant le {{date}}, sinon cette récompense retournera au programme de récompenses. Le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas pour cette date."
     },
     "sanctions": {
       "title": "Ce portefeuille est signalé par le contrôle de sanctions de Vaipakam.",

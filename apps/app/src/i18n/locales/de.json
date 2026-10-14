@@ -325,7 +325,9 @@
         "hf_warn": "Die Gesundheit eines Kredits fiel unter 1,5 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_alert": "Die Gesundheit eines Kredits fiel unter 1,2 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_critical": "Die Gesundheit eines Kredits fiel unter 1,05, nahe an der Liquidationslinie 1,0 — öffnen Sie ihn, um zu handeln.",
-        "generic": "Es gibt ein Update zu Ihrem Kredit."
+        "generic": "Es gibt ein Update zu Ihrem Kredit.",
+        "reward_final_notice": "Eine deiner Interaktionsbelohnungen ist in ihre letzte Hinweisfrist eingetreten – fordere sie im Claim Center an, bevor sie an das Belohnungsprogramm zurückgeht.",
+        "reward_expired": "Eine nicht angeforderte Interaktionsbelohnung von dir hat das Ende ihres Anforderungszeitraums erreicht und ist an das Belohnungsprogramm zurückgegangen."
       },
       "loanRef": "Kredit #{{loanId}} · antippen zum Anzeigen",
       "unreadBadgeTitle_zero": "{{count}} ungelesene Benachrichtigungen",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}} ungelesene Benachrichtigungen",
       "unreadBadgeTitle_few": "{{count}} ungelesene Benachrichtigungen",
       "unreadBadgeTitle_many": "{{count}} ungelesene Benachrichtigungen",
-      "unreadBadgeTitle_other": "{{count}} ungelesene Benachrichtigungen"
+      "unreadBadgeTitle_other": "{{count}} ungelesene Benachrichtigungen",
+      "rewardRef": "Belohnung Nr. {{entryId}} · tippen, um das Claim Center zu öffnen"
     },
     "errorBoundary": {
       "detailAria": "Fehlerdetails",
@@ -1954,7 +1957,9 @@
       "modeFull": "volle Gebühr bezahlt",
       "tariffPaidLine": "{{amount}} VPFI Gebühr übernommen",
       "precloseNoRefundWarn": "Dieser Kredit trägt eine bezahlte volle Gebühr. Sie wurde bei Krediteröffnung auf die volle Laufzeit bepreist und wird bei vorzeitigem Abschluss nicht erstattet.",
-      "nftTravelNote": "Der volle Gebührenmodus des Kreditgebers ist an die Position selbst gebunden — er wandert mit dem Positions-NFT zu einem Käufer dieser Position."
+      "nftTravelNote": "Der volle Gebührenmodus des Kreditgebers ist an die Position selbst gebunden — er wandert mit dem Positions-NFT zu einem Käufer dieser Position.",
+      "makerCeilingBelowQuote": "Das aktuelle Tarifangebot für die volle Größe dieser Order beträgt {{quote}} VPFI – über der Obergrenze von {{ceiling}} VPFI, die du gleich signierst. Eine Ausführung, deren Preis über deiner Obergrenze liegt, kann den Full-Tarif nicht berechnen und würde daher abgelehnt oder ohne Full ausgeführt, falls du das unten erlaubt hast. Kleinere Teilausführungen können noch darunter liegen. Du kannst die Order trotzdem einstellen: Maßgeblich ist das Angebot zum Zeitpunkt einer tatsächlichen Ausführung, und es kann sinken.",
+      "makerSignedNote": "Diese Wahl wird in deine Order signiert und kann nach dem Einstellen nicht mehr geändert werden – storniere sie und stelle sie neu ein, um sie zu ändern. Jede Ausführung zahlt ihren eigenen Tarif, wenn sie stattfindet, nie mehr als den Anteil deiner Obergrenze, der auf diese Ausführung entfällt."
     },
     "vpfi": {
       "nothing": "Nichts.",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "Swap-zur-Rückzahlung gefüllt",
         "SwapToRepayIntentCancelled": "Swap-zur-Rückzahlung storniert",
         "SwapToRepayIntentForceCancelled": "Swap-zur-Rückzahlung storniert",
-        "SwapToRepayIntentLotPulled": "Sicherheit für Swap-zur-Rückzahlung entnommen",
-        "FallbackCustodyMoved": "Verwahrung der Sicherheit aktualisiert",
         "PeriodicInterestSettled": "Zinsen abgerechnet",
         "PeriodicInterestAutoLiquidated": "Für Zinsen automatisch liquidiert",
         "RepayPartialPeriodAdvanced": "Zinsperiode vorgerückt",
@@ -2329,7 +2332,9 @@
       "empty": "Noch keine Rewards. Rewards erscheinen nach Kreditvergabe- oder Leih-Aktivität.",
       "waiting": "Ihre Rewards werden gerade finalisiert — ein Reward-Tag schließt über alle Chains hinweg ab, bevor er beansprucht werden kann. Schauen Sie bald wieder vorbei.",
       "claim": "Belohnungen beanspruchen",
-      "readyToClaim": "{{amount}} VPFI bereit zum Beanspruchen."
+      "readyToClaim": "{{amount}} VPFI bereit zum Beanspruchen.",
+      "expiryCountdown": "Fordere vor dem {{date}} an: Eine Belohnung, die während ihres gesamten Anforderungszeitraums nicht angefordert wird, geht an das Belohnungsprogramm zurück. Das Datum kann sich nur nach hinten verschieben – Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht.",
+      "expiryFinalNotice": "Letzter Hinweis: Fordere vor dem {{date}} an, sonst geht diese Belohnung an das Belohnungsprogramm zurück. Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht zu diesem Datum."
     },
     "sanctions": {
       "title": "Diese Wallet ist durch das Sanktions-Screening von Vaipakam markiert.",

@@ -325,7 +325,9 @@
         "hf_warn": "一笔贷款的健康值跌破 1.5 — 打开查看当前状态。",
         "hf_alert": "一笔贷款的健康值跌破 1.2 — 打开查看当前状态。",
         "hf_critical": "一笔贷款的健康值跌破 1.05，接近 1.0 清算线 — 打开采取行动。",
-        "generic": "您的贷款有更新。"
+        "generic": "您的贷款有更新。",
+        "reward_final_notice": "你的一项互动奖励已进入最终通知期——请在它返回奖励计划之前，到领取中心领取。",
+        "reward_expired": "你的一项未领取的互动奖励已到达领取期限的终点，并已返回奖励计划。"
       },
       "loanRef": "贷款 #{{loanId}} · 点击查看",
       "unreadBadgeTitle_zero": "{{count}} 条未读通知",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}} 条未读通知",
       "unreadBadgeTitle_few": "{{count}} 条未读通知",
       "unreadBadgeTitle_many": "{{count}} 条未读通知",
-      "unreadBadgeTitle_other": "{{count}} 条未读通知"
+      "unreadBadgeTitle_other": "{{count}} 条未读通知",
+      "rewardRef": "奖励 #{{entryId}} · 点按以打开领取中心"
     },
     "errorBoundary": {
       "detailAria": "错误详情",
@@ -1954,7 +1957,9 @@
       "modeFull": "已支付全额费率",
       "tariffPaidLine": "已承担 {{amount}} VPFI 费率",
       "precloseNoRefundWarn": "本笔贷款带有已支付的全额费率。它在贷款开立时按全期定价，提前结清不予退还。",
-      "nftTravelNote": "出借人的全额费用模式与仓位本身绑定——它会随仓位 NFT 一起转到该仓位的买方。"
+      "nftTravelNote": "出借人的全额费用模式与仓位本身绑定——它会随仓位 NFT 一起转到该仓位的买方。",
+      "makerCeilingBelowQuote": "此订单全额的当前费率报价为 {{quote}} VPFI，高于你即将签署的 {{ceiling}} VPFI 上限。价格高于上限的成交无法收取 Full 费率，因此会被拒绝；如果你在下方允许，则会在不使用 Full 的情况下成交。较小的部分成交仍可能低于上限。你仍然可以发布：真正起作用的是成交发生时的报价，而报价可能下降。",
+      "makerSignedNote": "此选项已签入你的订单，发布后无法更改——如需更改，请取消后重新发布。每次成交在发生时收取各自的费率，绝不超过该次成交在你上限中所占的份额。"
     },
     "vpfi": {
       "nothing": "无。",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "swap-to-repay 已成交",
         "SwapToRepayIntentCancelled": "swap-to-repay 已取消",
         "SwapToRepayIntentForceCancelled": "swap-to-repay 已取消",
-        "SwapToRepayIntentLotPulled": "swap-to-repay 抵押品已取出",
-        "FallbackCustodyMoved": "抵押品托管已更新",
         "PeriodicInterestSettled": "利息已结算",
         "PeriodicInterestAutoLiquidated": "因利息自动清算",
         "RepayPartialPeriodAdvanced": "利息周期已推进",
@@ -2329,7 +2332,9 @@
       "empty": "暂无奖励。奖励会在出借或借入活动后出现。",
       "waiting": "您的奖励正在最终确定 — 奖励日需跨所有链关闭后才能领取。请稍后查看。",
       "claim": "领取奖励",
-      "readyToClaim": "{{amount}} VPFI 可领取。"
+      "readyToClaim": "{{amount}} VPFI 可领取。",
+      "expiryCountdown": "请在 {{date}} 之前领取：在整个领取期限内未领取的奖励将返回奖励计划。该日期只会向后推迟——奖励无法领取的时间不计算在内。",
+      "expiryFinalNotice": "最终通知：请在 {{date}} 之前领取，否则此奖励将返回奖励计划。奖励无法领取的时间不计入该日期。"
     },
     "sanctions": {
       "title": "此钱包已被 Vaipakam 的制裁筛查标记。",

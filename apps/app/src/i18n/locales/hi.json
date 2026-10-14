@@ -325,7 +325,9 @@
         "hf_warn": "एक loan की health 1.5 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_alert": "एक loan की health 1.2 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_critical": "एक loan की health 1.05 से नीचे गई, 1.0 liquidation line के करीब — action लेने के लिए खोलें।",
-        "generic": "आपके loan पर update है।"
+        "generic": "आपके loan पर update है।",
+        "reward_final_notice": "आपका एक इंटरैक्शन रिवॉर्ड अपनी अंतिम सूचना अवधि में प्रवेश कर चुका है — रिवॉर्ड कार्यक्रम में लौटने से पहले क्लेम सेंटर में इसे क्लेम करें।",
+        "reward_expired": "आपका एक बिना क्लेम किया इंटरैक्शन रिवॉर्ड अपनी क्लेम अवधि के अंत तक पहुँच गया और रिवॉर्ड कार्यक्रम में लौट गया।"
       },
       "loanRef": "Loan #{{loanId}} · देखने के लिए tap करें",
       "unreadBadgeTitle_zero": "{{count}} unread notifications",
@@ -333,7 +335,8 @@
       "unreadBadgeTitle_two": "{{count}} unread notifications",
       "unreadBadgeTitle_few": "{{count}} unread notifications",
       "unreadBadgeTitle_many": "{{count}} unread notifications",
-      "unreadBadgeTitle_other": "{{count}} unread notifications"
+      "unreadBadgeTitle_other": "{{count}} unread notifications",
+      "rewardRef": "रिवॉर्ड #{{entryId}} · क्लेम सेंटर खोलने के लिए टैप करें"
     },
     "errorBoundary": {
       "detailAria": "Error detail",
@@ -1954,7 +1957,9 @@
       "modeFull": "पूरा tariff चुकाया गया",
       "tariffPaidLine": "{{amount}} VPFI tariff वहन किया गया",
       "precloseNoRefundWarn": "इस loan पर चुकाया हुआ पूरा tariff है। यह loan खुलते समय पूरे term पर आँका गया था और जल्दी बंद करने पर वापस नहीं होता।",
-      "nftTravelNote": "Lender का Full fee mode position से ही जुड़ा है — यह position NFT के साथ इस position के ख़रीदार तक चला जाता है।"
+      "nftTravelNote": "Lender का Full fee mode position से ही जुड़ा है — यह position NFT के साथ इस position के ख़रीदार तक चला जाता है।",
+      "makerCeilingBelowQuote": "इस ऑर्डर के पूरे आकार के लिए वर्तमान टैरिफ कोटेशन {{quote}} VPFI है — जो उस {{ceiling}} VPFI सीमा से अधिक है जिस पर आप हस्ताक्षर करने वाले हैं। आपकी सीमा से ऊपर मूल्य वाला फ़िल Full टैरिफ नहीं ले सकता, इसलिए उसे अस्वीकार कर दिया जाएगा, या यदि आपने नीचे इसकी अनुमति दी है तो बिना Full के भरा जाएगा। छोटे आंशिक फ़िल अब भी सीमा के भीतर आ सकते हैं। आप इसे किसी भी स्थिति में पोस्ट कर सकते हैं: मायने वह कोटेशन रखता है जो फ़िल होने के समय होता है, और वह घट सकता है।",
+      "makerSignedNote": "यह विकल्प आपके ऑर्डर में हस्ताक्षरित होता है, इसलिए पोस्ट करने के बाद इसे बदला नहीं जा सकता — इसे बदलने के लिए रद्द करें और फिर से पोस्ट करें। हर फ़िल पर उसके होने के समय उसका अपना टैरिफ लगता है, जो उस फ़िल के हिस्से की आपकी सीमा से कभी अधिक नहीं होता।"
     },
     "vpfi": {
       "nothing": "कुछ नहीं।",
@@ -2300,8 +2305,6 @@
         "SwapToRepayIntentFilled": "Swap-to-repay filled",
         "SwapToRepayIntentCancelled": "Swap-to-repay cancelled",
         "SwapToRepayIntentForceCancelled": "Swap-to-repay cancelled",
-        "SwapToRepayIntentLotPulled": "Swap-to-repay के लिए collateral लिया गया",
-        "FallbackCustodyMoved": "Collateral custody अपडेट हुई",
         "PeriodicInterestSettled": "Interest settled",
         "PeriodicInterestAutoLiquidated": "Interest के लिए auto-liquidated",
         "RepayPartialPeriodAdvanced": "Interest period आगे बढ़ा",
@@ -2329,7 +2332,9 @@
       "empty": "अभी कोई rewards नहीं। Rewards lending या borrowing activity के बाद दिखते हैं।",
       "waiting": "आपके rewards finalize हो रहे हैं — reward day सभी chains पर close होकर ही claimable होता है। बाद में check करें।",
       "claim": "Rewards claim करें",
-      "readyToClaim": "{{amount}} VPFI claim के लिए ready।"
+      "readyToClaim": "{{amount}} VPFI claim के लिए ready।",
+      "expiryCountdown": "{{date}} से पहले क्लेम करें: अपनी पूरी क्लेम अवधि तक बिना क्लेम किया गया रिवॉर्ड रिवॉर्ड कार्यक्रम में लौट जाता है। तारीख केवल आगे खिसक सकती है — जिस समय आपका रिवॉर्ड क्लेम नहीं किया जा सकता, वह गिना नहीं जाता।",
+      "expiryFinalNotice": "अंतिम सूचना: {{date}} से पहले क्लेम करें, वरना यह रिवॉर्ड रिवॉर्ड कार्यक्रम में लौट जाएगा। जिस समय आपका रिवॉर्ड क्लेम नहीं किया जा सकता, वह इस तारीख में नहीं गिना जाता।"
     },
     "sanctions": {
       "title": "यह wallet Vaipakam की sanctions screening द्वारा flag है।",
