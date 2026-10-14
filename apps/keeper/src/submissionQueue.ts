@@ -61,8 +61,14 @@
  * running at once in DIFFERENT isolates are not ordered by it. At a
  * one-minute cadence that needs a tick still sending a minute after it
  * started, which the free plan's CPU limit makes unlikely but does not
- * rule out. If it happens, one send fails with a nonce error and is
- * retried by its pass on a later tick; nothing is lost or doubled.
+ * rule out. If it happens, the two can sign different actions with the
+ * same nonce. Usually the second is refused and its pass retries it on a
+ * later tick. But if the second carries a high enough fee, the node lets
+ * it REPLACE the first, and the first pass, which already has a hash,
+ * logs an action that never lands. Its own next attempt finds the loan
+ * still open and tries again, so the action is delayed rather than lost
+ * for good, but the log line that said it was sent is wrong. Closing that
+ * needs a nonce lease shared between isolates (for example in D1).
  */
 import type { Account, Address, WalletClient } from 'viem';
 import {
@@ -71,7 +77,10 @@ import {
   sendRawTransaction,
   sendTransaction,
   signTransaction,
+  writeContract,
 } from 'viem/actions';
+import { HttpRequestError, TimeoutError } from 'viem';
+import { SubrequestBudgetExhausted } from './subrequestBudget';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -125,14 +134,23 @@ export async function withSubmissionSlot<T>(
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
     const nonce = fresh ? Math.max(pending, floor.next) : pending;
     let wasSigned = false;
+    let result: T;
     try {
-      return await send(nonce, () => {
+      result = await send(nonce, () => {
         wasSigned = true;
       });
-    } finally {
-      // Accepted, or possibly relayed: either way this nonce is spoken for.
-      if (wasSigned) floors.set(key, { next: nonce + 1, at: now() });
+    } catch (err) {
+      // Possibly relayed: the nonce is spoken for. A node that ANSWERED
+      // with a refusal took nothing, and moving the floor past an unused
+      // nonce would make every later send "nonce too high" and refresh
+      // the floor each time, so the gap would never close.
+      if (wasSigned && !isDefinitiveRejection(err)) {
+        floors.set(key, { next: nonce + 1, at: now() });
+      }
+      throw err;
     }
+    floors.set(key, { next: nonce + 1, at: now() });
+    return result;
   } finally {
     release();
     if (tails.get(key) === tail) tails.delete(key);
@@ -140,16 +158,55 @@ export async function withSubmissionSlot<T>(
 }
 
 /**
- * `wallet`, with `sendTransaction` routed through the queue. `writeContract`
- * reaches `sendTransaction` through the client, so it is queued too; every
- * other action is untouched. The override calls viem's own action on the
- * UNEXTENDED client, so nothing re-enters the queue.
+ * Answers that say the nonce IS taken: the node already holds a
+ * transaction there, quite possibly this one (viem retries a broadcast
+ * whose answer was lost, and the retry is refused this way). These must
+ * keep the floor, or the next send reuses the nonce and replaces it.
+ */
+const NONCE_TAKEN = /nonce too low|already known|known transaction|replacement transaction/i;
+
+/**
+ * Whether `err` is the node's own answer refusing the transaction, as
+ * opposed to an outcome nobody saw. A JSON-RPC error carries a numeric
+ * `code`; a timeout or a dropped connection does not. viem's
+ * `UnknownRpcError` carries `-1`, its "no code" placeholder, so that
+ * counts as unseen. A request the subrequest budget refused before
+ * sending is definitive too, in the other direction: nothing left the
+ * Worker. The whole cause chain is read before deciding, because viem
+ * wraps the node's answer and a placeholder outer code must not hide an
+ * inner timeout or a nonce-taken answer.
+ */
+export function isDefinitiveRejection(err: unknown): boolean {
+  const chain: unknown[] = [];
+  for (let e: unknown = err; e && chain.length < 8; e = (e as { cause?: unknown }).cause) {
+    chain.push(e);
+  }
+  if (chain.some((e) => e instanceof SubrequestBudgetExhausted)) return true;
+  if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
+  if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
+    return false;
+  }
+  return chain.some((e) => {
+    const code = (e as { code?: unknown }).code;
+    return typeof code === 'number' && code !== -1;
+  });
+}
+
+/**
+ * `wallet`, with `sendTransaction` AND `writeContract` routed through the
+ * queue. Both must be replaced: the wallet's own `writeContract` is a
+ * closure over the client it was built with, so replacing
+ * `sendTransaction` alone leaves every `writeContract` call unqueued. The
+ * replacement `writeContract` runs viem's action against a client whose
+ * `sendTransaction` is the queued one, which is where viem looks it up.
+ * The queued send calls viem's actions on the UNEXTENDED client, so
+ * nothing re-enters the queue. Every other action is untouched.
  */
 export function queuedWallet(wallet: WalletClient, chainId: number): WalletClient {
-  return wallet.extend((base) => ({
-    // Typed loosely: viem's generic signature for this action cannot be
+  return wallet.extend((base) => {
+    // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
-    sendTransaction: ((args: Parameters<typeof sendTransaction>[1]) => {
+    const queuedSend = (args: Parameters<typeof sendTransaction>[1]) => {
       const account = (args.account ?? base.account) as Account | Address | undefined;
       // Not a local signer, or a nonce the caller chose: viem handles the
       // first (and reports a missing account), and the second is the
@@ -173,6 +230,12 @@ export function queuedWallet(wallet: WalletClient, chainId: number): WalletClien
         signed();
         return sendRawTransaction(base, { serializedTransaction: serialized });
       });
-    }) as never,
-  })) as unknown as WalletClient;
+    };
+    const routed = { ...base, sendTransaction: queuedSend };
+    return {
+      sendTransaction: queuedSend as never,
+      writeContract: ((args: Parameters<typeof writeContract>[1]) =>
+        writeContract(routed as never, args)) as never,
+    };
+  }) as unknown as WalletClient;
 }
