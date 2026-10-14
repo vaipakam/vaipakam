@@ -256,7 +256,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
                 OfferCreateFacet.createSignedOfferVault.selector,
                 o.signer,
                 params,
-                LibSignedOffer.makerFullFor(o, _ceiling(o)) // #1949 — the whole order
+                LibSignedOffer.makerFullFor(o, 0, _ceiling(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));
@@ -279,7 +279,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
                 permit,
                 witness,
                 permitSig,
-                LibSignedOffer.makerFullFor(o, _ceiling(o)) // #1949 — the whole order
+                LibSignedOffer.makerFullFor(o, 0, _ceiling(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));

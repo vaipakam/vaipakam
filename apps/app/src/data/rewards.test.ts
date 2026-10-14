@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
-import { ClaimPreviewUnavailable, previewClaimByExecution } from './rewards';
+import { ClaimPreviewUnavailable, previewClaimByExecution, readHeldReward } from './rewards';
 
 /**
  * A2-iii — the app reads the exact claimable figure BY EXECUTION: the
@@ -63,5 +63,35 @@ describe('previewClaimByExecution', () => {
       throw new Error('rpc down');
     });
     await expect(previewClaimByExecution(c, DIAMOND, USER)).rejects.toThrow('rpc down');
+  });
+});
+
+/**
+ * #2489 r2 — the held balance is read on its OWN, so the Claim Center can
+ * offer it exactly when the combined claim's preview is unavailable.
+ */
+describe('readHeldReward', () => {
+  const DIAMOND = '0xdia0000000000000000000000000000000000000' as const;
+  const USER = '0x00000000000000000000000000000000000a11ce' as const;
+  const client = (read: () => unknown) => ({ readContract: async () => read() }) as never;
+
+  it('returns the wallet held balance', async () => {
+    await expect(readHeldReward(client(() => [7n, 9n]), DIAMOND, USER)).resolves.toBe(7n);
+  });
+
+  it('a revert (the view absent on this chain) reads as zero', async () => {
+    const reverted = () => {
+      const inner = new ContractFunctionRevertedError({ abi: [], data: undefined, functionName: 'getSanctionsHeldReward' });
+      const err = new BaseError('reverted');
+      (err as unknown as { walk: (fn: unknown) => unknown }).walk = () => inner;
+      throw err;
+    };
+    await expect(readHeldReward(client(reverted), DIAMOND, USER)).resolves.toBe(0n);
+  });
+
+  it('a transport failure throws — never read as "nothing held"', async () => {
+    await expect(readHeldReward(client(() => { throw new Error('fetch failed'); }), DIAMOND, USER)).rejects.toThrow(
+      'fetch failed',
+    );
   });
 });

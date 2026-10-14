@@ -2337,6 +2337,9 @@
       "waiting": "Vos récompenses sont en cours de finalisation — un jour de récompense se clôture sur toutes les chaînes avant de pouvoir être retiré. Revenez bientôt.",
       "claim": "Retirer les récompenses",
       "readyToClaim": "{{amount}} VPFI prêts à réclamer.",
+      "heldReady": "{{amount}} VPFI de vos récompenses ont été mis de côté pour vous et sont prêts à réclamer.",
+      "heldNote": "Vous pouvez les retirer séparément, même si vos autres récompenses ne peuvent pas être retirées pour le moment.",
+      "claimHeld": "Retirer les récompenses mises de côté",
       "expiryCountdown": "Réclamez avant le {{date}} : une récompense laissée non réclamée pendant toute sa période de réclamation retourne au programme de récompenses. La date ne peut que reculer : le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas.",
       "expiryFinalNotice": "Dernier avis : réclamez avant le {{date}}, sinon cette récompense retournera au programme de récompenses. Le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas pour cette date."
     },

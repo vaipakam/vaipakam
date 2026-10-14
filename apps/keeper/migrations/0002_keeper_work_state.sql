@@ -1,6 +1,6 @@
 -- apps/keeper/migrations/0002_keeper_work_state.sql
 --
--- Two pieces of keeper-private state (#2489, Codex round 1). Additive, like
+-- Keeper-private state added in #2489 (Codex rounds 1 and 2). Additive, like
 -- every keeper migration: it lands while the previous keeper is still serving.
 
 -- The keeper's DONE set. A pass that finds its work in the shared event log
@@ -22,6 +22,22 @@ CREATE TABLE IF NOT EXISTS keeper_work_done (
   item     TEXT    NOT NULL,
   done_at  INTEGER NOT NULL,  -- unix seconds
   PRIMARY KEY (chain_id, diamond, kind, item)
+);
+
+-- The sanctions-hold pass's SCREEN cursor (Codex #2489 r2). A wallet flagged
+-- while it holds ordinary (unstaged) reward leaves no trace the pass could
+-- find: its claim's observation reverts with the claim, so there is no
+-- evidence event and no staging record. So the pass screens every loan party
+-- through the contract's classifier, a bounded slice each tick, sized to cover
+-- them all within a day; this is where the slice resumes. `cursor` is the last
+-- address screened (lowercase), '' to start over. Disposable: an empty table
+-- restarts the screen from the first address.
+CREATE TABLE IF NOT EXISTS keeper_sanctions_screen (
+  chain_id   INTEGER NOT NULL,
+  diamond    TEXT    NOT NULL,
+  cursor     TEXT    NOT NULL,
+  updated_at INTEGER NOT NULL,  -- unix seconds
+  PRIMARY KEY (chain_id, diamond)
 );
 
 -- The one-time cutover copy's completion record (DeploymentRunbook, "Keeper

@@ -29,7 +29,16 @@
 //
 // Gated by KEEPER_ENABLED + REWARD_DELIVERY_PROOF_ENABLED.
 
-import { createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  createPublicClient,
+  http,
+  type Abi,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from 'viem';
 import {
   RewardEpochFacetABI,
   RewardRemittanceLensFacetABI,
@@ -41,6 +50,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
 import { listBudgetDeliveries, listWorkDone, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
+import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
 const ABI = [
   ...(RewardEpochFacetABI as Abi),
@@ -54,6 +64,8 @@ const MAX_WRITES_PER_TICK = 20;
 const RECEIPT_TIMEOUT_MS = 30_000;
 /** Reads per `aggregate3` (#1946). */
 const READ_CHUNK = 100;
+/** Days one flat page links (`LibRewardCustody.TRANSPORT_INDEX_PAGE`). */
+const TRANSPORT_INDEX_PAGE = 32;
 /** This pass's done-set kind (`keeper_work_done.kind`). */
 const DONE_KIND = 'delivery_proof' as const;
 
@@ -308,10 +320,33 @@ async function actionsFor(
 }
 
 /**
+ * The funded days of a reservation from its own immutable record
+ * (`fundedDayBits`, Codex #2489 r2): bit `i` set means `dayIds[i]` was funded
+ * — on the wire, in order. Null when the reservation predates the record
+ * (an empty bitmap over a non-empty day list), so the caller falls back.
+ * Pure; pinned by the tests.
+ */
+export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly bigint[]): bigint[] | null {
+  if (dayIds.length > 0 && bits.length === 0) return null;
+  const out: bigint[] = [];
+  for (let i = 0; i < dayIds.length; i++) {
+    const word = bits[i >> 8] ?? 0n;
+    if ((word >> BigInt(i & 255)) & 1n) out.push(dayIds[i]);
+  }
+  return out;
+}
+
+/**
  * The runbook's reconstruction rule: Base's reservation lists every day the
  * remit CLOSED; the wire lists only the days FUNDED for this chain, in order.
- * Filter, chunk, root — and refuse unless the rebuilt root equals the
- * reservation's AND the packet's, so a wrong list is never submitted.
+ * The funded ones are read from the reservation's own record, written once at
+ * dispatch (Codex #2489 r2): the live per-day mark this used to filter by is
+ * deleted by a release and rewritten by a later remit of the same days, so a
+ * delivery that executed after its release rebuilt an empty or wrong list
+ * forever. Only a reservation dispatched before the record existed falls back
+ * to the live mark. Then chunk, root — and refuse unless the rebuilt root
+ * equals the reservation's AND the packet's, so a wrong list is never
+ * submitted.
  */
 async function rebuildRootedList(
   baseClient: PublicClient,
@@ -326,11 +361,13 @@ async function rebuildRootedList(
     abi: ABI,
     functionName: 'getRemitReservation',
     args: [remitId],
-  })) as { dayIds: readonly bigint[]; dayListRoot: Hex; dstChainId: number };
+  })) as { dayIds: readonly bigint[]; dayListRoot: Hex; dstChainId: number; fundedDayBits?: readonly bigint[] };
   if (Number(r.dstChainId) !== chainId) {
     console.warn(`[keeper] deliveryProof remit=${remitId}: the reservation names chain ${r.dstChainId}, not ${chainId} — skipped`);
     return null;
   }
+  const recorded = fundedDaysFromBits(r.dayIds, r.fundedDayBits ?? []);
+  if (recorded !== null) return checkedRoot(recorded, r.dayListRoot, packetRoot, remitId);
   const remitted = await batchedRead(
     baseClient as never,
     r.dayIds.map((d) => ({
@@ -347,9 +384,15 @@ async function rebuildRootedList(
     if (!res || res.status !== 'success') return null; // never guess a list
     if ((res.result as bigint) !== 0n) funded.push(r.dayIds[i]);
   }
+  return checkedRoot(funded, r.dayListRoot, packetRoot, remitId);
+}
+
+/** `funded`, only when its d6 root equals BOTH the reservation's and the
+ *  packet's; null (and a warning) otherwise, so a wrong list is never sent. */
+function checkedRoot(funded: bigint[], reservationRoot: Hex, packetRoot: Hex, remitId: bigint): bigint[] | null {
   if (funded.length === 0) return null;
   const root = d6Root(d6Leaves(funded));
-  if (root.toLowerCase() !== r.dayListRoot.toLowerCase() || root.toLowerCase() !== packetRoot.toLowerCase()) {
+  if (root.toLowerCase() !== reservationRoot.toLowerCase() || root.toLowerCase() !== packetRoot.toLowerCase()) {
     console.warn(`[keeper] deliveryProof remit=${remitId}: rebuilt root ${root} disagrees with the reservation or the packet — skipped`);
     return null;
   }
@@ -411,26 +454,112 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
   return out;
 }
 
+/** One contract call: the function and its arguments. */
+interface Call {
+  functionName: string;
+  args: readonly unknown[];
+}
+
+/** The UNHINTED call for an action — the cheap common case. */
+function callFor(a: ProofAction): Call {
+  return a.kind === 'indexPage'
+    ? { functionName: 'materializeTransportBatchPage', args: [a.batchId, a.dayIds] }
+    : a.kind === 'indexChunk'
+      ? { functionName: 'materializeTransportBatchChunk', args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, [], []] }
+      : a.kind === 'proveChunk'
+        ? { functionName: 'proveDeliveryDayChunk', args: [a.packetHash, BigInt(a.chunkIndex), a.dayIds, a.proof] }
+        : { functionName: 'proveDeliveryDayList', args: [a.packetHash, a.dayIds] };
+}
+
+/** Whether `err` is the contract refusing an unhinted link past its bounded
+ *  walk — the one failure a verified hint cures. Read from the decoded revert,
+ *  with the message as a fallback for a node that returns no data. */
+export function isWalkExceeded(err: unknown): boolean {
+  if (err instanceof BaseError) {
+    const reverted = err.walk((e) => e instanceof ContractFunctionRevertedError);
+    if (reverted instanceof ContractFunctionRevertedError && reverted.data?.errorName === 'TransportIndexWalkExceeded') {
+      return true;
+    }
+  }
+  return String((err as { message?: string })?.message ?? '').includes('TransportIndexWalkExceeded');
+}
+
+/** The chain's own day-order views, read through `client` (#2489 r2). */
+function dayOrderReader(client: PublicClient, diamond: Address): DayOrderReader {
+  const read = (functionName: string, args: readonly unknown[]) =>
+    client.readContract({ address: diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
+  const asPage = (r: unknown): OrderPage => {
+    const [page, arrivedAt, next] = r as readonly [readonly Hex[], readonly (bigint | number)[], Hex];
+    return { page, arrivedAt: arrivedAt.map((x) => BigInt(x)), next };
+  };
+  return {
+    cursor: async (day) => ((await read('getTransportDayIndex', [day])) as readonly [bigint, Hex])[1],
+    listFrom: async (day, from, limit) => asPage(await read('getTransportDayBatchesFrom', [day, from, BigInt(limit)])),
+    lateFrom: async (day, from, limit) => asPage(await read('getTransportDayLateFrom', [day, from, BigInt(limit)])),
+  };
+}
+
+/** The HINTED call for an index action, its hints derived from the chain's
+ *  own views and verified by the contract (`transportHints.ts`). A flat page
+ *  links days `[indexedDays, indexedDays + 32)` of the whole list, so only
+ *  those carry a hint; a rooted chunk links every day it carries. */
+async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call | null> {
+  if (a.kind !== 'indexPage' && a.kind !== 'indexChunk') return null;
+  const client = ctx.client as unknown as PublicClient;
+  const packet = (await client.readContract({
+    address: ctx.diamond,
+    abi: ABI,
+    functionName: 'getIngressPacket',
+    args: [a.batchId],
+  } as never)) as { arrivedAt: bigint | number };
+  const arrived = BigInt(packet.arrivedAt);
+  const reader = dayOrderReader(client, ctx.diamond);
+  if (a.kind === 'indexChunk') {
+    const h = await hintsForDays(reader, a.dayIds, 0, a.dayIds.length, a.batchId, arrived);
+    return {
+      functionName: 'materializeTransportBatchChunk',
+      args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, h.hints, h.lateHints],
+    };
+  }
+  const b = (await client.readContract({
+    address: ctx.diamond,
+    abi: ABI,
+    functionName: 'getTransportBatch',
+    args: [a.batchId],
+  } as never)) as readonly [Hex, bigint, bigint, number, number, boolean];
+  const done = Number(b[4]);
+  const h = await hintsForDays(reader, a.dayIds, done, done + TRANSPORT_INDEX_PAGE, a.batchId, arrived);
+  return { functionName: 'materializeTransportBatchPageHinted', args: [a.batchId, a.dayIds, h.hints, h.lateHints] };
+}
+
 async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofAction): Promise<void> {
-  const call =
-    a.kind === 'indexPage'
-      ? { functionName: 'materializeTransportBatchPage', args: [a.batchId, a.dayIds] }
-      : a.kind === 'indexChunk'
-        ? { functionName: 'materializeTransportBatchChunk', args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, [], []] }
-        : a.kind === 'proveChunk'
-          ? { functionName: 'proveDeliveryDayChunk', args: [a.packetHash, BigInt(a.chunkIndex), a.dayIds, a.proof] }
-          : { functionName: 'proveDeliveryDayList', args: [a.packetHash, a.dayIds] };
-  try {
-    await ctx.client.simulateContract({
+  let call = callFor(a);
+  const simulate = (c: Call) =>
+    ctx.client.simulateContract({
       address: ctx.diamond,
       abi: ABI,
-      functionName: call.functionName,
-      args: call.args as never,
+      functionName: c.functionName,
+      args: c.args as never,
       account: ctx.wallet.account!,
     });
+  try {
+    await simulate(call);
   } catch (err) {
-    console.log(`[keeper] deliveryProof ${call.functionName} skipped: ${shortErr(err)}`);
-    return;
+    // A day too crowded for the contract's bounded walk (Codex #2489 r2):
+    // retry once with verified hints, rather than skipping the same action
+    // on every tick and leaving the batch forever short of whole.
+    const hinted = isWalkExceeded(err) ? await hintedCallFor(ctx, a).catch(() => null) : null;
+    if (!hinted) {
+      console.log(`[keeper] deliveryProof ${call.functionName} skipped: ${shortErr(err)}`);
+      return;
+    }
+    try {
+      await simulate(hinted);
+      call = hinted;
+    } catch (err2) {
+      console.log(`[keeper] deliveryProof ${hinted.functionName} (hinted) skipped: ${shortErr(err2)}`);
+      return;
+    }
   }
   try {
     const hash = await ctx.wallet.writeContract({

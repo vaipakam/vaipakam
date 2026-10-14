@@ -177,7 +177,8 @@ as a privilege boundary:
   records** (effective once its one-time cutover is deployed —
   `docs/ops/DeploymentRunbook.md`). `keeper_commitment_day`, the scan
   frontiers, the remit-ack log, `hf_band_state` and `keeper_ops_alert`
-  (with, since #2489, the passes' `keeper_work_done` and the cutover's
+  (with, since #2489, the passes' `keeper_work_done`, the sanctions
+  screen's `keeper_sanctions_screen` and the cutover's
   `keeper_cutover`) move to a keeper-private D1 (`vaipakam-keeper-db`) that the indexer
   does not bind, so (c) no longer reaches the completion marker above.
   It does NOT settle #1722: every input the keeper reads from the shared
@@ -407,7 +408,8 @@ NO secrets — the frontend bundle is static.
   **Since #2450 it binds a second, PRIVATE D1** — `vaipakam-keeper-db`
   as `KEEPER_DB` — and `hf_band_state`, the `keeper_commitment_scan` /
   `keeper_commitment_day` pair, the `keeper_remit_ack*` pair,
-  `keeper_ops_alert`, `keeper_work_done` and `keeper_cutover` live there, with their schema in
+  `keeper_ops_alert`, `keeper_work_done`, `keeper_sanctions_screen` and
+  `keeper_cutover` live there, with their schema in
   `apps/keeper/migrations/`. The rest of the list above stays on the
   shared binding. (`apps/keeper/README.md` carries the current split.)
 

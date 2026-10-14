@@ -567,6 +567,42 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         }
     }
 
+    /// @notice A page of `dayId`'s LATE chain — the links that landed anywhere
+    ///         but the day list's tail — in the chain's order (oldest arrival,
+    ///         batch id on a tie), starting AT `from` (zero: the chain's head),
+    ///         with the node the next page starts at (zero: none).
+    /// @dev    What a materializer reads to name a verified late predecessor
+    ///         (`lateHints` of {materializeTransportBatchPageHinted} and
+    ///         {materializeTransportBatchChunk}): without it the late chain
+    ///         could only be walked by the bounded unhinted search, so an epoch
+    ///         indexed behind more newer late links than that walk covers could
+    ///         never be indexed (Codex #2489 r2). Each page costs its own length;
+    ///         a node outside the chain pages nothing.
+    function getTransportDayLateFrom(uint256 dayId, bytes32 from, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory page, uint64[] memory arrivedAt, bytes32 next)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 head = s.transportDayLateHead[dayId];
+        bool inChain = from == bytes32(0) || from == head || s.transportDayLatePrev[dayId][from] != bytes32(0);
+        bytes32 node = !inChain ? bytes32(0) : (from == bytes32(0) ? head : from);
+        bytes32[] memory buf = new bytes32[](limit);
+        uint256 w;
+        while (node != bytes32(0) && w < limit) {
+            buf[w] = node;
+            unchecked { ++w; }
+            node = s.transportDayLateNext[dayId][node];
+        }
+        next = node;
+        page = new bytes32[](w);
+        arrivedAt = new uint64[](w);
+        for (uint256 k; k < w; ++k) {
+            page[k] = buf[k];
+            arrivedAt[k] = s.ingressPackets[buf[k]].arrivedAt;
+        }
+    }
+
     /// @notice The batch ids a plan of `dayId` can look up — the nodes from
     ///         the scan's start, at most one prune's worth and one window —
     ///         what a dry run hands the plan as a compact overlay (Codex

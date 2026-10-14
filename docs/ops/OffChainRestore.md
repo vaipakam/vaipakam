@@ -177,7 +177,9 @@ then deploy.
 
    `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
    cursors, completion markers, remit-ack log, HF-band edge state,
-   ops-alert de-dup, the passes' record of finished work (`keeper_work_done`)
+   ops-alert de-dup, the passes' record of finished work (`keeper_work_done`),
+   the sanctions screen's cursor (`keeper_sanctions_screen`; empty, the screen
+   simply starts over)
    and the cutover's completion record, which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
    restore it starts EMPTY, exactly as these tables always did (none was

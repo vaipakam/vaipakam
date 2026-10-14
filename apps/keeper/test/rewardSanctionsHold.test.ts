@@ -19,12 +19,18 @@ import {
   OBSERVE_AFTER_SEC,
   PASS_CADENCE_SEC,
   candidateOwners,
+  nextScreenCursor,
   planSanctionsHold,
+  SCREEN_MAX_PER_TICK,
+  SCREEN_MIN_PER_TICK,
+  screenSliceSize,
   raiseAlerts,
   type OwnerSanctionsStatus,
 } from '../src/rewardSanctionsHold';
 import {
+  countLoanParties,
   getOpsAlert,
+  listLoanPartiesAfter,
   listOpenSanctionsChains,
   listOpenStagingOwners,
   listOpenStagingRecordKeysForUser,
@@ -219,10 +225,80 @@ describe('raiseAlerts', () => {
       observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
-    await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
+    await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW, new Set([A, B]));
     expect(prepared.filter((s) => s.startsWith('DELETE')), 'one clear: the alert that was open').toHaveLength(1);
     const left = h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[];
     expect(left.map((r) => r.alert_key), "another chain's alert is not this pass's to clear").toEqual([otherChain]);
+  });
+});
+
+describe('raiseAlerts — an owner who left the candidates (Codex #2489 r2)', () => {
+  const quiet = {
+    observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
+    deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+  };
+  it("clears a former candidate's alerts, keeps a current candidate's even when its read failed this tick", async () => {
+    const h = createKeeperD1();
+    const C = '0x00000000000000000000000000000000000000cc';
+    const keys = [
+      `sanctions-hold-overdue:${CHAIN}:${A}`, // A: still a candidate, classified this tick
+      `sanctions-hold-no-chain:${CHAIN}:${B}`, // B: still a candidate, but its read failed (not in statuses)
+      `sanctions-observe-deadline:${CHAIN}:${C}`, // C: left the candidates
+      `sanctions-hold-overdue:${CHAIN + 1}:${C}`, // another chain: not this pass's
+    ];
+    for (const k of keys) {
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
+    }
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    // A's overdue alert stands this tick (still overdue), so it must survive.
+    const plan = { ...quiet, overdue: [held({ owner: A })] };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    try {
+      await raiseAlerts(env, CHAIN, [held({ owner: A })], plan, NOW, new Set([A, B]));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const left = (h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map(
+      (r) => r.alert_key,
+    );
+    expect(left).toContain(keys[0]);
+    expect(left, 'a failed read is not a departure').toContain(keys[1]);
+    expect(left, 'gone from the candidates: cleared').not.toContain(keys[2]);
+    expect(left).toContain(keys[3]);
+  });
+});
+
+describe('the loan-party screen (Codex #2489 r2)', () => {
+  it('sizes a tick to cover every party within a day, inside its bounds (straddle)', () => {
+    expect(screenSliceSize(0)).toBe(SCREEN_MIN_PER_TICK);
+    expect(screenSliceSize(24 * SCREEN_MIN_PER_TICK), 'a day at the floor').toBe(SCREEN_MIN_PER_TICK);
+    expect(screenSliceSize(24 * SCREEN_MIN_PER_TICK + 1), 'one more party lifts it').toBe(SCREEN_MIN_PER_TICK + 1);
+    expect(screenSliceSize(24 * SCREEN_MAX_PER_TICK), 'a day at the ceiling').toBe(SCREEN_MAX_PER_TICK);
+    expect(screenSliceSize(24 * SCREEN_MAX_PER_TICK + 1000), 'capped past it').toBe(SCREEN_MAX_PER_TICK);
+  });
+
+  it('resumes past the last party read, never past a failed read, and starts over at the end', () => {
+    const s = ['0x01', '0x02', '0x03'];
+    expect(nextScreenCursor('0x00', s, [true, true, true], 3)).toBe('0x03');
+    expect(nextScreenCursor('0x00', s, [true, false, true], 3), 'stops before the failure').toBe('0x01');
+    expect(nextScreenCursor('0x00', s, [false, true, true], 3), 'no progress past it').toBe('0x00');
+    expect(nextScreenCursor('0x00', s, [true, true, true], 5), 'a short slice reached the end').toBe('');
+  });
+
+  it('reads every original and current lender and borrower once, in address order, from the cursor', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const ins = h.db.prepare(
+      `INSERT INTO loans (chain_id, loan_id, offer_id, lender, borrower, lender_current_owner, borrower_current_owner,
+         principal, collateral_amount, start_block, start_at, updated_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?, '0', '0', 1, 1, 1)`,
+    );
+    const w = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+    ins.run(CHAIN, 1, w(3), w(1), w(3), w(9)); // borrower position sold to 9
+    ins.run(CHAIN, 2, w(1), w(2).toUpperCase().replace('0X', '0x'), w(1), w(2));
+    ins.run(CHAIN + 1, 3, w(7), w(8), w(7), w(8));
+    expect(await countLoanParties(h.d1 as D1Database, CHAIN)).toBe(4);
+    expect(await listLoanPartiesAfter(h.d1 as D1Database, CHAIN, '', 10)).toEqual([w(1), w(2), w(3), w(9)]);
+    expect(await listLoanPartiesAfter(h.d1 as D1Database, CHAIN, w(2), 2), 'after the cursor, bounded').toEqual([w(3), w(9)]);
   });
 });
 

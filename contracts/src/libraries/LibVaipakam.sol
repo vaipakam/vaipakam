@@ -9237,6 +9237,18 @@ library LibVaipakam {
         ///      under the delivery's own consumed acknowledgement. Booked once,
         ///      at the first attested consumption; 1 → 2 moves it across.
         uint8 recycledBooked;
+        /// @dev #2489 (Codex r2), appended — WHICH of `dayIds` this reservation
+        ///      funded: bit `i` (word `i >> 8`, bit `i & 255`) is set when
+        ///      `dayIds[i]` carried a non-zero slice, i.e. was listed on the wire.
+        ///      Written once at dispatch and never cleared, so the funded list —
+        ///      the list the d6 root commits to — stays recoverable from the
+        ///      reservation alone. The live per-day mark (`rewardBudgetRemitted`)
+        ///      is not that record: a release deletes it for the days this
+        ///      reservation closed, and a later remit of the same days rewrites
+        ///      it, so a list rebuilt from it after either no longer matches the
+        ///      root and the delivery could never be indexed or proven. Empty for
+        ///      a reservation dispatched before it existed, or with no closed day.
+        uint256[] fundedDayBits;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

@@ -93,7 +93,10 @@ test('signed-order maker Full tariff: dark hides it; enabled signs the maker’s
     await card.getByRole('checkbox').nth(1).check();
 
     const post = maker.page.getByRole('button', { name: 'Sign and post' });
-    await consentAndWaitEnabled(maker.page, post);
+    // The consent box BY NAME: the Full opt-in is the first checkbox on this
+    // ticket, so the helper's default would re-tick it instead.
+    const termsConsent = maker.page.getByRole('checkbox', { name: /I understand and agree to the Risk Disclosures/ });
+    await consentAndWaitEnabled(maker.page, post, termsConsent);
 
     // Codex #2489 r1 P1 — the straddle: a ticked Full choice that is not valid
     // (here, no ceiling) is never signed, and never quietly signed as "Full
@@ -103,14 +106,13 @@ test('signed-order maker Full tariff: dark hides it; enabled signs the maker’s
     // keep the button disabled.)
     const seeded = await ceilingInput.inputValue();
     await ceilingInput.fill('');
-    const consent = maker.page.locator('input[type="checkbox"]:visible').first();
-    if (!(await consent.isChecked())) await consent.check();
+    if (!(await termsConsent.isChecked())) await termsConsent.check();
     await expect(
       maker.page.getByText(/before opting in — a Full opt-in without a ceiling can’t be signed\./),
     ).toBeVisible();
     await expect(post).toBeDisabled();
     await ceilingInput.fill(seeded);
-    await consentAndWaitEnabled(maker.page, post);
+    await consentAndWaitEnabled(maker.page, post, termsConsent);
     await post.click();
     await expect(
       maker.page.getByText(/Signed offer posted — no network fee spent\./),

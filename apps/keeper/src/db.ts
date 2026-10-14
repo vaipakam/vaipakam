@@ -786,6 +786,44 @@ export async function listOpenStagingRecordKeysForUser(
     .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-f]{64}$/.test(k));
 }
 
+/**
+ * The loan parties of `chainId` — every lender and borrower the indexer has
+ * recorded, original or current holder, lowercased, in address order — after
+ * `after`, at most `limit`. The universe the sanctions-hold pass SCREENS
+ * (Codex #2489 r2): interaction reward is earned by loan parties, and a party
+ * flagged while it holds only ordinary (unstaged) reward leaves no evidence
+ * event or staging record behind, so the oracle is the only signal and every
+ * party has to be read against it. Address order makes the screen a stable
+ * rotation.
+ */
+const LOAN_PARTIES_SQL = `
+  SELECT addr FROM (
+    SELECT lower(lender) AS addr FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(borrower) FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(lender_current_owner) FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(borrower_current_owner) FROM loans WHERE chain_id = ?1
+  )
+  WHERE addr LIKE '0x%' AND length(addr) = 42`;
+
+export async function listLoanPartiesAfter(
+  db: D1Database,
+  chainId: number,
+  after: string,
+  limit: number,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(`${LOAN_PARTIES_SQL} AND addr > ?2 ORDER BY addr LIMIT ?3`)
+    .bind(chainId, after.toLowerCase(), limit)
+    .all<{ addr: string }>();
+  return (rows.results ?? []).map((r) => r.addr);
+}
+
+/** How many loan parties {@link listLoanPartiesAfter} rotates through. */
+export async function countLoanParties(db: D1Database, chainId: number): Promise<number> {
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM (${LOAN_PARTIES_SQL})`).bind(chainId).first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
 // The reads above are SHARED (the indexer's `activity_events`); the ops-alert
 // helpers below are KEEPER-PRIVATE (#2450, apps/keeper/migrations/0001) — ops
 // alert state stays out of the user-facing database — and take `KEEPER_DB`.
@@ -982,4 +1020,32 @@ export async function markWorkDone(
         .bind(chainId, diamond.toLowerCase(), kind, item, now),
     ),
   );
+}
+
+// ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0002) ──────
+
+/** Where the sanctions-hold screen resumes on `(chainId, diamond)`: the last
+ *  address screened, or '' to start from the first. */
+export async function getSanctionsScreenCursor(db: KeeperD1, chainId: number, diamond: string): Promise<string> {
+  const row = await db
+    .prepare(`SELECT cursor FROM keeper_sanctions_screen WHERE chain_id = ?1 AND diamond = ?2`)
+    .bind(chainId, diamond.toLowerCase())
+    .first<{ cursor: string }>();
+  return row?.cursor ?? '';
+}
+
+/** Record where the screen resumes. */
+export async function putSanctionsScreenCursor(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  cursor: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_sanctions_screen (chain_id, diamond, cursor, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (chain_id, diamond) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), cursor.toLowerCase(), Math.floor(Date.now() / 1000))
+    .run();
 }

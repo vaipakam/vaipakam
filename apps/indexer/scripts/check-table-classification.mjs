@@ -196,6 +196,10 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: 'keeper ops-alert de-duplication (#2450), keeper-private; disposable — an empty table re-sends at most one line per live condition — #1481',
   },
+  keeper_sanctions_screen: {
+    class: 'decision-needed',
+    reason: 'keeper sanctions-hold screen cursor (#2489), keeper-private; disposable — an empty table restarts the screen from the first loan party — #1481',
+  },
   keeper_work_done: {
     class: 'decision-needed',
     reason: 'keeper done set (#2489), keeper-private; disposable — recorded only from an on-chain read, so an empty table costs one more read per finished item and never drops an open one — #1481',

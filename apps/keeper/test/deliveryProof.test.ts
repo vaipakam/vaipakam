@@ -12,7 +12,16 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
-import { canonicalChainOf, deliveryComplete, packetMayNeedWork, planDelivery, type PacketState } from '../src/deliveryProof';
+import {
+  canonicalChainOf,
+  deliveryComplete,
+  fundedDaysFromBits,
+  isWalkExceeded,
+  packetMayNeedWork,
+  planDelivery,
+  type PacketState,
+} from '../src/deliveryProof';
+import { BaseError } from 'viem';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
 import { listBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -216,5 +225,31 @@ describe('deliveryComplete — the done set takes only what the chain shows fini
     expect(deliveryComplete({ packet: packet({ dayListHash: H, disposed: 1n }), batch: null, flatAllLanded: false })).toBe(true);
     expect(deliveryComplete({ packet: packet({ dayListHash: H, kind: 2 }), batch: null, flatAllLanded: false })).toBe(true);
     expect(deliveryComplete({ packet: packet(), batch: null, flatAllLanded: false })).toBe(true);
+  });
+});
+
+describe('fundedDaysFromBits — the rooted list from the reservation record itself (Codex #2489 r2)', () => {
+  it('takes exactly the days whose bit is set, in order, across word boundaries', () => {
+    const dayIds = Array.from({ length: 300 }, (_, i) => BigInt(1000 + i));
+    const bits = [(1n << 0n) | (1n << 255n), 1n << 43n]; // indexes 0, 255, 256 + 43
+    expect(fundedDaysFromBits(dayIds, bits)).toEqual([1000n, 1255n, 1299n]);
+  });
+
+  it('a closed day the reservation did not fund is left out', () => {
+    expect(fundedDaysFromBits([4n, 5n, 6n], [0b101n])).toEqual([4n, 6n]);
+  });
+
+  it('a reservation that predates the record reads as null (the caller falls back), never as "nothing funded"', () => {
+    expect(fundedDaysFromBits([4n, 5n], [])).toBeNull();
+    expect(fundedDaysFromBits([], []), 'no closed day: an empty list').toEqual([]);
+  });
+});
+
+describe('isWalkExceeded — the one failure a verified hint cures', () => {
+  it('reads the error name from the message, and nothing else counts', () => {
+    expect(isWalkExceeded(new BaseError('reverted: TransportIndexWalkExceeded(0x12, 4)'))).toBe(true);
+    expect(isWalkExceeded(new Error('execution reverted: TransportIndexWalkExceeded'))).toBe(true);
+    expect(isWalkExceeded(new BaseError('reverted: TransportIndexHintInvalid'))).toBe(false);
+    expect(isWalkExceeded(new Error('timeout'))).toBe(false);
   });
 });

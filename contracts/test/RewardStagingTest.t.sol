@@ -1139,6 +1139,26 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_epoch().materializeTransportBatchPageHinted(h130, _one(1), hints, new bytes32[](1)), 1, "linked by the late hint");
         bytes32[] memory ids = _epoch().getTransportDayScanIds(1);
         assertEq(ids[0], h130, "the oldest stands first in the list");
+
+        // #2489 (Codex r2) — the late chain is READABLE in its order, page by
+        // page, which is what lets a materializer name the late hint itself
+        // rather than depend on the bounded walk this test just saw refused.
+        (bytes32[] memory late, uint64[] memory at, bytes32 next) = _epoch().getTransportDayLateFrom(1, bytes32(0), 3);
+        assertEq(late.length, 3, "a full page");
+        assertEq(late[0], h130, "the chain's head is the oldest late link");
+        assertEq(late[1], _olderEpoch(128), "then the next oldest");
+        assertEq(late[2], _olderEpoch(127));
+        assertLt(at[0], at[1], "oldest arrival first");
+        assertEq(next, _olderEpoch(126), "the next page starts where this one stopped");
+        (bytes32[] memory more, , ) = _epoch().getTransportDayLateFrom(1, next, 1);
+        assertEq(more[0], _olderEpoch(126), "paging resumes AT next");
+        (bytes32[] memory none, , bytes32 n2) = _epoch().getTransportDayLateFrom(1, keccak256("not-a-link"), 5);
+        assertEq(none.length, 0, "a node outside the chain pages nothing");
+        assertEq(n2, bytes32(0));
+    }
+
+    function _olderEpoch(uint256 i) internal pure returns (bytes32) {
+        return keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("older", i))));
     }
 
     // ───────────────────────── round 5 ─────────────────────────

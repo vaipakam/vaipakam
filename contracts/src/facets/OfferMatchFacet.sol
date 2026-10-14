@@ -369,7 +369,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createSignedOfferVault.selector, o.signer, params,
-                LibSignedOffer.makerFullFor(o, fillAmount) // #1949 — the slice's pro-rata share
+                LibSignedOffer.makerFullFor(o, filledBefore, fillAmount) // #1949 — the slice's cumulative share
             )
         );
         if (!ok) {

@@ -1013,7 +1013,8 @@ keeper deployed today still reads the shared copies of these tables.
 operational state nothing outside the keeper reads: `hf_band_state`,
 `keeper_commitment_scan`, `keeper_commitment_day`,
 `keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_ops_alert`,
-`keeper_work_done` (the passes' record of finished work) and
+`keeper_work_done` (the passes' record of finished work),
+`keeper_sanctions_screen` (where the sanctions screen resumes) and
 `keeper_cutover` (this cutover's completion record).
 Its schema is `apps/keeper/migrations/`. Everything another Worker, the app
 or the backup reads stays in `vaipakam-warm` under the indexer's

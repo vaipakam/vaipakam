@@ -62,10 +62,14 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
 import {
+  countLoanParties,
+  getSanctionsScreenCursor,
+  listLoanPartiesAfter,
   listOpenSanctionsChains,
   listOpenStagingOwners,
   listOpenStagingRecordKeysForUser,
   listOpsAlertKeys,
+  putSanctionsScreenCursor,
 } from './db';
 import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 
@@ -209,41 +213,23 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   // Owners of open staging work join the open chains: a claimant held with NO
   // chain (the oracle was unavailable when its page ran, a flag marker set)
   // emits no evidence event, so the events alone never surface it.
-  const owners = candidateOwners(
+  const known = candidateOwners(
     await listOpenSanctionsChains(env.DB, chain.id),
     await listOpenStagingOwners(env.DB, chain.id),
   );
-  if (owners.length === 0) return;
-
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
-  const statuses: OwnerSanctionsStatus[] = [];
-  for (let i = 0; i < owners.length; i += STATUS_CHUNK) {
-    const chunk = owners.slice(i, i + STATUS_CHUNK);
-    // eslint-disable-next-line no-await-in-loop
-    const res = await batchedRead(
-      client as never,
-      chunk.map((owner) => ({
-        address: diamond,
-        abi: ABI,
-        functionName: 'getRewardSanctionsStatus' as const,
-        args: [owner] as const,
-      })),
-      `rewardSanctionsHold getRewardSanctionsStatus ${i}/${owners.length}`,
-    );
-    res.forEach((r, j) => {
-      if (r.status !== 'success') return; // unread: classified next tick
-      const t = r.result as readonly [number, bigint | number, bigint | number, bigint | number, bigint | number, Address, boolean];
-      statuses.push({
-        owner: chunk[j],
-        decision: Number(t[0]),
-        flaggedAt: Number(t[1]),
-        lastSeenAt: Number(t[2]),
-        forfeitableAt: Number(t[3]),
-        observeBy: Number(t[4]),
-      });
-    });
-  }
+  const statuses = (await readStatuses(client as never, diamond, known)).filter(
+    (st): st is OwnerSanctionsStatus => st !== null,
+  );
+  // The SCREEN (Codex #2489 r2): a wallet flagged while it holds only ordinary
+  // reward leaves neither of those traces — its claim's observation reverts
+  // with the claim — so a bounded slice of every loan party is classified each
+  // tick, and the held or confirmed ones join. Its first observation is what
+  // starts the chain the forfeit window is counted from.
+  const screened = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
+  statuses.push(...screened);
+  const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
 
   const plan = planSanctionsHold(statuses, nowSec);
   const ctx = buildKeeperContext(env, chain, client as never);
@@ -280,7 +266,103 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
-  await raiseAlerts(env, chain.id, statuses, plan, nowSec);
+  await raiseAlerts(env, chain.id, statuses, plan, nowSec, candidates);
+}
+
+/** Each owner's classification, `getRewardSanctionsStatus` batched, aligned
+ *  with `owners` — null where the read failed (classified next tick). */
+async function readStatuses(
+  client: PublicClient,
+  diamond: Address,
+  owners: readonly string[],
+): Promise<(OwnerSanctionsStatus | null)[]> {
+  const out: (OwnerSanctionsStatus | null)[] = [];
+  for (let i = 0; i < owners.length; i += STATUS_CHUNK) {
+    const chunk = owners.slice(i, i + STATUS_CHUNK);
+    // eslint-disable-next-line no-await-in-loop
+    const res = await batchedRead(
+      client as never,
+      chunk.map((owner) => ({
+        address: diamond,
+        abi: ABI,
+        functionName: 'getRewardSanctionsStatus' as const,
+        args: [owner] as const,
+      })),
+      `rewardSanctionsHold getRewardSanctionsStatus ${i}/${owners.length}`,
+    );
+    chunk.forEach((owner, j) => {
+      const r = res[j];
+      if (!r || r.status !== 'success') {
+        out.push(null);
+        return;
+      }
+      const t = r.result as readonly [number, bigint | number, bigint | number, bigint | number, bigint | number, Address, boolean];
+      out.push({
+        owner: owner as Address,
+        decision: Number(t[0]),
+        flaggedAt: Number(t[1]),
+        lastSeenAt: Number(t[2]),
+        forfeitableAt: Number(t[3]),
+        observeBy: Number(t[4]),
+      });
+    });
+  }
+  return out;
+}
+
+/** Screen passes per day at this pass's cadence. */
+const SCREENS_PER_DAY = (24 * 3600) / PASS_CADENCE_SEC;
+/** Bounds on one tick's screen slice: at least a few multicalls' worth so a
+ *  small universe is re-screened often, at most what the invocation's
+ *  subrequest budget can carry. */
+export const SCREEN_MIN_PER_TICK = 100;
+export const SCREEN_MAX_PER_TICK = 1000;
+
+/** How many loan parties one tick screens: enough to cover all `total` within
+ *  a day — a flagged party's first observation then lags its flag by at most
+ *  a day, which is the reward it keeps as earned "before" — within the bounds
+ *  above. Past the upper bound the cycle stretches past a day, and the pass
+ *  says so. Pure; pinned by the tests. */
+export function screenSliceSize(total: number): number {
+  return Math.min(SCREEN_MAX_PER_TICK, Math.max(SCREEN_MIN_PER_TICK, Math.ceil(total / SCREENS_PER_DAY)));
+}
+
+/** Where the screen resumes after a slice: past the last address read, or —
+ *  if a read failed — just before the first failure, so no party is skipped
+ *  for a cycle by a transient error. A slice shorter than asked has reached
+ *  the end: start over. Pure; pinned by the tests. */
+export function nextScreenCursor(after: string, slice: readonly string[], read: readonly boolean[], asked: number): string {
+  const firstFail = read.indexOf(false);
+  if (firstFail >= 0) return firstFail === 0 ? after : slice[firstFail - 1];
+  return slice.length < asked ? '' : slice[slice.length - 1];
+}
+
+/** One tick of the screen: the next slice of loan parties (skipping ones the
+ *  pass already knows), classified; the held or confirmed are returned to
+ *  join the candidates, and the cursor moves on. */
+async function screenLoanParties(
+  env: Env,
+  chainId: number,
+  client: PublicClient,
+  diamond: Address,
+  known: ReadonlySet<string>,
+): Promise<OwnerSanctionsStatus[]> {
+  const total = await countLoanParties(env.DB, chainId);
+  if (total === 0) return [];
+  const size = screenSliceSize(total);
+  if (Math.ceil(total / size) > SCREENS_PER_DAY) {
+    console.warn(
+      `[keeper] rewardSanctionsHold chain=${chainId}: ${total} loan parties exceed one day's screen at ${size} a tick — a cycle takes ${Math.ceil(total / size)} ticks`,
+    );
+  }
+  const after = await getSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond);
+  const slice = await listLoanPartiesAfter(env.DB, chainId, after, size);
+  const toRead = slice.filter((a) => !known.has(a));
+  const read = await readStatuses(client, diamond, toRead);
+  const byOwner = new Map(toRead.map((a, i) => [a, read[i]]));
+  const ok = slice.map((a) => known.has(a) || byOwner.get(a) !== null);
+  await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, size));
+  return read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER);
 }
 
 /** The owner settlement, repeated while it makes progress: each call is
@@ -458,6 +540,7 @@ export async function raiseAlerts(
   statuses: readonly OwnerSanctionsStatus[],
   plan: SanctionsHoldPlan,
   nowSec: number,
+  candidates: ReadonlySet<string>,
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -490,6 +573,17 @@ export async function raiseAlerts(
     await toggle(k('hold-no-chain'), noChain.has(st.owner), () =>
       `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, or it answers Flagged but the chain broke and has not restarted; the hold cannot confirm or clear until an observation lands.`,
     );
+  }
+  // An owner who LEFT the candidates (a clean read or a claim closed its chain
+  // and no staging work remains) is never in `statuses` again, so the loop
+  // above can never clear its alerts (Codex #2489 r2): a stale row would
+  // suppress the next incident for that wallet and the table would only grow.
+  // Keyed on the candidate set, not on this tick's reads, so an owner whose
+  // read merely failed keeps its alert.
+  for (const key of open) {
+    const owner = key.slice(key.lastIndexOf(':') + 1).toLowerCase();
+    // eslint-disable-next-line no-await-in-loop
+    if (!candidates.has(owner)) await resolveOpsAlert(env, key);
   }
 }
 

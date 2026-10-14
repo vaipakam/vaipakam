@@ -447,6 +447,36 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), 0, "not acked");
     }
 
+    /// Codex #2489 r2 — the reservation keeps WHICH of its closed days it funded,
+    /// immutably. Day 1 is funded; day 2 is armed with a zero commitment, so it
+    /// closes at zero in the same batch and is NOT on the wire. The release then
+    /// clears the live per-day mark, and the reservation's own record survives
+    /// it — the funded list the d6 root committed to stays recoverable.
+    /// @dev Mutations: marking every closed day funded (bits = 3) fails the
+    ///      first read; clearing the record on release fails the last.
+    function test_Reservation_KeepsItsFundedDays_PastARelease() public {
+        _finalizeDay(1);
+        _finalizeDay(2);
+        _armDayForArb(2, 100e18, 0);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 2, 0, 0);
+        uint256[] memory both = new uint256[](2);
+        both[0] = 1;
+        both[1] = 2;
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, both, 69_000_000 ether);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
+        assertEq(r.dayIds.length, 2, "both days closed by this reservation");
+        assertEq(r.fundedDayBits.length, 1, "one word covers them");
+        assertEq(r.fundedDayBits[0], 1, "day 1 (index 0) funded; day 2 (index 1) closed at zero, off the wire");
+        assertGt(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "fixture live: day 1 carries a slice");
+
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(1);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "the release clears the live mark");
+        r = rlens.getRemitReservation(1);
+        assertEq(r.fundedDayBits.length, 1, "the record survives the release");
+        assertEq(r.fundedDayBits[0], 1, "unchanged");
+    }
+
     function test_Release_RequiresPending() public {
         _finalizeDay(1);
         uint256 total = _remitDay1ToArb();

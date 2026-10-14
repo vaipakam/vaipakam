@@ -12,7 +12,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
 import { useClaimPayoutText } from '../data/useClaimPayout';
-import { useInteractionRewards } from '../data/rewards';
+import { useHeldReward, useInteractionRewards } from '../data/rewards';
 import { inFinalNotice, useRewardExpiryCountdown } from '../data/rewardExpiry';
 import { useNowSec } from '../hooks/useNowSec';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
@@ -29,21 +29,75 @@ import { WindowedRowList } from '../lib/visibleWindow';
  *  so the source of funds is never confused (Journey C1). */
 function RewardsCard() {
   const rewards = useInteractionRewards();
+  // #2489 r2 — a balance set aside for this wallet, read and claimed on its
+  // own. Shown only where the combined claim cannot be previewed (an exhausted
+  // pool, a held staging page): there it is the part the wallet can still
+  // take. Where the preview succeeds its figure already INCLUDES this balance
+  // (the combined claim pays it), so a second line would count it twice.
+  const held = useHeldReward();
+  const heldAmount = held.data ?? 0n;
   // RL-3 (#1956) — the soonest estimated return of an unclaimed reward; dark
   // (nothing renders) until governance sets the claim horizon.
   const expiry = useRewardExpiryCountdown();
   const nowSec = useNowSec();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
-  // claimInteractionRewards has NO on-chain sanctions screen (unlike the
-  // Tier-1 entry points), so this UI gate is load-bearing: a flagged
-  // wallet must not be handed a working payout button.
+  // The claims refuse a barred wallet on chain as well (#1566); this gate keeps
+  // a flagged wallet from being handed a button that can only revert.
   const sanctions = useSanctionsCheck();
   const sanctionsClear = sanctions.ready && !sanctions.flagged;
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [heldBusy, setHeldBusy] = useState(false);
+  const [heldError, setHeldError] = useState<string | null>(null);
+
+  /** The live re-read before any reward payout is signed — the button gate is
+   *  a cached read — failing CLOSED: an unreadable oracle blocks the claim. */
+  async function preflight() {
+    if (!address || !walletChain || !publicClient) {
+      throw new Error(copy.wallet.connectFirst);
+    }
+    await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address, { failClosed: true });
+  }
+
+  async function claimHeld() {
+    setHeldBusy(true);
+    setHeldError(null);
+    try {
+      await preflight();
+      await write('claimHeldInteractionRewards', [0 /* RewardDelivery.Default */]);
+      void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
+    } catch (err) {
+      setHeldError(captureTxError(err));
+    } finally {
+      setHeldBusy(false);
+    }
+  }
+
+  const heldBlock =
+    heldAmount > 0n ? (
+      <div data-testid="rewards-held" style={{ marginTop: 12 }}>
+        <p>
+          {copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} {copy.rewards.heldNote}
+        </p>
+        {heldError ? (
+          <div className="banner banner-danger" role="alert">
+            <span className="banner-body">{heldError}</span>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={heldBusy || !onSupportedChain || !sanctionsClear}
+          onClick={() => void claimHeld()}
+        >
+          {heldBusy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+          {heldBusy ? copy.common.waitingForWallet : copy.rewards.claimHeld}
+        </button>
+      </div>
+    ) : null;
 
   const snapshot = rewards.data;
   // Transport failure ≠ "no rewards" — say we couldn't check rather
@@ -67,29 +121,19 @@ function RewardsCard() {
         >
           {copy.common.tryAgain}
         </button>
+        {heldBlock}
       </section>
     );
   }
+  // Still loading: nothing yet — the held line belongs only to the branch
+  // above, where the combined claim's preview is known to be unavailable.
   if (!snapshot) return null;
 
   async function claim() {
     setBusy(true);
     setError(null);
     try {
-      // The button gate is a CACHED read, and this is the one payout
-      // with NO on-chain screen — the live re-read here is the last
-      // line of enforcement, so it fails CLOSED: an unreadable oracle
-      // blocks the claim instead of waving it through. (Everywhere
-      // else fail-open is fine because the contract screens too.)
-      if (!address || !walletChain || !publicClient) {
-        throw new Error(copy.wallet.connectFirst);
-      }
-      await assertWalletNotSanctionedLive(
-        publicClient,
-        walletChain.diamondAddress,
-        address,
-        { failClosed: true },
-      );
+      await preflight();
       await write('claimInteractionRewards', []);
       void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
     } catch (err) {

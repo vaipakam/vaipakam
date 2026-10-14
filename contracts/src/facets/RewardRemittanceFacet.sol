@@ -521,6 +521,10 @@ contract RewardRemittanceFacet is
             r.armedFreshFull = st.armedFresh;
             r.recycledFull = st.recycledFull;
             r.dayIds = dl.closedDays;
+            // #2489 (Codex r2) — which closed days were FUNDED, kept immutably:
+            // the d6 root commits to exactly these, and a release clears the
+            // live per-day mark they would otherwise be rebuilt from.
+            r.fundedDayBits = _fundedDayBits(dl.closedDays, dl.fundedDays);
             // #1566 transport epochs PR 3a — every payload this deployment
             // builds is the d5 shape, which carries the split, so the mirror
             // types this packet at ingress and a split attestation for it can
@@ -573,6 +577,28 @@ contract RewardRemittanceFacet is
         emit RewardBudgetRemitted(
             dstChainId, st.totalAll, dl.fundedCount, messageId, remitId
         );
+    }
+
+    /// @dev #2489 (Codex r2) — the funded-day bitmap over `closed`: bit `i` set
+    ///      when `closed[i]` is in `funded`. The planner appends a day to
+    ///      `funded` exactly when it appends it to `closed` with a non-zero
+    ///      slice, so `funded` is an in-order subsequence of `closed` and one
+    ///      forward pass with two cursors marks it.
+    function _fundedDayBits(uint256[] memory closed, uint256[] memory funded)
+        private
+        pure
+        returns (uint256[] memory bits)
+    {
+        bits = new uint256[]((closed.length + 255) >> 8);
+        uint256 j;
+        for (uint256 i; i < closed.length && j < funded.length; ++i) {
+            if (closed[i] == funded[j]) {
+                bits[i >> 8] |= uint256(1) << (i & 255);
+                unchecked {
+                    ++j;
+                }
+            }
+        }
     }
 
     /**

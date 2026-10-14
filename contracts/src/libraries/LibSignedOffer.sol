@@ -166,24 +166,43 @@ library LibSignedOffer {
         if (o.creatorFull && o.creatorMaxCStar == 0) revert SignedOfferFullNeedsMaxCStar();
     }
 
-    /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes.
-    ///         The whole order (`fillAmount >= ceiling`) takes the signed ceiling; a
-    ///         SLICE takes its pro-rata share, rounded UP: the signer's ceiling bounds
-    ///         the whole order they signed, and rounding up means no non-zero signed
-    ///         ceiling ever becomes a zero slice ceiling (which would read as "Full
-    ///         with no cap" and refuse the slice's accept unless downgrade is
-    ///         allowed) — the slices' ceilings sum to at most the signed ceiling plus
-    ///         one wei per slice. A non-Full order carries zeros. The share is a
-    ///         full-width `mulDiv`: the ceiling is signer-chosen, and a plain
-    ///         product would overflow on a large one and refuse every slice fill.
-    function makerFullFor(SignedOffer memory o, uint256 fillAmount) internal pure returns (MakerFull memory f) {
+    /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:
+    ///         the principal from `filledBefore` to `filledBefore + fillAmount`. The
+    ///         slice's ceiling is the DIFFERENCE of the cumulative pro-rata ceiling
+    ///         `cum(P) = ceil(creatorMaxCStar * P / ceiling)` at its two ends — the
+    ///         same telescoping form the slice collateral uses (`toCreateOfferParams`).
+    ///         Summed over every slice the inner terms cancel, so the slices' ceilings
+    ///         total `cum(filled)`, which is at most the signed ceiling and equals it
+    ///         once the order is fully filled (Codex #2489 r2). Rounding each slice up
+    ///         on its own instead let the slices sum past the signed ceiling, one wei
+    ///         per slice, so a keeper splitting an order into minimum fills obtained
+    ///         Full authorization the maker never signed. The whole order (from 0 to
+    ///         the ceiling) takes the signed ceiling exactly. A slice can come out zero
+    ///         only when the signed ceiling is below one wei per slice, where any real
+    ///         tariff exceeds the share anyway; such a slice is refused (or downgraded,
+    ///         if the maker allowed it), never charged above the signed total. A
+    ///         non-Full order carries zeros. Each `cum` is a full-width `mulDiv`: the
+    ///         ceiling is signer-chosen, and a plain product would overflow on a large
+    ///         one and refuse every slice fill.
+    function makerFullFor(SignedOffer memory o, uint256 filledBefore, uint256 fillAmount)
+        internal
+        pure
+        returns (MakerFull memory f)
+    {
         if (!o.creatorFull) return f;
         uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
         f.full = true;
         f.allowDowngrade = o.creatorAllowFullDowngrade;
-        f.maxCStar = fillAmount >= ceiling
-            ? o.creatorMaxCStar
-            : Math.mulDiv(o.creatorMaxCStar, fillAmount, ceiling, Math.Rounding.Ceil);
+        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, ceiling)
+            - _cumCeiling(o.creatorMaxCStar, filledBefore, ceiling);
+    }
+
+    /// @dev The cumulative pro-rata ceiling at principal `filled` of an order of size
+    ///      `ceiling`: the whole signed ceiling at (or past) the order's size, else its
+    ///      share rounded up. Monotone in `filled`, so the slice difference above can
+    ///      never underflow.
+    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 ceiling) private pure returns (uint256) {
+        return filled >= ceiling ? maxCStar : Math.mulDiv(maxCStar, filled, ceiling, Math.Rounding.Ceil);
     }
     bytes32 private constant DOMAIN_VERSION_HASH = keccak256("1");
 

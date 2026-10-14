@@ -291,6 +291,29 @@ contract FeeEntitlementFacetTest is SetupTest {
         assertEq(mBefore - vpfiToken.balanceOf(mVault), 2 * c, "two slices, the whole signed ceiling, no more");
     }
 
+    /// Codex #2489 r2 — the slice ceilings TELESCOPE to the signed ceiling. An odd
+    /// ceiling `2c + 1` over two half fills: the first slice takes the cumulative
+    /// share rounded up (`c + 1`), the second takes only what is left (`c`), so the
+    /// two sum to the signed ceiling exactly. Rounding each slice up on its own gave
+    /// `c + 1` twice — one wei past what the maker signed, per slice.
+    /// @dev Mutation: per-slice `mulDiv(maxCStar, fill, ceiling, Ceil)` makes the
+    ///      second slice `c + 1` and the sum `2c + 2`.
+    function testSigned_SliceCeilingsTelescope_ToTheSignedCeiling() public {
+        uint256 b1 = _signedScaffold();
+        uint256 b2 = _createBorrowerErc20Offer();
+        uint256 c = _cStar();
+        uint256 signed = 2 * c + 1;
+        LibSignedOffer.SignedOffer memory o = _signedLender(2 * PRINCIPAL, true, signed, false);
+        bytes memory sig = _signMaker(o);
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        uint256 first = OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar;
+        assertEq(first, c + 1, "the first half takes its cumulative share, rounded up");
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        uint256 second = OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar;
+        assertEq(second, c, "the second half takes only what is left");
+        assertEq(first + second, signed, "the slices sum to the signed ceiling, never past it");
+    }
+
     /// A maker who signs the largest ceiling ("no cap") can still be filled in
     /// slices: the slice's share is computed at full width, so the product of
     /// the ceiling and the fill cannot overflow and refuse every partial fill.

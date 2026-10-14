@@ -5139,6 +5139,12 @@ const copySource = {
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
     readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
+    // #2489 r2 — a held balance set aside for this wallet, claimable on its own
+    // (never through the combined claim alone, which can fail for unrelated
+    // reasons). Says nothing about why it was set aside.
+    heldReady: tmpl('{{amount}} VPFI of your rewards was set aside for you and is ready to claim.', ['amount']),
+    heldNote: 'You can claim it on its own, even when your other rewards can’t be claimed right now.',
+    claimHeld: 'Claim set-aside rewards',
     // RL-3 claim horizon (#1956) — the Claim Center countdown. The date is the
     // contract's EARLIEST estimate (it assumes the reward stays claimable), so
     // the real date can only move later; the copy says which way it can move.

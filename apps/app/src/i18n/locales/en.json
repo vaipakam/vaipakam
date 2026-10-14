@@ -2444,6 +2444,9 @@
       "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.",
       "claim": "Claim rewards",
       "readyToClaim": "{{amount}} VPFI ready to claim.",
+      "heldReady": "{{amount}} VPFI of your rewards was set aside for you and is ready to claim.",
+      "heldNote": "You can claim it on its own, even when your other rewards can’t be claimed right now.",
+      "claimHeld": "Claim set-aside rewards",
       "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.",
       "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date."
     },

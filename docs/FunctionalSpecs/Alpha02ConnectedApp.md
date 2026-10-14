@@ -2018,6 +2018,13 @@ is the borrower's own money.
   to a final-notice warning. The card shows no date while the claim window is
   off, and when it cannot read every reward's date it shows none rather than one
   that might be later than the real one.
+- A wallet with interaction rewards set aside for it can always take them on
+  their own. When the card cannot preview the wallet's whole claim (for
+  example because the claim cannot complete), it still shows the set-aside
+  balance and offers a claim that pays exactly that balance. When the whole
+  claim can be previewed, its figure already includes the set-aside balance,
+  so the card does not show it a second time. The card never says why the
+  balance was set aside.
 - Claims are chain-authoritative.
 - Indexed data may provide candidates, but live ownership and claimability
   decide whether a claim is actionable.
@@ -2200,8 +2207,11 @@ is the borrower's own money.
   open offer after posting, and a signed-order maker on the gasless order
   itself — the order shape carries the opt-in, so it travels with the
   signature and applies to every fill of that order, a keeper-matched slice
-  taking its pro-rata share of the maker's ceiling (never rounding a non-zero
-  ceiling to nothing). A signed Full opt-in without a ceiling is refused
+  taking its share of the maker's ceiling counted cumulatively, so the
+  slices' ceilings together never exceed the ceiling the maker signed and
+  reach it exactly once the order is fully filled. (A slice's share comes out
+  zero only when the signed ceiling is below one unit per slice; such a slice
+  cannot take Full.) A signed Full opt-in without a ceiling is refused
   before any value moves, on every fill path. Nobody can opt a counterparty
   in.
 - **A signed-order maker chooses on the order ticket, before signing.** The
