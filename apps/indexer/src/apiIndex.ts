@@ -60,6 +60,12 @@ const API_INDEX = {
       description:
         "Protocol display-config snapshot for a chain — current fee rates, discount tiers and thresholds, name-keyed under `values` (the positional `bundle` mirrors the contract getter). The published docs carry the protocol's compiled starting rates and do not follow a governance retune; these do. Check `updatedAt` (unix seconds) before treating a figure as current, and skip a response carrying `stale: true` — that row predates a governance change not yet re-read. Values are the RAW configured settings: an applied per-party fee discount is additionally capped at 5000 BPS (50%), so a `tierDiscountBps` above that ceiling is not what any user receives.",
     },
+    {
+      method: 'GET',
+      path: '/health/ingest',
+      description:
+        "Whether scheduled ingest is advancing: per scanned chain, the last block the indexer reached, when (`scannedAt`, unix seconds) and `ageSeconds` (negative if the cursor's time is ahead of the indexer's clock — its freshness is then unknown); plus the schema gate's state for this build (`current`, `pending` naming the unapplied migrations, or `unknown`). Facts only — what counts as stale is the caller's to judge. Never cached; a 503 means the state could not be read.",
+    },
   ],
 } as const;
 

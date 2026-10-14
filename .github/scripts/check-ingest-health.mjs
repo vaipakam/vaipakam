@@ -14,8 +14,13 @@
  * WHY HERE AND NOT IN A WORKER. The account's Cloudflare cron triggers are
  * all spoken for (docs/ops/CloudflareCronSlots.md), and a watcher inside the
  * indexer could not report the indexer's own crash or a removed trigger.
- * A scheduled GitHub Actions run needs neither, and a failed run notifies
- * the repository owner by GitHub's own channels.
+ * A scheduled GitHub Actions run needs neither.
+ *
+ * A FAILED RUN IS NOT THE ALERT. GitHub notifies only the account that last
+ * edited the cron line, and only if it has Actions notifications on. The
+ * dependable path is the workflow's `alert` job: an issue assigned to the
+ * operator (plus an optional ops-chat post). Do not remove that job on the
+ * assumption that a red run reaches someone (#2482 r6).
  *
  * WHAT FAILS (exit 1), each named in the output:
  *   - a watched chain whose diamond cursor has not advanced for longer than
@@ -72,7 +77,9 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
   for (const id of chains) {
     const c = body.chains.find((x) => x && x.chainId === id);
     if (!c) {
-      add(`missing:${id}`, `chain ${id}: no diamond cursor reported — it has never been scanned`);
+      // Absent says only that no cursor is recorded NOW: a never-scanned chain
+      // and a cursor deleted to replay a chain look the same here (#2482 r6).
+      add(`missing:${id}`, `chain ${id}: no diamond cursor is recorded — whether it was never scanned or its cursor was reset is not known from here`);
     } else if (typeof c.ageSeconds === 'number' && c.ageSeconds < 0) {
       add(`ahead:${id}`, `chain ${id}: the cursor's timestamp is ${-c.ageSeconds}s AHEAD of the indexer's clock — its freshness is unknown`);
     } else if (!isCount(c.ageSeconds) || !isCount(c.lastBlock) || !isCount(c.scannedAt)) {
@@ -188,7 +195,9 @@ async function main() {
   } catch (err) {
     problems = [{ key: 'unreachable', text: `${url} unreachable: ${String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 200)}` }];
   }
-  if (body?.chains) {
+  // Diagnostic print only — guarded so a malformed answer (`chains` not an
+  // array) keeps its verdict instead of throwing past it (#2482 r6).
+  if (Array.isArray(body?.chains)) {
     for (const c of body.chains) {
       const watched = chains.includes(c.chainId) ? '' : ' (not watched)';
       console.log(`chain ${c.chainId}: block ${c.lastBlock}, ${c.ageSeconds}s ago${watched}`);
