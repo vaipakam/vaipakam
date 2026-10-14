@@ -35,6 +35,7 @@ import {LibKeeperReward} from "../src/libraries/LibKeeperReward.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 
 /**
  * @title  RewardSanctionsForfeitTest (and its siblings in this file)
@@ -1501,6 +1502,37 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
     ///         settling nothing else. A still-flagged wallet is refused it.
     /// @dev   Kills a release that can only ride the ordinary claim: the held
     ///        balance would be stranded for as long as the new legs revert.
+    /// @notice Codex #2489 r4 — a wallet with NOTHING set apart never reaches
+    ///         the custody facet's release entry: the ordinary claim makes no
+    ///         self-call for a zero held balance. Pinned by cutting the release
+    ///         selector out of the Diamond (what a partially refreshed cut looks
+    ///         like): bob, who holds nothing, still claims; alice, who holds a
+    ///         balance, reverts with the Diamond's unrouted-selector error.
+    /// @dev   Kills dropping the zero early-return in `callReleaseSanctionsHeld`
+    ///        (bob's claim would revert too).
+    function test_sanc_R4a_aWalletWithNothingHeld_NeverReachesTheReleaseEntry() public {
+        (, uint256 vPre, ) = _legacyWindowScene();
+        (, uint256 heldApart) = _settleOwner(alice);
+        assertEq(heldApart, vPre, "fixture: alice holds a set-apart balance");
+        vm.warp(_dayStart(L + 1) + 1);
+        oracle.setFlagged(alice, false);
+        _mut().setDailyLenderInterest(L + 1, bob, 1e18, 1e18);
+        _finalize(L, L + 1);
+        vm.warp(_dayStart(L + 2));
+        assertEq(_held(bob), 0, "fixture: bob holds nothing");
+
+        bytes4[] memory sel = new bytes4[](1);
+        sel[0] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(0), action: IDiamondCut.FacetCutAction.Remove, functionSelectors: sel});
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+
+        assertGt(_claimWallet(bob), 0, "nothing held: the claim never calls the release entry, and pays");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("FunctionDoesNotExist()"));
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+    }
+
     function test_sanc_R1b_theHeldBalanceIsClaimableAlone_whenTheClaimsOwnLegsRevert() public {
         (uint256[4] memory ids, uint256 vPre, ) = _legacyWindowScene();
         (, uint256 heldApart) = _settleOwner(alice);
@@ -1580,19 +1612,25 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
 
     /// @notice L5 - the LEGACY PER-DAY WINDOW (the pre-entry counters). A
     ///         confirmed owner's settlement pays day F - 1 into the held balance
-    ///         and CLEARS day F's counters, paying nothing for it - the share
-    ///         stays in the unemitted pool (no bucket credit, the pool's paid-out
-    ///         grows by day F - 1 alone). After revocation the claim clears day
-    ///         L (a window day) the same way and pays day L + 1 with the held
+    ///         and FORFEITS day F: its counters clear, nothing is paid for it,
+    ///         its share is charged to the pool and credited to the recycle
+    ///         bucket as forfeited reward (Codex #2489 r4 — the spec routes
+    ///         every reward earned in a confirmed window into the bucket; the
+    ///         earlier cell pinned the day as "stays in the pool", which read as
+    ///         never emitted). After revocation the claim forfeits day L (a
+    ///         window day) the same way and pays day L + 1 with the held
     ///         balance; the static preview skips day L as the claim does.
     /// @dev   Kills dropping `dayForfeited` from `claimForUserWindow` (day F
-    ///        would be set apart, day L paid) or from `previewForUserWindow`
-    ///        (the static preview would count day L).
+    ///        would be set apart, day L paid), from `previewForUserWindow` (the
+    ///        static preview would count day L), and clearing a window day
+    ///        WITHOUT pricing it (no pool charge, no bucket credit).
     function test_sanc_L5_theLegacyPerDayWindow_clearsAWindowDay_andPaysTheDaysAround() public {
         _mut().setDailyLenderInterest(F - 1, alice, 1e18, 1e18);
         _mut().setDailyLenderInterest(F, alice, 1e18, 1e18);
         uint256 pPre = _lens().getInteractionHalfPoolForDay(F - 1);
         assertGt(pPre, 0, "fixture: day F - 1 carries reward");
+        uint256 pF = _lens().getInteractionHalfPoolForDay(F);
+        assertGt(pF, 0, "fixture: day F carries reward too");
         assertEq(_livePreview(alice), pPre, "fixture LIVE: the per-day window pays a clean owner's day F - 1");
         oracle.setFlagged(alice, true);
         uint256 t0 = _confirm(alice);
@@ -1604,8 +1642,8 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(heldApart, pPre, "day F - 1 set apart; day F pays nothing");
         (uint256 cF, , , ) = _lens().getInteractionDayEntry(F, alice);
         assertEq(cF, 0, "day F's counter is cleared");
-        assertEq(_paidOut() - paid0, pPre, "day F's share stays in the pool");
-        assertEq(_bucket(), bucket0, "and is not credited to the bucket");
+        assertEq(_paidOut() - paid0, pPre + pF, "day F's share is charged to the pool with day F - 1's");
+        assertEq(_bucket() - bucket0, pF, "and credited to the bucket as forfeited reward");
 
         vm.warp(t0 + 4 days + 1);
         oracle.setFlagged(alice, false);
@@ -1614,11 +1652,14 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _mut().setDailyLenderInterest(L + 1, alice, 1e18, 1e18);
         vm.warp(_dayStart(L + 2));
         uint256 pPost = _lens().getInteractionHalfPoolForDay(L + 1);
+        uint256 pL = _lens().getInteractionHalfPoolForDay(L);
         (uint256 previewed, , ) = _lens().previewInteractionRewards(alice);
         assertEq(previewed, pPost, "the static preview skips day L");
+        uint256 bucket1 = _bucket();
         assertEq(_claimWallet(alice), pPre + pPost, "the held balance and day L + 1");
         (uint256 cL, , , ) = _lens().getInteractionDayEntry(L, alice);
         assertEq(cL, 0, "day L's counter is cleared, unpaid");
+        assertEq(_bucket() - bucket1, pL, "day L forfeits to the bucket on the owner's own claim after revocation");
         assertEq(_held(alice), 0);
     }
 

@@ -7356,8 +7356,11 @@ on the live era alone.
 >   claimant's share itself — whatever the reservation priced, so a staging
 >   record's revalidation keeps comparing the entries' lifecycle routing
 >   only. The forfeit and expiry walks route to the treasury regardless. The
->   legacy (pre-`D*`) per-day window skips a window day's payment
->   (pre-cutover value is unemitted and stays in the pool); the legacy entry
+>   legacy (pre-`D*`) per-day window FORFEITS a window day (#2489 r4): the
+>   day is priced exactly as a paid day, charged to the pool and credited to
+>   the bucket as forfeited reward through the claim's treasury split —
+>   earlier revisions cleared it unpaid, which read as never emitted; the
+>   spec routes it to the bucket; the legacy entry
 >   slice is split by day as it settles — the window's share, read off the
 >   same telescoping curve the per-day legacy need uses, goes to the treasury
 >   legs, the rest to the user — and its epoch-funded part is attributed
@@ -7905,7 +7908,9 @@ closure 2's cutover PR.**
 >   binary search, so a deep registry never stalls a claim.
 >   An era release or a surplus drain is tallied as a RE-CREDIT, so the
 >   counted-funding view still reconciles against what Base sent. The
->   cutover version is 4.
+>   cutover version is 4 — and 5 since the held-apart custody row (#2489
+>   r4): the claim reaches a new custody selector, so a cut that refreshed
+>   the claim consumer without the custody facet must not certify.
 
 - An era registry: the current era id; per era, a holder row, an outstanding
   LIABILITY counter and an OPEN-CLASSIFICATION counter (§5c: two counters, two

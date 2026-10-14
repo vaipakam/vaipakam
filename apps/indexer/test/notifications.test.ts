@@ -559,14 +559,22 @@ describe('replayNotificationsFromArchive — the rows re-derived from activity_e
 });
 
 describe('planNotifiedWatermark — what one tick replays and where it stamps (straddles)', () => {
-  it('a never-stamped chain stamps without replaying history', () => {
-    expect(planNotifiedWatermark(null, 500n, 400n)).toEqual({ stampTo: 500n });
-    expect(planNotifiedWatermark(null, 500n, null)).toEqual({ stampTo: 500n });
+  it('a never-stamped chain stamps without replaying history — unless its OWN first scan failed (Codex #2489 r4)', () => {
+    expect(planNotifiedWatermark(null, 500n, 400n, true)).toEqual({ stampTo: 500n });
+    expect(planNotifiedWatermark(null, 500n, null, false), 'quiet tick, nothing to write').toEqual({ stampTo: 500n });
+    // The first scan's insert failed: the stamp sits just below the scan, so
+    // the next tick replays exactly it — nothing older, nothing skipped.
+    expect(planNotifiedWatermark(null, 500n, 400n, false)).toEqual({ stampTo: 399n });
+    expect(planNotifiedWatermark(399n, 600n, 501n, true), 'the next tick replays the failed scan').toEqual({
+      replayAfter: 399n,
+      replayThrough: 500n,
+      stampTo: 600n,
+    });
   });
 
   it('a healthy scanning tick (the watermark meets the fresh rows) stamps, no replay', () => {
-    expect(planNotifiedWatermark(399n, 500n, 400n)).toEqual({ stampTo: 500n });
-    expect(planNotifiedWatermark(398n, 500n, 400n), 'one block short: replay exactly it').toEqual({
+    expect(planNotifiedWatermark(399n, 500n, 400n, true)).toEqual({ stampTo: 500n });
+    expect(planNotifiedWatermark(398n, 500n, 400n, true), 'one block short: replay exactly it').toEqual({
       replayAfter: 398n,
       replayThrough: 399n,
       stampTo: 500n,
@@ -574,25 +582,25 @@ describe('planNotifiedWatermark — what one tick replays and where it stamps (s
   });
 
   it('a tick whose insert failed replays through its own end and stamps only after that', () => {
-    expect(planNotifiedWatermark(399n, 500n, null)).toEqual({ replayAfter: 399n, replayThrough: 500n, stampTo: 500n });
+    expect(planNotifiedWatermark(399n, 500n, 400n, false)).toEqual({ replayAfter: 399n, replayThrough: 500n, stampTo: 500n });
   });
 
   it('a quiet tick with nothing missing just refreshes the stamp', () => {
-    expect(planNotifiedWatermark(500n, 500n, null)).toEqual({ stampTo: 500n });
+    expect(planNotifiedWatermark(500n, 500n, null, false)).toEqual({ stampTo: 500n });
   });
 
   it('a long gap drains one window at a time, stamping only what was replayed', () => {
-    expect(planNotifiedWatermark(0n, 50_000n, null, 20_000n)).toEqual({
+    expect(planNotifiedWatermark(0n, 50_000n, null, false, 20_000n)).toEqual({
       replayAfter: 0n,
       replayThrough: 20_000n,
       stampTo: 20_000n,
     });
-    expect(planNotifiedWatermark(0n, 20_000n, null, 20_000n), 'the window reaches the end: stamp the end').toEqual({
+    expect(planNotifiedWatermark(0n, 20_000n, null, false, 20_000n), 'the window reaches the end: stamp the end').toEqual({
       replayAfter: 0n,
       replayThrough: 20_000n,
       stampTo: 20_000n,
     });
-    expect(planNotifiedWatermark(0n, 30_000n, 20_001n, 20_000n), 'gap ends where fresh rows begin').toEqual({
+    expect(planNotifiedWatermark(0n, 30_000n, 20_001n, true, 20_000n), 'gap ends where fresh rows begin').toEqual({
       replayAfter: 0n,
       replayThrough: 20_000n,
       stampTo: 30_000n,

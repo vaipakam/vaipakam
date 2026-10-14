@@ -136,15 +136,12 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
         throw new Error(copy.wallet.connectFirst);
       }
       // The batch can include claimInteractionRewards (and fund-out
-      // claim/withdraw paths). Re-read the oracle live and fail CLOSED —
-      // an unreadable oracle blocks rather than waving a flagged wallet
-      // through (same posture as the standalone rewards button).
-      await assertWalletNotSanctionedLive(
-        publicClient,
-        walletChain.diamondAddress,
-        address,
-        { failClosed: true },
-      );
+      // claim/withdraw paths). Re-read the oracle live, FAIL-OPEN (Codex
+      // #2489 r4): every leg screens on chain — the reward claim with the
+      // marker-aware rule since #1566 — so an unreadable oracle does not block
+      // an unmarked wallet here while the contract would pay it. The re-read
+      // only spares a doomed signature when the oracle answers flagged.
+      await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
       const chosen = items.filter((i) => isSelected(i.key));
       if (chosen.length === 0) return;
       const calls = encodeClaimAllCalls(chosen);

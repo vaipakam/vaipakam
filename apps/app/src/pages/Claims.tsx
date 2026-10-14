@@ -53,13 +53,18 @@ function RewardsCard() {
   const [heldBusy, setHeldBusy] = useState(false);
   const [heldError, setHeldError] = useState<string | null>(null);
 
-  /** The live re-read before any reward payout is signed — the button gate is
-   *  a cached read — failing CLOSED: an unreadable oracle blocks the claim. */
+  /** The live re-read before a reward payout is signed (the button gate is a
+   *  cached read), FAIL-OPEN like every other preflight (Codex #2489 r4): both
+   *  claim entries screen on chain with the marker-aware rule, so an unmarked
+   *  wallet during an oracle outage is claim-executable there — and its expiry
+   *  clock keeps running — while a fail-closed preflight here would refuse it
+   *  for nothing. The contract is the authority; this only spares a doomed
+   *  transaction when the oracle answers flagged. */
   async function preflight() {
     if (!address || !walletChain || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
-    await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address, { failClosed: true });
+    await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
   }
 
   async function claimHeld() {

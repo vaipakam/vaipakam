@@ -219,7 +219,12 @@ library LibRewardCustody {
     ///      holder-moving seams — the era draw a day's pricing makes, the era
     ///      release and the pending-surplus drain — so a cut without that facet
     ///      must not certify.
-    uint32 internal constant CUTOVER_VERSION = 4;
+    /// @dev 5 since #2489 (Codex r4): the `SanctionsHeld` custody row and its
+    ///      set-apart / release seams (`custodySetApartReward`,
+    ///      `custodyReleaseSanctionsHeld`) are a custody-protocol shape change —
+    ///      the claim reaches a new custody selector — so a cut that refreshed
+    ///      the claim consumer but not `RewardCustodyFacet` must not certify.
+    uint32 internal constant CUTOVER_VERSION = 5;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -1304,8 +1309,12 @@ library LibRewardCustody {
     }
 
     /// @dev {releaseSanctionsHeld} on the custody facet (Diamond-internal
-    ///      self-call); returns what was released to the Diamond.
+    ///      self-call); returns what was released to the Diamond. Nothing held
+    ///      makes no call (as {callSetApartReward} makes none for zero): the
+    ///      ordinary claim then never depends on the custody facet carrying
+    ///      the release selector for a wallet that has nothing set apart.
     function callReleaseSanctionsHeld(address user) internal returns (uint256 amount) {
+        if (LibVaipakam.storageSlot().rewardSanctionsHeld[user] == 0) return 0;
         amount = abi.decode(
             _custodyReturning(abi.encodeWithSignature("custodyReleaseSanctionsHeld(address)", user)), (uint256)
         );

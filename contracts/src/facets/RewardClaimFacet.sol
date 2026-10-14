@@ -252,23 +252,34 @@ contract RewardClaimFacet is
     ///      merge here. Order and figures are the
     ///      inlined walk's: slices first, then the walk — whose budget is net of
     ///      the slices' legacy fresh, and whose backing room was read before the
-    ///      slices moved anything (Codex #2276). `windowReward` reserves
-    ///      delivered headroom too (#1566 closure 2); `deliverTo` rides into any
-    ///      day the walk stages (3b-ii-A2, Codex #2308 r6).
+    ///      slices moved anything (Codex #2276). The legacy WINDOW's two
+    ///      figures (`window`, Codex #2489 r4) both draw on the pool and both
+    ///      reserve delivered headroom (#1566 closure 2), so the budget — computed
+    ///      here, in this frame, because the claim's is at the viaIR budget — is
+    ///      net of their sum; the forfeited figure then joins the treasury split
+    ///      as live-funded fresh, from where the caller's forfeit route (the
+    ///      pro-rata scaling, the pool charge, the bucket credit as forfeited
+    ///      reward through {LibRewardCustody.callSettleLegs}) carries it into the
+    ///      recycle bucket as the spec requires, instead of clearing it as if
+    ///      never emitted. `deliverTo` rides into any day the walk stages
+    ///      (3b-ii-A2, Codex #2308 r6).
     function _entryLegs(
         address user,
-        uint256 freshBudget,
-        uint256 windowReward,
+        LibInteractionRewards.LegacyWindowResult memory window,
         LibVaipakam.RewardDelivery deliverTo
     ) private returns (LibInteractionRewards.ClaimEntriesResult memory res) {
+        uint256 freshBudget = LibInteractionRewards.poolRemaining();
+        uint256 windowSpend = window.paid + window.forfeited;
+        freshBudget = freshBudget > windowSpend ? freshBudget - windowSpend : 0;
         uint256 backingRoom;
         (res, backingRoom) = LibInteractionRewards.callSettleLegacySlices(user);
         LibInteractionRewards.foldEntriesResult(
             res,
             LibInteractionRewards.callClaimEntriesWalk(
-                user, freshBudget, LibInteractionRewards.legacyFreshOf(res), windowReward, backingRoom, deliverTo
+                user, freshBudget, LibInteractionRewards.legacyFreshOf(res), windowSpend, backingRoom, deliverTo
             )
         );
+        res.toTreasury.total += window.forfeited;
     }
 
     /**
@@ -362,8 +373,10 @@ contract RewardClaimFacet is
         uint256 last = s.interactionLastClaimedDay[user];
         uint256 lastFinalized = today - 1;
 
-        uint256 windowReward;
-        bool walkedWindow;
+        // The legacy window's two figures in ONE memory slot (Codex #2489 r4):
+        // `paid` to the user, `forfeited` under the sanctions rule — this frame
+        // is at the viaIR budget and takes no new local.
+        LibInteractionRewards.LegacyWindowResult memory window;
         if (last < lastFinalized) {
             fromDay = last + 1;
             uint256 windowLast = fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
@@ -378,13 +391,9 @@ contract RewardClaimFacet is
             );
             if (any) {
                 toDay = effectiveTo;
-                windowReward = LibInteractionRewards.claimForUserWindow(
-                    user,
-                    fromDay,
-                    toDay
-                );
+                window = LibInteractionRewards.claimForUserWindow(user, fromDay, toDay);
                 s.interactionLastClaimedDay[user] = toDay;
-                walkedWindow = true;
+                window.walked = true;
             }
         }
 
@@ -403,19 +412,17 @@ contract RewardClaimFacet is
         // So the budget is computed ONCE here and threaded in as a REQUIRED
         // parameter. A leg that forgets to account for it cannot compile,
         // rather than merely failing a convention.
-        uint256 freshBudget = LibInteractionRewards.poolRemaining();
-        freshBudget = freshBudget > windowReward
-            ? freshBudget - windowReward
-            : 0;
-
+        // The budget is computed ONCE, inside {_entryLegs} (its own frame —
+        // this one is at the viaIR budget, Codex #2489 r4), net of BOTH window
+        // figures, and threaded to every leg as a REQUIRED parameter.
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
-        LibInteractionRewards.ClaimEntriesResult memory res = _entryLegs(user, freshBudget, windowReward, deliverTo);
+        LibInteractionRewards.ClaimEntriesResult memory res = _entryLegs(user, window, deliverTo);
         uint256 entryReward = res.toUser.total;
         uint256 treasuryDelta = res.toTreasury.total;
         uint256 paidRecycled = res.toUser.recycled;
         uint256 forfeitRecycled = res.toTreasury.recycled;
-        uint256 pending = entryReward + windowReward;
+        uint256 pending = entryReward + window.paid;
         // #1353 (M2 PR-5c) — a fully loan-side-capped entry pays 0 yet still
         // carries a finalized `armedFresh` commitment that MUST be retired
         // (`consumeArmedFresh` below); reverting here would roll back its
@@ -457,7 +464,7 @@ contract RewardClaimFacet is
                 emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
                 return (paid, fromDay, toDay);
             }
-            if (!walkedWindow) {
+            if (!window.walked) {
                 if (last >= lastFinalized) revert NoInteractionRewardsToClaim();
                 if (!s.knownGlobalSet[fromDay]) revert InteractionDayGlobalNotFinalized(fromDay);
                 revert InteractionDayAwaitingDelivery(fromDay);

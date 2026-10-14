@@ -518,12 +518,15 @@ export const NOTIFIED_REPLAY_MAX_BLOCKS = 20_000n;
 /** What the watermark's owner does on one tick — pure, pinned by the tests.
  *  `prev` is the stored watermark (null: never stamped); `through` the block
  *  the tick is complete to (`scanTo`, or the cursor on a quiet tick);
- *  `freshFrom` the first block whose rows THIS tick wrote successfully, or
- *  null when it wrote none (a quiet tick, or a failed insert). Any block in
- *  `(prev, freshFrom)` has archived events whose rows may be missing, so it
- *  is replayed before the stamp. A never-stamped chain stamps without
- *  replay: on a restored environment the archive is whole and the inbox is
- *  deliberately empty, and replaying history would re-mint every old row. */
+ *  `scanFrom` the first block THIS tick scanned (null on a quiet tick);
+ *  `wroteOk` whether this tick's own insert succeeded. Any block in
+ *  `(prev, scanFrom)` — or `(prev, through]` when the insert failed — has
+ *  archived events whose rows may be missing, so it is replayed before the
+ *  stamp. A never-stamped chain replays no HISTORY (on a restored
+ *  environment the archive is whole and the inbox is deliberately empty, and
+ *  replaying would re-mint every old row), but it does not get to skip its
+ *  own failure either (Codex #2489 r4): a first scan whose insert failed
+ *  stamps `scanFrom - 1`, so the next tick replays exactly that scan. */
 export interface NotifiedPlan {
   replayAfter?: bigint;
   replayThrough?: bigint;
@@ -532,11 +535,15 @@ export interface NotifiedPlan {
 export function planNotifiedWatermark(
   prev: bigint | null,
   through: bigint,
-  freshFrom: bigint | null,
+  scanFrom: bigint | null,
+  wroteOk: boolean,
   maxBlocks: bigint = NOTIFIED_REPLAY_MAX_BLOCKS,
 ): NotifiedPlan {
-  if (prev === null) return { stampTo: through };
-  const gapEnd = freshFrom === null ? through : freshFrom - 1n;
+  if (prev === null) {
+    // First stamp: never history; and never past a scan whose rows failed.
+    return { stampTo: scanFrom !== null && !wroteOk ? scanFrom - 1n : through };
+  }
+  const gapEnd = wroteOk && scanFrom !== null ? scanFrom - 1n : through;
   if (prev >= gapEnd) return { stampTo: through };
   const replayThrough = prev + maxBlocks < gapEnd ? prev + maxBlocks : gapEnd;
   return { replayAfter: prev, replayThrough, stampTo: replayThrough === gapEnd ? through : replayThrough };

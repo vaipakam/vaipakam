@@ -5447,18 +5447,40 @@ library LibInteractionRewards {
 
     // ─── Legacy window claim (used by test mutators) ────────────────────────
 
+    /// @notice [LEGACY] What one walk of the per-day window produced: the
+    ///         reward PAID to the user, and the reward FORFEITED under the
+    ///         sanctions rule (Codex #2489 r4). One memory value so the claim
+    ///         frame, at the viaIR budget, carries both in one slot.
+    struct LegacyWindowResult {
+        uint256 paid;
+        uint256 forfeited;
+        /// @dev Set by the claim once the window ran (the clamp admitted a day):
+        ///      a memory field, not a frame local, because the claim frame is
+        ///      at the viaIR budget and a bool there costs a whole slot.
+        bool walked;
+    }
+
     /**
      * @notice [LEGACY] Walk finalized days in `[fromDay .. toDayInclusive]`
      *         and accumulate `user`'s VPFI reward from the per-day
      *         counter API. Deletes per-user per-day counters as it goes
      *         so the claim is idempotent. Coexists with the new entry
      *         claim path — the facet sums both.
+     *
+     *         A day the claimant earned while a CONFIRMED flag stood is
+     *         priced exactly as a paid day and returned as FORFEITED (Codex
+     *         #2489 r4): the spec routes every reward earned in a confirmed
+     *         window into the recycle bucket, so the facet charges it to the
+     *         pool and credits the bucket as forfeited reward, the way the
+     *         entry path's forfeits go. Clearing the counters unpaid — the
+     *         earlier reading, "never committed, so it stays in the pool" —
+     *         treated it as never emitted instead.
      */
     function claimForUserWindow(
         address user,
         uint256 fromDay,
         uint256 toDayInclusive
-    ) internal returns (uint256 total) {
+    ) internal returns (LegacyWindowResult memory w) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
@@ -5468,55 +5490,56 @@ library LibInteractionRewards {
             // armed day — it would double-pay atop the entry path, and #1008 is
             // retired there ({snapshotDayCapThreshold}). Clear any residual /
             // fabricated legacy counter without crediting (Codex #1371 r4).
-            // #1566 sanctions rule (owner 2026-10-14) — a day the claimant
-            // earned while a CONFIRMED flag stood is forfeited the same way:
-            // its counters clear and nothing is paid. Pre-cutover value was
-            // never committed, so the unpaid share stays in the pool.
-            if (_isArmedDay(s, d) || LibRewardSanctions.dayForfeited(s, user, d)) {
+            if (_isArmedDay(s, d)) {
                 delete s.userLenderInterestNumeraire18[d][user];
                 delete s.userBorrowerInterestNumeraire18[d][user];
                 unchecked { ++d; }
                 continue;
             }
-            // #1944 c1 (S1-R1) — each side's fresh half through THE one
-            // derivation, {_sideFreshHalf}: the Base stamp once it has landed
-            // (zero for an excluded destination), the schedule before. `half`
-            // is assigned for the lender leg and REASSIGNED for the borrower
-            // leg, so the window gains no local. On the claim route a day
-            // still awaiting its delivery never reaches here:
-            // {clampToFinalized} stops before it.
-            uint256 half = _sideFreshHalf(
-                s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Lender, d
-            );
-            (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
-            uint256 myL = s.userLenderInterestNumeraire18[d][user];
-            if (half > 0 && myL > 0 && totalL > 0) {
-                uint256 raw = (half * myL) / totalL;
-                uint256 cap = _capVpfiForInterestUsd(
-                    myL,
-                    ethPriceRaw,
-                    ethPriceDec,
-                    capRatio
-                );
-                total += raw < cap ? raw : cap;
-                delete s.userLenderInterestNumeraire18[d][user];
-            }
-            half = _sideFreshHalf(
-                s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Borrower, d
-            );
-            uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
-            if (half > 0 && myB > 0 && totalB > 0) {
-                uint256 raw = (half * myB) / totalB;
-                uint256 cap = _capVpfiForInterestUsd(
-                    myB,
-                    ethPriceRaw,
-                    ethPriceDec,
-                    capRatio
-                );
-                total += raw < cap ? raw : cap;
-                delete s.userBorrowerInterestNumeraire18[d][user];
-            }
+            uint256 amount = _legacyDayLegs(s, user, d, capRatio, ethPriceRaw, ethPriceDec);
+            if (LibRewardSanctions.dayForfeited(s, user, d)) w.forfeited += amount;
+            else w.paid += amount;
             unchecked { ++d; }
+        }
+    }
+
+    /// @dev ONE pricing of a legacy day's two legs — the paid and the
+    ///      forfeited branch of {claimForUserWindow} must price identically,
+    ///      so they share it. Each side's fresh half comes through THE one
+    ///      derivation, {_sideFreshHalf} (#1944 c1: the Base stamp once it has
+    ///      landed, zero for an excluded destination, the schedule before);
+    ///      `half` is assigned for the lender leg and REASSIGNED for the
+    ///      borrower leg, so the frame gains no local. On the claim route a day
+    ///      still awaiting its delivery never reaches here: {clampToFinalized}
+    ///      stops before it. Deletes each leg's counter it priced.
+    function _legacyDayLegs(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 d,
+        uint256 capRatio,
+        uint256 ethPriceRaw,
+        uint8 ethPriceDec
+    ) private returns (uint256 amount) {
+        uint256 half = _sideFreshHalf(
+            s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Lender, d
+        );
+        (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
+        uint256 myL = s.userLenderInterestNumeraire18[d][user];
+        if (half > 0 && myL > 0 && totalL > 0) {
+            uint256 raw = (half * myL) / totalL;
+            uint256 cap = _capVpfiForInterestUsd(myL, ethPriceRaw, ethPriceDec, capRatio);
+            amount += raw < cap ? raw : cap;
+            delete s.userLenderInterestNumeraire18[d][user];
+        }
+        half = _sideFreshHalf(
+            s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Borrower, d
+        );
+        uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
+        if (half > 0 && myB > 0 && totalB > 0) {
+            uint256 raw = (half * myB) / totalB;
+            uint256 cap = _capVpfiForInterestUsd(myB, ethPriceRaw, ethPriceDec, capRatio);
+            amount += raw < cap ? raw : cap;
+            delete s.userBorrowerInterestNumeraire18[d][user];
         }
     }
 
