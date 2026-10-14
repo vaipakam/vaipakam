@@ -274,10 +274,17 @@ async function eligibleAt(blockNumber) {
     read('getLoanDetails', [LOAN_ID], at),
     blockNumber === undefined ? pub.getBlock() : pub.getBlock({ blockNumber }),
   ]);
-  const holder = await read('ownerOf', [l.lenderTokenId], at);
+  // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
+  // an admin retune between startup and the inspected block changes what
+  // triggerDefault itself evaluates there (#2481 r3).
+  const [holder, graceSeconds] = await Promise.all([
+    read('ownerOf', [l.lenderTokenId], at),
+    read('getEffectiveGraceSeconds', [l.durationDays], at),
+  ]);
+  const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
   if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
-  if (b.timestamp <= graceEnd) why.push(`not past grace (chain time ${b.timestamp})`);
+  if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
   if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
   return { ok: why.length === 0, why: why.join(', '), block: b.number };
 }
@@ -339,6 +346,9 @@ async function gate(method, params) {
       console.log(`GATE  could not estimate the requested call: ${err.shortMessage ?? err.message}`);
     }
   }
+  // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
+  // refused request recorded meanwhile must still withhold the one-shot send.
+  if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
   const actual = kind === 'tx' ? decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor) : params;
   const v = PLAN.offer(ROLE, kind, actual);
   if (!v.ok) {
@@ -528,6 +538,20 @@ try {
   check('card', 'ready', `the card declares ${SALE_STATE}`, state === SALE_STATE, `declared state ${state}`);
   const text = (await card.innerText()).replace(/\s+/g, ' ');
   console.log(`card: ${text.slice(0, 600)}`);
+  // A deployment posture the card DISCLOSES — no venue the app can ask, the
+  // quote proxy not configured, the venue list unreadable — is a precondition
+  // of this environment, not a card defect (#2481 r3).
+  const postures = [
+    ['readyNeedsRouteNoVenue', 'no venue the app can ask on this chain'],
+    ['readyNeedsRouteNoEnabledVenue', 'no enabled venue'],
+    ['readyNeedsRouteNotConfigured', 'the quote proxy is not configured'],
+    ['readyNeedsRouteUnreadable', "the venue list could not be read"],
+  ];
+  for (const [key, what] of postures) {
+    if (typeof FC[key] === 'string' && text.includes(FC[key])) {
+      await blocked(`the card discloses that a sale cannot be routed here (${what}) — not the routable sale this drive judges`, null, done);
+    }
+  }
   check('card', 'saleBody', 'the card says the collateral is sold through a route the app builds', text.includes(FC.readyNeedsRoute));
   // Revalidate the snapshot (#2481 r1): the card declares the block its
   // readiness was resolved at; the chain must show the same facts there AND
@@ -652,6 +676,9 @@ if (armedOnce) {
 // change is a race, stated, not an escape.
 let escaped = false;
 let escapeUnknown = null;
+/** The plan was armed, sent nothing, and the wallet's nonce could not be
+ *  read: a send through another connector cannot be ruled out. */
+let writeUnknown = false;
 if (armedOnce && !wrote()) {
   try {
     const [nonceAfter, status] = await Promise.all([
@@ -662,15 +689,20 @@ if (armedOnce && !wrote()) {
     if (escaped) {
       console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
     } else if (status !== ACTIVE) {
-      escapeUnknown = `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status} — closed by someone else in the meantime (a race)`;
-    } else {
-      escapeUnknown = 'the driver confirmed and the plan allowed no send; the wallet nonce did not move and the loan is still Active';
+      // Nothing was written by this drive; the loan simply moved under it.
+      stopped = [stopped, `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status} — closed by someone else in the meantime (a race)`].filter(Boolean).join('; ');
     }
+    // Nonce unchanged and the loan still Active: PROVABLY no write, so the
+    // run stays on the pre-write path, where a failed check is a FAIL.
   } catch (err) {
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message})`;
+    writeUnknown = true;
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message}) — a send through another connector cannot be ruled out`;
   }
 }
-const wroteAny = wrote() || armedOnce;
+// #2481 r3 — ARMING is not a write. Only a send the plan consumed, an escape
+// the nonce proves, or a nonce that could not be read (a write that cannot
+// be ruled out) puts the run on the post-write path.
+const wroteAny = wrote() || escaped || writeUnknown;
 try {
   await done();
 } catch (err) {

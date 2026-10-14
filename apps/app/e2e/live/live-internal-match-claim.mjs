@@ -568,28 +568,38 @@ try {
 
   // The position page's Owed line (#2466, #2470), before any claim: an
   // unclaimed internally matched loan is closed but not settled.
+  // Not `visit()`: that helper is for the FIRST navigation and reads any
+  // failure as infrastructure (BLOCKED). /positions is a product route
+  // reached after /claims loaded, so a failure here is a finding (#2481 r3).
   resetWindow();
-  await visit(page, `/positions/${LOAN_ID}`);
-  let owedText = '';
-  const owedDeadline = Date.now() + 45_000;
-  while (Date.now() < owedDeadline) {
-    owedText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
-    if (owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) break;
-    await page.waitForTimeout(1_000);
+  const posNav = await page
+    .goto(`${SITE_URL.replace(/\/$/, '')}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    .then((r) => ({ status: r?.status() ?? 200 }), (e) => ({ error: e.message }));
+  if (posNav.error || posNav.status >= 400) {
+    check('owedLine', 'pending', 'the position page loaded', false, posNav.error ?? `HTTP ${posNav.status}`);
+  } else {
+    let owedText = '';
+    const owedDeadline = Date.now() + 45_000;
+    while (Date.now() < owedDeadline) {
+      owedText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+      if (owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) break;
+      await page.waitForTimeout(1_000);
+    }
+    // Neither line within the wait, and the page's own RPC answered nothing in
+    // that window: the page never had the facts, so nothing was observed —
+    // BLOCKED, never a FAIL on the copy (#2481 r1).
+    if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
+      await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
+    }
+    check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
+    check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   }
-  // Neither line within the wait, and the page's own RPC answered nothing in
-  // that window: the page never had the facts, so nothing was observed —
-  // BLOCKED, never a FAIL on the copy (#2481 r1).
-  if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
-    await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
-  }
-  check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
-  check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   await shot(`internal-match-owed-${LOAN_ID}`);
   if (SUBMIT_CLAIM) {
     // The claim flow starts from the claims list.
     resetWindow();
-    await visit(page, '/claims');
+    const back = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
     await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
   }
 
