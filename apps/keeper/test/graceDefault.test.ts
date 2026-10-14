@@ -16,6 +16,7 @@ import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
   attemptGraceDefault,
   findDefaultable,
+  pickBatch,
   rotate,
   type GraceDefaultDeps,
   type GraceLoan,
@@ -54,6 +55,8 @@ interface Scene {
   /** The preview's ending; null makes the node fail the simulation. */
   ending?: 'sale' | 'fallback' | 'other' | null;
   calls?: number;
+  /** Health factor; a function to throw instead (e.g. illiquid collateral). */
+  hf?: bigint | (() => never);
 }
 
 function harness(scene: Scene) {
@@ -72,6 +75,9 @@ function harness(scene: Scene) {
         }
         case 'positionLock':
           return BigInt(scene.lock ?? 0);
+        case 'calculateHealthFactor':
+          if (typeof scene.hf === 'function') scene.hf();
+          return scene.hf ?? 2n * 10n ** 18n;
         case 'facetAddress':
           return scene.boundedListing === false ? A(0) : A(0xfa);
         default:
@@ -265,6 +271,59 @@ describe('attemptGraceDefault', () => {
   });
 });
 
+describe('the liquidator boundary', () => {
+  it('leaves an under-water loan to the HF liquidator — no competing terminal send', async () => {
+    const h = harness({ hf: 9n * 10n ** 17n, ending: 'sale' });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'hf-liquidatable (left to the liquidator)' });
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('proceeds when the HF read REVERTS — illiquid collateral has no HF, and the liquidator skips it too', async () => {
+    const nft: GraceLoan = { ...LIQUID, collateralAssetType: 1 };
+    const h = harness({
+      loans: [nft],
+      hf: () => {
+        throw revertWith('IlliquidCollateral');
+      },
+      ending: 'other',
+    });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out.kind).toBe('submitted');
+  });
+
+  it('does not proceed when the HF read never got an answer', async () => {
+    const h = harness({
+      hf: () => {
+        throw new Error('fetch failed');
+      },
+      ending: 'sale',
+    });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect((out as { reason: string }).reason).toMatch(/^hf-unread:/);
+    expect(h.writes).toHaveLength(0);
+  });
+});
+
+describe('pickBatch', () => {
+  it('takes consecutive, non-overlapping batches, so every loan is tried within ceil(n/width) runs', () => {
+    const items = Array.from({ length: 12 }, (_, i) => i);
+    const tried = new Set<number>();
+    for (let run = 0; run < Math.ceil(items.length / 5); run += 1) {
+      const { picked, deferred } = pickBatch(items, run, 5);
+      expect(picked).toHaveLength(5);
+      expect(picked.length + deferred.length).toBe(items.length);
+      picked.forEach((x) => tried.add(x));
+    }
+    expect(tried.size).toBe(items.length);
+  });
+
+  it('defers nothing when the set fits in one batch', () => {
+    expect(pickBatch([1, 2, 3], 9, 5)).toEqual({ picked: [1, 2, 3], deferred: [] });
+  });
+});
+
 describe('rotate', () => {
   it('brings every candidate to the front within length runs', () => {
     const items = [1, 2, 3, 4, 5, 6, 7];
@@ -296,7 +355,10 @@ describe('findDefaultable', () => {
         ];
       },
     } as unknown as PublicClient;
-    await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual([5n]);
+    await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual({
+      defaultable: [5n],
+      unread: [6n],
+    });
     expect(seen).toEqual([555n, 555n, 555n]);
   });
 });

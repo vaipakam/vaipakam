@@ -27,6 +27,7 @@ import {
   type AbiParameter,
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { SWAP_ADAPTER_SUCCEEDED_TOPIC } from '@vaipakam/lib/routeBuilder';
 
 /** How many entries every dynamic array result carries. */
 export const ARRAY_LEN = Number(process.env.BENCH_ARRAY_LEN ?? 25);
@@ -415,7 +416,8 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     // scanChain classifies every loan as safe and the liquidator skips its
     // sort / cap / sign / submit path — the active liquidation work this profile
     // most needs — reporting atRisk=0 with no honesty marker (Codex #1945 r4).
-    // 0.95e18 flags every scanned loan as liquidatable.
+    // 0.95e18 flags every scanned loan as liquidatable; `answerCall` lifts the
+    // EVEN ids back above the line (see there).
     if (/healthfactor/i.test(fnName) || /^hf$|healthfactor/i.test(p.name ?? '')) {
       return 950_000_000_000_000_000n;
     }
@@ -624,6 +626,22 @@ function answerCall(data: string, chainKey = ''): string {
     }
   }
 
+  // calculateHealthFactor(id): under water for ODD ids, healthy for EVEN
+  // ones. The liquidator still finds more at-risk loans than its per-tick cap,
+  // and the grace-default pass — which leaves an under-water loan to the
+  // liquidator — still reaches its route / preview / submit path on the
+  // healthy half (Codex #2485 r1). A constant below-line HF measured only its
+  // early skip.
+  if (/^calculatehealthfactor$/i.test(fn.name)) {
+    try {
+      const { args } = decodeFunctionData({ abi: [fn] as Abi, data: data as `0x${string}` });
+      const id = BigInt((args as readonly unknown[])[0] as bigint | number);
+      if (id % 2n === 0n) values[0] = 1_200_000_000_000_000_000n;
+    } catch {
+      /* undecodable id — leave the default */
+    }
+  }
+
   return encodeFunctionResult({
     abi: [fn] as Abi,
     functionName: fn.name,
@@ -632,6 +650,24 @@ function answerCall(data: string, chainKey = ''): string {
 }
 
 const HEX = (n: number | bigint) => `0x${n.toString(16)}`;
+
+/** The one block every block read is answered with. */
+function simBlock() {
+  return {
+    number: HEX(20_000_000),
+    hash: `0x${'22'.repeat(32)}`,
+    parentHash: `0x${'33'.repeat(32)}`,
+    timestamp: HEX(Math.floor(Date.now() / 1000)),
+    baseFeePerGas: HEX(1_000_000_000),
+    gasLimit: HEX(30_000_000),
+    gasUsed: HEX(15_000_000),
+    miner: ADDRESS,
+    extraData: '0x',
+    transactions: [],
+    logsBloom: `0x${'00'.repeat(256)}`,
+    difficulty: '0x0',
+  };
+}
 
 /** Answer one JSON-RPC request object. */
 function answer(
@@ -651,22 +687,46 @@ function answer(
       );
     case 'eth_getBlockByNumber':
     case 'eth_getBlockByHash':
-      return ok({
-        number: HEX(20_000_000),
-        hash: `0x${'22'.repeat(32)}`,
-        parentHash: `0x${'33'.repeat(32)}`,
-        timestamp: HEX(Math.floor(Date.now() / 1000)),
-        baseFeePerGas: HEX(1_000_000_000),
-        gasLimit: HEX(30_000_000),
-        gasUsed: HEX(15_000_000),
-        miner: ADDRESS,
-        extraData: '0x',
-        transactions: [],
-        logsBloom: `0x${'00'.repeat(256)}`,
-        difficulty: '0x0',
-      });
+      return ok(simBlock());
     case 'eth_getLogs':
       return ok([]);
+    case 'eth_simulateV1': {
+      // The grace-default pass previews `triggerDefault` here and sends only
+      // on a SALE ending, which it reads from the logs. Answer every call as
+      // a successful sale for the loan id in its calldata, so the profile
+      // measures the preview decode AND the submission after it, not an
+      // early skip (Codex #2485 r1).
+      const [{ blockStateCalls = [] } = {}] = params as [
+        { blockStateCalls?: { calls?: { to?: string; data?: string }[] }[] }?,
+      ];
+      return ok(
+        blockStateCalls.map((b) => ({
+          ...simBlock(),
+          calls: (b.calls ?? []).map((c) => ({
+            status: '0x1',
+            returnData: '0x',
+            gasUsed: HEX(400_000),
+            logs: [
+              {
+                address: c.to ?? ADDRESS,
+                topics: [
+                  SWAP_ADAPTER_SUCCEEDED_TOPIC,
+                  `0x${(c.data ?? '').slice(10, 74).padStart(64, '0')}`,
+                  `0x${'00'.repeat(32)}`,
+                ],
+                data: `0x${'00'.repeat(64)}`,
+                blockNumber: HEX(20_000_000),
+                blockHash: `0x${'22'.repeat(32)}`,
+                transactionHash: `0x${'44'.repeat(32)}`,
+                transactionIndex: '0x0',
+                logIndex: '0x0',
+                removed: false,
+              },
+            ],
+          })),
+        })),
+      );
+    }
     case 'eth_gasPrice':
     case 'eth_maxPriorityFeePerGas':
       return ok(HEX(1_000_000_000));

@@ -14,33 +14,37 @@
  *      blocks — the liquidator's reason for pinning, and the same here.
  *   2. Batch-read `isLoanDefaultable` at that block. The contract's own view
  *      is the eligibility rule; nothing here re-derives grace arithmetic.
- *   3. For each candidate, up to MAX_ATTEMPTS_PER_TICK, starting at a
- *      rotating offset so a loan that never closes cannot hold the front of
- *      the queue forever:
- *        a. The sale interlock (#2078): `triggerDefault` does not inspect
+ *   3. For a batch of MAX_ATTEMPTS_PER_TICK candidates — consecutive runs
+ *      take consecutive batches, so a loan that never closes cannot hold the
+ *      front of the queue (`pickBatch`):
+ *        a. Not the liquidator's. A loan that is also under water is left
+ *           to the HF liquidator, which runs every tick from the same
+ *           keeper account; two terminal sends for one loan would race.
+ *        b. The sale interlock (#2078): `triggerDefault` does not inspect
  *           sale linkage, so closing a loan after a buyer accepted its
  *           lender-position sale strands the buyer's principal. An accepted
  *           sale, or a sale state the chain does not establish, skips.
- *        b. The try-list. Liquid ERC-20 collateral for an ERC-20 loan is
+ *        c. The try-list. Liquid ERC-20 collateral for an ERC-20 loan is
  *           quoted through the shared route builder for the loan's whole
  *           collateral. Anything else sends an empty list and lets the
  *           contract take its in-kind branch, or refuse.
- *        c. The preview. `previewCloseOut` runs the call on `eth_simulateV1`
+ *        d. The preview. `previewCloseOut` runs the call on `eth_simulateV1`
  *           and reads its logs, because a plain simulation SUCCEEDS into
  *           the full-collateral fallback when every route fails. Only a
  *           `sale` or an `other` ending (in-kind, collapsed LTV, internal
  *           match, rental) is sent. A route that would fall back is not:
  *           the spec wants a liquid forced close to make a real market
  *           attempt, and a route already known to fail is not one.
- *        d. The final gate, at a fresh block: the sale state again, and the
+ *        e. The final gate, at a fresh block: the sale state again, and the
  *           collateral amount the quotes were made for (#2472 — after a
  *           top-up the adapter sells only the quoted amount and the rest
  *           lands in no one's claim).
- *        e. Submit. The receipt is not awaited; the next tick's
+ *        f. Submit. The receipt is not awaited; the next tick's
  *           `isLoanDefaultable` read is what says whether it landed.
  *
- * Every candidate logs one line naming what happened to it, so
- * `wrangler tail` says why a past-grace loan is still Active.
+ * Every defaultable loan is named in the log — attempted (with what
+ * happened to it), deferred to a later batch, or unread — so `wrangler tail`
+ * says why a past-grace loan is still Active.
  *
  * What stays uncovered is the gap between the final gate and inclusion: no
  * read from off-chain closes it. The on-chain guards that would are #2078
@@ -65,7 +69,9 @@ import {
   DiamondLoupeFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
+  RiskFacetABI,
 } from '@vaipakam/contracts/abis';
+import { isRevert } from '@vaipakam/lib/contractRevert';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { previewCloseOut, type CloseOutPreview } from '@vaipakam/lib/routeBuilder';
 import {
@@ -79,12 +85,14 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
+import { HF_LIQUIDATION_THRESHOLD } from './liquidator';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
+const RISK_ABI: Abi = RiskFacetABI as Abi;
 
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
@@ -98,8 +106,8 @@ const READ_CHUNK = 100;
  *  are reached on later ticks through the rotating start. */
 export const MAX_ATTEMPTS_PER_TICK = 5;
 
-/** The pass's cadence, in ms — the rotation steps once per run. Mirrors
- *  `cadenceMinutes` in passSchedule.ts. */
+/** The pass's cadence, in ms — the rotation moves one batch per run.
+ *  Mirrors `cadenceMinutes` in passSchedule.ts. */
 const ROTATION_STEP_MS = 5 * 60_000;
 
 /** LibVaipakam.AssetType.ERC20. */
@@ -152,7 +160,14 @@ async function processChain(env: Env, chain: ChainConfig): Promise<void> {
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
 
-  const candidates = await findDefaultable(client, ctx.diamond, chain.id);
+  const { defaultable: candidates, unread } = await findDefaultable(client, ctx.diamond, chain.id);
+  if (unread.length > 0) {
+    // Unread is not "not defaultable": name them, so a loan missing from the
+    // attempts below is not mistaken for one the chain ruled out.
+    console.log(
+      `[keeper] graceDefault chain=${chain.id} eligibility-unread loans=${unread.join(',')}`,
+    );
+  }
   if (candidates.length === 0) return;
 
   const deps: GraceDefaultDeps = {
@@ -171,10 +186,18 @@ async function processChain(env: Env, chain: ChainConfig): Promise<void> {
       }),
   };
 
-  const picked = rotate(candidates, Math.floor(Date.now() / ROTATION_STEP_MS)).slice(
-    0,
+  const { picked, deferred } = pickBatch(
+    candidates,
+    Math.floor(Date.now() / ROTATION_STEP_MS),
     MAX_ATTEMPTS_PER_TICK,
   );
+  if (deferred.length > 0) {
+    // Named, not just counted: an operator asking why one loan is still
+    // Active must be able to tell "waiting its turn" from "never seen".
+    console.log(
+      `[keeper] graceDefault chain=${chain.id} deferred-by-cap loans=${deferred.join(',')}`,
+    );
+  }
   let submitted = 0;
   for (const loanId of picked) {
     let outcome: GraceDefaultOutcome;
@@ -205,7 +228,7 @@ export async function findDefaultable(
   client: PublicClient,
   diamond: Address,
   chainId: number,
-): Promise<bigint[]> {
+): Promise<{ defaultable: bigint[]; unread: bigint[] }> {
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const total = (await client.readContract({
     address: diamond,
@@ -213,7 +236,7 @@ export async function findDefaultable(
     functionName: 'getActiveLoansCount',
     blockNumber,
   })) as bigint;
-  if (total === 0n) return [];
+  if (total === 0n) return { defaultable: [], unread: [] };
   const ids: bigint[] = [];
   for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) {
     const limit = cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;
@@ -243,26 +266,36 @@ export async function findDefaultable(
     );
     results.push(...part);
   }
-  const out: bigint[] = [];
-  let unread = 0;
+  const defaultable: bigint[] = [];
+  const unread: bigint[] = [];
   results.forEach((r, i) => {
-    if (r.status !== 'success') unread += 1;
-    else if (r.result === true) out.push(ids[i]);
+    if (r.status !== 'success') unread.push(ids[i]);
+    else if (r.result === true) defaultable.push(ids[i]);
   });
-  if (unread > 0) {
-    // Unread is not "not defaultable": say so, so a loan missing from the
-    // attempts below is not mistaken for one the chain ruled out.
-    console.log(`[keeper] graceDefault chain=${chainId} isLoanDefaultable unread=${unread}`);
-  }
-  return out;
+  return { defaultable, unread };
 }
 
-/** The candidates starting at `step mod length` — a stateless rotation, so
- *  every candidate reaches the front within `length` runs. */
+/** The candidates starting at `step mod length`. */
 export function rotate<T>(items: readonly T[], step: number): T[] {
   if (items.length === 0) return [];
   const start = ((step % items.length) + items.length) % items.length;
   return [...items.slice(start), ...items.slice(0, start)];
+}
+
+/** This run's batch: `width` candidates starting `run × width` along the
+ *  list, so consecutive runs take consecutive, non-overlapping batches and
+ *  every candidate is attempted within ⌈length ÷ width⌉ runs while the set
+ *  holds steady. Stateless, so nothing has to persist between isolates; a
+ *  set that changes between runs can shift a loan by a batch, which delays
+ *  it by a run rather than skipping it for good. */
+export function pickBatch<T>(
+  items: readonly T[],
+  run: number,
+  width: number,
+): { picked: T[]; deferred: T[] } {
+  if (items.length <= width) return { picked: [...items], deferred: [] };
+  const ordered = rotate(items, run * width);
+  return { picked: ordered.slice(0, width), deferred: ordered.slice(width) };
 }
 
 /** One loan: interlock, route, preview, final gate, submit. Never sends
@@ -276,6 +309,12 @@ export async function attemptGraceDefault(
   if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
 
   const loan = await readLoan(client, diamond, loanId);
+
+  // A past-grace loan that is ALSO under water belongs to the liquidator,
+  // which runs every tick from the same keeper account. Sending both would
+  // race two terminal transactions for one loan from one nonce sequence.
+  const hf = await liquidatorOwns(client, diamond, loanId);
+  if (hf !== null) return { kind: 'skipped', reason: hf };
 
   const sale = await saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper);
   if (sale !== null) return { kind: 'skipped', reason: sale };
@@ -375,5 +414,27 @@ async function saleVerdict(
     return facet === zeroAddress ? 'sale-legacy-listing' : null;
   } catch (err) {
     return `sale-unread:${describeFailure(err)}`;
+  }
+}
+
+/** Null when the liquidator will not act on this loan; otherwise why this
+ *  pass leaves it. Illiquid collateral has no health factor — the read
+ *  reverts, and the liquidator skips such loans too. */
+async function liquidatorOwns(
+  client: PublicClient,
+  diamond: Address,
+  loanId: bigint,
+): Promise<string | null> {
+  try {
+    const hf = (await client.readContract({
+      address: diamond,
+      abi: RISK_ABI,
+      functionName: 'calculateHealthFactor',
+      args: [loanId],
+    })) as bigint;
+    return hf < HF_LIQUIDATION_THRESHOLD ? 'hf-liquidatable (left to the liquidator)' : null;
+  } catch (err) {
+    if (isRevert(err)) return null;
+    return `hf-unread:${describeFailure(err)}`;
   }
 }
