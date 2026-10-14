@@ -8,9 +8,9 @@ custody across a change of role, the per-day closure proof that lets anyone
 finalize an era once nothing on it is owed, and the service capacity deposit
 for solvers, matchers and keepers, with its limiter and arming fee (#1219).
 Eight rounds of review left one design change worth stating up front: a
-compensation that arrives before its day's broadcast is now held apart,
-uncounted, until that broadcast confirms or rejects it, instead of being
-counted on arrival. Nothing has to be chased back out of shared funds when one
+compensation that arrives before its day's broadcast is now held apart, in
+an attribution of its own and counted as neither funded nor uncounted, until
+that broadcast confirms or rejects it, instead of being counted on arrival. Nothing has to be chased back out of shared funds when one
 is rejected. The other merge (#2461) records, for a position, what was lent and
 what is locked now (#2453, #2454). Nothing here is deployed yet: the contracts reach
 testnet together at the end of the programme.
