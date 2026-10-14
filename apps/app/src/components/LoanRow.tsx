@@ -35,8 +35,12 @@ export function LoanRow({
   const pastGrace = useLoanPastGrace(loan.loanId, loan.status === 'active');
   // A failed refresh keeps TanStack's last `data`; that is a STALE verdict
   // (governance may have lengthened grace meanwhile), so an errored read
-  // counts as unread rather than as the last answer.
-  const verdict = pastGrace.isError ? undefined : pastGrace.data;
+  // counts as unread rather than as the last answer. So does a PAUSED read
+  // (the browser is offline): TanStack keeps the cached `data` without
+  // setting `isError`, and the current protocol state is not in hand
+  // (#2475 r8).
+  const graceReadUnavailable = pastGrace.isError || pastGrace.isPaused;
+  const verdict = graceReadUnavailable ? undefined : pastGrace.data;
   const view = withGraceVerdict(timeView, verdict);
   // Any open row whose grace answer is not in hand may already be past
   // grace — the device clock can run behind the chain's, so "On track" or
@@ -47,7 +51,7 @@ export function LoanRow({
   // it (#2475 r7).
   const graceUnreadNote =
     loan.status === 'active' && view.labelKey !== 'pastGrace' && verdict === undefined
-      ? pastGrace.isError
+      ? graceReadUnavailable
         ? copy.loanRow.graceUnknownTitle
         : copy.loanRow.graceCheckingTitle
       : null;
