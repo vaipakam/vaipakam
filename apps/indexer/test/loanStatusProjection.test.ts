@@ -416,7 +416,7 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
   });
 });
 
-describe('settleFromLedger — settle what the ledger shows settled (#2464, #2476 r3)', () => {
+describe('settleFromLedger — the terminal→Settled edge the ledger and the chain both show (#2464, #2476 r6)', () => {
   const ledger = (h: SqliteD1, loanId: number, kind: string, block: number, at: number) =>
     h.db
       .prepare(
@@ -431,60 +431,105 @@ describe('settleFromLedger — settle what the ledger shows settled (#2464, #247
       terminal_at: number | null;
     };
   const budget = () => createBudget(1_000, 'test', 1_000);
-  /** A client whose block reads answer from `times`, and throw for any other block. */
-  const blocks = (times: Record<number, number>) =>
+  /** A chain whose block reads answer from `times` (throwing otherwise) and
+   *  whose loan status is `status(id)` — Settled (3) unless told otherwise. */
+  const chain = (
+    times: Record<number, number>,
+    status: (id: number) => number | Error = () => 3,
+    seen: { reads: Array<{ id: number; block: bigint }> } = { reads: [] },
+  ) =>
     ({
       getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
         const t = times[Number(blockNumber)];
         if (t === undefined) throw new Error('block read failed');
         return { timestamp: BigInt(t) };
       },
+      readContract: async ({ args, blockNumber }: { args: [bigint]; blockNumber: bigint }) => {
+        const id = Number(args[0]);
+        seen.reads.push({ id, block: blockNumber });
+        const st = status(id);
+        if (st instanceof Error) throw st;
+        return { status: st };
+      },
     }) as never;
   const env = (h: SqliteD1) => ({ DB: h.d1 }) as unknown as Env;
+  const heal = (h: SqliteD1, c: unknown) => settleFromLedger(c as never, DIAMOND, env(h), CHAIN, budget(), 777n);
 
-  it('settles a stuck row, dated by a fresh read of its event block, and touches nothing else', async () => {
+  it('settles a terminal row the chain confirms, dated by a fresh read of its event block, and touches nothing else', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 24, 'internal_matched'); // settled on chain — ledger has it
-    // The ledger's block_at is the scan's wall-clock sentinel here; the heal
-    // must not trust it.
+    // The ledger's block_at is the scan's wall-clock sentinel here; never trusted.
     ledger(h, 24, 'LoanSettled', 48004228, 1_999_999_999);
     seedLoan(h, 28, 'internal_matched'); // still unclaimed — no LoanSettled
     ledger(h, 28, 'OwedAtInternalMatchRecorded', 48059980, 1791888248);
-    seedLoan(h, 30, 'active');
-    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toEqual([24]);
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    expect(await heal(h, chain({ 48004228: 1791775970 }, () => 3, seen))).toEqual([24]);
     expect(row(h, 24)).toEqual({ status: 'settled', terminal_block: 48004228, terminal_at: 1791775970 });
     expect(row(h, 28).status).toBe('internal_matched');
-    expect(row(h, 30).status).toBe('active');
-    // Idempotent: nothing left to settle.
-    expect(await settleFromLedger(blocks({ 48004228: 1791775970 }), env(h), CHAIN, budget())).toEqual([]);
+    // The canonical read is pinned to the pass's settled block.
+    expect(seen.reads).toEqual([{ id: 24, block: 777n }]);
+    expect(await heal(h, chain({ 48004228: 1791775970 }))).toEqual([]);
   });
 
-  it('settles with the time unknown — never the ledger sentinel — when the block read fails, so the row leaves the batch', async () => {
+  it('every terminal status takes the edge; an ACTIVE row is the reconciliation repair’s, not this lane’s', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const cases = [
+      [41, 'repaid'],
+      [42, 'defaulted'],
+      [43, 'liquidated'],
+      [44, 'internal_matched'],
+      [45, 'active'],
+      [46, 'fallback_pending'],
+    ] as const;
+    for (const [id, st] of cases) {
+      seedLoan(h, id, st);
+      ledger(h, id, 'LoanSettled', 500 + id, 1);
+    }
+    expect(await heal(h, chain({ 541: 1, 542: 1, 543: 1, 544: 1, 545: 1, 546: 1 }))).toEqual([41, 42, 43, 44]);
+    expect(row(h, 45).status).toBe('active');
+    expect(row(h, 46).status).toBe('fallback_pending');
+  });
+
+  it('leaves a row the canonical chain does not show Settled exactly as it is (a reorganised-away event)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 50, 'internal_matched');
+    ledger(h, 50, 'LoanSettled', 900, 1);
+    expect(await heal(h, chain({ 900: 5 }, () => 5))).toEqual([]);
+    expect(row(h, 50)).toEqual({ status: 'internal_matched', terminal_block: null, terminal_at: null });
+  });
+
+  it('settles with the time unknown — never the ledger sentinel — when the chain confirms it but the block read fails', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 25, 'internal_matched');
     ledger(h, 25, 'LoanSettled', 700, 1_999_999_999);
-    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([25]);
+    expect(await heal(h, chain({}))).toEqual([25]);
     expect(row(h, 25)).toEqual({ status: 'settled', terminal_block: 700, terminal_at: null });
   });
 
-  it('unreadable blocks cannot hold the window: later rows are reached on the next tick (#2476 r5)', async () => {
+  it('rotates: rows the chain does not confirm cannot hold the batch, and the walk wraps', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     for (let id = 100; id < 125; id++) {
       seedLoan(h, id, 'internal_matched');
       ledger(h, id, 'LoanSettled', id, 1);
     }
-    await settleFromLedger(blocks({}), env(h), CHAIN, budget()); // first batch, all unreadable
-    expect(await settleFromLedger(blocks({}), env(h), CHAIN, budget())).toEqual([120, 121, 122, 123, 124]);
+    // 100–119 are not confirmed by the chain; 120–124 are.
+    const c = chain({}, (id) => (id >= 120 ? 3 : 5));
+    expect(await heal(h, c)).toEqual([]); // first page: 100–119
+    expect(await heal(h, c)).toEqual([120, 121, 122, 123, 124]); // next page, then wrap
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, (id) => (id >= 120 ? 3 : 5), seen));
+    expect(seen.reads[0].id).toBe(100); // wrapped to the start
   });
 
-  it('settles an event an older Worker ledgered without settling — the deploy gap a one-shot migration missed', async () => {
-    // The old handler recorded the ledger row and advanced the cursor but
-    // left the loan internally matched; the next scan will not replay it.
+  it('reports the ids it already settled when a later row throws', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
-    seedLoan(h, 26, 'internal_matched');
-    ledger(h, 26, 'LoanSettled', 900, 1);
-    await settleFromLedger(blocks({ 900: 5555 }), env(h), CHAIN, budget());
-    expect(row(h, 26).status).toBe('settled');
+    for (const id of [60, 61, 62]) {
+      seedLoan(h, id, 'internal_matched');
+      ledger(h, id, 'LoanSettled', id, 1);
+    }
+    const c = chain({ 60: 1, 61: 1, 62: 1 }, (id) => (id === 61 ? new Error('rpc') : 3));
+    expect(await heal(h, c)).toEqual([60, 62]);
+    expect(row(h, 61).status).toBe('internal_matched');
   });
 });
 
