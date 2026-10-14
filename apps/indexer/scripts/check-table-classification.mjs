@@ -26,16 +26,6 @@
  * Worker's own list (`ops/offchain-data-warm/src/backup.ts`), so
  * the classification and the backup cannot drift apart silently.
  *
- * TWO DATABASES SINCE #2450. Most tables live in the shared `vaipakam-warm`;
- * the keeper's private operational tables live in `vaipakam-keeper-db`
- * (derived from apps/keeper/migrations via `lib/d1-workers.mjs`). Restore
- * treatment does not change with the move, but WHERE it is carried out does:
- * a replay-derived private table must be cleared by the runbook's command
- * against ITS database — a `DELETE` aimed at the shared one would empty a
- * pre-cutover copy nothing reads and leave the live rows standing — and a
- * private table cannot be born-off-chain, because the nightly archive binds
- * only the shared database and could never have carried it.
- *
  * SCOPE CONTRACT — a tripwire against honest drift, not a hostile-code
  * analyzer. The extraction models the conventions this repo actually
  * uses (SQL in string literals, the runbook's fence shapes, the
@@ -56,13 +46,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import process from 'node:process';
-import { PRIVATE_DATABASES, privateTables } from './lib/d1-workers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
-
-/** The shared database every table lives in unless a private schema owns it. */
-const SHARED_DATABASE = 'vaipakam-warm';
 
 // ── The classification ────────────────────────────────────────────────
 // One entry per written table: { class, reason }. Classes:
@@ -107,9 +93,7 @@ const CLASSIFICATION = {
   },
   hf_band_state: {
     class: 'replay-derived',
-    reason:
-      'keeper band-edge producer state, keeper-private (vaipakam-keeper-db, #2450); ' +
-      'cleared with notifications so band rows re-derive (#1450 r33)',
+    reason: 'keeper band-edge producer state; cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
   loan_reconcile_quarantine: {
@@ -173,36 +157,21 @@ const CLASSIFICATION = {
   reward_retention: { class: 'decision-needed', reason: 'reward ledger; day-bucketing vs replay unverified — #1481' },
   // Found by this script's first run — missed by every manual sweep,
   // including the #1450 review's. Which is the point of the script.
-  // The five below are keeper-PRIVATE since #2450 (vaipakam-keeper-db): the
-  // nightly archive does not reach them, so whichever class #1481 settles on,
-  // it cannot be born-off-chain without a backup of that database first.
   keeper_commitment_day: {
     class: 'decision-needed',
-    reason: 'keeper commitment-reporting state (apps/keeper/src/db.ts), keeper-private; derivation unaudited — #1481',
+    reason: 'keeper commitment-reporting state (apps/keeper/src/db.ts); derivation unaudited — #1481',
   },
   keeper_commitment_scan: {
     class: 'decision-needed',
-    reason: 'keeper commitment scan cursor, keeper-private; derivation unaudited — #1481',
+    reason: 'keeper commitment scan cursor; derivation unaudited — #1481',
   },
   keeper_remit_ack: {
     class: 'decision-needed',
-    reason: 'keeper remit acknowledgement state, keeper-private; derivation unaudited — #1481',
+    reason: 'keeper remit acknowledgement state; derivation unaudited — #1481',
   },
   keeper_remit_ack_frontier: {
     class: 'decision-needed',
-    reason: 'keeper remit-ack frontier cursor, keeper-private; derivation unaudited — #1481',
-  },
-  keeper_ops_alert: {
-    class: 'decision-needed',
-    reason: 'keeper ops-alert de-duplication (#2450), keeper-private; disposable — an empty table re-sends at most one line per live condition — #1481',
-  },
-  keeper_sanctions_screen: {
-    class: 'decision-needed',
-    reason: 'keeper sanctions-hold screen cursor (#2489), keeper-private; disposable — an empty table restarts the screen from the first loan party — #1481',
-  },
-  keeper_work_done: {
-    class: 'decision-needed',
-    reason: 'keeper done set (#2489), keeper-private; disposable — recorded only from an on-chain read, so an empty table costs one more read per finished item and never drops an open one — #1481',
+    reason: 'keeper remit-ack frontier cursor; derivation unaudited — #1481',
   },
 };
 
@@ -490,17 +459,6 @@ const unarchived = Object.entries(CLASSIFICATION)
   .filter(([t, c]) => c.class === 'born-off-chain' && !archivedSet.has(t))
   .map(([t]) => t);
 
-// ── Check 3b: no PRIVATE table is born-off-chain (#2450) ──────────────
-// The archive Worker binds only the shared database (`DB_ARCHIVE`), so a
-// born-off-chain table in a private database is one the nightly can never
-// export — listing it in backup.ts would only read a stale shared copy, or
-// fail once that copy is dropped. Back the private database up first.
-const PRIVATE = privateTables(REPO_ROOT);
-const databaseOf = (t) => PRIVATE.get(t)?.name ?? SHARED_DATABASE;
-const privateBorn = Object.entries(CLASSIFICATION)
-  .filter(([t, c]) => c.class === 'born-off-chain' && PRIVATE.has(t))
-  .map(([t]) => `${t} (in ${databaseOf(t)})`);
-
 // ── Check 4: replay-derived == the runbook's §6 clear command ─────────
 // The classification's PROMISE for this class is "cleared before the
 // block-zero replay", and the implementation of that promise is the
@@ -509,34 +467,15 @@ const privateBorn = Object.entries(CLASSIFICATION)
 // a cleared table not classified replay-derived means the command
 // deletes something whose restore treatment says otherwise. Both
 // directions fail (Codex #1485 r2).
-//
-// PER DATABASE (#2450). A replay-derived table is cleared by the command
-// against the database it LIVES in: the shared one by default, a private one
-// when a private schema creates it. Each database is bound both ways on its
-// own — a table cleared in the wrong database counts as "cleared, but not
-// classified replay-derived THERE" and as "not cleared" where it lives.
 const runbookSrc = readFileSync(join(REPO_ROOT, 'docs', 'ops', 'OffChainRestore.md'), 'utf8');
+const clearedSet = clearedTablesFrom(runbookSrc);
 const replaySet = new Set(
   Object.entries(CLASSIFICATION)
     .filter(([, c]) => c.class === 'replay-derived')
     .map(([t]) => t),
 );
-const notCleared = [];
-const clearedUnclassified = [];
-for (const db of [SHARED_DATABASE, ...PRIVATE_DATABASES.map((p) => p.name)]) {
-  const replayHere = new Set([...replaySet].filter((t) => databaseOf(t) === db));
-  // The shared clear is always required; a private one only once a
-  // replay-derived table lives there (there is then something to clear).
-  const clearedHere = clearedTablesFrom(runbookSrc, db, { required: db === SHARED_DATABASE || replayHere.size > 0 });
-  for (const t of [...replayHere].filter((x) => !clearedHere.has(x)).sort()) {
-    notCleared.push(`${t}  (lives in ${db})`);
-  }
-  for (const t of [...clearedHere].filter((x) => !replayHere.has(x)).sort()) {
-    clearedUnclassified.push(
-      `${t}  (cleared in ${db}${databaseOf(t) !== db ? `, but it lives in ${databaseOf(t)}` : ''})`,
-    );
-  }
-}
+const notCleared = [...replaySet].filter((t) => !clearedSet.has(t)).sort();
+const clearedUnclassified = [...clearedSet].filter((t) => !replaySet.has(t)).sort();
 
 // ── Check 5: born-off-chain == the runbook's §4 import list ───────────
 // Same promise-vs-implementation binding as check 4, for the other
@@ -603,12 +542,6 @@ if (unarchived.length > 0) {
   console.error('✗ Classified born-off-chain but absent from backup.ts:');
   for (const t of unarchived) console.error(`    ${t}`);
 }
-if (privateBorn.length > 0) {
-  failed = true;
-  console.error('✗ Classified born-off-chain but lives in a PRIVATE database the nightly');
-  console.error('  archive does not bind — it could never be backed up (#2450):');
-  for (const t of privateBorn) console.error(`    ${t}`);
-}
 if (notCleared.length > 0) {
   failed = true;
   console.error("✗ Classified replay-derived but missing from OffChainRestore.md §6's");
@@ -617,7 +550,7 @@ if (notCleared.length > 0) {
 }
 if (clearedUnclassified.length > 0) {
   failed = true;
-  console.error("✗ In a §6 clear command but not classified replay-derived for that database:");
+  console.error("✗ In §6's clear command but not classified replay-derived:");
   for (const t of clearedUnclassified) console.error(`    ${t}`);
 }
 if (notImported.length > 0) {
@@ -685,22 +618,17 @@ export function archivedTablesFrom(backupSrc) {
   return archived;
 }
 
-/** Table names deleted by the runbook §6 clear-before-replay command(s)
- *  against `database` (default: the shared one). Targets the bash
- *  fence(s) that invoke `wrangler d1 execute <database>` with DELETE
- *  statements — prose mentions of DELETE FROM elsewhere in the document
- *  do not count.
- *
- *  Parsed PER INVOCATION, not per fence (#2450): with two databases a
- *  fence may carry a command for each, and attributing every DELETE in the
- *  fence to whichever database the fence mentions first would credit a
- *  table as cleared in a database that never saw the statement. A bash
- *  comment line is not an invocation. `required: false` lets a database
- *  that has nothing replay-derived go without a command. */
-export function clearedTablesFrom(runbookSrc, database = SHARED_DATABASE, { required = true } = {}) {
+/** Table names deleted by the runbook §6 clear-before-replay command.
+ *  Targets the bash fence(s) that invoke `wrangler d1 execute
+ *  vaipakam-warm` with DELETE statements — prose mentions of
+ *  DELETE FROM elsewhere in the document do not count. */
+export function clearedTablesFrom(runbookSrc) {
   const cleared = new Set();
-  const target = new RegExp(`wrangler\\s+d1\\s+execute\\s+(['"]?)${database.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1(?![a-z0-9-])`);
   for (const fence of runbookSrc.matchAll(/```bash\n([\s\S]*?)```/g)) {
+    const raw = fence[1];
+    if (!raw.includes('wrangler d1 execute vaipakam-warm') || !raw.includes('DELETE FROM')) {
+      continue;
+    }
     // Model bash BEFORE SQL (Codex #1485 r4): join `\`-newline
     // continuations exactly as bash does, THEN isolate the SQL — the
     // `--command="…"` value — and apply SQLite comment semantics to
@@ -710,29 +638,25 @@ export function clearedTablesFrom(runbookSrc, database = SHARED_DATABASE, { requ
     // happily treats as a comment (Codex #1485 r5). Scoping to the
     // command value removes the heuristic: inside SQL, `--` to
     // end-of-input is a comment, full stop.
-    const joined = fence[1].replace(/\\\n/g, ' ');
-    for (const line of joined.split('\n')) {
-      if (line.trimStart().startsWith('#')) continue;
-      if (!target.test(line) || !line.includes('DELETE FROM')) continue;
-      const cmd = line.match(/--command="([^"]*)"/);
-      if (!cmd) continue;
-      // The §6 replay-clear only counts against the DEPLOYED database.
-      // Without `--remote`, wrangler targets a local D1 and the replay
-      // would run over an uncleared production dataset (Codex #1485 r5).
-      if (!/\s--remote\b/.test(line)) {
-        throw new Error(
-          `the §6 clear-before-replay command for ${database} is missing --remote — it would ` +
-            'clear a LOCAL D1 and leave the deployed database unpurged',
-        );
-      }
-      const sql = cmd[1].replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--.*$/s, '');
-      for (const m of sql.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
-        cleared.add(m[1].toLowerCase());
-      }
+    const joined = raw.replace(/\\\n/g, ' ');
+    const cmd = joined.match(/--command="([^"]*)"/);
+    if (!cmd) continue;
+    // The §6 replay-clear only counts against the DEPLOYED database.
+    // Without `--remote`, wrangler targets a local D1 and the replay
+    // would run over an uncleared production dataset (Codex #1485 r5).
+    if (!/\s--remote\b/.test(joined)) {
+      throw new Error(
+        'the §6 clear-before-replay command is missing --remote — it would clear a LOCAL D1 ' +
+          'and leave the deployed database unpurged',
+      );
+    }
+    const sql = cmd[1].replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--.*$/s, '');
+    for (const m of sql.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
+      cleared.add(m[1].toLowerCase());
     }
   }
-  if (cleared.size === 0 && required) {
-    throw new Error(`could not locate the §6 clear-before-replay command for ${database} in OffChainRestore.md`);
+  if (cleared.size === 0) {
+    throw new Error('could not locate the §6 clear-before-replay command in OffChainRestore.md');
   }
   return cleared;
 }

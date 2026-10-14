@@ -190,7 +190,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   }
 
   const { resolved, scans } = await getCommitmentScanState(
-    env.KEEPER_DB,
+    env.DB,
     chain.id,
     stateFrom,
     Number(currentDay),
@@ -290,7 +290,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       // Resolution probe: the explicit on-chain dispatch flag. Marked days
       // are skipped with zero reads forever after.
       if (await isDayResolved(publicClient, diamond, d)) {
-        await markCommitmentDayResolved(env.KEEPER_DB, chain.id, Number(d));
+        await markCommitmentDayResolved(env.DB, chain.id, Number(d));
         if (reconciledSet.has(Number(d)) && baseDiamond) {
           await markReconciledDayConsumed(
             env.DB, baseChainId, baseDiamond, chain.id, Number(d),
@@ -449,7 +449,7 @@ async function submitSide(
   // and invalidates the frontier.
   const frontier = pending.length > 0 ? pending[0] : nextId;
   try {
-    await putCommitmentScanFrontier(env.KEEPER_DB, chainId, Number(day), side, frontier, lastSubmitted);
+    await putCommitmentScanFrontier(env.DB, chainId, Number(day), side, frontier, lastSubmitted);
   } catch (err) {
     console.warn(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,

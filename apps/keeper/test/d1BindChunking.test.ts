@@ -18,13 +18,17 @@
  * checked the answer would pass just as well with the fix reverted, which is
  * the trap this file exists to avoid.
  */
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { getRemitAckAttempts } from '../src/db';
 import { D1_MAX_BOUND_PARAMETERS } from '@vaipakam/lib/d1Binds';
-import type { SqliteD1 } from './helpers/sqliteD1';
-// `keeper_remit_ack` is keeper-private (#2450): its schema is the keeper's
-// own migrations, not the shared database's.
-import { createKeeperD1 } from './helpers/schemas';
+import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+
+const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
+const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
 
 const BASE_CHAIN = 84532;
 const DIAMOND = '0x00000000000000000000000000000000000000dd';
@@ -77,7 +81,7 @@ function seedAttempt(h: SqliteD1, remitId: number, attempts: number, lastAt: num
 
 describe('getRemitAckAttempts — D1 bind cap', () => {
   it('keeps every statement within the cap for a full 200-id scan window', async () => {
-    const h = createKeeperD1();
+    const h = createSqliteD1(ALL_MIGRATIONS);
     const ids = Array.from({ length: 200 }, (_, i) => i + 1);
     for (const id of ids) seedAttempt(h, id, id % 5, 1_700_000_000 + id);
     const { d1, statements } = recording(h);
@@ -95,7 +99,7 @@ describe('getRemitAckAttempts — D1 bind cap', () => {
   });
 
   it('is one statement when the window fits, so the chunking costs nothing at low volume', async () => {
-    const h = createKeeperD1();
+    const h = createSqliteD1(ALL_MIGRATIONS);
     const ids = Array.from({ length: 12 }, (_, i) => i + 1);
     for (const id of ids) seedAttempt(h, id, 1, 1_700_000_000);
     const { d1, statements } = recording(h);
@@ -108,7 +112,7 @@ describe('getRemitAckAttempts — D1 bind cap', () => {
   });
 
   it('issues no statement at all for an empty id list', async () => {
-    const h = createKeeperD1();
+    const h = createSqliteD1(ALL_MIGRATIONS);
     const { d1, statements } = recording(h);
 
     const out = await getRemitAckAttempts(d1 as never, BASE_CHAIN, DIAMOND, []);
@@ -120,7 +124,7 @@ describe('getRemitAckAttempts — D1 bind cap', () => {
   it('reports a missing row as absent rather than as zero attempts', async () => {
     // The caller distinguishes "never attempted" from "attempted at T" to
     // apply its backoff; a chunked read must not turn one into the other.
-    const h = createKeeperD1();
+    const h = createSqliteD1(ALL_MIGRATIONS);
     seedAttempt(h, 7, 3, 1_700_000_777);
     const { d1 } = recording(h);
 
@@ -133,7 +137,7 @@ describe('getRemitAckAttempts — D1 bind cap', () => {
   it('does not read another diamond rows', async () => {
     // The diamond bind is one of the two fixed binds the chunker reserves;
     // dropping it from a chunk would widen the read silently.
-    const h = createKeeperD1();
+    const h = createSqliteD1(ALL_MIGRATIONS);
     const other = '0x00000000000000000000000000000000000000ee';
     h.db
       .prepare(

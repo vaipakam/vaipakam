@@ -1680,11 +1680,8 @@ of the world rather than of the check.
   what is actually true at the time: immediately after a fresh contract
   deployment `liquidity_confidence` may legitimately stay empty
   (`runLiquidityConfidence` returns before its upsert when there are no
-  active collateral assets) and the keeper's HF-band inbox rows in
-  `notifications` need a loan to band. (`hf_band_state` is NOT a tell for
-  the shared database any more: since #2450 it lives in the keeper's
-  private `vaipakam-keeper-db`, which a shared-database cutover does not
-  move.) If neither can be provoked, **do not fall back to the tick's log line** — an
+  active collateral assets) and `hf_band_state` needs a loan to band. If
+  neither can be provoked, **do not fall back to the tick's log line** — an
   earlier revision suggested that, and it is wrong: `passIsArmed` builds
   those lines purely from arming flags and logs `start` before the pass
   touches D1 at all. It tells you the pass ran, not where it wrote.

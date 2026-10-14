@@ -2,17 +2,9 @@
  * D1 helpers — thin wrappers over the prepared-statement API. Keeps
  * the watcher loop readable and centralises query shapes so schema
  * changes in `migrations/*.sql` touch only this file.
- *
- * TWO databases since #2450. Helpers over the keeper's PRIVATE tables
- * (`apps/keeper/migrations/`) take a `KeeperD1` — the branded `env.KEEPER_DB`
- * — so the compiler refuses the shared `env.DB` there. Every other helper takes
- * a plain `D1Database` and is handed `env.DB`. No statement here touches both
- * kinds of table: D1 cannot join across databases, so a helper that needs both
- * reads each side separately (see `recordHfBandNotifications`).
  */
 
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
-import type { KeeperD1 } from './env';
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -381,9 +373,7 @@ export async function upsertLiquidityConfidence(
 }
 
 // ─── #1222 M3 B2-d1 — commitment-report scan state (Codex #1425 r2) ────────
-// Written by the keeper only. KEEPER-PRIVATE (#2450): schema in
-// apps/keeper/migrations/0001 (it began as shared migration 0043), so every
-// helper in this block takes the `KEEPER_DB` handle.
+// Written by the keeper only; schema owned by apps/indexer/migrations/0043.
 // The scan frontier lets the entry-id walk cross arbitrarily long
 // non-covering gaps across stateless invocations; the day marker lets
 // resolved days be skipped with zero RPC reads.
@@ -396,7 +386,7 @@ export interface CommitmentScanRow {
 
 /** Resolved-day ids + per-(day, side) scan frontiers for one chain/range. */
 export async function getCommitmentScanState(
-  db: KeeperD1,
+  db: D1Database,
   chainId: number,
   fromDay: number,
   toDay: number,
@@ -433,7 +423,7 @@ export async function getCommitmentScanState(
 
 /** Persist a (day, side) scan frontier + the on-chain cursor it was built on. */
 export async function putCommitmentScanFrontier(
-  db: KeeperD1,
+  db: D1Database,
   chainId: number,
   dayId: number,
   side: number,
@@ -456,7 +446,7 @@ export async function putCommitmentScanFrontier(
 
 /** Mark a chain-day's commitment report as complete + sent (skip forever). */
 export async function markCommitmentDayResolved(
-  db: KeeperD1,
+  db: D1Database,
   chainId: number,
   dayId: number,
 ): Promise<void> {
@@ -470,17 +460,13 @@ export async function markCommitmentDayResolved(
 }
 
 // ─── #1222 M3 B2-d2 — remit-ack scan state + reconcile rediscovery ─────────
-// The remit-ack tables are KEEPER-PRIVATE (#2450): schema in
-// apps/keeper/migrations/0001 (they began as shared migration 0044), so their
-// helpers take the `KEEPER_DB` handle. The reconcile-rediscovery table below
-// them, `keeper_commitment_reconciled`, stays SHARED — the indexer writes it —
-// and its helpers take the shared `DB`.
+// Written by the keeper only; schema owned by apps/indexer/migrations/0044.
 
 /** The remit-ack scan state for a Base chain: the terminal-prefix
  *  frontier + the rotating scan cursor (Codex #1426 r1 — a stuck early
  *  Pending pins the frontier; the cursor keeps paging the whole ledger). */
 export async function getRemitAckScanState(
-  db: KeeperD1,
+  db: D1Database,
   baseChainId: number,
   diamond: string,
 ): Promise<{ frontier: number; scanCursor: number }> {
@@ -499,7 +485,7 @@ export async function getRemitAckScanState(
 
 /** Persist the remit-ack scan state (frontier only ever advances). */
 export async function putRemitAckScanState(
-  db: KeeperD1,
+  db: D1Database,
   baseChainId: number,
   diamond: string,
   nextRemitId: number,
@@ -547,7 +533,7 @@ export async function putRemitAckScanState(
  * cost worth naming.
  */
 export async function getRemitAckAttempts(
-  db: KeeperD1,
+  db: D1Database,
   baseChainId: number,
   diamond: string,
   remitIds: number[],
@@ -584,7 +570,7 @@ export async function getRemitAckAttempts(
 
 /** Record one ack send attempt for a reservation. */
 export async function recordRemitAckAttempt(
-  db: KeeperD1,
+  db: D1Database,
   baseChainId: number,
   diamond: string,
   remitId: number,
@@ -611,7 +597,7 @@ export async function recordRemitAckAttempt(
 
 /** Stamp a reservation observed Acked on Base (audit trail terminal). */
 export async function markRemitAcked(
-  db: KeeperD1,
+  db: D1Database,
   baseChainId: number,
   diamond: string,
   remitId: number,
@@ -669,383 +655,5 @@ export async function markReconciledDayConsumed(
       dayId,
       Math.floor(Date.now() / 1000),
     )
-    .run();
-}
-
-// ─── #2450 — the sanctions-hold observer's reads, and ops-alert de-dup ──────
-
-/**
- * The wallets whose sanctions-evidence chain is OPEN on `chainId`: those whose
- * LATEST evidence event is a `RewardSanctionsEvidenceRecorded` (a chain start
- * no clean read has ended since), lowercased. The indexer decodes every
- * Diamond event into `activity_events`, so the observer reads the chain's own
- * record of who was flagged instead of scanning logs itself.
- *
- * One row per wallet, decided per wallet, so nothing bounds it but the number
- * of open chains (Codex #2489 r1). The earlier read took the newest 5,000 rows
- * and decided from those, so a wallet whose chain started before the newest
- * 5,000 events dropped out while its chain still stood. A wallet whose chain
- * was CLEARED is not listed here: what it can still be owed by the pass is the
- * resolution of a staging record or domain, and {@link listOpenStagingOwners}
- * lists every owner of one of those, however old.
- */
-export async function listOpenSanctionsChains(db: D1Database, chainId: number): Promise<string[]> {
-  const rows = await db
-    .prepare(
-      `SELECT who FROM (
-         SELECT lower(json_extract(args_json, '$.who')) AS who, kind,
-                ROW_NUMBER() OVER (
-                  PARTITION BY lower(json_extract(args_json, '$.who'))
-                  ORDER BY block_number DESC, log_index DESC
-                ) AS rn
-           FROM activity_events
-          WHERE chain_id = ?1
-            AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
-       )
-        WHERE rn = 1 AND kind = 'RewardSanctionsEvidenceRecorded'
-        ORDER BY who`,
-    )
-    .bind(chainId)
-    .all<{ who: string | null }>();
-  return (rows.results ?? [])
-    .map((r) => r.who)
-    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
-}
-
-/**
- * The open staging work the indexer's event log records on `chainId`, decided
- * per record and per domain (Codex #2489 r1): a record is open when its latest
- * `StagingRecordOpened` has no later `StagingRecordClosed`, a domain when its
- * latest `StagingDomainOpened` has no later `StagingDomainCleared`. Every close
- * path emits the close event (`LibRewardStaging._close`, both domain clears);
- * a record that is deleted without one was never announced as opened.
- *
- * Nothing bounds this by age or count: a Resolving record stays work until the
- * chain closes it, however long a held claimant waits. The earlier read took
- * the owners of records opened in the last 30 days, so a record still waiting
- * past that dropped out of the pass with its page never run.
- *
- * Positions compare `(block_number, log_index)` as one integer; a block's log
- * index is far below the multiplier.
- */
-const OPEN_STAGING_SQL = `
-  WITH ev AS (
-    SELECT kind,
-           lower(json_extract(args_json, '$.user')) AS who,
-           lower(COALESCE(json_extract(args_json, '$.key'), json_extract(args_json, '$.domainKey'))) AS k,
-           block_number * 1000000 + log_index AS pos
-      FROM activity_events
-     WHERE chain_id = ?1
-       AND kind IN ('StagingRecordOpened', 'StagingRecordClosed', 'StagingDomainOpened', 'StagingDomainCleared')
-  ),
-  opened AS (
-    SELECT CASE kind WHEN 'StagingRecordOpened' THEN 'record' ELSE 'domain' END AS what, k, who, MAX(pos) AS pos
-      FROM ev WHERE kind IN ('StagingRecordOpened', 'StagingDomainOpened')
-     GROUP BY what, k
-  ),
-  closed AS (
-    SELECT CASE kind WHEN 'StagingRecordClosed' THEN 'record' ELSE 'domain' END AS what, k, MAX(pos) AS pos
-      FROM ev WHERE kind IN ('StagingRecordClosed', 'StagingDomainCleared')
-     GROUP BY what, k
-  )
-  SELECT o.what AS what, o.k AS k, o.who AS who, o.pos AS pos
-    FROM opened o LEFT JOIN closed c ON c.what = o.what AND c.k = o.k
-   WHERE c.pos IS NULL OR c.pos < o.pos`;
-
-/** Distinct owners of an open staging record or domain on `chainId` —
- *  candidates the sanctions-hold pass classifies even when no evidence event
- *  names them (a claimant held with no observation chain, a cleared one). */
-export async function listOpenStagingOwners(db: D1Database, chainId: number): Promise<string[]> {
-  const rows = await db
-    .prepare(`SELECT DISTINCT who FROM (${OPEN_STAGING_SQL}) ORDER BY who`)
-    .bind(chainId)
-    .all<{ who: string | null }>();
-  return (rows.results ?? [])
-    .map((r) => r.who)
-    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
-}
-
-/** The keys of `user`'s OPEN staging records on `chainId`, oldest first. A
- *  record key is the input to the permissionless resolution page; the record's
- *  own phase, read on chain, decides whether there is anything to resolve. */
-export async function listOpenStagingRecordKeysForUser(
-  db: D1Database,
-  chainId: number,
-  user: string,
-): Promise<string[]> {
-  const rows = await db
-    .prepare(
-      `SELECT k FROM (${OPEN_STAGING_SQL})
-        WHERE what = 'record' AND who = ?2
-        ORDER BY pos`,
-    )
-    .bind(chainId, user.toLowerCase())
-    .all<{ k: string | null }>();
-  return (rows.results ?? [])
-    .map((r) => r.k)
-    .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-f]{64}$/.test(k));
-}
-
-/**
- * The loan parties of `chainId` — every lender and borrower the indexer has
- * recorded, original or current holder, lowercased, in address order — after
- * `after`, at most `limit`. The universe the sanctions-hold pass SCREENS
- * (Codex #2489 r2): interaction reward is earned by loan parties, and a party
- * flagged while it holds only ordinary (unstaged) reward leaves no evidence
- * event or staging record behind, so the oracle is the only signal and every
- * party has to be read against it. Address order makes the screen a stable
- * rotation.
- */
-const LOAN_PARTIES_SQL = `
-  SELECT addr FROM (
-    SELECT lower(lender) AS addr FROM loans WHERE chain_id = ?1
-    UNION SELECT lower(borrower) FROM loans WHERE chain_id = ?1
-    UNION SELECT lower(lender_current_owner) FROM loans WHERE chain_id = ?1
-    UNION SELECT lower(borrower_current_owner) FROM loans WHERE chain_id = ?1
-  )
-  WHERE addr LIKE '0x%' AND length(addr) = 42`;
-
-export async function listLoanPartiesAfter(
-  db: D1Database,
-  chainId: number,
-  after: string,
-  limit: number,
-): Promise<string[]> {
-  const rows = await db
-    .prepare(`${LOAN_PARTIES_SQL} AND addr > ?2 ORDER BY addr LIMIT ?3`)
-    .bind(chainId, after.toLowerCase(), limit)
-    .all<{ addr: string }>();
-  return (rows.results ?? []).map((r) => r.addr);
-}
-
-/** How many loan parties {@link listLoanPartiesAfter} rotates through. */
-export async function countLoanParties(db: D1Database, chainId: number): Promise<number> {
-  const row = await db.prepare(`SELECT COUNT(*) AS n FROM (${LOAN_PARTIES_SQL})`).bind(chainId).first<{ n: number }>();
-  return Number(row?.n ?? 0);
-}
-
-// The reads above are SHARED (the indexer's `activity_events`); the ops-alert
-// helpers below are KEEPER-PRIVATE (#2450, apps/keeper/migrations/0001) — ops
-// alert state stays out of the user-facing database — and take `KEEPER_DB`.
-
-/** The ops-alert record for `key`, or null when none was sent. */
-export async function getOpsAlert(
-  db: KeeperD1,
-  key: string,
-): Promise<{ firstSeenAt: number; lastSentAt: number } | null> {
-  const row = await db
-    .prepare(`SELECT first_seen_at, last_sent_at FROM keeper_ops_alert WHERE alert_key = ?1`)
-    .bind(key)
-    .first<{ first_seen_at: number; last_sent_at: number }>();
-  return row ? { firstSeenAt: row.first_seen_at, lastSentAt: row.last_sent_at } : null;
-}
-
-/** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`). */
-export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: number): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at)
-       VALUES (?1, ?2, ?2)
-       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at`,
-    )
-    .bind(key, nowSec)
-    .run();
-}
-
-/** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
- *  prefix), so a pass clears only the alerts that are actually open. */
-export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {
-  const rows = await db
-    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE alert_key LIKE ?1`)
-    .bind(likePattern)
-    .all<{ alert_key: string }>();
-  return (rows.results ?? []).map((r) => r.alert_key);
-}
-
-/** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
-export async function clearOpsAlert(db: KeeperD1, key: string): Promise<void> {
-  await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
-}
-
-// ─── #1944 / transport epochs — the delivery-proof pass's discovery read ─────
-
-/** One budget delivery a mirror recorded, joined to its day-list event. */
-export interface BudgetDeliveryRow {
-  /** The packet's ingress stamp (`IngressPacketRecorded.packetHash`). */
-  packetHash: string;
-  /** Base's remittance id (0 for a manual / legacy delivery). */
-  remitId: string;
-  /** The FLAT day list from `RewardBudgetReceived` (decimal strings), or null
-   *  for a rooted (d6) delivery, whose list is rebuilt from Base. */
-  flatDayIds: string[] | null;
-  /** True for a rooted (d6) delivery (`RewardBudgetRootReceived`). */
-  rooted: boolean;
-  block_at: number;
-}
-
-/** Budget-packet kind (`LibRewardCustody.PACKET_KIND_BUDGET`). */
-const PACKET_KIND_BUDGET = 1;
-
-/**
- * EVERY budget delivery recorded on `chainId`, oldest first: each packet joined
- * (same transaction) to the event that carries its day list — the flat list
- * itself, or the rooted wire's marker. The indexer decodes every Diamond event
- * into `activity_events`, so no log scan is needed.
- *
- * No age and no count bound (Codex #2489 r1): a delivery is work until the
- * chain shows it whole, and the earlier 45-day / 200-row window let one still
- * waiting on its proof drop out for good. What keeps a tick's chain work
- * bounded is the keeper's DONE set ({@link listWorkDone}): the pass skips every
- * packet it has seen finished, so only open deliveries are read on chain. The
- * rows read here grow by one per delivery ever made to this mirror.
- */
-export async function listBudgetDeliveries(db: D1Database, chainId: number): Promise<BudgetDeliveryRow[]> {
-  const rows = await db
-    .prepare(
-      `SELECT json_extract(p.args_json, '$.packetHash') AS packet_hash,
-              json_extract(p.args_json, '$.remitId')    AS remit_id,
-              d.kind                                     AS day_kind,
-              json_extract(d.args_json, '$.dayIds')      AS day_ids,
-              p.block_at                                 AS block_at
-         FROM activity_events p
-         LEFT JOIN activity_events d
-           ON d.chain_id = p.chain_id AND d.tx_hash = p.tx_hash
-          AND d.kind IN ('RewardBudgetReceived', 'RewardBudgetRootReceived')
-          -- One CCIP execution can land more than one delivery: pair each packet
-          -- with ITS delivery event (one receipt per remit and source), never
-          -- with every delivery of the transaction.
-          AND CAST(json_extract(d.args_json, '$.remitId') AS TEXT) = CAST(json_extract(p.args_json, '$.remitId') AS TEXT)
-          AND CAST(json_extract(d.args_json, '$.sourceChainId') AS TEXT) = CAST(json_extract(p.args_json, '$.sourceChainId') AS TEXT)
-        WHERE p.chain_id = ?1
-          AND p.kind = 'IngressPacketRecorded'
-          AND CAST(json_extract(p.args_json, '$.kind') AS INTEGER) = ?2
-        ORDER BY p.block_number ASC, p.log_index ASC`,
-    )
-    .bind(chainId, PACKET_KIND_BUDGET)
-    .all<{ packet_hash: string | null; remit_id: string | number | null; day_kind: string | null; day_ids: string | null; block_at: number }>();
-  const out: BudgetDeliveryRow[] = [];
-  for (const r of rows.results ?? []) {
-    if (typeof r.packet_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(r.packet_hash)) continue;
-    if (r.day_kind !== 'RewardBudgetReceived' && r.day_kind !== 'RewardBudgetRootReceived') continue;
-    let flat: string[] | null = null;
-    if (r.day_kind === 'RewardBudgetReceived') {
-      try {
-        const parsed = JSON.parse(r.day_ids ?? '[]');
-        if (!Array.isArray(parsed)) continue;
-        flat = parsed.map((x) => String(x));
-      } catch {
-        continue;
-      }
-    }
-    out.push({
-      packetHash: r.packet_hash,
-      remitId: String(r.remit_id ?? '0'),
-      flatDayIds: flat,
-      rooted: r.day_kind === 'RewardBudgetRootReceived',
-      block_at: r.block_at,
-    });
-  }
-  return out;
-}
-
-// ─── #1461 — released remittances whose delivery may still land ─────────────
-
-/** EVERY remit id the canonical chain RELEASED, oldest first, from the
- *  indexer's record of `RemitReservationReleased`. The ack pass's frontier scan
- *  treats a released reservation as terminal, so a delivery that executes after
- *  its release is found here instead.
- *
- *  No count bound (Codex #2489 r1): the earlier newest-50 read let a release
- *  still awaiting its late acknowledgement drop out behind 50 newer ones. The
- *  pass skips every release in the keeper's DONE set ({@link listWorkDone}), so
- *  only open ones are read on chain. */
-export async function listReleasedRemitIds(db: D1Database, chainId: number): Promise<number[]> {
-  const rows = await db
-    .prepare(
-      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
-         FROM activity_events
-        WHERE chain_id = ?1 AND kind = 'RemitReservationReleased'
-        GROUP BY remit_id
-        ORDER BY MIN(block_number)`,
-    )
-    .bind(chainId)
-    .all<{ remit_id: number | null }>();
-  return (rows.results ?? [])
-    .map((r) => r.remit_id)
-    .filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
-}
-
-// ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────
-
-/** The passes that keep a done set, by the `kind` each records under. */
-export type WorkKind = 'delivery_proof' | 'late_ack';
-
-/**
- * The items `kind` has CONFIRMED DONE on chain for `(chainId, diamond)`. A pass
- * reads every candidate the shared event log holds and skips these, so an item
- * stays a candidate until the chain shows it finished, never until it ages out
- * of a window. Keyed by the Diamond too: a fresh redeploy restarts the ids a
- * pass records (remit ids count from 1 again).
- */
-export async function listWorkDone(
-  db: KeeperD1,
-  chainId: number,
-  diamond: string,
-  kind: WorkKind,
-): Promise<Set<string>> {
-  const rows = await db
-    .prepare(`SELECT item FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3`)
-    .bind(chainId, diamond.toLowerCase(), kind)
-    .all<{ item: string }>();
-  return new Set((rows.results ?? []).map((r) => r.item));
-}
-
-/** Record `items` as done — only on an on-chain read that shows them finished.
- *  Idempotent; one statement per item, all in one batch. */
-export async function markWorkDone(
-  db: KeeperD1,
-  chainId: number,
-  diamond: string,
-  kind: WorkKind,
-  items: readonly string[],
-): Promise<void> {
-  if (items.length === 0) return;
-  const now = Math.floor(Date.now() / 1000);
-  await db.batch(
-    items.map((item) =>
-      db
-        .prepare(
-          `INSERT OR IGNORE INTO keeper_work_done (chain_id, diamond, kind, item, done_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
-        )
-        .bind(chainId, diamond.toLowerCase(), kind, item, now),
-    ),
-  );
-}
-
-// ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0002) ──────
-
-/** Where the sanctions-hold screen resumes on `(chainId, diamond)`: the last
- *  address screened, or '' to start from the first. */
-export async function getSanctionsScreenCursor(db: KeeperD1, chainId: number, diamond: string): Promise<string> {
-  const row = await db
-    .prepare(`SELECT cursor FROM keeper_sanctions_screen WHERE chain_id = ?1 AND diamond = ?2`)
-    .bind(chainId, diamond.toLowerCase())
-    .first<{ cursor: string }>();
-  return row?.cursor ?? '';
-}
-
-/** Record where the screen resumes. */
-export async function putSanctionsScreenCursor(
-  db: KeeperD1,
-  chainId: number,
-  diamond: string,
-  cursor: string,
-): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO keeper_sanctions_screen (chain_id, diamond, cursor, updated_at) VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT (chain_id, diamond) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`,
-    )
-    .bind(chainId, diamond.toLowerCase(), cursor.toLowerCase(), Math.floor(Date.now() / 1000))
     .run();
 }

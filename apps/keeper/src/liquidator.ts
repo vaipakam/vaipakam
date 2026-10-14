@@ -390,10 +390,8 @@ async function hfBandPass(
   readings: HfReading[],
 ): Promise<void> {
   try {
-    // Both bindings, by name: band state is keeper-private (KEEPER_DB),
-    // the inbox rows and the loans it resolves are shared (DB) — #2450.
     await recordHfBandNotifications(
-      env,
+      env.DB,
       chain.id,
       readings,
       Math.floor(Date.now() / 1000),

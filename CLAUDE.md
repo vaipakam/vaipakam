@@ -627,47 +627,18 @@ database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by
 `apps/indexer/migrations/`** — that's the single source of truth for
-every table the live db holds. `apps/agent` intentionally has no
-`migrations/` directory of its own; it reads and writes a subset of the
-shared tables via the same binding (see the per-Worker READMEs for the
-exact write/read split).
+every table the live db holds. `apps/keeper` and `apps/agent`
+intentionally have no `migrations/` directory of their own; they
+read and write a subset of the shared tables via the same binding
+(see the per-Worker READMEs for the exact write/read split).
 
-**`apps/keeper` also owns a PRIVATE database** (#2450) —
-`vaipakam-keeper-db` (database_id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`,
-binding `KEEPER_DB`, alongside its shared `DB`), with its own
-`apps/keeper/migrations/`, for keeper-only operational state: its scan
-cursors, completion markers, remit-ack log, HF-band edge state and
-ops-alert de-dup. Separate by trust boundary, like `ops/mesh-watcher`
-below: ops-alert state stays out of the user-facing database, and the
-indexer and agent have no binding through which to write the keeper's
-completion records. Apply with
-`wrangler d1 migrations apply vaipakam-keeper-db --remote` from inside
-`apps/keeper/` (or `pnpm --filter @vaipakam/keeper run migrate`). **The
-keeper's `deploy` applies these itself** (`apps/keeper/scripts/deploy-keeper.mjs`
-— one applier per database: the keeper is the private one's only writer),
-verifies them in the database, and then hands the shared schema to
-`deploy-shared-d1.mjs verify` exactly as before; keep a keeper migration
-additive like any other (the old keeper is still serving when it lands).
-The one-time move of the live rows is `pnpm --filter @vaipakam/keeper run
-cutover` (`docs/ops/DeploymentRunbook.md`, "Keeper private D1 — one-time
-cutover"). It records completion only when all five moved tables match on
-both sides by row count and latest write time, and the deploy REFUSES to
-publish while the shared copies hold rows and that record is missing or no
-longer matches them.
-
-**Rule**: a table any other Worker, the app or the nightly backup reads
-stays in the SHARED database, and every schema change to it — even for a
-table only `keeper` or `agent` writes — lands as a new file under
-`apps/indexer/migrations/NNNN_<slug>.sql`. Only state nothing outside the
-keeper reads goes in `apps/keeper/migrations/`. Apply the shared schema with
+**Rule**: every schema change — even for a table only `keeper` or
+`agent` writes — lands as a new file under
+`apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
 `wrangler d1 migrations apply vaipakam-warm --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
-directly on a deployed db: that diverges the migrations record from
-the live schema and breaks fresh-environment bootstrap. Five of the
-keeper-private tables were first created by shared migrations `0041`,
-`0043` and `0044`, which are applied — never edit or renumber them; the old
-shared copies are retired later by a NEW indexer migration that only drops
-them (`apps/keeper/test/keeperPrivateD1.test.ts` refuses anything else).
+directly on the deployed db: that diverges the migrations record from
+the live schema and breaks fresh-environment bootstrap.
 
 **Migrations apply BEFORE code ships, ONE applier, and every migration is
 additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
@@ -764,22 +735,16 @@ artifacts and stay in their respective env / config:
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
-  `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
-  `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`,
-  `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
-  Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
-  `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
-  entry in `wrangler.jsonc`'s `vars`. At the 2026-07-30 readback the two
-  `REWARD_*` flags then existing were **absent** on the live Worker,
-  which left THREE scheduled passes dark — `rewardBudgetRemit` and
-  `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
-  `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
-  `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
-  `REWARD_DELIVERY_PROOF_ENABLED` and `graceDefault` (#2483) on
-  `GRACE_DEFAULT_ENABLED`, all added after it. `graceDefault` submits
-  `triggerDefault` for past-grace loans; it ships unset, so that pass is
-  dark until an owner arms it. All are provisioned the same way when
-  armed. Their `*_LOOKBACK_DAYS` /
+  `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
+  `ZEROEX_API_KEY`, `ONEINCH_API_KEY`. All four arming flags are
+  `secret_text`, not entries in `wrangler.jsonc`'s `vars` — the two
+  `REWARD_*` ones are **absent** on the live Worker, which leaves THREE
+  scheduled passes dark — `rewardBudgetRemit` and `remitAck` both gate on
+  `REWARD_REMIT_ENABLED`, `commitmentReport` on
+  `REWARD_COMMIT_ENABLED` — and are
+  provisioned the same way when armed. `GRACE_DEFAULT_ENABLED` (#2483)
+  arms `graceDefault`, which submits `triggerDefault` for past-grace loans;
+  it ships unset, so that pass is dark until an owner arms it. Their `*_LOOKBACK_DAYS` /
   `*_LANE_CAP` knobs are plain vars, not secrets.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
@@ -870,8 +835,7 @@ deliberate dashboard action.
   (`tg_chat_id` per subscription).
 - `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
   (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-warm`
-  (nightly backup outcomes + weekly healthcheck verdicts) + `apps/keeper`'s
-  reward passes (the #2450 sanctions-hold observer's operator alerts). Posts to a
+  (nightly backup outcomes + weekly healthcheck verdicts). Posts to a
   single operator chat (`TG_OPS_CHAT_ID`). The retired `ops/lz-watcher`
   used it too before #1440 removed that Worker and its source.
 
@@ -1987,6 +1951,16 @@ remedy when one does not start. Apply this loop on every PR:
   that is not just convention: unresolved threads hold the PR at
   `mergeable_state: blocked` with every check green and no indication
   why, which cost real time on #2223.
+- **Own security review before EVERY merge** (user directive
+  2026-10-14): whoever merges runs their own security review of the PR's
+  full diff on its FINAL head, after the last Codex round. The lenses are
+  fund movement and accounting, access control and authorization,
+  reentrancy and external calls, upgrade and storage safety, and off-chain
+  trust and secrets. Post the verdict on the PR before merging. A
+  P1/P2-grade finding blocks the merge until it is fixed (that push gets its
+  usual Codex round). A docs-only PR gets a light pass: no secrets, no false
+  security claims. This is separate from the high-risk PR's adversarial
+  review BEFORE Codex round 1.
 
 ## Release notes — per-PR fragments
 

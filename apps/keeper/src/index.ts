@@ -98,7 +98,7 @@
  * (RPC_*, the Telegram bot token, the Push signer, the aggregator
  * API keys and `KEEPER_PRIVATE_KEY`) are Cloudflare Secrets Store
  * bindings read asynchronously; `resolveEnv` fetches them once, at
- * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes", then "ten"; every pass in `KEEPER_PASSES` is scheduled below.)
+ * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; every pass in `KEEPER_PASSES` is scheduled below.)
  */
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
@@ -158,20 +158,9 @@ export default {
     // that can see the whole tick, is what an operator can actually read —
     // and declining before `resolveEnv` also means a maintenance build stops
     // fetching secrets it has no use for.
-    //
-    // #2450 — BOTH bindings, not just `DB`. A maintenance build omits every
-    // `d1_databases` entry, so it lacks both; one present without the other is
-    // the barrier half-applied (a CI check refuses that config), and running
-    // on it would leave the keeper-private passes each discovering a refusal
-    // while the rest act on half the state. Declining costs this tick's
-    // liquidations too, exactly as a maintenance build already does — the
-    // fail-closed shape, said once.
-    const unbound = (['DB', 'KEEPER_DB'] as const).filter((b) => !hasD1Binding(env[b]));
-    if (unbound.length > 0) {
+    if (!hasD1Binding(env.DB)) {
       // eslint-disable-next-line no-console
-      console.warn(
-        maintenanceSkipNotice(WORKER_NAME, `this tick (unbound: ${unbound.join(', ')})`),
-      );
+      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
       return;
     }
 

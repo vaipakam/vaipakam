@@ -70,9 +70,7 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > (HF is the borrower's actionable number; the lender's risk lane is
 > grace/terminal rows), DOWNGRADE-only with absence-of-state = healthy
 > (first observation inside a band notifies once; recoveries update state
-> silently; state rows live in `hf_band_state`, migration 0041 — in the
-> keeper's private `vaipakam-keeper-db` since #2450, while the inbox rows
-> stay in the shared database — pruned
+> silently; state rows live in `hf_band_state`, migration 0041, pruned
 > when a loan leaves the active set). The stored edge is
 > (band, recipient), not band alone (Codex #1300 r2): a borrower
 > position that transfers while STILL inside a band re-alerts the new

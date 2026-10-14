@@ -1813,7 +1813,9 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   the keeper's `deliveryProof` pass is armed on that mirror
   (`REWARD_DELIVERY_PROOF_ENABLED`): every few minutes it indexes each epoch
   delivery's days and proves the list of each delivery that holds no epoch
-  (arming the gate without it makes every funded day wait on a human). A mirror past custody era 0 may arm:
+  (arming the gate without it makes every funded day wait on a human). That
+  pass ships separately (#2496); until it is deployed and armed, leave the
+  gate dark. A mirror past custody era 0 may arm:
   Base stamps every remittance with the destination's own reported era and a
   retired era's delivery opens its epoch (the custody-era revision), so no
   delivery is held inert. The setter refuses a `fromDay` at or

@@ -54,22 +54,6 @@ export const WORKER_NAME = 'vaipakam-keeper';
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
 export type SecretBinding = { get(): Promise<string> };
 
-/** Type-only brand; no value of it exists at runtime. */
-declare const KEEPER_PRIVATE: unique symbol;
-
-/**
- * The keeper's PRIVATE database handle (`KEEPER_DB`, `vaipakam-keeper-db`) —
- * distinct in the type system from the shared `DB` (#2450).
- *
- * Every helper that reads or writes a keeper-private table takes this type,
- * so handing one the shared database is a compile error rather than a
- * `no such table` at runtime on whichever pass happens to reach it. The brand
- * is one-directional: a `KeeperD1` still satisfies a plain `D1Database`
- * parameter, so a shared-table helper given the private handle is caught by
- * the tests (whose shared harness has no keeper tables), not by the compiler.
- */
-export type KeeperD1 = D1Database & { readonly [KEEPER_PRIVATE]: true };
-
 /**
  * `DB` + the config knobs that arrive as plain strings — identical shape in
  * both `WorkerEnv` and `Env`, because none of them needs `.get()`
@@ -123,24 +107,6 @@ interface BaseEnv {
   REWARD_COMMIT_ENABLED?: string;
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
-
-  // #2450 — the #1566 sanctions-hold observer (`rewardSanctionsHold.ts`).
-  /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
-  REWARD_SANCTIONS_KEEPER_ENABLED?: string;
-
-  // #1944 + the transport epochs — the delivery-proof pass (`deliveryProof.ts`).
-  /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
-  REWARD_DELIVERY_PROOF_ENABLED?: string;
-
-  // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
-  // Telegram bots": split by who reads the alert). Plain `wrangler secret
-  // put` strings, the same delivery `ops/mesh-watcher` uses, so they need no
-  // Secrets Store binding. Unset = alerts go to the Worker log only, and the
-  // pass says so.
-  /** Ops bot token (`wrangler secret put TG_OPS_BOT_TOKEN`). */
-  TG_OPS_BOT_TOKEN?: string;
-  /** The single operator chat the ops bot posts to. */
-  TG_OPS_CHAT_ID?: string;
 
   // #2483 — time-based default pass. `secret_text` like the flags above.
   /** 'true' arms the grace-default pass (in addition to KEEPER_ENABLED). It
@@ -209,13 +175,6 @@ export interface WorkerEnv extends BaseEnv {
    */
   DB?: D1Database;
 
-  /**
-   * The keeper's private D1 (`vaipakam-keeper-db`) AS DELIVERED — possibly
-   * absent for the same reason `DB` is: a maintenance build omits every
-   * `d1_databases` entry, this one included (#2239, #2450).
-   */
-  KEEPER_DB?: D1Database;
-
   // Per-chain RPC URLs — HF reads + liquidation submission.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
@@ -252,20 +211,8 @@ export interface Env extends BaseEnv {
    * `env.DB` exactly as it always has; on a maintenance build the operations
    * throw a named refusal rather than returning data from a database that is
    * being moved away.
-   *
-   * The SHARED database (`vaipakam-warm`): every table another Worker, the app
-   * or the nightly backup also reads.
    */
   DB: D1Database;
-
-  /**
-   * The keeper's PRIVATE database (`vaipakam-keeper-db`, #2450): its scan
-   * cursors, completion markers, ack log, HF-band edge state and ops-alert
-   * de-dup — tables nothing outside this Worker reads. Resolved through the
-   * same maintenance seam as `DB`, and branded so a keeper-table helper cannot
-   * be handed the shared database (see `KeeperD1`).
-   */
-  KEEPER_DB: KeeperD1;
 
   // Per-chain RPC URLs — HF reads + liquidation submission. Each
   // missing URL skips that chain this tick.
@@ -359,15 +306,12 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
   return {
     // Passed straight through — these need no `.get()` resolution. That is
     // NOT the same as "non-secret", which this label claimed until #2223:
-    // KEEPER_ENABLED and the REWARD_*_ENABLED flags below are
+    // KEEPER_ENABLED and the two REWARD_*_ENABLED flags below are
     // `secret_text` bindings, delivered as strings like any other. See the
     // module comment, which already drew this distinction.
     // `DB` goes through the maintenance seam: the real binding untouched on
     // every ordinary deploy, a refusing stub when it is absent (#2239).
     DB: resolveD1Binding(raw.DB, WORKER_NAME),
-    // So does `KEEPER_DB` (#2450) — the brand is a compile-time marker only,
-    // so the cast changes nothing at runtime.
-    KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
@@ -376,10 +320,6 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
-    REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
-    REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
-    TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
-    TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
