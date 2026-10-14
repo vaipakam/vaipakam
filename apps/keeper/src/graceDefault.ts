@@ -511,11 +511,11 @@ export async function attemptGraceDefault(
   const account = wallet.account;
   if (!account) return { kind: 'skipped', reason: 'no-keeper-account' };
   // In the account's submission slot (#2486), so no other pass's send on
-  // this chain can take the same nonce. A broadcast that fails is rethrown
-  // inside the slot so the queue records no nonce for it.
+  // this chain can take the same nonce. Once signed, the nonce stays
+  // reserved even if the broadcast fails, since it may have been relayed.
   let tx: Hex | undefined;
   try {
-    await withSubmissionSlot(wallet, deps.chainId, account.address, async (nonce) => {
+    await withSubmissionSlot(wallet, deps.chainId, account.address, async (nonce, signed) => {
       const request = await wallet.prepareTransactionRequest({
         account,
         to: diamond,
@@ -527,6 +527,7 @@ export async function attemptGraceDefault(
       // was prepared with (read from the RPC) is the one signed over.
       const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
       tx = keccak256(serialized);
+      signed();
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
   } catch (err) {

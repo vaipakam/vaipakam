@@ -34,6 +34,8 @@ interface Node {
   reportedPending?: () => number;
   /** Fail gas estimation for the next call. */
   failNextEstimate?: boolean;
+  /** Accept the next broadcast, then throw as if its answer was lost. */
+  loseAnswer?: boolean;
 }
 
 function nodeWallet(node: Node): WalletClient {
@@ -61,6 +63,10 @@ function nodeWallet(node: Node): WalletClient {
               throw new Error('nonce too low');
             }
             node.accepted.push(tx.nonce);
+            if (node.loseAnswer) {
+              node.loseAnswer = false;
+              throw new Error('request timed out');
+            }
             return `0x${'ab'.repeat(32)}`;
           }
           default:
@@ -89,8 +95,8 @@ describe('submission queue (#2486)', () => {
     // way graceDefault sends, started together.
     const passA = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
     const base = nodeWallet(node);
-    const passB = withSubmissionSlot(base, CHAIN_ID, account.address, async (nonce) => {
-      const signed = await base.signTransaction({
+    const passB = withSubmissionSlot(base, CHAIN_ID, account.address, async (nonce, signed) => {
+      const signedTx = await base.signTransaction({
         account,
         chain: null,
         chainId: CHAIN_ID,
@@ -98,7 +104,8 @@ describe('submission queue (#2486)', () => {
         nonce,
         ...FEES,
       } as never);
-      return base.sendRawTransaction({ serializedTransaction: signed });
+      signed();
+      return base.sendRawTransaction({ serializedTransaction: signedTx });
     });
     await Promise.all([passA, passB]);
     expect(node.rejected).toEqual([]);
@@ -127,7 +134,10 @@ describe('submission queue (#2486)', () => {
         wallet,
         CHAIN_ID,
         account.address,
-        async (nonce) => nonce,
+        async (nonce, signed) => {
+          signed();
+          return nonce;
+        },
         () => now,
       );
     expect(await slot()).toBe(0);
@@ -137,16 +147,29 @@ describe('submission queue (#2486)', () => {
     expect(await slot()).toBe(0);
   });
 
-  it('a send that throws records no nonce', async () => {
+  it('a send that throws BEFORE signing records no nonce', async () => {
     const node: Node = { accepted: [], rejected: [], reportedPending: () => 0 };
     const wallet = nodeWallet(node);
     await expect(
       withSubmissionSlot(wallet, CHAIN_ID, account.address, async () => {
-        throw new Error('request timed out');
+        throw new Error('execution reverted');
       }),
     ).rejects.toThrow();
     const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, async (n) => n);
     expect(nonce).toBe(0);
+  });
+
+  it('a broadcast that throws AFTER signing keeps its nonce reserved', async () => {
+    // The node takes the transaction but the answer is lost, and the node
+    // answering the next count has not seen it.
+    const node: Node = { accepted: [], rejected: [], reportedPending: () => 0, loseAnswer: true };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const first = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
+    await expect(first).rejects.toThrow();
+    // The next send must not reuse nonce 0, which would replace it.
+    await wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
+    expect(node.accepted).toEqual([0, 1]);
+    expect(node.rejected).toEqual([]);
   });
 
   it('queues per chain: another chain does not wait', async () => {

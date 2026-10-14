@@ -27,11 +27,25 @@
  * Reading the pending count right after a broadcast is usually enough,
  * but a load-balanced RPC can answer from a node that has not seen the
  * transaction yet. So a slot also remembers the nonce after the last
- * accepted broadcast and uses whichever is higher. The floor expires after
- * {@link FLOOR_TTL_MS}: if a broadcast the RPC accepted is then dropped,
- * the gap it leaves lasts at most that long before the pending count is
- * trusted again. A broadcast that threw records nothing, because whether
- * it was relayed is unknown and a guessed floor could open a gap.
+ * broadcast and uses whichever is higher. The floor expires after
+ * {@link FLOOR_TTL_MS}: if that broadcast is then dropped, the gap it
+ * leaves lasts at most that long before the pending count is trusted
+ * again, and the next send fills it.
+ *
+ * Which failures set the floor is the point of the design:
+ *
+ * - **Before signing** (a reverted gas estimate, a refused request): no
+ *   transaction with this nonce exists anywhere, so nothing is recorded
+ *   and the next send reuses the nonce. This is what keeps a reverted
+ *   estimate from opening a gap.
+ * - **After signing** (the broadcast threw, or its answer never came
+ *   back): the RPC may have relayed it. Reusing the nonce could then
+ *   replace a keeper action already in flight, so the nonce is
+ *   quarantined behind the floor exactly as if the broadcast had been
+ *   accepted. If it really was lost, that costs at most one floor
+ *   lifetime of later sends waiting behind the gap; replacing a relayed
+ *   close-out has no such bound. The send reports the boundary by calling
+ *   `signed()` once it holds signed bytes.
  *
  * ## Scope
  *
@@ -44,7 +58,13 @@
  * retried by its pass on a later tick; nothing is lost or doubled.
  */
 import type { Account, Address, WalletClient } from 'viem';
-import { getTransactionCount, sendTransaction } from 'viem/actions';
+import {
+  getTransactionCount,
+  prepareTransactionRequest,
+  sendRawTransaction,
+  sendTransaction,
+  signTransaction,
+} from 'viem/actions';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -69,8 +89,9 @@ export function resetSubmissionQueues(): void {
 
 /**
  * Run `send` in this account's next slot on `chainId`, handing it the
- * nonce to use. `send` must broadcast exactly one transaction with that
- * nonce, and resolve only once the broadcast has returned.
+ * nonce to use. `send` must broadcast at most one transaction with that
+ * nonce, call `signed()` once it holds the signed bytes and before
+ * broadcasting them, and resolve only once the broadcast has returned.
  *
  * The nonce is read through `wallet`'s own transport, so a pass that caps
  * its requests counts the read.
@@ -79,7 +100,7 @@ export async function withSubmissionSlot<T>(
   wallet: WalletClient,
   chainId: number,
   address: Address,
-  send: (nonce: number) => Promise<T>,
+  send: (nonce: number, signed: () => void) => Promise<T>,
   now: () => number = Date.now,
 ): Promise<T> {
   const key = keyOf(chainId, address);
@@ -96,9 +117,15 @@ export async function withSubmissionSlot<T>(
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
     const nonce = fresh ? Math.max(pending, floor.next) : pending;
-    const result = await send(nonce);
-    floors.set(key, { next: nonce + 1, at: now() });
-    return result;
+    let wasSigned = false;
+    try {
+      return await send(nonce, () => {
+        wasSigned = true;
+      });
+    } finally {
+      // Accepted, or possibly relayed: either way this nonce is spoken for.
+      if (wasSigned) floors.set(key, { next: nonce + 1, at: now() });
+    }
   } finally {
     release();
     if (tails.get(key) === tail) tails.delete(key);
@@ -117,14 +144,28 @@ export function queuedWallet(wallet: WalletClient, chainId: number): WalletClien
     // restated by a wrapper; the arguments pass through unchanged.
     sendTransaction: ((args: Parameters<typeof sendTransaction>[1]) => {
       const account = (args.account ?? base.account) as Account | Address | undefined;
-      const address = typeof account === 'string' ? account : account?.address;
-      // No account, or a nonce the caller chose: viem reports the first,
-      // and the second is the caller's to coordinate.
-      if (!address || args.nonce !== undefined) return sendTransaction(base, args);
-      return withSubmissionSlot(base, chainId, address, (nonce) =>
-        sendTransaction(base, { ...args, nonce } as typeof args),
-      );
+      // Not a local signer, or a nonce the caller chose: viem handles the
+      // first (and reports a missing account), and the second is the
+      // caller's to coordinate.
+      if (typeof account !== 'object' || account.type !== 'local' || args.nonce !== undefined) {
+        return sendTransaction(base, args);
+      }
+      // viem's own sendTransaction, split at the signature so the slot
+      // knows whether a failure could have reached the network.
+      return withSubmissionSlot(base, chainId, account.address, async (nonce, signed) => {
+        const request = await prepareTransactionRequest(base, {
+          ...(args as object),
+          account,
+          nonce,
+        } as never);
+        const serialized = await signTransaction(base, {
+          ...(request as object),
+          account,
+          chain: null,
+        } as never);
+        signed();
+        return sendRawTransaction(base, { serializedTransaction: serialized });
+      });
     }) as never,
   })) as unknown as WalletClient;
 }
-
