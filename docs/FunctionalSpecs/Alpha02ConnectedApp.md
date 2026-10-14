@@ -1410,6 +1410,14 @@ Thin-market honesty rules apply.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
+- Once grace has ended, the lender's notice does not promise that the loan
+  will be closed automatically. Whether an automatic close-out runs is a
+  per-deployment setting the app cannot read, and even where it runs it
+  leaves some loans open, so the notice says automatic close-out may be
+  switched off and that the app cannot tell. It does not promise the lender
+  can act either: it points to this page's close-out card, when shown, for
+  whether the lender can close the loan out now and what stands in the way
+  if not, and says anyone may close it first.
 - A position row whose loan is past its grace period says so ("Past grace"),
   distinct from a loan that is past due but still inside grace. Whether grace
   has ended is the protocol's own answer, judged by chain time against the

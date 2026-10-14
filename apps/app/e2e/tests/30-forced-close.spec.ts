@@ -234,6 +234,16 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   });
   const cardAfter = afterWarp.page.getByTestId('forced-close-card');
   await expect(cardAfter).toBeVisible({ timeout: 30_000 });
+  // The lender's grace-over banner (#2484) promises no automatic
+  // close — the keeper pass is a per-deployment setting the app cannot
+  // read — and defers to this card for whether the lender can act.
+  const graceBanner = afterWarp.page
+    .locator('.banner-danger[role="alert"]')
+    .filter({ hasText: /grace period has ended/i });
+  await expect(graceBanner).toBeVisible({ timeout: 30_000 });
+  await expect(graceBanner).toContainText(/may be switched off on this deployment/i);
+  await expect(graceBanner).toContainText(/overdue-loan card on this page/i);
+  await expect(graceBanner).not.toContainText(/normally happens automatically/i);
 
   // The state actually moved — the waiting line is gone.
   await expect(
