@@ -128,6 +128,11 @@ function harness(scene: Scene) {
   } as unknown as PublicClient;
   const wallet = {
     account: { address: KEEPER },
+    // The submission slot (#2486) reads the pending nonce first.
+    request: async ({ method }: { method: string }) => {
+      if (method === 'eth_getTransactionCount') return '0x0';
+      throw new Error(`unexpected request ${method}`);
+    },
     // The send is prepare → sign → broadcast; what was asked for is
     // recorded at the prepare, decoded, so tests read it like a call.
     prepareTransactionRequest: async (args: { data: Hex }) => {
