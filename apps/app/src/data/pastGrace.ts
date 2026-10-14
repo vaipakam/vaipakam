@@ -53,37 +53,54 @@ export type GraceVerdict =
   | { read: 'checking' | 'unavailable'; verdict: undefined };
 
 /**
- * The single rule for when a cached answer may still be shown (#2475
- * r2/r8/r9 — each round found another way a stale `data` outlived the
- * read that produced it, so the rule lives here and nowhere else).
- * TanStack keeps the last `data` through an error, through a paused fetch,
- * and while the browser is offline with no fetch yet attempted; in every
- * one of those the protocol's current answer is not in hand, and governance
- * may have changed the grace schedule meanwhile.
+ * The single rule for when a cached answer may be shown (#2475 r2/r8/r9/r10
+ * each found another way a stale `data` outlived the read behind it, by
+ * reasoning about TanStack's status flags). The rule is now about the
+ * ANSWER, not the flags: it is current only if it was fetched after the
+ * most recent loss of connectivity (`connectedSince`, +Infinity while
+ * offline) and the latest read did not fail or pause. So a disconnect
+ * drops a cached answer at once, and a reconnect does not restore it; only
+ * a read that completes after reconnecting does.
  */
 export function graceVerdictFrom(q: {
   data: boolean | undefined;
+  dataUpdatedAt: number;
   isError: boolean;
   isPaused: boolean;
-  online: boolean;
+  connectedSince: number;
 }): GraceVerdict {
-  if (q.isError || q.isPaused || !q.online) return { read: 'unavailable', verdict: undefined };
+  if (q.isError || q.isPaused || q.connectedSince === Number.POSITIVE_INFINITY) {
+    return { read: 'unavailable', verdict: undefined };
+  }
   if (q.data === undefined) return { read: 'checking', verdict: undefined };
+  // Answered before the last disconnect: not current, and a fresh read is
+  // in flight or due, so the honest state is "checking".
+  if (q.dataUpdatedAt <= q.connectedSince) return { read: 'checking', verdict: undefined };
   return { read: 'current', verdict: q.data };
 }
 
-function subscribeOnline(cb: () => void) {
+// When connectivity was last lost (0 = never in this session). Tracked
+// directly: TanStack only marks a query paused when its NEXT fetch starts,
+// and clears that the moment it is back online, before the re-read lands.
+let lastOfflineAt = 0;
+onlineManager.subscribe((online) => {
+  if (!online) lastOfflineAt = Date.now();
+});
+function subscribeConnectivity(cb: () => void) {
   return onlineManager.subscribe(cb);
 }
-function isOnline() {
-  return onlineManager.isOnline();
+function connectedSince() {
+  return onlineManager.isOnline() ? lastOfflineAt : Number.POSITIVE_INFINITY;
 }
 
 export function useLoanPastGrace(loanId: number, enabled: boolean): GraceVerdict {
   const q = useLoanPastGraceQuery(loanId, enabled);
-  // Tracked directly: TanStack only marks a query paused when its NEXT fetch
-  // starts, so a cached `true` would otherwise outlive a disconnect until
-  // the next interval.
-  const online = useSyncExternalStore(subscribeOnline, isOnline, isOnline);
-  return graceVerdictFrom({ data: q.data, isError: q.isError, isPaused: q.isPaused, online });
+  const since = useSyncExternalStore(subscribeConnectivity, connectedSince, connectedSince);
+  return graceVerdictFrom({
+    data: q.data,
+    dataUpdatedAt: q.dataUpdatedAt,
+    isError: q.isError,
+    isPaused: q.isPaused,
+    connectedSince: since,
+  });
 }

@@ -1414,7 +1414,7 @@ Thin-market honesty rules apply.
   distinct from a loan that is past due but still inside grace. Whether grace
   has ended is the protocol's own answer, judged by chain time against the
   live grace schedule, never the device clock; until that answer is read the
-  row keeps its ordinary time-based label (as it does when a re-read fails or cannot run because the device is offline, rather than repeating an earlier answer) and, whatever that label says (the device clock may be behind the chain's), says on its own visible line, independent of whatever the badge shows, that the grace answer is still being checked or is unavailable, and it is re-read periodically
+  row keeps its ordinary time-based label (as it does when a re-read fails or cannot run because the device is offline, rather than repeating an earlier answer; an answer from before a disconnect is not shown again until a read completes after reconnecting) and, whatever that label says (the device clock may be behind the chain's), says on its own visible line, independent of whatever the badge shows, that the grace answer is still being checked or is unavailable, and it is re-read periodically
   because governance can lengthen the grace schedule and reopen repayment.
   That answer establishes TIME eligibility only — a close-out can still be
   refused for reasons the row does not read, such as a pause — so the row's
