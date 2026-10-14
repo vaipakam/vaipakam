@@ -111,6 +111,22 @@ describe('0058 — initiation terms backed by LoanInitiatedDetails', () => {
   });
 });
 
+describe('the route before 0058 is applied (#2478 r2)', () => {
+  it('withholds the terms when the flag column does not exist yet', async () => {
+    // HTTP is not behind the schema gate: a Worker published ahead of its
+    // migration reads rows with no `init_terms_unbacked`. Absent ≠ backed.
+    const h = harness(); // schema before 0058
+    h.loan(9, [900, 60], [900, 60]); // a post-extension copy, unverifiable
+    h.db.prepare(`INSERT INTO loan_participants (chain_id, loan_id, wallet, role, from_at) VALUES (84532, 9, ?, 'lender', 109)`).run(ME);
+    const res = await handleLoansByHistoricalParticipant(
+      new Request(`https://idx/loans/by-participant?chainId=84532&wallet=${ME}&scope=all`),
+      { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env,
+    );
+    const body = (await res.json()) as { loans: Array<{ loanId: number; initRateBps: number | null; initDurationDays: number | null }> };
+    expect(body.loans.find((l) => l.loanId === 9)).toMatchObject({ initRateBps: null, initDurationDays: null });
+  });
+});
+
 describe('reverifyInitTerms — cost (#2478 r1)', () => {
   it('probes the details index per flagged loan rather than scanning the chain’s details rows', async () => {
     // A loan whose terms the ledger never carries stays flagged, so this runs
