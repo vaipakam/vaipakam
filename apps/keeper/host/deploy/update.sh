@@ -7,18 +7,24 @@
 #   1. fetches the deploy branch into root's own checkout, so no other
 #      account can redirect where the code comes from;
 #   2. stops if `current` is already that commit's release;
-#   3. exports exactly that commit with `git archive` and builds it in a
-#      throwaway sandbox (build.sh): a fresh dynamic user that cannot read
+#   3. exports exactly that commit with `git archive` and builds it with
+#      that commit's own build.sh in a throwaway sandbox: a fresh dynamic
+#      user that cannot read
 #      the env file or write the releases, keeps nothing once it ends (so no
 #      build can leave tooling behind for the next), and runs the new bundle
 #      with --check, so a build that cannot even load is never installed;
-#   4. copies the bundle into releases/<commit> and switches `current` to it
+#   4. installs that same commit's systemd units and root-side scripts
+#      (each only if it changed), so a bundle never runs under the units or
+#      updater of another commit: a change that needs a new credential,
+#      sandbox setting or ExecStart lands together with the code that needs
+#      it;
+#   5. copies the bundle into releases/<commit> and switches `current` to it
 #      in one rename. Root chose the commit and built that commit's own
 #      export, so the release is bound to it; nothing another account wrote
 #      can be installed;
-#   5. restarts a running keeper onto it gracefully, unless the bundle is
-#      byte-identical to the one already running (a merge that did not touch
-#      the keeper), which needs no restart.
+#   6. restarts a running keeper onto it gracefully, unless both the bundle
+#      and the keeper's unit are unchanged (a merge that did not touch the
+#      keeper), which needs no restart.
 #
 # Any failure exits non-zero before `current` moves, so the running keeper is
 # untouched and the next run retries. A run interrupted after the switch, or
@@ -73,6 +79,11 @@ incoming=""
 trap 'rm -rf "$tmp" ${incoming:+"$incoming"}' EXIT
 git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
 chmod 644 "$tmp/src.tar"
+# This commit's own deploy kit: its build.sh builds it, and its units and
+# scripts are installed with it below.
+mkdir "$tmp/kit"
+git -C "$REPO" archive "$target" apps/keeper/host/deploy | tar -x --no-same-owner -C "$tmp/kit"
+kit="$tmp/kit/apps/keeper/host/deploy"
 # The one directory the sandbox may write. `$tmp` itself stays 0700, so no
 # other account on the machine can reach it; the sandbox sees only the
 # bind-mounted paths below.
@@ -89,7 +100,7 @@ systemd-run --quiet --wait --pipe --collect \
   --unit=vaipakam-keeper-build \
   -p PartOf=vaipakam-keeper-update.service \
   -p DynamicUser=yes \
-  -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $ROOT/build.sh:/run/keeper-build.sh" \
+  -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $kit/build.sh:/run/keeper-build.sh" \
   -p BindPaths="$tmp/out:/run/keeper-out" \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
@@ -117,6 +128,30 @@ restart=yes
 if [ -f "$ROOT/current/keeper-host.mjs" ] && cmp -s "$incoming/keeper-host.mjs" "$ROOT/current/keeper-host.mjs"; then
   restart=no
 fi
+
+# Install this commit's kit, last before the switch so a failed build changes
+# nothing. Each file is replaced only when its content changed (a unit's mtime
+# is what install.sh's restart check reads), and by rename, so the copy of
+# this script bash is running stays intact.
+place() { # place <source> <destination> <mode>
+  if ! cmp -s "$1" "$2"; then
+    install -m "$3" -o root -g root "$1" "$2.new"
+    mv -Tf "$2.new" "$2"
+    return 0
+  fi
+  return 1
+}
+units_changed=no
+for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
+  if place "$kit/$unit" "/etc/systemd/system/$unit" 644; then
+    units_changed=yes
+    # The keeper's own unit changed: it must restart onto it even when its
+    # bundle did not.
+    if [ "$unit" = vaipakam-keeper.service ]; then restart=yes; fi
+  fi
+done
+if [ "$units_changed" = yes ]; then systemctl daemon-reload; fi
+place "$kit/update.sh" "$ROOT/update.sh" 755 || true
 rm -rf "$release"
 mv -T "$incoming" "$release"
 incoming=""

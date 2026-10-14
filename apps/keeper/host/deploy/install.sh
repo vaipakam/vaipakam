@@ -26,10 +26,11 @@ main() {
   local REPO_URL="https://github.com/vaipakam/vaipakam.git"
   local NODE_MAJOR=22
   local ROOT=/opt/vaipakam-keeper
-  # A reinstall must never move the machine to other code by itself.
-  local BRANCH="${KEEPER_DEPLOY_BRANCH:-$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)}"
 
   log() { echo "[keeper-install] $*"; }
+  # Nothing this script or the updater creates is group- or world-writable,
+  # whatever umask it was started with.
+  umask 022
 
   [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
   # The keeper unit reads its env file through LoadCredential= (systemd 247).
@@ -111,22 +112,35 @@ main() {
   for bin in node npm npx corepack; do ln -sfn "$NODE_HOME/current/bin/$bin" "/usr/local/bin/$bin"; done
 
   # Everything under /opt/vaipakam-keeper is root's: the checkout the code
-  # comes from, the scripts and the releases. Builds run as a throwaway
-  # dynamic user (build.sh), and the keeper as another, which is the only
-  # one that sees the env file.
-  if [ -L "$ROOT" ] || [ -L "$ROOT/releases" ] || [ -L "$ROOT/repo" ]; then
-    echo "$ROOT and its releases/ and repo/ must not be links; fix them by hand and re-run" >&2
+  # comes from, the scripts, the releases and the state files. Builds run as
+  # a throwaway dynamic user (build.sh), and the keeper as another, which is
+  # the only one that sees the env file.
+  #
+  # One rule decides whether any of it is trusted, rather than a check per
+  # file: the tree is used as it stands only if a completed install made it
+  # (the .installed marker) AND nothing in it is owned by anyone but root or
+  # writable by anyone but root. Otherwise it is deleted and built again
+  # from nothing. Before an install completes it holds nothing that cannot
+  # be rebuilt, and a tree another account could ever have written (a
+  # planted git config, a pre-made release, a linked state file) is not
+  # something to repair piece by piece.
+  if [ -L "$ROOT" ]; then
+    echo "$ROOT must not be a link; remove it by hand and re-run" >&2
     exit 1
   fi
-  install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"
-  echo "$BRANCH" > "$ROOT/deploy-branch"
-  # The updater runs git as root in this checkout, and a git config can name
-  # programs git runs. So a checkout any other account could ever have
-  # written is not repaired in place: it is deleted and cloned again.
-  if [ -e "$ROOT/repo" ] && [ -n "$(find "$ROOT/repo" \( ! -user root -o ! -group root -o \( ! -type l -perm /022 \) \) -print -quit)" ]; then
-    log "the existing checkout is not entirely root-owned and root-only-writable; cloning it again"
-    rm -rf "$ROOT/repo"
+  if [ -e "$ROOT" ]; then
+    if [ ! -f "$ROOT/.installed" ] || [ -L "$ROOT/.installed" ] \
+      || [ -n "$(find "$ROOT" \( ! -user root -o ! -group root -o \( ! -type l -perm /022 \) \) -print -quit)" ]; then
+      log "$ROOT was not made by a completed install, or another account could have written it; starting it again from nothing"
+      rm -rf "$ROOT"
+    fi
   fi
+  # A reinstall must never move the machine to other code by itself. Read
+  # only now, from a tree that passed the rule above.
+  local BRANCH="${KEEPER_DEPLOY_BRANCH:-$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)}"
+  install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"
+  echo "$BRANCH" > "$ROOT/.deploy-branch.new"
+  mv -Tf "$ROOT/.deploy-branch.new" "$ROOT/deploy-branch"
   if [ ! -d "$ROOT/repo/.git" ]; then
     rm -rf "$ROOT/repo"
     log "cloning $REPO_URL"
@@ -134,13 +148,28 @@ main() {
   fi
   git -C "$ROOT/repo" remote set-url origin "$REPO_URL"
   git -C "$ROOT/repo" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+  # The kit comes from the commit that is running, so a reinstall never puts
+  # a newer commit's units under the release in use (say, while deploys are
+  # paused for a rollback). Only a machine with no release yet takes the
+  # branch tip, and its first deploy then installs the kit of whatever
+  # commit it deploys.
+  local kit_commit
+  kit_commit="$(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || git -C "$ROOT/repo" rev-parse "origin/$BRANCH")"
+  if ! [[ "$kit_commit" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "could not tell which commit is running ($kit_commit); fix $ROOT/current by hand and re-run" >&2
+    exit 1
+  fi
   local kit="$tmp/kit"
   mkdir -p "$kit"
-  git -C "$ROOT/repo" archive "origin/$BRANCH" apps/keeper/host/deploy | tar -x -C "$kit"
+  git -C "$ROOT/repo" archive "$kit_commit" apps/keeper/host/deploy | tar -x --no-same-owner -C "$kit"
   kit="$kit/apps/keeper/host/deploy"
 
-  install -m 755 -o root -g root "$kit/update.sh" "$ROOT/update.sh"
-  install -m 755 -o root -g root "$kit/build.sh" "$ROOT/build.sh"
+  # Only the updater is installed here. From then on each deploy installs the
+  # units and the updater of the commit it deploys, and builds with that
+  # commit's own build.sh, so code never runs under another commit's kit.
+  install -m 755 -o root -g root "$kit/update.sh" "$ROOT/.update.sh.new"
+  mv -Tf "$ROOT/.update.sh.new" "$ROOT/update.sh"
+  rm -f "$ROOT/build.sh"
 
   if [ -L /etc/vaipakam ] || [ -L /etc/vaipakam/keeper.env ]; then
     echo "/etc/vaipakam and its keeper.env must not be links; fix them by hand and re-run" >&2
@@ -158,9 +187,13 @@ main() {
     echo "/etc/vaipakam/keeper.env must be a regular file; fix it by hand and re-run" >&2
     exit 1
   fi
-  chown root:root /etc/vaipakam /etc/vaipakam/keeper.env
+  chown root:root /etc/vaipakam
   chmod 750 /etc/vaipakam
-  chmod 600 /etc/vaipakam/keeper.env
+  # A fresh root-owned copy replaces the file, rather than a chown of it: an
+  # account that could write the old file may still hold it open, and a new
+  # inode is out of that descriptor's reach. The contents are kept.
+  install -m 600 -o root -g root /etc/vaipakam/keeper.env /etc/vaipakam/.keeper.env.new
+  mv -Tf /etc/vaipakam/.keeper.env.new /etc/vaipakam/keeper.env
 
   # A unit file is replaced only when its content changed, so its mtime says
   # when it last changed; the restart check below relies on that.

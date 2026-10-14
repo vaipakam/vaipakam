@@ -110,14 +110,31 @@ describe('host deploy kit paths', () => {
 
   it('installs every unit in the kit', () => {
     const install = read('install.sh');
-    for (const unit of [
-      'vaipakam-keeper.service',
-      'vaipakam-keeper-update.service',
-      'vaipakam-keeper-update.timer',
-      'build.sh',
-      'update.sh',
-    ]) {
+    for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer', 'update.sh']) {
       expect(install, unit).toContain(unit);
     }
+    // A reinstall takes the kit of the commit that is running, not the branch tip.
+    expect(install).toContain('kit_commit="$(cat "$ROOT/current/SOURCE_COMMIT"');
+    // One trust rule for the whole tree, and a fresh inode for the env file.
+    expect(install).toContain('rm -rf "$ROOT"');
+    expect(install).toContain('umask 022');
+    expect(install).toContain('mv -Tf /etc/vaipakam/.keeper.env.new /etc/vaipakam/keeper.env');
+  });
+
+  it('deploys each commit with its own build.sh, units and updater', () => {
+    const update = read('update.sh');
+    expect(update).toContain('git -C "$REPO" archive "$target" apps/keeper/host/deploy');
+    expect(update).toContain('$kit/build.sh:/run/keeper-build.sh');
+    expect(update).not.toContain('$ROOT/build.sh');
+    for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer']) {
+      expect(update, unit).toContain(unit);
+    }
+    expect(update).toContain('place "$kit/$unit" "/etc/systemd/system/$unit" 644');
+    expect(update).toContain('place "$kit/update.sh" "$ROOT/update.sh" 755');
+    // A changed keeper unit restarts the keeper even when the bundle is identical.
+    expect(update).toMatch(/if \[ "\$unit" = vaipakam-keeper\.service \]; then restart=yes; fi/);
+    // The kit goes in after the build succeeds and before `current` moves.
+    expect(update.indexOf('place "$kit/$unit"')).toBeGreaterThan(update.indexOf('built="$tmp/out/keeper-host.mjs"'));
+    expect(update.indexOf('place "$kit/$unit"')).toBeLessThan(update.indexOf('mv -Tf "$ROOT/current.next" "$ROOT/current"'));
   });
 });

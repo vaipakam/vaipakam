@@ -24,11 +24,16 @@ A merge to `main` is the deploy. Each run of `update.sh` does the following:
 1. It fetches `main` into root's own checkout.
 2. If `current` is already that commit's release, it stops there.
 3. Otherwise it exports exactly that commit and builds it in a sandbox, as a
-   fresh dynamic user that systemd deletes afterwards (`build.sh`). The build
-   runs the new bundle with `--check`, to prove it loads.
-4. It installs the bundle as `releases/<commit>` and switches `current` to it.
-5. It restarts a running keeper, unless the new bundle is byte-identical to
-   the running one (a merge that did not touch the keeper).
+   fresh dynamic user that systemd deletes afterwards, with that commit's own
+   `build.sh`. The build runs the new bundle with `--check`, to prove it
+   loads.
+4. It installs that same commit's systemd units and `update.sh`, each only if
+   it changed. So the keeper never runs under the units of another commit: a
+   change that needs a new setting in its unit arrives with the code that
+   needs it.
+5. It installs the bundle as `releases/<commit>` and switches `current` to it.
+6. It restarts a running keeper, unless neither the bundle nor the keeper's
+   unit changed (a merge that did not touch the keeper).
 
 Any failure leaves the running keeper untouched, and the next run retries.
 The only state is `current`.
@@ -100,17 +105,22 @@ The script does the following:
 
 It never enables or starts the keeper. That is the cutover in §5, so a
 machine that is installed but not cut over cannot start a second keeper at
-its next boot. Running it again is safe. Each run brings the units and
-scripts up to date (the timer does not update them). It also moves Node to
+its next boot. Running it again is safe. It installs the units and
+`update.sh` of the commit that is running, never a newer one (each deploy
+installs its own commit's, step 4 of §1), so a re-run while deploys are
+paused leaves the machine on one commit's code and units. It also moves Node to
 the latest 22.x release. When Node or the keeper's unit changed, it restarts
 a running keeper onto them, after its current tick. So re-run it to take Node
 security releases. Node lives in `/usr/local/lib/vaipakam-node`, which the
 script owns outright: it keeps the version in use and the one before it, and
 removes older ones. A re-run keeps the branch the machine follows unless
 `KEEPER_DEPLOY_BRANCH` is set again, and leaves paused deploys paused (§6):
-only the first install to complete turns the update timer on. A checkout
-that is not entirely root-owned is deleted and cloned again rather than
-trusted. And whether a running keeper needs a restart is read from the
+only the first install to complete turns the update timer on. One rule
+decides whether `/opt/vaipakam-keeper` is trusted: unless a completed install
+made it and everything in it is root's and writable only by root, the whole
+tree is deleted and made again, never repaired piece by piece. The env file
+is replaced by a fresh root-owned copy with the same contents, so nothing
+that held the old file open keeps access. And whether a running keeper needs a restart is read from the
 machine, not remembered: it restarts when Node or its unit changed after it
 started, so a re-run after an interrupted one still does it.
 
@@ -188,8 +198,9 @@ empty.
   --now vaipakam-keeper-update.timer`.
 - **Roll back:** pause deploys (above) first. Then point `current` at an
   earlier release (`sudo ln -sfn /opt/vaipakam-keeper/releases/<commit>
-  /opt/vaipakam-keeper/current`) and run `sudo systemctl restart
-  vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
+  /opt/vaipakam-keeper/current`), re-run the install script (§3) so the
+  units and `update.sh` are that release's own again, and run `sudo systemctl
+  restart vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
   sees that `current` is not `main`'s release and deploys it.
 - **Move hosts:** on the old machine run `sudo systemctl disable --now
   vaipakam-keeper vaipakam-keeper-update.timer`. Then enable the new machine
