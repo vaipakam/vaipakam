@@ -255,6 +255,23 @@ function dedupeKey(chainId: number, loanId: number): string {
 }
 
 /**
+ * Null when every build for this loan was a no-quote the market gave — each
+ * venue asked, each declined (the shared `noQuoteReason` rule) — so the
+ * in-kind close may be considered; otherwise the reason it may not. A venue
+ * that was not heard from might have quoted, and an in-kind close cannot be
+ * undone, so anything short of `declined` keeps the loan waiting (#2487 r1).
+ */
+export function inKindBlocker(
+  builds: readonly Pick<ServerOrchestrationResult, 'calls' | 'noQuote'>[],
+): string | null {
+  for (const b of builds) {
+    if (b.calls.length > 0) return 'another size quoted';
+    if (b.noQuote !== 'declined') return `no-quote reason ${b.noQuote ?? 'none'}`;
+  }
+  return builds.length > 0 ? null : 'no builds';
+}
+
+/**
  * The liquidator's no-route fallback (#2487): when the loan is past grace,
  * close it in kind through the attempt the grace-default pass uses, in its
  * `in-kind` role. Returns true when a transaction was submitted or may have
@@ -517,16 +534,22 @@ export async function maybeAutonomousLiquidate(
       console.log(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
       );
-      // #2487 — no venue quotes any size of this collateral. If the loan is
-      // also past grace, it is still this pass's (it is under water), and the
-      // grace-default pass will not touch it, so the liquidator sends the
-      // in-kind close-out itself: `triggerDefault` with an empty list, where
-      // the contract's collapsed-LTV branch hands the collateral to the
-      // lender. The shared attempt sends only when the preview shows that
-      // terminal default, with no swap and no internal match.
-      const noRouteAtAll =
-        halfQuotes.calls.length === 0 && (partialQuotes === null || partialQuotes.calls.length === 0);
-      if (noRouteAtAll) return tryInKindCloseOut(chain, ctx, publicClient, loanIdBig);
+      // #2487 — if every venue was asked about every size and every one
+      // DECLINED, and the loan is also past grace, it is still this pass's
+      // (it is under water) and the grace-default pass will not touch it,
+      // so the liquidator sends the in-kind close-out itself:
+      // `triggerDefault` with an empty list, where the contract's
+      // collapsed-LTV branch hands the collateral to the lender. The shared
+      // attempt sends only when the preview shows that terminal default,
+      // with no swap and no internal match.
+      //
+      // An empty list is NOT enough on its own (#2487 r1): an unread
+      // roster, a venue that did not answer, or one this keeper cannot ask
+      // also leaves it empty, and a route might exist there. Only the
+      // shared `declined` verdict says the market was asked and said no.
+      const blocker = inKindBlocker([quotes, halfQuotes, ...(partialQuotes ? [partialQuotes] : [])]);
+      if (blocker === null) return tryInKindCloseOut(chain, ctx, publicClient, loanIdBig);
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} in-kind not considered: ${blocker}`);
       return false;
     }
 

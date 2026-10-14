@@ -24,7 +24,7 @@ import {
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 import { attemptCloseOut } from '../src/closeOut';
-import { tryInKindCloseOut } from '../src/keeper';
+import { inKindBlocker, tryInKindCloseOut } from '../src/keeper';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
   attemptGraceDefault,
@@ -170,6 +170,7 @@ function harness(scene: Scene) {
         calls: Array.from({ length: n }, (_, i) => ({ adapterIdx: BigInt(i), data: '0x01' })),
         failed: [],
         route: null,
+        noQuote: n > 0 ? null : 'declined',
       } as unknown as ServerOrchestrationResult;
     },
   };
@@ -492,6 +493,23 @@ describe("the liquidator's no-route fallback (#2487)", () => {
     const h = harness({ hf: UNDER, ending: 'other', defaulted: false, defaultable: true });
     expect(await tryInKindCloseOut(CHAIN, ctxOf(h), h.deps.client, LOAN_ID)).toBe(false);
     expect(h.writes).toHaveLength(0);
+  });
+});
+
+describe('when the liquidator may consider the in-kind close (#2487 r1)', () => {
+  const declined = { calls: [], noQuote: 'declined' as const };
+  it('only when every size was asked of every venue and every one declined', () => {
+    expect(inKindBlocker([declined, declined, declined])).toBeNull();
+  });
+  it('not when any size quoted', () => {
+    expect(inKindBlocker([declined, { calls: [{ adapterIdx: 0n, data: '0x' }], noQuote: null }])).toBe(
+      'another size quoted',
+    );
+  });
+  it('not when a venue was unread, unanswered or not asked', () => {
+    for (const reason of ['unread', 'unanswered', 'unanswered-partly-reached', 'unconfigured', 'unreachable', 'partly-reached'] as const) {
+      expect(inKindBlocker([declined, { calls: [], noQuote: reason }])).toBe(`no-quote reason ${reason}`);
+    }
   });
 });
 

@@ -39,6 +39,7 @@ import {
   aggregatorAnswerForStatus,
   buildCloseOutRoute,
   classifySlots,
+  noQuoteReason,
   readCloseOutRoster,
   type ClassifiedSlot,
   type AggregatorAnswer,
@@ -47,6 +48,7 @@ import {
   type AggregatorSource,
   type CloseOutRoster,
   type CloseOutRoute,
+  type NoQuoteReason,
 } from '@vaipakam/lib/routeBuilder';
 import type { AdapterCall, SwapVenueKind } from '@vaipakam/lib/swapRoutes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
@@ -91,6 +93,12 @@ export interface ServerOrchestrationResult {
   failed: string[];
   /** The shared builder's own result, for a caller that reports it. */
   route: CloseOutRoute | null;
+  /** Why nothing was quoted — the shared `noQuoteReason` rule, applied to
+   *  the roster this build read — or null when there is a route. Only
+   *  `declined` says every venue was asked and every one declined; any
+   *  other reason means some venue was not heard from, so a caller must
+   *  not treat the empty list as the market's answer (#2487 r1). */
+  noQuote: NoQuoteReason | null;
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
@@ -223,6 +231,7 @@ export async function orchestrateServerQuotes(
       calls: [],
       failed: [`roster-unread:${describeFailure(err)}`],
       route: null,
+      noQuote: 'unread',
     };
   }
   const { read, slots } = standing;
@@ -245,9 +254,11 @@ export async function orchestrateServerQuotes(
   // An enabled adapter this module cannot name is a venue that exists and
   // was not asked — said, not dropped (#2480 r1 `4267324316`).
   if (read.unrecognized > 0) failed.push(`unrecognized-adapters:${read.unrecognized}`);
-  if (route.kind === 'no-quote') return { ranked: [], calls: [], failed, route };
+  if (route.kind === 'no-quote') {
+    return { ranked: [], calls: [], failed, route, noQuote: noQuoteReason(route, read) };
+  }
   const ranked: ServerRankedQuote[] = route.candidates.flatMap((c) =>
     c.expectedOutput === null ? [] : [{ kind: c.kind, expectedOutput: c.expectedOutput, call: c.call }],
   );
-  return { ranked, calls: route.calls, failed, route };
+  return { ranked, calls: route.calls, failed, route, noQuote: null };
 }
