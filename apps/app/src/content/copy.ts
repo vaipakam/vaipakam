@@ -3527,8 +3527,12 @@ const copySource = {
     // defers to the card for whether the lender can act now. The card
     // hides only while an accepted sale awaits completion, hence "when
     // it appears". The call is permissionless, so anyone may go first.
+    // The last sentence avoids "closed, then claim": on the fallback
+    // route the claim comes first and ENDS the loan (see
+    // forcedClose.claimNoteSale), so it says only that the page shows
+    // what can be claimed and when.
     graceOverLender:
-      'The grace period has ended — this loan can now be closed out as a default. Automatic close-out may be switched off on this deployment, and the app can’t tell whether it is, so don’t wait for it. The overdue-loan card on this page, when it appears, says whether you can close the loan out yourself right now, and what stands in the way if not. Anyone may close it out first. Once the loan is closed, the collateral claim appears here.',
+      'The grace period has ended — this loan can now be closed out as a default. Automatic close-out may be switched off on this deployment, and the app can’t tell whether it is, so don’t wait for it. The overdue-loan card on this page, when it appears, says whether you can close the loan out yourself right now, and what stands in the way if not. Anyone may close it out first. Once it has been closed out, this page shows what you can claim and when.',
     // Codex #1166 r2 — fallback_pending is the post-grace failed-
     // default state: the cure (full repayment) is still accepted, but
     // only until the lender finalizes the default.
