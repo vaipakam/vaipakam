@@ -134,6 +134,31 @@ export function planDelivery(args: {
   return []; // a pre-3a packet carries no provable list
 }
 
+/**
+ * The canonical (Base) chain a mirror's deliveries come from, from
+ * `getRewardReporterConfig` — `(rewardMessenger, localChainId, baseChainId,
+ * isCanonical, grace)`. Field 2, never field 1: field 1 is the MIRROR's own id,
+ * and reading it sent every rooted-list rebuild to the mirror itself, where the
+ * reservation reads as empty and no rooted delivery was ever indexed or proven.
+ * Null on the canonical chain, which funds itself.
+ */
+export function canonicalChainOf(cfg: readonly [Address, number, number, boolean, bigint]): number | null {
+  if (cfg[3]) return null;
+  const base = Number(cfg[2]);
+  return base > 0 ? base : null;
+}
+
+/** Whether a packet can still need a write — checked BEFORE any read of its
+ *  batch or its rooted list, so a finished one costs nothing. */
+export function packetMayNeedWork(packet: PacketState): boolean {
+  if (packet.kind !== 1 || packet.disposed !== 0n) return false;
+  if (packet.dayListRoot !== ZERO32) {
+    const all = packet.chunkCount >= 256 ? -1n : (1n << BigInt(packet.chunkCount)) - 1n;
+    return packet.chunkCount > 0 && (packet.chunksIndexed & all) !== all;
+  }
+  return packet.dayListHash !== ZERO32;
+}
+
 export async function runDeliveryProof(env: Env): Promise<void> {
   if (!passIsArmed(env, 'deliveryProof', 'REWARD_DELIVERY_PROOF_ENABLED')) return;
   const chains = getChainConfigs(env);
@@ -155,8 +180,8 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
     abi: ABI,
     functionName: 'getRewardReporterConfig',
   })) as readonly [Address, number, number, boolean, bigint];
-  const baseChainId = Number(cfg[1]);
-  if (cfg[3]) return; // the canonical chain funds itself: nothing is delivered to it
+  const baseChainId = canonicalChainOf(cfg);
+  if (baseChainId === null) return; // the canonical chain funds itself: nothing is delivered to it
 
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = await listRecentBudgetDeliveries(env.DB, chain.id, nowSec - LOOKBACK_SEC);
@@ -171,12 +196,24 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
     return;
   }
   const budget = { writes: MAX_WRITES_PER_TICK };
+  const seen = new Set<string>();
   for (const row of rows) {
     if (budget.writes <= 0) break;
-    const packet = packets.get(row.packetHash.toLowerCase());
-    if (!packet) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const actions = await actionsFor(client, diamond, chain.id, row, packet, base, baseClient);
+    const key = row.packetHash.toLowerCase();
+    if (seen.has(key)) continue; // one pass per packet, whatever the join returned
+    seen.add(key);
+    const packet = packets.get(key);
+    if (!packet || !packetMayNeedWork(packet)) continue;
+    // One row's failed read (a canonical RPC outage, say) skips that row, never
+    // the chain's whole pass.
+    let actions: ProofAction[];
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      actions = await actionsFor(client, diamond, chain.id, row, packet, base, baseClient);
+    } catch (err) {
+      console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
+      continue;
+    }
     for (const a of actions) {
       if (budget.writes <= 0) break;
       // eslint-disable-next-line no-await-in-loop
@@ -242,7 +279,10 @@ async function rebuildRootedList(
     functionName: 'getRemitReservation',
     args: [remitId],
   })) as { dayIds: readonly bigint[]; dayListRoot: Hex; dstChainId: number };
-  if (Number(r.dstChainId) !== chainId) return null;
+  if (Number(r.dstChainId) !== chainId) {
+    console.warn(`[keeper] deliveryProof remit=${remitId}: the reservation names chain ${r.dstChainId}, not ${chainId} — skipped`);
+    return null;
+  }
   const remitted = await batchedRead(
     baseClient as never,
     r.dayIds.map((d) => ({

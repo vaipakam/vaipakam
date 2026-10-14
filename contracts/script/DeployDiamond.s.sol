@@ -3200,8 +3200,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         returns (bytes4[] memory s)
     {
         // A2-iii retired the dry run, the domain needs and the domain probe
-        // (Remove legs in RefreshAllFacetsInPlace._retiredSelectors). #1566
-        // sanctions slice — the staging records' reads moved to
+        // (a complete in-place refresh removes them with every other route
+        // outside the deploy's selector set, #2313). #1566 sanctions slice — the staging records' reads moved to
         // RewardStagingDomainFacet (a host split: this facet sat a few hundred
         // bytes under EIP-170).
         s = new bytes4[](3);
@@ -3313,7 +3313,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = RewardStagingDomainFacet.getStagingRecordBatches.selector;
         s[11] = RewardStagingDomainFacet.getStagingRecordEntries.selector;
         s[12] = RewardStagingDomainFacet.getStagingRecordPending.selector;
-        s[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (Remove leg in RefreshAllFacetsInPlace)
+        s[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (#2313: the in-place refresh removes the old route)
         s[14] = RewardStagingDomainFacet.isTransportBatchPriorityUsed.selector; // A2-ii
         s[15] = RewardStagingDomainFacet.getStagingEncumberedCount.selector;
     }

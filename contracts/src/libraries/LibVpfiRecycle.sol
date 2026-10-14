@@ -1751,8 +1751,13 @@ library LibVpfiRecycle {
             // exactly — and drains any backlog left by a ceiling that was later
             // cleared; a huge ceiling is a no-op by construction. The keeper
             // bps cannot be armed for a chain until a ceiling exists.
-            uint256 want = claimed + s.chainAttributionBacklog[sourceChainId];
-            if (want > headroom) want = headroom;
+            // Saturating at `headroom` BEFORE adding: the backlog is bounded by
+            // an earlier headroom, which a mirror-supplied cumulative can set
+            // near 2^256, so `claimed + backlog` would overflow and revert the
+            // chain's every later day report. `claimed <= headroom` by its own
+            // min, so the subtraction cannot underflow.
+            uint256 backlog = s.chainAttributionBacklog[sourceChainId];
+            uint256 want = backlog >= headroom - claimed ? headroom : claimed + backlog;
             uint256 cap = s.chainDailyAttributionCap[sourceChainId];
             accepted = (cap != 0 && want > cap) ? cap : want;
             s.chainAttributionBacklog[sourceChainId] = want - accepted;

@@ -1863,7 +1863,7 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   an `awaits*` flag on an armed day with `reportSent == false` = waiting on the
   commitment report; an `awaits*` flag otherwise = waiting on delivery; `landed` =
   delivered. `getPacketDeliveryProof(packetHash)` shows a delivery's list
-  commitments, chunk progress and its batch / quarantine / classification /
+  commitments, chunk progress and its batch / classification /
   disposal state. **Landed is not drawable**: an epoch still needs to be whole and
   attested before value moves from it; the delivered bound governs that.
 - **Repair rule — there is no admin release on the mirror, by design.** A day

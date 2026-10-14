@@ -72,7 +72,7 @@ export const SIGNED_OFFER_TYPES = {
   ],
 } as const;
 
-/** The 28 field names in canonical struct order — the route uses this both to
+/** The 31 field names in canonical struct order — the route uses this both to
  *  validate the POSTed object strictly and to build the canonical
  *  `order_json` replay payload with a stable key order. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] =

@@ -391,7 +391,18 @@ library LibInteractionRewards {
                     borrowerFreshHalf = lenderFreshHalf;
                 }
             } else {
-                lenderFreshHalf = halfPoolForDay(dayId);
+                // #1944 c1 — an UNARMED day funds the figure the broadcast
+                // shipped the destination: the day's finalize-stamped floor
+                // half (`RewardBroadcastFacet._perDestFields`), which is what
+                // the mirror prices the day from ({_sideFreshHalf}). The raw
+                // schedule sent more than the mirror pays once the floor fell
+                // below it near the 69M cap, and, sized past the remaining
+                // pool, refused the whole send while a gated mirror waited for
+                // the day. Below the cap the two are equal. A day finalized
+                // before the governor stamp existed keeps the schedule, as the
+                // mirror does for an unstamped record.
+                LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
+                lenderFreshHalf = p.stamped ? uint256(p.scheduleFloor) / 2 : halfPoolForDay(dayId);
                 borrowerFreshHalf = lenderFreshHalf;
             }
         }

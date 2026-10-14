@@ -7969,8 +7969,8 @@ library LibVaipakam {
         ///      retired era's delivery opens its epoch (#1566 PR C revision), so no
         ///      delivery is held inert.
         uint256 dayDeliveryGateFromDay;
-        /// @dev #1944 consequence 1 — the ingress stamp of the FIRST non-quarantined,
-        ///      undisposed budget packet PROVEN to list `day`, for packets holding NO
+        /// @dev #1944 consequence 1 — the ingress stamp of the FIRST undisposed
+        ///      budget packet PROVEN to list `day`, for packets holding NO
         ///      transport batch (typed d5, pre-activation d6/legacy). Written only by
         ///      the two proof entries (`RewardEpochFacet.proveDeliveryDayList/Chunk`),
         ///      never at ingress (the 300k destination budget — `TransportBatch`'s note)

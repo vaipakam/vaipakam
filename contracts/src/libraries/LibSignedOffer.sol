@@ -173,13 +173,17 @@ library LibSignedOffer {
     ///         ceiling ever becomes a zero slice ceiling (which would read as "Full
     ///         with no cap" and refuse the slice's accept unless downgrade is
     ///         allowed) — the slices' ceilings sum to at most the signed ceiling plus
-    ///         one wei per slice. A non-Full order carries zeros.
+    ///         one wei per slice. A non-Full order carries zeros. The share is a
+    ///         full-width `mulDiv`: the ceiling is signer-chosen, and a plain
+    ///         product would overflow on a large one and refuse every slice fill.
     function makerFullFor(SignedOffer memory o, uint256 fillAmount) internal pure returns (MakerFull memory f) {
         if (!o.creatorFull) return f;
         uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
         f.full = true;
         f.allowDowngrade = o.creatorAllowFullDowngrade;
-        f.maxCStar = fillAmount >= ceiling ? o.creatorMaxCStar : Math.ceilDiv(o.creatorMaxCStar * fillAmount, ceiling);
+        f.maxCStar = fillAmount >= ceiling
+            ? o.creatorMaxCStar
+            : Math.mulDiv(o.creatorMaxCStar, fillAmount, ceiling, Math.Rounding.Ceil);
     }
     bytes32 private constant DOMAIN_VERSION_HASH = keccak256("1");
 

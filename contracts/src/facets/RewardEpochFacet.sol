@@ -174,8 +174,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         refused: its days are already indexed by
     ///         {materializeTransportBatchPage}/{materializeTransportBatchChunk},
     ///         and a second mark beside that index would be a second
-    ///         statement of one fact. Era-quarantined (until classified) and
-    ///         disposed packets are refused because neither funds a day.
+    ///         statement of one fact. A disposed packet is refused because its
+    ///         value left and it funds no day.
     ///
     ///         NOT `whenNotPaused`, for the facet's stated reason: this
     ///         records a membership the delivery already committed to and

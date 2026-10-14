@@ -250,6 +250,10 @@ async function sendAckFromMirror(
   // r4 — receipts key by (remitter, remitId); the remitter is the Base
   // diamond whose reservation ledger this pass is scanning.
   baseDiamond: Address,
+  // A LATE ack (a released reservation) only resolves a settled receipt: Base's
+  // released branch stamps nothing for a provisional one, so sending it would
+  // pay the CCIP fee every backoff window for nothing.
+  late = false,
 ): Promise<boolean> {
   let client = clients.get(mirrorCfg.id);
   if (!client) {
@@ -263,8 +267,12 @@ async function sendAckFromMirror(
     abi: REMIT_ABI,
     functionName: 'getReceivedRemit',
     args: [baseDiamond, BigInt(remitId)],
-  })) as { srcChainId: number; receivedAt: bigint; amount: bigint };
+  })) as { srcChainId: number; receivedAt: bigint; amount: bigint; classification: number };
   if (receipt.receivedAt === 0n) return false;
+  if (late && !lateAckUseful(receipt.classification)) {
+    console.log(`[keeper] remitAck late remit=${remitId}: the receipt is still provisional — waits for its broadcast`);
+    return false;
+  }
 
   const ctx = buildKeeperContext(env, mirrorCfg, client);
   if (!ctx || !ctx.wallet.account) return false;
@@ -339,7 +347,7 @@ async function ackLateDeliveries(
     if (!mirrorCfg) continue;
     try {
       // eslint-disable-next-line no-await-in-loop
-      const ok = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond);
+      const ok = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond, true);
       if (ok) {
         // eslint-disable-next-line no-await-in-loop
         await recordRemitAckAttempt(env.DB, baseChainId, diamond, ids[i], Number(v.dstChainId));
@@ -357,6 +365,14 @@ async function ackLateDeliveries(
  *  stamped the ack has done its work: a trusted consumption resolved the share
  *  in that call, and a quarantine leaves it to the recovery ceremony or the
  *  terminal-loss record, so re-acking would spend gas every pass for nothing. */
+/** Whether a late acknowledgement can change anything for a mirror receipt of
+ *  `classification` (0 consumed / 1 quarantined / 2 provisional): only a
+ *  SETTLED receipt — consumed or quarantined — is stamped by Base's released
+ *  branch; a provisional one waits for its day's broadcast to settle it. */
+export function lateAckUseful(classification: number | bigint): boolean {
+  return Number(classification) !== 2;
+}
+
 export function isLateDeliveryCandidate(v: {
   status: number | bigint;
   strandedRecycled?: bigint;

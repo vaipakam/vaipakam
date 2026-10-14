@@ -41,9 +41,10 @@
 //
 // Gated by KEEPER_ENABLED + REWARD_SANCTIONS_KEEPER_ENABLED.
 
-import { createPublicClient, http, type Abi, type Address, type Hex } from 'viem';
+import { createPublicClient, http, parseAbi, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import {
   InteractionRewardsLensFacetABI,
+  ProfileFacetABI,
   RewardHorizonSweepFacetABI,
   RewardStagingDomainFacetABI,
   RewardStagingSettleFacetABI,
@@ -55,6 +56,7 @@ import { batchedRead } from './batchRead';
 import {
   listSanctionsEvidenceEvents,
   listStagingRecordKeysForUser,
+  listStagingRecordOwners,
   SANCTIONS_EVIDENCE_ROW_LIMIT,
   type SanctionsEvidenceRow,
 } from './db';
@@ -62,6 +64,7 @@ import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 
 const ABI = [
   ...(InteractionRewardsLensFacetABI as Abi),
+  ...(ProfileFacetABI as Abi),
   ...(RewardHorizonSweepFacetABI as Abi),
   ...(RewardStagingDomainFacetABI as Abi),
   ...(RewardStagingSettleFacetABI as Abi),
@@ -95,6 +98,10 @@ const FORFEIT_MAX_STEPS = 30n;
 const MAX_FORFEIT_PAGES_PER_OWNER = 4;
 /** Re-send a still-standing ops condition at most this often. */
 const ALERT_REPEAT_SEC = 6 * 3600;
+/** How far back staging-record owners join the candidates (#2450 review):
+ *  a held claimant whose chain never started emits no evidence event. */
+const STAGING_OWNER_LOOKBACK_SEC = 30 * 86_400;
+const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
 /** One candidate's classification, as `getRewardSanctionsStatus` returns it. */
 export interface OwnerSanctionsStatus {
@@ -109,6 +116,10 @@ export interface OwnerSanctionsStatus {
 export interface SanctionsHoldPlan {
   /** Held owners to observe now. */
   observe: Address[];
+  /** Forfeit owners whose chain is due an observation: observed by a sweep page
+   *  that makes progress, else by the evidence call (a lapsed chain would
+   *  restart confirmation for whatever accrues to them next). */
+  forfeitObserveDue: Address[];
   /** Owners whose rewards to settle: Forfeit runs the sweep, then the pages. */
   forfeit: Address[];
   /** Owners whose Resolving records to resolve without a sweep (Deliver). */
@@ -117,7 +128,8 @@ export interface SanctionsHoldPlan {
   deadlineAtRisk: OwnerSanctionsStatus[];
   /** Held owners past confirmation by more than the maximum gap. */
   overdue: OwnerSanctionsStatus[];
-  /** Held owners with no observation chain (the oracle is not answering). */
+  /** Held owners with no observation chain: the oracle is not answering, or it
+   *  answers Flagged but the chain broke and has not restarted. */
   heldWithoutChain: OwnerSanctionsStatus[];
 }
 
@@ -145,6 +157,7 @@ export function planSanctionsHold(
 ): SanctionsHoldPlan {
   const plan: SanctionsHoldPlan = {
     observe: [],
+    forfeitObserveDue: [],
     forfeit: [],
     resolveOnly: [],
     deadlineAtRisk: [],
@@ -154,6 +167,7 @@ export function planSanctionsHold(
   for (const st of statuses) {
     if (st.decision === DECISION_FORFEIT) {
       plan.forfeit.push(st.owner);
+      if (observeDue(st, nowSec)) plan.forfeitObserveDue.push(st.owner);
       continue;
     }
     if (st.decision === DECISION_DELIVER) {
@@ -163,7 +177,7 @@ export function planSanctionsHold(
     if (st.decision !== DECISION_HOLD) continue;
     // Hold. A chain that has never been observed, or whose latest observation
     // is a quarter-gap old, is observed now.
-    if (st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC) plan.observe.push(st.owner);
+    if (observeDue(st, nowSec)) plan.observe.push(st.owner);
     if (st.flaggedAt === 0) {
       plan.heldWithoutChain.push(st);
       continue;
@@ -174,6 +188,20 @@ export function planSanctionsHold(
     if (st.forfeitableAt !== 0 && gap > 0 && nowSec > st.forfeitableAt + gap) plan.overdue.push(st);
   }
   return plan;
+}
+
+/** One rule for when a chain is due an observation, for every decision: never
+ *  observed, or its latest observation is a quarter of the maximum gap old. */
+export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
+  return st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC;
+}
+
+/** Sweep a page only when it makes progress: a page that stamps and settles
+ *  nothing (the day not final yet, held by the delivery gate, no headroom or
+ *  backing room) is not worth a transaction every tick — its observation, if
+ *  due, is the cheap evidence call instead. */
+export function sweepPageEffective(stamped: bigint, settled: bigint): boolean {
+  return stamped > 0n || settled > 0n;
 }
 
 export async function runRewardSanctionsHold(env: Env): Promise<void> {
@@ -195,7 +223,11 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${rows.length} evidence rows hit the read bound — the newest may be unread`,
     );
   }
-  const owners = candidateOwners(rows, nowSec);
+  // Owners of recent staging records join the candidates: a claimant held with
+  // NO chain (the oracle was unavailable when its page ran, a flag marker set)
+  // emits no evidence event, so the events alone never surface it.
+  const recordOwners = await listStagingRecordOwners(env.DB, chain.id, nowSec - STAGING_OWNER_LOOKBACK_SEC);
+  const owners = [...new Set([...candidateOwners(rows, nowSec), ...recordOwners.map((o) => o.toLowerCase() as Address)])];
   if (owners.length === 0) return;
 
   const client = createPublicClient({ transport: http(chain.rpc) });
@@ -232,14 +264,25 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   const ctx = buildKeeperContext(env, chain, client as never);
   const budget = { writes: MAX_WRITES_PER_TICK };
   if (ctx?.wallet.account) {
+    const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
     for (const owner of plan.observe) {
       if (budget.writes <= 0) break;
+      // A held owner with no chain is observed only while the oracle answers:
+      // during an outage the observation records nothing, and an hourly
+      // transaction would buy nothing until it recovers.
+      // eslint-disable-next-line no-await-in-loop
+      if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
+    const forfeitDue = new Set(plan.forfeitObserveDue);
     for (const owner of plan.forfeit) {
       // eslint-disable-next-line no-await-in-loop
-      await runOwnerSweep(ctx, budget, owner);
+      const swept = await runOwnerSweep(ctx, budget, owner);
+      if (!swept && forfeitDue.has(owner) && budget.writes > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+      }
       // eslint-disable-next-line no-await-in-loop
       await resolveOwnerRecords(env, ctx, budget, owner);
     }
@@ -256,9 +299,12 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
 }
 
 /** The owner sweep, paged from index 0: each page simulated, sent only when it
- *  stamps, settles or leaves work. A page's on-chain observation is part of the
- *  same call, so a sent page also keeps the chain alive. */
-async function runOwnerSweep(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<void> {
+ *  stamps or settles (#2450 review: a page that leaves work but makes no
+ *  progress is not sent). A page's on-chain observation is part of the same
+ *  call, so a sent page also keeps the chain alive. Returns whether any page
+ *  was sent. */
+async function runOwnerSweep(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
+  let sentAny = false;
   let from = 0n;
   for (let page = 0; page < MAX_FORFEIT_PAGES_PER_OWNER && budget.writes > 0; page++) {
     let result: readonly [number, bigint, bigint, bigint, bigint];
@@ -274,18 +320,33 @@ async function runOwnerSweep(ctx: KeeperContext, budget: { writes: number }, own
       result = sim.result as readonly [number, bigint, bigint, bigint, bigint];
     } catch (err) {
       console.log(`[keeper] rewardSanctionsHold sweep ${owner} from=${from} would revert: ${shortErr(err)}`);
-      return;
+      return sentAny;
     }
-    const [decision, stamped, settled, nextIndex, unfinished] = result;
-    if (Number(decision) !== DECISION_FORFEIT) return;
-    const effective = stamped > 0n || settled > 0n || unfinished > 0n;
-    if (effective) {
+    const [decision, stamped, settled, nextIndex] = result;
+    if (Number(decision) !== DECISION_FORFEIT) return sentAny;
+    if (sweepPageEffective(stamped, settled)) {
       // eslint-disable-next-line no-await-in-loop
       const sent = await send(ctx, budget, 'forfeitFlaggedOwnerRewards', [owner, from, FORFEIT_PAGE_ENTRIES, FORFEIT_MAX_STEPS], owner);
-      if (!sent) return;
+      if (!sent) return sentAny;
+      sentAny = true;
     }
-    if (nextIndex <= from) return; // the list is exhausted
+    if (nextIndex <= from) return sentAny; // the list is exhausted
     from = nextIndex;
+  }
+  return sentAny;
+}
+
+/** Whether the chain's sanctions oracle answers for `owner` right now — a view
+ *  read off chain, so a no-chain held owner is observed only when an
+ *  observation can record something. No oracle, or a failing read: false. */
+async function oracleAnswers(client: PublicClient, diamond: Address, owner: Address): Promise<boolean> {
+  try {
+    const oracle = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
+    if (!oracle || /^0x0{40}$/i.test(oracle)) return false;
+    await client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -412,7 +473,7 @@ async function raiseAlerts(
     );
     // eslint-disable-next-line no-await-in-loop
     await toggle(env, k('hold-no-chain'), noChain.has(st.owner), nowSec, () =>
-      `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, so the hold cannot confirm or clear.`,
+      `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, or it answers Flagged but the chain broke and has not restarted; the hold cannot confirm or clear until an observation lands.`,
     );
   }
 }

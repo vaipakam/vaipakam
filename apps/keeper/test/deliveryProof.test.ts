@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
-import { planDelivery, type PacketState } from '../src/deliveryProof';
+import { canonicalChainOf, packetMayNeedWork, planDelivery, type PacketState } from '../src/deliveryProof';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
 import { listRecentBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -130,17 +130,63 @@ describe('listRecentBudgetDeliveries (real schema)', () => {
     const P1 = `0x${'1'.repeat(64)}`;
     const P2 = `0x${'2'.repeat(64)}`;
     const P3 = `0x${'3'.repeat(64)}`;
-    seed('0xt1', 'IngressPacketRecorded', { packetHash: P1, kind: 1, remitId: '7' }, 5_000);
-    seed('0xt1', 'RewardBudgetReceived', { dayIds: ['4', '5'] }, 5_000);
-    seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8' }, 6_000);
-    seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H }, 6_000);
-    seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9' }, 7_000); // compensation: not a budget
-    seed('0xt0', 'IngressPacketRecorded', { packetHash: `0x${'4'.repeat(64)}`, kind: 1, remitId: '6' }, 100); // too old
-    seed('0xt0', 'RewardBudgetReceived', { dayIds: ['1'] }, 100);
+    const S = '84532';
+    seed('0xt1', 'IngressPacketRecorded', { packetHash: P1, kind: 1, remitId: '7', sourceChainId: S }, 5_000);
+    seed('0xt1', 'RewardBudgetReceived', { dayIds: ['4', '5'], remitId: '7', sourceChainId: S }, 5_000);
+    seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8', sourceChainId: S }, 6_000);
+    seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H, remitId: '8', sourceChainId: S }, 6_000);
+    seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9', sourceChainId: S }, 7_000); // compensation: not a budget
+    seed('0xt0', 'IngressPacketRecorded', { packetHash: `0x${'4'.repeat(64)}`, kind: 1, remitId: '6', sourceChainId: S }, 100); // too old
+    seed('0xt0', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '6', sourceChainId: S }, 100);
     const rows = await listRecentBudgetDeliveries(h.d1 as D1Database, 421614, 1_000);
     expect(rows.map((r) => [r.packetHash, r.remitId, r.rooted, r.flatDayIds])).toEqual([
       [P2, '8', true, null],
       [P1, '7', false, ['4', '5']],
     ]);
+  });
+
+  it('pairs each packet with ITS delivery when one transaction lands two (no cross-product)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    let block = 10;
+    const seed = (kind: string, args: Record<string, unknown>) =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+           VALUES (?, ?, 0, '0xtx', ?, ?, 5000)`,
+        )
+        .run(421614, block++, kind, JSON.stringify(args));
+    const A = `0x${'a'.repeat(64)}`;
+    const B = `0x${'c'.repeat(64)}`;
+    seed('IngressPacketRecorded', { packetHash: A, kind: 1, remitId: '11', sourceChainId: '84532' });
+    seed('RewardBudgetReceived', { dayIds: ['1', '2'], remitId: '11', sourceChainId: '84532' });
+    seed('IngressPacketRecorded', { packetHash: B, kind: 1, remitId: '12', sourceChainId: '84532' });
+    seed('RewardBudgetReceived', { dayIds: ['3'], remitId: '12', sourceChainId: '84532' });
+    const rows = await listRecentBudgetDeliveries(h.d1 as D1Database, 421614, 1_000);
+    expect(rows.map((r) => [r.packetHash, r.flatDayIds])).toEqual([
+      [B, ['3']],
+      [A, ['1', '2']],
+    ]);
+  });
+});
+
+describe('the pass wiring', () => {
+  it('reads the CANONICAL chain from field 2 of the reporter config, never the mirror\'s own field 1', () => {
+    const A0 = '0x0000000000000000000000000000000000000001' as const;
+    expect(canonicalChainOf([A0, 421614, 84532, false, 0n])).toBe(84532);
+    expect(canonicalChainOf([A0, 84532, 84532, true, 0n])).toBeNull(); // the canonical chain funds itself
+    expect(canonicalChainOf([A0, 421614, 0, false, 0n])).toBeNull(); // no canonical configured: nothing to rebuild from
+  });
+
+  it('skips, before any read, a packet with nothing left to write', () => {
+    const base: PacketState = {
+      kind: 1, batchId: Z, dayListHash: Z, dayListRoot: H, chunkCount: 3, chunksIndexed: 0n, disposed: 0n,
+    };
+    expect(packetMayNeedWork(base)).toBe(true);
+    expect(packetMayNeedWork({ ...base, chunksIndexed: 0b011n })).toBe(true); // straddle: one chunk left
+    expect(packetMayNeedWork({ ...base, chunksIndexed: 0b111n })).toBe(false); // every chunk landed
+    expect(packetMayNeedWork({ ...base, disposed: 1n })).toBe(false);
+    expect(packetMayNeedWork({ ...base, kind: 2 })).toBe(false);
+    expect(packetMayNeedWork({ ...base, dayListRoot: Z, dayListHash: H })).toBe(true); // a flat list: the planner decides
+    expect(packetMayNeedWork({ ...base, dayListRoot: Z })).toBe(false); // a pre-3a packet: no provable list
   });
 });

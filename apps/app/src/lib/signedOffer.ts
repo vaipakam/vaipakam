@@ -65,7 +65,7 @@ export const SIGNED_OFFER_TYPES = {
   ],
 } as const;
 
-/** The 28 field names in canonical struct order — the POST body /
+/** The 31 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] =
   SIGNED_OFFER_TYPES.SignedOffer.map((f) => f.name);

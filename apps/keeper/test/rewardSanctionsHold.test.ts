@@ -21,12 +21,14 @@ import {
   PASS_CADENCE_SEC,
   candidateOwners,
   planSanctionsHold,
+  sweepPageEffective,
   type OwnerSanctionsStatus,
 } from '../src/rewardSanctionsHold';
 import {
   getOpsAlert,
   listSanctionsEvidenceEvents,
   listStagingRecordKeysForUser,
+  listStagingRecordOwners,
   type SanctionsEvidenceRow,
 } from '../src/db';
 import { sendOpsAlert } from '../src/opsAlert';
@@ -129,6 +131,28 @@ describe('planSanctionsHold', () => {
     expect(p.observe).toEqual([]);
     expect(p.overdue).toEqual([]);
   });
+
+  it('a Forfeit owner is due an observation on the same rule as a hold (straddle)', () => {
+    // A forfeit whose sweep page makes no progress still needs its chain kept
+    // alive, or the confirmation it rests on can lapse.
+    const at = (age: number) =>
+      planSanctionsHold(
+        [held({ decision: DECISION_FORFEIT, lastSeenAt: NOW - age, observeBy: NOW - age + DAY })],
+        NOW,
+      );
+    expect(at(OBSERVE_AFTER_SEC - 1).forfeitObserveDue, 'one second early').toEqual([]);
+    expect(at(OBSERVE_AFTER_SEC).forfeitObserveDue, 'at the bound').toEqual([A]);
+    expect(at(OBSERVE_AFTER_SEC).forfeit, 'still routed to the sweep').toEqual([A]);
+    expect(at(OBSERVE_AFTER_SEC).observe, 'not a hold observation').toEqual([]);
+  });
+});
+
+describe('sweepPageEffective', () => {
+  it('sends a forfeit page only when it stamps or settles something', () => {
+    expect(sweepPageEffective(0n, 0n), 'no progress: no transaction').toBe(false);
+    expect(sweepPageEffective(1n, 0n), 'a stamp alone').toBe(true);
+    expect(sweepPageEffective(0n, 1n), 'a settlement alone').toBe(true);
+  });
 });
 
 describe('the D1 reads, on the real schema', () => {
@@ -163,6 +187,23 @@ describe('the D1 reads, on the real schema', () => {
     seed('StagingRecordOpened', 4, { key: k2, user: A });
     seed('StagingRecordOpened', 5, { key: `0x${'3'.repeat(64)}`, user: B });
     expect(await listStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k2, k1]);
+  });
+
+  it('lists staging-record owners once each, lowercased, newest first, inside the lookback (straddle)', async () => {
+    h = createSqliteD1(ALL_MIGRATIONS);
+    const C = '0x00000000000000000000000000000000000000cc';
+    const k = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+    seed('StagingRecordOpened', 3, { key: k(1), user: '0x00000000000000000000000000000000000000AA' }, NOW - 100);
+    seed('StagingRecordOpened', 9, { key: k(2), user: B }, NOW - 100); // B newest
+    seed('StagingRecordOpened', 4, { key: k(3), user: A }, NOW - 100); // A again
+    seed('StagingRecordOpened', 2, { key: k(4), user: C }, NOW - 101); // one second outside
+    seed('RewardSanctionsEvidenceRecorded', 8, { who: C }, NOW); // not a staging record
+    const since = NOW - 100;
+    // B's newest record is newer than A's newest: B first, though A sorts first by address.
+    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since)).toEqual([B, A]);
+    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since - 1), 'one second wider').toEqual([B, A, C]);
+    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN, since, 1), 'the bound keeps the newest').toEqual([B]);
+    expect(await listStagingRecordOwners(h.d1 as D1Database, CHAIN + 1, 0), 'another chain').toEqual([]);
   });
 });
 

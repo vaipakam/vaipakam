@@ -4787,10 +4787,8 @@ library LibRewardCustody {
 
     /// @dev The packet gate both proof entries share: the packet exists, is a
     ///      BUDGET packet, holds no transport batch (a batched packet's days
-    ///      land through the batch index — one fact, one writer), is not an
-    ///      era-quarantined packet still awaiting final classification (the
-    ///      ingress quarantined it so it would fund nothing until classified),
-    ///      and was not disposed of (its value left; it funds no day here).
+    ///      land through the batch index — one fact, one writer), and was not
+    ///      disposed of (its value left; it funds no day here).
     function _requireProvablePacket(
         LibVaipakam.Storage storage s,
         bytes32 h

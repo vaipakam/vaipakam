@@ -432,6 +432,8 @@ interface SeedRow {
   deadline?: number;
   status?: string;
   signer?: string;
+  /** The stored replay payload; defaults to a current (31-field) shape. */
+  orderJson?: string;
 }
 
 function seedBook(rows: SeedRow[]): Env {
@@ -445,7 +447,7 @@ function seedBook(rows: SeedRow[]): Env {
         amount, amount_max, collateral_amount, collateral_amount_max,
         fill_mode, expires_at, deadline, nonce,
         status, filled_amount, created_at, updated_at)
-     VALUES (?, ?, ?, '{}', '0xsig', ?, ?, ?, ?, 0, 0, ?, ?,
+     VALUES (?, ?, ?, ?, '0xsig', ?, ?, ?, ?, 0, 0, ?, ?,
              '100', '100', '10', '10', 0, ?, ?, '1', ?, '0', ?, ?)`,
   );
   for (const r of rows) {
@@ -453,6 +455,7 @@ function seedBook(rows: SeedRow[]): Env {
       CHAIN_ID,
       r.orderHash,
       r.signer ?? SIGNER.address.toLowerCase(),
+      r.orderJson ?? '{"creatorFull":false}',
       r.offerType,
       LEND,
       COLL,
@@ -570,6 +573,27 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
       ]),
     );
     expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
+  });
+
+  it('a pre-#1949 row (no Full opt-in fields) is not served, and does not use up the cap', async () => {
+    // Its signature is over the 28-field typehash: the contract can never
+    // accept it, and a client replaying it would have no value for the
+    // three new fields. Straddle: the same row in the current shape is served.
+    const rows: SeedRow[] = [];
+    for (let i = 0; i < 100; i++) {
+      rows.push({
+        orderHash: `old-${String(i).padStart(3, '0')}`,
+        offerType: 0,
+        rateBps: 100,
+        rateBpsMax: 100,
+        createdAt: 1_000 + i,
+        orderJson: '{"useFullTermInterest":false}',
+      });
+    }
+    rows.push({ orderHash: 'ask-current', offerType: 0, rateBps: 900, rateBpsMax: 900, createdAt: 9_000 });
+    const body = await getBookBody(seedBook(rows));
+    expect(body.offers.map((o) => o.orderHash)).toEqual(['ask-current']);
+    expect(body.truncated).toBe(false);
   });
 });
 

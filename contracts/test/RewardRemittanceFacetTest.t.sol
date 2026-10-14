@@ -289,6 +289,38 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
     }
 
+    /// @notice #1944 c1 — an UNARMED day finalized near the 69M cap remits the
+    ///         finalize-stamped FLOOR half (what the broadcast ships the mirror
+    ///         and the mirror prices), not the raw schedule. Straddle: below the
+    ///         cap the same day quotes the schedule slice, the two being equal.
+    /// @dev    Mutation: read `halfPoolForDay` in the unarmed branch and the
+    ///         quote is the schedule slice (four times the floor here); the send
+    ///         then refuses at the cap, because that slice exceeds what is left.
+    function test_AnExhaustedUnarmedDay_RemitsTheStampedFloor_NotTheSchedule() public {
+        uint256 half = LibInteractionRewards.halfPoolForDay(1);
+        uint256 snap = vm.snapshotState();
+        _finalizeDay1();
+        (uint256 scheduleSlice, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        vm.revertToState(snap);
+
+        // A quarter of the day's schedule (2·half) left: the floor is `half/2`,
+        // its half `half/4`.
+        uint256 left = half / 2;
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(CAP - left);
+        _finalizeDay1();
+        uint256 fh = left / 2;
+        uint256 dL = (fh * 1e18) / 60e18;
+        uint256 dB = (fh * 1e18) / 30e18;
+        uint256 expected = _ceilDiv(dL * 20e18, 1e18) + _ceilDiv(dB * 10e18, 1e18);
+        (uint256 total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(total, expected, "the floor slice");
+        assertApproxEqAbs(total * 4, scheduleSlice, 8, "a quarter of the schedule slice, as the floor is of the schedule");
+        assertGt(scheduleSlice, left, "fixture: the schedule slice would not fit what is left");
+
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        assertEq(ccip.sentTokens(0)[0].amount, expected, "sent the floor slice the mirror prices");
+    }
+
     function test_Slices_SumToFullDayEmission() public {
         _finalizeDay1();
         uint256 half = LibInteractionRewards.halfPoolForDay(1);

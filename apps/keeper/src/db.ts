@@ -693,14 +693,44 @@ export async function listSanctionsEvidenceEvents(
          FROM activity_events
         WHERE chain_id = ?1
           AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
-        ORDER BY block_number, log_index
+        ORDER BY block_number DESC, log_index DESC
         LIMIT ?2`,
     )
     .bind(chainId, SANCTIONS_EVIDENCE_ROW_LIMIT)
     .all<SanctionsEvidenceRow>();
-  return (rows.results ?? []).filter(
-    (r) => typeof r.who === 'string' && /^0x[0-9a-f]{40}$/.test(r.who),
-  );
+  // Read NEWEST first, so the bound drops the oldest rows, never the newest
+  // flags (#2450 review); returned oldest first, as the callers expect.
+  return (rows.results ?? [])
+    .filter((r) => typeof r.who === 'string' && /^0x[0-9a-f]{40}$/.test(r.who))
+    .reverse();
+}
+
+/** Distinct owners of staging records opened on `chainId` since `sinceSec` —
+ *  candidates the sanctions-hold pass classifies even when no evidence event
+ *  names them (a claimant held with no observation chain). Newest first, so
+ *  the bound drops the owners least likely to still hold an open record. */
+export async function listStagingRecordOwners(
+  db: D1Database,
+  chainId: number,
+  sinceSec: number,
+  limit = 500,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT lower(json_extract(args_json, '$.user')) AS who
+         FROM activity_events
+        WHERE chain_id = ?1
+          AND kind = 'StagingRecordOpened'
+          AND block_at >= ?2
+        GROUP BY who
+        ORDER BY MAX(block_number) DESC
+        LIMIT ?3`,
+    )
+    .bind(chainId, sinceSec, limit)
+    .all<{ who: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.who)
+    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
 }
 
 /** Staging-record keys opened for `user` on `chainId`, newest first. A record
@@ -800,6 +830,11 @@ export async function listRecentBudgetDeliveries(
          LEFT JOIN activity_events d
            ON d.chain_id = p.chain_id AND d.tx_hash = p.tx_hash
           AND d.kind IN ('RewardBudgetReceived', 'RewardBudgetRootReceived')
+          -- One CCIP execution can land more than one delivery: pair each packet
+          -- with ITS delivery event (one receipt per remit and source), never
+          -- with every delivery of the transaction.
+          AND CAST(json_extract(d.args_json, '$.remitId') AS TEXT) = CAST(json_extract(p.args_json, '$.remitId') AS TEXT)
+          AND CAST(json_extract(d.args_json, '$.sourceChainId') AS TEXT) = CAST(json_extract(p.args_json, '$.sourceChainId') AS TEXT)
         WHERE p.chain_id = ?1
           AND p.kind = 'IngressPacketRecorded'
           AND CAST(json_extract(p.args_json, '$.kind') AS INTEGER) = ?2

@@ -8,7 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { isLateDeliveryCandidate } from '../src/remitAck';
+import { isLateDeliveryCandidate, lateAckUseful } from '../src/remitAck';
 import { listReleasedRemitIds } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -57,5 +57,14 @@ describe('listReleasedRemitIds (real schema)', () => {
     seed(84532, 'RemitReservationAcked', '5');
     seed(421614, 'RemitReservationReleased', '7');
     expect(await listReleasedRemitIds(h.d1 as D1Database, 84532)).toEqual([9, 4]);
+  });
+});
+
+describe('lateAckUseful', () => {
+  it('acks a settled receipt only — a provisional one waits for its broadcast (no fee every backoff)', () => {
+    expect(lateAckUseful(0), 'consumed').toBe(true);
+    expect(lateAckUseful(1), 'quarantined').toBe(true);
+    expect(lateAckUseful(2), 'provisional').toBe(false);
+    expect(lateAckUseful(2n), 'provisional, as a bigint').toBe(false);
   });
 });
