@@ -16,23 +16,31 @@
 //
 // BLOCKED (2) when SITE_URL does not serve the same bundle as
 // REFERENCE_SITE_URL (a workers.dev host; alpha02 refused), when the page's
-// History request cannot be observed or fails, when the wallet has no rows,
-// or when no row distinguishes the fix (see below). FAIL (1) on any
-// row that contradicts the indexer, a missing row, or a page write/error.
+// History request cannot be observed, fails or is unreadable, when the wallet
+// has no rows, or when no row distinguishes the fix (see below). FAIL (1) on
+// any row that contradicts the indexer, a missing row, or a page write
+// (HTTP, injected wallet or WebSocket) or page error.
+//
+// ONE verdict, decided at the end (#2492 r3, root fix): a precondition that
+// stops the drive is RECORDED, not exited on, so a defect already observed —
+// a write, a page error, a failed row — outranks it. FAIL > BLOCKED > PASS.
 //
 //   SITE_URL=https://app.vaipakam.com \
 //   REFERENCE_SITE_URL=https://<worker>.workers.dev \
 //   TESTNET_WALLETS_FILE=… [ROLE=lender2] \
 //     node live-desk-history-terms.mjs
+//
+// REFERENCE_SITE_URL may be omitted when SITE_URL is itself the workers.dev
+// URL the deploy printed — the batch's documented form — since that host IS
+// the reference. A custom-domain SITE_URL still requires it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { addressOf, blocked, blockedSync, ensureConnected, launch, requireSiteUrl, visit } from './driver.mjs';
+import { addressOf, blocked, blockedSync, ensureConnected, launch, READ_METHODS, requireSiteUrl, visit } from './driver.mjs';
+import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const SITE_URL = requireSiteUrl();
-const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
-if (!REFERENCE_SITE_URL) blockedSync('REFERENCE_SITE_URL is required: the workers.dev URL of the deploy under review.');
 // A malformed URL is a configuration problem — BLOCKED, never a FAIL (#2492 r1).
 const hostOf = (u) => {
   try {
@@ -41,6 +49,14 @@ const hostOf = (u) => {
     return blockedSync(`${u} is not a URL — check SITE_URL and REFERENCE_SITE_URL.`);
   }
 };
+// A workers.dev SITE_URL is the deploy's own URL, so it is its own reference
+// (#2492 r3): the batch exports only SITE_URL, and requiring a second copy of
+// the same URL would block every batch run of this driver.
+const REFERENCE_SITE_URL =
+  process.env.REFERENCE_SITE_URL || (/\.workers\.dev$/i.test(hostOf(SITE_URL)) ? SITE_URL : '');
+if (!REFERENCE_SITE_URL) {
+  blockedSync('REFERENCE_SITE_URL is required when SITE_URL is not a workers.dev host: pass the workers.dev URL of the deploy under review.');
+}
 for (const u of [SITE_URL, REFERENCE_SITE_URL]) {
   if (/alpha02\./i.test(hostOf(u))) blockedSync(`${u} is alpha02 — not the deploy under review.`);
 }
@@ -112,6 +128,13 @@ const hasToken = (text, token) =>
 // ── The History panel, against the page's OWN data ─────────────────────
 const session = await launch({ role: ROLE, readOnly: true });
 const { ctx, page, done, consoleErrors, blockedRequests } = session;
+// The third egress path (#2492 r3): `launch`'s read-only guard covers HTTP
+// routes and the injected wallet, not a WebSocket transport. Every JSON-RPC
+// method the page sends on a socket is judged against the same read list.
+const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
+/** A precondition that stopped the drive. Recorded, never exited on, so an
+ *  already-observed defect still decides the verdict (#2492 r3). */
+class Blocked extends Error {}
 await ctx.addInitScript(() => {
   try {
     localStorage.setItem('vaipakam:language', 'en');
@@ -121,6 +144,7 @@ await ctx.addInitScript(() => {
 });
 let loans = null;
 let stopped = null;
+let blockedWhy = null;
 try {
   await visit(page, '/desk');
   await ensureConnected(page);
@@ -141,17 +165,21 @@ try {
   );
   await page.getByRole('button', { name: HISTORY.tab, exact: true }).first().click({ timeout: 60_000 });
   const res = await historyResponse.catch(() => null);
-  if (!res) {
-    await blocked('the History panel made no /loans/by-participant request the drive could observe', null, done);
-  }
+  if (!res) throw new Blocked('the History panel made no /loans/by-participant request the drive could observe');
   const reqWallet = (new URL(res.url()).searchParams.get('wallet') ?? '').toLowerCase();
   if (reqWallet !== WALLET.toLowerCase()) {
     check(false, `the History panel asked for ${ROLE}'s wallet`, `it asked for ${reqWallet}`);
     throw new Error('the page is connected as a different wallet');
   }
-  if (!res.ok()) await blocked(`the page's History request answered HTTP ${res.status()}`, null, done);
-  loans = (await res.json()).loans ?? [];
-  if (loans.length === 0) await blocked(`${ROLE} ${WALLET} has no History rows to judge`, null, done);
+  if (!res.ok()) throw new Blocked(`the page's History request answered HTTP ${res.status()}`);
+  // A 2xx the drive cannot read (a 204, a truncated body) is an unreadable
+  // indexer — BLOCKED, not a product FAIL (#2492 r3).
+  const body = await res.json().catch(() => undefined);
+  if (!body || typeof body !== 'object' || (body.loans !== undefined && !Array.isArray(body.loans))) {
+    throw new Blocked(`the page's History response (HTTP ${res.status()}) is not a readable loan list`);
+  }
+  loans = body.loans ?? [];
+  if (loans.length === 0) throw new Blocked(`${ROLE} ${WALLET} has no History rows to judge`);
 
   // A row DISTINGUISHES the fix from the pre-#2467 code (which showed the
   // live terms) only if what it must show differs from them: unknown terms,
@@ -166,7 +194,7 @@ try {
       `${distinguishing.length} distinguishing: ${distinguishing.map((l) => l.loanId).join(', ') || 'none'}`,
   );
   if (distinguishing.length === 0) {
-    await blocked(`no row for ${ROLE} tells executed terms from live ones (none extended, none unknown) — nothing here could show the fix`, null, done);
+    throw new Blocked(`no row for ${ROLE} tells executed terms from live ones (none extended, none unknown) — nothing here could show the fix`);
   }
 
   const rowFor = (id) => page.locator('.item-row').filter({ has: page.locator(`a[href$="/positions/${id}"]`) });
@@ -214,8 +242,9 @@ try {
   }
   await session.shot('desk-history-terms').catch(() => {});
 } catch (err) {
-  stopped = err.message;
-  console.log(`STOP  ${stopped}`);
+  if (err instanceof Blocked) blockedWhy = err.message;
+  else stopped = err.message;
+  console.log(`${err instanceof Blocked ? 'BLOCK' : 'STOP '} ${err.message}`);
 }
 // Close FIRST, then read what the page did (#2492 r2): a request emitted
 // while the context closes must still count against a read-only run.
@@ -226,8 +255,15 @@ try {
 }
 const pageErrors = consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 check(pageErrors.length === 0, 'no page errors', pageErrors.join(' | ').slice(0, 300));
-const violations = splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations;
+const violations = [...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations, ...wsViolations];
 check(violations.length === 0, 'the page attempted no write in a read-only session', violations.map((v) => v.reason).join(' | '));
 if (stopped && failures === 0) check(false, 'the History panel was driven to completion', stopped);
-console.log(failures === 0 ? 'OUTCOME: PASS' : `OUTCOME: FAIL — ${failures} check(s) failed`);
-process.exit(failures === 0 ? 0 : 1);
+// FAIL > BLOCKED > PASS: a precondition that stopped the drive never hides a
+// defect it had already observed.
+if (failures > 0) {
+  console.log(`OUTCOME: FAIL — ${failures} check(s) failed${blockedWhy ? ` (the drive also stopped: ${blockedWhy})` : ''}`);
+  process.exit(1);
+}
+if (blockedWhy) await blocked(blockedWhy);
+console.log('OUTCOME: PASS');
+process.exit(0);
