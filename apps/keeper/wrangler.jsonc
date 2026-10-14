@@ -346,8 +346,14 @@
   // tick. "* * * * *" matched the historical ops/hf-watcher cadence;
   // tighter schedules don't help (HF reads are per-tick rate-limited
   // inside the watcher).
+  // RESTORED 2026-10-14 at the owner's request (step 2 of the procedure
+  // above). #1896 is still open: the CPU work since the hold (#1945, #1987,
+  // #1989, #1992) has not been confirmed against a live tick, which is what
+  // step 8 does — with KEEPER_ENABLED disarmed first (step 1). If step 8
+  // still sees `exceededCpu`, revert this to `[]` and COMMIT it (step 8's
+  // rollback).
   "triggers": {
-    "crons": [],
+    "crons": ["* * * * *"],
   },
 
   // D1 binding — `vaipakam-warm`, the STAGING database for the

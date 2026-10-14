@@ -59,7 +59,7 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
 | `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | live — and should not be (#1977) |
-| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — unscheduled since #1896, held for its return |
+| `vaipakam-keeper` | `* * * * *` | `apps/keeper` | live — re-armed 2026-10-14 from its #1896 reservation |
 | `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
 **The table above is the whole inventory.** A Worker not listed holds no
@@ -74,8 +74,8 @@ paragraph still asserting it had none.
 
 ## What that adds up to
 
-- **Live right now:** 4 of 5
-- **Committed, live plus the keeper's reserve:** 5 of 5
+- **Live right now:** 5 of 5
+- **Committed, live only:** 5 of 5
 - **Genuinely spare:** 0
 
 These three lines are **derived from the inventory above, and checked against
