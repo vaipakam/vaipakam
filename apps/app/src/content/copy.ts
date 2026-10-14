@@ -3518,16 +3518,17 @@ const copySource = {
     // fallback-pending cure is exempt), so never suggest a repay race.
     graceOverBorrower:
       'The grace period has ended — the protocol no longer accepts repayment, and the lender can take the collateral at any moment. Once they claim it, the outcome will show here.',
-    // #2484 — promises no automatic close. The keeper's grace-default
-    // pass is armed per deployment by a flag the app cannot read, and
-    // even when armed it leaves some loans open (no working venue, an
-    // accepted sale, collateral moved after quoting). What IS true
-    // everywhere: the lender can close out from the forced-close card
-    // on this page (#2474), which hides only while an accepted sale
-    // awaits completion — hence "when it appears" — and the call is
-    // permissionless, so someone else may get there first.
+    // #2484 — promises no automatic close, and says why: the keeper's
+    // grace-default pass is armed per deployment by a flag the app
+    // cannot read, and even when armed it leaves some loans open (no
+    // working venue, an accepted sale, collateral moved after quoting).
+    // Nor does it promise self-service: the forced-close card (#2474)
+    // renders blocked states with no submit action, so the banner
+    // defers to the card for whether the lender can act now. The card
+    // hides only while an accepted sale awaits completion, hence "when
+    // it appears". The call is permissionless, so anyone may go first.
     graceOverLender:
-      'The grace period has ended — this loan can now be closed out as a default. Don’t count on that happening automatically: you can do it yourself from the overdue-loan card on this page when it appears, and anyone else may do it first. Once the loan is closed, the collateral claim appears here.',
+      'The grace period has ended — this loan can now be closed out as a default. Automatic close-out may be switched off on this deployment, and the app can’t tell whether it is, so don’t wait for it. The overdue-loan card on this page, when it appears, says whether you can close the loan out yourself right now, and what stands in the way if not. Anyone may close it out first. Once the loan is closed, the collateral claim appears here.',
     // Codex #1166 r2 — fallback_pending is the post-grace failed-
     // default state: the cure (full repayment) is still accepted, but
     // only until the lender finalizes the default.
