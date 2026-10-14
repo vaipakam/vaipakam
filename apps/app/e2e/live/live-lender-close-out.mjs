@@ -60,6 +60,7 @@ import {
   requireSigningRole,
   visit,
   READ_METHODS,
+  watchPageRpc,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
@@ -102,6 +103,7 @@ const REPO = path.resolve(HERE, '../../../..');
 const CHAIN_ID = 84532;
 const ACTIVE = 0;
 const DEFAULTED = 2;
+const SETTLED = 3;
 const FALLBACK_PENDING = 4;
 /** The one state this drive judges: a liquid-collateral close-out that the
  *  app must route as a SALE (#2463). */
@@ -130,6 +132,9 @@ const FC = COPY.forcedClose ?? {};
 for (const k of ['submit', 'readyNeedsRoute', 'outcomeNoteSale']) {
   if (typeof FC[k] !== 'string') blockedSync(`en.json no longer carries copy.forcedClose.${k}`);
 }
+for (const k of ['saleReceipt', 'receipt', 'rentalReceipt']) {
+  if (typeof FC[k]?.youReceive !== 'string') blockedSync(`en.json no longer carries copy.forcedClose.${k}.youReceive`);
+}
 
 // ── The outcome manifest and the write plan ────────────────────────────
 const OUTCOME = ['closedOut'];
@@ -137,14 +142,17 @@ const CLOSE_ONLY = [
   {
     id: 'confirmSale',
     claim: 'the confirmation the lender signs under describes the sale',
-    checks: { outcome: 'the confirm step carries copy.forcedClose.outcomeNoteSale' },
+    checks: {
+      outcome: 'the confirm step carries copy.forcedClose.outcomeNoteSale',
+      receipt: "the confirmation's own receipt is the SALE receipt (saleReceipt.youReceive), not the standard or rental one",
+    },
   },
   {
     id: 'closedOut',
     claim: 'the close-out executed and the loan left Active — Defaulted (sale cleared) or FallbackPending (sale did not), never a revert',
     checks: {
-      receipt: "the close-out's receipt is successful and carries LoanDefaulted or LoanFallbackPending for this loan",
-      status: "getLoanDetails.status at the receipt's block agrees with the event",
+      receipt: "the close-out's receipt is successful and carries LoanDefaulted with SwapAdapterSucceeded (the sale cleared) or LoanFallbackPending with SwapAllAdaptersFailed (it did not), for this loan",
+      status: "getLoanDetails.status at the receipt's block is that outcome or a state it can validly reach later in the same block",
     },
   },
   {
@@ -163,7 +171,7 @@ const MANIFEST = createManifest({
         ready: `the card declares ${SALE_STATE}`,
         saleBody: 'the card carries copy.forcedClose.readyNeedsRoute (the sale explanation for a routable venue)',
         noAmount: 'the card text states no monetary amount',
-        submit: 'the card shows its close-out button, enabled',
+        submit: "the card shows its close-out button, enabled, labelled copy.forcedClose.submit",
         fresh: 'the chain at the block the card declares, and again at the latest block, still shows this loan Active, past grace and held by this wallet',
       },
     },
@@ -365,6 +373,36 @@ await ctx.addInitScript(() => {
   }
 });
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
+// The page's own chain answers, HTTP and WebSocket, counted per window — so a
+// card that never appears while the page heard NOTHING from the chain reads
+// as unobserved (BLOCKED), not as a broken card (#2481 r2).
+const rpc = watchPageRpc(page);
+let wsAnswers = 0;
+let wsGeneration = 0;
+page.on('websocket', (ws) => {
+  const sent = new Map();
+  const each = (payload, fn) => {
+    try {
+      for (const m of [].concat(JSON.parse(String(payload)))) if (m) fn(m);
+    } catch {
+      /* not JSON-RPC */
+    }
+  };
+  ws.on('framesent', (f) => each(f.payload, (m) => {
+    if (m.id !== undefined && READ_METHODS.has(m.method)) sent.set(m.id, wsGeneration);
+  }));
+  ws.on('framereceived', (f) => each(f.payload, (m) => {
+    if (m.id === undefined || !('result' in m || 'error' in m)) return;
+    if (sent.get(m.id) === wsGeneration) wsAnswers++;
+    sent.delete(m.id);
+  }));
+});
+const resetWindow = () => {
+  rpc.reset();
+  wsAnswers = 0;
+  wsGeneration++;
+};
+const answered = async () => (await rpc.settled()) + wsAnswers;
 const violationsSoFar = () => [
   ...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations,
   ...wsViolations,
@@ -426,24 +464,42 @@ async function judgeOutcome(hash) {
   const ours = (name) =>
     parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: receipt.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()) })
       .some((l) => l.args.loanId === LOAN_ID);
+  // A SALE is proven by the swap events, not by LoanDefaulted alone: an
+  // in-kind close-out also emits LoanDefaulted and ignores the routes, so a
+  // card wrongly declaring a sale would otherwise pass (#2481 r2).
   const defaulted = ours('LoanDefaulted');
   const fallback = ours('LoanFallbackPending');
+  const sold = ours('SwapAdapterSucceeded');
+  const allFailed = ours('SwapAllAdaptersFailed');
+  const saleCleared = defaulted && sold && !fallback;
+  const saleFellBack = fallback && allFailed && !defaulted;
   check(
     'closedOut',
     'receipt',
-    'the close-out executed and recorded its outcome',
-    defaulted !== fallback,
-    `${defaulted ? 'LoanDefaulted (the sale cleared)' : fallback ? 'LoanFallbackPending (the sale did not clear; collateral held for the lender)' : 'neither LoanDefaulted nor LoanFallbackPending'} — ${hash}, block ${receipt.blockNumber}`,
+    'the close-out ran the sale and recorded its outcome',
+    saleCleared || saleFellBack,
+    `${saleCleared ? 'LoanDefaulted + SwapAdapterSucceeded (the sale cleared)' : saleFellBack ? 'LoanFallbackPending + SwapAllAdaptersFailed (no venue met the minimum; collateral held for the lender)' : `events: LoanDefaulted ${defaulted}, LoanFallbackPending ${fallback}, SwapAdapterSucceeded ${sold}, SwapAllAdaptersFailed ${allFailed} — no sale proven`} — ${hash}, block ${receipt.blockNumber}`,
   );
   try {
+    // The read is the END of the receipt's block, so a later transaction in
+    // the same block may already have moved the loan on: a Defaulted loan
+    // to Settled once both claims land; a FallbackPending one cured back to
+    // Active, finalized to Defaulted, or settled (#2481 r2).
     const after = await readPinned(() => read('getLoanDetails', [LOAN_ID], { blockNumber: receipt.blockNumber }));
-    const want = defaulted ? DEFAULTED : FALLBACK_PENDING;
-    check('closedOut', 'status', 'the loan status agrees with the event', Number(after.status) === want, `status ${after.status} at block ${receipt.blockNumber}`);
+    const reachable = saleCleared ? [DEFAULTED, SETTLED] : [FALLBACK_PENDING, ACTIVE, DEFAULTED, SETTLED];
+    check(
+      'closedOut',
+      'status',
+      'the loan status is the outcome, or a state it validly reaches later in that block',
+      reachable.includes(Number(after.status)),
+      `status ${after.status} at block ${receipt.blockNumber}`,
+    );
   } catch (err) {
     unsettled('closedOut', 'status', `the direct RPC could not read the loan after the close-out (${err.message})`);
   }
 }
 try {
+  resetWindow();
   await visit(page, `/positions/${LOAN_ID}`);
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
@@ -452,6 +508,9 @@ try {
   await ensureConnected(page);
   const card = page.getByTestId('forced-close-card');
   const mounted = await card.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
+  if (!mounted && (await answered()) === 0) {
+    await blocked('the page RPC answered nothing while the position page loaded, so the card was never observable', null, done);
+  }
   check('card', 'mounted', 'the forced-close card renders', mounted);
   if (!mounted) throw new Error('the forced-close card never rendered');
   // The state settles once the card's reads (and, for a sale, its venue
@@ -496,7 +555,8 @@ try {
     .waitFor({ state: 'visible', timeout: 60_000 })
     .then(() => submit.isEnabled())
     .catch(() => false);
-  check('card', 'submit', 'the close-out button is shown and enabled', enabled);
+  const label = enabled ? ((await submit.getAttribute('aria-label')) ?? (await submit.innerText())).replace(/\s+/g, ' ').trim() : '';
+  check('card', 'submit', 'the close-out button is shown, enabled and labelled as the close-out', enabled && label === FC.submit, `label "${label}"`);
   await shot(`lender-close-out-card-${LOAN_ID}`);
 
   if (SUBMIT && preSendFails() > 0) {
@@ -528,6 +588,17 @@ try {
     await shot(`lender-close-out-confirm-${LOAN_ID}`);
     const confirmText = (await card.innerText()).replace(/\s+/g, ' ');
     check('confirmSale', 'outcome', 'the confirmation describes the sale', confirmText.includes(FC.outcomeNoteSale));
+    // The confirmation's OWN receipt (#2481 r2): the sale note above also
+    // shows on the card before the confirmation opens, so it alone cannot
+    // tell the sale receipt from the standard or rental one.
+    const receiptText = (await card.locator('dl.receipt').last().innerText().catch(() => '')).replace(/\s+/g, ' ');
+    check(
+      'confirmSale',
+      'receipt',
+      'the confirmation receipt is the sale receipt',
+      receiptText.includes(FC.saleReceipt.youReceive) && !receiptText.includes(FC.receipt.youReceive) && !receiptText.includes(FC.rentalReceipt.youReceive),
+      receiptText.slice(0, 160),
+    );
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
     // The wallet's nonce before the arm: the only evidence that ties a later
     // state change to THIS wallet rather than to a keeper (#2481 r1).
