@@ -47,6 +47,13 @@
  *   close-out has no such bound. The send reports the boundary by calling
  *   `signed()` once it holds signed bytes.
  *
+ * What remains: a relayed transaction that the answering RPC still cannot
+ * see when the floor expires. A later send can then take its nonce. The
+ * node refuses that as an underpriced replacement unless the later send's
+ * fees are enough higher to replace it, in which case the earlier action
+ * is dropped. Closing that needs reconciling against the chain, which an
+ * isolate-local queue cannot do reliably on a lagging RPC either.
+ *
  * ## Scope
  *
  * The queue lives in this isolate's memory. It orders every pass of one
