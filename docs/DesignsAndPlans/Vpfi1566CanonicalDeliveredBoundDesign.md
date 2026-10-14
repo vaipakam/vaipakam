@@ -4832,6 +4832,7 @@ What the first PR ships, mapped to the rules above:
   > confirm counts what was held; demote unwinds nothing because nothing
   > was counted. The funding identity gains a third term: delivered =
   > counted + uncounted + held.
+  > **Ratified by the owner 2026-10-14** — keep the held-apart rule.
 - **The two administrative writers are retained unchanged** — the
   role-transition retirement and `seedArmedFreshPaid`. Their natspec now
   describes the vintage-blind noun.
