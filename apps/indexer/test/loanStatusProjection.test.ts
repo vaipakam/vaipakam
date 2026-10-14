@@ -14,6 +14,9 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { processLoanLogs, settleFromLedger, settleLoanRow } from '../src/chainIndexer';
 import { createBudget } from '../src/subrequestBudget';
+import { pad, toHex, toEventSelector } from 'viem';
+
+const LOAN_SETTLED = toEventSelector('LoanSettled(uint256)');
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -419,14 +422,15 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
 describe('settleFromLedger — the terminal→Settled edge the ledger and the chain both show (#2464, #2476 r6)', () => {
   /** The tx hash names its block, so the receipt mock can answer by default
    *  with the canonical block of every ledgered event. */
-  const txOf = (block: number) => `0x${block.toString(16).padStart(64, '0')}`;
+  const txOf = (loanId: number, block: number) =>
+    `0x${loanId.toString(16).padStart(32, '0')}${block.toString(16).padStart(32, '0')}`;
   const ledger = (h: SqliteD1, loanId: number, kind: string, block: number, at: number) =>
     h.db
       .prepare(
         `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
          VALUES (?, ?, 0, ?, ?, ?, '{}', ?)`,
       )
-      .run(CHAIN, block, txOf(block), kind, loanId, at);
+      .run(CHAIN, block, txOf(loanId, block), kind, loanId, at);
   const row = (h: SqliteD1, id: number) =>
     h.db.prepare('SELECT status, terminal_block, terminal_at FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as {
       status: string;
@@ -442,12 +446,21 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     seen: { reads: Array<{ id: number; block: bigint }> } = { reads: [] },
     /** Blocks whose transactions the node no longer returns (reorganised away). */
     discarded: Set<number> = new Set(),
+    /** Blocks whose re-included transaction no longer emits LoanSettled. */
+    noLog: Set<number> = new Set(),
   ) =>
     ({
       getTransactionReceipt: async ({ hash }: { hash: string }) => {
-        const block = parseInt(hash, 16);
+        const loanId = parseInt(hash.slice(2, 34), 16);
+        const block = parseInt(hash.slice(34), 16);
         if (discarded.has(block)) throw new Error('transaction receipt not found');
-        return { status: 'success', blockNumber: BigInt(block) };
+        return {
+          status: 'success',
+          blockNumber: BigInt(block),
+          logs: noLog.has(block)
+            ? []
+            : [{ address: DIAMOND, topics: [LOAN_SETTLED, pad(toHex(BigInt(loanId)), { size: 32 })] }],
+        };
       },
       getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
         const t = times[Number(blockNumber)];
@@ -538,6 +551,51 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     ledger(h, 70, 'LoanSettled', 1005, 1); // the canonical replacement
     expect(await heal(h, chain({ 1000: 10, 1005: 15 }, () => 3, undefined, new Set([1000])))).toEqual([70]);
     expect(row(h, 70)).toEqual({ status: 'settled', terminal_block: 1005, terminal_at: 15 });
+  });
+
+  it('refuses a receipt that no longer carries this loan’s LoanSettled from the Diamond (#2476 r9)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 73, 'internal_matched');
+    ledger(h, 73, 'LoanSettled', 1400, 1);
+    expect(await heal(h, chain({ 1400: 1 }, () => 3, undefined, new Set(), new Set([1400])))).toEqual([]);
+    expect(row(h, 73).status).toBe('internal_matched');
+  });
+
+  it('tries a second candidate only while the budget still covers the rest of the row (#2476 r9)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 74, 'internal_matched');
+    ledger(h, 74, 'LoanSettled', 1500, 1); // the canonical one, tried second
+    ledger(h, 74, 'LoanSettled', 1505, 1); // newest, discarded
+    // A metered client: every call spends one subrequest, as in production.
+    const metered = (b: ReturnType<typeof createBudget>) => {
+      const inner = chain({ 1500: 9 }, () => 3, undefined, new Set([1505])) as unknown as Record<string, (...a: unknown[]) => unknown>;
+      return new Proxy(inner, {
+        get: (t, k) => (...a: unknown[]) => {
+          b.subrequests.remaining--;
+          return t[k as string](...a);
+        },
+      });
+    };
+    // D1 statements are subrequests too, as the production meter counts them.
+    const meteredEnv = (b: ReturnType<typeof createBudget>) => {
+      const d1 = h.d1 as { prepare(sql: string): unknown };
+      return {
+        DB: {
+          prepare: (sql: string) => {
+            b.subrequests.remaining--;
+            return d1.prepare(sql);
+          },
+        },
+      } as unknown as Env;
+    };
+    // Two reads before the row, its six-request reservation: the first receipt
+    // fits, a second candidate would not.
+    const tight = createBudget(8, 'test', 1_000);
+    expect(await settleFromLedger(metered(tight) as never, DIAMOND, meteredEnv(tight), CHAIN, tight, 777n)).toEqual([]);
+    expect(row(h, 74).status).toBe('internal_matched');
+    const roomy = createBudget(20, 'test', 1_000);
+    expect(await settleFromLedger(metered(roomy) as never, DIAMOND, meteredEnv(roomy), CHAIN, roomy, 777n)).toEqual([74]);
+    expect(row(h, 74).terminal_block).toBe(1500);
   });
 
   it('writes nothing when no ledgered event is confirmed, even though the chain says Settled', async () => {

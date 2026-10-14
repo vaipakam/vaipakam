@@ -244,6 +244,14 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
     expect(at(heal, '} catch', at(heal, 'await refreshStubLoans('))).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
   });
 
+  it('settles from the ledger only on a SETTLED head, and both call sites pass it (#2476 r9)', () => {
+    expect(heal.indexOf('if (headSettled)')).toBeGreaterThan(-1);
+    expect(heal.indexOf('if (headSettled)')).toBeLessThan(at(heal, 'await settleFromLedger('));
+    const calls = pass.split('await runHealLanes(').slice(1).map((c) => c.slice(0, c.indexOf(');')));
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c).toContain('settledHead.settled');
+  });
+
   it('settles from the ledger BEFORE the metadata heals, in its own try (#2476 r4)', () => {
     const settle = at(heal, 'await settleFromLedger(');
     expect(settle).toBeLessThan(at(heal, 'await refreshStubOffers('));

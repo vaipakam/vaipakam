@@ -38,6 +38,9 @@
 import {
   decodeEventLog,
   toEventSignature,
+  toEventSelector,
+  pad,
+  toHex,
   type Abi,
   type AbiEvent,
   type Address,
@@ -2077,7 +2080,7 @@ async function runChainPass(
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
-    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock);
+    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock, settledHead.settled);
     // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
@@ -2473,6 +2476,7 @@ async function runChainPass(
     env,
     budget,
     scanTo,
+    settledHead.settled,
   );
 
   const hintStats = pushHintStats(allLogs);
@@ -3405,6 +3409,9 @@ async function runHealLanes(
   env: Env,
   budget: TickBudget,
   atBlock: bigint,
+  /** #2476 r9 — whether `atBlock` is a block the chain itself called settled
+   *  (`SettledHead.settled`), rather than the `latest - N` guess. */
+  headSettled: boolean,
 ): Promise<{ detailRefreshes: number; loanDetailRefreshes: number; ledgerSettledLoanIds: number[] }> {
   let detailRefreshes = 0;
   let loanDetailRefreshes = 0;
@@ -3414,9 +3421,16 @@ async function runHealLanes(
   // backlog could spend the budget every tick and leave it unhealed for good.
   // Every tick, not a one-shot migration: an older Worker can ledger the
   // event without settling the row at any time it is still serving.
+  // Only on a settled head, for the reason the reconciliation pass gives
+  // (`_runLoanReconcilePass`): a row this lane settles is never re-examined,
+  // so it may not act on a guessed block a reorg could take back.
   let ledgerSettledLoanIds: number[] = [];
   try {
-    ledgerSettledLoanIds = await settleFromLedger(client, diamond, env, chainId, budget, atBlock);
+    if (headSettled) {
+      ledgerSettledLoanIds = await settleFromLedger(client, diamond, env, chainId, budget, atBlock);
+    } else {
+      console.warn(`[chainIndexer] ledger settlement heal NOT RUNNING on chain ${chainId}: the head is a guess, not a settled block`);
+    }
   } catch (err) {
     console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, err);
   }
@@ -3884,7 +3898,7 @@ export async function settleFromLedger(
         blockNumber: atBlock,
       })) as { status: number | bigint };
       if (Number(detail.status) !== CHAIN_STATUS_SETTLED) continue;
-      const block = await canonicalSettlementBlock(client, env, chainId, row.loan_id);
+      const block = await canonicalSettlementBlock(client, diamond, env, chainId, row.loan_id, budget);
       if (block === null) continue; // no ledgered event confirmed — next lap
       let at: number | null;
       try {
@@ -3923,18 +3937,34 @@ export async function settleFromLedger(
   return healed;
 }
 
+/** topic0 of `LoanSettled(uint256 indexed loanId)`, from the compiled ABI. */
+const LOAN_SETTLED_TOPIC = toEventSelector(
+  EVENT_ABI.find((e) => e.name === 'LoanSettled') as AbiEvent,
+);
+
 /**
  * The block of a ledgered `LoanSettled` for `loanId` that the chain confirms:
- * its transaction's receipt, as the node returns it now, is successful and
- * in that same block. Newest first, because a replacement after a reorg is
- * the later row. `null` when no candidate is confirmed (or none could be
- * read) — the caller then writes nothing.
+ * its transaction's receipt, as the node returns it now, is successful, in
+ * that same block, and CARRIES the event — a log from this Diamond with the
+ * `LoanSettled` topic and this loan id (#2476 r9). A transaction re-included
+ * at the same height against different state need not emit it any more.
+ * Newest first, because a replacement after a reorg is the later row.
+ * `null` when no candidate is confirmed (or none could be read) — the
+ * caller then writes nothing.
+ *
+ * The first receipt is in the row's reserved cost. Each further candidate
+ * is tried only while the budget still covers it AND the rest of the row
+ * (block read, settle write, the rotation-pointer write) — so a loan with
+ * several ledgered candidates cannot push that pointer write past the
+ * ceiling (#2476 r9).
  */
 async function canonicalSettlementBlock(
   client: PublicClient,
+  diamond: Address,
   env: Env,
   chainId: number,
   loanId: number,
+  budget: TickBudget,
 ): Promise<number | null> {
   const candidates = await env.DB.prepare(
     `SELECT block_number, tx_hash FROM activity_events
@@ -3943,12 +3973,22 @@ async function canonicalSettlementBlock(
   )
     .bind(chainId, loanId)
     .all<{ block_number: number; tx_hash: string }>();
+  const loanTopic = pad(toHex(BigInt(loanId)), { size: 32 }).toLowerCase();
+  let first = true;
   for (const c of candidates.results ?? []) {
+    // receipt + block read + settle write + pointer write
+    if (!first && budget.subrequests.remaining < 4) return null;
+    first = false;
     try {
       const receipt = await client.getTransactionReceipt({ hash: c.tx_hash as `0x${string}` });
-      if (receipt.status === 'success' && Number(receipt.blockNumber) === c.block_number) {
-        return c.block_number;
-      }
+      if (receipt.status !== 'success' || Number(receipt.blockNumber) !== c.block_number) continue;
+      const carries = receipt.logs.some(
+        (log) =>
+          log.address.toLowerCase() === diamond.toLowerCase() &&
+          log.topics[0]?.toLowerCase() === LOAN_SETTLED_TOPIC.toLowerCase() &&
+          log.topics[1]?.toLowerCase() === loanTopic,
+      );
+      if (carries) return c.block_number;
     } catch {
       // Not found (reorganised away) or unreadable — try the next candidate.
     }
