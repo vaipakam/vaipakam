@@ -3532,7 +3532,7 @@ const copySource = {
     // forcedClose.claimNoteSale), so it says only that the page shows
     // what can be claimed and when.
     graceOverLender:
-      'The grace period has ended — this loan can now be closed out as a default. Automatic close-out may be switched off on this deployment, and the app can’t tell whether it is, so don’t wait for it. The overdue-loan card on this page, when it appears, says whether you can close the loan out yourself right now, and what stands in the way if not. Anyone may close it out first. Once it has been closed out, this page shows what you can claim and when.',
+      'The grace period has ended — this loan can now be closed out as a default. Automatic close-out may be switched off on this deployment, and the app can’t tell whether it is, so don’t wait for it. The overdue-loan card on this page, when it appears, says whether you can close the loan out yourself right now, and what stands in the way if not. Anyone may close it out first. After a close-out runs, this page shows what you can claim and when.',
     // Codex #1166 r2 — fallback_pending is the post-grace failed-
     // default state: the cure (full repayment) is still accepted, but
     // only until the lender finalizes the default.
