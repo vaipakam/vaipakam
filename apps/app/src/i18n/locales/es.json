@@ -1462,7 +1462,8 @@
       "rowBorrowed": "Posición prestataria · {{amount}} tomados al inicio",
       "rowLent": "Posición prestamista · {{amount}} prestados al inicio",
       "rowBorrowedAmountUnknown": "Posición prestataria · el importe tomado al inicio no está disponible",
-      "rowLentAmountUnknown": "Posición prestamista · el importe prestado al inicio no está disponible"
+      "rowLentAmountUnknown": "Posición prestamista · el importe prestado al inicio no está disponible",
+      "owedInternalMatched": "Nada — el emparejamiento interno cerró este préstamo. Queda liquidado cuando se cobren sus reclamaciones."
     },
     "powerSurface": {
       "body": "Esta página muestra las ofertas abiertas de un par una junto a otra y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",

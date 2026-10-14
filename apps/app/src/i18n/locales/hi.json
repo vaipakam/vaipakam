@@ -1462,7 +1462,8 @@
       "rowBorrowed": "Borrowing position · शुरुआत में {{amount}} borrow किया गया",
       "rowLent": "Lending position · शुरुआत में {{amount}} lend किया गया",
       "rowBorrowedAmountUnknown": "Borrowing position · शुरुआत में borrow किया गया amount उपलब्ध नहीं है",
-      "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है"
+      "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है",
+      "owedInternalMatched": "कुछ नहीं — internal matching ने यह loan बंद कर दिया। इसके claims collect होते ही यह settle हो जाता है।"
     },
     "powerSurface": {
       "body": "यह पेज एक जोड़ी के खुले offers साथ-साथ दिखाता है और आपको अपनी दर तय करने देता है। कदम-दर-कदम चलना पसंद है? Borrow और Lend पेज यही काम समझाते हुए करते हैं।",

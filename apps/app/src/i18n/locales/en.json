@@ -1558,6 +1558,7 @@
       "owedDefaulted": "Nothing to repay anymore — this loan ended in default and the collateral covers it.",
       "owedDefaultedNoCollateral": "Nothing to repay anymore — this loan ended in default and was settled.",
       "owedClosed": "Nothing — this loan is closed and settled.",
+      "owedInternalMatched": "Nothing — internal matching closed this loan. It settles once its claims are collected.",
       "whatNextRepaidBorrower": "You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.",
       "whatNextRepaidLender": "The borrower repaid. Nothing else can happen to this loan — claim your funds below if you haven’t yet.",
       "whatNextRepaidViewer": "The borrower repaid. Nothing else can happen to this loan — any remaining claims belong to the position holders.",

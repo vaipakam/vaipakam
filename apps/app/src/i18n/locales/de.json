@@ -1462,7 +1462,8 @@
       "rowBorrowed": "Kreditnehmerposition · {{amount}} zu Beginn geliehen",
       "rowLent": "Kreditgeberposition · {{amount}} zu Beginn verliehen",
       "rowBorrowedAmountUnknown": "Kreditnehmerposition · der zu Beginn geliehene Betrag ist nicht verfügbar",
-      "rowLentAmountUnknown": "Kreditgeberposition · der zu Beginn verliehene Betrag ist nicht verfügbar"
+      "rowLentAmountUnknown": "Kreditgeberposition · der zu Beginn verliehene Betrag ist nicht verfügbar",
+      "owedInternalMatched": "Nichts — das interne Matching hat diesen Kredit geschlossen. Er ist abgewickelt, sobald seine Claims eingelöst sind."
     },
     "powerSurface": {
       "body": "Diese Seite zeigt die offenen Angebote für ein Paar nebeneinander und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",
