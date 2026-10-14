@@ -19,12 +19,17 @@ export async function batchedRead(
   client: ReturnType<typeof createPublicClient>,
   contracts: readonly unknown[],
   label: string,
+  /** Read every entry at this block — on the aggregate AND on the serial
+   *  fallback, so a degraded read still describes the same block. viem's
+   *  `multicall` ignores a per-contract `blockNumber`; it must go here. */
+  blockNumber?: bigint,
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   if (contracts.length === 0) return [];
   try {
     const results = (await client.multicall({
       contracts: contracts as never,
       allowFailure: true,
+      blockNumber,
       // REQUIRED — see src/multicall3.ts (#1946).
       multicallAddress: MULTICALL3_ADDRESS,
       // Disable viem's byte-size re-split (1024 B default), which would turn
@@ -52,14 +57,14 @@ export async function batchedRead(
       console.error(
         `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — retrying serially`,
       );
-      return serialRead(client, contracts);
+      return serialRead(client, contracts, blockNumber);
     }
     return results;
   } catch (err) {
     console.error(
       `[keeper] ${label} multicall failed, falling back to serial: ${String(err).slice(0, 200)}`,
     );
-    return serialRead(client, contracts);
+    return serialRead(client, contracts, blockNumber);
   }
 }
 
@@ -67,12 +72,18 @@ export async function batchedRead(
 async function serialRead(
   client: ReturnType<typeof createPublicClient>,
   contracts: readonly unknown[],
+  blockNumber: bigint | undefined,
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   const out: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
   for (const c of contracts) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      out.push({ status: 'success', result: await client.readContract(c as never) });
+      out.push({
+        status: 'success',
+        result: await client.readContract(
+          (blockNumber === undefined ? c : { ...(c as object), blockNumber }) as never,
+        ),
+      });
     } catch (e) {
       out.push({ status: 'failure', error: e });
     }

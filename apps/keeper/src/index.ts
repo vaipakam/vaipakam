@@ -98,7 +98,7 @@
  * (RPC_*, the Telegram bot token, the Push signer, the aggregator
  * API keys and `KEEPER_PRIVATE_KEY`) are Cloudflare Secrets Store
  * bindings read asynchronously; `resolveEnv` fetches them once, at
- * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; ten are scheduled below.)
+ * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; every pass in `KEEPER_PASSES` is scheduled below.)
  */
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';

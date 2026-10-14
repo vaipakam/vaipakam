@@ -1,5 +1,5 @@
 /**
- * The keeper's ten passes, as data (#1896).
+ * The keeper's passes, as data (#1896).
  *
  * ── Why a table ──────────────────────────────────────────────────────
  *
@@ -39,6 +39,7 @@ import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
+import { runGraceDefault } from './graceDefault';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -136,6 +137,19 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 4,
     why: 'warns inside a 24h window with a repeat throttle — minutes are not material',
     run: runPreGraceWatcher,
+  },
+  {
+    name: 'graceDefault',
+    // Every loan it acts on is already past a grace period measured in
+    // days, so a few minutes' delay changes nothing material, and each
+    // candidate costs a quote round and an eth_simulateV1. The per-tick cap
+    // is rotated rather than urgency-ordered (graceDefault.ts) — at five a
+    // run that drains sixty candidates an hour per chain, which a testnet
+    // backlog never approaches; revisit both together if a mainnet one does.
+    cadenceMinutes: 5,
+    offsetMinutes: 3,
+    why: 'acts on loans already days past grace; each attempt costs quotes and a simulation',
+    run: runGraceDefault,
   },
   {
     name: 'rewardBudgetRemit',

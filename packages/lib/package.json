@@ -92,6 +92,10 @@
     "./routeBuilder": {
       "types": "./src/routeBuilder.ts",
       "default": "./src/routeBuilder.ts"
+    },
+    "./saleHold": {
+      "types": "./src/saleHold.ts",
+      "default": "./src/saleHold.ts"
     }
   },
   "scripts": {

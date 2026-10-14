@@ -957,6 +957,13 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
 - **Permissionless Liquidation / Authorized Keepers / Third-Party Execution Allowed:**
   - Vaipakam should disable all non-liquidation MEV-style or third-party execution interactions by default.
   - Permissionless liquidation remains allowed even when broader MEV or keeper access is turned off, because liquidation is a protocol-safety function and must remain executable when a loan becomes default-eligible.
+  - **The protocol's own keeper closes out past-grace loans** (#2483), so a lender who never opens the app is still closed out and only has to claim. It uses the same permissionless time-based default any caller may use, and holds itself to the same rules the lender's close-out card does:
+    - it acts only on a loan the chain itself reports as defaultable;
+    - it never closes a loan whose lender position has an accepted sale, or whose sale state it cannot establish, because the default would strand the buyer's payment;
+    - for liquid collateral it sends a real, quoted swap route, and it does not send a route the chain shows would fail into the in-kind fallback — such a loan is left for the lender, or for a later attempt when a venue answers;
+    - it does not send when the collateral changed after the route was quoted;
+    - every loan it passes over is logged with the reason, so an operator can say why a past-grace loan is still open.
+    It is armed by its own deployment setting, separate from the keeper-wide switch. While that setting is off, nothing closes a past-grace loan automatically, and no surface may say that something does.
   - Any broader bot, keeper, or third-party execution access must be an explicit user opt-in and must never be assumed by default.
   - User consent for such access must be logged and auditable at three levels: user profile/default-preference level, offer level, and loan level.
   - If such access is enabled in a later phase, it must be restricted to narrowly defined authorized actions instead of a blanket "bots allowed" permission.

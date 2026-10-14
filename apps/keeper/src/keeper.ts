@@ -764,7 +764,10 @@ export async function maybeAutonomousLiquidate(
  * forever, leaving the pass permanently dark. Which is the same failure this
  * module's logging exists to expose, one layer down.
  */
-export type PassArmingFlag = 'REWARD_REMIT_ENABLED' | 'REWARD_COMMIT_ENABLED';
+export type PassArmingFlag =
+  | 'REWARD_REMIT_ENABLED'
+  | 'REWARD_COMMIT_ENABLED'
+  | 'GRACE_DEFAULT_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.
