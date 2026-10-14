@@ -3773,20 +3773,27 @@ const LOAN_TOKEN_ID_BATCH = 50;
  * heal for an event the projection missed. One writer, so the two cannot
  * disagree about what a settled row records.
  *
- * - `block` is the event's block. The event handler always knows it, which
- *   is what tells its writes apart from the reconciliation repair's (that
- *   leaves `terminal_block` NULL, and the repair's notice checks for exactly
- *   that — notifications.ts, #2476 r3). The ledger heal may pass NULL when no
- *   ledgered event is confirmed (#2476 r11); it never collides with the
- *   repair's fingerprint because the two touch disjoint rows — the heal only
- *   rows already terminal, the repair only rows still active or
- *   fallback_pending.
+ * - `block` is the event's block. The ledger heal may pass NULL when no
+ *   ledgered event is confirmed (#2476 r11). Telling these writes apart from
+ *   the reconciliation repair's is NOT left to that shape any more: the
+ *   repair stamps an explicit `terminal_by_repair = 1` and its notice
+ *   requires it (#2476 r12), because a heal can produce the same null shape
+ *   in the same second.
  * - `at` is that block's chain time, or NULL when it is not known — never
  *   the time of the write.
- * - A row already settled is left alone, EXCEPT that a settlement still
- *   undated takes a known time (#2476 r3): a replay of the same block after
- *   a partial pass, whose block read now succeeded, converges instead of
- *   keeping the unknown for good. Idempotent either way.
+ * - A row already settled is left alone, EXCEPT that what it does not know
+ *   is filled (#2476 r3, r12): an unknown block takes the event's block even
+ *   when that block's time is still unknown, and an unknown time is filled
+ *   only from the block the row already names (or the one now supplied).
+ *   Known values are never overwritten. Idempotent either way.
+ * - ONLY FROM A TERMINAL STATUS (#2476 r12). A row still `active` or
+ *   `fallback_pending` that meets `LoanSettled` missed its whole terminal
+ *   transition: its amounts and side tables are as stale as its status, and
+ *   a status-only write would publish a settled loan still advertising its
+ *   listings. The reconciliation repair, which re-reads the loan and clears
+ *   the side tables in one batch, owns those rows.
+ * - It clears `terminal_by_repair`: the row's terminal state now comes from
+ *   the chain's event, not from a repair (see notifications.ts).
  *
  * Returns whether the row changed.
  */
@@ -3797,12 +3804,26 @@ export async function settleLoanRow(
   block: number | null,
   at: number | null,
 ): Promise<boolean> {
+  // SET expressions read the row as it WAS, so `status` in each CASE is the
+  // prior status.
   const r = await env.DB.prepare(
-    `UPDATE loans SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
-      WHERE chain_id = ? AND loan_id = ?
-        AND (status <> 'settled' OR (terminal_at IS NULL AND ? IS NOT NULL))`,
+    `UPDATE loans
+        SET terminal_block = CASE WHEN status <> 'settled' THEN ?1 ELSE COALESCE(terminal_block, ?1) END,
+            terminal_at = CASE
+              WHEN status <> 'settled' THEN ?2
+              WHEN terminal_at IS NULL AND COALESCE(terminal_block, ?1) = ?1 THEN ?2
+              ELSE terminal_at
+            END,
+            status = 'settled', terminal_by_repair = 0, updated_at = ?3
+      WHERE chain_id = ?4 AND loan_id = ?5
+        AND status NOT IN ('active', 'fallback_pending')
+        AND (
+          status <> 'settled'
+          OR (terminal_block IS NULL AND ?1 IS NOT NULL)
+          OR (terminal_at IS NULL AND ?2 IS NOT NULL AND COALESCE(terminal_block, ?1) = ?1)
+        )`,
   )
-    .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId, at)
+    .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId)
     .run();
   return (r.meta?.changes ?? 0) > 0;
 }
@@ -3965,7 +3986,11 @@ export async function settleFromLedger(
   // A short page means the walk reached the end: wrap. Otherwise resume after
   // the last row this tick reached.
   const next = rows.length < SETTLE_HEAL_BATCH && reached === (rows.at(-1)?.loan_id ?? pointer) ? 0 : reached;
-  if (next !== pointer) {
+  // #2476 r12 — and only while the LIVE budget still covers it: a read that
+  // failed after retries can have spent the reserve, and a write past the
+  // ceiling could end the invocation before the ids above are returned. A
+  // skipped write only repeats a page next tick.
+  if (next !== pointer && budget.subrequests.remaining >= 1 && budget.d1Queries.remaining >= 1) {
     // #2476 r7 — a failed pointer write must not lose the ids above: those
     // rows are settled and will never be selected again, so this return is
     // the only report they get. The walk merely repeats a page next tick.
@@ -5441,7 +5466,7 @@ export async function processLoanLogs(
             // keeper's claim-time auto-dispatch can FULLY rescue a
             // `fallback_pending` loan straight to `internal_matched` with no
             // later claim event, so that row must be promotable here too.
-            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
               absPrincipal.toString(),
@@ -5831,7 +5856,7 @@ export async function processLoanLogs(
       const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
       const r = await env.DB.prepare(
         `UPDATE loans
-           SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
+           SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
       )
         .bind(
@@ -6008,7 +6033,7 @@ export async function processLoanLogs(
   // see `deferredStatusEdges` for why the move was required.
   for (const [loanId, { terminal, blockNumber }] of deferredStatusEdges) {
     const r = await env.DB.prepare(
-      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
       .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
@@ -6064,7 +6089,7 @@ async function flipLoanStatus(
   const loanId = loanIdOverride ?? Number(args.loanId as bigint);
   const now = Math.floor(Date.now() / 1000);
   const r = await env.DB.prepare(
-    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
      WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
   )
     .bind(status, Number(log.blockNumber), now, now, chainId, loanId)

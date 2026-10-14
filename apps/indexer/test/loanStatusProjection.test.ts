@@ -722,4 +722,34 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     expect(await settleLoanRow(env(h), CHAIN, 50, 100, null)).toBe(false);
     expect(at(h, 50)).toEqual({ status: 'settled', b: 100, t: 500 });
   });
+
+  it('never settles a row still indexed active or fallback_pending — the repair owns a missed terminal (#2476 r12)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 51, 'active');
+    seedLoan(h, 52, 'fallback_pending');
+    expect(await settleLoanRow(env(h), CHAIN, 51, 100, 500)).toBe(false);
+    expect(await settleLoanRow(env(h), CHAIN, 52, 100, 500)).toBe(false);
+    expect((at(h, 51) as { status: string }).status).toBe('active');
+    expect((at(h, 52) as { status: string }).status).toBe('fallback_pending');
+  });
+
+  it('fills an unknown block even while its time stays unknown, and never overwrites a known one (#2476 r12)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 53, 'internal_matched');
+    expect(await settleLoanRow(env(h), CHAIN, 53, null, null)).toBe(true);
+    expect(at(h, 53)).toEqual({ status: 'settled', b: null, t: null });
+    expect(await settleLoanRow(env(h), CHAIN, 53, 300, null)).toBe(true); // block known, time still not
+    expect(at(h, 53)).toEqual({ status: 'settled', b: 300, t: null });
+    expect(await settleLoanRow(env(h), CHAIN, 53, 999, 7)).toBe(false); // a different block never dates it
+    expect(await settleLoanRow(env(h), CHAIN, 53, 300, 42)).toBe(true); // its own block does
+    expect(at(h, 53)).toEqual({ status: 'settled', b: 300, t: 42 });
+  });
+
+  it('clears the repair marker: a settlement from the chain is not the repair’s (#2476 r12)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 54, 'repaid');
+    h.db.prepare('UPDATE loans SET terminal_by_repair = 1 WHERE chain_id = ? AND loan_id = 54').run(CHAIN);
+    await settleLoanRow(env(h), CHAIN, 54, 100, 1);
+    expect((h.db.prepare('SELECT terminal_by_repair AS m FROM loans WHERE chain_id = ? AND loan_id = 54').get(CHAIN) as { m: number }).m).toBe(0);
+  });
 });

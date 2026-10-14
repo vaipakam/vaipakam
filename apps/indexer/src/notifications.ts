@@ -762,8 +762,7 @@ export function notificationInsertStatement(
         WHERE EXISTS (
           SELECT 1 FROM loans
            WHERE chain_id = ? AND loan_id = ?
-             AND status = ? AND terminal_block IS NULL AND terminal_at IS NULL
-             AND updated_at = ?
+             AND status = ? AND terminal_by_repair = 1 AND updated_at = ?
         )`,
     )
     .bind(
@@ -792,15 +791,17 @@ export function notificationInsertStatement(
  *
  * D1 offers no "did the previous statement in this batch match" primitive,
  * and splitting the batch would give back the atomicity round 3 established.
- * So the insert self-gates on the fingerprint the CAS writes: the status,
- * a NULL `terminal_block` AND a NULL `terminal_at`, and this pass's own
- * `updated_at` second. The NULL BLOCK is the provenance marker: an event
- * writer always knows the block it read the event in, while its TIME can be
- * unknown too (the `LoanSettled` writer records NULL rather than a guess
- * when the block read failed — #2476 r3), so a null time alone no longer
- * says "the repair wrote this". The residual is stated rather than hidden:
- * another writer would have to leave both unknown, set the same status, and
- * do it in the same second; none in this Worker leaves the block unknown.
+ * So the insert self-gates on what the CAS writes: the status, this pass's
+ * own `updated_at` second, and `terminal_by_repair = 1` — an EXPLICIT marker
+ * only the repair's UPDATE sets, and every other terminal writer clears
+ * (#2476 r12, migration 0059). Earlier revisions inferred the repair from
+ * the row's shape — a NULL `terminal_at`, then a NULL `terminal_block` too —
+ * and each inference was broken by a legitimate writer producing the same
+ * shape (an event whose block time could not be read; the ledger heal
+ * settling with its provenance unconfirmed). A marker only the repair writes
+ * cannot be imitated that way. The residual is stated: a repair's own row,
+ * rewritten by the repair of another pass in the same second, would match —
+ * and that notice would still be a repair's.
  */
 export interface RepairFingerprint {
   chainId: number;

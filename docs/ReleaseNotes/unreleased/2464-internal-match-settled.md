@@ -6,6 +6,6 @@ The indexer now treats the protocol's settlement event as authoritative: it sett
 
 A loan still shown as active but with a settlement in the log has missed its whole closing step. That stays the job of the indexer's existing correction pass, which re-reads the full loan.
 
-When the time of a settlement cannot be read during a scan, the loan is settled with its time recorded as unknown, and a later replay of the same block fills it in. The "we found this by checking" notice from the indexer's correction pass can no longer be attached to a settlement the event wrote.
+When the time of a settlement cannot be read during a scan, the loan is settled with its time recorded as unknown, and a later replay of the same block fills it in. The "we found this by checking" notice from the indexer's correction pass is now tied to an explicit marker that only the correction pass sets (a new additive database column), rather than to what the loan's record happens to look like, so it can no longer be attached to a settlement an event or the settle check wrote. A settlement event for a loan the indexer still shows as active is left to the correction pass, which re-reads the whole loan and clears its listings, rather than changing only its status.
 
 Closes #2464.

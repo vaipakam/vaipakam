@@ -264,7 +264,7 @@ describe('a notice is written only for a repair this pass made', () => {
     h.db
       .prepare(
         `UPDATE loans SET status = 'defaulted', terminal_block = NULL,
-                          terminal_at = NULL, updated_at = ?
+                          terminal_at = NULL, terminal_by_repair = 1, updated_at = ?
           WHERE chain_id = ? AND loan_id = ?`,
       )
       .run(at, CHAIN, loanId);
@@ -306,6 +306,21 @@ describe('a notice is written only for a repair this pass made', () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 40, 'active');
     expect(await insertGated(h, FP())).toBe(0);
+  });
+
+  it('writes NOTHING for a ledger-heal settlement with its provenance unknown, even in the same second (#2476 r12)', async () => {
+    // The exact null-block / null-time shape a repair leaves — but written by
+    // the heal, which clears the explicit repair marker.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'active');
+    h.db
+      .prepare(
+        `UPDATE loans SET status = 'settled', terminal_block = NULL, terminal_at = NULL,
+                          terminal_by_repair = 0, updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+      .run(1_700_000_000, CHAIN, 40);
+    expect(await insertGated(h, FP({ status: 'settled' }))).toBe(0);
   });
 
   it('writes NOTHING for an event write whose time is unknown, even in the same second (#2476 r3)', async () => {

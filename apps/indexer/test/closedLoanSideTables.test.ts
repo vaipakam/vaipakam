@@ -458,6 +458,10 @@ describe('reconcileAfterScan against a real database', () => {
       .prepare('SELECT status, principal, collateral_amount FROM loans WHERE loan_id = ?')
       .get(21) as { status: string; principal: string; collateral_amount: string };
     expect(row.status).toBe('repaid');
+    // The explicit marker the repair's notice gates on (#2476 r12).
+    expect(
+      (h.db.prepare('SELECT terminal_by_repair AS m FROM loans WHERE loan_id = ?').get(21) as { m: number }).m,
+    ).toBe(1);
     // The money comes from the same read as the status.
     expect(row.principal).toBe('0');
     expect(row.collateral_amount).toBe('250');
