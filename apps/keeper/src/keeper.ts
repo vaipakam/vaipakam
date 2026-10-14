@@ -23,6 +23,7 @@
  *     entire path is no-op.
  */
 
+import { queuedWallet } from './submissionQueue';
 import {
   type Address,
   createWalletClient,
@@ -979,10 +980,15 @@ export function buildKeeperContext(
     return null;
   }
   const { account } = resolved;
-  const wallet = createWalletClient({
-    account,
-    transport: http(chain.rpc, fetchFn ? { fetchFn } : undefined),
-  });
+  // Queued (#2486): every pass signs with this one key, so its sends on
+  // this chain are admitted one at a time with a fresh nonce each.
+  const wallet = queuedWallet(
+    createWalletClient({
+      account,
+      transport: http(chain.rpc, fetchFn ? { fetchFn } : undefined),
+    }),
+    chain.id,
+  );
   return {
     wallet,
     client: publicClient,

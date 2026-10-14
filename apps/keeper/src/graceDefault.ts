@@ -65,6 +65,7 @@
  * keeper-wide one, and it is dark until that flag is armed.
  */
 
+import { withSubmissionSlot } from './submissionQueue';
 import {
   createPublicClient,
   encodeFunctionData,
@@ -72,6 +73,7 @@ import {
   keccak256,
   type Abi,
   type Address,
+  type Hex,
   type PublicClient,
   type WalletClient,
   zeroAddress,
@@ -508,25 +510,35 @@ export async function attemptGraceDefault(
   // bytes either way, so the log can name it.
   const account = wallet.account;
   if (!account) return { kind: 'skipped', reason: 'no-keeper-account' };
-  const request = await wallet.prepareTransactionRequest({
-    account,
-    to: diamond,
-    data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
-    chain: undefined,
-  } as never);
-  // `chain: null`: the client is chainless, and the chain id the request
-  // was prepared with (read from the RPC) is the one signed over.
-  const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
-  const tx = keccak256(serialized);
+  // In the account's submission slot (#2486), so no other pass's send on
+  // this chain can take the same nonce. Once signed, the nonce stays
+  // reserved even if the broadcast fails, since it may have been relayed.
+  let tx: Hex | undefined;
   try {
-    await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    await withSubmissionSlot(wallet, deps.chainId, account.address, async (nonce, signed) => {
+      const request = await wallet.prepareTransactionRequest({
+        account,
+        to: diamond,
+        data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
+        nonce,
+        chain: undefined,
+      } as never);
+      // `chain: null`: the client is chainless, and the chain id the request
+      // was prepared with (read from the RPC) is the one signed over.
+      const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
+      tx = keccak256(serialized);
+      signed();
+      await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    });
   } catch (err) {
     // The cap refuses BEFORE any network call, so a refused broadcast is
     // one that definitely did not happen.
     if (refusedByBudget(err)) throw err;
+    // Failed before signing: nothing was sent.
+    if (tx === undefined) throw err;
     return { kind: 'unconfirmed', tx, preview, calls: calls.length, reason: describeFailure(err) };
   }
-  return { kind: 'submitted', tx, preview, calls: calls.length };
+  return { kind: 'submitted', tx: tx!, preview, calls: calls.length };
 }
 
 /** Whether `err`, or anything in its cause chain, is the budget's refusal. */
