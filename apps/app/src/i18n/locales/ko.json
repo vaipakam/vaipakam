@@ -325,7 +325,8 @@
         "hf_warn": "대출의 건강도가 1.5 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_alert": "대출의 건강도가 1.2 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_critical": "대출의 건강도가 1.05 아래로 떨어져 청산 기준선 1.0에 근접했습니다 — 열어서 조치하세요.",
-        "generic": "대출에 업데이트가 있습니다."
+        "generic": "대출에 업데이트가 있습니다.",
+        "grace_ended": "대출의 유예 기간이 끝났습니다 — 열어서 상태를 확인하세요."
       },
       "loanRef": "Loan #{{loanId}} · 탭하여 보기",
       "unreadBadgeTitle_zero": "{{count}}개의 unread notifications",

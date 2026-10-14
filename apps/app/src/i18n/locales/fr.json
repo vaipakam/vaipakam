@@ -325,7 +325,8 @@
         "hf_warn": "La santé d'un prêt est passée sous 1.5 — ouvrez-le pour voir où il en est.",
         "hf_alert": "La santé d'un prêt est passée sous 1.2 — ouvrez-le pour voir où il en est.",
         "hf_critical": "La santé d'un prêt est passée sous 1.05, proche de la ligne de liquidation 1.0 — ouvrez-le pour agir.",
-        "generic": "Il y a une mise à jour sur votre prêt."
+        "generic": "Il y a une mise à jour sur votre prêt.",
+        "grace_ended": "Le délai de grâce d’un prêt a pris fin — ouvrez-le pour voir où il en est."
       },
       "loanRef": "Prêt n°{{loanId}} · toucher pour voir",
       "unreadBadgeTitle_zero": "{{count}} notifications non lues",

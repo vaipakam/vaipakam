@@ -10,6 +10,13 @@
  *     running (BOTH parties, per the design table: the borrower can
  *     still repay with the late fee; the current lender-position holder
  *     learns a default — and their claim — may be near).
+ *   - `grace_ended` — the grace window has CLOSED (BOTH parties, #2463
+ *     follow-up): on the contract's own rule (`isLoanDefaultable`,
+ *     strictly past `maturity + grace`) the loan can now be defaulted, so
+ *     the lender can close it out and the borrower has lost the ordinary
+ *     repay window. Fires for the first 7 days past grace end, then goes
+ *     quiet — a loan that stays open longer is not re-announced, and a
+ *     default, once triggered, arrives through its own event.
  *
  * Runs at the ingest scan tail (chainIndexer.ts), same fail-open
  * discipline as the event materializer: derived convenience rows must
@@ -152,7 +159,7 @@ export function graceCaseSql(buckets: GraceBucketJson[] | null): string {
   return `CASE ${whens.join(' ')} ELSE ${Math.floor(elseG)} END`;
 }
 
-/** Fail-loud sweep bound: the maturity window (matured within max-grace,
+/** Fail-loud sweep bound: the maturity window (matured within max-grace + the grace_ended week,
  *  or due within 7d) should hold at most a few hundred loans per chain;
  *  if it ever exceeds this, log the truncation rather than silently
  *  skipping the tail (no-silent-caps rule). The window keeps shifting,
@@ -182,24 +189,40 @@ export interface CalendarLoanRow {
 interface Milestone {
   kind: NotifKind;
   /** Window start relative to maturity (seconds; negative = before). */
-  fromOffset: number;
+  fromOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   /** Window end relative to maturity (exclusive). */
   toOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   recipients: 'borrower' | 'both';
 }
 
-/** The three calendar milestones. Each fires once per (loan, maturity):
+/** How long past grace end `grace_ended` stays emittable. Bounds the
+ *  sweep's look-back: without it every long-overdue open loan would sit in
+ *  the window forever. A week covers a sweep outage of days; a loan still
+ *  open after that has already been announced. */
+export const GRACE_ENDED_WINDOW_SECONDS = 7 * DAY;
+
+/** The four calendar milestones. Each fires once per (loan, maturity):
  *  T-7d and T-1d while the loan is still live; grace_entered from the
- *  due date until the grace window closes (past grace end the loan is
- *  liquidatable — a "grace running" nudge would be stale advice, and
- *  the terminal row arrives via the default/liquidation events). */
+ *  due date until the grace window closes (past grace end a "grace
+ *  running" nudge would be stale advice); grace_ended once the window has
+ *  closed — STRICTLY after `maturity + grace`, the same comparison
+ *  `DefaultedFacet.isLoanDefaultable` makes, so the row never says the
+ *  window closed one second before the contract agrees. The terminal row
+ *  for an actual default arrives via the default/liquidation events. */
 const MILESTONES: Milestone[] = [
-  { kind: 'maturity_7d', fromOffset: -7 * DAY, toOffset: () => 0, recipients: 'borrower' },
-  { kind: 'maturity_1d', fromOffset: -1 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  { kind: 'maturity_7d', fromOffset: () => -7 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  { kind: 'maturity_1d', fromOffset: () => -1 * DAY, toOffset: () => 0, recipients: 'borrower' },
   {
     kind: 'grace_entered',
-    fromOffset: 0,
+    fromOffset: () => 0,
     toOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets),
+    recipients: 'both',
+  },
+  {
+    kind: 'grace_ended',
+    fromOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets) + 1,
+    toOffset: (durationDays, buckets) =>
+      effectiveGraceSeconds(durationDays, buckets) + GRACE_ENDED_WINDOW_SECONDS,
     recipients: 'both',
   },
 ];
@@ -230,7 +253,7 @@ export function planCalendarRows(
       isSaleVehicle: false,
     };
     for (const m of MILESTONES) {
-      const from = maturity + m.fromOffset;
+      const from = maturity + m.fromOffset(loan.duration_days, graceBuckets);
       const to = maturity + m.toOffset(loan.duration_days, graceBuckets);
       if (nowSec < from || nowSec >= to) continue;
       const sides: ('lender' | 'borrower')[] =
@@ -312,9 +335,10 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
   // starve the un-notified tail. Each probe reconstructs a dedup key
   // (`chain:recipient:kind:loan:maturity`) for the most advanced kind
-  // due NOW (past maturity → grace_entered, within a day → maturity_1d,
-  // else maturity_7d); a stage crossing changes the computed kind, so a
-  // loan re-enters the window exactly when it has something new to emit.
+  // due NOW (past grace end → grace_ended, past maturity → grace_entered,
+  // within a day → maturity_1d, else maturity_7d); a stage crossing
+  // changes the computed kind, so a loan re-enters the window exactly when
+  // it has something new to emit.
   //
   // Every outer-column reference inside the correlated subqueries MUST
   // be `loans.`-qualified (Codex #1298 r6): notifications has its own
@@ -330,9 +354,13 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // grace-stage loan stays selectable until the CURRENT holder's key
   // exists (the zero/absent-lender guard keeps burned sides, which can
   // never be notified, from re-selecting the loan forever). Maturity
-  // stages are borrower-only, so the borrower key suffices there.
+  // stages are borrower-only, so the borrower key suffices there. Both
+  // grace stages are two-sided, so the lender leg probes the CURRENT
+  // stage's kind rather than a fixed one — a fixed 'grace_entered' would
+  // read as satisfied for a past-grace loan and suppress its grace_ended.
   const maturity = `(loans.start_time + loans.duration_days * 86400)`;
-  const stageKind = `(CASE WHEN ${maturity} <= ? THEN 'grace_entered'
+  const stageKind = `(CASE WHEN ${maturity} + ${graceCase} < ? THEN 'grace_ended'
+                      WHEN ${maturity} <= ? THEN 'grace_entered'
                       WHEN ${maturity} - ? <= 86400 THEN 'maturity_1d'
                       ELSE 'maturity_7d' END)`;
   const borrowerRcpt = `LOWER(COALESCE(loans.borrower_current_owner, loans.borrower))`;
@@ -359,7 +387,7 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
             ${withQuarantine ? `AND ${quarantineExclusionSql('loans')}` : ''}
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
-            AND (${maturity} + ${graceCase}) > ?
+            AND (${maturity} + ${graceCase} + ${GRACE_ENDED_WINDOW_SECONDS}) > ?
             AND (
               NOT EXISTS (
                 SELECT 1 FROM notifications n
@@ -371,8 +399,8 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
                 AND ${lenderRcpt} <> '0x0000000000000000000000000000000000000000'
                 AND NOT EXISTS (
                   SELECT 1 FROM notifications n2
-                  WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} ||
-                    ':grace_entered:' || loans.loan_id || ':' || ${maturity}
+                  WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} || ':' ||
+                    ${stageKind} || ':' || loans.loan_id || ':' || ${maturity}
                 )
               )
             )
@@ -445,8 +473,8 @@ export async function sweepCalendarNotifications(
     }
 
     // Window: every real active loan whose maturity is within 7d ahead
-    // (T-7d arm) or within the WIDEST possible grace behind
-    // (grace_entered arm — bucket-derived so a custom longer-than-30d
+    // (T-7d arm) or within the WIDEST possible grace plus the grace_ended
+    // week behind (grace arms — bucket-derived so a custom longer-than-30d
     // grace can't fall out early). The arithmetic runs in SQLite so the
     // scan never loads the whole active set. Sale-vehicle/stub rows are
     // excluded (bookkeeping, not user loans); there is no loans-side
@@ -461,8 +489,9 @@ export async function sweepCalendarNotifications(
     // and those have days of window left before their reminder is
     // late. A loan-id order would starve a fixed tail instead.
     //
-    // The `maturity + <per-loan grace> > now` leg (Codex #1298 r2) drops
-    // loans already past their OWN grace end IN SQL: they emit nothing,
+    // The `maturity + <per-loan grace> + <grace_ended week> > now` leg
+    // (Codex #1298 r2, widened for grace_ended) drops loans already past
+    // their OWN last emittable moment IN SQL: they emit nothing,
     // so letting them occupy LIMIT slots (e.g. 30d loans 4–30 days
     // overdue under the default 3d grace, which the broad max-grace
     // look-back otherwise keeps selecting) would starve the emitting
@@ -517,18 +546,17 @@ export async function sweepCalendarNotifications(
       .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
       .bind(
         chainId,
-        nowSec - maxGraceSeconds(graceBuckets),
+        nowSec - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS,
         nowSec + 7 * DAY,
         nowSec,
-        // Suppression-probe binds (r5/r6): the two `now` comparisons
-        // that pick the current-stage kind, then the grace-stage check
-        // guarding the lender-key leg. The keys' chain/loan/maturity
-        // segments concat the row's own INTEGER columns — a BOUND number
-        // can arrive as REAL (driver-dependent) and render '84532.0',
-        // silently missing every stored key.
-        nowSec,
-        nowSec,
-        nowSec,
+        // Suppression-probe binds (r5/r6), in SQL text order: the three
+        // `now` comparisons that pick the borrower probe's current-stage
+        // kind, the grace-stage check guarding the lender-key leg, then
+        // the lender probe's own three. Every one is `now`. The keys'
+        // chain/loan/maturity segments concat the row's own INTEGER
+        // columns — a BOUND number can arrive as REAL (driver-dependent)
+        // and render '84532.0', silently missing every stored key.
+        ...Array<number>(7).fill(nowSec),
       )
       .all<CalendarLoanRow>();
     const loans = res.results ?? [];

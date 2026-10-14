@@ -2350,6 +2350,16 @@ is the borrower's own money.
   definitive outcome arrives as its own notification. The grace length
   follows the protocol's configured schedule (the default one unless
   governance has set custom tiers).
+- Both parties are also told when a loan's grace window has CLOSED while the
+  loan is still open — the moment the lender (or anyone) may close it out and
+  the borrower's ordinary repay window has ended. "Closed" means what the
+  protocol itself means by it: strictly after the due date plus the loan's
+  grace length, so the inbox never says the window closed before the
+  protocol would allow a close-out. This reminder is created only during the
+  first week after grace ends (a loan still open after that is not
+  re-announced), once per due date, and states the fact as of the notice —
+  whether the loan was then closed out, repaid, or is still open is the
+  position page's to say.
 - For loans whose collateral has a live price, the borrower is also warned in
   the inbox when the loan's health worsens past protocol-level lines (below
   1.5, below 1.2, and below 1.05 — the last close to the 1.0 liquidation

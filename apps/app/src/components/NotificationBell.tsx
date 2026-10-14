@@ -25,6 +25,7 @@ import {
   Coins,
   Handshake,
   Hourglass,
+  TimerOff,
   Repeat,
   ShieldAlert,
   Siren,
@@ -61,6 +62,8 @@ const KIND_ICON: Record<string, LucideIcon> = {
   maturity_7d: CalendarClock,
   maturity_1d: AlarmClock,
   grace_entered: Hourglass,
+  // #2463 follow-up — the grace window closed (the loan became defaultable).
+  grace_ended: TimerOff,
   // HF-band rows (#1213 PR 2b) — the keeper's loan-health crossings.
   hf_warn: TrendingDown,
   hf_alert: ShieldAlert,

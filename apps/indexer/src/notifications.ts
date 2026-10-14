@@ -54,6 +54,10 @@ export const NOTIF_KINDS = [
   'maturity_7d',
   'maturity_1d',
   'grace_entered',
+  // #2463 follow-up — the grace window CLOSED: on the contract's own
+  // clock the loan can now be defaulted (lender close-out). Time-derived
+  // like the three above, from the calendar sweep.
+  'grace_ended',
   // HF-band crossings (#1213 PR 2b) — produced by apps/keeper's
   // liquidator piggyback (hfBandNotifications.ts), NOT by this Worker;
   // listed here because this array is the taxonomy's source of truth
