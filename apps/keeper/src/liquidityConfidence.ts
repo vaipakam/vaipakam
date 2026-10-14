@@ -59,7 +59,11 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
-import { orchestrateServerQuotes } from './serverQuotes';
+import {
+  orchestrateServerQuotes,
+  readKeeperRouteStanding,
+  type RosterStanding,
+} from './serverQuotes';
 import { batchedRead } from './batchRead';
 import {
   getLiquidityConfidence,
@@ -393,7 +397,15 @@ async function aggregatorConfirmedTier(
   slippageBps: bigint,
   sizesPad: readonly [bigint, bigint, bigint, bigint],
   cache: TickCache,
+  /** The chain's adapter roster, read ONCE per tick by the caller (#2480
+   *  r2). This pass only MEASURES a price and discards the calldata, so a
+   *  roster from earlier in the tick is accurate enough, and re-reading it
+   *  per (asset × token × size) probe would spend the Worker's subrequest
+   *  budget on reads the measurement does not need. `null` means it could
+   *  not be read: no aggregator evidence this tick, the counter untouched. */
+  standing: RosterStanding | null,
 ): Promise<number | null> {
+  if (standing === null) return null;
   const assetPrice = await getAssetPadPrice(client, diamond, asset);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 
@@ -440,7 +452,7 @@ async function aggregatorConfirmedTier(
           diamond,
           txOrigin,
           slippageBps: Number(slippageBps),
-        });
+        }, standing);
       } catch {
         continue;
       }
@@ -783,6 +795,12 @@ async function runRelayForChain(
   const ctx = buildKeeperContext(env, chain, client);
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
   const txOrigin = ctx?.wallet.account?.address as Address | undefined;
+  // Lazily, once per chain tick — see `aggregatorConfirmedTier`.
+  let standing: Promise<RosterStanding | null> | undefined;
+  const standingOnce = () =>
+    (standing ??= readKeeperRouteStanding(env, client, chain.id, diamond, txOrigin).catch(
+      () => null,
+    ));
 
   const assets = await activeCollateralAssets(client, diamond);
   if (assets.length === 0) return;
@@ -821,6 +839,7 @@ async function runRelayForChain(
       cfg.slippageBps,
       cfg.sizesPad,
       cache,
+      await standingOnce(),
     );
     if (aggTier === null) continue; // every quote failed — leave the counter alone
     // Cap the *aggregator-confirmed* tier at 2 unless the Tier-3

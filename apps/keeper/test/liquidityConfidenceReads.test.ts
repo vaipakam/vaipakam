@@ -35,6 +35,7 @@ import {
   type AbiFunction,
 } from 'viem';
 import {
+  AdminFacetABI,
   ConfigFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
@@ -86,6 +87,7 @@ const F = {
   details: fn(LoanFacetABI, 'getLoanDetails'),
   price: fn(OracleFacetABI, 'getAssetPrice'),
   decimals: fn(erc20Abi, 'decimals'),
+  adapters: fn(AdminFacetABI, 'getSwapAdapters'),
 } as const;
 
 const SEL = Object.fromEntries(
@@ -145,6 +147,8 @@ type Tally = {
   price: string[];
   /** decimals() calls, by the token they were sent to (lowercased). */
   decimals: string[];
+  /** getSwapAdapters calls — the roster, once per chain tick. */
+  adapters: number;
   /** standalone (un-batched) getLoanDetails calls. */
   serialDetails: number;
   /** aggregate3 calls, and the selectors they carried. */
@@ -156,7 +160,7 @@ type Tally = {
  *        a FAILED read is not cached.
  */
 function install(failDecimalsFor?: string): { tally: Tally; restore: () => void } {
-  const tally: Tally = { price: [], decimals: [], serialDetails: 0, batches: [] };
+  const tally: Tally = { price: [], decimals: [], adapters: 0, serialDetails: 0, batches: [] };
   const real = globalThis.fetch;
 
   const answer = (to: string, data: string): string | null => {
@@ -178,6 +182,12 @@ function install(failDecimalsFor?: string): { tally: Tally; restore: () => void 
         ]);
       case SEL.paa:
         return enc(F.paa, QUOTES.map((q) => q));
+      // The adapter roster, read once per tick before any probe (#2480 r2).
+      // Empty: every probe then quotes nothing, which is fine — the reads
+      // under test happen before the quotes.
+      case SEL.adapters:
+        tally.adapters += 1;
+        return enc(F.adapters, []);
       case SEL.keeperTier:
         return enc(F.keeperTier, 1);
       case SEL.loanCount:
@@ -314,7 +324,11 @@ describe('liquidityConfidence read budget (#1896)', () => {
       );
     }
 
-    // 4. The pass still did its work — a change that reduced counts by not
+    // 4. The adapter roster is read ONCE for the chain's tick, not once per
+    //    (asset x quote token x size) probe (#2480 r2).
+    expect(tally.adapters).toBe(1);
+
+    // 5. The pass still did its work — a change that reduced counts by not
     //    running would satisfy everything above.
     expect(tally.price.length).toBeGreaterThan(0);
   });

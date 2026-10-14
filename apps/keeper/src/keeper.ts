@@ -185,15 +185,18 @@ function pickSplitLegs(
   // carry its own slippage bound — which aggregator calldata does and a raw
   // UniV3 / mock call does not (`LibSwap.sol`, swapSplit's dev note). And
   // two UniV3 adapters during an adapter replacement quote the SAME pools,
-  // so their half-size quotes are not independent liquidity.
+  // so their half-size quotes are not independent liquidity — and the same
+  // holds for two instances of ONE aggregator (an old and a new 0x adapter
+  // during a replacement route to the same venue), so the two legs must be
+  // different aggregators, not merely different indexes (#2480 r2).
   const legs = halfQuotes.ranked.filter((q) => q.kind === 'zeroex' || q.kind === 'oneinch');
   if (legs.length < 2) return null;
-  // Find the top-2 quotes with distinct `adapterIdx`. `ranked` is
+  // Find the top-2 quotes from distinct aggregators. `ranked` is
   // already best-first by expectedOutput.
   const a = legs[0];
   let b: ServerRankedQuote | null = null;
   for (let i = 1; i < legs.length; i++) {
-    if (legs[i].call.adapterIdx !== a.call.adapterIdx) {
+    if (legs[i].kind !== a.kind) {
       b = legs[i];
       break;
     }
