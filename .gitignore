@@ -32,6 +32,9 @@ yarn.lock
 .env
 .env.local
 .env.example.example
+# The keeper machine runner's live env (signing key, RPC keys, D1 token).
+# Only `.env.machine.example` is tracked.
+.env.machine
 
 # Cloudflare Worker local-dev secrets. The `.example` file is
 # committed, the populated `.dev.vars` is local-only and contains

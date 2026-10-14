@@ -1,0 +1,7 @@
+{
+  // The machine runner is typechecked in its OWN program, like bench/, so its
+  // Node `process` declaration (machine/globals.d.ts) stays out of src/**,
+  // where the Worker has no `process` and using one must still fail.
+  "extends": "../tsconfig.json",
+  "include": ["**/*.ts"]
+}

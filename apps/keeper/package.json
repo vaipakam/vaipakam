@@ -3,15 +3,17 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Vaipakam's first-party autonomous keeper Cloudflare Worker (Stage 3 PR2 + architectural-rebalance commit of the Worker split \u2014 see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Cron-driven, no HTTP surface. The single Worker that holds KEEPER_PRIVATE_KEY (staging plan \u00a72 least-privilege contract: signing key lives on exactly one Worker). Today: HF watcher loop + autonomous on-chain liquidation submission + Telegram / Push alert dispatch on HF band downgrades + daily oracle snapshot signer (OracleFacet.captureDailyPriceSnapshot, moved from agent). Also LIVE (per RangeOffersDesign.md and \u00a77 of the Stage 3 plan; this said 'Tomorrow'): the off-chain offer matcher, scheduled every cron tick, for the Phase 1 Range Orders + Lender Partial Fills system, submitting matchOffers(lenderId, borrowerId) to earn the 1% LIF matcher fee. Holds privileged secrets (KEEPER_PRIVATE_KEY, ZEROEX_API_KEY, ONEINCH_API_KEY, TG_BOT_TOKEN, PUSH_CHANNEL_PK) in the Cloudflare secret store; never serves user-facing reads. Distinct from the public reference keeper bot at `vaipakam-keeper-bot` (sibling repo) \u2014 that one is for third-party operators; this one is the project's own.",
+  "description": "Vaipakam's first-party autonomous keeper Cloudflare Worker (Stage 3 PR2 + architectural-rebalance commit of the Worker split — see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Cron-driven, no HTTP surface. The single Worker that holds KEEPER_PRIVATE_KEY (staging plan §2 least-privilege contract: signing key lives on exactly one Worker). Today: HF watcher loop + autonomous on-chain liquidation submission + Telegram / Push alert dispatch on HF band downgrades + daily oracle snapshot signer (OracleFacet.captureDailyPriceSnapshot, moved from agent). Also LIVE (per RangeOffersDesign.md and §7 of the Stage 3 plan; this said 'Tomorrow'): the off-chain offer matcher, scheduled every cron tick, for the Phase 1 Range Orders + Lender Partial Fills system, submitting matchOffers(lenderId, borrowerId) to earn the 1% LIF matcher fee. Holds privileged secrets (KEEPER_PRIVATE_KEY, ZEROEX_API_KEY, ONEINCH_API_KEY, TG_BOT_TOKEN, PUSH_CHANNEL_PK) in the Cloudflare secret store; never serves user-facing reads. Distinct from the public reference keeper bot at `vaipakam-keeper-bot` (sibling repo) — that one is for third-party operators; this one is the project's own.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "node ../indexer/scripts/deploy-shared-d1.mjs verify",
     "deploy:dry": "wrangler deploy --dry-run",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-keep-vars.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && tsc -p machine --noEmit && node scripts/check-keep-vars.mjs",
     "test": "vitest run",
-    "bench:cpu": "tsx bench/passCpu.ts"
+    "bench:cpu": "tsx bench/passCpu.ts",
+    "machine": "tsx machine/main.ts",
+    "build:machine": "esbuild machine/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/keeper-machine.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "dependencies": {
     "@pushprotocol/restapi": "^1.7.32",
@@ -22,6 +24,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "esbuild": "^0.27.7",
     "tsx": "^4.19.2",
     "typescript": "^6.0.0",
     "vitest": "^4.1.4",
