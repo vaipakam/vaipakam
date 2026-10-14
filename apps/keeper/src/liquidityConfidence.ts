@@ -406,6 +406,12 @@ async function aggregatorConfirmedTier(
   standing: RosterStanding | null,
 ): Promise<number | null> {
   if (standing === null) return null;
+  // A fully read roster with nothing enabled is not missing evidence: it is
+  // a deployment with no route a liquidation could execute through, so the
+  // asset tiers at 0 — the immediate-demotion direction — rather than
+  // keeping whatever tier it had (#2480 r6). `null` stays reserved for
+  // evidence that could not be gathered.
+  if (!standing.read.incomplete && standing.read.enabledCount === 0) return 0;
   const assetPrice = await getAssetPadPrice(client, diamond, asset);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 

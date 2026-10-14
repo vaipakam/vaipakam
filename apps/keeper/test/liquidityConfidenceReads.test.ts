@@ -88,7 +88,19 @@ const F = {
   price: fn(OracleFacetABI, 'getAssetPrice'),
   decimals: fn(erc20Abi, 'decimals'),
   adapters: fn(AdminFacetABI, 'getSwapAdapters'),
+  adapterDisabled: fn(AdminFacetABI, 'isSwapAdapterDisabled'),
+  adapterName: {
+    type: 'function',
+    name: 'adapterName',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  } as AbiFunction,
 } as const;
+
+/** One enabled adapter this keeper cannot name: a roster that is read and
+ *  non-empty, so the pass measures — but quotes nothing. */
+const VENUE = '0x00000000000000000000000000000000000000c1';
 
 const SEL = Object.fromEntries(
   Object.entries(F).map(([k, f]) => [k, toFunctionSelector(f).toLowerCase()]),
@@ -158,8 +170,12 @@ type Tally = {
 /**
  * @param failDecimalsFor token whose `decimals()` always reverts, to check that
  *        a FAILED read is not cached.
+ * @param emptyRoster the Diamond lists no swap adapter at all.
  */
-function install(failDecimalsFor?: string): { tally: Tally; restore: () => void } {
+function install(
+  failDecimalsFor?: string,
+  emptyRoster = false,
+): { tally: Tally; restore: () => void } {
   const tally: Tally = { price: [], decimals: [], adapters: 0, serialDetails: 0, batches: [] };
   const real = globalThis.fetch;
 
@@ -183,11 +199,15 @@ function install(failDecimalsFor?: string): { tally: Tally; restore: () => void 
       case SEL.paa:
         return enc(F.paa, QUOTES.map((q) => q));
       // The adapter roster, read once per tick before any probe (#2480 r2).
-      // Empty: every probe then quotes nothing, which is fine — the reads
-      // under test happen before the quotes.
+      // One venue the keeper cannot name: every probe then quotes nothing,
+      // which is fine — the reads under test happen before the quotes.
       case SEL.adapters:
         tally.adapters += 1;
-        return enc(F.adapters, []);
+        return enc(F.adapters, emptyRoster ? [] : [VENUE]);
+      case SEL.adapterDisabled:
+        return enc(F.adapterDisabled, false);
+      case SEL.adapterName:
+        return enc(F.adapterName, 'SomeVenue');
       case SEL.keeperTier:
         return enc(F.keeperTier, 1);
       case SEL.loanCount:
@@ -353,5 +373,27 @@ describe('liquidityConfidence read budget (#1896)', () => {
     expect(count(tally.decimals, QUOTES[0])).toBeGreaterThan(1);
     // And the tokens that DID answer are still cached.
     expect(count(tally.decimals, QUOTES[1])).toBeLessThanOrEqual(1);
+  });
+
+  it('tiers an asset at 0 when the Diamond lists no swap adapter (#2480 r6)', async () => {
+    // No route a liquidation could execute through is evidence, not its
+    // absence: the asset must not keep the tier it had.
+    const { tally, restore } = install(undefined, true);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let lines: string[];
+    try {
+      await run();
+      lines = log.mock.calls.map((c) => String(c[0]));
+    } finally {
+      restore();
+      spy.mockRestore();
+      log.mockRestore();
+    }
+    const tierLines = lines.filter((l) => l.includes('liq-confidence') && l.includes('asset='));
+    expect(tierLines.length).toBe(ASSETS.length);
+    for (const l of tierLines) expect(l).toMatch(/agg=0|keeperTier 1→0/);
+    // And it got there without pricing anything.
+    expect(tally.price).toEqual([]);
   });
 });

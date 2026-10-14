@@ -1002,7 +1002,7 @@ export function ForcedCloseCard({
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only
       // what this confirm actually checked.
-      const reason = noQuoteReason(route, standing.read.incomplete);
+      const reason = noQuoteReason(route, standing.read);
       return {
         message:
           reason === 'unread'

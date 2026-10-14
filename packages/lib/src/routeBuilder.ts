@@ -150,12 +150,17 @@ export type NoQuoteReason =
 
 export function noQuoteReason(
   route: Extract<CloseOutRoute, { kind: 'no-quote' }>,
-  rosterIncomplete: boolean,
+  /** The roster read the route was built from. An enabled adapter it
+   *  could not name never becomes a slot, so it has no outcome of its own;
+   *  it counts here as a venue the protocol lists that was left out
+   *  (#2480 r6) — otherwise "every venue was asked" could be claimed. */
+  roster: Pick<CloseOutRoster, 'incomplete' | 'unrecognized'>,
 ): NoQuoteReason {
-  if (rosterIncomplete) return 'unread';
+  if (roster.incomplete) return 'unread';
   const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
   const configGap = has('no-proxy') || has('unconfigured');
-  const unaskable = has('other-pools') || has('origin-bound') || has('unpriceable');
+  const unaskable =
+    has('other-pools') || has('origin-bound') || has('unpriceable') || roster.unrecognized > 0;
   const leftOut = configGap || unaskable;
   if (has('unanswered')) return leftOut ? 'unanswered-partly-reached' : 'unanswered';
   // A refused swap target was an answer with nothing this route can use,
