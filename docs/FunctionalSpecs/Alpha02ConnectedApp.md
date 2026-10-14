@@ -1410,6 +1410,19 @@ Thin-market honesty rules apply.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
+- A position row whose loan is past its grace period says so ("Past grace"),
+  distinct from a loan that is past due but still inside grace. Whether grace
+  has ended is the protocol's own answer, judged by chain time against the
+  live grace schedule, never the device clock; until that answer is read the
+  row keeps its ordinary time-based label (as it does when a re-read fails or cannot run because the device is offline, rather than repeating an earlier answer; an answer requested before the row was opened, or before the device regained focus or connectivity, is not shown until a read sent since then completes) and, whatever that label says (the device clock may be behind the chain's), says on its own visible line, independent of whatever the badge shows, that the grace answer is still being checked or is unavailable, and it is re-read periodically
+  because governance can lengthen the grace schedule and reopen repayment.
+  That answer establishes TIME eligibility only — a close-out can still be
+  refused for reasons the row does not read, such as a pause — so the row's
+  explanation says a close-out may now be possible and points at the
+  position page. The explanation is visible on the row (not only on hover)
+  and is by side: for the lender the position may now be closed out and
+  anyone may do it first; for the borrower the ordinary repay window is over
+  and the loan may be closed out against the collateral.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
@@ -1540,6 +1553,18 @@ is the borrower's own money.
   lowers the balance the fee-discount tier is measured on, so the discount may
   drop. When the app cannot tell whether the collateral is VPFI, it says that
   and gives the same caution, rather than treating unknown as "not VPFI".
+
+### Loan status and what is owed, as the page states them (#2466, #2470)
+
+- An internally matched loan is closed but not settled until its claims are
+  collected. While a claim is pending, the page says the match closed the loan
+  and that it settles once its claims are collected; it never calls the loan
+  settled before the protocol has settled it.
+- Where the page reconciles an indexed status with a live read of the chain,
+  it uses only a live read that is running and did not fail. A stopped read's
+  last answer, or an answer kept across a failed refresh, describes the loan as
+  it was, and is never allowed to override the indexed status — so a settled
+  loan is never shown as merely repaid because of an old answer.
 
 ### Forced close-out of an overdue loan
 
@@ -2325,6 +2350,21 @@ is the borrower's own money.
   definitive outcome arrives as its own notification. The grace length
   follows the protocol's configured schedule (the default one unless
   governance has set custom tiers).
+- Both parties are also told when a loan's grace window has CLOSED while the
+  loan is still open. This is a statement about TIME only: the loan's grace
+  period is over, so the time condition for a default close-out is met. It
+  does not promise that a close-out will succeed — the protocol can still
+  refuse one (for example while paused, while the network's sequencer is
+  unhealthy, or when another close-out prerequisite fails), and the notice
+  defers to the position page for what can actually be done. "Closed" means
+  what the protocol itself means by it: strictly after the due date plus the
+  loan's grace length, measured on the chain's own clock rather than the
+  indexer's, so the inbox never says the window closed before the chain
+  would agree. This reminder is created only during the
+  first week after grace ends (a loan still open after that is not
+  re-announced), once per due date, and states the fact as of the notice —
+  whether the loan was then closed out, repaid, or is still open is the
+  position page's to say.
 - For loans whose collateral has a live price, the borrower is also warned in
   the inbox when the loan's health worsens past protocol-level lines (below
   1.5, below 1.2, and below 1.05 — the last close to the 1.0 liquidation

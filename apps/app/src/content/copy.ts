@@ -773,6 +773,10 @@ const copySource = {
       maturity_7d: 'A loan was a week from its due date — open it to see where it stands.',
       maturity_1d: 'A loan was a day from its due date — open it to see where it stands.',
       grace_entered: 'A loan went past its due date — open it to see where it stands.',
+      // #2463 follow-up — stated as of the notice, like the rows above: the
+      // grace window closing is a fact that stays true; whether the loan was
+      // then closed out is the position page's to say.
+      grace_ended: 'A loan’s grace period ended — open it to see where it stands.',
       // HF-band rows (#1213 PR 2b) — the keeper's loan-health crossings.
       // Same durable-history rule: each states the dip AS OF the notice
       // ("dipped") and defers the live number to the position page.
@@ -3538,6 +3542,10 @@ const copySource = {
     owedDefaultedNoCollateral:
       'Nothing to repay anymore — this loan ended in default and was settled.',
     owedClosed: 'Nothing — this loan is closed and settled.',
+    // #2466 — an internally matched loan is closed but NOT settled until its
+    // claims are collected; `owedClosed` said "settled" while the claim
+    // button stood right below it.
+    owedInternalMatched: 'Nothing — internal matching closed this loan. It settles once its claims are collected.',
     whatNextRepaidBorrower:
       'You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.',
     whatNextRepaidLender:
@@ -4140,6 +4148,9 @@ const copySource = {
       roleLender: 'Lender',
       roleBorrower: 'Borrower',
       started: 'started',
+      // #2467 — a fill's executed rate and term, when the indexer cannot
+      // back them against the loan's initiation event.
+      termsUnknown: 'terms at the start not available',
     },
     ticket: {
       rateBpsNote: 'Rates are stored in basis points (1% = 100 bps)',
@@ -4965,6 +4976,9 @@ const copySource = {
     closed: 'Closed',
     beingSettled: 'Being settled',
     pastDue: 'Past due',
+    // #2463 follow-up — shown only when the chain says the grace period
+    // has ended (`isLoanDefaultable`), never from a client-side clock.
+    pastGrace: 'Past grace',
     dueToday: 'Due today',
     dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
   },
@@ -5347,6 +5361,25 @@ const copySource = {
   loanRow: {
     youRent: 'You rent',
     youRentOut: 'You rent out',
+    // #2463 follow-up — the line under a "Past grace" row, by side (also the
+    // badge's hover text). Grace having ended is a TIME fact; whether the
+    // close-out can run right now also depends on things this row does not
+    // read (a pause, an outage), so none says it CAN — each says it may and
+    // points at the page. Closing out is permissionless, so none says only
+    // the lender may.
+    pastGraceLender:
+      'The grace period has ended, so this position may now be closed out; its page shows whether that can be done right now. Anyone may close it out first.',
+    pastGraceBorrower:
+      'The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.',
+    pastGraceRenter:
+      'The rental and its grace period have ended; your use of the NFT ended with the rental. Anyone may now be able to close it out, which settles the rental; its page shows where it stands.',
+    // Shown as its own line on an open row while the chain's grace answer
+    // is unread or failed: the loan may already be past grace, and the row
+    // must not present its time label as the whole story.
+    graceCheckingTitle:
+      'Checking with the protocol whether this loan’s grace period has ended.',
+    graceUnknownTitle:
+      'The protocol could not be asked whether this loan’s grace period has ended, so it may already have; open the loan to see where it stands.',
   },
   settingsPage: {
     title: 'Settings',

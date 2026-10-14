@@ -209,6 +209,26 @@ test('the close-out card tracks the grace boundary for the lender', async ({
 
   // ---- After grace: the same card, a different answer ----
   const afterWarp = await launchWallet('lender', { advanced: true });
+  // The Positions row says so too (#2463 follow-up): "Past grace" on the
+  // chain's `isLoanDefaultable`, not on a client-side grace ladder.
+  await afterWarp.page.goto('/positions', { waitUntil: 'domcontentloaded' });
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-state'),
+  ).toHaveAttribute('data-state-key', 'pastGrace', { timeout: 30_000 });
+  // Its explanation is on the row itself, not only in a hover title.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-past-grace'),
+  ).toBeVisible();
+  // With the chain's answer in hand, the "still checking" line is gone.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-grace-unread'),
+  ).toHaveCount(0);
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
   });

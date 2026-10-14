@@ -3,7 +3,8 @@
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { formatBpsAsPercent, formatTokenAmount, shortAddress } from '../lib/format';
-import { loanStateView, loanStateLabel } from '../lib/loanState';
+import { loanStateView, loanStateLabel, withGraceVerdict } from '../lib/loanState';
+import { useLoanPastGrace } from '../data/pastGrace';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
@@ -26,7 +27,37 @@ export function LoanRow({
   const payout = useClaimPayoutText(claim);
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
-  const view = loanStateView(loan);
+  const timeView = loanStateView(loan);
+  // #2463 follow-up — an open row asks the chain whether grace has ended;
+  // only its `true` turns the time-based badge into "Past grace". Asked
+  // for every open loan, not only past-due ones by this device's clock,
+  // because the chain's clock is the one the contract uses.
+  const grace = useLoanPastGrace(loan.loanId, loan.status === 'active');
+  // Only a CURRENT chain answer counts; a failed, paused or offline read
+  // never re-shows the last cached one (rule in `graceVerdictFrom`).
+  const verdict = grace.verdict;
+  const view = withGraceVerdict(timeView, verdict);
+  // Any open row whose grace answer is not in hand may already be past
+  // grace — the device clock can run behind the chain's, so "On track" or
+  // "Due soon" is no safer than "Past due" here. Say the answer is pending
+  // or unavailable instead of letting the time label read as the whole
+  // lifecycle state (#2475 r6). Rendered as its own line, not inside the
+  // badge, so no badge branch (health override, health checking) can hide
+  // it (#2475 r7).
+  const graceUnreadNote =
+    loan.status === 'active' && view.labelKey !== 'pastGrace' && verdict === undefined
+      ? grace.read === 'unavailable'
+        ? copy.loanRow.graceUnknownTitle
+        : copy.loanRow.graceCheckingTitle
+      : null;
+  const pastGraceTitle =
+    view.labelKey !== 'pastGrace'
+      ? undefined
+      : loan.role === 'lender'
+        ? copy.loanRow.pastGraceLender
+        : isRental
+          ? copy.loanRow.pastGraceRenter
+          : copy.loanRow.pastGraceBorrower;
   // UX-003 — the time-based badge alone can show a reassuring green on
   // a loan hovering at the liquidation line. For active priced loans,
   // let a WORSE health state override the badge (never a better one —
@@ -75,6 +106,24 @@ export function LoanRow({
             ? copy.positions.rowRental(loan.loanId)
             : copy.positions.rowLoan(loan.loanId, formatBpsAsPercent(loan.interestRateBps))}
         </span>
+        {pastGraceTitle ? (
+          <>
+            <br />
+            {/* Visible, not only the badge's `title`: a touch screen has no
+                hover and keyboard focus lands on the row's link. */}
+            <span className="row-sub" data-testid="loan-row-past-grace">
+              {pastGraceTitle}
+            </span>
+          </>
+        ) : null}
+        {graceUnreadNote ? (
+          <>
+            <br />
+            <span className="row-sub" data-testid="loan-row-grace-unread">
+              {graceUnreadNote}
+            </span>
+          </>
+        ) : null}
         {payout ? (
           <>
             <br />
@@ -98,7 +147,14 @@ export function LoanRow({
           {loanStateLabel(view, copy.loanState)} · {copy.risk.listChecking}
         </span>
       ) : (
-        <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
+        <span
+          className={`badge badge-${view.badge}`}
+          title={pastGraceTitle}
+          data-testid="loan-row-state"
+          data-state-key={view.labelKey}
+        >
+          {loanStateLabel(view, copy.loanState)}
+        </span>
       )}
       {claim ? <span className="btn btn-primary btn-sm">{copy.claims.claim}</span> : null}
     </Link>

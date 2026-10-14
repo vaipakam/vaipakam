@@ -325,7 +325,8 @@
         "hf_warn": "Die Gesundheit eines Kredits fiel unter 1,5 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_alert": "Die Gesundheit eines Kredits fiel unter 1,2 — öffnen Sie ihn, um den Stand zu sehen.",
         "hf_critical": "Die Gesundheit eines Kredits fiel unter 1,05, nahe an der Liquidationslinie 1,0 — öffnen Sie ihn, um zu handeln.",
-        "generic": "Es gibt ein Update zu Ihrem Kredit."
+        "generic": "Es gibt ein Update zu Ihrem Kredit.",
+        "grace_ended": "Die Nachfrist eines Kredits ist abgelaufen — öffnen Sie ihn, um den Stand zu sehen."
       },
       "loanRef": "Kredit #{{loanId}} · antippen zum Anzeigen",
       "unreadBadgeTitle_zero": "{{count}} ungelesene Benachrichtigungen",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "Kreditnehmerposition · {{amount}} zu Beginn geliehen",
       "rowLent": "Kreditgeberposition · {{amount}} zu Beginn verliehen",
       "rowBorrowedAmountUnknown": "Kreditnehmerposition · der zu Beginn geliehene Betrag ist nicht verfügbar",
-      "rowLentAmountUnknown": "Kreditgeberposition · der zu Beginn verliehene Betrag ist nicht verfügbar"
+      "rowLentAmountUnknown": "Kreditgeberposition · der zu Beginn verliehene Betrag ist nicht verfügbar",
+      "owedInternalMatched": "Nichts — das interne Matching hat diesen Kredit geschlossen. Er ist abgewickelt, sobald seine Claims eingelöst sind."
     },
     "powerSurface": {
       "body": "Diese Seite zeigt die offenen Angebote für ein Paar nebeneinander und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",
@@ -1780,7 +1782,8 @@
         "loading": "Verlauf wird geladen…",
         "roleLender": "Kreditgeber",
         "roleBorrower": "Kreditnehmer",
-        "started": "gestartet"
+        "started": "gestartet",
+        "termsUnknown": "Konditionen zu Beginn nicht verfügbar"
       },
       "ticket": {
         "rateBpsNote": "Sätze werden in Basispunkten gespeichert (1% = 100 bps)",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "Fällig in {{count}} Tagen",
       "dueInDays_few": "Fällig in {{count}} Tagen",
       "dueInDays_many": "Fällig in {{count}} Tagen",
-      "dueInDays_other": "Fällig in {{count}} Tagen"
+      "dueInDays_other": "Fällig in {{count}} Tagen",
+      "pastGrace": "Nachfrist abgelaufen"
     },
     "activity": {
       "loading": "Ihre Aktivität wird geladen…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "Sie mieten",
-      "youRentOut": "Sie vermieten"
+      "youRentOut": "Sie vermieten",
+      "pastGraceLender": "Die Nachfrist ist abgelaufen, daher kann diese Position jetzt möglicherweise geschlossen werden; ihre Seite zeigt, ob das gerade möglich ist. Jeder kann sie zuerst schließen.",
+      "pastGraceBorrower": "Die Nachfrist ist abgelaufen, daher ist das reguläre Rückzahlungsfenster vorbei und jeder kann den Kredit jetzt möglicherweise gegen die Sicherheit schließen; seine Seite zeigt den Stand.",
+      "pastGraceRenter": "Die Miete und ihre Nachfrist sind abgelaufen; Ihre Nutzung des NFT endete mit der Miete. Jeder kann sie jetzt möglicherweise schließen, was die Miete abrechnet; ihre Seite zeigt den Stand.",
+      "graceCheckingTitle": "Wir fragen das Protokoll, ob die Nachfrist dieses Kredits abgelaufen ist.",
+      "graceUnknownTitle": "Das Protokoll konnte nicht gefragt werden, ob die Nachfrist dieses Kredits abgelaufen ist; sie könnte bereits abgelaufen sein. Öffnen Sie den Kredit, um den Stand zu sehen."
     },
     "settingsPage": {
       "title": "Einstellungen",

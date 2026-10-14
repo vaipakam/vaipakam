@@ -325,7 +325,8 @@
         "hf_warn": "一笔贷款的健康值跌破 1.5 — 打开查看当前状态。",
         "hf_alert": "一笔贷款的健康值跌破 1.2 — 打开查看当前状态。",
         "hf_critical": "一笔贷款的健康值跌破 1.05，接近 1.0 清算线 — 打开采取行动。",
-        "generic": "您的贷款有更新。"
+        "generic": "您的贷款有更新。",
+        "grace_ended": "一笔贷款的宽限期已结束 — 打开查看当前状态。"
       },
       "loanRef": "贷款 #{{loanId}} · 点击查看",
       "unreadBadgeTitle_zero": "{{count}} 条未读通知",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "借款头寸 · 起始借入 {{amount}}",
       "rowLent": "出借头寸 · 起始借出 {{amount}}",
       "rowBorrowedAmountUnknown": "借款头寸 · 起始借入金额暂不可用",
-      "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用"
+      "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用",
+      "owedInternalMatched": "无 — 内部撮合已结束这笔贷款。其领取完成后即结算。"
     },
     "powerSurface": {
       "body": "本页并排显示一个交易对的开放报价，并让你设定自己的利率。想一步步操作？“借款”和“出借”页面会带着说明完成同样的事。",
@@ -1780,7 +1782,8 @@
         "loading": "正在加载您的历史…",
         "roleLender": "出借人",
         "roleBorrower": "借款人",
-        "started": "已开始"
+        "started": "已开始",
+        "termsUnknown": "初始条款不可用"
       },
       "ticket": {
         "rateBpsNote": "利率以基点存储（1% = 100 bps）",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "{{count}} 天后到期",
       "dueInDays_few": "{{count}} 天后到期",
       "dueInDays_many": "{{count}} 天后到期",
-      "dueInDays_other": "{{count}} 天后到期"
+      "dueInDays_other": "{{count}} 天后到期",
+      "pastGrace": "宽限期已过"
     },
     "activity": {
       "loading": "正在加载您的活动…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "您租用",
-      "youRentOut": "您出租"
+      "youRentOut": "您出租",
+      "pastGraceLender": "宽限期已结束，因此该仓位现在可能可以平仓；其页面会显示现在是否可以操作。任何人都可能先行平仓。",
+      "pastGraceBorrower": "宽限期已结束，常规还款窗口已关闭，任何人现在都可能针对抵押品平仓该贷款；其页面会显示当前状态。",
+      "pastGraceRenter": "租赁及其宽限期已结束；你对该 NFT 的使用已随租赁结束。任何人现在都可能将其平仓，从而结算该租赁；其页面会显示当前状态。",
+      "graceCheckingTitle": "正在向协议核实该贷款的宽限期是否已结束。",
+      "graceUnknownTitle": "无法向协议核实该贷款的宽限期是否已结束，它可能已经结束；打开贷款查看当前状态。"
     },
     "settingsPage": {
       "title": "设置",

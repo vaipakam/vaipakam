@@ -325,7 +325,8 @@
         "hf_warn": "La santé d'un prêt est passée sous 1.5 — ouvrez-le pour voir où il en est.",
         "hf_alert": "La santé d'un prêt est passée sous 1.2 — ouvrez-le pour voir où il en est.",
         "hf_critical": "La santé d'un prêt est passée sous 1.05, proche de la ligne de liquidation 1.0 — ouvrez-le pour agir.",
-        "generic": "Il y a une mise à jour sur votre prêt."
+        "generic": "Il y a une mise à jour sur votre prêt.",
+        "grace_ended": "Le délai de grâce d’un prêt a pris fin — ouvrez-le pour voir où il en est."
       },
       "loanRef": "Prêt n°{{loanId}} · toucher pour voir",
       "unreadBadgeTitle_zero": "{{count}} notifications non lues",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "Position d’emprunteur · {{amount}} empruntés au départ",
       "rowLent": "Position de prêteur · {{amount}} prêtés au départ",
       "rowBorrowedAmountUnknown": "Position d’emprunteur · le montant emprunté au départ est indisponible",
-      "rowLentAmountUnknown": "Position de prêteur · le montant prêté au départ est indisponible"
+      "rowLentAmountUnknown": "Position de prêteur · le montant prêté au départ est indisponible",
+      "owedInternalMatched": "Rien — l’appariement interne a clôturé ce prêt. Il est réglé une fois ses réclamations encaissées."
     },
     "powerSurface": {
       "body": "Cette page affiche côte à côte les offres ouvertes d’une paire et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",
@@ -1780,7 +1782,8 @@
         "loading": "Chargement de votre historique…",
         "roleLender": "Prêteur",
         "roleBorrower": "Emprunteur",
-        "started": "démarré"
+        "started": "démarré",
+        "termsUnknown": "conditions de départ indisponibles"
       },
       "ticket": {
         "rateBpsNote": "Les taux sont stockés en points de base (1 % = 100 bps)",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "Échéance dans {{count}} jours",
       "dueInDays_few": "Échéance dans {{count}} jours",
       "dueInDays_many": "Échéance dans {{count}} jours",
-      "dueInDays_other": "Échéance dans {{count}} jours"
+      "dueInDays_other": "Échéance dans {{count}} jours",
+      "pastGrace": "Délai de grâce écoulé"
     },
     "activity": {
       "loading": "Chargement de votre activité…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "Vous louez",
-      "youRentOut": "Vous mettez en location"
+      "youRentOut": "Vous mettez en location",
+      "pastGraceLender": "Le délai de grâce a pris fin : cette position pourrait désormais être clôturée ; sa page indique si c’est possible dès maintenant. N’importe qui peut la clôturer en premier.",
+      "pastGraceBorrower": "Le délai de grâce a pris fin : la fenêtre de remboursement ordinaire est close et n’importe qui pourrait désormais clôturer le prêt contre la garantie ; sa page indique où il en est.",
+      "pastGraceRenter": "La location et son délai de grâce ont pris fin ; votre usage du NFT a pris fin avec la location. N’importe qui pourrait désormais la clôturer, ce qui règle la location ; sa page indique où elle en est.",
+      "graceCheckingTitle": "Nous demandons au protocole si le délai de grâce de ce prêt a pris fin.",
+      "graceUnknownTitle": "Le protocole n’a pas pu être interrogé sur la fin du délai de grâce de ce prêt ; il a peut-être déjà pris fin. Ouvrez le prêt pour voir où il en est."
     },
     "settingsPage": {
       "title": "Paramètres",

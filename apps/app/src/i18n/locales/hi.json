@@ -325,7 +325,8 @@
         "hf_warn": "एक loan की health 1.5 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_alert": "एक loan की health 1.2 से नीचे गई — स्थिति देखने के लिए खोलें।",
         "hf_critical": "एक loan की health 1.05 से नीचे गई, 1.0 liquidation line के करीब — action लेने के लिए खोलें।",
-        "generic": "आपके loan पर update है।"
+        "generic": "आपके loan पर update है।",
+        "grace_ended": "एक loan की grace period ख़त्म हो गई — उसकी स्थिति देखने के लिए खोलें।"
       },
       "loanRef": "Loan #{{loanId}} · देखने के लिए tap करें",
       "unreadBadgeTitle_zero": "{{count}} unread notifications",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "Borrowing position · शुरुआत में {{amount}} borrow किया गया",
       "rowLent": "Lending position · शुरुआत में {{amount}} lend किया गया",
       "rowBorrowedAmountUnknown": "Borrowing position · शुरुआत में borrow किया गया amount उपलब्ध नहीं है",
-      "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है"
+      "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है",
+      "owedInternalMatched": "कुछ नहीं — internal matching ने यह loan बंद कर दिया। इसके claims collect होते ही यह settle हो जाता है।"
     },
     "powerSurface": {
       "body": "यह पेज एक जोड़ी के खुले offers साथ-साथ दिखाता है और आपको अपनी दर तय करने देता है। कदम-दर-कदम चलना पसंद है? Borrow और Lend पेज यही काम समझाते हुए करते हैं।",
@@ -1780,7 +1782,8 @@
         "loading": "आपकी history load हो रही है…",
         "roleLender": "Lender",
         "roleBorrower": "Borrower",
-        "started": "started"
+        "started": "started",
+        "termsUnknown": "शुरुआती terms उपलब्ध नहीं"
       },
       "ticket": {
         "rateBpsNote": "Rates basis points में store होती हैं (1% = 100 bps)",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "{{count}} days में due",
       "dueInDays_few": "{{count}} days में due",
       "dueInDays_many": "{{count}} days में due",
-      "dueInDays_other": "{{count}} days में due"
+      "dueInDays_other": "{{count}} days में due",
+      "pastGrace": "ग्रेस अवधि समाप्त"
     },
     "activity": {
       "loading": "आपकी गतिविधि लोड हो रही है…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "आप rent करते हैं",
-      "youRentOut": "आप rent पर देते हैं"
+      "youRentOut": "आप rent पर देते हैं",
+      "pastGraceLender": "Grace period ख़त्म हो गई है, इसलिए शायद अब इस position को close out किया जा सके; अभी यह हो सकता है या नहीं, यह उसका page बताता है। कोई भी इसे पहले close out कर सकता है।",
+      "pastGraceBorrower": "Grace period ख़त्म हो गई है, इसलिए सामान्य repay window समाप्त है और शायद अब कोई भी collateral के बदले loan को close out कर सके; उसका page उसकी स्थिति बताता है।",
+      "pastGraceRenter": "Rental और उसकी grace period ख़त्म हो गई हैं; NFT का आपका उपयोग rental के साथ ही ख़त्म हो गया। शायद अब कोई भी इसे close out कर सके, जिससे rental settle हो जाएगा; उसका page उसकी स्थिति बताता है।",
+      "graceCheckingTitle": "Protocol से पूछा जा रहा है कि इस loan की grace period ख़त्म हुई या नहीं।",
+      "graceUnknownTitle": "Protocol से यह नहीं पूछा जा सका कि इस loan की grace period ख़त्म हुई या नहीं, इसलिए शायद वह ख़त्म हो चुकी हो; स्थिति देखने के लिए loan खोलें।"
     },
     "settingsPage": {
       "title": "Settings",

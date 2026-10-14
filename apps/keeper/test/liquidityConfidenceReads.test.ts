@@ -35,11 +35,13 @@ import {
   type AbiFunction,
 } from 'viem';
 import {
+  AdminFacetABI,
   ConfigFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
   OracleFacetABI,
 } from '@vaipakam/contracts/abis';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { MULTICALL3_ADDRESS } from '../src/multicall3';
 
 const AGGREGATE3 = {
@@ -86,7 +88,33 @@ const F = {
   details: fn(LoanFacetABI, 'getLoanDetails'),
   price: fn(OracleFacetABI, 'getAssetPrice'),
   decimals: fn(erc20Abi, 'decimals'),
+  adapters: fn(AdminFacetABI, 'getSwapAdapters'),
+  adapterDisabled: fn(AdminFacetABI, 'isSwapAdapterDisabled'),
+  adapterName: {
+    type: 'function',
+    name: 'adapterName',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  } as AbiFunction,
 } as const;
+
+/** One enabled adapter this keeper cannot name: a roster that is read and
+ *  non-empty, so the pass measures — but quotes nothing. */
+const VENUE = '0x00000000000000000000000000000000000000c1';
+
+/** Base Sepolia's declared testnet mock adapter, and what it reads. */
+const MOCK = (
+  getDeployment(84532)!.testnetMocks!.mockSwapAdapter as string
+).toLowerCase();
+const MOCK_SEL = {
+  shouldRevert: toFunctionSelector('shouldRevert()').toLowerCase(),
+  restrictedTo: toFunctionSelector('restrictedTo()').toLowerCase(),
+  outputMultiplierBps: toFunctionSelector('outputMultiplierBps()').toLowerCase(),
+  tokenUsdPrice8: toFunctionSelector('tokenUsdPrice8(address)').toLowerCase(),
+  balanceOf: toFunctionSelector('balanceOf(address)').toLowerCase(),
+};
+const word = (v: bigint) => `0x${v.toString(16).padStart(64, '0')}`;
 
 const SEL = Object.fromEntries(
   Object.entries(F).map(([k, f]) => [k, toFunctionSelector(f).toLowerCase()]),
@@ -145,6 +173,8 @@ type Tally = {
   price: string[];
   /** decimals() calls, by the token they were sent to (lowercased). */
   decimals: string[];
+  /** getSwapAdapters calls — the roster, once per chain tick. */
+  adapters: number;
   /** standalone (un-batched) getLoanDetails calls. */
   serialDetails: number;
   /** aggregate3 calls, and the selectors they carried. */
@@ -154,9 +184,13 @@ type Tally = {
 /**
  * @param failDecimalsFor token whose `decimals()` always reverts, to check that
  *        a FAILED read is not cached.
+ * @param roster the Diamond's adapter list (default: one unnamed venue).
  */
-function install(failDecimalsFor?: string): { tally: Tally; restore: () => void } {
-  const tally: Tally = { price: [], decimals: [], serialDetails: 0, batches: [] };
+function install(
+  failDecimalsFor?: string,
+  roster: string[] = [VENUE],
+): { tally: Tally; restore: () => void } {
+  const tally: Tally = { price: [], decimals: [], adapters: 0, serialDetails: 0, batches: [] };
   const real = globalThis.fetch;
 
   const answer = (to: string, data: string): string | null => {
@@ -178,6 +212,27 @@ function install(failDecimalsFor?: string): { tally: Tally; restore: () => void 
         ]);
       case SEL.paa:
         return enc(F.paa, QUOTES.map((q) => q));
+      // The adapter roster, read once per tick before any probe (#2480 r2).
+      // One venue the keeper cannot name: every probe then quotes nothing,
+      // which is fine — the reads under test happen before the quotes.
+      case SEL.adapters:
+        tally.adapters += 1;
+        return enc(F.adapters, roster);
+      case SEL.adapterDisabled:
+        return enc(F.adapterDisabled, false);
+      case SEL.adapterName:
+        return enc(F.adapterName, to === MOCK ? 'Mock' : 'SomeVenue');
+      // The testnet mock: live, unrestricted, 1:1, funded — it would pay.
+      case MOCK_SEL.shouldRevert:
+        return to === MOCK ? word(0n) : null;
+      case MOCK_SEL.restrictedTo:
+        return to === MOCK ? word(0n) : null;
+      case MOCK_SEL.outputMultiplierBps:
+        return to === MOCK ? word(10_000n) : null;
+      case MOCK_SEL.tokenUsdPrice8:
+        return to === MOCK ? word(0n) : null;
+      case MOCK_SEL.balanceOf:
+        return word(10n ** 30n);
       case SEL.keeperTier:
         return enc(F.keeperTier, 1);
       case SEL.loanCount:
@@ -314,7 +369,11 @@ describe('liquidityConfidence read budget (#1896)', () => {
       );
     }
 
-    // 4. The pass still did its work — a change that reduced counts by not
+    // 4. The adapter roster is read ONCE for the chain's tick, not once per
+    //    (asset x quote token x size) probe (#2480 r2).
+    expect(tally.adapters).toBe(1);
+
+    // 5. The pass still did its work — a change that reduced counts by not
     //    running would satisfy everything above.
     expect(tally.price.length).toBeGreaterThan(0);
   });
@@ -339,5 +398,48 @@ describe('liquidityConfidence read budget (#1896)', () => {
     expect(count(tally.decimals, QUOTES[0])).toBeGreaterThan(1);
     // And the tokens that DID answer are still cached.
     expect(count(tally.decimals, QUOTES[1])).toBeLessThanOrEqual(1);
+  });
+
+  it('tiers an asset at 0 when the Diamond lists no swap adapter (#2480 r6)', async () => {
+    // No route a liquidation could execute through is evidence, not its
+    // absence: the asset must not keep the tier it had.
+    const { tally, restore } = install(undefined, []);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let lines: string[];
+    try {
+      await run();
+      lines = log.mock.calls.map((c) => String(c[0]));
+    } finally {
+      restore();
+      spy.mockRestore();
+      log.mockRestore();
+    }
+    const tierLines = lines.filter((l) => l.includes('liq-confidence') && l.includes('asset='));
+    expect(tierLines.length).toBe(ASSETS.length);
+    for (const l of tierLines) expect(l).toMatch(/agg=0|keeperTier 1→0/);
+    // And it got there without pricing anything.
+    expect(tally.price).toEqual([]);
+  });
+
+  it('never tiers on the testnet mock adapter (#2480 r7)', async () => {
+    // The mock pays a fixed, prefunded amount; that is not market depth.
+    const { restore } = install(undefined, [MOCK]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let lines: string[];
+    try {
+      await run();
+      lines = log.mock.calls.map((c) => String(c[0]));
+    } finally {
+      restore();
+      spy.mockRestore();
+      log.mockRestore();
+    }
+    // A mock-only roster lists no real market, so every asset tiers at 0
+    // rather than keeping its tier (#2480 r8).
+    const tierLines = lines.filter((x) => x.includes('liq-confidence') && x.includes('asset='));
+    expect(tierLines.length).toBe(ASSETS.length);
+    for (const l of tierLines) expect(l).toMatch(/agg=0|keeperTier 1→0/);
   });
 });

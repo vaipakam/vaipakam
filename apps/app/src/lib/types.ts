@@ -46,6 +46,45 @@ export const LIVE_STATUS_TO_INDEXED = {
  *  #2373 r4 — one rule for the page's action gate AND for the claim reads
  *  that feed its payout, so the payout is never composed from a status the
  *  page has already moved past. */
+/** #2470 — the live status the page may reconcile with, or `undefined`.
+ *
+ *  Only a read that is RUNNING and HEALTHY counts. The page reads the live
+ *  status only while the indexed row is still open (active or in the
+ *  fallback); once the indexer catches up to a terminal status the query
+ *  stops, and React Query keeps its last result — a pre-transition snapshot.
+ *  Reconciling with that would map an old `Repaid` over an indexed `settled`
+ *  and regress the page until a reload.
+ *
+ *  #2477 r1 — "healthy" is more than `!isError`. React Query keeps the last
+ *  data, with `isError` still false, while a query is PAUSED (offline) and
+ *  while a failed attempt waits for its retry (`failureCount > 0`). Both are
+ *  the same stale snapshot, so both are refused. Same gate as the page's
+ *  amount fold (#2461). */
+export interface LiveReadState {
+  enabled: boolean;
+  isError: boolean;
+  isPaused: boolean;
+  failureCount: number;
+}
+
+/** Whether a live read's data describes the chain NOW: the query is
+ *  running, and its last attempt neither failed, is retrying, nor is
+ *  paused. */
+export function isLiveReadUsable(read: LiveReadState): boolean {
+  return read.enabled && !read.isError && !read.isPaused && read.failureCount === 0;
+}
+
+/** The live read's data while it is usable, `undefined` otherwise.
+ *
+ *  #2477 r2 — the page takes its live loan read through this ONCE and every
+ *  status-bearing use reads the result: the reconciliation, the amount fold,
+ *  the reopened-loan predicate, the take-back-collateral card and its
+ *  ceiling, the sale-hold confirmation. Gating each consumer separately is
+ *  how one of them kept trusting a paused read after the others stopped. */
+export function usableLiveData<T>(read: LiveReadState & { data: T | undefined }): T | undefined {
+  return isLiveReadUsable(read) ? read.data : undefined;
+}
+
 export function reconcileIndexedStatus<S extends string>(
   indexed: S,
   live: number | undefined,

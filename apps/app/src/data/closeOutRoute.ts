@@ -34,134 +34,45 @@
  * close-out then succeeds into the protocol's full-collateral fallback.
  * The card says so; this module only builds the list.
  */
-import { encodeFunctionData, toEventSelector, type Address, type Hex, type PublicClient } from 'viem';
+import type { Address, PublicClient } from 'viem';
 import {
-  packAggregatorData,
-  packUniV3Data,
-  parseOneInchQuote,
-  parseZeroExQuote,
-  quoteTestnetMock,
-  quoteUniV3Tiers,
-  rankRoutes,
-  univ3AdapterMatchesQuoter,
-  readSwapAdapterEntries,
-  resolveAdapterRoster,
-  TESTNET_MOCK_DATA,
-  UNIV3_VENUES,
-  type AdapterCall,
-  type AdapterRoster,
-  type RosterSlot,
-  type RouteCandidate,
-  type SwapVenueKind,
-} from '@vaipakam/lib/swapRoutes';
+  aggregatorAnswerForStatus,
+  buildCloseOutRoute as buildSharedRoute,
+  classifySlots as classifySharedSlots,
+  readCloseOutRoster,
+  routePosture,
+  type AggregatorAnswer,
+  type AggregatorSource,
+  type ClassifiedSlot,
+  type CloseOutRoster,
+  type CloseOutRoute,
+  type CloseOutSale,
+  type RoutePosture,
+} from '@vaipakam/lib/routeBuilder';
+import type { AdapterRoster } from '@vaipakam/lib/swapRoutes';
 
-/** What is being sold: the loan's whole collateral, for its principal
- *  asset — the amounts `triggerDefault` passes to the failover. */
-export interface CloseOutSale {
-  sellToken: Address;
-  buyToken: Address;
-  sellAmount: bigint;
-}
-
-/**
- * What became of one adapter slot when the confirm asked it — one value
- * per slot, so the sentence the card shows is derived from what actually
- * happened to every venue rather than from flags each path remembered to
- * set (#2463 round 9; rounds 2–8 each found a path that folded "could not
- * tell" into "no price").
- *
- *  - `quoted` — produced at least one candidate.
- *  - `declined` — the venue ANSWERED and had nothing usable: no route, no
- *    pool at any tier, a target its adapter does not allow, a mock that
- *    would not pay.
- *  - `unanswered` — the app never got an answer it could judge: a timeout,
- *    transport failure, rate limit or 5xx, a malformed body, or a failed
- *    read of something the route depends on.
- *  - `no-proxy` — an aggregator this deployment has no quote proxy for, so
- *    it was not asked.
- *  - `unconfigured` — the quote proxy answered that it has no key for it.
- *  - `origin-bound` — 0x, which this app does not ask: see `classifySlots`.
- *  - `other-pools` — a UniV3 adapter whose router belongs to a different
- *    V3 factory from the quoter this app knows, so this app cannot price it.
- *  - `unpriceable` — a venue this app has no way to price on this chain at
- *    all (no quoter for it here, or a kind it does not quote).
- */
-export type SlotOutcome =
-  | 'quoted'
-  | 'declined'
-  | 'unanswered'
-  | 'no-proxy'
-  | 'unconfigured'
-  | 'origin-bound'
-  | 'other-pools'
-  | 'unpriceable';
-
-export type CloseOutRoute =
-  /** Something to send. `outcomes` covers every slot, as for `no-quote`:
-   *  a venue that did not answer is a back-up this route does not have,
-   *  and the confirm says so (#2463 round 15). */
-  | {
-      kind: 'route';
-      calls: AdapterCall[];
-      venues: SwapVenueKind[];
-      outcomes: { kind: SwapVenueKind; outcome: SlotOutcome }[];
-    }
-  /** Nothing to send. `outcomes` says, per adapter slot, why. */
-  | {
-      kind: 'no-quote';
-      outcomes: { kind: SwapVenueKind; outcome: SlotOutcome }[];
-    };
-
-/**
- * Why a confirm found nothing to send — the ONE place the no-quote message
- * is decided, so each sentence claims only what was actually checked.
- *
- *  - `unread` — some adapter could not be identified, so it was never asked.
- *  - `unanswered` — at least one venue gave no answer the app could judge.
- *  - `unanswered-partly-reached` — the same, and some venue the protocol
- *    lists was also left out, which a retry alone will not change.
- *  - `unconfigured` — nothing declined, and everything left out was left
- *    out for want of the quote proxy or its key.
- *  - `unreachable` — nothing declined, and something left out cannot be
- *    asked from this app at all.
- *  - `partly-reached` — the venues asked declined, but others the protocol
- *    lists were left out.
- *  - `declined` — every venue was asked and every one declined.
- */
-export type NoQuoteReason =
-  | 'unread'
-  | 'unanswered'
-  | 'unanswered-partly-reached'
-  | 'unconfigured'
-  | 'unreachable'
-  | 'partly-reached'
-  | 'declined';
-
-export function noQuoteReason(
-  route: Extract<CloseOutRoute, { kind: 'no-quote' }>,
-  rosterIncomplete: boolean,
-): NoQuoteReason {
-  if (rosterIncomplete) return 'unread';
-  const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
-  const configGap = has('no-proxy') || has('unconfigured');
-  const unaskable = has('other-pools') || has('origin-bound') || has('unpriceable');
-  const leftOut = configGap || unaskable;
-  if (has('unanswered')) return leftOut ? 'unanswered-partly-reached' : 'unanswered';
-  if (!has('declined')) {
-    return configGap && !unaskable ? 'unconfigured' : 'unreachable';
-  }
-  return leftOut ? 'partly-reached' : 'declined';
-}
-
-/**
- * Whether a route about to be sent was built without hearing from some
- * venue the app did ask — so a back-up that venue might have offered is
- * unknown, not absent. Venues left out for a standing reason are not this:
- * the card already says what the app cannot ask.
- */
-export function routeMissingAnswers(route: Extract<CloseOutRoute, { kind: 'route' }>): boolean {
-  return route.outcomes.some((o) => o.outcome === 'unanswered');
-}
+// The builder itself is shared with the keeper (#2468) and lives in
+// `@vaipakam/lib/routeBuilder`. This module is the app's side of it: how
+// the app reaches the aggregators (through the agent's key-holding proxy,
+// never 0x — see `SlotAskability` there), and the card's standing read.
+export {
+  noQuoteReason,
+  previewCloseOut,
+  readCloseOutRoster,
+  routeMissingAnswers,
+  routePosture,
+  SWAP_ADAPTER_SUCCEEDED_TOPIC,
+  SWAP_ALL_ADAPTERS_FAILED_TOPIC,
+  type ClassifiedSlot,
+  type CloseOutPreview,
+  type CloseOutRoster,
+  type CloseOutRoute,
+  type CloseOutSale,
+  type NoQuoteReason,
+  type RoutePosture,
+  type SlotAskability,
+  type SlotOutcome,
+} from '@vaipakam/lib/routeBuilder';
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
 export function agentQuoteOrigin(): string | null {
@@ -200,159 +111,49 @@ export async function readQuoteProxyReadiness(
 }
 
 /**
- * Whether this app can ask one adapter slot for a price at all — decided
- * from facts that hold for the visit, never from a quote.
- *
- * THE ONE RULE for askability (#2463 round 13). The card's posture and the
- * confirm's route both read it, so the card can no longer offer a button
- * on a slot the confirm is certain to skip: rounds 11, 12 and 13 each found
- * one such slot (a Safe asking 0x, a wallet origin never read, a UniV3
- * router on another factory), because the card judged availability from
- * the roster's kinds while the confirm judged each slot.
- *
- *  - `askable` — the confirm will ask it for a price.
- *  - `no-proxy` — an aggregator, and this deployment has no quote proxy.
- *  - `unconfigured` — an aggregator the quote proxy says it holds no key
- *    for (round 15: a proxy URL alone used to count as askable).
- *  - `origin-bound` — 0x. Its quotes can bind liquidity to the account
- *    that ORIGINATES the transaction, and this app cannot know that
- *    account for every wallet it supports: a Safe's transaction is sent by
- *    an owner or a relayer, a smart account's by a bundler, and an
- *    undeployed smart account has no code to tell it from an EOA. Rounds
- *    10 to 14 each found another wallet shape a per-wallet check got
- *    wrong, so 0x is not asked at all rather than asked on a guess (#2463
- *    round 14, root fix). 1inch and Uniswap V3 bind to no origin.
- *  - `other-pools` — a UniV3 adapter whose router is on another factory.
- *  - `unpriceable` — no way to price this kind on this chain.
- *  - `unread` — a fact this depends on could not be read.
+ * The app's {@link AggregatorSource}: 1inch through the agent's proxy when
+ * it holds a key, 0x never (`origin-bound` — this app cannot name the
+ * transaction's originating account for every wallet it supports).
  */
-export type SlotAskability =
-  | 'askable'
-  | 'no-proxy'
-  | 'unconfigured'
-  | 'origin-bound'
-  | 'other-pools'
-  | 'unpriceable'
-  | 'unread';
-
-export interface ClassifiedSlot {
-  kind: SwapVenueKind;
-  slot: RosterSlot;
-  askability: SlotAskability;
+export function agentAggregatorSource(
+  quoteProxy: QuoteProxyReadiness,
+  agentOrigin: string | null,
+  fetchImpl: typeof fetch = fetch,
+): AggregatorSource {
+  return {
+    askability(kind) {
+      if (kind === 'zeroex') return 'origin-bound';
+      if (quoteProxy === 'absent') return 'no-proxy';
+      if (quoteProxy === 'unread') return 'unread';
+      return quoteProxy.oneinch ? 'askable' : 'unconfigured';
+    },
+    quote(kind, req) {
+      if (agentOrigin === null) return Promise.resolve('unconfigured');
+      return agentQuote(fetchImpl, agentOrigin, kind, {
+        chainId: req.chainId,
+        sellToken: req.sellToken,
+        buyToken: req.buyToken,
+        sellAmount: req.sellAmount.toString(),
+        taker: req.taker,
+        slippageBps: req.slippageBps,
+      });
+    },
+  };
 }
 
-/** The roster's kinds in the order the confirm asks them. */
-const VENUE_ORDER: readonly SwapVenueKind[] = [
-  'zeroex',
-  'oneinch',
-  'univ3',
-  'balancerv2',
-  'testnetMock',
-];
-
-export async function classifySlots(deps: {
+/** Every slot's askability, for this app. */
+export function classifySlots(deps: {
   client: Pick<PublicClient, 'readContract'>;
   chainId: number;
   roster: AdapterRoster;
   quoteProxy: QuoteProxyReadiness;
 }): Promise<ClassifiedSlot[]> {
-  const { client, chainId, roster, quoteProxy } = deps;
-  const judge = async (kind: SwapVenueKind, slot: RosterSlot): Promise<SlotAskability> => {
-    switch (kind) {
-      case 'zeroex':
-        return 'origin-bound';
-      case 'oneinch':
-        if (quoteProxy === 'absent') return 'no-proxy';
-        if (quoteProxy === 'unread') return 'unread';
-        return quoteProxy.oneinch ? 'askable' : 'unconfigured';
-      case 'univ3': {
-        if (UNIV3_VENUES[chainId] === undefined) return 'unpriceable';
-        // The adapter's router is governance's choice; price it only where
-        // it trades the same pools as the quoter this app knows.
-        const match = await univ3AdapterMatchesQuoter(client, slot.address, chainId).catch(
-          () => 'unanswered' as const,
-        );
-        return match === 'match' ? 'askable' : match === 'mismatch' ? 'other-pools' : 'unread';
-      }
-      case 'testnetMock':
-        return 'askable';
-      default:
-        return 'unpriceable';
-    }
-  };
-  const slots = VENUE_ORDER.flatMap((kind) => (roster[kind] ?? []).map((slot) => ({ kind, slot })));
-  return Promise.all(
-    slots.map(async ({ kind, slot }) => ({ kind, slot, askability: await judge(kind, slot) })),
-  );
-}
-
-/** One read of a Diamond's adapter list. */
-export interface CloseOutRoster {
-  roster: AdapterRoster;
-  /** True when some adapter's name or disabled flag could not be read.
-   *  Such an entry is left out of `roster` — an unread venue is not one to
-   *  send — but it also means an empty result is not proof that no usable
-   *  venue exists, only that none could be identified. */
-  incomplete: boolean;
-  /** How many adapters the Diamond lists whose disabled flag was READ as
-   *  false — of any kind, including ones this app cannot name. Zero, with
-   *  nothing unread, means the contract itself has no venue to try:
-   *  `triggerDefault` reverts `NoEnabledSwapRoute` for every caller,
-   *  operator included, until governance enables one. */
-  enabledCount: number;
-}
-
-/**
- * Where a needs-route close-out stands on this chain, as ONE derived
- * value (#2463 round 6). Every card body and confirm-time message keys off
- * this rather than re-deriving its own subset of the conditions, which is
- * how three rounds of findings each found a sentence claiming more than
- * the roster showed.
- *
- * - `available` — at least one slot `classifySlots` judged askable.
- * - `unread` — some entry, or a fact a slot's askability depends on, could
- *   not be read, and nothing askable was found; absence is not proven.
- * - `no-enabled-venue` — the list was read in full and no adapter is
- *   enabled (or none is registered). Nobody can close the loan by sale.
- * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
- *   but this deployment has no quote proxy to ask it through, or the
- *   proxy holds no key for it.
- * - `unsupported` — enabled venues exist, none this app can ask from
- *   here (of a kind it cannot price, or 0x, which it does not ask);
- *   another caller with its own route can still close it.
- */
-export type RoutePosture =
-  | 'available'
-  | 'unread'
-  | 'no-enabled-venue'
-  | 'proxy-unconfigured'
-  | 'unsupported';
-
-export function routePosture(read: CloseOutRoster, slots: readonly ClassifiedSlot[]): RoutePosture {
-  const has = (a: SlotAskability) => slots.some((x) => x.askability === a);
-  if (has('askable')) return 'available';
-  if (read.incomplete || has('unread')) return 'unread';
-  if (read.enabledCount === 0) return 'no-enabled-venue';
-  if (has('no-proxy') || has('unconfigured')) return 'proxy-unconfigured';
-  return 'unsupported';
-}
-
-/** Read the roster for one chain's Diamond. */
-export async function readCloseOutRoster(
-  client: Pick<PublicClient, 'readContract'>,
-  diamond: Address,
-  testnetMockAdapter: Address | undefined,
-): Promise<CloseOutRoster> {
-  const entries = await readSwapAdapterEntries(client, diamond);
-  return {
-    roster: resolveAdapterRoster(entries, { testnetMockAdapter }),
-    // A disabled entry's name is irrelevant — it is skipped either way —
-    // so only an entry that might be a usable venue makes the read partial.
-    incomplete: entries.some(
-      (e) => e.disabled === undefined || (e.disabled === false && e.name === undefined),
-    ),
-    enabledCount: entries.filter((e) => e.disabled === false).length,
-  };
+  return classifySharedSlots({
+    client: deps.client,
+    chainId: deps.chainId,
+    roster: deps.roster,
+    aggregators: agentAggregatorSource(deps.quoteProxy, null),
+  });
 }
 
 /** Everything the posture is derived from, read together. */
@@ -393,36 +194,10 @@ export async function readRouteStanding(deps: {
 
 const QUOTE_TIMEOUT_MS = 8_000;
 
-/** `ConfigFacet.getLiquidationConfig` — the EFFECTIVE values, with the
- *  defaults applied for any knob governance left unset. */
-const LIQUIDATION_CONFIG_ABI = [
-  {
-    type: 'function',
-    name: 'getLiquidationConfig',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [
-      { name: 'handlingFeeBps', type: 'uint256' },
-      { name: 'maxSlippageBps', type: 'uint256' },
-      { name: 'maxIncentiveBps', type: 'uint256' },
-    ],
-  },
-] as const;
-
-const SWAP_TARGET_ALLOWED_ABI = [
-  {
-    type: 'function',
-    name: 'swapTargetAllowed',
-    stateMutability: 'view',
-    inputs: [{ type: 'address' }],
-    outputs: [{ type: 'bool' }],
-  },
-] as const;
-
 /** The agent's answer: the aggregator's body, "this deployment has no key
  *  for that aggregator", the aggregator answering with no route, or no
  *  answer the app can judge. */
-type AgentAnswer = { body: unknown } | 'unconfigured' | 'declined' | 'unanswered';
+type AgentAnswer = AggregatorAnswer;
 
 async function agentQuote(
   fetchImpl: typeof fetch,
@@ -454,12 +229,7 @@ async function agentQuote(
       const err = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
       if (typeof err === 'string' && err.endsWith('-not-configured')) return 'unconfigured';
     }
-    // A rejected credential is the deployment's configuration, not the
-    // market: it stays wrong until an operator replaces the key.
-    if (res.status === 401 || res.status === 403) return 'unconfigured';
-    // Any other 4xx except a rate limit is the aggregator answering — no
-    // route for this pair or size. A 429 or 5xx is no answer at all.
-    return res.status >= 400 && res.status < 500 && res.status !== 429 ? 'declined' : 'unanswered';
+    return aggregatorAnswerForStatus(res.status);
   } catch {
     return 'unanswered';
   } finally {
@@ -467,264 +237,24 @@ async function agentQuote(
   }
 }
 
-/**
- * Ask every venue this app can reach for a price on this sale, and rank
- * what comes back into the try-list.
- *
- * Built fresh each time it is called: aggregator calldata is quoted for a
- * moment and does not keep. Each aggregator is quoted with ITS ADAPTER as
- * the taker: the adapter pulls the collateral from the Diamond and calls
- * the swap target itself, so calldata quoted for the Diamond would be for
- * a caller that never makes the call.
- */
-export async function buildCloseOutRoute(deps: {
+/** Ask every slot this app can reach for a price on this sale, and rank
+ *  the try-list — the shared builder, with the agent's proxy as the source. */
+export function buildCloseOutRoute(deps: {
   client: Pick<PublicClient, 'readContract' | 'call'>;
   chainId: number;
   diamond: Address;
-  /** `classifySlots`' answer for this confirm: only `askable` slots are
-   *  asked, and every other slot is recorded as an outcome. */
   slots: readonly ClassifiedSlot[];
   sale: CloseOutSale;
   agentOrigin: string | null;
   fetchImpl?: typeof fetch;
 }): Promise<CloseOutRoute> {
-  const { client, chainId, diamond, sale, agentOrigin } = deps;
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  // Every enabled instance of a venue is asked, in the Diamond's order:
-  // two adapters of one kind (an adapter replacement in progress) each
-  // have their own taker and allowlist, so one refusing says nothing
-  // about the other.
-  const slots = deps.slots.filter((s) => s.askability === 'askable');
-  type Attempt = { outcome: SlotOutcome; candidates: RouteCandidate[] };
-  const none = (outcome: SlotOutcome): Attempt => ({ outcome, candidates: [] });
-
-  // The aggregators are quoted with the protocol's OWN slippage ceiling, read
-  // from the Diamond, not with the proxy's default: calldata built for a
-  // tighter limit than the protocol allows can revert on movement the
-  // oracle floor would accept, and send the close-out into the fallback for
-  // nothing. Unread, no aggregator is asked: a quote built on a guessed
-  // limit is not one this app can stand behind.
-  const needsSlippage = slots.some((s) => s.kind === 'zeroex' || s.kind === 'oneinch');
-  let slippageBps: number | null = null;
-  if (needsSlippage) {
-    try {
-      const [, maxSlippageBps] = await client.readContract({
-        address: diamond,
-        abi: LIQUIDATION_CONFIG_ABI,
-        functionName: 'getLiquidationConfig',
-      });
-      slippageBps = Number(maxSlippageBps);
-    } catch {
-      slippageBps = null;
-    }
-  }
-
-  const attempt = async ({ kind, slot }: (typeof slots)[number]): Promise<Attempt> => {
-    const adapterIdx = BigInt(slot.idx);
-    switch (kind) {
-      case 'zeroex':
-      case 'oneinch': {
-        if (slippageBps === null) return none('unanswered');
-        const answer = await agentQuote(fetchImpl, agentOrigin!, kind, {
-          chainId,
-          sellToken: sale.sellToken,
-          buyToken: sale.buyToken,
-          sellAmount: sale.sellAmount.toString(),
-          taker: slot.address,
-          slippageBps,
-        });
-        if (typeof answer === 'string') return none(answer);
-        const q =
-          kind === 'zeroex' ? parseZeroExQuote(answer.body) : parseOneInchQuote(answer.body);
-        // A well-formed answer with no usable route in it is a decline
-        // (0x answers 200 with no liquidity, for one).
-        if (!q) return none('declined');
-        // The adapter calls only swap targets governance has allowed on it
-        // (`AggregatorAdapterBase.swapTargetAllowed`). A quote naming any
-        // other target — a router the aggregator has rotated to — is an
-        // attempt the adapter is certain to refuse.
-        let allowed;
-        try {
-          allowed = await client.readContract({
-            address: slot.address,
-            abi: SWAP_TARGET_ALLOWED_ABI,
-            functionName: 'swapTargetAllowed',
-            args: [q.swapTarget],
-          });
-        } catch {
-          return none('unanswered');
-        }
-        if (!allowed) return none('declined');
-        return {
-          outcome: 'quoted',
-          candidates: [
-            {
-              kind,
-              expectedOutput: q.expectedOutput,
-              call: { adapterIdx, data: packAggregatorData(q.swapTarget, q.swapCalldata) },
-            },
-          ],
-        };
-      }
-      case 'univ3': {
-        // Its router was matched to this chain's quoter in `classifySlots`.
-        // One candidate per quoting pool: the same adapter index may appear
-        // more than once, and a second tier is a real back-up if the best
-        // pool moves below the minimum before the transaction runs.
-        const { tiers, unanswered } = await quoteUniV3Tiers(client, chainId, sale);
-        if (tiers.length === 0) return none(unanswered ? 'unanswered' : 'declined');
-        return {
-          outcome: 'quoted',
-          candidates: tiers.map((q) => ({
-            kind,
-            expectedOutput: q.expectedOutput,
-            call: { adapterIdx, data: packUniV3Data(q.fee) },
-          })),
-        };
-      }
-      case 'testnetMock': {
-        const out = await quoteTestnetMock(client, slot.address, diamond, sale);
-        if (out === 'unanswered') return none('unanswered');
-        if (out === null) return none('declined');
-        return {
-          outcome: 'quoted',
-          candidates: [{ kind, expectedOutput: out, call: { adapterIdx, data: TESTNET_MOCK_DATA } }],
-        };
-      }
-      default:
-        return none('declined');
-    }
-  };
-
-  const results = await Promise.all(
-    slots.map((s) => attempt(s).catch((): Attempt => none('unanswered'))),
-  );
-  const candidates = results.flatMap((r) => r.candidates);
-  // Every slot's outcome, asked or not, on BOTH results: slots never asked
-  // are protocol-enabled routes left out, each for the reason
-  // `classifySlots` gave.
-  const outcomes = [
-    ...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })),
-    ...deps.slots
-      .filter((s) => s.askability !== 'askable')
-      .map((s) => ({
-        kind: s.kind,
-        outcome: (s.askability === 'unread' ? 'unanswered' : s.askability) as SlotOutcome,
-      })),
-  ];
-  if (candidates.length === 0) return { kind: 'no-quote', outcomes };
-  const ranked = rankRoutes(candidates);
-  return {
-    kind: 'route',
-    calls: ranked.map((c) => c.call),
-    venues: ranked.map((c) => c.kind),
-    outcomes,
-  };
-}
-
-/**
- * What this close-out would do if it were sent now, read from the chain
- * rather than from the quotes.
- *
- *  - `'sale'` — the simulated close-out ran and emitted
- *    `LibSwap.SwapAdapterSucceeded` for this loan: a route met the
- *    protocol's minimum. Affirmative evidence, not the absence of a
- *    failure.
- *  - `'fallback'` — it ran and emitted `LibSwap.SwapAllAdaptersFailed` for
- *    this loan. Every route was refused, and the close-out would succeed
- *    into the full-collateral fallback instead of a sale.
- *  - `'other'` — it ran and emitted neither. The loan no longer takes the
- *    sale branch at all: its collateral was re-classified illiquid, its LTV
- *    crossed the collapse threshold, or an opposing position matched it,
- *    while the route was being built. The card's sale copy no longer
- *    describes what this transaction would do.
- *  - `'unknown'` — the node could not run the preview (`eth_simulateV1`
- *    unsupported, or the call reverted, which the ordinary simulation
- *    that follows reports in its own words).
- *
- * This is the check that makes every way a route can fail the same case.
- * A quote can be for the wrong caller, name a router the adapter does not
- * allow, point at an index governance has just moved, or simply come in
- * under the minimum; a plain `eth_call` passes all of them, because
- * `triggerDefault` catches each attempt and SUCCEEDS into the fallback.
- * Only the logs tell the two endings apart, and `eth_simulateV1` is the
- * read that returns logs.
- */
-export type CloseOutPreview = 'sale' | 'fallback' | 'other' | 'unknown';
-
-const TRIGGER_DEFAULT_ABI = [
-  {
-    type: 'function',
-    name: 'triggerDefault',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'loanId', type: 'uint256' },
-      {
-        name: 'adapterCalls',
-        type: 'tuple[]',
-        components: [
-          { name: 'adapterIdx', type: 'uint256' },
-          { name: 'data', type: 'bytes' },
-        ],
-      },
-    ],
-    outputs: [],
-  },
-] as const;
-
-/** `LibSwap.SwapAdapterSucceeded(uint256 indexed loanId, uint256 indexed
- *  adapterIdx, address adapter, uint256 outputAmount)`. */
-export const SWAP_ADAPTER_SUCCEEDED_TOPIC = toEventSelector(
-  'SwapAdapterSucceeded(uint256,uint256,address,uint256)',
-);
-
-/** `LibSwap.SwapAllAdaptersFailed(uint256 indexed loanId)`. */
-export const SWAP_ALL_ADAPTERS_FAILED_TOPIC = toEventSelector(
-  'SwapAllAdaptersFailed(uint256)',
-);
-
-export async function previewCloseOut(deps: {
-  client: Pick<PublicClient, 'simulateCalls'>;
-  diamond: Address;
-  account: Address;
-  loanId: bigint;
-  calls: readonly AdapterCall[];
-}): Promise<CloseOutPreview> {
-  const { client, diamond, account, loanId, calls } = deps;
-  let results;
-  try {
-    ({ results } = await client.simulateCalls({
-      account,
-      calls: [
-        {
-          to: diamond,
-          data: encodeFunctionData({
-            abi: TRIGGER_DEFAULT_ABI,
-            functionName: 'triggerDefault',
-            args: [loanId, calls],
-          }),
-        },
-      ],
-    }));
-  } catch {
-    return 'unknown';
-  }
-  const result = results[0];
-  if (!result || result.status !== 'success') return 'unknown';
-  // `logs` is optional in the response: a node that ran the call without
-  // reporting events has not shown which ending it reached, which is not
-  // the same as having shown that it reached neither.
-  const logs = result.logs;
-  if (logs === undefined) return 'unknown';
-  const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
-  const emitted = (topic: Hex) =>
-    logs.some(
-      (log) =>
-        log.address.toLowerCase() === diamond.toLowerCase() &&
-        log.topics[0] === topic &&
-        log.topics[1]?.toLowerCase() === loanTopic,
-    );
-  if (emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)) return 'sale';
-  if (emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)) return 'fallback';
-  return 'other';
+  return buildSharedRoute({
+    client: deps.client,
+    chainId: deps.chainId,
+    diamond: deps.diamond,
+    slots: deps.slots,
+    sale: deps.sale,
+    // Askability was already decided in `slots`; only `quote` is used here.
+    aggregators: agentAggregatorSource('absent', deps.agentOrigin, deps.fetchImpl ?? fetch),
+  });
 }

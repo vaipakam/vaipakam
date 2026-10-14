@@ -325,7 +325,8 @@
         "hf_warn": "La salud de un préstamo bajó de 1.5 — ábrelo para ver cómo está.",
         "hf_alert": "La salud de un préstamo bajó de 1.2 — ábrelo para ver cómo está.",
         "hf_critical": "La salud de un préstamo bajó de 1.05, cerca de la línea de liquidación 1.0 — ábrelo para actuar.",
-        "generic": "Hay una novedad sobre tu préstamo."
+        "generic": "Hay una novedad sobre tu préstamo.",
+        "grace_ended": "El periodo de gracia de un préstamo terminó — ábrelo para ver cómo está."
       },
       "loanRef": "Préstamo #{{loanId}} · toca para ver",
       "unreadBadgeTitle_zero": "{{count}} notificaciones sin leer",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "Posición prestataria · {{amount}} tomados al inicio",
       "rowLent": "Posición prestamista · {{amount}} prestados al inicio",
       "rowBorrowedAmountUnknown": "Posición prestataria · el importe tomado al inicio no está disponible",
-      "rowLentAmountUnknown": "Posición prestamista · el importe prestado al inicio no está disponible"
+      "rowLentAmountUnknown": "Posición prestamista · el importe prestado al inicio no está disponible",
+      "owedInternalMatched": "Nada — el emparejamiento interno cerró este préstamo. Queda liquidado cuando se cobren sus reclamaciones."
     },
     "powerSurface": {
       "body": "Esta página muestra las ofertas abiertas de un par una junto a otra y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",
@@ -1780,7 +1782,8 @@
         "loading": "Cargando tu historial…",
         "roleLender": "Prestamista",
         "roleBorrower": "Prestatario",
-        "started": "iniciado"
+        "started": "iniciado",
+        "termsUnknown": "condiciones iniciales no disponibles"
       },
       "ticket": {
         "rateBpsNote": "Las tasas se guardan en puntos básicos (1% = 100 bps)",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "Vence en {{count}} días",
       "dueInDays_few": "Vence en {{count}} días",
       "dueInDays_many": "Vence en {{count}} días",
-      "dueInDays_other": "Vence en {{count}} días"
+      "dueInDays_other": "Vence en {{count}} días",
+      "pastGrace": "Gracia vencida"
     },
     "activity": {
       "loading": "Cargando tu actividad…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "Alquilas",
-      "youRentOut": "Das en alquiler"
+      "youRentOut": "Das en alquiler",
+      "pastGraceLender": "El periodo de gracia terminó, así que esta posición ya podría cerrarse; su página muestra si se puede hacer ahora mismo. Cualquiera puede cerrarla antes.",
+      "pastGraceBorrower": "El periodo de gracia terminó, así que la ventana de pago ordinaria se acabó y cualquiera podría ya cerrar el préstamo contra la garantía; su página muestra cómo está.",
+      "pastGraceRenter": "El alquiler y su periodo de gracia terminaron; tu uso del NFT terminó con el alquiler. Cualquiera podría ya cerrarlo, lo que liquida el alquiler; su página muestra cómo está.",
+      "graceCheckingTitle": "Consultando al protocolo si el periodo de gracia de este préstamo ha terminado.",
+      "graceUnknownTitle": "No se pudo consultar al protocolo si el periodo de gracia de este préstamo terminó, así que puede que ya haya terminado; abre el préstamo para ver cómo está."
     },
     "settingsPage": {
       "title": "Configuración",

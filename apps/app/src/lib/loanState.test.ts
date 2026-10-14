@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loanStateView, loanStateLabel } from './loanState';
+import { loanStateView, loanStateLabel, withGraceVerdict } from './loanState';
 import { copySource } from '../content/copy';
 import type { IndexedLoan } from '../data/indexer';
 
@@ -62,5 +62,29 @@ describe('loanStateLabel resolves through the catalog', () => {
     expect(loanStateLabel(view, copySource.loanState)).toBe(
       `Due in ${view.daysRemaining} days`,
     );
+  });
+});
+
+describe('withGraceVerdict', () => {
+  const overdue = () => loanStateView(loan({ status: 'active', startTime: now() - 40 * DAY }));
+  it('turns past due into past grace only on the chain saying so', () => {
+    expect(overdue().labelKey).toBe('pastDue');
+    expect(withGraceVerdict(overdue(), true).labelKey).toBe('pastGrace');
+    expect(loanStateLabel(withGraceVerdict(overdue(), true), copySource.loanState)).toBe(
+      'Past grace',
+    );
+  });
+  it('keeps past due while the verdict is unread or still in grace', () => {
+    expect(withGraceVerdict(overdue(), undefined).labelKey).toBe('pastDue');
+    expect(withGraceVerdict(overdue(), false).labelKey).toBe('pastDue');
+  });
+  it('follows the chain over this device clock for an open loan', () => {
+    const onTrack = loanStateView(loan({ status: 'active', startTime: now() }));
+    expect(withGraceVerdict(onTrack, true).labelKey).toBe('pastGrace');
+    expect(withGraceVerdict(onTrack, false)).toEqual(onTrack);
+  });
+  it('never relabels a loan that is no longer open', () => {
+    const repaid = loanStateView(loan({ status: 'repaid' }));
+    expect(withGraceVerdict(repaid, true)).toEqual(repaid);
   });
 });

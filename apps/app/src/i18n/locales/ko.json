@@ -325,7 +325,8 @@
         "hf_warn": "대출의 건강도가 1.5 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_alert": "대출의 건강도가 1.2 아래로 떨어졌습니다 — 열어서 상태를 확인하세요.",
         "hf_critical": "대출의 건강도가 1.05 아래로 떨어져 청산 기준선 1.0에 근접했습니다 — 열어서 조치하세요.",
-        "generic": "대출에 업데이트가 있습니다."
+        "generic": "대출에 업데이트가 있습니다.",
+        "grace_ended": "대출의 유예 기간이 끝났습니다 — 열어서 상태를 확인하세요."
       },
       "loanRef": "Loan #{{loanId}} · 탭하여 보기",
       "unreadBadgeTitle_zero": "{{count}}개의 unread notifications",
@@ -1462,7 +1463,8 @@
       "rowBorrowed": "차입 포지션 · 시작 시 {{amount}} 차입",
       "rowLent": "대여 포지션 · 시작 시 {{amount}} 대여",
       "rowBorrowedAmountUnknown": "차입 포지션 · 시작 시 차입한 금액을 표시할 수 없음",
-      "rowLentAmountUnknown": "대여 포지션 · 시작 시 대여한 금액을 표시할 수 없음"
+      "rowLentAmountUnknown": "대여 포지션 · 시작 시 대여한 금액을 표시할 수 없음",
+      "owedInternalMatched": "없음 — 내부 매칭으로 이 대출이 종료되었습니다. 청구가 수령되면 정산됩니다."
     },
     "powerSurface": {
       "body": "이 페이지는 한 쌍의 열린 제안을 나란히 보여 주고 직접 이율을 정할 수 있게 합니다. 단계별로 안내받고 싶다면 빌리기·빌려주기 페이지에서 같은 일을 설명과 함께 할 수 있습니다.",
@@ -1780,7 +1782,8 @@
         "loading": "회원님의 이력을 불러오는 중…",
         "roleLender": "대출자",
         "roleBorrower": "차입자",
-        "started": "시작됨"
+        "started": "시작됨",
+        "termsUnknown": "시작 시 조건을 표시할 수 없음"
       },
       "ticket": {
         "rateBpsNote": "금리는 basis points로 저장됩니다(1% = 100 bps)",
@@ -2230,7 +2233,8 @@
       "dueInDays_two": "{{count}}일 후 due",
       "dueInDays_few": "{{count}}일 후 due",
       "dueInDays_many": "{{count}}일 후 due",
-      "dueInDays_other": "{{count}}일 후 due"
+      "dueInDays_other": "{{count}}일 후 due",
+      "pastGrace": "유예 기간 종료"
     },
     "activity": {
       "loading": "활동을 불러오는 중…",
@@ -2450,7 +2454,12 @@
     },
     "loanRow": {
       "youRent": "회원님이 빌림",
-      "youRentOut": "회원님이 빌려줌"
+      "youRentOut": "회원님이 빌려줌",
+      "pastGraceLender": "유예 기간이 끝나 이 포지션을 이제 정리할 수 있을 수 있습니다. 지금 가능한지는 해당 페이지에서 확인하세요. 누구나 먼저 정리할 수 있습니다.",
+      "pastGraceBorrower": "유예 기간이 끝나 일반 상환 기간이 종료되었으며, 이제 누구나 담보를 대상으로 대출을 정리할 수 있을 수 있습니다. 상태는 해당 페이지에서 확인하세요.",
+      "pastGraceRenter": "대여와 유예 기간이 끝났습니다. NFT 사용은 대여 종료와 함께 끝났습니다. 이제 누구나 정리할 수 있을 수 있으며, 그러면 대여가 정산됩니다. 상태는 해당 페이지에서 확인하세요.",
+      "graceCheckingTitle": "이 대출의 유예 기간이 끝났는지 프로토콜에 확인하고 있습니다.",
+      "graceUnknownTitle": "이 대출의 유예 기간이 끝났는지 프로토콜에 확인할 수 없어 이미 끝났을 수 있습니다. 대출을 열어 상태를 확인하세요."
     },
     "settingsPage": {
       "title": "설정",

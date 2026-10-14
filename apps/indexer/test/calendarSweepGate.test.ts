@@ -58,7 +58,7 @@ describe('a tick that did not establish the live set', () => {
       const out = await _sweepCalendarIfEstablished(env, CHAIN, 1_700_000_000, 900, {
         established: false,
         reason,
-      });
+      }, 1_700_000_000);
       // Not merely "no rows" — the sweep never ran, so it cannot have read a
       // stale active row at all.
       expect(prepare).not.toHaveBeenCalled();
@@ -177,7 +177,7 @@ describe('a tick that did establish it', () => {
       established: true,
       repairedLoanIds: [],
       unestablishedLoanIds: [],
-    }).catch(() => undefined);
+    }, 1_700_000_000).catch(() => undefined);
     // The stub throws on first query; reaching it is the proof that the gate
     // let this tick through.
     expect(prepare).toHaveBeenCalled();
@@ -195,7 +195,7 @@ describe('a tick that did establish it', () => {
       established: true,
       repairedLoanIds: [],
       unestablishedLoanIds: [],
-    }).catch(() => undefined);
+    }, 1_700_000_000).catch(() => undefined);
     expect(prepare).toHaveBeenCalled();
   });
 
@@ -208,7 +208,7 @@ describe('a tick that did establish it', () => {
       established: true,
       repairedLoanIds: [8],
       unestablishedLoanIds: [],
-    }).catch(() => undefined);
+    }, 1_700_000_000).catch(() => undefined);
     expect(prepare).toHaveBeenCalled();
   });
 });
