@@ -90,7 +90,7 @@ class of table. Putting it in the shared `vaipakam-warm` now would mean moving
 it again when #2497 lands. So the lease is sequenced AFTER #2497. It lands
 before any machine is armed.
 
-Three rules for the lease, so they are not re-derived:
+Four rules for the lease, so they are not re-derived:
 
 - **One clock.** Expiry is computed and compared with the DATABASE's time
   (`strftime('%s','now')` in the statement), never a host's. The Worker and a
