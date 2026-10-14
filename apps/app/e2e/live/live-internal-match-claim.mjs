@@ -143,6 +143,13 @@ for (const k of ['title', 'checking', 'unavailable']) {
 const CONNECT_FIRST = readJson('apps/app/src/i18n/locales/en.json')?.copy?.wallet?.connectFirst;
 if (typeof CONNECT_FIRST !== 'string') blockedSync('en.json no longer carries copy.wallet.connectFirst');
 const ROW = CLAIMS.row ?? {};
+// #2466 / #2470 — the position page's Owed line for an unclaimed internally
+// matched loan, and the line it must NOT show (the loan is closed but not
+// yet settled).
+const POSITIONS = readJson('apps/app/src/i18n/locales/en.json')?.copy?.positions ?? {};
+for (const k of ['owedInternalMatched', 'owedClosed']) {
+  if (typeof POSITIONS[k] !== 'string') blockedSync(`en.json no longer carries copy.positions.${k}`);
+}
 for (const k of ['matchCleared', 'matchClearedNoCharges', 'matchPaidShort', 'matchPaidFull', 'whyInternalMatchLender']) {
   if (typeof ROW[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.row.${k}`);
 }
@@ -212,6 +219,14 @@ const MANIFEST = createManifest({
         why: 'the row carries copy.claims.row.whyInternalMatchLender',
         note: 'the row carries the line rebuilt from getOwedAtInternalMatch and the en catalogue',
         noFallback: 'the row carries none of the fallback lines',
+      },
+    },
+    {
+      id: 'owedLine',
+      claim: "the position page says internal matching closed the loan and that it settles once its claims are collected — never 'closed and settled' (#2466, #2470)",
+      checks: {
+        pending: 'the position page carries copy.positions.owedInternalMatched',
+        notSettled: 'the position page does not carry copy.positions.owedClosed',
       },
     },
     ...(SUBMIT_CLAIM ? CLAIM_ONLY : []),
@@ -550,6 +565,27 @@ try {
   check('claimRow', 'note', 'row states what matching cleared, and the payout comparison', flat.includes(EXPECTED_NOTE));
   check('claimRow', 'noFallback', 'row shows no fallback line', !FALLBACK_LINES.some((l) => flat.includes(l)));
   await shot(`internal-match-claim-row-${LOAN_ID}`);
+
+  // The position page's Owed line (#2466, #2470), before any claim: an
+  // unclaimed internally matched loan is closed but not settled.
+  resetWindow();
+  await visit(page, `/positions/${LOAN_ID}`);
+  let owedText = '';
+  const owedDeadline = Date.now() + 45_000;
+  while (Date.now() < owedDeadline) {
+    owedText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+    if (owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) break;
+    await page.waitForTimeout(1_000);
+  }
+  check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
+  check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
+  await shot(`internal-match-owed-${LOAN_ID}`);
+  if (SUBMIT_CLAIM) {
+    // The claim flow starts from the claims list.
+    resetWindow();
+    await visit(page, '/claims');
+    await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+  }
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
   if (SUBMIT_CLAIM && preClaimFails() > 0) {

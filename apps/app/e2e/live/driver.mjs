@@ -614,7 +614,15 @@ function assertInjectedAccount(requested, account) {
 export async function ensureConnected(page) {
   const connect = page.getByRole('button', { name: /connect wallet/i }).first();
   if (!(await connect.isVisible().catch(() => false))) return;
-  await connect.click();
+  // The injected wallet can auto-reconnect between the visibility check and
+  // the click, hiding the CTA: a click that misses because the button went
+  // away is the connected state, not a failure (#2463 live drive).
+  try {
+    await connect.click({ timeout: 10_000 });
+  } catch (err) {
+    if (await connect.isVisible().catch(() => false)) throw err;
+    return;
+  }
   // A remembered session can complete right after the click and hide
   // the modal before the provider option is clickable — treat "the
   // connect CTA left the header" as connected, and only try the
@@ -694,6 +702,10 @@ export const READ_METHODS = new Set([
   'eth_getTransactionCount',
   'eth_getTransactionReceipt',
   'eth_maxPriorityFeePerGas',
+  // A stateless multi-call simulation: nothing is signed or broadcast. The
+  // close-out card previews a route with it to tell a sale from the fallback
+  // (src/data/closeOutRoute.ts, #2463).
+  'eth_simulateV1',
   'eth_syncing',
   'eth_subscribe',
   'eth_unsubscribe',
