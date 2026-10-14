@@ -449,4 +449,31 @@ describe('findDefaultable', () => {
     expect(pages.reduce((n, [, l]) => n + Number(l), 0)).toBe(SCAN_WINDOW);
     expect(aggregates).toBeLessThanOrEqual(Math.ceil(SCAN_WINDOW / 100));
   });
+
+  it('marks a rejected or throwing aggregate unread instead of retrying each id serially', async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => BigInt(i + 1));
+    let eligibilityReads = 0;
+    let aggregates = 0;
+    const shared = new Error('aggregate3 rejected');
+    const client = {
+      getBlockNumber: async () => 7n,
+      readContract: async (args: { functionName: string }) => {
+        if (args.functionName === 'getActiveLoansCount') return BigInt(ids.length);
+        if (args.functionName === 'getActiveLoansPaginated') return ids;
+        eligibilityReads += 1;
+        return true;
+      },
+      multicall: async (args: { contracts: unknown[] }) => {
+        aggregates += 1;
+        // First chunk: rejected (one shared error); second chunk: throws.
+        if (aggregates === 1) return args.contracts.map(() => ({ status: 'failure', error: shared }));
+        throw new Error('multicall unavailable');
+      },
+    } as unknown as PublicClient;
+    const scan = await findDefaultable(client, DIAMOND, 84532);
+    expect(eligibilityReads).toBe(0);
+    expect(aggregates).toBe(2);
+    expect(scan.defaultable).toEqual([]);
+    expect(scan.unread).toEqual(ids);
+  });
 });

@@ -317,6 +317,10 @@ export async function findDefaultable(
       })),
       `graceDefault chain=${chainId} isLoanDefaultable`,
       blockNumber,
+      // No serial retry: it would cost one subrequest per id, up to
+      // SCAN_WINDOW of them, and break the scan's bound. A failed chunk is
+      // reported as eligibility-unread and is read again on a later visit.
+      'unread',
     );
     results.push(...part);
   }

@@ -23,8 +23,19 @@ export async function batchedRead(
    *  fallback, so a degraded read still describes the same block. viem's
    *  `multicall` ignores a per-contract `blockNumber`; it must go here. */
   blockNumber?: bigint,
+  /** What a rejected or throwing aggregate degrades to. `'serial'` (the
+   *  default) retries one read per entry, which costs one subrequest per
+   *  entry. `'unread'` returns every entry as a failure carrying the
+   *  aggregate's error, so the call costs exactly one subrequest whatever
+   *  happens: for a pass whose per-run budget must not depend on the
+   *  RPC's health (graceDefault, #2483). */
+  onAggregateFailure: 'serial' | 'unread' = 'serial',
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   if (contracts.length === 0) return [];
+  const degrade = (error: unknown) =>
+    onAggregateFailure === 'serial'
+      ? serialRead(client, contracts, blockNumber)
+      : Promise.resolve(contracts.map(() => ({ status: 'failure' as const, error })));
   try {
     const results = (await client.multicall({
       contracts: contracts as never,
@@ -55,16 +66,20 @@ export async function batchedRead(
       );
     if (aggregateFailed) {
       console.error(
-        `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — retrying serially`,
+        `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — ${
+          onAggregateFailure === 'serial' ? 'retrying serially' : 'marking the chunk unread'
+        }`,
       );
-      return serialRead(client, contracts, blockNumber);
+      return degrade(results[0].error);
     }
     return results;
   } catch (err) {
     console.error(
-      `[keeper] ${label} multicall failed, falling back to serial: ${String(err).slice(0, 200)}`,
+      `[keeper] ${label} multicall failed, ${
+        onAggregateFailure === 'serial' ? 'falling back to serial' : 'marking the chunk unread'
+      }: ${String(err).slice(0, 200)}`,
     );
-    return serialRead(client, contracts, blockNumber);
+    return degrade(err);
   }
 }
 
