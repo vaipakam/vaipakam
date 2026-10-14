@@ -959,7 +959,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
   - Permissionless liquidation remains allowed even when broader MEV or keeper access is turned off, because liquidation is a protocol-safety function and must remain executable when a loan becomes default-eligible.
   - **The protocol's own keeper closes out past-grace loans** (#2483), so a lender who never opens the app is still closed out and only has to claim. It uses the same permissionless time-based default any caller may use, and holds itself to the same rules the lender's close-out card does:
     - it acts only on a loan the chain itself reports as defaultable;
-    - it leaves a loan that is also below the health-factor liquidation line to the health-factor liquidation, so the two never race to close the same loan;
+    - it leaves a loan that is also below the health-factor liquidation line to the health-factor liquidation, checking the health factor both before it quotes and again at the last moment before it sends. A price that crosses the line in the moment between that last check and the send can still put both close-outs in flight; the one that lands second then fails on-chain without moving any funds;
     - it never closes a loan whose lender position has an accepted sale, or whose sale state it cannot establish, because the default would strand the buyer's payment;
     - for liquid collateral it sends a real, quoted swap route, and it does not send a route the chain shows would fail into the in-kind fallback — such a loan is left for the lender, or for a later attempt when a venue answers;
     - it does not send when the collateral changed after the route was quoted;

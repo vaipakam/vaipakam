@@ -344,13 +344,18 @@ export async function attemptGraceDefault(
     return { kind: 'skipped', reason: `preview=unknown calls=${calls.length}${routeNote}` };
   }
 
-  // THE FINAL GATE, pinned to one fresh block: the sale state and the
-  // collateral the quotes were made for, judged together.
+  // THE FINAL GATE, pinned to one fresh block: the liquidator boundary, the
+  // sale state and the collateral the quotes were made for, judged together.
+  // The health factor is read again because a price can cross the line while
+  // the route is quoted and previewed; the earlier read only kept a loan that
+  // was ALREADY under water from costing a quote.
   const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
-  const [lateSale, live] = await Promise.all([
+  const [lateHf, lateSale, live] = await Promise.all([
+    liquidatorOwns(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
   ]);
+  if (lateHf !== null) return { kind: 'skipped', reason: `gate:${lateHf}` };
   if (lateSale !== null) return { kind: 'skipped', reason: `gate:${lateSale}` };
   if (swappable && live.collateralAmount !== loan.collateralAmount) {
     return { kind: 'skipped', reason: 'gate:collateral-changed' };
@@ -424,6 +429,7 @@ async function liquidatorOwns(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,
+  blockNumber?: bigint,
 ): Promise<string | null> {
   try {
     const hf = (await client.readContract({
@@ -431,6 +437,7 @@ async function liquidatorOwns(
       abi: RISK_ABI,
       functionName: 'calculateHealthFactor',
       args: [loanId],
+      blockNumber,
     })) as bigint;
     return hf < HF_LIQUIDATION_THRESHOLD ? 'hf-liquidatable (left to the liquidator)' : null;
   } catch (err) {

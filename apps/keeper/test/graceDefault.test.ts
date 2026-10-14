@@ -55,8 +55,9 @@ interface Scene {
   /** The preview's ending; null makes the node fail the simulation. */
   ending?: 'sale' | 'fallback' | 'other' | null;
   calls?: number;
-  /** Health factor; a function to throw instead (e.g. illiquid collateral). */
-  hf?: bigint | (() => never);
+  /** Health factor; a function to compute it per read, or to throw (e.g.
+   *  illiquid collateral). */
+  hf?: bigint | (() => bigint);
 }
 
 function harness(scene: Scene) {
@@ -76,7 +77,7 @@ function harness(scene: Scene) {
         case 'positionLock':
           return BigInt(scene.lock ?? 0);
         case 'calculateHealthFactor':
-          if (typeof scene.hf === 'function') scene.hf();
+          if (typeof scene.hf === 'function') return scene.hf();
           return scene.hf ?? 2n * 10n ** 18n;
         case 'facetAddress':
           return scene.boundedListing === false ? A(0) : A(0xfa);
@@ -277,6 +278,25 @@ describe('the liquidator boundary', () => {
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect(out).toEqual({ kind: 'skipped', reason: 'hf-liquidatable (left to the liquidator)' });
     expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('re-checks the health factor at the final gate — a price that crosses the line mid-quote', async () => {
+    let reads = 0;
+    const h = harness({
+      hf: () => {
+        reads += 1;
+        // Healthy before quoting; under water by the time of the gate.
+        return reads === 1 ? 2n * 10n ** 18n : 9n * 10n ** 17n;
+      },
+      ending: 'sale',
+    });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({
+      kind: 'skipped',
+      reason: 'gate:hf-liquidatable (left to the liquidator)',
+    });
+    expect(reads).toBe(2);
     expect(h.writes).toHaveLength(0);
   });
 

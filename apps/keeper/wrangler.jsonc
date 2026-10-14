@@ -225,7 +225,7 @@
   //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
   //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
   //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
-  //      before observing a live tick means the six gated passes can
+  //      before observing a live tick means the seven gated passes can
   //      submit transactions on an invocation that still dies — the CPU
   //      fix being incomplete or regressed is exactly the case this
   //      sequence exists for, so it must be ruled out while the passes
@@ -295,11 +295,11 @@
   //      per tick.
   //  10. Now validate the GATED passes, again across every cadence they
   //      run at (Codex #1924 r5 P1). Step 8 has already cleared the
-  //      ungated set; what step 9 newly switched on is the six gated
+  //      ungated set; what step 9 newly switched on is the seven gated
   //      passes, and one armed tick exercises only the
-  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` is
-  //      gated AND staggered (5 min, offset 2), so cover at least one
-  //      full 5-minute cycle before declaring re-enable complete — or
+  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` (5 min,
+  //      offset 2) and `graceDefault` (5 min, offset 3) are gated AND
+  //      staggered, so cover at least one full 5-minute cycle before declaring re-enable complete — or
   //      profile that pass in production by other means.
   //      A `done in Nms` LINE IS NOT PROOF THE PASS RAN (Codex #1924
   //      r7). `timedPass` logs it whenever `run()` returns, and a gated
