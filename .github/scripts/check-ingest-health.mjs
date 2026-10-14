@@ -41,12 +41,16 @@
  *
  * @param {unknown} body the parsed response
  * @param {{ chains: number[], staleSeconds: number }} opts
- * @returns {string[]} problems, empty when healthy
+ * @returns {{ key: string, text: string }[]} problems, empty when healthy. The
+ *   `key` is STABLE across runs while the condition is unchanged (no ages or
+ *   timestamps in it), so the workflow can tell a continuing stall from a
+ *   changed one; `text` is what the operator reads.
  */
 export function judgeIngestHealth(body, { chains, staleSeconds }) {
   const problems = [];
+  const add = (key, text) => problems.push({ key, text });
   if (!body || typeof body !== 'object' || !Array.isArray(body.chains) || !body.schema || !isCount(body.checkedAt)) {
-    return ['the route answered, but not with the documented shape (checkedAt + schema + chains)'];
+    return [{ key: 'shape', text: 'the route answered, but not with the documented shape (checkedAt + schema + chains)' }];
   }
   const { schema } = body;
   if (schema.state === 'pending') {
@@ -55,27 +59,29 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
     const missing = Array.isArray(schema.missing)
       ? schema.missing.map((m) => (typeof m === 'string' && /^[0-9A-Za-z_.-]{1,80}$/.test(m) ? m : '(unprintable name)')).join(', ')
       : '(unnamed)';
-    problems.push(
+    add(
+      `pending:${missing}`,
       `schema gate PENDING — scheduled ingest is declining until these D1 migrations are applied: ${missing}. ` +
         'Apply them (cd apps/indexer && npx wrangler d1 migrations apply vaipakam-warm --remote); ingest resumes on the next tick.',
     );
   } else if (schema.state === 'unknown') {
-    problems.push('schema gate UNKNOWN — the indexer could not read d1_migrations, so scheduled ingest is declining.');
+    add('gate-unknown', 'schema gate UNKNOWN — the indexer could not read d1_migrations, so scheduled ingest is declining.');
   } else if (schema.state !== 'current') {
-    problems.push(`schema gate state "${schema.state}" is not one this probe knows`);
+    add('gate-state', `schema gate state "${String(schema.state).replace(/[^0-9A-Za-z_-]/g, '?').slice(0, 40)}" is not one this probe knows`);
   }
   for (const id of chains) {
     const c = body.chains.find((x) => x && x.chainId === id);
     if (!c) {
-      problems.push(`chain ${id}: no diamond cursor reported — it has never been scanned`);
+      add(`missing:${id}`, `chain ${id}: no diamond cursor reported — it has never been scanned`);
     } else if (typeof c.ageSeconds === 'number' && c.ageSeconds < 0) {
-      problems.push(`chain ${id}: the cursor's timestamp is ${-c.ageSeconds}s AHEAD of the indexer's clock — its freshness is unknown`);
+      add(`ahead:${id}`, `chain ${id}: the cursor's timestamp is ${-c.ageSeconds}s AHEAD of the indexer's clock — its freshness is unknown`);
     } else if (!isCount(c.ageSeconds) || !isCount(c.lastBlock) || !isCount(c.scannedAt)) {
       // A defaulted or corrupt row (a negative age, a missing block) must not
       // read as fresh: every documented field is a non-negative finite number.
-      problems.push(`chain ${id}: the route reported an incomplete or invalid cursor row`);
+      add(`invalid:${id}`, `chain ${id}: the route reported an incomplete or invalid cursor row`);
     } else if (c.ageSeconds > staleSeconds) {
-      problems.push(
+      add(
+        `stale:${id}`,
         `chain ${id}: ingest STALE — the cursor last advanced ${Math.round(c.ageSeconds / 60)} min ago ` +
           `(block ${c.lastBlock}), over the ${Math.round(staleSeconds / 60)} min threshold`,
       );
@@ -119,23 +125,30 @@ function selftest() {
   ok(judgeIngestHealth(healthy, opts).length === 0, 'a current gate and fresh watched chains pass, an unwatched stale chain is ignored');
   const stale = { ...healthy, chains: healthy.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: 3600 } : c)) };
   const s = judgeIngestHealth(stale, opts);
-  ok(s.length === 1 && s[0].includes('84532') && s[0].includes('STALE'), 'a watched chain past the threshold fails, named');
+  ok(s.length === 1 && s[0].key === 'stale:84532' && s[0].text.includes('STALE'), 'a watched chain past the threshold fails, named');
   const hostile = { ...healthy, schema: { state: 'pending', missing: ['0058_ok.sql', 'x\nEOF\nevil=1'] } };
-  ok(judgeIngestHealth(hostile, opts).every((p) => !p.includes('\n') && !p.includes('evil')), 'a migration name that is not a file name is never echoed');
+  ok(judgeIngestHealth(hostile, opts).every((p) => !p.text.includes('\n') && !p.text.includes('evil') && !p.key.includes('evil')), 'a migration name that is not a file name is never echoed');
   const pending = { ...healthy, schema: { state: 'pending', missing: ['0058_init_terms_unbacked.sql'] } };
-  ok(judgeIngestHealth(pending, opts).some((p) => p.includes('0058_init_terms_unbacked.sql')), 'a pending gate fails, naming the migration');
+  ok(judgeIngestHealth(pending, opts).some((p) => p.text.includes('0058_init_terms_unbacked.sql')), 'a pending gate fails, naming the migration');
   ok(judgeIngestHealth({ ...healthy, schema: { state: 'unknown' } }, opts).length === 1, 'an unknown gate fails');
   const missing = { ...healthy, chains: healthy.chains.filter((c) => c.chainId !== 421614) };
-  ok(judgeIngestHealth(missing, opts).some((p) => p.includes('421614')), 'a watched chain absent from the answer fails');
+  ok(judgeIngestHealth(missing, opts).some((p) => p.text.includes('421614')), 'a watched chain absent from the answer fails');
   ok(judgeIngestHealth({ error: 'x' }, opts).length === 1, 'an answer of the wrong shape fails');
   ok(judgeIngestHealth(null, opts).length === 1, 'no answer fails');
   ok(judgeIngestHealth({ ...healthy, chains: [{ chainId: 84532 }, ...healthy.chains.filter((c) => c.chainId === 421614)] }, opts).length === 1, 'a chain with no age fails');
   const partial = { ...healthy, chains: [{ chainId: 84532, ageSeconds: 0 }, ...healthy.chains.filter((c) => c.chainId === 421614)] };
-  ok(judgeIngestHealth(partial, opts).some((p) => p.includes('84532')), 'a partial row (age only) fails rather than reading as fresh');
+  ok(judgeIngestHealth(partial, opts).some((p) => p.text.includes('84532')), 'a partial row (age only) fails rather than reading as fresh');
   const negative = { ...healthy, chains: healthy.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: -1 } : c)) };
-  ok(judgeIngestHealth(negative, opts).some((p) => p.includes('84532') && p.includes('AHEAD')), 'a negative age fails, as unknown freshness');
+  ok(judgeIngestHealth(negative, opts).some((p) => p.text.includes('84532') && p.text.includes('AHEAD')), 'a negative age fails, as unknown freshness');
   const { checkedAt: _omit, ...noChecked } = healthy;
   ok(judgeIngestHealth(noChecked, opts).length === 1, 'an answer without checkedAt fails');
+  const later = { ...stale, checkedAt: 2000, chains: stale.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: 4200 } : c)) };
+  ok(
+    JSON.stringify(judgeIngestHealth(later, opts).map((p) => p.key)) === JSON.stringify(s.map((p) => p.key)),
+    'a continuing stall keeps the same key while its age grows',
+  );
+  const both = { ...stale, schema: { state: 'pending', missing: ['0059_x.sql'] } };
+  ok(judgeIngestHealth(both, opts).map((p) => p.key).join(',') !== s.map((p) => p.key).join(','), 'a changed condition changes the keys');
   let threw = false;
   try {
     parseChains('');
@@ -163,7 +176,7 @@ async function main() {
     if (res.status !== 200) {
       // The status only: the body is the network's text, and it would travel
       // into workflow outputs, the issue and the chat message.
-      problems = [`${url} answered HTTP ${res.status}`];
+      problems = [{ key: `http:${res.status}`, text: `${url} answered HTTP ${res.status}` }];
     } else {
       try {
         body = JSON.parse(text);
@@ -173,7 +186,7 @@ async function main() {
       problems = judgeIngestHealth(body, { chains, staleSeconds });
     }
   } catch (err) {
-    problems = [`${url} unreachable: ${err.message}`];
+    problems = [{ key: 'unreachable', text: `${url} unreachable: ${String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 200)}` }];
   }
   if (body?.chains) {
     for (const c of body.chains) {
@@ -186,7 +199,7 @@ async function main() {
     console.log('ingest healthy');
     return;
   }
-  for (const p of problems) console.log(`::error title=Indexer ingest::${p}`);
+  for (const p of problems) console.log(`::error title=Indexer ingest::${p.text}`);
   // For the workflow's summary, alert issue and Telegram steps. Every line is
   // made single-line, and the heredoc delimiter is random, so no text in a
   // problem — some of it derived from the network — can end the value early
@@ -195,8 +208,10 @@ async function main() {
     const { appendFileSync } = await import('node:fs');
     const { randomUUID } = await import('node:crypto');
     const delimiter = `EOF_${randomUUID()}`;
-    const lines = problems.map((p) => p.replace(/[\r\n]+/g, ' ').slice(0, 500));
-    appendFileSync(process.env.GITHUB_OUTPUT, `problems<<${delimiter}\n${lines.join('\n')}\n${delimiter}\n`);
+    const lines = problems.map((p) => p.text.replace(/[\r\n]+/g, ' ').slice(0, 500));
+    // The stable condition, one line: what the alert issue is keyed on.
+    const keys = problems.map((p) => p.key.replace(/[^0-9A-Za-z_.:,-]/g, '?')).sort().join(',');
+    appendFileSync(process.env.GITHUB_OUTPUT, `problems<<${delimiter}\n${lines.join('\n')}\n${delimiter}\nkeys=${keys}\n`);
   }
   process.exitCode = 1;
 }
