@@ -21,8 +21,9 @@
 #      the keeper), which needs no restart.
 #
 # Any failure exits non-zero before `current` moves, so the running keeper is
-# untouched and the next run retries. A restart that cannot be queued puts
-# `current` back, so that is retried too. The only state is `current` itself, so
+# untouched and the next run retries. A run interrupted after the switch, or
+# whose restart could not be queued, leaves `restart-pending`, and the next
+# run queues the restart. The only state is `current` itself, so
 # there is no record of "already built" to fall out of step with it.
 #
 # What this cannot protect against is stated in docs/ops/KeeperMachine.md
@@ -42,12 +43,25 @@ log() { echo "[keeper-update] $*"; }
 git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 target="$(git -C "$REPO" rev-parse "origin/$BRANCH")"
 release="$ROOT/releases/$target"
+# Written just before `current` moves to a release the keeper must restart
+# onto, and removed once that restart is queued. So a run that was stopped,
+# timed out, or could not queue the restart after switching leaves it behind,
+# and the next run finishes the job instead of seeing its release in place
+# and stopping with the old bundle still running.
+PENDING="$ROOT/restart-pending"
+queue_restart() {
+  systemctl try-restart --no-block vaipakam-keeper.service
+  rm -f "$PENDING"
+}
 if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
+  if [ -e "$PENDING" ]; then
+    log "restarting the keeper onto $target, which an earlier run switched to but did not restart"
+    queue_restart
+  fi
   exit 0
 fi
 
 log "building $BRANCH at $target"
-prev="$(readlink "$ROOT/current" 2>/dev/null || true)"
 tmp="$(mktemp -d)"
 incoming=""
 # A run that fails part-way leaves neither its scratch nor a half-written
@@ -102,21 +116,12 @@ fi
 rm -rf "$release"
 mv -T "$incoming" "$release"
 incoming=""
-switch_current() {
-  ln -sfn "$1" "$ROOT/current.next"
-  mv -Tf "$ROOT/current.next" "$ROOT/current"
-}
-switch_current "$release"
+if [ "$restart" = yes ]; then touch "$PENDING"; fi
+ln -sfn "$release" "$ROOT/current.next"
+mv -Tf "$ROOT/current.next" "$ROOT/current"
 if [ "$restart" = yes ]; then
-  if ! systemctl try-restart --no-block vaipakam-keeper.service; then
-    # Put `current` back, so this commit is still undeployed and the next
-    # run rebuilds it and tries the restart again, rather than seeing its
-    # release in place and stopping with the old bundle still running.
-    if [ -n "$prev" ]; then switch_current "$prev"; else rm -f "$ROOT/current"; fi
-    echo "[keeper-update] could not queue the keeper restart; the next run retries $target" >&2
-    exit 1
-  fi
   log "deployed $target; a running keeper restarts onto it after its current tick"
+  queue_restart
 else
   log "deployed $target; the keeper is byte-identical to the running one, so no restart"
 fi

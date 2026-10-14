@@ -77,12 +77,20 @@ main() {
     curl -fsSL "$base/$file" -o "$tmp/$file"
     (cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c --quiet -)
     mkdir -p /usr/local/lib/nodejs
-    tar -xJf "$tmp/$file" -C /usr/local/lib/nodejs
+    # Root's tar would otherwise keep the archive's owner ids, which can match
+    # a local account that could then replace the runtime the keeper runs.
+    tar --no-same-owner -xJf "$tmp/$file" -C /usr/local/lib/nodejs
     local dir="/usr/local/lib/nodejs/${file%.tar.xz}"
     local bin
     for bin in node npm npx corepack; do ln -sfn "$dir/bin/$bin" "/usr/local/bin/$bin"; done
     node_changed=yes
   fi
+  # Also on a run that installed nothing, for a runtime extracted before this
+  # rule existed.
+  local node_dir
+  node_dir="$(dirname "$(dirname "$(readlink -f /usr/local/bin/node)")")"
+  chown -R root:root "$node_dir"
+  chmod -R go-w "$node_dir"
 
   # Everything under /opt/vaipakam-keeper is root's: the checkout the code
   # comes from, the scripts and the releases. Builds run as a throwaway

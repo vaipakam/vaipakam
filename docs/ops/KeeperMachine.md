@@ -172,8 +172,11 @@ empty.
   the database does not record.
 - **Pause deploys:** `sudo systemctl disable --now vaipakam-keeper-update.timer`,
   then `sudo systemctl stop vaipakam-keeper-update.service`. The second
-  command waits for a deploy already running to finish. Stopping only the
-  timer would let that deploy finish and switch `current` anyway. `disable`
+  command stops a deploy already running (and its build), so it cannot
+  switch `current` after you have paused. Stopping only the timer would let
+  that deploy finish and switch anyway. A deploy stopped just after switching
+  leaves `restart-pending`, and the next run, once deploys resume, restarts
+  the keeper onto that release. `disable`
   keeps the timer off across a reboot. Resume with `sudo systemctl enable
   --now vaipakam-keeper-update.timer`.
 - **Roll back:** pause deploys (above) first. Then point `current` at an

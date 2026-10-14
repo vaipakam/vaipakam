@@ -69,7 +69,9 @@ describe('host deploy kit paths', () => {
     expect(update).toContain('built="$tmp/out/keeper-host.mjs"');
     expect(update).toContain('"$incoming/keeper-host.mjs"');
     expect(update).toContain('mv -Tf "$ROOT/current.next" "$ROOT/current"');
-    expect(update).toContain('switch_current "$release"');
+    // A switch whose restart did not get queued is finished by the next run.
+    expect(update).toContain('if [ "$restart" = yes ]; then touch "$PENDING"; fi');
+    expect(update).toContain('rm -f "$PENDING"');
     expect(read('vaipakam-keeper.service')).toContain('/opt/vaipakam-keeper/current/keeper-host.mjs');
   });
 
