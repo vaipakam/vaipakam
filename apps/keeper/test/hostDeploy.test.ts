@@ -95,8 +95,9 @@ describe('host deploy kit paths', () => {
   it('keeps what the keeper runs root-owned, and never starts the keeper from the install', () => {
     const install = read('install.sh');
     expect(install).toContain('install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"');
-    // A reinstall never resumes paused deploys: only a first install enables the timer.
-    expect(install).toMatch(/if \[ "\$first_install" = yes \]; then\n\s+systemctl enable --quiet --now vaipakam-keeper-update\.timer/);
+    // A reinstall never resumes paused deploys: only the install that first completes enables the timer.
+    expect(install).toMatch(/if \[ ! -e "\$ROOT\/\.installed" \]; then\n\s+systemctl enable --quiet --now vaipakam-keeper-update\.timer/);
+    expect(install).toContain('touch "$ROOT/.installed"');
     expect(install).not.toMatch(/enable[^\n]*vaipakam-keeper\.service/);
     expect(install).not.toMatch(/systemctl (start|restart)[^\n]*vaipakam-keeper\.service/);
   });

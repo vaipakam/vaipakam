@@ -77,7 +77,6 @@ main() {
   if [ -x "$NODE_HOME/current/bin/node" ]; then
     installed="$("$NODE_HOME/current/bin/node" -v)"
   fi
-  local node_changed=no
   if [ "$installed" != "$latest" ]; then
     log "installing Node $latest (was: ${installed:-none})"
     curl -fsSL "$base/$file" -o "$tmp/$file"
@@ -94,7 +93,6 @@ main() {
     mv -T "$incoming" "$NODE_HOME/$latest"
     ln -sfn "$latest" "$NODE_HOME/current.next"
     mv -Tf "$NODE_HOME/current.next" "$NODE_HOME/current"
-    node_changed=yes
   fi
   # Keep the version in use and the one before it; remove older ones (and
   # any half-extracted .incoming left by an interrupted run).
@@ -116,9 +114,21 @@ main() {
   # comes from, the scripts and the releases. Builds run as a throwaway
   # dynamic user (build.sh), and the keeper as another, which is the only
   # one that sees the env file.
+  if [ -L "$ROOT" ] || [ -L "$ROOT/releases" ] || [ -L "$ROOT/repo" ]; then
+    echo "$ROOT and its releases/ and repo/ must not be links; fix them by hand and re-run" >&2
+    exit 1
+  fi
   install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"
   echo "$BRANCH" > "$ROOT/deploy-branch"
+  # The updater runs git as root in this checkout, and a git config can name
+  # programs git runs. So a checkout any other account could ever have
+  # written is not repaired in place: it is deleted and cloned again.
+  if [ -e "$ROOT/repo" ] && [ -n "$(find "$ROOT/repo" \( ! -user root -o ! -group root -o \( ! -type l -perm /022 \) \) -print -quit)" ]; then
+    log "the existing checkout is not entirely root-owned and root-only-writable; cloning it again"
+    rm -rf "$ROOT/repo"
+  fi
   if [ ! -d "$ROOT/repo/.git" ]; then
+    rm -rf "$ROOT/repo"
     log "cloning $REPO_URL"
     git clone --quiet --filter=blob:none --no-checkout "$REPO_URL" "$ROOT/repo"
   fi
@@ -152,19 +162,21 @@ main() {
   chmod 750 /etc/vaipakam
   chmod 600 /etc/vaipakam/keeper.env
 
-  local unit unit_changed=no first_install=no
-  [ -e /etc/systemd/system/vaipakam-keeper-update.timer ] || first_install=yes
-  if ! cmp -s "$kit/vaipakam-keeper.service" /etc/systemd/system/vaipakam-keeper.service; then
-    unit_changed=yes
-  fi
+  # A unit file is replaced only when its content changed, so its mtime says
+  # when it last changed; the restart check below relies on that.
+  local unit
   for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
-    install -m 644 "$kit/$unit" "/etc/systemd/system/$unit"
+    if ! cmp -s "$kit/$unit" "/etc/systemd/system/$unit"; then
+      install -m 644 "$kit/$unit" "/etc/systemd/system/$unit"
+    fi
   done
   systemctl daemon-reload
-  # Deploys start on the first install only. Afterwards the timer's state is
-  # the operator's: a reinstall (say, for a Node security release) while
-  # deploys are paused for a rollback must not resume them (§6).
-  if [ "$first_install" = yes ]; then
+  # Deploys are turned on once, by the install that first completes. After
+  # that the timer's state is the operator's: a reinstall (say, for a Node
+  # security release) while deploys are paused for a rollback must not
+  # resume them (§6). Completion is its own marker, written at the very end,
+  # so an install interrupted before it finishes turns them on when re-run.
+  if [ ! -e "$ROOT/.installed" ]; then
     systemctl enable --quiet --now vaipakam-keeper-update.timer
   fi
   if systemctl is-enabled --quiet vaipakam-keeper-update.timer; then
@@ -175,17 +187,27 @@ main() {
   fi
   log "current release: $(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || echo none)"
 
-  # daemon-reload alone leaves a running keeper on its old unit, and the
-  # updater only restarts for a new bundle, so a changed unit or a new Node
-  # restarts it here (after its current tick, as every restart does).
-  if [ "$node_changed" = yes ] || [ "$unit_changed" = yes ]; then
-    systemctl try-restart --no-block vaipakam-keeper.service
+  # daemon-reload alone leaves a running keeper on its old unit and its old
+  # Node. Rather than remember what this run changed (which an interrupted
+  # run would forget), compare what is installed now with when the running
+  # keeper started: restart it, after its current tick, if Node or its unit
+  # changed since then. Re-running after any interruption reaches the same
+  # answer.
+  if systemctl is-active --quiet vaipakam-keeper.service; then
+    local started changed
+    started="$(date -d "$(systemctl show -p ActiveEnterTimestamp --value vaipakam-keeper.service)" +%s 2>/dev/null || echo 0)"
+    changed="$(stat -c %Y "$NODE_HOME/current" /etc/systemd/system/vaipakam-keeper.service | sort -n | tail -1)"
+    if [ "$changed" -ge "$started" ]; then
+      log "Node or the keeper unit changed since the keeper started; it restarts after its current tick"
+      systemctl try-restart --no-block vaipakam-keeper.service
+    fi
   fi
   if systemctl is-active --quiet vaipakam-keeper.service; then
     log "keeper is running"
   else
     log "keeper is installed but NOT enabled or started. Fill in /etc/vaipakam/keeper.env, then follow the cutover in docs/ops/KeeperMachine.md §5"
   fi
+  touch "$ROOT/.installed"
 }
 
 main "$@"
