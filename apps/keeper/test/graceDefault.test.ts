@@ -7,7 +7,16 @@
  * holds. Each asserts that NOTHING was written, not just the outcome tag.
  */
 import { describe, expect, it } from 'vitest';
-import type { Address, PublicClient, WalletClient } from 'viem';
+import {
+  decodeFunctionData,
+  keccak256,
+  type Abi,
+  type Address,
+  type Hex,
+  type PublicClient,
+  type WalletClient,
+} from 'viem';
+import { DefaultedFacetABI } from '@vaipakam/contracts/abis';
 import {
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
@@ -61,7 +70,11 @@ interface Scene {
   /** Health factor; a function to compute it per read, or to throw (e.g.
    *  illiquid collateral). */
   hf?: bigint | (() => bigint);
+  /** `lost`: the broadcast call fails after the signed bytes went out. */
+  broadcast?: 'lost';
 }
+
+const SIGNED: Hex = '0x02f86b0182';
 
 function harness(scene: Scene) {
   const writes: unknown[] = [];
@@ -115,9 +128,16 @@ function harness(scene: Scene) {
   } as unknown as PublicClient;
   const wallet = {
     account: { address: KEEPER },
-    writeContract: async (args: unknown) => {
-      writes.push(args);
-      return '0xabc';
+    // The send is prepare → sign → broadcast; what was asked for is
+    // recorded at the prepare, decoded, so tests read it like a call.
+    prepareTransactionRequest: async (args: { data: Hex }) => {
+      writes.push(decodeFunctionData({ abi: DefaultedFacetABI as Abi, data: args.data }));
+      return args;
+    },
+    signTransaction: async () => SIGNED,
+    sendRawTransaction: async () => {
+      if (scene.broadcast === 'lost') throw new Error('request timed out');
+      return keccak256(SIGNED);
     },
   } as unknown as WalletClient;
   const routes: GraceLoan[] = [];
@@ -141,10 +161,17 @@ function harness(scene: Scene) {
 }
 
 describe('attemptGraceDefault', () => {
+  it('reports a lost broadcast as unconfirmed, naming the locally computed hash', async () => {
+    const h = harness({ ending: 'sale', calls: 1, broadcast: 'lost' });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toMatchObject({ kind: 'unconfirmed', tx: keccak256(SIGNED), preview: 'sale', calls: 1 });
+    expect(h.writes).toHaveLength(1);
+  });
+
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
     const h = harness({ ending: 'sale', calls: 2 });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'sale', calls: 2 });
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'sale', calls: 2 });
     expect(h.routes).toEqual([LIQUID]);
     expect(h.writes).toHaveLength(1);
     const w = h.writes[0] as { functionName: string; args: [bigint, unknown[]] };
@@ -172,7 +199,7 @@ describe('attemptGraceDefault', () => {
     const nft: GraceLoan = { ...LIQUID, collateralAssetType: 1 };
     const h = harness({ loans: [nft], ending: 'other' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: '0xabc', preview: 'other', calls: 0 });
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'other', calls: 0 });
     expect(h.routes).toHaveLength(0);
     expect((h.writes[0] as { args: [bigint, unknown[]] }).args[1]).toEqual([]);
   });

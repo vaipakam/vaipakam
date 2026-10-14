@@ -67,7 +67,9 @@
 
 import {
   createPublicClient,
+  encodeFunctionData,
   http,
+  keccak256,
   type Abi,
   type Address,
   type PublicClient,
@@ -95,7 +97,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
-import { createSubrequestBudget } from './subrequestBudget';
+import { createSubrequestBudget, SubrequestBudgetExhausted } from './subrequestBudget';
 import { HF_LIQUIDATION_THRESHOLD } from './liquidator';
 import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
 import type { PassTick } from './passSchedule';
@@ -166,6 +168,11 @@ export type GraceDefaultOutcome =
   // swaps — and `calls` is the try-list sent, which an `other` ending (an
   // internal match, an in-kind close) may not use at all.
   | { kind: 'submitted'; tx: string; preview: CloseOutPreview; calls: number }
+  // The signed transaction went to the RPC and no answer came back: it may
+  // be in the mempool or may never have arrived. `tx` is its hash, computed
+  // locally from the signed bytes, so an operator can look it up; the
+  // next run's pending-transaction check settles it on-chain either way.
+  | { kind: 'unconfirmed'; tx: string; preview: CloseOutPreview; calls: number; reason: string }
   | { kind: 'skipped'; reason: string };
 
 /** Everything one loan's attempt needs, injected so the decision is
@@ -267,6 +274,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     console.log(`[keeper] graceDefault ${where} deferred-by-cap loans=${deferred.join(',')}`);
   }
   let submitted = 0;
+  let unconfirmed = 0;
   for (const loanId of picked) {
     let outcome: GraceDefaultOutcome;
     try {
@@ -287,6 +295,11 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
       console.log(
         `[keeper] graceDefault chain=${chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls}`,
       );
+    } else if (outcome.kind === 'unconfirmed') {
+      unconfirmed += 1;
+      console.log(
+        `[keeper] graceDefault chain=${chain.id} loan=${loanId} send-unconfirmed tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls}: ${outcome.reason} — may or may not have been broadcast; later runs hold while it is pending`,
+      );
     } else {
       console.log(
         `[keeper] graceDefault chain=${chain.id} loan=${loanId} skipped: ${outcome.reason}`,
@@ -294,7 +307,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     }
   }
   console.log(
-    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted} ${spent()}`,
+    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted} unconfirmed=${unconfirmed} ${spent()}`,
   );
 }
 
@@ -487,15 +500,41 @@ export async function attemptGraceDefault(
     return { kind: 'skipped', reason: `preview=unknown calls=${calls.length}${routeNote}` };
   }
 
-  const tx = await wallet.writeContract({
-    address: diamond,
-    abi: DEFAULTED_ABI,
-    functionName: 'triggerDefault',
-    args: [loanId, calls],
+  // Prepared and signed here, broadcast separately: a failure up to the
+  // signature means nothing was sent, while a failure of the broadcast
+  // itself leaves the outcome unknown — the RPC may have relayed the
+  // transaction and lost the answer. The hash is known from the signed
+  // bytes either way, so the log can name it.
+  const account = wallet.account;
+  if (!account) return { kind: 'skipped', reason: 'no-keeper-account' };
+  const request = await wallet.prepareTransactionRequest({
+    account,
+    to: diamond,
+    data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
     chain: undefined,
-    account: wallet.account ?? null,
   } as never);
+  // `chain: null`: the client is chainless, and the chain id the request
+  // was prepared with (read from the RPC) is the one signed over.
+  const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
+  const tx = keccak256(serialized);
+  try {
+    await wallet.sendRawTransaction({ serializedTransaction: serialized });
+  } catch (err) {
+    // The cap refuses BEFORE any network call, so a refused broadcast is
+    // one that definitely did not happen.
+    if (refusedByBudget(err)) throw err;
+    return { kind: 'unconfirmed', tx, preview, calls: calls.length, reason: describeFailure(err) };
+  }
   return { kind: 'submitted', tx, preview, calls: calls.length };
+}
+
+/** Whether `err`, or anything in its cause chain, is the budget's refusal. */
+function refusedByBudget(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 8; depth += 1) {
+    if (e instanceof SubrequestBudgetExhausted) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 async function readLoan(
