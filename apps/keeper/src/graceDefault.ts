@@ -7,19 +7,25 @@
  * The lender's close-out card (#2474) sends the same transaction; this pass
  * applies the card's rules rather than a second set of its own.
  *
- * Per chain, per tick:
+ * Per run:
  *
- *   1. Pin one block and enumerate the active loans at it. Swap-and-pop on
+ *   1. On each chain, pin one block and enumerate the active loans at it. Swap-and-pop on
  *      the active list can skip a loan mid-pagination when the scan spans
  *      blocks — the liquidator's reason for pinning, and the same here.
  *   2. Batch-read `isLoanDefaultable` at that block. The contract's own view
  *      is the eligibility rule; nothing here re-derives grace arithmetic.
- *   3. For a batch of MAX_ATTEMPTS_PER_TICK candidates — consecutive runs
- *      take consecutive batches, so a loan that never closes cannot hold the
- *      front of the queue (`pickBatch`):
- *        a. Not the liquidator's. A loan that is also under water is left
- *           to the HF liquidator, which runs every tick from the same
- *           keeper account; two terminal sends for one loan would race.
+ *   3. For a batch of MAX_ATTEMPTS_PER_RUN candidates drawn from every
+ *      chain's list together — the subrequest allowance is the
+ *      invocation's, not a chain's — and consecutive runs take consecutive
+ *      batches, so a loan that never closes cannot hold the front of the
+ *      queue (`pickBatch`):
+ *        a. Not the liquidator's. A loan that is also under water is the
+ *           HF liquidator's to SELL, and it runs every tick from the same
+ *           keeper account; two swap closes of one loan would race. The
+ *           liquidator cannot close one without a route, though, and
+ *           `triggerDefault` closes a genuinely LTV-collapsed loan in kind
+ *           with none — so under water this pass previews the empty list
+ *           only and sends only an in-kind ending.
  *        b. The sale interlock (#2078): `triggerDefault` does not inspect
  *           sale linkage, so closing a loan after a buyer accepted its
  *           lender-position sale strands the buyer's principal. An accepted
@@ -35,10 +41,11 @@
  *           match, rental) is sent. A route that would fall back is not:
  *           the spec wants a liquid forced close to make a real market
  *           attempt, and a route already known to fail is not one.
- *        e. The final gate, at a fresh block: the sale state again, and the
- *           collateral amount the quotes were made for (#2472 — after a
- *           top-up the adapter sells only the quoted amount and the rest
- *           lands in no one's claim).
+ *        e. The final gate, at a fresh block: the health factor still on
+ *           the side of the line step a judged it on, the sale state
+ *           again, and the collateral amount the quotes were made for
+ *           (#2472 — after a top-up the adapter sells only the quoted
+ *           amount and the rest lands in no one's claim).
  *        f. Submit. The receipt is not awaited; the next tick's
  *           `isLoanDefaultable` read is what says whether it landed.
  *
@@ -101,10 +108,17 @@ const SCAN_PAGE = 200n;
  *  so one eth_call never grows with the active-loan count. */
 const READ_CHUNK = 100;
 
-/** Candidates worked per chain per tick — each costs a quote round and a
- *  simulation, so this bounds API and RPC spend as well as gas. The rest
- *  are reached on later ticks through the rotating start. */
-export const MAX_ATTEMPTS_PER_TICK = 5;
+/** Candidates worked per RUN, across every chain. One attempt costs about
+ *  sixteen subrequests plus two per enabled swap adapter (the roster is read
+ *  one adapter at a time) plus the aggregator quotes — loan, health factor
+ *  and sale reads, the simulation, the final gate's reads and the send's own
+ *  preparation; the CPU bench measures 22 RPC calls with three adapters, on
+ *  top of about four per chain for the scan. That is against a
+ *  50-subrequest allowance the whole invocation shares with the other passes
+ *  due on the same tick. The rest are reached
+ *  on later runs through the rotating start: at one per five minutes, a
+ *  backlog of n past-grace loans clears within 5n minutes. */
+export const MAX_ATTEMPTS_PER_RUN = 1;
 
 /** The pass's cadence, in ms — the rotation moves one batch per run.
  *  Mirrors `cadenceMinutes` in passSchedule.ts. */
@@ -139,26 +153,89 @@ export interface GraceDefaultDeps {
   buildRoute: (loan: GraceLoan) => Promise<ServerOrchestrationResult>;
 }
 
+/** One chain's working state for a run. */
+interface ChainRun {
+  chain: ChainConfig;
+  deps: GraceDefaultDeps;
+  candidates: bigint[];
+  attempted: number;
+  submitted: number;
+}
+
 export async function runGraceDefault(env: Env): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
+
+  // Scan every chain first: the scan is a handful of subrequests per chain,
+  // while an attempt costs a quote round, a simulation and a send. The cap
+  // then applies to the RUN, not to each chain, because the subrequest
+  // allowance is the invocation's — shared by every chain and every pass
+  // the tick launches — and a per-chain cap multiplies with the roster.
+  const runs: ChainRun[] = [];
   for (const chain of getChainConfigs(env)) {
     try {
-      await processChain(env, chain);
+      // eslint-disable-next-line no-await-in-loop
+      const run = await scanChain(env, chain);
+      if (run) runs.push(run);
     } catch (err) {
       // Described, never stringified: a viem transport error carries the
       // request URL, and this Worker's RPC URLs carry API keys.
       console.error(`[keeper] graceDefault chain=${chain.id} failed: ${describeFailure(err)}`);
     }
   }
+
+  const queue = runs.flatMap((run) => run.candidates.map((loanId) => ({ run, loanId })));
+  const { picked, deferred } = pickBatch(
+    queue,
+    Math.floor(Date.now() / ROTATION_STEP_MS),
+    MAX_ATTEMPTS_PER_RUN,
+  );
+  for (const run of runs) {
+    // Named, not just counted: an operator asking why one loan is still
+    // Active must be able to tell "waiting its turn" from "never seen".
+    const waiting = deferred.filter((d) => d.run === run).map((d) => d.loanId);
+    if (waiting.length > 0) {
+      console.log(
+        `[keeper] graceDefault chain=${run.chain.id} deferred-by-cap loans=${waiting.join(',')}`,
+      );
+    }
+  }
+
+  for (const { run, loanId } of picked) {
+    let outcome: GraceDefaultOutcome;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      outcome = await attemptGraceDefault(run.deps, loanId);
+    } catch (err) {
+      outcome = { kind: 'skipped', reason: `error:${describeFailure(err)}` };
+    }
+    run.attempted += 1;
+    if (outcome.kind === 'submitted') {
+      run.submitted += 1;
+      console.log(
+        `[keeper] graceDefault chain=${run.chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} route=${outcome.route}`,
+      );
+    } else {
+      console.log(
+        `[keeper] graceDefault chain=${run.chain.id} loan=${loanId} skipped: ${outcome.reason}`,
+      );
+    }
+  }
+
+  for (const run of runs) {
+    if (run.candidates.length === 0) continue;
+    console.log(
+      `[keeper] graceDefault chain=${run.chain.id} defaultable=${run.candidates.length} attempted=${run.attempted} submitted=${run.submitted}`,
+    );
+  }
 }
 
-async function processChain(env: Env, chain: ChainConfig): Promise<void> {
-  if (!chain.diamond) return;
+async function scanChain(env: Env, chain: ChainConfig): Promise<ChainRun | null> {
+  if (!chain.diamond) return null;
   const client = createPublicClient({ transport: http(chain.rpc) }) as PublicClient;
   const ctx = buildKeeperContext(env, chain, client);
-  if (!ctx) return;
+  if (!ctx) return null;
   const keeper = ctx.wallet.account?.address;
-  if (!keeper) return;
+  if (!keeper) return null;
 
   const { defaultable: candidates, unread } = await findDefaultable(client, ctx.diamond, chain.id);
   if (unread.length > 0) {
@@ -168,7 +245,6 @@ async function processChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] graceDefault chain=${chain.id} eligibility-unread loans=${unread.join(',')}`,
     );
   }
-  if (candidates.length === 0) return;
 
   const deps: GraceDefaultDeps = {
     client,
@@ -185,42 +261,7 @@ async function processChain(env: Env, chain: ChainConfig): Promise<void> {
         txOrigin: keeper,
       }),
   };
-
-  const { picked, deferred } = pickBatch(
-    candidates,
-    Math.floor(Date.now() / ROTATION_STEP_MS),
-    MAX_ATTEMPTS_PER_TICK,
-  );
-  if (deferred.length > 0) {
-    // Named, not just counted: an operator asking why one loan is still
-    // Active must be able to tell "waiting its turn" from "never seen".
-    console.log(
-      `[keeper] graceDefault chain=${chain.id} deferred-by-cap loans=${deferred.join(',')}`,
-    );
-  }
-  let submitted = 0;
-  for (const loanId of picked) {
-    let outcome: GraceDefaultOutcome;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      outcome = await attemptGraceDefault(deps, loanId);
-    } catch (err) {
-      outcome = { kind: 'skipped', reason: `error:${describeFailure(err)}` };
-    }
-    if (outcome.kind === 'submitted') {
-      submitted += 1;
-      console.log(
-        `[keeper] graceDefault chain=${chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} route=${outcome.route}`,
-      );
-    } else {
-      console.log(
-        `[keeper] graceDefault chain=${chain.id} loan=${loanId} skipped: ${outcome.reason}`,
-      );
-    }
-  }
-  console.log(
-    `[keeper] graceDefault chain=${chain.id} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted}`,
-  );
+  return { chain, deps, candidates, attempted: 0, submitted: 0 };
 }
 
 /** Active loans past grace, read at one pinned block. */
@@ -310,11 +351,16 @@ export async function attemptGraceDefault(
 
   const loan = await readLoan(client, diamond, loanId);
 
-  // A past-grace loan that is ALSO under water belongs to the liquidator,
-  // which runs every tick from the same keeper account. Sending both would
-  // race two terminal transactions for one loan from one nonce sequence.
-  const hf = await liquidatorOwns(client, diamond, loanId);
-  if (hf !== null) return { kind: 'skipped', reason: hf };
+  // A past-grace loan that is ALSO under water: any SWAP close of it belongs
+  // to the liquidator, which runs every tick from the same keeper account —
+  // quoting a second sale here would race two terminal transactions for one
+  // loan. What the liquidator cannot do is the no-swap close: it needs a
+  // route, while `triggerDefault` moves a genuinely LTV-collapsed loan's
+  // collateral in kind with an empty list. So under water this pass
+  // previews the empty list only, and sends only an in-kind ending.
+  const hf = await hfStanding(client, diamond, loanId);
+  if (typeof hf === 'object') return { kind: 'skipped', reason: `hf-unread:${hf.unread}` };
+  const underWater = hf === 'under-water';
 
   const sale = await saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper);
   if (sale !== null) return { kind: 'skipped', reason: sale };
@@ -323,7 +369,9 @@ export async function attemptGraceDefault(
   // the empty list, and the contract takes its in-kind or rental branch or
   // refuses (a liquid ERC-20 needs a route: `NoEnabledSwapRoute`).
   const swappable =
-    loan.collateralAssetType === ASSET_TYPE_ERC20 && loan.assetType === ASSET_TYPE_ERC20;
+    !underWater &&
+    loan.collateralAssetType === ASSET_TYPE_ERC20 &&
+    loan.assetType === ASSET_TYPE_ERC20;
   let calls: readonly AdapterCall[] = [];
   let routeNote = '';
   if (swappable) {
@@ -335,6 +383,11 @@ export async function attemptGraceDefault(
   // An empty list still previews: a liquid loan reverts, an illiquid or
   // collapsed one takes the in-kind branch, and only the chain knows which.
   const preview = await previewCloseOut({ client, diamond, account: keeper, loanId, calls });
+  if (underWater && preview !== 'other') {
+    // Not an in-kind close (a liquid loan's empty list reverts, or the
+    // chain could not say): the liquidator's.
+    return { kind: 'skipped', reason: `${LEFT_TO_LIQUIDATOR} preview=${preview}` };
+  }
   if (preview === 'fallback') {
     return { kind: 'skipped', reason: `preview=fallback calls=${calls.length}${routeNote}` };
   }
@@ -346,16 +399,23 @@ export async function attemptGraceDefault(
 
   // THE FINAL GATE, pinned to one fresh block: the liquidator boundary, the
   // sale state and the collateral the quotes were made for, judged together.
-  // The health factor is read again because a price can cross the line while
-  // the route is quoted and previewed; the earlier read only kept a loan that
-  // was ALREADY under water from costing a quote.
+  // The health factor is read again because a price can cross the line, in
+  // either direction, while the route is quoted and previewed: the decision
+  // above (quote a sale, or preview in kind only) holds only for the side
+  // of the line it was made on.
   const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
   const [lateHf, lateSale, live] = await Promise.all([
-    liquidatorOwns(client, diamond, loanId, gateBlock),
+    hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
   ]);
-  if (lateHf !== null) return { kind: 'skipped', reason: `gate:${lateHf}` };
+  if (typeof lateHf === 'object') return { kind: 'skipped', reason: `gate:hf-unread:${lateHf.unread}` };
+  if (lateHf !== hf) {
+    return {
+      kind: 'skipped',
+      reason: lateHf === 'under-water' ? `gate:${LEFT_TO_LIQUIDATOR}` : 'gate:hf-recovered',
+    };
+  }
   if (lateSale !== null) return { kind: 'skipped', reason: `gate:${lateSale}` };
   if (swappable && live.collateralAmount !== loan.collateralAmount) {
     return { kind: 'skipped', reason: 'gate:collateral-changed' };
@@ -422,15 +482,18 @@ async function saleVerdict(
   }
 }
 
-/** Null when the liquidator will not act on this loan; otherwise why this
- *  pass leaves it. Illiquid collateral has no health factor — the read
- *  reverts, and the liquidator skips such loans too. */
-async function liquidatorOwns(
+/** Where the loan stands against the liquidator's line. Illiquid
+ *  collateral has no health factor — the read reverts, and the liquidator
+ *  skips such loans too, so a revert reads as above the line. A read that
+ *  got no answer is said as such and never guessed. */
+type HfStanding = 'above' | 'under-water' | { unread: string };
+
+async function hfStanding(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,
   blockNumber?: bigint,
-): Promise<string | null> {
+): Promise<HfStanding> {
   try {
     const hf = (await client.readContract({
       address: diamond,
@@ -439,9 +502,11 @@ async function liquidatorOwns(
       args: [loanId],
       blockNumber,
     })) as bigint;
-    return hf < HF_LIQUIDATION_THRESHOLD ? 'hf-liquidatable (left to the liquidator)' : null;
+    return hf < HF_LIQUIDATION_THRESHOLD ? 'under-water' : 'above';
   } catch (err) {
-    if (isRevert(err)) return null;
-    return `hf-unread:${describeFailure(err)}`;
+    if (isRevert(err)) return 'above';
+    return { unread: describeFailure(err) };
   }
 }
+
+const LEFT_TO_LIQUIDATOR = 'hf-liquidatable (left to the liquidator)';

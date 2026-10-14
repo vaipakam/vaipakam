@@ -273,11 +273,48 @@ describe('attemptGraceDefault', () => {
 });
 
 describe('the liquidator boundary', () => {
-  it('leaves an under-water loan to the HF liquidator — no competing terminal send', async () => {
+  it('leaves an under-water loan to the HF liquidator — no competing sale is quoted', async () => {
+    // The empty list a liquid loan cannot close with: the chain refuses it.
+    const h = harness({ hf: 9n * 10n ** 17n, ending: null });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({
+      kind: 'skipped',
+      reason: 'hf-liquidatable (left to the liquidator) preview=unknown',
+    });
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('closes an under-water loan IN KIND when the chain takes the no-swap branch — the liquidator needs a route it may not have', async () => {
+    // A genuinely LTV-collapsed loan: `triggerDefault` moves the collateral
+    // in kind with an empty list, which the quote-bound liquidator cannot do.
+    const h = harness({ hf: 9n * 10n ** 17n, ending: 'other' });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', route: 'none' });
+    expect(h.routes).toHaveLength(0);
+  });
+
+  it('never sends an under-water loan into a swap ending of its own', async () => {
     const h = harness({ hf: 9n * 10n ** 17n, ending: 'sale' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'skipped', reason: 'hf-liquidatable (left to the liquidator)' });
-    expect(h.routes).toHaveLength(0);
+    expect(out).toEqual({
+      kind: 'skipped',
+      reason: 'hf-liquidatable (left to the liquidator) preview=sale',
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('refuses the in-kind send when the health factor recovered by the gate', async () => {
+    let reads = 0;
+    const h = harness({
+      hf: () => {
+        reads += 1;
+        return reads === 1 ? 9n * 10n ** 17n : 2n * 10n ** 18n;
+      },
+      ending: 'other',
+    });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:hf-recovered' });
     expect(h.writes).toHaveLength(0);
   });
 
