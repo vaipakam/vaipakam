@@ -3538,6 +3538,10 @@ const copySource = {
     owedDefaultedNoCollateral:
       'Nothing to repay anymore — this loan ended in default and was settled.',
     owedClosed: 'Nothing — this loan is closed and settled.',
+    // #2466 — an internally matched loan is closed but NOT settled until its
+    // claims are collected; `owedClosed` said "settled" while the claim
+    // button stood right below it.
+    owedInternalMatched: 'Nothing — internal matching closed this loan. It settles once its claims are collected.',
     whatNextRepaidBorrower:
       'You repaid this loan. Nothing else can happen to it — claim your collateral back below if you haven’t yet.',
     whatNextRepaidLender:

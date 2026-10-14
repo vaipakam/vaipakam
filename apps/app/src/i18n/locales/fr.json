@@ -1462,7 +1462,8 @@
       "rowBorrowed": "Position d’emprunteur · {{amount}} empruntés au départ",
       "rowLent": "Position de prêteur · {{amount}} prêtés au départ",
       "rowBorrowedAmountUnknown": "Position d’emprunteur · le montant emprunté au départ est indisponible",
-      "rowLentAmountUnknown": "Position de prêteur · le montant prêté au départ est indisponible"
+      "rowLentAmountUnknown": "Position de prêteur · le montant prêté au départ est indisponible",
+      "owedInternalMatched": "Rien — l’appariement interne a clôturé ce prêt. Il est réglé une fois ses réclamations encaissées."
     },
     "powerSurface": {
       "body": "Cette page affiche côte à côte les offres ouvertes d’une paire et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",

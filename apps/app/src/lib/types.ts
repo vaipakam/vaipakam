@@ -46,6 +46,23 @@ export const LIVE_STATUS_TO_INDEXED = {
  *  #2373 r4 — one rule for the page's action gate AND for the claim reads
  *  that feed its payout, so the payout is never composed from a status the
  *  page has already moved past. */
+/** #2470 — the live status the page may reconcile with, or `undefined`.
+ *
+ *  Only a read that is RUNNING and did not error counts. The page reads the
+ *  live status only while the indexed row is still open (active or in the
+ *  fallback); once the indexer catches up to a terminal status the query
+ *  stops, and React Query keeps its last result — a pre-transition snapshot.
+ *  Reconciling with that would map an old `Repaid` over an indexed
+ *  `settled` and regress the page until a reload. A failed refetch likewise
+ *  keeps stale data. Same gate the page's amount fold uses (#2461). */
+export function usableLiveStatus(read: {
+  enabled: boolean;
+  status: number | undefined;
+  isError: boolean;
+}): number | undefined {
+  return read.enabled && !read.isError ? read.status : undefined;
+}
+
 export function reconcileIndexedStatus<S extends string>(
   indexed: S,
   live: number | undefined,

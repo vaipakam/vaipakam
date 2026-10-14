@@ -1462,7 +1462,8 @@
       "rowBorrowed": "차입 포지션 · 시작 시 {{amount}} 차입",
       "rowLent": "대여 포지션 · 시작 시 {{amount}} 대여",
       "rowBorrowedAmountUnknown": "차입 포지션 · 시작 시 차입한 금액을 표시할 수 없음",
-      "rowLentAmountUnknown": "대여 포지션 · 시작 시 대여한 금액을 표시할 수 없음"
+      "rowLentAmountUnknown": "대여 포지션 · 시작 시 대여한 금액을 표시할 수 없음",
+      "owedInternalMatched": "없음 — 내부 매칭으로 이 대출이 종료되었습니다. 청구가 수령되면 정산됩니다."
     },
     "powerSurface": {
       "body": "이 페이지는 한 쌍의 열린 제안을 나란히 보여 주고 직접 이율을 정할 수 있게 합니다. 단계별로 안내받고 싶다면 빌리기·빌려주기 페이지에서 같은 일을 설명과 함께 할 수 있습니다.",

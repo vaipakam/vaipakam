@@ -125,6 +125,7 @@ import {
   AssetType,
   reconcileIndexedStatus,
   LoanStatus,
+  usableLiveStatus,
 } from '../lib/types';
 import { tipAware } from '../chain/railHealth';
 
@@ -1204,13 +1205,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // one the page's badge and action gate use below, so a payout is never
   // composed from an indexed status the chain has already moved past (a
   // repaid loan read as "recovered from the default").
+  // #2470 — ONE live status for every reconciliation on this page (the
+  // claim reads here, the badge and action gate below): never a stopped
+  // query's cached snapshot, never data kept across a failed refetch.
+  const liveStatusForReconcile = usableLiveStatus({
+    enabled: liveStatusEnabled,
+    status: liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
+    isError: liveStatus.isError,
+  });
   const claimLoan = loan.data
     ? {
         ...loan.data,
-        status: reconcileIndexedStatus(
-          loan.data.status,
-          liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
-        ),
+        status: reconcileIndexedStatus(loan.data.status, liveStatusForReconcile),
       }
     : undefined;
   const lenderClaim = useLoanClaim(claimLoan, 'lender');
@@ -1257,10 +1263,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // and the claim paths re-check live at submit anyway).
   // Indexed as a plain number map so an unknown FUTURE enum value
   // yields undefined (→ no override) instead of a lying type.
-  const reconciledStatus = reconcileIndexedStatus(
-    loan.data.status,
-    liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
-  );
+  const reconciledStatus = reconcileIndexedStatus(loan.data.status, liveStatusForReconcile);
   const statusIsReconciled = reconciledStatus !== loan.data.status;
   // #2461 r1/r2 — while the live read runs (the indexed row is still open)
   // the page's principal and collateral come from it, with or without a
@@ -3183,7 +3186,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       ? hasCollateral
                         ? copy.positions.owedDefaulted
                         : copy.positions.owedDefaultedNoCollateral
-                      : copy.positions.owedClosed
+                      : row.status === 'internal_matched'
+                        ? // #2466 — closed by the match, but not settled:
+                          // it settles only once its claims are collected.
+                          copy.positions.owedInternalMatched
+                        : copy.positions.owedClosed
                   : copy.positions.details.owedPrincipalUpToInterest(principalStr, interestStr)}
             </dd>
           </div>

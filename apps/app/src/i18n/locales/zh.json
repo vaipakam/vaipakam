@@ -1462,7 +1462,8 @@
       "rowBorrowed": "借款头寸 · 起始借入 {{amount}}",
       "rowLent": "出借头寸 · 起始借出 {{amount}}",
       "rowBorrowedAmountUnknown": "借款头寸 · 起始借入金额暂不可用",
-      "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用"
+      "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用",
+      "owedInternalMatched": "无 — 内部撮合已结束这笔贷款。其领取完成后即结算。"
     },
     "powerSurface": {
       "body": "本页并排显示一个交易对的开放报价，并让你设定自己的利率。想一步步操作？“借款”和“出借”页面会带着说明完成同样的事。",

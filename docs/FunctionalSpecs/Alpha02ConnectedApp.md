@@ -1541,6 +1541,18 @@ is the borrower's own money.
   drop. When the app cannot tell whether the collateral is VPFI, it says that
   and gives the same caution, rather than treating unknown as "not VPFI".
 
+### Loan status and what is owed, as the page states them (#2466, #2470)
+
+- An internally matched loan is closed but not settled until its claims are
+  collected. While a claim is pending, the page says the match closed the loan
+  and that it settles once its claims are collected; it never calls the loan
+  settled before the protocol has settled it.
+- Where the page reconciles an indexed status with a live read of the chain,
+  it uses only a live read that is running and did not fail. A stopped read's
+  last answer, or an answer kept across a failed refresh, describes the loan as
+  it was, and is never allowed to override the indexed status — so a settled
+  loan is never shown as merely repaid because of an old answer.
+
 ### Forced close-out of an overdue loan
 
 - A lender holding an active position whose repayment window and grace period
