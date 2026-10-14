@@ -40,9 +40,6 @@ log() { echo "[keeper-update] $*"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
 
-git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-target="$(git -C "$REPO" rev-parse "origin/$BRANCH")"
-release="$ROOT/releases/$target"
 # Written just before `current` moves to a release the keeper must restart
 # onto, and removed once that restart is queued. So a run that was stopped,
 # timed out, or could not queue the restart after switching leaves it behind,
@@ -53,11 +50,18 @@ queue_restart() {
   systemctl try-restart --no-block vaipakam-keeper.service
   rm -f "$PENDING"
 }
+# Finish a restart an earlier run left pending, before anything that can
+# fail (the fetch, a build of a newer commit), so a failing newer build can
+# never leave the keeper on a bundle older than `current`.
+if [ -e "$PENDING" ]; then
+  log "restarting the keeper onto $(readlink "$ROOT/current"), which an earlier run switched to but did not restart"
+  queue_restart
+fi
+
+git -C "$REPO" fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+target="$(git -C "$REPO" rev-parse "origin/$BRANCH")"
+release="$ROOT/releases/$target"
 if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
-  if [ -e "$PENDING" ]; then
-    log "restarting the keeper onto $target, which an earlier run switched to but did not restart"
-    queue_restart
-  fi
   exit 0
 fi
 

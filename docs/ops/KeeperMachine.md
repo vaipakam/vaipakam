@@ -104,8 +104,11 @@ its next boot. Running it again is safe. Each run brings the units and
 scripts up to date (the timer does not update them). It also moves Node to
 the latest 22.x release. When Node or the keeper's unit changed, it restarts
 a running keeper onto them, after its current tick. So re-run it to take Node
-security releases. It keeps the branch the machine follows unless
-`KEEPER_DEPLOY_BRANCH` is set again.
+security releases. Node lives in `/usr/local/lib/vaipakam-node`, which the
+script owns outright: it keeps the version in use and the one before it, and
+removes older ones. A re-run keeps the branch the machine follows unless
+`KEEPER_DEPLOY_BRANCH` is set again, and leaves paused deploys paused (§6):
+only the first install turns the update timer on.
 
 ## 4. Configure
 

@@ -67,30 +67,50 @@ main() {
   [ -n "$file" ] || { echo "no Node ${NODE_MAJOR} build for linux-${arch} on nodejs.org" >&2; exit 1; }
   local latest="${file#node-}"
   latest="${latest%%-linux-*}"
+  # The runtime lives in a directory this script owns outright, so every
+  # rule below applies only there: versions side by side, `current` naming
+  # the one in use, and the four commands in /usr/local/bin pointing through
+  # it. Nothing outside NODE_HOME is ever chowned, chmodded or pruned.
+  local NODE_HOME=/usr/local/lib/vaipakam-node
+  install -d -o root -g root -m 755 "$NODE_HOME"
   local installed=""
-  if [ -x /usr/local/bin/node ]; then
-    installed="$(/usr/local/bin/node -v)"
+  if [ -x "$NODE_HOME/current/bin/node" ]; then
+    installed="$("$NODE_HOME/current/bin/node" -v)"
   fi
   local node_changed=no
   if [ "$installed" != "$latest" ]; then
     log "installing Node $latest (was: ${installed:-none})"
     curl -fsSL "$base/$file" -o "$tmp/$file"
     (cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c --quiet -)
-    mkdir -p /usr/local/lib/nodejs
+    local incoming
+    incoming="$(mktemp -d "$NODE_HOME/.incoming.XXXXXX")"
     # Root's tar would otherwise keep the archive's owner ids, which can match
     # a local account that could then replace the runtime the keeper runs.
-    tar --no-same-owner -xJf "$tmp/$file" -C /usr/local/lib/nodejs
-    local dir="/usr/local/lib/nodejs/${file%.tar.xz}"
-    local bin
-    for bin in node npm npx corepack; do ln -sfn "$dir/bin/$bin" "/usr/local/bin/$bin"; done
+    tar --no-same-owner -xJf "$tmp/$file" -C "$incoming" --strip-components=1
+    chown -R root:root "$incoming"
+    chmod -R go-w "$incoming"
+    chmod 755 "$incoming"
+    rm -rf "${NODE_HOME:?}/$latest"
+    mv -T "$incoming" "$NODE_HOME/$latest"
+    ln -sfn "$latest" "$NODE_HOME/current.next"
+    mv -Tf "$NODE_HOME/current.next" "$NODE_HOME/current"
     node_changed=yes
   fi
-  # Also on a run that installed nothing, for a runtime extracted before this
-  # rule existed.
-  local node_dir
-  node_dir="$(dirname "$(dirname "$(readlink -f /usr/local/bin/node)")")"
-  chown -R root:root "$node_dir"
-  chmod -R go-w "$node_dir"
+  # Keep the version in use and the one before it; remove older ones (and
+  # any half-extracted .incoming left by an interrupted run).
+  local keep_prev="$installed" entry
+  for entry in "$NODE_HOME"/* "$NODE_HOME"/.incoming.*; do
+    [ -e "$entry" ] || continue
+    case "$(basename "$entry")" in
+      current | "$latest" | "${keep_prev:-$latest}") ;;
+      *) rm -rf "$entry" ;;
+    esac
+  done
+  # Enforced every run, within NODE_HOME only.
+  chown -R root:root "$NODE_HOME"
+  chmod -R go-w "$NODE_HOME"
+  local bin
+  for bin in node npm npx corepack; do ln -sfn "$NODE_HOME/current/bin/$bin" "/usr/local/bin/$bin"; done
 
   # Everything under /opt/vaipakam-keeper is root's: the checkout the code
   # comes from, the scripts and the releases. Builds run as a throwaway
@@ -132,7 +152,8 @@ main() {
   chmod 750 /etc/vaipakam
   chmod 600 /etc/vaipakam/keeper.env
 
-  local unit unit_changed=no
+  local unit unit_changed=no first_install=no
+  [ -e /etc/systemd/system/vaipakam-keeper-update.timer ] || first_install=yes
   if ! cmp -s "$kit/vaipakam-keeper.service" /etc/systemd/system/vaipakam-keeper.service; then
     unit_changed=yes
   fi
@@ -140,10 +161,18 @@ main() {
     install -m 644 "$kit/$unit" "/etc/systemd/system/$unit"
   done
   systemctl daemon-reload
-  systemctl enable --quiet --now vaipakam-keeper-update.timer
-
-  log "deploying the latest build (the first one can take a few minutes)"
-  systemctl start vaipakam-keeper-update.service
+  # Deploys start on the first install only. Afterwards the timer's state is
+  # the operator's: a reinstall (say, for a Node security release) while
+  # deploys are paused for a rollback must not resume them (§6).
+  if [ "$first_install" = yes ]; then
+    systemctl enable --quiet --now vaipakam-keeper-update.timer
+  fi
+  if systemctl is-enabled --quiet vaipakam-keeper-update.timer; then
+    log "deploying the latest build (the first one can take a few minutes)"
+    systemctl start vaipakam-keeper-update.service
+  else
+    log "deploys are paused (the update timer is disabled), so nothing was deployed; resume per docs/ops/KeeperMachine.md §6"
+  fi
   log "current release: $(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || echo none)"
 
   # daemon-reload alone leaves a running keeper on its old unit, and the
