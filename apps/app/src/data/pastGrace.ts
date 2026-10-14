@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { idleAware } from '../lib/idle';
 
 export function useLoanPastGrace(loanId: number, enabled: boolean) {
   const { readChain } = useActiveChain();
@@ -30,8 +31,10 @@ export function useLoanPastGrace(loanId: number, enabled: boolean) {
     // Polled in BOTH states. A `true` is not final: governance can lengthen
     // the grace schedule (`setGraceBuckets` / `clearGraceBuckets`), which
     // re-derives an open loan's deadline and can reopen ordinary repayment.
-    // A minute is fine-grained enough for a list badge.
-    refetchInterval: 60_000,
+    // A minute is fine-grained enough for a list badge, stretched once the
+    // session goes idle so an unattended Positions tab does not keep every
+    // mounted row reading forever.
+    refetchInterval: idleAware(60_000),
     queryFn: () =>
       publicClient!.readContract({
         address: readChain.diamondAddress,

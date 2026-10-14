@@ -33,7 +33,10 @@ export function LoanRow({
   // for every open loan, not only past-due ones by this device's clock,
   // because the chain's clock is the one the contract uses.
   const pastGrace = useLoanPastGrace(loan.loanId, loan.status === 'active');
-  const view = withGraceVerdict(timeView, pastGrace.data);
+  // A failed refresh keeps TanStack's last `data`; that is a STALE verdict
+  // (governance may have lengthened grace meanwhile), so an errored read
+  // counts as unread rather than as the last answer.
+  const view = withGraceVerdict(timeView, pastGrace.isError ? undefined : pastGrace.data);
   const pastGraceTitle =
     view.labelKey !== 'pastGrace'
       ? undefined

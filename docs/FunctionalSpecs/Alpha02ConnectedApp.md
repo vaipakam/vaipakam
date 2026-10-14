@@ -1414,7 +1414,7 @@ Thin-market honesty rules apply.
   distinct from a loan that is past due but still inside grace. Whether grace
   has ended is the protocol's own answer, judged by chain time against the
   live grace schedule, never the device clock; until that answer is read the
-  row keeps its ordinary time-based label, and it is re-read periodically
+  row keeps its ordinary time-based label (as it does when a re-read fails, rather than repeating an earlier answer), and it is re-read periodically
   because governance can lengthen the grace schedule and reopen repayment.
   That answer establishes TIME eligibility only — a close-out can still be
   refused for reasons the row does not read, such as a pause — so the row's
