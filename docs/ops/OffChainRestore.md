@@ -172,7 +172,19 @@ then deploy.
 
    ```bash
    wrangler d1 create vaipakam-warm
+   wrangler d1 create vaipakam-keeper-db
    ```
+
+   `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
+   cursors, completion markers, remit-ack log, HF-band edge state and
+   ops-alert de-dup, which nothing else reads. **The archive does not carry
+   it** — the backup Worker binds only the shared database — so after a
+   restore it starts EMPTY, exactly as these tables always did (none was
+   ever archived; their restore treatment is #1481). Expect the keeper to
+   rescan its remit-ack and commitment frontiers from the start, re-send an
+   acknowledgement for each reservation still Pending on Base (paid CCIP
+   messages, rate-limited per reservation from then on), and re-mint one
+   HF-band inbox row per currently-degraded loan.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
@@ -194,9 +206,17 @@ then deploy.
    `database_id` to the new IDs from step 3. The bound paths:
 
    - `apps/indexer/wrangler.jsonc`     → vaipakam-warm
-   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm (`DB`) **and**
+     vaipakam-keeper-db (`KEEPER_DB`)
    - `apps/agent/wrangler.jsonc`       → vaipakam-warm
    - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
+
+   The keeper's private database is pinned by id in one more place, like
+   the shared one below: `PRIVATE_DATABASES` in
+   `apps/indexer/scripts/lib/d1-workers.mjs`. Set its `id` to the new
+   `vaipakam-keeper-db` uuid too — `check-d1-name-consistency` refuses a
+   tree whose `KEEPER_DB` binding and that pin disagree, and the live-binding
+   gate checks the serving keeper against the pinned id.
 
    **And one place that is not a `wrangler.jsonc`** (#2267): the cutover
    tooling pins the database by **id** as well as name, in
@@ -505,7 +525,7 @@ then deploy.
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
-      | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner forfeit sweep and resolving their held staging records (#2450) |
+      | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`
       (`wrangler secret put`), is captured the same way: while unset the
@@ -525,10 +545,14 @@ then deploy.
       §7a, after the smoke test, and is deliberately the last thing that
       happens before the backup writer.
 
-7. Apply migrations:
+7. Apply migrations — the shared schema from `apps/indexer`, and the
+   keeper's private schema from `apps/keeper` (#2450). The keeper's
+   `deploy` would apply the second itself; it is applied here so the
+   restore order stays explicit.
 
    ```bash
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-warm --remote )
+   ( cd apps/keeper     && wrangler d1 migrations apply vaipakam-keeper-db --remote )
    ```
 
 8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
@@ -1466,13 +1490,21 @@ from the archive. Why:
   restore path.
 
 ```bash
+# FIRST, the keeper's PRIVATE database (#2450): the HF-band state is
+# producer state for the inbox rows the shared command below clears, and
+# it lives in vaipakam-keeper-db now, not in the shared database. Run it
+# BEFORE the shared command — see "notifications is cleared with its
+# producer state" below for why the order matters.
+( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM hf_band_state" )
+```
+
+```bash
 # Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
-DELETE FROM hf_band_state; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
@@ -1532,7 +1564,7 @@ boundary is stated honestly** (#1450 r33). The table has THREE
 producer classes, and "the replay regenerates it" is true of only
 one: chain-event rows come back from the block-zero replay; the
 keeper's HF-band rows come back only as *current-state* rows, and
-only because `hf_band_state` is cleared in the same command — with
+only because `hf_band_state` is cleared in the same step — with
 the state emptied, every loan reads as previously-healthy and the
 keeper's first tick re-derives one fresh notification per
 currently-degraded loan (day-bucketed dedup bounds this; it is
@@ -1546,6 +1578,25 @@ attacker may have written. Clearing `notifications` while LEAVING
 `hf_band_state` would be the worst combination: the state says
 "already notified" about rows that no longer exist, and current
 degradations go silent.
+
+**Two databases, so two commands, and the ORDER is the safeguard**
+(#2450). `hf_band_state` is keeper-private now and lives in
+`vaipakam-keeper-db`; D1 cannot clear tables in two databases in one
+command, so the pair is no longer atomic. Clear the private state FIRST,
+as the fences above do. If the shared command then fails, the state is
+empty while the inbox rows remain — the keeper's next tick re-derives one
+row per degraded loan and the day-bucket dedup absorbs it, the benign
+direction. The reverse order, interrupted, leaves exactly the worst
+combination above. Re-run whichever command did not complete before
+moving on.
+
+**Before the keeper's private database is live** — the deployed keeper's
+config has no `KEEPER_DB` binding yet, because the one-time cutover in
+`docs/ops/DeploymentRunbook.md` ("Keeper private D1 — one-time cutover")
+has not run — the keeper still reads the SHARED `hf_band_state`. In that
+state skip the private command and add `DELETE FROM hf_band_state;` to the
+shared one instead; clearing the private copy would empty a table the
+deployed keeper never reads.
 
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
@@ -2016,10 +2067,12 @@ caught at the cheapest stage.
    NON-compromise restore **both are normally already satisfied** — so
    VERIFY them rather than assuming they need rebuilding:
 
-   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
-     `apps/indexer/migrations/`, so §1 step 7 applied it with every other
-     migration. Confirm:
-     `wrangler d1 migrations list vaipakam-warm --remote`.
+   - **The remit-ack tables.** They are keeper-private since #2450 and
+     come from the keeper's own `apps/keeper/migrations/0001_keeper_state.sql`
+     (the shared `0044_keeper_remit_ack.sql` still exists, and still applies
+     to `vaipakam-warm`, but the keeper no longer reads that copy). §1 step 7
+     applied both. Confirm the private one from `apps/keeper/`:
+     `wrangler d1 migrations list vaipakam-keeper-db --remote`.
    - **The on-chain authority.** Two of them, and they are not the same —
      this is the part that is easy to get wrong. `remitRewardBudget`
      authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**

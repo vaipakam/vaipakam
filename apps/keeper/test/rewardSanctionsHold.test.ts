@@ -15,13 +15,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CLEARED_CANDIDATE_SEC,
   DECISION_DELIVER,
-  DECISION_FORFEIT,
+  DECISION_CONFIRMED,
   DECISION_HOLD,
   OBSERVE_AFTER_SEC,
   PASS_CADENCE_SEC,
   candidateOwners,
   planSanctionsHold,
-  sweepPageEffective,
+  raiseAlerts,
   type OwnerSanctionsStatus,
 } from '../src/rewardSanctionsHold';
 import {
@@ -34,6 +34,10 @@ import {
 import { sendOpsAlert } from '../src/opsAlert';
 import type { Env } from '../src/env';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+// The ops-alert table is keeper-private (#2450): those cells run on the
+// keeper's own schema, beside a shared database that has no keeper tables.
+import { createKeeperD1, createSharedD1 } from './helpers/schemas';
+import type { KeeperD1 } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -121,39 +125,32 @@ describe('planSanctionsHold', () => {
     expect(at(1).overdue.map((s) => s.owner), 'one second past').toEqual([A]);
   });
 
-  it('routes Forfeit to the sweep and Deliver to the resolution pages only', () => {
+  it('routes Confirmed to the settlement and Deliver to the resolution pages only', () => {
     const p = planSanctionsHold(
-      [held({ owner: A, decision: DECISION_FORFEIT }), held({ owner: B, decision: DECISION_DELIVER })],
+      [held({ owner: A, decision: DECISION_CONFIRMED }), held({ owner: B, decision: DECISION_DELIVER })],
       NOW,
     );
-    expect(p.forfeit).toEqual([A]);
+    expect(p.settle).toEqual([A]);
     expect(p.resolveOnly).toEqual([B]);
     expect(p.observe).toEqual([]);
     expect(p.overdue).toEqual([]);
   });
 
-  it('a Forfeit owner is due an observation on the same rule as a hold (straddle)', () => {
-    // A forfeit whose sweep page makes no progress still needs its chain kept
-    // alive, or the confirmation it rests on can lapse.
+  it('a Confirmed owner is due an observation on the same rule as a hold (straddle)', () => {
+    // A confirmed owner whose settlement makes no progress still needs its
+    // chain kept alive, or the window stops counting the days it earns next.
     const at = (age: number) =>
       planSanctionsHold(
-        [held({ decision: DECISION_FORFEIT, lastSeenAt: NOW - age, observeBy: NOW - age + DAY })],
+        [held({ decision: DECISION_CONFIRMED, lastSeenAt: NOW - age, observeBy: NOW - age + DAY })],
         NOW,
       );
-    expect(at(OBSERVE_AFTER_SEC - 1).forfeitObserveDue, 'one second early').toEqual([]);
-    expect(at(OBSERVE_AFTER_SEC).forfeitObserveDue, 'at the bound').toEqual([A]);
-    expect(at(OBSERVE_AFTER_SEC).forfeit, 'still routed to the sweep').toEqual([A]);
+    expect(at(OBSERVE_AFTER_SEC - 1).settleObserveDue, 'one second early').toEqual([]);
+    expect(at(OBSERVE_AFTER_SEC).settleObserveDue, 'at the bound').toEqual([A]);
+    expect(at(OBSERVE_AFTER_SEC).settle, 'still routed to the settlement').toEqual([A]);
     expect(at(OBSERVE_AFTER_SEC).observe, 'not a hold observation').toEqual([]);
   });
 });
 
-describe('sweepPageEffective', () => {
-  it('sends a forfeit page only when it stamps or settles something', () => {
-    expect(sweepPageEffective(0n, 0n), 'no progress: no transaction').toBe(false);
-    expect(sweepPageEffective(1n, 0n), 'a stamp alone').toBe(true);
-    expect(sweepPageEffective(0n, 1n), 'a settlement alone').toBe(true);
-  });
-});
 
 describe('the D1 reads, on the real schema', () => {
   let h: SqliteD1;
@@ -207,36 +204,68 @@ describe('the D1 reads, on the real schema', () => {
   });
 });
 
+describe('raiseAlerts', () => {
+  it('clears only an alert that is actually open: a quiet candidate costs no write', async () => {
+    const h = createKeeperD1();
+    const key = `sanctions-hold-overdue:${CHAIN}:${A}`;
+    const otherChain = `sanctions-hold-overdue:${CHAIN + 1}:${A}`;
+    for (const k of [key, otherChain]) {
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
+    }
+    const prepared: string[] = [];
+    const d1 = h.d1 as unknown as { prepare: (sql: string) => unknown };
+    const real = d1.prepare.bind(d1);
+    d1.prepare = (sql: string) => {
+      prepared.push(sql);
+      return real(sql);
+    };
+    const quiet = {
+      observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
+      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    };
+    await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
+    expect(prepared.filter((s) => s.startsWith('DELETE')), 'one clear: the alert that was open').toHaveLength(1);
+    const left = h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[];
+    expect(left.map((r) => r.alert_key), "another chain's alert is not this pass's to clear").toEqual([otherChain]);
+  });
+});
+
 describe('sendOpsAlert', () => {
   afterEach(() => vi.unstubAllGlobals());
   function env(h: SqliteD1, over: Partial<Env> = {}): Env {
-    return { DB: h.d1, TG_OPS_BOT_TOKEN: 'tok-secret', TG_OPS_CHAT_ID: '-100', ...over } as unknown as Env;
+    return {
+      DB: createSharedD1().d1,
+      KEEPER_DB: h.d1,
+      TG_OPS_BOT_TOKEN: 'tok-secret',
+      TG_OPS_CHAT_ID: '-100',
+      ...over,
+    } as unknown as Env;
   }
 
   it('reports unconfigured and records nothing when the ops channel is unset', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
+    const h = createKeeperD1();
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     expect(await sendOpsAlert(env(h, { TG_OPS_BOT_TOKEN: undefined }), 'k', 'x', 60, NOW)).toBe('unconfigured');
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await getOpsAlert(h.d1 as D1Database, 'k')).toBeNull();
+    expect(await getOpsAlert(h.d1 as KeeperD1, 'k')).toBeNull();
   });
 
   it('records a delivered alert and suppresses a repeat inside the interval (straddle)', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
+    const h = createKeeperD1();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
     expect(await sendOpsAlert(env(h), 'k', 'x', 600, NOW)).toBe('sent');
     expect(await sendOpsAlert(env(h), 'k', 'x', 600, NOW + 599), 'inside the interval').toBe('suppressed');
     expect(await sendOpsAlert(env(h), 'k', 'x', 600, NOW + 600), 'at the interval').toBe('sent');
-    expect(await getOpsAlert(h.d1 as D1Database, 'k')).toEqual({ firstSeenAt: NOW, lastSentAt: NOW + 600 });
+    expect(await getOpsAlert(h.d1 as KeeperD1, 'k')).toEqual({ firstSeenAt: NOW, lastSentAt: NOW + 600 });
   });
 
   it('a failed post is NOT recorded, so the next tick tries again — and never logs the token', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
+    const h = createKeeperD1();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('bad tok-secret', { status: 500 })));
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await sendOpsAlert(env(h), 'k', 'x', 600, NOW)).toBe('failed');
-    expect(await getOpsAlert(h.d1 as D1Database, 'k')).toBeNull();
+    expect(await getOpsAlert(h.d1 as KeeperD1, 'k')).toBeNull();
     const logged = err.mock.calls.flat().join(' ');
     expect(logged).not.toContain('tok-secret');
     expect(logged).toContain('<TG_OPS_BOT_TOKEN>');

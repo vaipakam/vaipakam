@@ -31,6 +31,16 @@
  * about are read from their own committed configs, so a Worker added
  * later is covered without editing a list here.
  *
+ * A WORKER-PRIVATE binding is the one exception to "every declared binding
+ * points at the expected database" (#2450). The keeper binds a second D1,
+ * `KEEPER_DB`, for state nothing else reads; a cutover of the SHARED
+ * database does not move it, so `--expect` does not apply to it. It is
+ * checked against its own id, pinned in `lib/d1-workers.mjs`'s
+ * `PRIVATE_DATABASES` — by id, for the reason the shared pair is — and a
+ * version serving it attached to anything else fails like any mismatch.
+ * Inside the barrier (`--writers-held`) it gets no exception at all: the
+ * maintenance build drops every D1 binding, the private one included.
+ *
  * This is a LIVE check against the Cloudflare API — it needs credentials
  * and it is not wired into CI. Run it after a cutover, and after any
  * deploy that was supposed to change a binding.
@@ -45,6 +55,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  PRIVATE_DATABASES,
   SHARED_CONSUMERS,
   WRITERS,
   assertClassified,
@@ -93,6 +104,10 @@ const CONFIGS = [...WRITER_FILES, ...MANUAL];
 function requiredBindings(cfg) {
   return (cfg.d1_databases ?? []).map((e) => e.binding).filter(Boolean);
 }
+
+/** The registered private database a Worker's binding names, if it is one. */
+const privateBinding = (file, name) =>
+  PRIVATE_DATABASES.find((p) => p.file === file && p.binding === name);
 
 function fail(msg) {
   console.error(`\n[check-live-d1-bindings] ${msg}\n`);
@@ -210,7 +225,8 @@ async function d1Of(script, versionId) {
 async function assertWritersHeld() {
   console.log(
     `expecting every serving version of the three writers to carry NO D1 ` +
-      `binding.\nThe hand-deployed backup Worker is NOT checked here: the ` +
+      `binding — a private one (${PRIVATE_DATABASES.map((p) => p.binding).join(', ') || 'none'}) ` +
+      `included.\nThe hand-deployed backup Worker is NOT checked here: the ` +
       `barrier does not\nstop it, and it stays on the database being left ` +
       `behind until step 5.\n`,
   );
@@ -432,15 +448,19 @@ async function main() {
           );
           continue;
         }
-        const ok = id === EXPECT;
+        // A private binding is held to ITS pinned id, whichever direction
+        // the shared database is being checked in (see the header).
+        const priv = privateBinding(file, name);
+        const want = priv ? priv.id : EXPECT;
+        const ok = id === want;
         console.log(
           `  ${script.padEnd(30)} ${v.id.slice(0, 8)}${share}  ${name}=${id} ` +
-            `${ok ? 'OK' : '← MISMATCH'}`,
+            `${ok ? 'OK' : '← MISMATCH'}${priv ? ` (private: ${priv.name})` : ''}`,
         );
         if (!ok) {
           problems.push(
             `${script} version ${v.id}${share} serves ${name}=${id}, not ` +
-              `${EXPECT}`,
+              `${want}${priv ? ` — its private ${priv.name}` : ''}`,
           );
         }
       }
@@ -487,7 +507,11 @@ async function main() {
   }
   console.log(
     `[check-live-d1-bindings] OK — every serving version of every Worker ` +
-      `that binds a database binds ${EXPECT}.`,
+      `that binds a database binds ${EXPECT}` +
+      (PRIVATE_DATABASES.length > 0
+        ? `, and each private binding its own pinned database ` +
+          `(${PRIVATE_DATABASES.map((p) => `${p.binding}=${p.id}`).join(', ')}).`
+        : '.'),
   );
 }
 

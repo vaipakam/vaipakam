@@ -360,8 +360,7 @@
   //                          which DELETEs expired rows (`db.ts:303`).
   //                          "agent writes" alone read as though the keeper
   //                          only consumed this table)
-  //   - `notify_state`,
-  //     `hf_band_state`     (per-user notify + HF-band dedupe)
+  //   - `notify_state`      (per-user notify dedupe)
   //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and
   //                          written by the scheduled `runPreGraceWatcher`)
   //   - `indexer_cursor`    (READ ONLY — `recordHfBandNotifications`
@@ -377,10 +376,17 @@
   //   - `offers`            (read by dailyOracleSnapshot; NOT by the
   //                          matcher, whose discovery is on-chain)
   //   - `oracle_snapshot_state` (daily snapshot dedupe)
-  //   - `keeper_commitment_*`, `keeper_remit_ack*`, `liquidity_confidence`
-  //                         (commitment scan, remit ack, liquidity probe)
+  //   - `liquidity_confidence` (liquidity probe)
+  //   - `keeper_commitment_reconciled` (reconciled-day rediscovery; the
+  //                          indexer writes it, so it stays shared)
   //
-  // Names verified against apps/indexer/migrations/. `thresholds`,
+  // The keeper's OWN operational tables — `hf_band_state`,
+  // `keeper_commitment_scan`, `keeper_commitment_day`,
+  // `keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_ops_alert` —
+  // are NOT here any more: they live behind `KEEPER_DB` below (#2450).
+  //
+  // Names verified against apps/indexer/migrations/ (and, for the KEEPER_DB
+  // tables, apps/keeper/migrations/). `thresholds`,
   // `link_codes` and `loan_index_*` were named here and exist under no
   // migration. The three entries above them were verified the other way
   // round — from the live call graph rather than from this list — because
@@ -398,11 +404,40 @@
   // is intentionally untouched until staging is fully validated.
   // See docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3
   // for the staging-vs-primary D1 split.
+  //
+  // TWO databases since #2450, split by who may read the data:
+  //
+  //   - `DB` — the SHARED `vaipakam-warm`, for every table another Worker,
+  //     the app or the nightly backup also reads. Its schema is
+  //     apps/indexer's, which is why its `migrations_dir` names that
+  //     directory explicitly: wrangler defaults every entry to `./migrations`,
+  //     so without it a `wrangler d1 migrations apply vaipakam-warm` typed in
+  //     THIS directory would apply the keeper's private DDL to the shared
+  //     database. Named, the same command applies the indexer's own files —
+  //     the ones that database already records.
+  //   - `KEEPER_DB` — `vaipakam-keeper-db`, the keeper's PRIVATE operational
+  //     state (scan cursors, completion markers, ack log, HF-band edge state,
+  //     ops-alert de-dup). Nothing outside this Worker reads it, and the
+  //     indexer and agent have no binding to it, so neither can write the
+  //     keeper's completion records. Separate by trust boundary, the rule
+  //     ops/mesh-watcher already follows (CLAUDE.md, "Cloudflare D1 schema
+  //     discipline"). Schema in apps/keeper/migrations/, applied by hand —
+  //     no deploy script applies it.
+  //
+  // A maintenance build (#2239) omits BOTH entries: the barrier is an empty
+  // `d1_databases`, and the tick declines while either binding is absent.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "vaipakam-warm",
       "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
+      "migrations_dir": "../indexer/migrations",
+    },
+    {
+      "binding": "KEEPER_DB",
+      "database_name": "vaipakam-keeper-db",
+      "database_id": "f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095",
+      "migrations_dir": "migrations",
     },
   ],
 
@@ -488,13 +523,15 @@
   //                        and gates the REWARD_* flags below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
   //     (only after the keeper EOA is authorized on-chain) AND the #1222
-  //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
-  //     migration 0044 applied first).
+  //     B2-d2 remit-ACK pass (delivered-backing reservations; needs the
+  //     keeper's own D1 migration 0001 applied to `vaipakam-keeper-db` first —
+  //     its ack tables moved there from shared migration 0044, #2450).
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
   //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
-  //     observer (every reward chain; needs D1 migration 0057 applied first).
+  //     observer (every reward chain; needs the keeper's own D1 migration
+  //     0001 applied to `vaipakam-keeper-db` first).
   //   - REWARD_DELIVERY_PROOF_ENABLED — 'true' arms the #1944 / transport-epoch
   //     delivery pass (mirrors: index epoch days, prove no-epoch day lists).
   //     Both added after the 2026-07-30 readback above, so that readback says

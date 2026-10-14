@@ -54,6 +54,22 @@ export const WORKER_NAME = 'vaipakam-keeper';
 /** A Cloudflare Secrets Store secret binding — read with `.get()`. */
 export type SecretBinding = { get(): Promise<string> };
 
+/** Type-only brand; no value of it exists at runtime. */
+declare const KEEPER_PRIVATE: unique symbol;
+
+/**
+ * The keeper's PRIVATE database handle (`KEEPER_DB`, `vaipakam-keeper-db`) —
+ * distinct in the type system from the shared `DB` (#2450).
+ *
+ * Every helper that reads or writes a keeper-private table takes this type,
+ * so handing one the shared database is a compile error rather than a
+ * `no such table` at runtime on whichever pass happens to reach it. The brand
+ * is one-directional: a `KeeperD1` still satisfies a plain `D1Database`
+ * parameter, so a shared-table helper given the private handle is caught by
+ * the tests (whose shared harness has no keeper tables), not by the compiler.
+ */
+export type KeeperD1 = D1Database & { readonly [KEEPER_PRIVATE]: true };
+
 /**
  * `DB` + the config knobs that arrive as plain strings — identical shape in
  * both `WorkerEnv` and `Env`, because none of them needs `.get()`
@@ -188,6 +204,13 @@ export interface WorkerEnv extends BaseEnv {
    */
   DB?: D1Database;
 
+  /**
+   * The keeper's private D1 (`vaipakam-keeper-db`) AS DELIVERED — possibly
+   * absent for the same reason `DB` is: a maintenance build omits every
+   * `d1_databases` entry, this one included (#2239, #2450).
+   */
+  KEEPER_DB?: D1Database;
+
   // Per-chain RPC URLs — HF reads + liquidation submission.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
@@ -224,8 +247,20 @@ export interface Env extends BaseEnv {
    * `env.DB` exactly as it always has; on a maintenance build the operations
    * throw a named refusal rather than returning data from a database that is
    * being moved away.
+   *
+   * The SHARED database (`vaipakam-warm`): every table another Worker, the app
+   * or the nightly backup also reads.
    */
   DB: D1Database;
+
+  /**
+   * The keeper's PRIVATE database (`vaipakam-keeper-db`, #2450): its scan
+   * cursors, completion markers, ack log, HF-band edge state and ops-alert
+   * de-dup — tables nothing outside this Worker reads. Resolved through the
+   * same maintenance seam as `DB`, and branded so a keeper-table helper cannot
+   * be handed the shared database (see `KeeperD1`).
+   */
+  KEEPER_DB: KeeperD1;
 
   // Per-chain RPC URLs — HF reads + liquidation submission. Each
   // missing URL skips that chain this tick.
@@ -325,6 +360,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // `DB` goes through the maintenance seam: the real binding untouched on
     // every ordinary deploy, a refusing stub when it is absent (#2239).
     DB: resolveD1Binding(raw.DB, WORKER_NAME),
+    // So does `KEEPER_DB` (#2450) — the brand is a compile-time marker only,
+    // so the cast changes nothing at runtime.
+    KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,

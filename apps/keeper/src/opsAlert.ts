@@ -9,10 +9,12 @@
 // deliberately not reused: it swallows a failed post, and an ops alert must
 // know whether it was delivered before recording it as sent.
 //
-// De-duplicated through `keeper_ops_alert`: a condition a pass reports
-// usually persists for hours, so a key re-sends only after the caller's
-// minimum interval, and a caller clears its key once the condition is gone so
-// a recurrence alerts at once.
+// De-duplicated through `keeper_ops_alert`, which lives in the keeper's
+// PRIVATE database (`env.KEEPER_DB`, #2450) — ops alert state is kept out of
+// the shared, user-facing D1 (CLAUDE.md, "Cloudflare D1 schema discipline").
+// A condition a pass reports usually persists for hours, so a key re-sends
+// only after the caller's minimum interval, and a caller clears its key once
+// the condition is gone so a recurrence alerts at once.
 //
 // Unconfigured (either variable unset) is reported in the log on every call
 // rather than silently dropped — the mesh-watcher's DEGRADED convention — so
@@ -49,11 +51,11 @@ export async function sendOpsAlert(
     return 'unconfigured';
   }
   try {
-    const prior = await getOpsAlert(env.DB, key);
+    const prior = await getOpsAlert(env.KEEPER_DB, key);
     if (prior && nowSec - prior.lastSentAt < minIntervalSec) return 'suppressed';
     const ok = await postToTelegram(token, chatId, text);
     if (!ok) return 'failed';
-    await recordOpsAlertSent(env.DB, key, nowSec);
+    await recordOpsAlertSent(env.KEEPER_DB, key, nowSec);
     return 'sent';
   } catch (err) {
     console.error(`[keeper] ops alert ${key} failed: ${redact(String(err), token)}`);
@@ -64,7 +66,7 @@ export async function sendOpsAlert(
 /** The condition behind `key` has cleared: the next occurrence alerts at once. */
 export async function resolveOpsAlert(env: Env, key: string): Promise<void> {
   try {
-    await clearOpsAlert(env.DB, key);
+    await clearOpsAlert(env.KEEPER_DB, key);
   } catch (err) {
     console.error(`[keeper] ops alert ${key} clear failed: ${String(err)}`);
   }

@@ -2,9 +2,17 @@
  * D1 helpers — thin wrappers over the prepared-statement API. Keeps
  * the watcher loop readable and centralises query shapes so schema
  * changes in `migrations/*.sql` touch only this file.
+ *
+ * TWO databases since #2450. Helpers over the keeper's PRIVATE tables
+ * (`apps/keeper/migrations/`) take a `KeeperD1` — the branded `env.KEEPER_DB`
+ * — so the compiler refuses the shared `env.DB` there. Every other helper takes
+ * a plain `D1Database` and is handed `env.DB`. No statement here touches both
+ * kinds of table: D1 cannot join across databases, so a helper that needs both
+ * reads each side separately (see `recordHfBandNotifications`).
  */
 
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import type { KeeperD1 } from './env';
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -373,7 +381,9 @@ export async function upsertLiquidityConfidence(
 }
 
 // ─── #1222 M3 B2-d1 — commitment-report scan state (Codex #1425 r2) ────────
-// Written by the keeper only; schema owned by apps/indexer/migrations/0043.
+// Written by the keeper only. KEEPER-PRIVATE (#2450): schema in
+// apps/keeper/migrations/0001 (it began as shared migration 0043), so every
+// helper in this block takes the `KEEPER_DB` handle.
 // The scan frontier lets the entry-id walk cross arbitrarily long
 // non-covering gaps across stateless invocations; the day marker lets
 // resolved days be skipped with zero RPC reads.
@@ -386,7 +396,7 @@ export interface CommitmentScanRow {
 
 /** Resolved-day ids + per-(day, side) scan frontiers for one chain/range. */
 export async function getCommitmentScanState(
-  db: D1Database,
+  db: KeeperD1,
   chainId: number,
   fromDay: number,
   toDay: number,
@@ -423,7 +433,7 @@ export async function getCommitmentScanState(
 
 /** Persist a (day, side) scan frontier + the on-chain cursor it was built on. */
 export async function putCommitmentScanFrontier(
-  db: D1Database,
+  db: KeeperD1,
   chainId: number,
   dayId: number,
   side: number,
@@ -446,7 +456,7 @@ export async function putCommitmentScanFrontier(
 
 /** Mark a chain-day's commitment report as complete + sent (skip forever). */
 export async function markCommitmentDayResolved(
-  db: D1Database,
+  db: KeeperD1,
   chainId: number,
   dayId: number,
 ): Promise<void> {
@@ -460,13 +470,17 @@ export async function markCommitmentDayResolved(
 }
 
 // ─── #1222 M3 B2-d2 — remit-ack scan state + reconcile rediscovery ─────────
-// Written by the keeper only; schema owned by apps/indexer/migrations/0044.
+// The remit-ack tables are KEEPER-PRIVATE (#2450): schema in
+// apps/keeper/migrations/0001 (they began as shared migration 0044), so their
+// helpers take the `KEEPER_DB` handle. The reconcile-rediscovery table below
+// them, `keeper_commitment_reconciled`, stays SHARED — the indexer writes it —
+// and its helpers take the shared `DB`.
 
 /** The remit-ack scan state for a Base chain: the terminal-prefix
  *  frontier + the rotating scan cursor (Codex #1426 r1 — a stuck early
  *  Pending pins the frontier; the cursor keeps paging the whole ledger). */
 export async function getRemitAckScanState(
-  db: D1Database,
+  db: KeeperD1,
   baseChainId: number,
   diamond: string,
 ): Promise<{ frontier: number; scanCursor: number }> {
@@ -485,7 +499,7 @@ export async function getRemitAckScanState(
 
 /** Persist the remit-ack scan state (frontier only ever advances). */
 export async function putRemitAckScanState(
-  db: D1Database,
+  db: KeeperD1,
   baseChainId: number,
   diamond: string,
   nextRemitId: number,
@@ -533,7 +547,7 @@ export async function putRemitAckScanState(
  * cost worth naming.
  */
 export async function getRemitAckAttempts(
-  db: D1Database,
+  db: KeeperD1,
   baseChainId: number,
   diamond: string,
   remitIds: number[],
@@ -570,7 +584,7 @@ export async function getRemitAckAttempts(
 
 /** Record one ack send attempt for a reservation. */
 export async function recordRemitAckAttempt(
-  db: D1Database,
+  db: KeeperD1,
   baseChainId: number,
   diamond: string,
   remitId: number,
@@ -597,7 +611,7 @@ export async function recordRemitAckAttempt(
 
 /** Stamp a reservation observed Acked on Base (audit trail terminal). */
 export async function markRemitAcked(
-  db: D1Database,
+  db: KeeperD1,
   baseChainId: number,
   diamond: string,
   remitId: number,
@@ -759,9 +773,13 @@ export async function listStagingRecordKeysForUser(
     .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-fA-F]{64}$/.test(k));
 }
 
+// The reads above are SHARED (the indexer's `activity_events`); the ops-alert
+// helpers below are KEEPER-PRIVATE (#2450, apps/keeper/migrations/0001) — ops
+// alert state stays out of the user-facing database — and take `KEEPER_DB`.
+
 /** The ops-alert record for `key`, or null when none was sent. */
 export async function getOpsAlert(
-  db: D1Database,
+  db: KeeperD1,
   key: string,
 ): Promise<{ firstSeenAt: number; lastSentAt: number } | null> {
   const row = await db
@@ -772,7 +790,7 @@ export async function getOpsAlert(
 }
 
 /** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`). */
-export async function recordOpsAlertSent(db: D1Database, key: string, nowSec: number): Promise<void> {
+export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: number): Promise<void> {
   await db
     .prepare(
       `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at)
@@ -783,8 +801,18 @@ export async function recordOpsAlertSent(db: D1Database, key: string, nowSec: nu
     .run();
 }
 
+/** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
+ *  prefix), so a pass clears only the alerts that are actually open. */
+export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {
+  const rows = await db
+    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE alert_key LIKE ?1`)
+    .bind(likePattern)
+    .all<{ alert_key: string }>();
+  return (rows.results ?? []).map((r) => r.alert_key);
+}
+
 /** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
-export async function clearOpsAlert(db: D1Database, key: string): Promise<void> {
+export async function clearOpsAlert(db: KeeperD1, key: string): Promise<void> {
   await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
 }
 

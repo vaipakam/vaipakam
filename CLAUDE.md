@@ -627,18 +627,45 @@ database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by
 `apps/indexer/migrations/`** — that's the single source of truth for
-every table the live db holds. `apps/keeper` and `apps/agent`
-intentionally have no `migrations/` directory of their own; they
-read and write a subset of the shared tables via the same binding
-(see the per-Worker READMEs for the exact write/read split).
+every table the live db holds. `apps/agent` intentionally has no
+`migrations/` directory of its own; it reads and writes a subset of the
+shared tables via the same binding (see the per-Worker READMEs for the
+exact write/read split).
 
-**Rule**: every schema change — even for a table only `keeper` or
-`agent` writes — lands as a new file under
-`apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
+**`apps/keeper` also owns a PRIVATE database** (#2450) —
+`vaipakam-keeper-db` (database_id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`,
+binding `KEEPER_DB`, alongside its shared `DB`), with its own
+`apps/keeper/migrations/`, for keeper-only operational state: its scan
+cursors, completion markers, remit-ack log, HF-band edge state and
+ops-alert de-dup. Separate by trust boundary, like `ops/mesh-watcher`
+below: ops-alert state stays out of the user-facing database, and the
+indexer and agent have no binding through which to write the keeper's
+completion records. Apply with
+`wrangler d1 migrations apply vaipakam-keeper-db --remote` from inside
+`apps/keeper/` (or `pnpm --filter @vaipakam/keeper run migrate`). **The
+keeper's `deploy` applies these itself** (`apps/keeper/scripts/deploy-keeper.mjs`
+— one applier per database: the keeper is the private one's only writer),
+verifies them in the database, and then hands the shared schema to
+`deploy-shared-d1.mjs verify` exactly as before; keep a keeper migration
+additive like any other (the old keeper is still serving when it lands).
+The one-time move of the live rows is in `docs/ops/DeploymentRunbook.md`
+("Keeper private D1 — one-time cutover"), and the deploy REFUSES to publish
+while that copy is pending (a monotone keeper cursor table with rows only in
+the shared copy).
+
+**Rule**: a table any other Worker, the app or the nightly backup reads
+stays in the SHARED database, and every schema change to it — even for a
+table only `keeper` or `agent` writes — lands as a new file under
+`apps/indexer/migrations/NNNN_<slug>.sql`. Only state nothing outside the
+keeper reads goes in `apps/keeper/migrations/`. Apply the shared schema with
 `wrangler d1 migrations apply vaipakam-warm --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
-directly on the deployed db: that diverges the migrations record from
-the live schema and breaks fresh-environment bootstrap.
+directly on a deployed db: that diverges the migrations record from
+the live schema and breaks fresh-environment bootstrap. Five of the
+keeper-private tables were first created by shared migrations `0041`,
+`0043` and `0044`, which are applied — never edit or renumber them; the old
+shared copies are retired later by a NEW indexer migration that only drops
+them (`apps/keeper/test/keeperPrivateD1.test.ts` refuses anything else).
 
 **Migrations apply BEFORE code ships, ONE applier, and every migration is
 additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES

@@ -43,4 +43,30 @@ describe('scheduled, on a build with no D1 binding', () => {
     // and it never reaches `resolveEnv`, so it spends no Secrets Store reads.
     expect(log).not.toHaveBeenCalled();
   });
+
+  // #2450 — the keeper binds TWO databases. A build carrying the shared one
+  // but not its private one is the barrier half-applied: declining is the
+  // fail-closed answer, and the line names which binding is missing.
+  it('declines just the same when only the private KEEPER_DB is missing, and names it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+    } as unknown as ExecutionContext & { waitUntil: ReturnType<typeof vi.fn> };
+
+    await worker.scheduled(
+      { scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController,
+      { DB: {} as D1Database } as WorkerEnv,
+      ctx,
+    );
+
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = warn.mock.calls[0]?.join(' ') ?? '';
+    expect(line).toContain('did NOT run');
+    expect(line).toContain('KEEPER_DB');
+    expect(line).not.toMatch(/unbound: DB\b/);
+    expect(log).not.toHaveBeenCalled();
+  });
 });

@@ -213,10 +213,16 @@ function db(): { handle: unknown; sql: string[] } {
   return { handle, sql };
 }
 
-async function run(handle: unknown): Promise<void> {
+/**
+ * Two stubs, one per database (#2450): the scan state is keeper-private, so
+ * its writes must reach `KEEPER_DB` — a pass that wrote it to the shared
+ * handle would record progress where the next tick never reads it.
+ */
+async function run(shared: unknown, keeper: unknown): Promise<void> {
   const { runRemitAck } = await import('../src/remitAck');
   await runRemitAck({
-    DB: handle,
+    DB: shared,
+    KEEPER_DB: keeper,
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
@@ -232,12 +238,13 @@ const wroteScanState = (sql: string[]): boolean =>
 describe('remitAck reservation scan (#1896)', () => {
   it('batches the whole window, with no per-reservation read', async () => {
     const { seen, restore } = install();
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();
@@ -256,6 +263,8 @@ describe('remitAck reservation scan (#1896)', () => {
     // The scan ran to completion and persisted its progress — without this, a
     // version that read nothing would satisfy "no serial reads" trivially.
     expect(wroteScanState(sql)).toBe(true);
+    // ...and persisted it to the keeper's own database, never the shared one.
+    expect(shared.sql.filter((q) => /keeper_remit_ack/.test(q))).toEqual([]);
   });
 
   it('ABORTS the scan on a failed read rather than skipping the reservation', async () => {
@@ -264,6 +273,7 @@ describe('remitAck reservation scan (#1896)', () => {
     // the cursor past a reservation whose status was never read — dropping it
     // from the scan until the rotating window came back around.
     const { seen, restore } = install(3);
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warned: string[] = [];
@@ -272,7 +282,7 @@ describe('remitAck reservation scan (#1896)', () => {
     });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();

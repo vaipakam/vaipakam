@@ -158,9 +158,20 @@ export default {
     // that can see the whole tick, is what an operator can actually read —
     // and declining before `resolveEnv` also means a maintenance build stops
     // fetching secrets it has no use for.
-    if (!hasD1Binding(env.DB)) {
+    //
+    // #2450 — BOTH bindings, not just `DB`. A maintenance build omits every
+    // `d1_databases` entry, so it lacks both; one present without the other is
+    // the barrier half-applied (a CI check refuses that config), and running
+    // on it would leave the keeper-private passes each discovering a refusal
+    // while the rest act on half the state. Declining costs this tick's
+    // liquidations too, exactly as a maintenance build already does — the
+    // fail-closed shape, said once.
+    const unbound = (['DB', 'KEEPER_DB'] as const).filter((b) => !hasD1Binding(env[b]));
+    if (unbound.length > 0) {
       // eslint-disable-next-line no-console
-      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+      console.warn(
+        maintenanceSkipNotice(WORKER_NAME, `this tick (unbound: ${unbound.join(', ')})`),
+      );
       return;
     }
 

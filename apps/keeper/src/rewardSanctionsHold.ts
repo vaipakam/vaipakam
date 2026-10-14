@@ -2,8 +2,10 @@
 //
 // #2450 — the #1566 sanctions-hold observer.
 //
-// The reward sanctions rule forfeits a flagged owner's undelivered interaction
-// reward only once the flag is CONFIRMED: a chain of authoritative Flagged
+// The reward sanctions rule (owner 2026-10-14) pays a flagged wallet nothing
+// until its flag is revoked; once the flag is CONFIRMED, reward the wallet
+// earned while flagged is forfeited and reward it earned before is set apart
+// for it. A flag is confirmed by a chain of authoritative Flagged
 // observations spanning the confirmation window W with no gap longer than G
 // (`LibRewardSanctions`; W = 3 days, G = 1 day today). Until then a first-
 // flagged claimant's staged payout is HELD and its staging record stays
@@ -23,11 +25,13 @@
 //      read without writing, batched. Its deadlines (`observeBy`,
 //      `forfeitableAt`) are the contract's, never restated here.
 //   3. ACT — Hold: `recordRewardSanctionsEvidence` once the latest observation
-//      is `OBSERVE_AFTER_SEC` old (a quarter of G). Forfeit: the owner sweep
-//      (`forfeitFlaggedOwnerRewards`, paged) and then the owner's Resolving
-//      staging records and domains, whose resolution page forfeits the held
-//      share into the recycle bucket and closes the record. Deliver (a chain
-//      cleared): the same resolution pages, which now pay the claimant. Every
+//      is `OBSERVE_AFTER_SEC` old (a quarter of G). Confirmed: the owner
+//      settlement (`settleSanctionedInteractionRewards`, repeated while it
+//      makes progress — each call settles what one claim would), which
+//      forfeits the window days and sets the rest apart, then the owner's
+//      Resolving staging records and domains, whose resolution page does the
+//      same for a staged day and closes the record. Deliver (a chain cleared):
+//      the same resolution pages, which now pay the claimant. Every
 //      write is SIMULATED first and sent only if it would change something,
 //      so an owner already settled costs reads, not gas.
 //   4. ALERT — the OPS channel when an observation deadline is within one
@@ -45,6 +49,7 @@ import { createPublicClient, http, parseAbi, type Abi, type Address, type Hex, t
 import {
   InteractionRewardsLensFacetABI,
   ProfileFacetABI,
+  RewardClaimFacetABI,
   RewardHorizonSweepFacetABI,
   RewardStagingDomainFacetABI,
   RewardStagingSettleFacetABI,
@@ -56,6 +61,7 @@ import { batchedRead } from './batchRead';
 import {
   listSanctionsEvidenceEvents,
   listStagingRecordKeysForUser,
+  listOpsAlertKeys,
   listStagingRecordOwners,
   SANCTIONS_EVIDENCE_ROW_LIMIT,
   type SanctionsEvidenceRow,
@@ -65,6 +71,7 @@ import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 const ABI = [
   ...(InteractionRewardsLensFacetABI as Abi),
   ...(ProfileFacetABI as Abi),
+  ...(RewardClaimFacetABI as Abi),
   ...(RewardHorizonSweepFacetABI as Abi),
   ...(RewardStagingDomainFacetABI as Abi),
   ...(RewardStagingSettleFacetABI as Abi),
@@ -73,7 +80,7 @@ const ABI = [
 /** `LibRewardSanctions.Decision`. */
 export const DECISION_DELIVER = 0;
 export const DECISION_HOLD = 1;
-export const DECISION_FORFEIT = 2;
+export const DECISION_CONFIRMED = 2;
 
 /** Observe a held owner once its latest observation is this old: a quarter of
  *  the contract's one-day maximum gap, so three more passes run before the
@@ -91,13 +98,13 @@ const PHASE_RESOLVING = 3;
 const STATUS_CHUNK = 100;
 /** Transactions this pass may send per chain per tick. */
 const MAX_WRITES_PER_TICK = 25;
-/** Sweep page arguments; the facet clamps both (32 entries, 30 steps). */
-const FORFEIT_PAGE_ENTRIES = 32n;
-const FORFEIT_MAX_STEPS = 30n;
-/** Sweep pages per owner per tick; the rest resumes next tick. */
-const MAX_FORFEIT_PAGES_PER_OWNER = 4;
+/** Settlement calls per owner per tick; each settles what one claim would
+ *  (a bounded window of days), and the rest resumes next tick. */
+const MAX_SETTLE_CALLS_PER_OWNER = 4;
 /** Re-send a still-standing ops condition at most this often. */
 const ALERT_REPEAT_SEC = 6 * 3600;
+/** How long one send may take to be mined before this tick's sends stop. */
+const RECEIPT_TIMEOUT_MS = 30_000;
 /** How far back staging-record owners join the candidates (#2450 review):
  *  a held claimant whose chain never started emits no evidence event. */
 const STAGING_OWNER_LOOKBACK_SEC = 30 * 86_400;
@@ -116,13 +123,14 @@ export interface OwnerSanctionsStatus {
 export interface SanctionsHoldPlan {
   /** Held owners to observe now. */
   observe: Address[];
-  /** Forfeit owners whose chain is due an observation: observed by a sweep page
-   *  that makes progress, else by the evidence call (a lapsed chain would
-   *  restart confirmation for whatever accrues to them next). */
-  forfeitObserveDue: Address[];
-  /** Owners whose rewards to settle: Forfeit runs the sweep, then the pages. */
-  forfeit: Address[];
-  /** Owners whose Resolving records to resolve without a sweep (Deliver). */
+  /** Confirmed owners whose chain is due an observation: observed by a
+   *  settlement call that makes progress, else by the evidence call (a lapsed
+   *  chain stops counting the days the owner earns next). */
+  settleObserveDue: Address[];
+  /** Owners whose rewards to settle: Confirmed runs the settlement, then the
+   *  pages. */
+  settle: Address[];
+  /** Owners whose Resolving records to resolve without a settlement (Deliver). */
   resolveOnly: Address[];
   /** Held owners whose chain breaks within one cadence. */
   deadlineAtRisk: OwnerSanctionsStatus[];
@@ -157,17 +165,17 @@ export function planSanctionsHold(
 ): SanctionsHoldPlan {
   const plan: SanctionsHoldPlan = {
     observe: [],
-    forfeitObserveDue: [],
-    forfeit: [],
+    settleObserveDue: [],
+    settle: [],
     resolveOnly: [],
     deadlineAtRisk: [],
     overdue: [],
     heldWithoutChain: [],
   };
   for (const st of statuses) {
-    if (st.decision === DECISION_FORFEIT) {
-      plan.forfeit.push(st.owner);
-      if (observeDue(st, nowSec)) plan.forfeitObserveDue.push(st.owner);
+    if (st.decision === DECISION_CONFIRMED) {
+      plan.settle.push(st.owner);
+      if (observeDue(st, nowSec)) plan.settleObserveDue.push(st.owner);
       continue;
     }
     if (st.decision === DECISION_DELIVER) {
@@ -194,14 +202,6 @@ export function planSanctionsHold(
  *  observed, or its latest observation is a quarter of the maximum gap old. */
 export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
   return st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC;
-}
-
-/** Sweep a page only when it makes progress: a page that stamps and settles
- *  nothing (the day not final yet, held by the delivery gate, no headroom or
- *  backing room) is not worth a transaction every tick — its observation, if
- *  due, is the cheap evidence call instead. */
-export function sweepPageEffective(stamped: bigint, settled: bigint): boolean {
-  return stamped > 0n || settled > 0n;
 }
 
 export async function runRewardSanctionsHold(env: Env): Promise<void> {
@@ -275,11 +275,11 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
-    const forfeitDue = new Set(plan.forfeitObserveDue);
-    for (const owner of plan.forfeit) {
+    const settleDue = new Set(plan.settleObserveDue);
+    for (const owner of plan.settle) {
       // eslint-disable-next-line no-await-in-loop
-      const swept = await runOwnerSweep(ctx, budget, owner);
-      if (!swept && forfeitDue.has(owner) && budget.writes > 0) {
+      const settled = await runOwnerSettlement(ctx, budget, owner);
+      if (!settled && settleDue.has(owner) && budget.writes > 0) {
         // eslint-disable-next-line no-await-in-loop
         await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
       }
@@ -290,48 +290,43 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       // eslint-disable-next-line no-await-in-loop
       await resolveOwnerRecords(env, ctx, budget, owner);
     }
-  } else if (plan.observe.length + plan.forfeit.length > 0) {
+  } else if (plan.observe.length + plan.settle.length > 0) {
     console.warn(
-      `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.forfeit.length} to settle, but no keeper key — nothing sent`,
+      `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
   await raiseAlerts(env, chain.id, statuses, plan, nowSec);
 }
 
-/** The owner sweep, paged from index 0: each page simulated, sent only when it
- *  stamps or settles (#2450 review: a page that leaves work but makes no
- *  progress is not sent). A page's on-chain observation is part of the same
- *  call, so a sent page also keeps the chain alive. Returns whether any page
- *  was sent. */
-async function runOwnerSweep(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
+/** The owner settlement, repeated while it makes progress: each call is
+ *  SIMULATED first and sent only when it would succeed — it reverts, as a
+ *  claim does, when there is nothing left to settle, and returns early on a
+ *  verdict that is not Confirmed — so an owner already settled costs one read.
+ *  A sent call's on-chain observation is part of the same call, so it also
+ *  keeps the chain alive. Returns whether any call was sent. */
+async function runOwnerSettlement(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
   let sentAny = false;
-  let from = 0n;
-  for (let page = 0; page < MAX_FORFEIT_PAGES_PER_OWNER && budget.writes > 0; page++) {
-    let result: readonly [number, bigint, bigint, bigint, bigint];
+  for (let call = 0; call < MAX_SETTLE_CALLS_PER_OWNER && budget.writes > 0; call++) {
+    let decision: number;
     try {
       // eslint-disable-next-line no-await-in-loop
       const sim = await ctx.client.simulateContract({
         address: ctx.diamond,
         abi: ABI,
-        functionName: 'forfeitFlaggedOwnerRewards',
-        args: [owner, from, FORFEIT_PAGE_ENTRIES, FORFEIT_MAX_STEPS],
+        functionName: 'settleSanctionedInteractionRewards',
+        args: [owner],
         account: ctx.wallet.account!,
       });
-      result = sim.result as readonly [number, bigint, bigint, bigint, bigint];
+      decision = Number((sim.result as readonly [number, bigint, bigint, bigint])[0]);
     } catch (err) {
-      console.log(`[keeper] rewardSanctionsHold sweep ${owner} from=${from} would revert: ${shortErr(err)}`);
+      console.log(`[keeper] rewardSanctionsHold settle ${owner} would revert: ${shortErr(err)}`);
       return sentAny;
     }
-    const [decision, stamped, settled, nextIndex] = result;
-    if (Number(decision) !== DECISION_FORFEIT) return sentAny;
-    if (sweepPageEffective(stamped, settled)) {
-      // eslint-disable-next-line no-await-in-loop
-      const sent = await send(ctx, budget, 'forfeitFlaggedOwnerRewards', [owner, from, FORFEIT_PAGE_ENTRIES, FORFEIT_MAX_STEPS], owner);
-      if (!sent) return sentAny;
-      sentAny = true;
-    }
-    if (nextIndex <= from) return sentAny; // the list is exhausted
-    from = nextIndex;
+    if (decision !== DECISION_CONFIRMED) return sentAny;
+    // eslint-disable-next-line no-await-in-loop
+    const sent = await send(ctx, budget, 'settleSanctionedInteractionRewards', [owner], owner);
+    if (!sent) return sentAny;
+    sentAny = true;
   }
   return sentAny;
 }
@@ -351,8 +346,9 @@ async function oracleAnswers(client: PublicClient, diamond: Address, owner: Addr
 }
 
 /** Resolve every Resolving staging record and domain of `owner`. The page pays
- *  a Deliver claimant, forfeits a confirmed one, and withholds a held one —
- *  the last case is never reached here (held owners are observed instead). */
+ *  a Deliver claimant, settles a confirmed one under the rule (a window day
+ *  forfeited, an earlier day set apart), and withholds a held one — the last
+ *  case is never reached here (held owners are observed instead). */
 async function resolveOwnerRecords(
   env: Env,
   ctx: KeeperContext,
@@ -442,16 +438,27 @@ async function send(
     } as never);
     budget.writes -= 1;
     console.log(`[keeper] rewardSanctionsHold ${fn} owner=${owner} chain=${ctx.chainId} tx=${hash}`);
-    // No receipt wait: every call here is idempotent, and the next tick
-    // re-reads the contract's verdict before acting again.
+    // Wait for inclusion before the next send, as the matcher and the daily
+    // oracle snapshot do: the keeper's liquidator and matcher sign from the
+    // same account, so a burst of unmined sends here would race them for
+    // nonces. A send that does not land in time ends this pass's sends for
+    // the tick; every call here is idempotent and the next tick re-reads the
+    // contract's verdict before acting again.
+    const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    if (receipt.status !== 'success') {
+      console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} reverted on chain: tx=${hash}`);
+      return false;
+    }
     return true;
   } catch (err) {
     console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
+    budget.writes = 0;
     return false;
   }
 }
 
-async function raiseAlerts(
+/** Raise or clear the pass's ops alerts for one chain. Exported for tests. */
+export async function raiseAlerts(
   env: Env,
   chainId: number,
   statuses: readonly OwnerSanctionsStatus[],
@@ -461,26 +468,35 @@ async function raiseAlerts(
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
   const noChain = new Set(plan.heldWithoutChain.map((s) => s.owner));
+  // One read of this chain's open sanctions alerts, so a candidate with
+  // nothing open costs no write: only a raised alert, or the clearing of one
+  // that is actually open, touches the table.
+  let open: Set<string>;
+  try {
+    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`));
+  } catch (err) {
+    console.error(`[keeper] rewardSanctionsHold open-alert read failed on chain ${chainId}: ${shortErr(err)}`);
+    return;
+  }
+  const toggle = async (key: string, on: boolean, text: () => string): Promise<void> => {
+    if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec);
+    else if (open.has(key)) await resolveOpsAlert(env, key);
+  };
   for (const st of statuses) {
     const k = (what: string) => `sanctions-${what}:${chainId}:${st.owner}`;
     // eslint-disable-next-line no-await-in-loop
-    await toggle(env, k('observe-deadline'), atRisk.has(st.owner), nowSec, () =>
+    await toggle(k('observe-deadline'), atRisk.has(st.owner), () =>
       `[chain ${chainId}] reward sanctions hold: ${st.owner} must be observed by ${iso(st.observeBy)} or its confirmation window restarts — the keeper's observations are not landing.`,
     );
     // eslint-disable-next-line no-await-in-loop
-    await toggle(env, k('hold-overdue'), overdue.has(st.owner), nowSec, () =>
+    await toggle(k('hold-overdue'), overdue.has(st.owner), () =>
       `[chain ${chainId}] reward sanctions hold: ${st.owner} has been held past ${iso(st.forfeitableAt)} by more than the maximum observation gap. A held staging record blocks custody activation and reward-role changes while it stands.`,
     );
     // eslint-disable-next-line no-await-in-loop
-    await toggle(env, k('hold-no-chain'), noChain.has(st.owner), nowSec, () =>
+    await toggle(k('hold-no-chain'), noChain.has(st.owner), () =>
       `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, or it answers Flagged but the chain broke and has not restarted; the hold cannot confirm or clear until an observation lands.`,
     );
   }
-}
-
-async function toggle(env: Env, key: string, on: boolean, nowSec: number, text: () => string): Promise<void> {
-  if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec);
-  else await resolveOpsAlert(env, key);
 }
 
 function iso(sec: number): string {

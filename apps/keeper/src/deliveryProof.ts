@@ -53,6 +53,8 @@ const ABI = [
 export const LOOKBACK_SEC = 45 * 86_400;
 /** Transactions per chain per tick (each indexes one page or one chunk). */
 const MAX_WRITES_PER_TICK = 20;
+/** How long one send may take to be mined before this tick's sends stop. */
+const RECEIPT_TIMEOUT_MS = 30_000;
 /** Reads per `aggregate3` (#1946). */
 const READ_CHUNK = 100;
 
@@ -395,8 +397,18 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     } as never);
     budget.writes -= 1;
     console.log(`[keeper] deliveryProof ${call.functionName} chain=${ctx.chainId} tx=${hash}`);
+    // Wait for inclusion before the next send (the matcher's pattern): the
+    // liquidator and matcher sign from the same account, so a burst of
+    // unmined sends would race them for nonces. Every step here is
+    // idempotent; one that does not land in time ends this pass's sends for
+    // the tick and the next tick re-reads the packet.
+    const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    if (receipt.status !== 'success') {
+      console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
+    }
   } catch (err) {
     console.error(`[keeper] deliveryProof ${call.functionName} send failed: ${shortErr(err)}`);
+    budget.writes = 0;
   }
 }
 

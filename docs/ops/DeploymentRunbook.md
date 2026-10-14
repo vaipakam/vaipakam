@@ -366,6 +366,13 @@ manual follow-up required when the prerequisites are in place:
    to call `pnpm exec wrangler deploy`, which bypassed it and deleted
    the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
    `PARTIAL_LIQ_*` tuning on every deploy.
+   **The keeper also binds a PRIVATE database, `vaipakam-keeper-db`
+   (`KEEPER_DB`, #2450), and its package deploy applies that schema
+   itself** (`apps/keeper/scripts/deploy-keeper.mjs`: apply, verify in the
+   database, then the shared `verify` and publish). Run the one-time cutover
+   below before the FIRST deploy of a keeper that reads `KEEPER_DB`; the
+   deploy refuses to publish while that copy is pending — see "Keeper
+   private D1 — one-time cutover".
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
    `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
    carries `--keep-vars`. Since #1995 the agent's `wrangler.jsonc` also
@@ -994,6 +1001,134 @@ the webhook 200-no-ops, and any already-armed DO alarm bails on its next fire
 per-chain through the DO; Phase B adds a WebSocket push fan-out from the same DO.)
 
 ---
+
+## Keeper private D1 — one-time cutover (#2450)
+
+**When:** once, at the end-of-programme deploy — the first deploy of a
+keeper build whose `wrangler.jsonc` binds `KEEPER_DB`. Not before: the
+keeper deployed today still reads the shared copies of these tables.
+
+**What moves.** `apps/keeper` owns a private D1, `vaipakam-keeper-db`
+(id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
+operational state nothing outside the keeper reads: `hf_band_state`,
+`keeper_commitment_scan`, `keeper_commitment_day`,
+`keeper_remit_ack_frontier`, `keeper_remit_ack` and `keeper_ops_alert`.
+Its schema is `apps/keeper/migrations/`. Everything another Worker, the app
+or the backup reads stays in `vaipakam-warm` under the indexer's
+migrations. The database already exists; nothing here creates it.
+
+**What the deploy does, and what it will not do.** The `cf-keeper` phase of
+`deploy-chain.sh` / `deploy-testnet.sh` / `deploy-mainnet.sh` runs the
+keeper's `pnpm run deploy` (`apps/keeper/scripts/deploy-keeper.mjs`): it
+applies `vaipakam-keeper-db`'s migrations (step 1 below happens there too,
+idempotently), verifies them, and hands the shared schema to
+`deploy-shared-d1.mjs verify`. The copy in step 2 has to sit between the
+schema and the publish, so the deploy checks for it rather than running
+past it: while a monotone keeper cursor table (`keeper_remit_ack_frontier`,
+`keeper_commitment_scan` — only ever inserted or advanced) still has rows in
+the shared copy and none in the private one, it REFUSES to publish and names
+the table. Step 2 itself stays manual — it needs the keeper stopped — and
+the refusal is what makes skipping it loud instead of a re-send of paid
+acknowledgements.
+
+**The order is load-bearing.** Five of the six tables are LIVE in the shared
+database today. A keeper that starts on an empty private copy forgets which
+remit acknowledgements it already sent — and re-sends paid CCIP messages for
+every reservation still Pending — and forgets the HF band each at-risk loan
+was last seen in, so it re-alerts those borrowers. So the rows are copied
+immediately before the keeper that reads `KEEPER_DB` goes live, with no
+keeper tick in between.
+
+1. **Apply the keeper's schema.** From the repo root:
+
+   ```bash
+   ( cd apps/keeper && wrangler d1 migrations apply vaipakam-keeper-db --remote )
+   ( cd apps/keeper && wrangler d1 migrations list vaipakam-keeper-db --remote )
+   ```
+
+   (`pnpm --filter @vaipakam/keeper run migrate` is the same apply.) The
+   apply asks for confirmation; the `list` is the verdict — it must show
+   `0001_keeper_state.sql` applied and nothing pending.
+
+2. **Copy the live rows, with the keeper stopped.** Rows the deployed
+   keeper writes after the export are lost, so confirm it is not running:
+   under the #1896 hold it has no schedule (`"crons": []`) — confirm the
+   Worker's *Settings → Trigger Events* is empty. If a schedule exists,
+   remove it in the dashboard and allow for propagation first
+   (`apps/keeper/README.md`, #1466).
+
+   Export the five live tables from the shared database — data only, the
+   tables already exist on the private side:
+
+   ```bash
+   for t in keeper_remit_ack keeper_remit_ack_frontier keeper_commitment_scan keeper_commitment_day hf_band_state; do
+     ( cd apps/indexer && wrangler d1 export vaipakam-warm --remote --no-schema --table="$t" --output="../../keeper-cutover-$t.sql" ) \
+       || { echo "export of $t FAILED — stop here"; break; }
+   done
+   ```
+
+   Import them into the private database. The `DELETE` first makes a re-run
+   after a partial import safe (on a first run the tables are empty), and it
+   targets the PRIVATE database only:
+
+   ```bash
+   ( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM keeper_remit_ack; DELETE FROM keeper_remit_ack_frontier; DELETE FROM keeper_commitment_scan; DELETE FROM keeper_commitment_day; DELETE FROM hf_band_state" )
+   for t in keeper_remit_ack keeper_remit_ack_frontier keeper_commitment_scan keeper_commitment_day hf_band_state; do
+     ( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --file="../../keeper-cutover-$t.sql" ) \
+       || echo "import of $t FAILED (an empty table exports no rows — the count check below decides)"
+   done
+   ```
+
+   Verify, per table, that both sides hold the same number of rows — the
+   source is not being written (step 2's precondition) and the target was
+   emptied first, so equal counts mean a complete copy:
+
+   ```bash
+   for t in keeper_remit_ack keeper_remit_ack_frontier keeper_commitment_scan keeper_commitment_day hf_band_state; do
+     a=$( cd apps/indexer && wrangler d1 execute vaipakam-warm --remote --json --command="SELECT COUNT(*) AS n FROM $t" | jq '.[0].results[0].n' )
+     b=$( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --json --command="SELECT COUNT(*) AS n FROM $t" | jq '.[0].results[0].n' )
+     echo "$t shared=$a private=$b $([ "$a" = "$b" ] && echo OK || echo MISMATCH)"
+   done
+   ```
+
+   Do not continue on a `MISMATCH`, or on a count that did not print. The
+   `keeper-cutover-*.sql` files hold keeper operational state; delete them
+   once the keeper is verified.
+
+3. **Deploy the keeper — immediately.**
+   `pnpm --filter @vaipakam/keeper run deploy`. Nothing may tick between
+   step 2 and this.
+
+4. **Verify.**
+   - The SERVING version binds both databases:
+     `node apps/indexer/scripts/check-live-d1-bindings.mjs` (needs
+     `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`) must show
+     `DB=e5e927cf…` and `KEEPER_DB=f809ca7a…` for `vaipakam-keeper`.
+   - One tick ran on the private database. Under the #1896 hold that is
+     the first tick after the schedule is restored by its own procedure —
+     do not add a schedule just to verify. In `wrangler tail
+     vaipakam-keeper` there must be no `no such table` and no
+     `D1 is not available`, and a keeper-private write must land in
+     `vaipakam-keeper-db`: for an armed remit pass,
+     `SELECT MAX(updated_at) FROM keeper_remit_ack_frontier` there moves
+     past the deploy time. Prefer an observable write; where none can be
+     provoked, the binding check above is the configuration evidence.
+   - The OLD copies stopped changing: the same `MAX(updated_at)` read
+     against `vaipakam-warm` stays at its pre-cutover value. A later value
+     there means a keeper version that still reads the shared tables is
+     serving.
+
+5. **Later — not in this change — drop the old copies.** The five shared
+   tables stay in `vaipakam-warm` through the rollback window: rolling back
+   means redeploying the previous keeper, which reads them (copy the
+   private rows back the same way first if the new keeper has run long
+   enough to matter). Once no serving keeper reads them, retire them with a
+   NEW indexer migration that only `DROP TABLE`s them — never by editing
+   `0041` / `0043` / `0044`, which are applied and keyed by filename. That
+   drop is destructive, so it is the second step of an expand/contract pair
+   and ships on its own. When it lands, also remove the "Before the
+   keeper's private database is live" fallback from
+   `docs/ops/OffChainRestore.md` §6.
 
 ## How addresses get persisted
 

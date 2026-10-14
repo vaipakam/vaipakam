@@ -17,8 +17,15 @@ const pkg = (w: string) =>
 describe('deploy-shared-d1 — one applier', () => {
   it('only the indexer (the schema owner) applies; keeper and agent verify', () => {
     expect(pkg('indexer').deploy).toMatch(/deploy-shared-d1\.mjs apply$/);
-    expect(pkg('keeper').deploy).toMatch(/deploy-shared-d1\.mjs verify$/);
     expect(pkg('agent').deploy).toMatch(/deploy-shared-d1\.mjs verify$/);
+    // #2450 — the keeper's deploy applies its PRIVATE schema (it is that
+    // database's one applier) and hands the SHARED one to this script's
+    // `verify` mode, never `apply`.
+    expect(pkg('keeper').deploy).toBe('node scripts/deploy-keeper.mjs');
+    const wrapper = readFileSync(new URL('../../keeper/scripts/deploy-keeper.mjs', import.meta.url), 'utf8');
+    expect(wrapper).toMatch(/\[SHARED_DEPLOY, 'verify'\]/);
+    expect(wrapper).not.toMatch(/SHARED_DEPLOY, 'apply'/);
+    expect(wrapper).not.toMatch(/vaipakam-warm/);
   });
 
   it('every shared-D1 Worker has a dry run that never touches the database', () => {

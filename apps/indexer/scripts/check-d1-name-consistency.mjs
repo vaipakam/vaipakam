@@ -40,20 +40,31 @@
  *      every literal command could move together while an incident restore
  *      still writes to the retired database, with nothing red.
  *
+ *   5. A Worker-PRIVATE database (#2450 — `apps/keeper`'s `KEEPER_DB`) is
+ *      what the registry says it is and nothing more: bound by its owner
+ *      under its registered binding, on BOTH its pinned name and id, never
+ *      the shared database or either cutover end, present whenever its
+ *      owner binds the shared database, and bound by NO other Worker. A
+ *      shared consumer's extra binding that is not a registered private one
+ *      is refused too: an unregistered second handle is exactly what check 1
+ *      cannot see, because it only asks about the shared binding by name.
+ *
  * WHAT IT DOES NOT CATCH: prose. A sentence describing the database by
  * name in a design doc is invisible here. Checks 2 and 4 cover the
  * executable and copy-pasteable surface, which is the part that moves data.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MUST_NOT_SHARE,
+  PRIVATE_DATABASES,
   SHARED_CONSUMERS,
   WRITERS,
   assertClassified,
+  discoverD1Configs,
 } from './lib/d1-workers.mjs';
 import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
 
@@ -71,6 +82,10 @@ const OTHER_DATABASES = new Map([
     'vaipakam-lz-alerts-db',
     'retired ops/lz-watcher (#1440) — still named in the restore runbook',
   ],
+  // The Worker-private databases, from the one registry that defines them
+  // (#2450). Each carries its own reason there; check 5 below verifies the
+  // bindings these commands rely on.
+  ...PRIVATE_DATABASES.map((p) => [p.name, `${p.file} "${p.binding}" — ${p.reason}`]),
 ]);
 
 /**
@@ -374,7 +389,10 @@ const tracked = execFileSync(
 )
   .split('\0')
   .filter(Boolean)
-  .filter((f) => !HISTORICAL.some((h) => f.startsWith(h)));
+  .filter((f) => !HISTORICAL.some((h) => f.startsWith(h)))
+  // A tracked file deleted in the working tree (a removal not yet committed)
+  // holds no command to check; reading it would crash the run instead.
+  .filter((f) => existsSync(join(REPO, f)));
 
 let commandCount = 0;
 for (const file of tracked) {
@@ -463,6 +481,94 @@ for (const { file, constant, field, idField, why } of COMMAND_GENERATORS) {
   }
 }
 
+// ---------------------------------------------------------------- check 5
+//
+// WORKER-PRIVATE DATABASES (#2450). A shared consumer may carry exactly one
+// kind of second binding: a private database registered in `d1-workers.mjs`.
+// Check 1 cannot police this, because it asks about the SHARED binding by
+// name — a second handle to the shared database under any other name passes
+// it untouched, and that is the hole this check closes from both sides.
+const FORBIDDEN_TO_PRIVATE = [
+  { name: SHARED_NAME, id: SHARED_ID, what: 'the SHARED database' },
+  { name: SUCCESSOR.name, id: SUCCESSOR.id, what: 'the cutover SUCCESSOR' },
+  { name: PREDECESSOR.name, id: PREDECESSOR.id, what: 'the RETAINED cutover predecessor' },
+];
+const boundFiles = new Set(bound.map((c) => c.file));
+for (const p of PRIVATE_DATABASES) {
+  const entries = d1Entries(p.file);
+  // Inside the barrier the owner declares no D1 at all, this one included.
+  if (entries.length === 0 && heldForCutover && WRITERS.has(p.file)) continue;
+  const entry = entries.find((e) => e.binding === p.binding);
+  if (entry === undefined) {
+    if (boundFiles.has(p.file)) {
+      problems.push(
+        `${p.file}: binds the shared database but not its private ` +
+          `"${p.binding}" (${p.name}).\n    The Worker's code reads ` +
+          `env.${p.binding}, so every keeper-private pass would refuse — and ` +
+          `outside the cutover barrier there is no shape in which only half ` +
+          `of a Worker's databases is bound.`,
+      );
+    }
+    continue;
+  }
+  const hit = FORBIDDEN_TO_PRIVATE.find(
+    (f) => entry.database_name === f.name || entry.database_id === f.id,
+  );
+  if (hit) {
+    problems.push(
+      `${p.file} binds ${hit.what} (${hit.name}) as its PRIVATE ` +
+        `"${p.binding}".\n    That is a second handle to the shared data ` +
+        `under a name the shared-database checks do not watch, and the ` +
+        `private tables it is meant to hold would land in the user-facing ` +
+        `database: ${p.reason}.`,
+    );
+    continue;
+  }
+  const nameOk = entry.database_name === p.name;
+  const idOk = entry.database_id === p.id;
+  if (!nameOk || !idOk) {
+    problems.push(
+      `${p.file} (binding ${p.binding}) is not the registered private ` +
+        `database:\n` +
+        `    name: ${entry.database_name ?? '(missing)'} ${nameOk ? '(ok)' : `!= ${p.name}`}\n` +
+        `    id:   ${entry.database_id ?? '(missing)'} ${idOk ? '(ok)' : `!= ${p.id}`}\n` +
+        `    Pinned in apps/indexer/scripts/lib/d1-workers.mjs. A name can be ` +
+        `reissued to a different database; move both, or neither.`,
+    );
+  }
+}
+
+// Every extra binding on a shared consumer is a registered private one.
+for (const c of SHARED_CONSUMERS) {
+  for (const e of d1Entries(c.file)) {
+    if (e.binding === c.binding) continue;
+    if (PRIVATE_DATABASES.some((p) => p.file === c.file && p.binding === e.binding)) continue;
+    problems.push(
+      `${c.file}: d1 binding "${e.binding}" (${e.database_name ?? '?'}) is ` +
+        `neither its shared binding "${c.binding}" nor a private database ` +
+        `registered in apps/indexer/scripts/lib/d1-workers.mjs.\n    An ` +
+        `unregistered second handle is one no check here asks about — it may ` +
+        `be the shared database under another name.`,
+    );
+  }
+}
+
+// And nobody but the owner binds a private database — by name or by id.
+for (const file of discoverD1Configs(REPO)) {
+  for (const e of d1Entries(file)) {
+    for (const p of PRIVATE_DATABASES) {
+      if (file === p.file && e.binding === p.binding) continue;
+      if (e.database_name === p.name || e.database_id === p.id) {
+        problems.push(
+          `${file} binds ${p.name} as "${e.binding}" — that database is ` +
+            `PRIVATE to ${p.file} ("${p.binding}"): ${p.reason}. A private ` +
+            `database a second Worker can write is not private.`,
+        );
+      }
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error(
     `\n[check-d1-name-consistency] ${problems.length} problem(s):\n\n` +
@@ -483,5 +589,6 @@ console.log(
     `${heldForCutover ? ' (writers held for cutover)' : ''}, ` +
     `${commandCount} \`wrangler d1\` ` +
     `command(s) and ${COMMAND_GENERATORS.length} generator constant(s); ` +
-    `${MUST_NOT_SHARE.length} Worker(s) verified separate.`,
+    `${MUST_NOT_SHARE.length} Worker(s) verified separate; ` +
+    `${PRIVATE_DATABASES.length} private database(s) bound only by their owner.`,
 );
