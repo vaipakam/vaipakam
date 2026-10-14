@@ -417,13 +417,16 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
 });
 
 describe('settleFromLedger — the terminal→Settled edge the ledger and the chain both show (#2464, #2476 r6)', () => {
+  /** The tx hash names its block, so the receipt mock can answer by default
+   *  with the canonical block of every ledgered event. */
+  const txOf = (block: number) => `0x${block.toString(16).padStart(64, '0')}`;
   const ledger = (h: SqliteD1, loanId: number, kind: string, block: number, at: number) =>
     h.db
       .prepare(
         `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
-         VALUES (?, ?, 0, '0x1', ?, ?, '{}', ?)`,
+         VALUES (?, ?, 0, ?, ?, ?, '{}', ?)`,
       )
-      .run(CHAIN, block, kind, loanId, at);
+      .run(CHAIN, block, txOf(block), kind, loanId, at);
   const row = (h: SqliteD1, id: number) =>
     h.db.prepare('SELECT status, terminal_block, terminal_at FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as {
       status: string;
@@ -437,8 +440,15 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     times: Record<number, number>,
     status: (id: number) => number | Error = () => 3,
     seen: { reads: Array<{ id: number; block: bigint }> } = { reads: [] },
+    /** Blocks whose transactions the node no longer returns (reorganised away). */
+    discarded: Set<number> = new Set(),
   ) =>
     ({
+      getTransactionReceipt: async ({ hash }: { hash: string }) => {
+        const block = parseInt(hash, 16);
+        if (discarded.has(block)) throw new Error('transaction receipt not found');
+        return { status: 'success', blockNumber: BigInt(block) };
+      },
       getBlock: async ({ blockNumber }: { blockNumber: bigint }) => {
         const t = times[Number(blockNumber)];
         if (t === undefined) throw new Error('block read failed');
@@ -519,6 +529,46 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const seen = { reads: [] as Array<{ id: number; block: bigint }> };
     await heal(h, chain({}, (id) => (id >= 120 ? 3 : 5), seen));
     expect(seen.reads[0].id).toBe(100); // wrapped to the start
+  });
+
+  it('takes the provenance only from an event the chain confirms, never from a discarded one (#2476 r7)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 70, 'internal_matched');
+    ledger(h, 70, 'LoanSettled', 1000, 1); // reorganised away
+    ledger(h, 70, 'LoanSettled', 1005, 1); // the canonical replacement
+    expect(await heal(h, chain({ 1000: 10, 1005: 15 }, () => 3, undefined, new Set([1000])))).toEqual([70]);
+    expect(row(h, 70)).toEqual({ status: 'settled', terminal_block: 1005, terminal_at: 15 });
+  });
+
+  it('writes nothing when no ledgered event is confirmed, even though the chain says Settled', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 71, 'internal_matched');
+    ledger(h, 71, 'LoanSettled', 1100, 1);
+    expect(await heal(h, chain({ 1100: 1 }, () => 3, undefined, new Set([1100])))).toEqual([]);
+    expect(row(h, 71).status).toBe('internal_matched');
+  });
+
+  it('still reports what it settled when the rotation pointer cannot be saved (#2476 r7)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 72, 'internal_matched');
+    ledger(h, 72, 'LoanSettled', 1200, 1);
+    const d1 = h.d1 as { prepare(sql: string): unknown };
+    const failingCursor = {
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes('INSERT INTO indexer_cursor')) throw new Error('D1 write failed');
+          return d1.prepare(sql);
+        },
+      },
+    } as unknown as Env;
+    // Fill a whole page so the pointer advances and must be written.
+    for (let id = 200; id < 220; id++) {
+      seedLoan(h, id, 'internal_matched');
+      ledger(h, id, 'LoanSettled', 2000 + id, 1);
+    }
+    const got = await settleFromLedger(chain({}) as never, DIAMOND, failingCursor, CHAIN, budget(), 777n);
+    expect(got).toContain(72);
+    expect(got).toHaveLength(20);
   });
 
   it('reports the ids it already settled when a later row throws', async () => {

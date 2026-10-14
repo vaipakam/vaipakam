@@ -3773,8 +3773,9 @@ export async function settleLoanRow(
 
 /** Rows `settleFromLedger` takes per tick; the rest wait for the next. */
 const SETTLE_HEAL_BATCH = 20;
-/** Per healed row: the canonical status read, the block read, the write. */
-const SETTLE_HEAL_COST = 3;
+/** Per healed row: the canonical status read, the event lookup, its receipt,
+ *  the block read, the write. */
+const SETTLE_HEAL_COST = 5;
 /** `indexer_cursor.kind` of the heal's rotation pointer (a loan id). */
 export const SETTLE_HEAL_CURSOR_KIND = 'settle_heal_rotation';
 /** The chain's `LoanStatus.Settled` (see loanStatusProjection.ts). */
@@ -3799,14 +3800,18 @@ const CHAIN_STATUS_SETTLED = 3;
  * every duty the repair already has, one review round at a time).
  *
  * CANONICAL, not just ledgered. The ledger is append-only, so an event from
- * a block later reorganised away stays in it. Each row is settled only when
- * `getLoanDetails` at the pass's settled block says Settled; a row the chain
- * does not confirm is left exactly as it is.
+ * a block later reorganised away stays in it. Two checks, both against the
+ * chain: `getLoanDetails` at the pass's settled block must say Settled, and
+ * the `LoanSettled` whose block becomes `terminal_block` must be one whose
+ * transaction receipt the node returns AT that block (#2476 r7) — so a
+ * discarded event can supply neither the status nor the provenance. The
+ * ledger's candidates are tried newest first; if none is confirmed the row
+ * is left exactly as it is and revisited next lap.
  *
- * DATED by a fresh read of the event's block, never by the ledger's
+ * DATED by a fresh read of that event's block, never by the ledger's
  * `block_at`, which holds the scan's wall-clock sentinel when the original
  * read failed. A failed read settles it with the time unknown — the chain
- * has confirmed the status, and unknown is the honest date.
+ * has confirmed the event, and unknown is the honest date.
  *
  * ROTATING, so no set of rows can hold the batch: a pointer in
  * `indexer_cursor` walks the candidates by loan id and wraps, so a row the
@@ -3835,10 +3840,7 @@ export async function settleFromLedger(
         .first<{ last_block: number }>()
     )?.last_block ?? 0;
   const res = await env.DB.prepare(
-    `SELECT l.loan_id AS loan_id,
-            (SELECT ae.block_number FROM activity_events ae
-              WHERE ae.chain_id = l.chain_id AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
-              ORDER BY ae.block_number ASC, ae.log_index ASC LIMIT 1) AS block
+    `SELECT l.loan_id AS loan_id
        FROM loans l
       WHERE l.chain_id = ?
         AND l.status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
@@ -3851,7 +3853,7 @@ export async function settleFromLedger(
       LIMIT ?`,
   )
     .bind(chainId, pointer, SETTLE_HEAL_BATCH)
-    .all<{ loan_id: number; block: number }>();
+    .all<{ loan_id: number }>();
   const rows = res.results ?? [];
   const healed: number[] = [];
   let reached = pointer;
@@ -3867,14 +3869,15 @@ export async function settleFromLedger(
         blockNumber: atBlock,
       })) as { status: number | bigint };
       if (Number(detail.status) !== CHAIN_STATUS_SETTLED) continue;
+      const block = await canonicalSettlementBlock(client, env, chainId, row.loan_id);
+      if (block === null) continue; // no ledgered event confirmed — next lap
       let at: number | null;
       try {
-        const block = await client.getBlock({ blockNumber: BigInt(row.block) });
-        at = Number(block.timestamp);
+        at = Number((await client.getBlock({ blockNumber: BigInt(block) })).timestamp);
       } catch {
         at = null;
       }
-      if (await settleLoanRow(env, chainId, row.loan_id, row.block, at)) healed.push(row.loan_id);
+      if (await settleLoanRow(env, chainId, row.loan_id, block, at)) healed.push(row.loan_id);
     } catch (err) {
       console.warn(`[chainIndexer] ledger settlement heal: loan ${row.loan_id} on chain ${chainId} retried next lap`, err);
     }
@@ -3883,19 +3886,59 @@ export async function settleFromLedger(
   // the last row this tick reached.
   const next = rows.length < SETTLE_HEAL_BATCH && reached === (rows.at(-1)?.loan_id ?? pointer) ? 0 : reached;
   if (next !== pointer) {
-    const t = Math.floor(Date.now() / 1000);
-    await env.DB.prepare(
-      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`,
-    )
-      .bind(chainId, SETTLE_HEAL_CURSOR_KIND, next, t)
-      .run();
+    // #2476 r7 — a failed pointer write must not lose the ids above: those
+    // rows are settled and will never be selected again, so this return is
+    // the only report they get. The walk merely repeats a page next tick.
+    try {
+      const t = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`,
+      )
+        .bind(chainId, SETTLE_HEAL_CURSOR_KIND, next, t)
+        .run();
+    } catch (err) {
+      console.warn(`[chainIndexer] ledger settlement heal: rotation pointer not saved on chain ${chainId}`, err);
+    }
   }
   if (healed.length > 0) {
     console.log(`[chainIndexer] settled ${healed.length} loan(s) on chain ${chainId} from their ledgered LoanSettled`);
   }
   return healed;
+}
+
+/**
+ * The block of a ledgered `LoanSettled` for `loanId` that the chain confirms:
+ * its transaction's receipt, as the node returns it now, is successful and
+ * in that same block. Newest first, because a replacement after a reorg is
+ * the later row. `null` when no candidate is confirmed (or none could be
+ * read) — the caller then writes nothing.
+ */
+async function canonicalSettlementBlock(
+  client: PublicClient,
+  env: Env,
+  chainId: number,
+  loanId: number,
+): Promise<number | null> {
+  const candidates = await env.DB.prepare(
+    `SELECT block_number, tx_hash FROM activity_events
+      WHERE chain_id = ? AND loan_id = ? AND kind = 'LoanSettled'
+      ORDER BY block_number DESC, log_index DESC`,
+  )
+    .bind(chainId, loanId)
+    .all<{ block_number: number; tx_hash: string }>();
+  for (const c of candidates.results ?? []) {
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: c.tx_hash as `0x${string}` });
+      if (receipt.status === 'success' && Number(receipt.blockNumber) === c.block_number) {
+        return c.block_number;
+      }
+    } catch {
+      // Not found (reorganised away) or unreadable — try the next candidate.
+    }
+  }
+  return null;
 }
 
 /**
