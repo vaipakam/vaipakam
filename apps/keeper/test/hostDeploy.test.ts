@@ -58,18 +58,32 @@ describe('host deploy kit paths', () => {
     scripts: Record<string, string>;
   };
 
-  it('starts the file update.sh stages, which is the file build:host writes', () => {
+  it('starts the file promote.sh installs, built from the file build:host writes', () => {
     expect(pkg.scripts['build:host']).toContain('--outfile=dist/keeper-host.mjs');
-    const update = read('update.sh');
-    expect(update).toContain('apps/keeper/dist/keeper-host.mjs');
-    expect(update).toContain('"$release/keeper-host.mjs"');
+    expect(read('update.sh')).toContain('apps/keeper/dist/keeper-host.mjs');
+    expect(read('update.sh')).toContain('"$STAGING/keeper-host.mjs"');
+    const promote = read('promote.sh');
+    expect(promote).toContain('STAGING=/var/lib/vaipakam-build/staging');
+    expect(promote).toContain('"$tmp/keeper-host.mjs"');
     expect(read('vaipakam-keeper.service')).toContain('/opt/vaipakam-keeper/current/keeper-host.mjs');
   });
 
-  it('restarts on the marker update.sh rewrites, and only a running keeper', () => {
-    expect(read('update.sh')).toContain('"$ROOT/restart-request"');
-    expect(read('vaipakam-keeper-restart.path')).toContain('PathChanged=/opt/vaipakam-keeper/restart-request');
-    expect(read('vaipakam-keeper-restart.service')).toContain('systemctl try-restart vaipakam-keeper.service');
+  it('promotes on the marker update.sh rewrites, and restarts only a running keeper', () => {
+    expect(read('update.sh')).toContain('"$STAGING/ready"');
+    expect(read('vaipakam-keeper-promote.path')).toContain('PathChanged=/var/lib/vaipakam-build/staging/ready');
+    expect(read('vaipakam-keeper-promote.service')).toContain('ExecStart=/opt/vaipakam-keeper/promote.sh');
+    expect(read('promote.sh')).toContain('systemctl try-restart --no-block vaipakam-keeper.service');
+  });
+
+  it('keeps the build user out of what the keeper runs', () => {
+    expect(read('vaipakam-keeper-update.service')).toContain('ReadWritePaths=/var/lib/vaipakam-build\n');
+    expect(read('install.sh')).toContain('install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"');
+  });
+
+  it('never kills a keeper mid-pass, and reads settings only from the env file', () => {
+    const unit = read('vaipakam-keeper.service');
+    expect(unit).toContain('TimeoutStopSec=infinity');
+    expect(unit).toMatch(/^ExecStart=\/usr\/bin\/env -i \/usr\/local\/bin\/node --env-file=%d\/keeper.env /m);
   });
 
   it('installs every unit in the kit', () => {
@@ -78,8 +92,10 @@ describe('host deploy kit paths', () => {
       'vaipakam-keeper.service',
       'vaipakam-keeper-update.service',
       'vaipakam-keeper-update.timer',
-      'vaipakam-keeper-restart.path',
-      'vaipakam-keeper-restart.service',
+      'vaipakam-keeper-promote.path',
+      'vaipakam-keeper-promote.service',
+      'promote.sh',
+      'update.sh',
     ]) {
       expect(install, unit).toContain(unit);
     }

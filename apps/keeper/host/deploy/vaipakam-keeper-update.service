@@ -1,7 +1,8 @@
 # Builds the keeper from the latest main and stages it (update.sh). Runs as
-# the unprivileged build user, which owns /opt/vaipakam-keeper and can never
-# read the keeper's env file. It cannot restart the keeper itself: it touches
-# a marker that vaipakam-keeper-restart.path watches.
+# the unprivileged build user, which can write only its own home: it can
+# never read the keeper's env file or touch the releases the keeper runs.
+# It cannot promote or restart anything itself: it rewrites a marker that
+# vaipakam-keeper-promote.path watches.
 
 [Unit]
 Description=Vaipakam keeper: build and stage the latest main
@@ -22,7 +23,7 @@ Nice=10
 
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/vaipakam-keeper /var/lib/vaipakam-build
+ReadWritePaths=/var/lib/vaipakam-build
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

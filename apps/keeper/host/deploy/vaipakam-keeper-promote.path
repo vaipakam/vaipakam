@@ -1,0 +1,11 @@
+# Promotes a newly staged keeper build (update.sh rewrites this marker after
+# staging one).
+
+[Unit]
+Description=Vaipakam keeper: watch for a newly staged build
+
+[Path]
+PathChanged=/var/lib/vaipakam-build/staging/ready
+
+[Install]
+WantedBy=multi-user.target

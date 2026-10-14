@@ -16,28 +16,37 @@ landed, so §2 holds by procedure only. Read §2 before starting anything.
 | Unit | Runs as | Does |
 | --- | --- | --- |
 | `vaipakam-keeper.service` | a dynamic user, with the env file as a private credential | the keeper itself: one tick every UTC minute |
-| `vaipakam-keeper-update.timer` → `.service` | `vaipakam-build` (no access to the env file) | every 5 minutes: fetch `main`, build, check, stage (`update.sh`) |
-| `vaipakam-keeper-restart.path` → `.service` | root | restarts a running keeper when a new build is staged |
+| `vaipakam-keeper-update.timer` → `.service` | `vaipakam-build`, which can write only its own home | every 5 minutes: fetch `main`, build, check, stage (`update.sh`) |
+| `vaipakam-keeper-promote.path` → `.service` | root | copies a staged build into the root-owned releases and restarts a running keeper onto it (`promote.sh`) |
 
 A merge to `main` is the deploy. `update.sh` builds the single-file bundle,
-runs it with `--check` to prove it loads, and compares it with the staged one.
-A merge that does not change the keeper produces the same bundle and does
-not restart it. Any failure leaves the running keeper untouched, and the next
-run retries.
+runs it with `--check` to prove it loads, and compares it with the running
+one. A merge that does not change the keeper produces the same bundle and
+does not restart it. Any failure leaves the running keeper untouched, and the
+next run retries.
 
-Trust: whoever can merge to `main` controls what the keeper runs, exactly as
-with the Worker's auto-deploy. Node comes from nodejs.org, verified against
-the release's published SHA-256 over TLS.
+Three accounts, so no one of them holds everything. The build user can read
+neither the env file nor write the releases. It can only OFFER a build, and
+root promotes it only when the commit it names is the branch's current tip on
+GitHub. The keeper's dynamic user is the only one that sees the env file.
+
+Trust, stated plainly: whoever can merge to `main`, or tamper with the build
+(a compromised dependency, or the build account), controls what the keeper
+runs. Promotion stops a build being swapped in at an arbitrary time. It cannot
+prove a bundle is its commit's build. This is the same trust the Workers'
+auto-deploy carries. Node comes from nodejs.org, verified against the
+release's published SHA-256 over TLS.
 
 Files on the machine:
 
-| Path | What |
-| --- | --- |
-| `/etc/vaipakam/keeper.env` | settings and secrets. root, `0600`. Never overwritten by the kit |
-| `/opt/vaipakam-keeper/current` | the running release (symlink into `releases/<commit>`) |
-| `/opt/vaipakam-keeper/releases/` | the last five builds, for rollback |
-| `/opt/vaipakam-keeper/deploy-branch` | the branch followed (default `main`) |
-| `/opt/vaipakam-keeper/repo` | the build checkout |
+| Path | Owner | What |
+| --- | --- | --- |
+| `/etc/vaipakam/keeper.env` | root, `0600` | settings and secrets. Never overwritten by the kit |
+| `/opt/vaipakam-keeper/current` | root | the running release (symlink into `releases/<commit>`) |
+| `/opt/vaipakam-keeper/releases/` | root | the last five promoted builds, for rollback |
+| `/opt/vaipakam-keeper/deploy-branch` | root | the branch followed (default `main`) |
+| `/var/lib/vaipakam-build/repo` | build user | the build checkout |
+| `/var/lib/vaipakam-build/staging/` | build user | the latest build offered for promotion |
 
 ## 2. One keeper at a time (read first)
 
@@ -66,10 +75,11 @@ curl -fsSL https://raw.githubusercontent.com/vaipakam/vaipakam/main/apps/keeper/
 ```
 
 It installs Node 22, creates `vaipakam-build`, clones the repository, installs
-the units, enables the update timer, runs the first build, and creates
-`/etc/vaipakam/keeper.env` from the template if there is none. It does NOT
-start the keeper. Running it again is safe and brings the units and
-`update.sh` up to date (they are not updated by the timer).
+the units, enables the update timer, runs and promotes the first build, and
+creates `/etc/vaipakam/keeper.env` from the template if there is none. It
+does NOT start the keeper. Running it again is safe. It brings the units and
+scripts up to date (the timer does not update them) and moves Node to the
+latest 22.x release, so re-run it to take Node security releases.
 
 ## 4. Configure
 
@@ -121,22 +131,36 @@ empty.
 
 ## 6. Stop, roll back, move hosts
 
-- **Stop:** `sudo systemctl stop vaipakam-keeper`. The tick in flight
-  finishes first (up to 300 s) and the process exits. `try-restart` then
-  leaves it stopped when a new build lands.
+- **Stop:** `sudo systemctl stop vaipakam-keeper`. The tick in flight finishes
+  first and the process exits. There is deliberately no stop timeout: systemd
+  never kills a keeper that is mid-pass, because a kill can cut a pass off
+  between sending a transaction and recording it. A promotion leaves a stopped
+  keeper stopped. Stopping does NOT survive a reboot; see "Move hosts".
+- **A stop that hangs** means a pass is waiting on a network call that is not
+  returning. Find out which one from the log before deciding. Killing it
+  (`sudo systemctl kill -s KILL vaipakam-keeper`) is an operator decision,
+  and afterwards check the keeper address on each chain for a transaction
+  the database does not record.
 - **Pause deploys:** `sudo systemctl stop vaipakam-keeper-update.timer`.
-- **Roll back:** stop the update timer, point `current` at an earlier
-  release (`sudo -u vaipakam-build ln -sfn /opt/vaipakam-keeper/releases/<commit>
+- **Roll back:** stop the update timer, point `current` at an earlier release
+  (`sudo ln -sfn /opt/vaipakam-keeper/releases/<commit>
   /opt/vaipakam-keeper/current`), then `sudo systemctl restart
-  vaipakam-keeper`. Restarting the timer later moves it to `main` again.
-- **Move hosts:** stop the old machine and confirm its process has exited,
-  then start the new one. Never the other way round (§2).
+  vaipakam-keeper`. **To return to `main`**, run `sudo
+  /opt/vaipakam-keeper/promote.sh`, which promotes the latest build again,
+  then restart the timer. Restarting the timer alone does not move the keeper
+  back, because the latest commit is already built.
+- **Move hosts:** on the old machine run `sudo systemctl disable --now
+  vaipakam-keeper vaipakam-keeper-update.timer`. `disable` matters: a unit
+  that is only stopped starts again at the next boot, which would put a
+  second keeper on the same key. Confirm the process has exited (`systemctl
+  is-active vaipakam-keeper` prints `inactive`), then start the new machine.
+  Never the other way round (§2).
 
 ## 7. Not yet true
 
 - **No lease** (#2503). §2 holds by procedure only.
 - **Batch atomicity over the D1 HTTP API is unverified, and nothing relies on
-  it.** Both `batch` call sites (`src/hfBandNotifications.ts`) are idempotent
+  it.** Both `batch` call sites ([`apps/keeper/src/hfBandNotifications.ts`](../../apps/keeper/src/hfBandNotifications.ts)) are idempotent
   and already run as two separate batches, so a partial write leaves the same
   state a failed tick does. A new `batch` that needs all-or-nothing must be
   verified on a scratch database first, never on `vaipakam-warm`.

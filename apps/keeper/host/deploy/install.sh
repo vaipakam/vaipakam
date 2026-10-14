@@ -29,23 +29,29 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q >/dev/null
 apt-get install -y -q git curl ca-certificates xz-utils >/dev/null
 
-# Node from nodejs.org, checked against the release's published SHA-256.
-node_major=0
+# Node 22 from nodejs.org, checked against the release's published SHA-256.
+# Installed outside the package manager, so every run compares the installed
+# version with the latest 22.x and replaces it when they differ: re-running
+# this script is how the machine takes Node security releases.
+case "$(uname -m)" in
+  x86_64) arch=x64 ;;
+  aarch64) arch=arm64 ;;
+  *) echo "unsupported CPU architecture $(uname -m)" >&2; exit 1 ;;
+esac
+base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
+file="$(grep -oE "node-v${NODE_MAJOR}\.[0-9]+\.[0-9]+-linux-${arch}\.tar\.xz" "$tmp/SHASUMS256.txt" | head -1)"
+[ -n "$file" ] || { echo "no Node ${NODE_MAJOR} build for linux-${arch} on nodejs.org" >&2; exit 1; }
+latest="${file#node-}"
+latest="${latest%%-linux-*}"
+installed=""
 if [ -x /usr/local/bin/node ]; then
-  node_major="$(/usr/local/bin/node -p 'process.versions.node.split(".")[0]')"
+  installed="$(/usr/local/bin/node -v)"
 fi
-if [ "$node_major" -lt "$NODE_MAJOR" ]; then
-  case "$(uname -m)" in
-    x86_64) arch=x64 ;;
-    aarch64) arch=arm64 ;;
-    *) echo "unsupported CPU architecture $(uname -m)" >&2; exit 1 ;;
-  esac
-  base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
-  file="$(grep -oE "node-v[0-9.]+-linux-${arch}\.tar\.xz" "$tmp/SHASUMS256.txt" | head -1)"
-  log "installing $file"
+if [ "$installed" != "$latest" ]; then
+  log "installing Node $latest (was: ${installed:-none})"
   curl -fsSL "$base/$file" -o "$tmp/$file"
   (cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c --quiet -)
   mkdir -p /usr/local/lib/nodejs
@@ -55,24 +61,27 @@ if [ "$node_major" -lt "$NODE_MAJOR" ]; then
 fi
 log "node $(/usr/local/bin/node -v)"
 
-# The build user owns the checkout and the releases. It never sees the env
-# file, and the keeper itself runs as a separate dynamic user.
+# Two areas, two owners. The build user owns only its home: the checkout, the
+# package cache and the staging area. /opt/vaipakam-keeper (the releases the
+# keeper runs, and the scripts) is root's, so a compromised build can offer a
+# bundle but never install one (promote.sh). The keeper runs as a third,
+# dynamic user and is the only one that sees the env file.
 if ! id "$BUILD_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "$BUILD_HOME" --create-home --shell /usr/sbin/nologin "$BUILD_USER"
 fi
-install -d -o "$BUILD_USER" -g "$BUILD_USER" -m 755 "$ROOT" "$ROOT/releases"
+install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"
+install -d -o "$BUILD_USER" -g "$BUILD_USER" -m 755 "$BUILD_HOME" "$BUILD_HOME/staging"
 echo "$BRANCH" > "$ROOT/deploy-branch"
-if [ ! -d "$ROOT/repo/.git" ]; then
+if [ ! -d "$BUILD_HOME/repo/.git" ]; then
   log "cloning $REPO_URL"
-  runuser -u "$BUILD_USER" -- git clone --quiet --filter=blob:none --no-checkout "$REPO_URL" "$ROOT/repo"
+  runuser -u "$BUILD_USER" -- git clone --quiet --filter=blob:none --no-checkout "$REPO_URL" "$BUILD_HOME/repo"
 fi
-runuser -u "$BUILD_USER" -- git -C "$ROOT/repo" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-runuser -u "$BUILD_USER" -- git -C "$ROOT/repo" checkout --quiet --force --detach "origin/$BRANCH"
-deploy="$ROOT/repo/apps/keeper/host/deploy"
+runuser -u "$BUILD_USER" -- git -C "$BUILD_HOME/repo" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+runuser -u "$BUILD_USER" -- git -C "$BUILD_HOME/repo" checkout --quiet --force --detach "origin/$BRANCH"
+deploy="$BUILD_HOME/repo/apps/keeper/host/deploy"
 
 install -m 755 -o root -g root "$deploy/update.sh" "$ROOT/update.sh"
-touch "$ROOT/restart-request"
-chown "$BUILD_USER:$BUILD_USER" "$ROOT/restart-request"
+install -m 755 -o root -g root "$deploy/promote.sh" "$ROOT/promote.sh"
 
 install -d -m 750 /etc/vaipakam
 if [ ! -e /etc/vaipakam/keeper.env ]; then
@@ -81,16 +90,19 @@ if [ ! -e /etc/vaipakam/keeper.env ]; then
 fi
 
 for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer \
-  vaipakam-keeper-restart.path vaipakam-keeper-restart.service; do
+  vaipakam-keeper-promote.path vaipakam-keeper-promote.service; do
   install -m 644 "$deploy/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl enable --quiet vaipakam-keeper.service
-systemctl enable --quiet --now vaipakam-keeper-restart.path vaipakam-keeper-update.timer
+systemctl enable --quiet --now vaipakam-keeper-promote.path vaipakam-keeper-update.timer
 
 log "building the keeper (first build can take a few minutes)"
 systemctl start vaipakam-keeper-update.service
-log "staged: $(cat "$ROOT/current/SOURCE_COMMIT")"
+# The path unit promotes in the background; promote here too so the result
+# is known before this script reports it (promote.sh is idempotent).
+"$ROOT/promote.sh"
+log "running release: $(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || echo none)"
 if systemctl is-active --quiet vaipakam-keeper.service; then
   log "keeper is running"
 else

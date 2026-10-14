@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
-# Builds the keeper from the deploy branch and stages it, if it changed.
+# Builds the keeper from the deploy branch and stages it for promotion.
 #
-# Run by vaipakam-keeper-update.service (every five minutes, as the
-# unprivileged build user). One run:
+# Run by vaipakam-keeper-update.service every five minutes, as the
+# unprivileged build user. It can write only its own home
+# (/var/lib/vaipakam-build): the running releases under /opt/vaipakam-keeper
+# are root's, so this account can never replace the code that runs with the
+# signing key. One run:
 #
 #   1. fetches the deploy branch (main unless install.sh was told otherwise);
 #   2. if it has not moved since the last build, stops;
 #   3. checks it out, installs the keeper's dependencies from the lockfile
 #      and builds the single-file bundle;
-#   4. runs the new bundle with --check, so a build that cannot even load
-#      never replaces the one that is running;
+#   4. runs the new bundle with --check, so a build that cannot even load is
+#      never offered for promotion;
 #   5. if the bundle is byte-identical to the running one (a merge that did
 #      not touch the keeper), records the commit and stops;
-#   6. otherwise stages it as a new release, switches `current` to it in one
-#      rename, and rewrites restart-request, which makes systemd restart the
-#      keeper gracefully onto it.
+#   6. otherwise stages it and rewrites staging/ready, which makes root's
+#      promote.sh (vaipakam-keeper-promote.path) take it.
 #
-# Any failure exits non-zero before `current` moves, so the running keeper is
+# Any failure exits non-zero with nothing staged, so the running keeper is
 # untouched and the next run retries. Comparing bundles rather than changed
 # paths means there is no list of "keeper files" to keep in step.
 set -euo pipefail
 
 ROOT=/opt/vaipakam-keeper
-REPO="$ROOT/repo"
+HOME_DIR=/var/lib/vaipakam-build
+REPO="$HOME_DIR/repo"
+STAGING="$HOME_DIR/staging"
 BRANCH="$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)"
-KEEP_RELEASES=5
 NODE=/usr/local/bin/node
 
 log() { echo "[keeper-update] $*"; }
@@ -32,7 +35,7 @@ log() { echo "[keeper-update] $*"; }
 cd "$REPO"
 git fetch --quiet --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 target="$(git rev-parse "origin/$BRANCH")"
-built="$(cat "$ROOT/built-sha" 2>/dev/null || true)"
+built="$(cat "$HOME_DIR/built-sha" 2>/dev/null || true)"
 if [ "$target" = "$built" ]; then
   exit 0
 fi
@@ -51,26 +54,15 @@ if [ -f "$ROOT/current/keeper-host.mjs" ]; then
   cur_hash="$(sha256sum "$ROOT/current/keeper-host.mjs" | cut -d' ' -f1)"
 fi
 if [ "$new_hash" = "$cur_hash" ]; then
-  log "$target builds the keeper that is already staged; nothing to restart"
-  echo "$target" > "$ROOT/built-sha"
+  log "$target builds the keeper that is already running; nothing to promote"
+  echo "$target" > "$HOME_DIR/built-sha"
   exit 0
 fi
 
-release="$ROOT/releases/$target"
-mkdir -p "$release"
-install -m 644 "$bundle" "$release/keeper-host.mjs"
-echo "$target" > "$release/SOURCE_COMMIT"
-ln -sfn "$release" "$ROOT/current.next"
-mv -Tf "$ROOT/current.next" "$ROOT/current"
-echo "$target" > "$ROOT/built-sha"
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $target" > "$ROOT/restart-request"
-log "staged $target; a running keeper restarts onto it after its current tick"
-
-# Keep the last few releases for a manual rollback, never the one in use.
-# Release names are commit hashes, so `ls` is safe here.
-in_use="$(readlink -f "$ROOT/current")"
-# shellcheck disable=SC2012
-ls -1dt "$ROOT"/releases/*/ 2>/dev/null | tail -n +"$((KEEP_RELEASES + 1))" | while read -r dir; do
-  dir="${dir%/}"
-  [ "$dir" = "$in_use" ] || rm -rf "$dir"
-done
+mkdir -p "$STAGING"
+install -m 644 "$bundle" "$STAGING/keeper-host.mjs.next"
+mv -f "$STAGING/keeper-host.mjs.next" "$STAGING/keeper-host.mjs"
+echo "$target" > "$STAGING/SOURCE_COMMIT"
+echo "$target" > "$HOME_DIR/built-sha"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $target" > "$STAGING/ready"
+log "staged $target for promotion"

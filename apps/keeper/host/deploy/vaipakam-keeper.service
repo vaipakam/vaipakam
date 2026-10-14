@@ -6,7 +6,10 @@
 #
 # The env file stays root-only (0600). LoadCredential hands a copy to this
 # service's dynamic user alone, so the file's mode never has to be loosened
-# and no long-lived account owns the signing key.
+# and no long-lived account owns the signing key. `env -i` starts Node with an
+# EMPTY environment, so the file is the only source of settings: Node's
+# --env-file never overrides a variable already set, and a value inherited
+# from the service manager would otherwise win over the file.
 
 [Unit]
 Description=Vaipakam keeper
@@ -18,13 +21,15 @@ After=network-online.target
 Type=simple
 DynamicUser=yes
 LoadCredential=keeper.env:/etc/vaipakam/keeper.env
-ExecStart=/usr/local/bin/node --env-file=%d/keeper.env /opt/vaipakam-keeper/current/keeper-host.mjs
+ExecStart=/usr/bin/env -i /usr/local/bin/node --env-file=%d/keeper.env /opt/vaipakam-keeper/current/keeper-host.mjs
 
 # SIGTERM stops new ticks and lets the one in flight finish, which may be
-# waiting on a transaction receipt. Give it room before systemd escalates to
-# SIGKILL, which WOULD cut a pass off between sending and recording.
+# waiting on a transaction receipt. systemd never escalates to SIGKILL on its
+# own: a kill could cut a pass off between sending and recording, and the
+# process's in-memory send ordering would be lost with it. A stop that hangs
+# is the operator's call (docs/ops/KeeperMachine.md §6), never a timer's.
 KillSignal=SIGTERM
-TimeoutStopSec=300
+TimeoutStopSec=infinity
 
 Restart=always
 RestartSec=30
