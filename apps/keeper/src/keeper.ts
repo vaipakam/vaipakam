@@ -256,17 +256,20 @@ function dedupeKey(chainId: number, loanId: number): string {
 
 /**
  * Null when every build for this loan was a no-quote the market gave — each
- * venue asked, each declined (the shared `noQuoteReason` rule) — so the
+ * venue asked, each venue's own outcome `declined` — so the
  * in-kind close may be considered; otherwise the reason it may not. A venue
  * that was not heard from might have quoted, and an in-kind close cannot be
  * undone, so anything short of `declined` keeps the loan waiting (#2487 r1).
  */
 export function inKindBlocker(
-  builds: readonly Pick<ServerOrchestrationResult, 'calls' | 'noQuote'>[],
+  builds: readonly Pick<ServerOrchestrationResult, 'calls' | 'noQuote' | 'marketDeclined'>[],
 ): string | null {
   for (const b of builds) {
     if (b.calls.length > 0) return 'another size quoted';
     if (b.noQuote !== 'declined') return `no-quote reason ${b.noQuote ?? 'none'}`;
+    // `declined` as worded for readers also covers a quote whose swap
+    // target governance has not allowed: a route exists (#2487 r2).
+    if (!b.marketDeclined) return 'a venue quoted a swap target its adapter does not allow';
   }
   return builds.length > 0 ? null : 'no builds';
 }

@@ -141,18 +141,21 @@ describe('orchestrateServerQuotes (#2468)', () => {
       expect(out.calls).toEqual([]);
       expect(out.failed).toEqual(['zeroex:target-not-allowed']);
       expect(out.noQuote).toBe('declined');
+      expect(out.marketDeclined).toBe(false);
     });
 
     it("an explicit no-liquidity answer is a decline", async () => {
       const out = await ask({ liquidityAvailable: false });
       expect(out.failed).toEqual(['zeroex:declined']);
       expect(out.noQuote).toBe('declined');
+      expect(out.marketDeclined).toBe(true);
     });
 
     it('a body that is neither is unanswered, not a market fact', async () => {
       const out = await ask({});
       expect(out.failed).toEqual(['zeroex:unanswered']);
       expect(out.noQuote).toBe('unanswered');
+      expect(out.marketDeclined).toBe(false);
     });
   });
 

@@ -171,6 +171,7 @@ function harness(scene: Scene) {
         failed: [],
         route: null,
         noQuote: n > 0 ? null : 'declined',
+        marketDeclined: n === 0,
       } as unknown as ServerOrchestrationResult;
     },
   };
@@ -497,19 +498,25 @@ describe("the liquidator's no-route fallback (#2487)", () => {
 });
 
 describe('when the liquidator may consider the in-kind close (#2487 r1)', () => {
-  const declined = { calls: [], noQuote: 'declined' as const };
+  const declined = { calls: [], noQuote: 'declined' as const, marketDeclined: true };
   it('only when every size was asked of every venue and every one declined', () => {
     expect(inKindBlocker([declined, declined, declined])).toBeNull();
   });
   it('not when any size quoted', () => {
-    expect(inKindBlocker([declined, { calls: [{ adapterIdx: 0n, data: '0x' }], noQuote: null }])).toBe(
+    expect(inKindBlocker([declined, { calls: [{ adapterIdx: 0n, data: '0x' }], noQuote: null, marketDeclined: false }])).toBe(
       'another size quoted',
     );
   });
   it('not when a venue was unread, unanswered or not asked', () => {
     for (const reason of ['unread', 'unanswered', 'unanswered-partly-reached', 'unconfigured', 'unreachable', 'partly-reached'] as const) {
-      expect(inKindBlocker([declined, { calls: [], noQuote: reason }])).toBe(`no-quote reason ${reason}`);
+      expect(inKindBlocker([declined, { calls: [], noQuote: reason, marketDeclined: false }])).toBe(`no-quote reason ${reason}`);
     }
+  });
+});
+
+describe('a quote blocked by the swap-target allowlist is not a decline (#2487 r2)', () => {
+  it('keeps the loan open even though the shared wording calls it declined', () => {
+    expect(inKindBlocker([{ calls: [], noQuote: 'declined', marketDeclined: false }])).toMatch(/does not allow/);
   });
 });
 
