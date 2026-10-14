@@ -18,9 +18,13 @@ import {
 } from 'viem';
 import { DefaultedFacetABI } from '@vaipakam/contracts/abis';
 import {
+  INTERNAL_MATCH_EXECUTED_TOPIC,
+  LOAN_DEFAULTED_TOPIC,
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
+import { attemptCloseOut } from '../src/closeOut';
+import { tryInKindCloseOut } from '../src/keeper';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
   attemptGraceDefault,
@@ -72,6 +76,12 @@ interface Scene {
   hf?: bigint | (() => bigint);
   /** `lost`: the broadcast call fails after the signed bytes went out. */
   broadcast?: 'lost';
+  /** The preview also emits `LoanDefaulted` for this loan. */
+  defaulted?: boolean;
+  /** The preview also emits an internal match from the Diamond. */
+  internalMatch?: boolean;
+  /** `isLoanDefaultable`; null makes the read fail. */
+  defaultable?: boolean | null;
 }
 
 const SIGNED: Hex = '0x02f86b0182';
@@ -99,6 +109,9 @@ function harness(scene: Scene) {
           return scene.hf ?? 2n * 10n ** 18n;
         case 'facetAddress':
           return scene.boundedListing === false ? A(0) : A(0xfa);
+        case 'isLoanDefaultable':
+          if (scene.defaultable === null) throw new Error('rpc down');
+          return scene.defaultable ?? true;
         default:
           throw new Error(`unexpected read ${args.functionName}`);
       }
@@ -116,14 +129,12 @@ function harness(scene: Scene) {
           : scene.ending === 'fallback'
             ? [SWAP_ALL_ADAPTERS_FAILED_TOPIC]
             : [];
-      return {
-        results: [
-          {
-            status: 'success',
-            logs: topics.map((t) => ({ address: DIAMOND, topics: [t, LOAN_TOPIC] })),
-          },
-        ],
-      };
+      const logs = topics.map((t) => ({ address: DIAMOND, topics: [t, LOAN_TOPIC] }));
+      if (scene.defaulted) logs.push({ address: DIAMOND, topics: [LOAN_DEFAULTED_TOPIC, LOAN_TOPIC] });
+      if (scene.internalMatch) {
+        logs.push({ address: DIAMOND, topics: [INTERNAL_MATCH_EXECUTED_TOPIC, `0x${'0'.repeat(63)}9`] });
+      }
+      return { results: [{ status: 'success', logs }] };
     },
   } as unknown as PublicClient;
   const wallet = {
@@ -385,6 +396,101 @@ describe('the liquidator boundary', () => {
     });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect((out as { reason: string }).reason).toMatch(/^hf-unread:/);
+    expect(h.writes).toHaveLength(0);
+  });
+});
+
+describe('the in-kind role (#2487) — the liquidator closing a loan no venue quotes', () => {
+  const UNDER = 9n * 10n ** 17n;
+
+  it('sends an empty list when the preview is a terminal default with no swap', async () => {
+    const h = harness({ hf: UNDER, ending: 'other', defaulted: true });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 0 });
+    expect(h.routes).toHaveLength(0);
+    const w = h.writes[0] as { functionName: string; args: [bigint, unknown[]] };
+    expect(w.functionName).toBe('triggerDefault');
+    expect(w.args[1]).toEqual([]);
+  });
+
+  it('leaves a loan above the line to the grace-default pass', async () => {
+    const h = harness({ hf: 2n * 10n ** 18n, ending: 'other', defaulted: true });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toMatch(/grace-default pass/);
+    expect(h.previews).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('does not send an ending that is not terminal for this loan', async () => {
+    const h = harness({ hf: UNDER, ending: 'other', defaulted: false });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toMatch(/^preview=not-terminal/);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('does not send when the ending is an internal match', async () => {
+    const h = harness({ hf: UNDER, ending: 'other', defaulted: true, internalMatch: true });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toMatch(/^preview=internal-match/);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('does not send when the empty list reverts (a liquid loan that needs a route)', async () => {
+    const h = harness({ hf: UNDER, ending: null });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toMatch(/^preview=unknown/);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('refuses when the collateral changed while the loan was judged', async () => {
+    const h = harness({
+      hf: UNDER,
+      ending: 'other',
+      defaulted: true,
+      loans: [LIQUID, { ...LIQUID, collateralAmount: 2n * 10n ** 18n }],
+    });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toBe('gate:collateral-changed');
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('refuses when the HF recovers above the line at the final gate', async () => {
+    let reads = 0;
+    const h = harness({
+      hf: () => (reads++ === 0 ? UNDER : 2n * 10n ** 18n),
+      ending: 'other',
+      defaulted: true,
+    });
+    const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+    expect((out as { reason: string }).reason).toMatch(/^gate:hf-above-line/);
+    expect(h.writes).toHaveLength(0);
+  });
+});
+
+describe("the liquidator's no-route fallback (#2487)", () => {
+  const UNDER = 9n * 10n ** 17n;
+  const CHAIN = { id: 84532, name: 'base-sepolia' };
+  const ctxOf = (h: ReturnType<typeof harness>) =>
+    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 });
+
+  it('closes in kind when the loan is past grace', async () => {
+    const h = harness({ hf: UNDER, ending: 'other', defaulted: true, defaultable: true });
+    expect(await tryInKindCloseOut(CHAIN, ctxOf(h), h.deps.client, LOAN_ID)).toBe(true);
+    expect(h.writes).toHaveLength(1);
+  });
+
+  it('does nothing before grace ends, or when that cannot be read', async () => {
+    for (const defaultable of [false, null]) {
+      const h = harness({ hf: UNDER, ending: 'other', defaulted: true, defaultable });
+      expect(await tryInKindCloseOut(CHAIN, ctxOf(h), h.deps.client, LOAN_ID)).toBe(false);
+      expect(h.previews).toHaveLength(0);
+      expect(h.writes).toHaveLength(0);
+    }
+  });
+
+  it('reports a refused attempt as not sent', async () => {
+    const h = harness({ hf: UNDER, ending: 'other', defaulted: false, defaultable: true });
+    expect(await tryInKindCloseOut(CHAIN, ctxOf(h), h.deps.client, LOAN_ID)).toBe(false);
     expect(h.writes).toHaveLength(0);
   });
 });

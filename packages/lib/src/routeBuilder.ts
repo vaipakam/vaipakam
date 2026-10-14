@@ -658,7 +658,41 @@ export interface PreviewCloseOutDeps {
   blockNumber?: bigint;
 }
 
+/** `DefaultedFacet.LoanDefaulted(uint256 indexed loanId, bool
+ *  riskAndTermsConsentFromBoth, LoanStatus newStatus)` — the terminal event
+ *  of every close-out that ends the loan, swap or not. */
+export const LOAN_DEFAULTED_TOPIC = toEventSelector('LoanDefaulted(uint256,bool,uint8)');
+
+/** `RiskMatchLiquidationFacet.InternalMatchExecuted(...)`. The loan can sit
+ *  in either indexed leg or in the unindexed third, so the preview treats
+ *  any match the Diamond emits as this close-out's. */
+export const INTERNAL_MATCH_EXECUTED_TOPIC = toEventSelector(
+  'InternalMatchExecuted(uint256,uint256,uint256,address,uint256,uint256,uint256,uint256,uint256,uint256)',
+);
+
+/** The preview, with the two facts an `'other'` ending leaves open. */
+export interface CloseOutPreviewDetail {
+  preview: CloseOutPreview;
+  /** `LoanDefaulted` was emitted for this loan: the close-out ends it. */
+  defaulted: boolean;
+  /** The Diamond emitted an internal match during the call. */
+  internalMatch: boolean;
+}
+
 export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseOutPreview> {
+  return (await previewCloseOutDetail(deps)).preview;
+}
+
+/**
+ * {@link previewCloseOut}, plus whether the ending is terminal and whether
+ * an internal match produced it. A caller that may send only one kind of
+ * `'other'` ending — the keeper's in-kind close of a collapsed loan (#2487)
+ * — reads these instead of treating every `'other'` alike.
+ */
+export async function previewCloseOutDetail(
+  deps: PreviewCloseOutDeps,
+): Promise<CloseOutPreviewDetail> {
+  const unknown: CloseOutPreviewDetail = { preview: 'unknown', defaulted: false, internalMatch: false };
   const { client, diamond, account, loanId, calls, blockNumber } = deps;
   let results;
   try {
@@ -677,24 +711,33 @@ export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseO
       ...(blockNumber !== undefined ? { blockNumber } : {}),
     }));
   } catch {
-    return 'unknown';
+    return unknown;
   }
   const result = results[0];
-  if (!result || result.status !== 'success') return 'unknown';
+  if (!result || result.status !== 'success') return unknown;
   // `logs` is optional in the response: a node that ran the call without
   // reporting events has not shown which ending it reached, which is not
   // the same as having shown that it reached neither.
   const logs = result.logs;
-  if (logs === undefined) return 'unknown';
+  if (logs === undefined) return unknown;
   const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
+  const fromDiamond = (log: { address: string }) =>
+    log.address.toLowerCase() === diamond.toLowerCase();
   const emitted = (topic: Hex) =>
     logs.some(
       (log) =>
-        log.address.toLowerCase() === diamond.toLowerCase() &&
+        fromDiamond(log) &&
         log.topics[0] === topic &&
         log.topics[1]?.toLowerCase() === loanTopic,
     );
-  if (emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)) return 'sale';
-  if (emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)) return 'fallback';
-  return 'other';
+  const defaulted = emitted(LOAN_DEFAULTED_TOPIC);
+  const internalMatch = logs.some(
+    (log) => fromDiamond(log) && log.topics[0] === INTERNAL_MATCH_EXECUTED_TOPIC,
+  );
+  const preview: CloseOutPreview = emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)
+    ? 'sale'
+    : emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)
+      ? 'fallback'
+      : 'other';
+  return { preview, defaulted, internalMatch };
 }

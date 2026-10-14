@@ -25,8 +25,11 @@
  *           to the HF liquidator, wholly — it runs every tick from the same
  *           keeper account, and two passes each deciding whether to close
  *           one loan race two terminal transactions however the decision
- *           is split. This pass does not act on it at all (#2487 tracks the
- *           collapsed, unquotable case the liquidator does not yet close).
+ *           is split. This pass does not act on it at all. When the
+ *           liquidator finds no route for such a loan and it is past grace,
+ *           the liquidator itself sends the in-kind close-out through the
+ *           same attempt this pass uses (`attemptCloseOut(..., 'in-kind')`,
+ *           #2487), so the loan still has exactly one owner.
  *        b. The sale interlock (#2078): `triggerDefault` does not inspect
  *           sale linkage, so closing a loan after a buyer accepted its
  *           lender-position sale strands the buyer's principal. An accepted
@@ -65,50 +68,30 @@
  * keeper-wide one, and it is dark until that flag is armed.
  */
 
-import { withSubmissionSlot } from './submissionQueue';
-import {
-  createPublicClient,
-  encodeFunctionData,
-  http,
-  keccak256,
-  type Abi,
-  type Address,
-  type Hex,
-  type PublicClient,
-  type WalletClient,
-  zeroAddress,
-} from 'viem';
-import {
-  DefaultedFacetABI,
-  DiamondLoupeFacetABI,
-  LoanFacetABI,
-  MetricsFacetABI,
-  RiskFacetABI,
-} from '@vaipakam/contracts/abis';
-import { isRevert } from '@vaipakam/lib/contractRevert';
+import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
+import { DefaultedFacetABI, MetricsFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { previewCloseOut, type CloseOutPreview } from '@vaipakam/lib/routeBuilder';
-import {
-  BOUNDED_LISTING_SELECTOR,
-  probeSaleHoldLive,
-  saleHoldBlocksSettlement,
-  type SaleListingHoldState,
-} from '@vaipakam/lib/saleHold';
-import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
-import { createSubrequestBudget, SubrequestBudgetExhausted } from './subrequestBudget';
-import { HF_LIQUIDATION_THRESHOLD } from './liquidator';
-import { orchestrateServerQuotes, type ServerOrchestrationResult } from './serverQuotes';
+import { createSubrequestBudget } from './subrequestBudget';
+import { orchestrateServerQuotes } from './serverQuotes';
 import type { PassTick } from './passSchedule';
+import { attemptGraceDefault, type GraceDefaultDeps, type GraceDefaultOutcome } from './closeOut';
+
+// The per-loan attempt lives in ./closeOut, shared with the liquidator's
+// in-kind fallback (#2487). Re-exported so existing importers keep working.
+export {
+  attemptGraceDefault,
+  LEFT_TO_LIQUIDATOR,
+  type GraceDefaultDeps,
+  type GraceDefaultOutcome,
+  type GraceLoan,
+} from './closeOut';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
-const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
-const LOAN_ABI: Abi = LoanFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
-const RISK_ABI: Abi = RiskFacetABI as Abi;
 
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
@@ -154,40 +137,6 @@ const ROTATION_STEP_MS = 5 * 60_000;
 
 /** LibVaipakam.AssetType.ERC20. */
 const ASSET_TYPE_ERC20 = 0;
-
-/** The loan fields this pass reads. */
-export interface GraceLoan {
-  assetType: number;
-  collateralAssetType: number;
-  collateralAsset: Address;
-  collateralAmount: bigint;
-  principalAsset: Address;
-  lenderTokenId: bigint;
-}
-
-/** What happened to one candidate — the log line, and what tests assert. */
-export type GraceDefaultOutcome =
-  // `preview` is the ending the chain showed — `sale` is the only one that
-  // swaps — and `calls` is the try-list sent, which an `other` ending (an
-  // internal match, an in-kind close) may not use at all.
-  | { kind: 'submitted'; tx: string; preview: CloseOutPreview; calls: number }
-  // The signed transaction went to the RPC and no answer came back: it may
-  // be in the mempool or may never have arrived. `tx` is its hash, computed
-  // locally from the signed bytes, so an operator can look it up; the
-  // next run's pending-transaction check settles it on-chain either way.
-  | { kind: 'unconfirmed'; tx: string; preview: CloseOutPreview; calls: number; reason: string }
-  | { kind: 'skipped'; reason: string };
-
-/** Everything one loan's attempt needs, injected so the decision is
- *  testable without an RPC. */
-export interface GraceDefaultDeps {
-  client: PublicClient;
-  wallet: WalletClient;
-  diamond: Address;
-  chainId: number;
-  /** Builds the try-list for a sale of the loan's whole collateral. */
-  buildRoute: (loan: GraceLoan) => Promise<ServerOrchestrationResult>;
-}
 
 export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
@@ -411,220 +360,3 @@ export function pickBatch<T>(
   return { picked: ordered.slice(0, width), deferred: ordered.slice(width) };
 }
 
-/** One loan: interlock, route, preview, final gate, submit. Never sends
- *  when any step cannot establish its answer. */
-export async function attemptGraceDefault(
-  deps: GraceDefaultDeps,
-  loanId: bigint,
-): Promise<GraceDefaultOutcome> {
-  const { client, wallet, diamond } = deps;
-  const keeper = wallet.account?.address;
-  if (!keeper) return { kind: 'skipped', reason: 'no-keeper-account' };
-
-  // A send from an earlier run may still be pending — on this loan, or on
-  // another pass's. The loan then still reads Active and defaultable, and a
-  // second `triggerDefault` would queue behind the first only to revert once
-  // it lands. Nothing persists between runs, so the chain is asked: while
-  // the keeper's pending nonce is ahead of its mined one, this run waits.
-  const [pendingNonce, minedNonce] = await Promise.all([
-    client.getTransactionCount({ address: keeper, blockTag: 'pending' }),
-    client.getTransactionCount({ address: keeper, blockTag: 'latest' }),
-  ]);
-  if (pendingNonce > minedNonce) {
-    return { kind: 'skipped', reason: `keeper-tx-pending (${pendingNonce - minedNonce} unmined)` };
-  }
-
-  const loan = await readLoan(client, diamond, loanId);
-
-  // ONE OWNER PER LOAN. A past-grace loan that is also under water belongs
-  // to the liquidator, wholly: it runs every tick from the same keeper
-  // account, and two passes each deciding for themselves whether to close
-  // one loan race two terminal transactions however the decision is split.
-  // An earlier revision let this pass make the no-swap close for a
-  // collapsed loan the liquidator had no route for; it could not know
-  // whether the liquidator had found one, and every narrowing of that
-  // exception left the same race (#2485 r2, r3, r5, r6). So this pass does
-  // not act under water at all. The collapsed, unquotable, past-grace loan
-  // that leaves is the liquidator's to close in kind (#2487); until then the
-  // lender's close-out card closes it.
-  const hf = await hfStanding(client, diamond, loanId);
-  if (typeof hf === 'object') return { kind: 'skipped', reason: `hf-unread:${hf.unread}` };
-  if (hf === 'under-water') return { kind: 'skipped', reason: LEFT_TO_LIQUIDATOR };
-
-  const sale = await saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper);
-  if (sale !== null) return { kind: 'skipped', reason: sale };
-
-  // A swap is possible only between two ERC-20s; every other shape sends
-  // the empty list, and the contract takes its in-kind or rental branch or
-  // refuses (a liquid ERC-20 needs a route: `NoEnabledSwapRoute`).
-  const swappable =
-    loan.collateralAssetType === ASSET_TYPE_ERC20 && loan.assetType === ASSET_TYPE_ERC20;
-  let calls: readonly AdapterCall[] = [];
-  let routeNote = '';
-  if (swappable) {
-    const route = await deps.buildRoute(loan);
-    calls = route.calls;
-    if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
-  }
-
-  // THE FINAL GATE, pinned to one fresh block: the liquidator boundary, the
-  // sale state, the collateral the quotes were made for AND the preview,
-  // judged together. The preview belongs here rather than before the gate:
-  // pool liquidity, an adapter or a quote can change in the moments between,
-  // and a route that would already fall back at the block the send is
-  // judged against must not be sent on an earlier block's word.
-  //
-  // The health factor is read again because a price can cross the line
-  // while the route is quoted, and a loan that crossed it is the
-  // liquidator's from that moment.
-  //
-  // An empty list still previews: a liquid loan reverts, an illiquid or
-  // collapsed one takes the in-kind branch, and only the chain knows which.
-  const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
-  const [lateHf, lateSale, live, preview] = await Promise.all([
-    hfStanding(client, diamond, loanId, gateBlock),
-    saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
-    readLoan(client, diamond, loanId, gateBlock),
-    previewCloseOut({ client, diamond, account: keeper, loanId, calls, blockNumber: gateBlock }),
-  ]);
-  if (typeof lateHf === 'object') return { kind: 'skipped', reason: `gate:hf-unread:${lateHf.unread}` };
-  if (lateHf === 'under-water') return { kind: 'skipped', reason: `gate:${LEFT_TO_LIQUIDATOR}` };
-  if (lateSale !== null) return { kind: 'skipped', reason: `gate:${lateSale}` };
-  if (swappable && live.collateralAmount !== loan.collateralAmount) {
-    return { kind: 'skipped', reason: 'gate:collateral-changed' };
-  }
-
-  if (preview === 'fallback') {
-    return { kind: 'skipped', reason: `preview=fallback calls=${calls.length}${routeNote}` };
-  }
-  if (preview === 'unknown') {
-    // eth_simulateV1 unsupported, or the call reverts — e.g. a liquid loan
-    // with no quotable venue (`NoEnabledSwapRoute`).
-    return { kind: 'skipped', reason: `preview=unknown calls=${calls.length}${routeNote}` };
-  }
-
-  // Prepared and signed here, broadcast separately: a failure up to the
-  // signature means nothing was sent, while a failure of the broadcast
-  // itself leaves the outcome unknown — the RPC may have relayed the
-  // transaction and lost the answer. The hash is known from the signed
-  // bytes either way, so the log can name it.
-  const account = wallet.account;
-  if (!account) return { kind: 'skipped', reason: 'no-keeper-account' };
-  // In the account's submission slot (#2486), so no other pass's send on
-  // this chain can take the same nonce. Once signed, the nonce stays
-  // reserved even if the broadcast fails, since it may have been relayed.
-  let tx: Hex | undefined;
-  try {
-    await withSubmissionSlot(wallet, deps.chainId, account.address, async (nonce, signed) => {
-      const request = await wallet.prepareTransactionRequest({
-        account,
-        to: diamond,
-        data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
-        nonce,
-        chain: undefined,
-      } as never);
-      // `chain: null`: the client is chainless, and the chain id the request
-      // was prepared with (read from the RPC) is the one signed over.
-      const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
-      tx = keccak256(serialized);
-      signed();
-      await wallet.sendRawTransaction({ serializedTransaction: serialized });
-    });
-  } catch (err) {
-    // The cap refuses BEFORE any network call, so a refused broadcast is
-    // one that definitely did not happen.
-    if (refusedByBudget(err)) throw err;
-    // Failed before signing: nothing was sent.
-    if (tx === undefined) throw err;
-    return { kind: 'unconfirmed', tx, preview, calls: calls.length, reason: describeFailure(err) };
-  }
-  return { kind: 'submitted', tx: tx!, preview, calls: calls.length };
-}
-
-/** Whether `err`, or anything in its cause chain, is the budget's refusal. */
-function refusedByBudget(err: unknown): boolean {
-  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 8; depth += 1) {
-    if (e instanceof SubrequestBudgetExhausted) return true;
-    e = (e as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
-async function readLoan(
-  client: PublicClient,
-  diamond: Address,
-  loanId: bigint,
-  blockNumber?: bigint,
-): Promise<GraceLoan> {
-  return (await client.readContract({
-    address: diamond,
-    abi: LOAN_ABI,
-    functionName: 'getLoanDetails',
-    args: [loanId],
-    blockNumber,
-  })) as GraceLoan;
-}
-
-/** Null when the sale state permits a close-out; otherwise the reason not
- *  to send. A probe that throws is a reason too — never a pass. */
-async function saleVerdict(
-  client: PublicClient,
-  diamond: Address,
-  loanId: bigint,
-  lenderTokenId: bigint,
-  keeper: Address,
-  blockNumber?: bigint,
-): Promise<string | null> {
-  let state: SaleListingHoldState;
-  try {
-    state = await probeSaleHoldLive(client, diamond, loanId, lenderTokenId, keeper, blockNumber);
-  } catch (err) {
-    return `sale-unread:${describeFailure(err)}`;
-  }
-  if (saleHoldBlocksSettlement(state)) return `sale-${state}`;
-  if (state === 'none') return null;
-  // A listing stands (live or ended). The classifier's reading of it holds
-  // only on a Diamond that routes the bounded-listing lifecycle; a legacy
-  // one shares the error names with different meanings.
-  try {
-    const facet = (await client.readContract({
-      address: diamond,
-      abi: LOUPE_ABI,
-      functionName: 'facetAddress',
-      args: [BOUNDED_LISTING_SELECTOR],
-      blockNumber,
-    })) as Address;
-    return facet === zeroAddress ? 'sale-legacy-listing' : null;
-  } catch (err) {
-    return `sale-unread:${describeFailure(err)}`;
-  }
-}
-
-/** Where the loan stands against the liquidator's line. Illiquid
- *  collateral has no health factor — the read reverts, and the liquidator
- *  skips such loans too, so a revert reads as above the line. A read that
- *  got no answer is said as such and never guessed. */
-type HfStanding = 'above' | 'under-water' | { unread: string };
-
-async function hfStanding(
-  client: PublicClient,
-  diamond: Address,
-  loanId: bigint,
-  blockNumber?: bigint,
-): Promise<HfStanding> {
-  try {
-    const hf = (await client.readContract({
-      address: diamond,
-      abi: RISK_ABI,
-      functionName: 'calculateHealthFactor',
-      args: [loanId],
-      blockNumber,
-    })) as bigint;
-    return hf < HF_LIQUIDATION_THRESHOLD ? 'under-water' : 'above';
-  } catch (err) {
-    if (isRevert(err)) return 'above';
-    return { unread: describeFailure(err) };
-  }
-}
-
-const LEFT_TO_LIQUIDATOR = 'hf-liquidatable (left to the liquidator)';

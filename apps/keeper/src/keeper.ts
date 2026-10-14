@@ -34,13 +34,16 @@ import {
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AdminFacetABI,
+  DefaultedFacetABI,
   FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
   RiskFacetABI,
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
+import { attemptCloseOut } from './closeOut';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -249,6 +252,53 @@ export function resetKeeperDedupe(): void {
 
 function dedupeKey(chainId: number, loanId: number): string {
   return `${chainId}:${loanId}`;
+}
+
+/**
+ * The liquidator's no-route fallback (#2487): when the loan is past grace,
+ * close it in kind through the attempt the grace-default pass uses, in its
+ * `in-kind` role. Returns true when a transaction was submitted or may have
+ * been broadcast. Every other outcome is logged with its reason.
+ */
+export async function tryInKindCloseOut(
+  chain: Pick<ChainConfig, 'id' | 'name'>,
+  ctx: KeeperContext,
+  publicClient: PublicClient,
+  loanIdBig: bigint,
+): Promise<boolean> {
+  const defaultable = (await publicClient
+    .readContract({
+      address: ctx.diamond,
+      abi: DefaultedFacetABI,
+      functionName: 'isLoanDefaultable',
+      args: [loanIdBig],
+    })
+    .catch(() => null)) as boolean | null;
+  if (defaultable !== true) {
+    const why = defaultable === null ? 'defaultable-unread' : 'not-past-grace';
+    console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${why}`);
+    return false;
+  }
+  const outcome = await attemptCloseOut(
+    {
+      client: publicClient,
+      wallet: ctx.wallet,
+      diamond: ctx.diamond,
+      chainId: chain.id,
+      // The in-kind role sends an empty list and never builds a route.
+      buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
+    },
+    loanIdBig,
+    'in-kind',
+  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
+  if (outcome.kind === 'skipped') {
+    console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${outcome.reason}`);
+    return false;
+  }
+  console.log(
+    `[keeper] loan=${loanIdBig} chain=${chain.name} in-kind ${outcome.kind === 'submitted' ? 'submitted' : `send-unconfirmed (${outcome.reason})`} tx=${outcome.tx} preview=${outcome.preview}`,
+  );
+  return true;
 }
 
 /**
@@ -467,6 +517,16 @@ export async function maybeAutonomousLiquidate(
       console.log(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
       );
+      // #2487 — no venue quotes any size of this collateral. If the loan is
+      // also past grace, it is still this pass's (it is under water), and the
+      // grace-default pass will not touch it, so the liquidator sends the
+      // in-kind close-out itself: `triggerDefault` with an empty list, where
+      // the contract's collapsed-LTV branch hands the collateral to the
+      // lender. The shared attempt sends only when the preview shows that
+      // terminal default, with no swap and no internal match.
+      const noRouteAtAll =
+        halfQuotes.calls.length === 0 && (partialQuotes === null || partialQuotes.calls.length === 0);
+      if (noRouteAtAll) return tryInKindCloseOut(chain, ctx, publicClient, loanIdBig);
       return false;
     }
 
