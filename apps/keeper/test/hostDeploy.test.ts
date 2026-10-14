@@ -80,6 +80,8 @@ describe('host deploy kit paths', () => {
     // Ephemeral: no cache survives a build, so no build can plant tooling.
     expect(update).not.toContain('CacheDirectory');
     expect(update).toContain('-p PrivateTmp=yes');
+    // The build sees only the variables update.sh names.
+    expect(update).toMatch(/-p Nice=10 \\\n  \/usr\/bin\/env -i \\$/m);
     // One fixed name, so two builds cannot run at once.
     expect(update).toMatch(/--unit=vaipakam-keeper-build \\$/m);
     expect(update).toContain('-p ProtectSystem=strict');

@@ -60,6 +60,10 @@ chmod 644 "$tmp/src.tar"
 # bind-mounted paths below.
 mkdir "$tmp/out"
 chmod 777 "$tmp/out"
+# `env -i`: the build sees only the variables named below, never anything
+# the service manager would otherwise pass on (DefaultEnvironment=,
+# set-environment), so a dependency's install script cannot find a secret
+# that was left there.
 # One fixed unit name: systemd refuses to start a second unit of the same
 # name, so two builds can never run at once, even one orphaned by a stopped
 # or timed-out updater. PartOf stops the build when the updater stops.
@@ -73,10 +77,11 @@ systemd-run --quiet --wait --pipe --collect \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
   -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
   -p Nice=10 \
-  -E HOME=/tmp/home \
-  -E COREPACK_HOME=/tmp/corepack \
-  -E COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-  -E PATH=/usr/local/bin:/usr/bin:/bin \
+  /usr/bin/env -i \
+  HOME=/tmp/home \
+  COREPACK_HOME=/tmp/corepack \
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+  PATH=/usr/local/bin:/usr/bin:/bin \
   /bin/bash /run/keeper-build.sh /run/keeper-src.tar /run/keeper-out
 built="$tmp/out/keeper-host.mjs"
 # The sandbox wrote this file and is gone now. Take only a regular file, never

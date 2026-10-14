@@ -15,19 +15,30 @@
 # a machine that is installed but not yet cut over cannot start a second
 # keeper at its next boot.
 #
-# KEEPER_DEPLOY_BRANCH (default main) picks the branch the machine follows
-# from then on; it is remembered in /opt/vaipakam-keeper/deploy-branch.
+# KEEPER_DEPLOY_BRANCH picks the branch the machine follows from then on; it
+# is remembered in /opt/vaipakam-keeper/deploy-branch, and a later run
+# without it keeps the remembered branch (main on a first install).
+#
+# Needs systemd 247 or newer (Ubuntu 22.04 or later) for LoadCredential=.
 set -euo pipefail
 
 main() {
   local REPO_URL="https://github.com/vaipakam/vaipakam.git"
-  local BRANCH="${KEEPER_DEPLOY_BRANCH:-main}"
   local NODE_MAJOR=22
   local ROOT=/opt/vaipakam-keeper
+  # A reinstall must never move the machine to other code by itself.
+  local BRANCH="${KEEPER_DEPLOY_BRANCH:-$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)}"
 
   log() { echo "[keeper-install] $*"; }
 
   [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
+  # The keeper unit reads its env file through LoadCredential= (systemd 247).
+  local systemd_version
+  systemd_version="$(systemctl --version | awk 'NR==1 { print $2 }')"
+  if ! [ "${systemd_version%%.*}" -ge 247 ] 2>/dev/null; then
+    echo "systemd ${systemd_version:-unknown} is too old: the keeper needs 247 or newer (Ubuntu 22.04 or later)" >&2
+    exit 1
+  fi
 
   log "installing packages"
   export DEBIAN_FRONTEND=noninteractive
@@ -113,7 +124,10 @@ main() {
   chmod 750 /etc/vaipakam
   chmod 600 /etc/vaipakam/keeper.env
 
-  local unit
+  local unit unit_changed=no
+  if ! cmp -s "$kit/vaipakam-keeper.service" /etc/systemd/system/vaipakam-keeper.service; then
+    unit_changed=yes
+  fi
   for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
     install -m 644 "$kit/$unit" "/etc/systemd/system/$unit"
   done
@@ -124,7 +138,10 @@ main() {
   systemctl start vaipakam-keeper-update.service
   log "current release: $(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || echo none)"
 
-  if [ "$node_changed" = yes ]; then
+  # daemon-reload alone leaves a running keeper on its old unit, and the
+  # updater only restarts for a new bundle, so a changed unit or a new Node
+  # restarts it here (after its current tick, as every restart does).
+  if [ "$node_changed" = yes ] || [ "$unit_changed" = yes ]; then
     systemctl try-restart --no-block vaipakam-keeper.service
   fi
   if systemctl is-active --quiet vaipakam-keeper.service; then

@@ -1,6 +1,7 @@
 # Keeper on an always-on machine: runbook
 
 How to run `apps/keeper` as one long-running process on an Ubuntu machine
+(22.04 or later: the install needs systemd 247 or newer and refuses older)
 instead of as a Cloudflare cron Worker. The runtime is described in
 [`apps/keeper/host/README.md`](../../apps/keeper/host/README.md); the install
 kit is [`apps/keeper/host/deploy/`](../../apps/keeper/host/deploy/). In short,
@@ -101,8 +102,10 @@ It never enables or starts the keeper. That is the cutover in §5, so a
 machine that is installed but not cut over cannot start a second keeper at
 its next boot. Running it again is safe. Each run brings the units and
 scripts up to date (the timer does not update them). It also moves Node to
-the latest 22.x release and restarts a running keeper onto it. So re-run it
-to take Node security releases.
+the latest 22.x release. When Node or the keeper's unit changed, it restarts
+a running keeper onto them, after its current tick. So re-run it to take Node
+security releases. It keeps the branch the machine follows unless
+`KEEPER_DEPLOY_BRANCH` is set again.
 
 ## 4. Configure
 
