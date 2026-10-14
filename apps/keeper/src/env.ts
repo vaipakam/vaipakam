@@ -200,6 +200,35 @@ export interface WorkerEnv extends BaseEnv {
 }
 
 /**
+ * Every `WorkerEnv` field delivered as a Secrets Store binding, named once.
+ *
+ * The Worker gets these as `{ get() }` bindings from `wrangler.jsonc`. A host
+ * that is not a Worker (`host/`, the always-on-machine runtime) has plain
+ * strings instead, and wraps exactly these keys so `resolveEnv` runs
+ * unchanged on both. `satisfies` keeps every entry a real `WorkerEnv` key;
+ * `test/secretBindingKeys.test.ts` checks the list against `resolveEnv`, so
+ * a secret added there and not here fails a test instead of reaching the
+ * machine as a raw string where a binding was expected.
+ */
+export const SECRET_BINDING_KEYS = [
+  'RPC_BASE',
+  'RPC_ETH',
+  'RPC_ARB',
+  'RPC_OP',
+  'RPC_BNB',
+  'RPC_SEPOLIA',
+  'RPC_BASE_SEPOLIA',
+  'RPC_ARB_SEPOLIA',
+  'RPC_OP_SEPOLIA',
+  'RPC_BNB_TESTNET',
+  'TG_BOT_TOKEN',
+  'PUSH_CHANNEL_PK',
+  'ZEROEX_API_KEY',
+  'ONEINCH_API_KEY',
+  'KEEPER_PRIVATE_KEY',
+] as const satisfies readonly (keyof WorkerEnv)[];
+
+/**
  * The RESOLVED env passed to all downstream code. Every field is a
  * plain string; a missing / unconfigured chain or secret is
  * `undefined` and the dependent pass skips it this tick.
