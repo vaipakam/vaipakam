@@ -2232,7 +2232,8 @@
       "dueInDays_two": "{{count}}일 후 due",
       "dueInDays_few": "{{count}}일 후 due",
       "dueInDays_many": "{{count}}일 후 due",
-      "dueInDays_other": "{{count}}일 후 due"
+      "dueInDays_other": "{{count}}일 후 due",
+      "pastGrace": "유예 기간 종료"
     },
     "activity": {
       "loading": "활동을 불러오는 중…",
@@ -2452,7 +2453,12 @@
     },
     "loanRow": {
       "youRent": "회원님이 빌림",
-      "youRentOut": "회원님이 빌려줌"
+      "youRentOut": "회원님이 빌려줌",
+      "pastGraceLender": "유예 기간이 끝나 이 포지션을 이제 정리할 수 있을 수 있습니다. 지금 가능한지는 해당 페이지에서 확인하세요. 누구나 먼저 정리할 수 있습니다.",
+      "pastGraceBorrower": "유예 기간이 끝나 일반 상환 기간이 종료되었으며, 이제 누구나 담보를 대상으로 대출을 정리할 수 있을 수 있습니다. 상태는 해당 페이지에서 확인하세요.",
+      "pastGraceRenter": "대여와 유예 기간이 끝났습니다. NFT 사용은 대여 종료와 함께 끝났습니다. 이제 누구나 정리할 수 있을 수 있으며, 그러면 대여가 정산됩니다. 상태는 해당 페이지에서 확인하세요.",
+      "graceCheckingTitle": "이 대출의 유예 기간이 끝났는지 프로토콜에 확인하고 있습니다.",
+      "graceUnknownTitle": "이 대출의 유예 기간이 끝났는지 프로토콜에 확인할 수 없어 이미 끝났을 수 있습니다. 대출을 열어 상태를 확인하세요."
     },
     "settingsPage": {
       "title": "설정",

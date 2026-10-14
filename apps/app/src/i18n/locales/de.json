@@ -2232,7 +2232,8 @@
       "dueInDays_two": "Fällig in {{count}} Tagen",
       "dueInDays_few": "Fällig in {{count}} Tagen",
       "dueInDays_many": "Fällig in {{count}} Tagen",
-      "dueInDays_other": "Fällig in {{count}} Tagen"
+      "dueInDays_other": "Fällig in {{count}} Tagen",
+      "pastGrace": "Nachfrist abgelaufen"
     },
     "activity": {
       "loading": "Ihre Aktivität wird geladen…",
@@ -2452,7 +2453,12 @@
     },
     "loanRow": {
       "youRent": "Sie mieten",
-      "youRentOut": "Sie vermieten"
+      "youRentOut": "Sie vermieten",
+      "pastGraceLender": "Die Nachfrist ist abgelaufen, daher kann diese Position jetzt möglicherweise geschlossen werden; ihre Seite zeigt, ob das gerade möglich ist. Jeder kann sie zuerst schließen.",
+      "pastGraceBorrower": "Die Nachfrist ist abgelaufen, daher ist das reguläre Rückzahlungsfenster vorbei und jeder kann den Kredit jetzt möglicherweise gegen die Sicherheit schließen; seine Seite zeigt den Stand.",
+      "pastGraceRenter": "Die Miete und ihre Nachfrist sind abgelaufen; Ihre Nutzung des NFT endete mit der Miete. Jeder kann sie jetzt möglicherweise schließen, was die Miete abrechnet; ihre Seite zeigt den Stand.",
+      "graceCheckingTitle": "Wir fragen das Protokoll, ob die Nachfrist dieses Kredits abgelaufen ist.",
+      "graceUnknownTitle": "Das Protokoll konnte nicht gefragt werden, ob die Nachfrist dieses Kredits abgelaufen ist; sie könnte bereits abgelaufen sein. Öffnen Sie den Kredit, um den Stand zu sehen."
     },
     "settingsPage": {
       "title": "Einstellungen",

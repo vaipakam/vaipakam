@@ -1410,6 +1410,19 @@ Thin-market honesty rules apply.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
+- A position row whose loan is past its grace period says so ("Past grace"),
+  distinct from a loan that is past due but still inside grace. Whether grace
+  has ended is the protocol's own answer, judged by chain time against the
+  live grace schedule, never the device clock; until that answer is read the
+  row keeps its ordinary time-based label (as it does when a re-read fails or cannot run because the device is offline, rather than repeating an earlier answer; an answer requested before the row was opened, or before the device regained focus or connectivity, is not shown until a read sent since then completes) and, whatever that label says (the device clock may be behind the chain's), says on its own visible line, independent of whatever the badge shows, that the grace answer is still being checked or is unavailable, and it is re-read periodically
+  because governance can lengthen the grace schedule and reopen repayment.
+  That answer establishes TIME eligibility only — a close-out can still be
+  refused for reasons the row does not read, such as a pause — so the row's
+  explanation says a close-out may now be possible and points at the
+  position page. The explanation is visible on the row (not only on hover)
+  and is by side: for the lender the position may now be closed out and
+  anyone may do it first; for the borrower the ordinary repay window is over
+  and the loan may be closed out against the collateral.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.

@@ -4972,6 +4972,9 @@ const copySource = {
     closed: 'Closed',
     beingSettled: 'Being settled',
     pastDue: 'Past due',
+    // #2463 follow-up — shown only when the chain says the grace period
+    // has ended (`isLoanDefaultable`), never from a client-side clock.
+    pastGrace: 'Past grace',
     dueToday: 'Due today',
     dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
   },
@@ -5354,6 +5357,25 @@ const copySource = {
   loanRow: {
     youRent: 'You rent',
     youRentOut: 'You rent out',
+    // #2463 follow-up — the line under a "Past grace" row, by side (also the
+    // badge's hover text). Grace having ended is a TIME fact; whether the
+    // close-out can run right now also depends on things this row does not
+    // read (a pause, an outage), so none says it CAN — each says it may and
+    // points at the page. Closing out is permissionless, so none says only
+    // the lender may.
+    pastGraceLender:
+      'The grace period has ended, so this position may now be closed out; its page shows whether that can be done right now. Anyone may close it out first.',
+    pastGraceBorrower:
+      'The grace period has ended, so the ordinary repay window is over and anyone may now be able to close the loan out against the collateral; its page shows where it stands.',
+    pastGraceRenter:
+      'The rental and its grace period have ended; your use of the NFT ended with the rental. Anyone may now be able to close it out, which settles the rental; its page shows where it stands.',
+    // Shown as its own line on an open row while the chain's grace answer
+    // is unread or failed: the loan may already be past grace, and the row
+    // must not present its time label as the whole story.
+    graceCheckingTitle:
+      'Checking with the protocol whether this loan’s grace period has ended.',
+    graceUnknownTitle:
+      'The protocol could not be asked whether this loan’s grace period has ended, so it may already have; open the loan to see where it stands.',
   },
   settingsPage: {
     title: 'Settings',

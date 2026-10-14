@@ -2232,7 +2232,8 @@
       "dueInDays_two": "{{count}} days में due",
       "dueInDays_few": "{{count}} days में due",
       "dueInDays_many": "{{count}} days में due",
-      "dueInDays_other": "{{count}} days में due"
+      "dueInDays_other": "{{count}} days में due",
+      "pastGrace": "ग्रेस अवधि समाप्त"
     },
     "activity": {
       "loading": "आपकी गतिविधि लोड हो रही है…",
@@ -2452,7 +2453,12 @@
     },
     "loanRow": {
       "youRent": "आप rent करते हैं",
-      "youRentOut": "आप rent पर देते हैं"
+      "youRentOut": "आप rent पर देते हैं",
+      "pastGraceLender": "Grace period ख़त्म हो गई है, इसलिए शायद अब इस position को close out किया जा सके; अभी यह हो सकता है या नहीं, यह उसका page बताता है। कोई भी इसे पहले close out कर सकता है।",
+      "pastGraceBorrower": "Grace period ख़त्म हो गई है, इसलिए सामान्य repay window समाप्त है और शायद अब कोई भी collateral के बदले loan को close out कर सके; उसका page उसकी स्थिति बताता है।",
+      "pastGraceRenter": "Rental और उसकी grace period ख़त्म हो गई हैं; NFT का आपका उपयोग rental के साथ ही ख़त्म हो गया। शायद अब कोई भी इसे close out कर सके, जिससे rental settle हो जाएगा; उसका page उसकी स्थिति बताता है।",
+      "graceCheckingTitle": "Protocol से पूछा जा रहा है कि इस loan की grace period ख़त्म हुई या नहीं।",
+      "graceUnknownTitle": "Protocol से यह नहीं पूछा जा सका कि इस loan की grace period ख़त्म हुई या नहीं, इसलिए शायद वह ख़त्म हो चुकी हो; स्थिति देखने के लिए loan खोलें।"
     },
     "settingsPage": {
       "title": "Settings",
