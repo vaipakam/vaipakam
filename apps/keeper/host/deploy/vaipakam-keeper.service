@@ -1,0 +1,48 @@
+# The keeper, as one long-running process (docs/ops/KeeperMachine.md).
+#
+# install.sh installs this unit and enables it but does not start it: start
+# it once /etc/vaipakam/keeper.env is filled in. Logs:
+#   journalctl -u vaipakam-keeper -f
+#
+# The env file stays root-only (0600). LoadCredential hands a copy to this
+# service's dynamic user alone, so the file's mode never has to be loosened
+# and no long-lived account owns the signing key.
+
+[Unit]
+Description=Vaipakam keeper
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/docs/ops/KeeperMachine.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+LoadCredential=keeper.env:/etc/vaipakam/keeper.env
+ExecStart=/usr/local/bin/node --env-file=%d/keeper.env /opt/vaipakam-keeper/current/keeper-host.mjs
+
+# SIGTERM stops new ticks and lets the one in flight finish, which may be
+# waiting on a transaction receipt. Give it room before systemd escalates to
+# SIGKILL, which WOULD cut a pass off between sending and recording.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# AF_UNIX: name resolution through systemd-resolved.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute is deliberately NOT set: V8's JIT needs W+X pages.
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

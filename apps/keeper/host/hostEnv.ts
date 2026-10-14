@@ -8,7 +8,11 @@
  * tick knows which host it is on:
  *
  *   - every variable is copied through as a string, which covers the arming
- *     flags and tuning knobs exactly as the Worker receives them;
+ *     flags and tuning knobs exactly as the Worker receives them. An EMPTY
+ *     variable is dropped, so a blank line in the env file means "unset",
+ *     as an unbound var does on the Worker. Without this, `KNOB=` would
+ *     arrive as `''` and a numeric knob could read it as 0 instead of its
+ *     default;
  *   - the keys in `SECRET_BINDING_KEYS` are wrapped as bindings;
  *   - `DB` is the D1 HTTP adapter, pointed at the same database the Worker
  *     binds (`D1_DATABASE_ID`), with the account id and an API token.
@@ -43,7 +47,7 @@ export function buildHostEnv(
 ): HostEnvResult {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(vars)) {
-    if (value === undefined || HOST_ONLY.has(key)) continue;
+    if (value === undefined || value === '' || HOST_ONLY.has(key)) continue;
     out[key] = value;
   }
   const secretKeys: readonly string[] = SECRET_BINDING_KEYS;

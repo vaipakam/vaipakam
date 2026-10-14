@@ -975,7 +975,10 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
     - ticks on the machine never overlap: a minute that arrives while the previous tick is still running is skipped, and the log names the duties still running;
     - before each tick on the machine, the keeper confirms that the database has every layout change the running code was written for, and declines the tick by name while one is missing. On the Worker, the deploy refuses to publish until the same check passes; a machine has no deploy step, so the check moves into the tick;
     - with no database configured, the keeper reads and writes nothing and says so on every tick;
-    - stopping the process lets the tick in flight finish, so a restart never cuts off a transaction between signing and sending.
+    - stopping the process lets the tick in flight finish, so a restart never cuts off a transaction between signing and sending;
+    - a setting left empty on the machine counts as unset, exactly as an unbound setting does on the Worker, so it takes the documented default rather than an empty value;
+    - on the machine, a merge to the branch it follows is its deploy, as it is for the Workers. A new build replaces the running one only after it has been built and shown to load, and the switch waits for the tick in flight. A merge that does not change the keeper does not restart it, and a build that fails leaves the running keeper as it was;
+    - the step that fetches and builds new code cannot read the keeper's settings or signing key, and the keeper itself runs with no standing account of its own.
   The machine reaches the database with a credential that Cloudflare cannot narrow to one database, so it can read and write every database in the account. The setup guide says so and treats that credential like the signing key.
   - Any broader bot, keeper, or third-party execution access must be an explicit user opt-in and must never be assumed by default.
   - User consent for such access must be logged and auditable at three levels: user profile/default-preference level, offer level, and loan level.

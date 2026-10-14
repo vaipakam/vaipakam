@@ -229,6 +229,40 @@ export const SECRET_BINDING_KEYS = [
 ] as const satisfies readonly (keyof WorkerEnv)[];
 
 /**
+ * Every plain-string knob a host can set, named once (`BaseEnv`'s keys).
+ *
+ * The machine host's env template (`host/deploy/keeper.env.example`) is
+ * checked against this list and `SECRET_BINDING_KEYS`, so the template
+ * cannot omit a setting the keeper reads or list one it does not. The
+ * `PlainVarKeysComplete` check below fails to compile if a knob is added to
+ * `BaseEnv` without being added here.
+ */
+export const PLAIN_VAR_KEYS = [
+  'TG_BOT_USERNAME',
+  'FRONTEND_ORIGIN',
+  'KEEPER_ENABLED',
+  'REWARD_REMIT_ENABLED',
+  'REWARD_REMIT_LOOKBACK_DAYS',
+  'REWARD_REMIT_LANE_CAP',
+  'REWARD_COMMIT_ENABLED',
+  'REWARD_COMMIT_LOOKBACK_DAYS',
+  'GRACE_DEFAULT_ENABLED',
+  'LIQ_CONFIDENCE_MIN_CHECKS',
+  'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
+  'LIQ_TIER3_MIN_TVL_USD',
+  'LIQ_TIER3_DISABLE_DEFI_LISTING',
+  'LIQ_TIER3_MIN_MCAP_USD',
+  'LIQ_TIER3_MIN_VOL_USD',
+  'SPLIT_MIN_IMPROVEMENT_BPS',
+  'PARTIAL_LIQ_MIN_HF_BPS',
+] as const satisfies readonly (keyof BaseEnv)[];
+
+type PlainVarKeysComplete =
+  Exclude<keyof BaseEnv, (typeof PLAIN_VAR_KEYS)[number]> extends never ? true : false;
+const plainVarKeysComplete: PlainVarKeysComplete = true;
+void plainVarKeysComplete;
+
+/**
  * The RESOLVED env passed to all downstream code. Every field is a
  * plain string; a missing / unconfigured chain or secret is
  * `undefined` and the dependent pass skips it this tick.

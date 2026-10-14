@@ -99,6 +99,17 @@ describe('D1 HTTP adapter', () => {
 });
 
 describe('host env', () => {
+  it('treats an empty variable as unset, as an unbound var is on the Worker', () => {
+    const env = buildHostEnv({
+      KEEPER_ENABLED: 'false',
+      LIQ_TIER3_MIN_TVL_USD: '',
+      RPC_BASE_SEPOLIA: '',
+    }).env as unknown as Record<string, unknown>;
+    expect(env.KEEPER_ENABLED).toBe('false');
+    expect('LIQ_TIER3_MIN_TVL_USD' in env).toBe(false);
+    expect('RPC_BASE_SEPOLIA' in env).toBe(false);
+  });
+
   const full = {
     [HOST_SETTINGS.accountId]: ACCOUNT,
     [HOST_SETTINGS.databaseId]: DATABASE,

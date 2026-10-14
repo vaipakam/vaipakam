@@ -1,0 +1,31 @@
+# Builds the keeper from the latest main and stages it (update.sh). Runs as
+# the unprivileged build user, which owns /opt/vaipakam-keeper and can never
+# read the keeper's env file. It cannot restart the keeper itself: it touches
+# a marker that vaipakam-keeper-restart.path watches.
+
+[Unit]
+Description=Vaipakam keeper: build and stage the latest main
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=vaipakam-build
+Group=vaipakam-build
+Environment=HOME=/var/lib/vaipakam-build
+Environment=COREPACK_HOME=/var/lib/vaipakam-build/corepack
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ExecStart=/opt/vaipakam-keeper/update.sh
+# A build on a small machine can take a while; never let two overlap.
+TimeoutStartSec=1800
+Nice=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/vaipakam-keeper /var/lib/vaipakam-build
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
