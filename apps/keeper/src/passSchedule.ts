@@ -152,10 +152,11 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     // Every loan it acts on is already past a grace period measured in
     // days, so a few minutes' delay changes nothing material, and each
     // candidate costs a quote round, an eth_simulateV1 and a send. The cap is
-    // one attempt per run across every chain — the invocation's subrequest
-    // allowance is shared — rotated rather than urgency-ordered
-    // (graceDefault.ts): twelve candidates an hour, which a testnet backlog
-    // never strains; revisit cadence and cap together if a mainnet one does.
+    // one chain, one bounded scan window and one attempt per run — the
+    // invocation's subrequest allowance is shared — rotated rather than
+    // urgency-ordered (graceDefault.ts): twelve attempts an hour across all
+    // chains, which a testnet backlog never strains; revisit cadence and cap
+    // together if a mainnet one does.
     cadenceMinutes: 5,
     offsetMinutes: 3,
     why: 'acts on loans already days past grace; each attempt costs quotes and a simulation',

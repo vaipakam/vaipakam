@@ -11,13 +11,13 @@ import type { Address, PublicClient, WalletClient } from 'viem';
 import {
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
-  LOAN_DEFAULTED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
   attemptGraceDefault,
   findDefaultable,
   pickBatch,
+  SCAN_WINDOW,
   rotate,
   type GraceDefaultDeps,
   type GraceLoan,
@@ -53,10 +53,8 @@ interface Scene {
   lock?: number;
   teardown?: () => void;
   boundedListing?: boolean;
-  /** The preview's ending; null makes the node fail the simulation.
-   *  `other` is a terminal no-swap close (it emits LoanDefaulted); `match`
-   *  is an internal match, which does not. */
-  ending?: 'sale' | 'fallback' | 'other' | 'match' | null;
+  /** The preview's ending; null makes the node fail the simulation. */
+  ending?: 'sale' | 'fallback' | 'other' | null;
   calls?: number;
   /** Unmined keeper transactions on the chain (pending − latest nonce). */
   unmined?: number;
@@ -101,12 +99,10 @@ function harness(scene: Scene) {
       if (scene.ending === null) throw new Error('eth_simulateV1 unsupported');
       const topics =
         scene.ending === 'sale'
-          ? [SWAP_ADAPTER_SUCCEEDED_TOPIC, LOAN_DEFAULTED_TOPIC]
+          ? [SWAP_ADAPTER_SUCCEEDED_TOPIC]
           : scene.ending === 'fallback'
             ? [SWAP_ALL_ADAPTERS_FAILED_TOPIC]
-            : scene.ending === 'other'
-              ? [LOAN_DEFAULTED_TOPIC]
-              : []; // 'match': an internal match returns before LoanDefaulted
+            : [];
       return {
         results: [
           {
@@ -307,58 +303,12 @@ describe('a send still pending from an earlier run', () => {
 });
 
 describe('the liquidator boundary', () => {
-  it('leaves an under-water loan to the HF liquidator — no competing sale is quoted', async () => {
-    // The empty list a liquid loan cannot close with: the chain refuses it.
-    const h = harness({ hf: 9n * 10n ** 17n, ending: null });
-    const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({
-      kind: 'skipped',
-      reason: 'hf-liquidatable (left to the liquidator) preview=unknown',
-    });
-    expect(h.routes).toHaveLength(0);
-    expect(h.writes).toHaveLength(0);
-  });
-
-  it('closes an under-water loan IN KIND when the chain takes the no-swap branch — the liquidator needs a route it may not have', async () => {
-    // A genuinely LTV-collapsed loan: `triggerDefault` moves the collateral
-    // in kind with an empty list, which the quote-bound liquidator cannot do.
+  it('leaves an under-water loan to the HF liquidator wholly — no route, no preview, no send', async () => {
     const h = harness({ hf: 9n * 10n ** 17n, ending: 'other' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 0 });
+    expect(out).toEqual({ kind: 'skipped', reason: 'hf-liquidatable (left to the liquidator)' });
     expect(h.routes).toHaveLength(0);
-  });
-
-  it('leaves an under-water INTERNAL MATCH to the liquidator — it is not an in-kind close', async () => {
-    const h = harness({ hf: 9n * 10n ** 17n, ending: 'match' });
-    const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({
-      kind: 'skipped',
-      reason: 'hf-liquidatable (left to the liquidator) preview=other-without-default',
-    });
-    expect(h.writes).toHaveLength(0);
-  });
-
-  it('never sends an under-water loan into a swap ending of its own', async () => {
-    const h = harness({ hf: 9n * 10n ** 17n, ending: 'sale' });
-    const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({
-      kind: 'skipped',
-      reason: 'hf-liquidatable (left to the liquidator) preview=sale',
-    });
-    expect(h.writes).toHaveLength(0);
-  });
-
-  it('refuses the in-kind send when the health factor recovered by the gate', async () => {
-    let reads = 0;
-    const h = harness({
-      hf: () => {
-        reads += 1;
-        return reads === 1 ? 9n * 10n ** 17n : 2n * 10n ** 18n;
-      },
-      ending: 'other',
-    });
-    const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'skipped', reason: 'gate:hf-recovered' });
+    expect(h.previews).toHaveLength(0);
     expect(h.writes).toHaveLength(0);
   });
 
@@ -459,7 +409,44 @@ describe('findDefaultable', () => {
     await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual({
       defaultable: [5n],
       unread: [6n],
+      window: { index: 0, count: 1, total: 3 },
     });
     expect(seen).toEqual([555n, 555n, 555n]);
+  });
+
+  it('scans one bounded window per visit and walks a large book window by window', async () => {
+    const total = BigInt(SCAN_WINDOW * 2 + 50);
+    const pages: [bigint, bigint][] = [];
+    let aggregates = 0;
+    const client = {
+      getBlockNumber: async () => 9n,
+      readContract: async (args: { functionName: string; args?: [bigint, bigint] }) => {
+        if (args.functionName === 'getActiveLoansCount') return total;
+        if (args.functionName === 'getActiveLoansPaginated') {
+          const [from, limit] = args.args!;
+          pages.push([from, limit]);
+          return Array.from({ length: Number(limit) }, (_, i) => from + BigInt(i) + 1n);
+        }
+        throw new Error(`unexpected read ${args.functionName}`);
+      },
+      multicall: async (args: { contracts: unknown[] }) => {
+        aggregates += 1;
+        return args.contracts.map(() => ({ status: 'success', result: false }));
+      },
+    } as unknown as PublicClient;
+
+    const third = await findDefaultable(client, DIAMOND, 84532, 2);
+    expect(third.window).toEqual({ index: 2, count: 3, total: Number(total) });
+    // The last window holds only the 50 ids past 2 × SCAN_WINDOW.
+    expect(pages).toEqual([[BigInt(SCAN_WINDOW * 2), 50n]]);
+    expect(aggregates).toBe(1);
+
+    pages.length = 0;
+    aggregates = 0;
+    const wrapped = await findDefaultable(client, DIAMOND, 84532, 3);
+    expect(wrapped.window.index).toBe(0);
+    // A full window: never more than SCAN_WINDOW ids, whatever the book.
+    expect(pages.reduce((n, [, l]) => n + Number(l), 0)).toBe(SCAN_WINDOW);
+    expect(aggregates).toBeLessThanOrEqual(Math.ceil(SCAN_WINDOW / 100));
   });
 });

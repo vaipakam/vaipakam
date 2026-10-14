@@ -41,14 +41,15 @@ const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
 
 /**
  * A FIXED scheduled tick, so a pass that rotates on it measures the same
- * candidate every run. graceDefault's rotation index is
- * floor(scheduledTime / 5 min) = 1 here, which selects the second loan of
- * the first chain — loan 2, an EVEN id, which the RPC mock keeps above the
- * liquidation line, so the run reaches the route, preview, gate and send
- * rather than the under-water skip (Codex #2485 r4). The wall clock picked
- * an odd id about half the time.
+ * candidate every run. graceDefault's run index is
+ * floor(scheduledTime / 5 min) = 3 here; with the fixture's three chains
+ * that is the first chain's second visit, whose single window yields its
+ * second candidate — loan 2, an EVEN id, which the RPC mock keeps above the
+ * liquidation line, so the run reaches the route, gate and send rather than
+ * the under-water skip (Codex #2485 r4). The wall clock picked an odd id
+ * about half the time. Re-derive this if the fixture's chain count changes.
  */
-const BENCH_TICK = { scheduledTimeMs: 5 * 60_000 } as const;
+const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000 } as const;
 
 
 /**
