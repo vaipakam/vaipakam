@@ -3839,6 +3839,14 @@ const CHAIN_STATUS_SETTLED = 3;
  * read failed. A failed read settles it with the time unknown — the chain
  * has confirmed the event, and unknown is the honest date.
  *
+ * BUDGET: the reservations here are normal figures for a SOFT stop, as for
+ * the other heal lanes (`healRowAffordable`) — a read the client retries
+ * costs more than any fixed figure says. What is guaranteed is narrower and
+ * is what matters: the settle write, after which the row is never selected
+ * again, is issued only while the live budget still covers it and the
+ * pointer write, so a settled row is not left unreported by this lane's own
+ * spending (#2476 r8–r10).
+ *
  * ROTATING, so no set of rows can hold the batch: a pointer in
  * `indexer_cursor` walks the candidates by loan id and wraps, so a row the
  * chain does not confirm, or whose read keeps failing, is revisited only
@@ -3858,7 +3866,9 @@ export async function settleFromLedger(
   /** The pass's settled block — the canonical state every read is pinned to. */
   atBlock: bigint,
 ): Promise<number[]> {
-  if (!healRowAffordable(budget, 1)) return [];
+  // #2476 r10 — the setup itself: the pointer read, the page read, and the
+  // pointer reset an empty page can require.
+  if (budget.subrequests.remaining < 3 || budget.d1Queries.remaining < 3) return [];
   const pointer =
     (
       await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
@@ -3888,6 +3898,7 @@ export async function settleFromLedger(
     // budget at that write could end the invocation before this returns, and
     // a row settled here is never selected again, so its report would be lost.
     if (!settleRowAffordable(budget)) break;
+    const before = reached;
     reached = row.loan_id;
     try {
       const detail = (await client.readContract({
@@ -3905,6 +3916,15 @@ export async function settleFromLedger(
         at = Number((await client.getBlock({ blockNumber: BigInt(block) })).timestamp);
       } catch {
         at = null;
+      }
+      // #2476 r10 — re-check the LIVE budget before the one write that takes
+      // the row out of this selection for good. The row's reservation is a
+      // normal figure, not a bound (the client retries a failed read), so if
+      // the reads ran over, stop here: the row stays unsettled, the pointer
+      // stays before it, and the next lap does it with room to report it.
+      if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 2) {
+        reached = before;
+        break;
       }
       if (await settleLoanRow(env, chainId, row.loan_id, block, at)) healed.push(row.loan_id);
     } catch (err) {

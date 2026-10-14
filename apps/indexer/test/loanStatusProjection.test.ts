@@ -639,6 +639,33 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(await settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(6, 'test', 1_000), 777n)).toEqual([80]);
   });
 
+  it('does not settle a row when its reads ran over and the live budget no longer covers the write and pointer (#2476 r10)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 75, 'internal_matched');
+    ledger(h, 75, 'LoanSettled', 1600, 1);
+    const b = createBudget(20, 'test', 1_000);
+    // A client whose status read RETRIES, spending far more than reserved.
+    const inner = chain({ 1600: 1 }) as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const retrying = new Proxy(inner, {
+      get: (t, k) => (...a: unknown[]) => {
+        b.subrequests.remaining -= k === 'readContract' ? 18 : 1;
+        return t[k as string](...a);
+      },
+    });
+    expect(await settleFromLedger(retrying as never, DIAMOND, env(h), CHAIN, b, 777n)).toEqual([]);
+    expect(row(h, 75).status).toBe('internal_matched');
+    // The pointer did not move past it: the next lap, with room, settles it.
+    expect(await heal(h, chain({ 1600: 1 }))).toEqual([75]);
+  });
+
+  it('does not start at all when the setup reads are not covered (#2476 r10)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 76, 'internal_matched');
+    ledger(h, 76, 'LoanSettled', 1700, 1);
+    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(2, 'test', 1_000), 777n)).toEqual([]);
+    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(1_000, 'test', 2), 777n)).toEqual([]);
+  });
+
   it('reports the ids it already settled when a later row throws', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     for (const id of [60, 61, 62]) {
