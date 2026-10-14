@@ -7313,6 +7313,88 @@ on the live era alone.
 > resolves) the entry still holds the day, as above. Reward already in
 > the vault stays frozen; loan value is untouched.
 >
+> **Revised (owner 2026-10-14) — earned-while-flagged is forfeited,
+> earned-before is held apart.** The 2026-10-02 rule forfeited ALL
+> undelivered reward once the flag confirmed, pre-flag earnings included.
+> The owner narrowed it: after a wallet is flagged nothing is paid to it
+> until the flag is revoked; reward earned WHILE it was flagged is
+> forfeited; reward earned BEFORE is the wallet's and is paid once the
+> flag is revoked. Three refinements were ratified with it:
+>
+> 1. *Confirmation still gates the forfeit.* Nothing is forfeited on one
+>    read. A chain of authoritative Flagged observations (three-day span,
+>    no gap over one day, one oracle) is still what makes a flag count; a
+>    flag revoked before its chain confirms forfeits nothing, and what it
+>    held meanwhile pays.
+> 2. *"Earned while flagged" is by reward day, from evidence.* A confirmed
+>    chain defines a WINDOW: from the day of its first Flagged observation
+>    through the day of its last. A stored chain is confirmed exactly when
+>    `lastSeenAt ≥ flaggedAt + CONFIRM_SECS` — only the confirming
+>    observation can write such a word — so the window is a property of
+>    the evidence alone. When a confirmed chain ends (a Clean read clears
+>    it, or a new chain restarts over it) its window is RECORDED, append
+>    only, so a day settled later — even after revocation, by the wallet's
+>    own claim — still forfeits. Days after the last Flagged observation
+>    and before the clean read are not in the window (benefit of the doubt
+>    on unobserved time; the keeper observes a held wallet every six hours).
+> 3. *Held value is set apart, not left in the reward machinery.* A
+>    confirmed-flagged owner's pre-flag reward is SETTLED — priced and
+>    retired exactly as a claim would — and delivered into a per-wallet
+>    held balance in its own custody row (`SanctionsHeld`), every move a
+>    row move plus an event. The obligation then terminates like any paid
+>    claim, so an indefinite listing pins no day, no delivery release, no
+>    staging encumbrance and no era: the very problems the 2026-10-02 rule
+>    was chosen to end. No deadline is needed; the balance blocks nothing.
+>
+> **Mechanism.**
+> - *One predicate, applied where a claimant's day settles.* "Day `d` was
+>   earned while a confirmed flag stood" is ONE function (it reads the
+>   recorded windows and the stored chain's own window). It is applied at
+>   exactly the two places a claimant's day is SETTLED: the claim walk's
+>   day loop marks the day so the pricing routes every entry's share to the
+>   treasury (forfeit) legs, and a staged day's payout page forfeits the
+>   claimant's share itself — whatever the reservation priced, so a staging
+>   record's revalidation keeps comparing the entries' lifecycle routing
+>   only. The forfeit and expiry walks route to the treasury regardless. The
+>   legacy (pre-`D*`) per-day window skips a window day's payment
+>   (pre-cutover value is unemitted and stays in the pool); the legacy entry
+>   slice is split by day as it settles — the window's share, read off the
+>   same telescoping curve the per-day legacy need uses, goes to the treasury
+>   legs, the rest to the user — and its epoch-funded part is attributed
+>   user-first up to the user's share. Only a two-read fast path ("this
+>   wallet has no sanctions evidence and no recorded window") is inlined in
+>   the walks, which sit at EIP-170; the window loop and the slice share run
+>   on hosts reached by self-call. The claim body settles the legacy slices
+>   itself and walks only the armed days on the hosted walk, which is what
+>   gave the walk room for the day check.
+> - *Settlement of a confirmed-flagged owner* is the claim itself, run on
+>   the owner's behalf by a permissionless entry that first observes (so
+>   it doubles as the chain's heartbeat) and proceeds only on a confirmed
+>   verdict, with the internal `SanctionsHeld` destination: the user legs
+>   are set apart, the window days forfeit through the primitive. The
+>   public claim entries refuse that destination. A staged day's last page
+>   applies the same split: a window day's user share forfeits at once; an
+>   unconfirmed flag still waits (bounded by confirmation or revocation); a
+>   confirmed flag's pre-flag day is set apart; a record whose destination
+>   is `SanctionsHeld` is set apart.
+> - *Release* is the wallet's next ordinary claim once it is no longer
+>   barred: the held balance leaves its row and is delivered with the
+>   claim, to the venue the claim names. It was charged to the pool and the
+>   delivered ledger when it was set apart, so the release spends neither
+>   again.
+> - *Custody.* Activated: setting apart is three in-holder moves (live
+>   fresh, recycled, epoch-paid) into `SanctionsHeld` — the live-fresh
+>   move records the payout once, as a delivery would — and a release is
+>   one debit of that row (which records nothing further) delivered through
+>   the Diamond's vault-or-wallet route. Not activated: the tokens stay at
+>   the Diamond, the held total is netted out of the fresh backing room the
+>   payout gates read, and the activation ceremony requires the row to
+>   equal the held total (relocated beforehand by the bootstrap writer, as
+>   the recycled row is).
+> - *Removed:* the entry-level forfeit stamp, its eligibility rule and lens,
+>   and the owner forfeit sweep — the settle entry replaces them.
+
+>
 > Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
 > allocations to 3c (the plan recommends yes, and A is written that way);
 > and whether the closure proof above is the accepted mechanism, on which

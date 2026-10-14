@@ -945,7 +945,13 @@ library LibVaipakam {
         ///      uncounted, backing nothing, carried by no era move. Confirmation
         ///      counts it and credits it to the day's era like any arrival;
         ///      demotion moves it, untouched, into `Unclassified`.
-        Provisional
+        Provisional,
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — reward earned BEFORE a
+        ///      confirmed flag, set apart per wallet (`rewardSanctionsHeld`):
+        ///      already paid out of the pool and the delivered ledger, backing
+        ///      nothing, carried by no era move, released only to its wallet
+        ///      once it is no longer barred.
+        SanctionsHeld
     }
 
     /**
@@ -2579,7 +2585,12 @@ library LibVaipakam {
     enum RewardDelivery {
         Default,
         Wallet,
-        Vault
+        Vault,
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — INTERNAL ONLY: the
+        ///      settlement of a confirmed-flagged owner sets the user's share
+        ///      apart into its held balance instead of delivering it. Every
+        ///      public entry that takes a venue refuses it.
+        SanctionsHeld
     }
 
     /**
@@ -5395,14 +5406,6 @@ library LibVaipakam {
         // permissionless, sanctions-open sweep still route it to treasury.
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
-        // #1566 — no longer sale orphans only: it also carries every
-        // sanctions-STAMPED entry of EITHER side (lender or borrower), pushed
-        // by `LibInteractionRewards.stampSanctionsForfeit`, so the same
-        // permissionless loan sweep settles a stamp whatever the owner's later
-        // status. The "Lender" in the name is historical: the field keeps its
-        // name (every reader - the #953 sale path, the test mutator - uses it,
-        // and a rename buys no layout change) and its slot (Storage is
-        // append-only).
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
         // ─── #954 (Codex #981 P1/P2) — frozen swap-surplus borrower claim ─────
         // `SwapToRepayFacet.swapToRepayFull` normally hands the borrower's
@@ -8008,6 +8011,30 @@ library LibVaipakam {
         /// @dev #1452 — the same share for FORCED finalizations: evidenced by an
         ///      operator, not acknowledged by a delivery, so kept apart.
         mapping(uint32 => uint256) chainRemittedRecycledForceFinalized;
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, the
+        ///      RECORDED windows of its ended confirmed chains, each packed
+        ///      `fromDay(128) | toDay(128)` (the one codec is
+        ///      `LibRewardSanctions.packWindow`): the reward days it earned
+        ///      while a confirmed flag stood, from the day of the chain's first
+        ///      Flagged observation through the day of its last. Append-only,
+        ///      written ONLY by `LibRewardSanctions.observe` when a confirmed
+        ///      chain is cleared or restarted over, so a day settled later —
+        ///      by the wallet's own claim after revocation included — still
+        ///      forfeits. The live chain's window is read from
+        ///      `rewardSanctionsEvidence` itself.
+        mapping(address => uint256[]) rewardSanctionsWindows;
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, reward
+        ///      earned BEFORE a confirmed flag, settled and SET APART for it
+        ///      (custody row `SanctionsHeld` once custody is active; the
+        ///      Diamond's balance before). Paid out by the wallet's next claim
+        ///      once it is no longer barred. Already charged to the pool and
+        ///      the delivered ledger when set apart, so its release spends
+        ///      neither again.
+        mapping(address => uint256) rewardSanctionsHeld;
+        /// @dev Σ `rewardSanctionsHeld` — the figure the `SanctionsHeld` row
+        ///      must equal at custody activation, and the earmark the fresh
+        ///      backing room nets out of the Diamond's balance before it.
+        uint256 rewardSanctionsHeldTotal;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

@@ -1,60 +1,6 @@
 [
   {
     "type": "function",
-    "name": "forfeitFlaggedOwnerRewards",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "fromIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxEntries",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxSteps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "decision",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "stamped",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "settledTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "nextIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "unfinished",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "recordRewardSanctionsEvidence",
     "inputs": [
       {
@@ -95,6 +41,64 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rewardSanctionsDayForfeited",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "d",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rewardSanctionsLegacyWindowShare",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lo",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hi",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "slice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -154,43 +158,6 @@
   },
   {
     "type": "event",
-    "name": "RewardEntrySanctionsForfeited",
-    "inputs": [
-      {
-        "name": "entryId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "side",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "flaggedAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RewardSanctionsEvidenceCleared",
     "inputs": [
       {
@@ -229,6 +196,31 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardSanctionsWindowRecorded",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1302,17 +1294,6 @@
         "name": "borrowerCursor",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateEraRegistryPending",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },
@@ -3718,6 +3699,17 @@
   },
   {
     "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardEntrySetMismatch",
     "inputs": [
       {
@@ -4903,17 +4895,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportPacketEraQuarantined",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

@@ -2163,10 +2163,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = RewardClaimFacet.claimInteractionRewards.selector;
         selectors[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         selectors[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii
+        selectors[3] = RewardClaimFacet.settleSanctionedInteractionRewards.selector; // #1566 sanctions rule
         return selectors;
     }
 
@@ -2202,12 +2203,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] =
             RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
         selectors[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
-        selectors[2] = RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards.selector; // #1566 sanctions slice
-        selectors[3] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566 sanctions slice
+        selectors[2] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566 sanctions rule: the evidence host
+        selectors[3] = RewardHorizonSweepFacet.rewardSanctionsDayForfeited.selector; // #1566 sanctions rule
+        selectors[4] = RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare.selector; // #1566: the legacy split's window loop host
         return selectors;
     }
 
@@ -2220,7 +2222,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](26);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2251,7 +2253,8 @@ contract HelperTest {
         selectors[22] = InteractionRewardsLensFacet.claimTransferable.selector;
         // #1566 sanctions slice — the forfeit rule's status and the stampable-entry page.
         selectors[23] = InteractionRewardsLensFacet.getRewardSanctionsStatus.selector;
-        selectors[24] = InteractionRewardsLensFacet.getSanctionsForfeitableRewardEntries.selector;
+        selectors[24] = InteractionRewardsLensFacet.getRewardSanctionsWindows.selector; // #1566 sanctions rule
+        selectors[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
         return selectors;
     }
 
@@ -2468,7 +2471,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](41);
+        selectors = new bytes4[](43);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2517,6 +2520,9 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
+        selectors[41] = RewardCustodyFacet.custodySetApartReward.selector;
+        selectors[42] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
@@ -2705,7 +2711,7 @@ contract HelperTest {
     /// 3b-ii-A2-ii (#2305) — the domain lifecycle entries. Mirrors
     /// `DeployDiamond._getRewardStagingDomainSelectors`.
     function getRewardStagingDomainFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         selectors[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         selectors[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
@@ -2723,6 +2729,7 @@ contract HelperTest {
         selectors[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii
         selectors[14] = RewardStagingDomainFacet.isTransportBatchPriorityUsed.selector; // A2-ii
         selectors[15] = RewardStagingDomainFacet.getStagingEncumberedCount.selector;
+        selectors[16] = RewardStagingDomainFacet.epochSettleLegacySlices.selector; // #1566 host split: the claim's legacy slices (Diamond-gated)
     }
 
     function getRewardStagingSettleFacetSelectors()
@@ -2770,10 +2777,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
         selectors[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6)
-        selectors[2] = RewardForfeitWalkFacet.epochForfeitEntryChunk.selector; // #1566 sanctions slice
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

@@ -551,17 +551,21 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _assertConserved(hs);
     }
 
-    /// @dev A claimant flagged BETWEEN resolution pages is not paid: once the
-    ///      flag is CONFIRMED the last page forfeits their share into the
-    ///      recycle bucket with the treasury's forfeit legs, and closes the
-    ///      record (owner decision 2026-10-02; Codex #2308 r21 - a vault-only
-    ///      delivery trapped the record in `Resolving` for a claimant with no
-    ///      vault). #1566 sanctions slice: a first flag is not a confirmed one,
-    ///      so the last page first HOLDS, paying and retiring nothing, and the
-    ///      page that lands once the chain of observations spans the
-    ///      confirmation window forfeits ({_holdThenConfirm}). Before the slice
-    ///      this page forfeited on one read.
-    function test_AClaimantFlaggedMidResolution_IsForfeited_NotTrapped() public {
+    /// @dev A claimant CONFIRMED-flagged between resolution pages is neither
+    ///      paid nor trapped (Codex #2308 r21 - a vault-only delivery trapped the
+    ///      record in `Resolving` for a claimant with no vault). #1566 sanctions
+    ///      rule (owner 2026-10-14): the record's day was earned BEFORE the flag,
+    ///      so the last page SETS the claimant's share APART - into the held
+    ///      balance and the `SanctionsHeld` custody row, announced as delivered
+    ///      at the `SanctionsHeld` venue - rather than delivering it to the
+    ///      wallet or forfeiting it; it is charged to the loan side as the
+    ///      claimant's own share, and the claimant's first claim once the flag is
+    ///      revoked pays it. A first flag is not a confirmed one, so the last page
+    ///      first HOLDS, paying and retiring nothing, and the page that lands once
+    ///      the chain of observations spans the confirmation window sets the
+    ///      share apart ({_holdThenConfirm}). Under the 2026-10-02 rule this page
+    ///      forfeited the share.
+    function test_AClaimantConfirmedMidResolution_IsSetApart_NotTrapped() public {
         _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
@@ -573,10 +577,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
         uint256 aliceBefore = vpfi.balanceOf(alice);
-        (, uint256 bucketBefore, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
-        uint256 userFresh = r.reservedLiveUserFresh + r.epochUserFresh;
-        uint256 userRecycled = r.reservedLiveUserRecycled + r.epochUserRecycled;
-        assertGt(userFresh + userRecycled, 0, "fixture: a share to forfeit");
+        uint256 bucketBefore = _bucket();
+        uint256 heldRowBefore = _row(LibVaipakam.RewardCustodyRow.SanctionsHeld);
+        uint256 share = r.reservedLiveUserFresh + r.epochUserFresh + r.reservedLiveUserRecycled + r.epochUserRecycled;
+        assertGt(share, 0, "fixture: a share to decide on");
         uint8 sideKey = uint8(LibVaipakam.RewardSide.Lender);
         uint256 sidePaidBefore = _mut().loanSideRewardPaidRaw(LOAN, sideKey);
         assertGt(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "fixture: the reservation holds the loan side");
@@ -585,22 +589,30 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _holdThenConfirm();
         vm.recordLogs();
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit StagingClaimantForfeited(_key(), alice, userFresh, userRecycled);
+        emit StagingDelivered(_key(), alice, share, uint8(LibVaipakam.RewardDelivery.SanctionsHeld));
         assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes once the flag is confirmed");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
-        // Codex #2308 r22 — a forfeited share is not emitted to the side: the
-        // loan side's reward cap is untouched, its reservation released, and
-        // no delivery venue is announced for value that never moved.
-        assertEq(_mut().loanSideRewardPaidRaw(LOAN, sideKey), sidePaidBefore, "a forfeit charges no loan-side cap");
+        // The set-apart share IS the claimant's: charged to the loan side as a
+        // user share (a forfeit charges none), its reservation released.
+        assertEq(_mut().loanSideRewardPaidRaw(LOAN, sideKey) - sidePaidBefore, share, "charged as the claimant's share");
         assertEq(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "and releases the reservation it took");
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 delivered = keccak256("StagingDelivered(bytes32,address,uint256,uint8)");
+        bytes32 forfeited = keccak256("StagingClaimantForfeited(bytes32,address,uint256,uint256)");
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != delivered, "no delivery is announced for a forfeit");
+            assertTrue(logs[i].topics.length == 0 || logs[i].topics[0] != forfeited, "a pre-flag day is never forfeited");
         }
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed, not trapped");
-        (, uint256 bucketAfter, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
-        assertEq(bucketAfter - bucketBefore, userFresh, "the forfeited fresh is absorbed into the bucket");
+        (uint256 held, uint256 heldTotal) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
+        assertEq(held, share, "the share is held for the claimant");
+        assertEq(heldTotal, share);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.SanctionsHeld) - heldRowBefore, share, "in the SanctionsHeld row");
+        assertEq(_bucket(), bucketBefore, "nothing forfeited into the bucket");
+        // Revoked: the claimant's next claim releases the held share.
+        m.setFlagged(alice, false);
+        assertEq(_claim(), share, "the first claim after the revocation pays it");
+        assertEq(vpfi.balanceOf(alice) - aliceBefore, share);
+        (held, heldTotal) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
+        assertEq(held + heldTotal, 0, "nothing left held");
     }
 
     /// @dev Codex #2308 r23 P1 — the first irreversible page REVALIDATES the
@@ -1344,13 +1356,19 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     ///      the last one HOLDS while the flag is unconfirmed (#1566 sanctions
     ///      slice - the `while (!resolve) {}` this cell used would now spin
     ///      forever on that hold), and the page that lands once the chain of
-    ///      observations spans the confirmation window forfeits the share and
-    ///      closes the record (owner decision 2026-10-02). No pre-flight is
-    ///      needed - a forfeit cannot fail.
-    function test_AClaimantFlaggedBeforeResolution_ResolvesToAForfeit() public {
+    ///      observations spans the confirmation window closes the record with
+    ///      the share SET APART (#1566 sanctions rule, owner 2026-10-14: the
+    ///      day was earned before the flag; it is held for the claimant, never
+    ///      delivered to the flagged wallet, and announced at the
+    ///      `SanctionsHeld` venue). No pre-flight is needed - a set-apart moves
+    ///      custody between rows and cannot fail on the claimant's vault.
+    function test_AClaimantFlaggedBeforeResolution_ResolvesToASetApart() public {
         _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
+        uint256 share = r.reservedLiveUserFresh + r.epochUserFresh + r.reservedLiveUserRecycled + r.epochUserRecycled;
+        assertGt(share, 0, "fixture: a share to decide on");
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
@@ -1361,13 +1379,93 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_settle().resolveStagedDayPage(_key()), "the page at the window's end completes");
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 forfeitedTopic = keccak256("StagingClaimantForfeited(bytes32,address,uint256,uint256)");
-        bool announced;
+        bytes32 deliveredTopic = keccak256("StagingDelivered(bytes32,address,uint256,uint8)");
+        uint256 heldVenue;
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics.length != 0 && logs[i].topics[0] == forfeitedTopic) announced = true;
+            if (logs[i].topics.length == 0) continue;
+            assertTrue(logs[i].topics[0] != forfeitedTopic, "a pre-flag day is never forfeited");
+            if (logs[i].topics[0] == deliveredTopic) {
+                (uint256 amount, uint8 venue) = abi.decode(logs[i].data, (uint256, uint8));
+                assertEq(amount, share, "the whole share");
+                assertEq(venue, uint8(LibVaipakam.RewardDelivery.SanctionsHeld), "at the held-apart venue");
+                ++heldVenue;
+            }
         }
-        assertTrue(announced, "the share is forfeited by the record's own payout");
+        assertEq(heldVenue, 1, "the share is set apart by the record's own payout");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        (uint256 held, ) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
+        assertEq(held, share, "held for the claimant");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "the record closed");
+    }
+
+    /// @dev #1566 sanctions rule - the WINDOW-DAY variant: a day the claimant
+    ///      earned WHILE a confirmed flag stood is forfeited at its record's
+    ///      payout, whoever opened the record. Here the owner settlement of the
+    ///      confirmed claimant opens it - a wide window day (the flag's first day
+    ///      plus one) it can only stage - so the record carries the held-apart
+    ///      venue; its reservation prices a USER share (the entry is not
+    ///      forfeited, the day is), and the last page still FORFEITS that share
+    ///      (`StagingClaimantForfeited`, absorbed into the bucket): the window
+    ///      outranks the venue. Straddle: the pre-flag day of the two cells above
+    ///      is set apart.
+    function test_AClaimantsWindowDay_StagedByTheSettlement_IsForfeitedNotSetApart() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(alice, true);
+        uint256 t0 = vm.getBlockTimestamp();
+        uint256 g = LibRewardSanctions.MAX_OBS_GAP_SECS;
+        for (uint256 t = t0; t < t0 + LibRewardSanctions.CONFIRM_SECS; t += g) {
+            vm.warp(t);
+            RewardHorizonSweepFacet(address(diamond)).recordRewardSanctionsEvidence(alice);
+        }
+        vm.warp(t0 + LibRewardSanctions.CONFIRM_SECS);
+        assertEq(RewardHorizonSweepFacet(address(diamond)).recordRewardSanctionsEvidence(alice), 2, "fixture: confirmed");
+        uint256 day = (t0 - InteractionRewardsLensFacet(address(diamond)).getInteractionLaunchTimestamp()) / 1 days + 1;
+        _mut().setGovernorCommitArmedFromDayRaw(day);
+        _mut().seedCumLenderDayRaw(day - 1, 0, 0);
+        _armedDay(day, NEED);
+        _loanSideOpen(1);
+        uint256 id = _entry(uint32(day), uint32(day + 1));
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        _wideDayOn(day, 600);
+        assertTrue(
+            RewardHorizonSweepFacet(address(diamond)).rewardSanctionsDayForfeited(alice, day),
+            "fixture: the day lies in the confirmed chain's window"
+        );
+        (uint8 decision, uint256 heldApart, , ) = RewardClaimFacet(address(diamond)).settleSanctionedInteractionRewards(alice);
+        assertEq(decision, 2, "the settlement runs for the confirmed owner");
+        assertEq(heldApart, 0, "and only stages the wide day");
+        bytes32 key = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, day));
+        RewardStagingDomainFacet.StagingRecordView memory r = _view().getStagingRecord(key);
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "fixture: the settlement opened a record");
+        assertEq(r.venue, uint8(LibVaipakam.RewardDelivery.SanctionsHeld), "under the held-apart venue");
+        _staging().prepareStagedDay(key);
+        _staging().prepareStagedDay(key);
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(key);
+        r = _view().getStagingRecord(key);
+        uint256 userFresh = r.reservedLiveUserFresh + r.epochUserFresh;
+        assertGt(userFresh, 0, "fixture LIVE: the reservation priced a user share");
+        uint256 bucketBefore = _bucket();
+        vm.recordLogs();
+        _resolveAll(key);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 forfeitedTopic = keccak256("StagingClaimantForfeited(bytes32,address,uint256,uint256)");
+        bytes32 deliveredTopic = keccak256("StagingDelivered(bytes32,address,uint256,uint8)");
+        uint256 forfeits;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0) continue;
+            assertTrue(logs[i].topics[0] != deliveredTopic, "a window day is neither delivered nor set apart");
+            if (logs[i].topics[0] == forfeitedTopic) ++forfeits;
+        }
+        assertEq(forfeits, 1, "the window day's share is forfeited");
+        assertEq(_bucket() - bucketBefore, userFresh, "absorbed into the bucket");
+        (uint256 held, ) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
+        assertEq(held, 0, "nothing held");
+        assertEq(vpfi.balanceOf(alice), 0, "nothing delivered");
+        assertEq(_view().getStagingRecord(key).phase, uint8(LibVaipakam.StagingPhase.None), "closed");
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "the entry settled");
     }
 
     // ───────────────────────── round 6 ─────────────────────────

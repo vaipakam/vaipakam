@@ -53,6 +53,40 @@
   },
   {
     "type": "function",
+    "name": "settleSanctionedInteractionRewards",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "decision",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "heldApart",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "simulateClaimInteractionRewards",
     "inputs": [
       {
@@ -1213,17 +1247,6 @@
         "name": "borrowerCursor",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateEraRegistryPending",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },
@@ -3629,6 +3652,17 @@
   },
   {
     "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardEntrySetMismatch",
     "inputs": [
       {
@@ -4836,17 +4870,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportPacketEraQuarantined",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

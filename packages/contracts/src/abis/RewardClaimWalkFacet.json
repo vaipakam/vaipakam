@@ -14,7 +14,17 @@
         "internalType": "uint256"
       },
       {
+        "name": "legacyFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "windowFreshReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "backingRoom",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1276,17 +1286,6 @@
         "name": "borrowerCursor",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateEraRegistryPending",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ]
   },
@@ -2796,11 +2795,6 @@
   },
   {
     "type": "error",
-    "name": "RecycleBackingTokenUnset",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RecycleBucketReservedShortfall",
     "inputs": [
       {
@@ -3679,6 +3673,17 @@
     "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4883,17 +4888,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportPacketEraQuarantined",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

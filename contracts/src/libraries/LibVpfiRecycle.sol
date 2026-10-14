@@ -1033,8 +1033,11 @@ library LibVpfiRecycle {
         // bucket and the recovery reservation are the precedents); the ban
         // there is on enumerating REMEMBERED balance owners, and neither of
         // these is remembered.
+        // #1566 sanctions rule — and net of the reward SET APART for flagged
+        // wallets, which rests here until custody activates: it is already
+        // paid out of the pool and belongs to those wallets, never backing.
         (, , uint256 unearmarked) = backingPosition(s);
-        uint256 staged = s.liveFreshReserved + s.stagedEpochTotal;
+        uint256 staged = s.liveFreshReserved + s.stagedEpochTotal + s.rewardSanctionsHeldTotal;
         return unearmarked > staged ? unearmarked - staged : 0;
     }
 

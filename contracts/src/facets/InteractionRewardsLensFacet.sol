@@ -509,24 +509,26 @@ contract InteractionRewardsLensFacet {
         return LibInteractionRewards._claimTransferable(LibVaipakam.storageSlot(), user, need);
     }
 
-    // ─── #1566 sanctions slice — the reward forfeit rule's reads ─────────────
+    // ─── #1566 sanctions rule — the reads ─────────────────────────────────────
 
-    /// @notice #1566 sanctions slice — where `who` stands under the reward forfeit
-    ///         rule: what {RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards} would
-    ///         decide if it observed now, and the chain a keeper must keep alive.
+    /// @notice #1566 sanctions rule — where `who` stands: what the owner settlement
+    ///         ({RewardClaimFacet.settleSanctionedInteractionRewards}) would decide if
+    ///         it observed now, and the chain a keeper must keep alive.
     /// @dev    Reads the ONE classifier ({LibRewardSanctions.decide}: the writing
-    ///         observation's predicates, no writes), so this view and the sweep
+    ///         observation's predicates, no writes), so this view and the settlement
     ///         cannot disagree. A view records nothing: a Hold one observation short
-    ///         of Forfeit stays Hold here until someone calls the sweep or
-    ///         {RewardHorizonSweepFacet.recordRewardSanctionsEvidence}. The deadlines
-    ///         are derived from the classifier's two constants, never restated.
+    ///         of Confirmed stays Hold here until someone observes
+    ///         ({RewardHorizonSweepFacet.recordRewardSanctionsEvidence}, or the
+    ///         settlement). The deadlines are derived from the classifier's two
+    ///         constants, never restated.
     /// @param  who The wallet to classify.
-    /// @return decision       0 Deliver, 1 Hold, 2 Forfeit.
+    /// @return decision       0 Deliver, 1 Hold, 2 Confirmed.
     /// @return flaggedAt      Start of the observation chain, as `decide` reports it
     ///                        (0 = none).
     /// @return lastSeenAt     Latest Flagged observation of the chain (0 = none).
     /// @return forfeitableAt  `flaggedAt + CONFIRM_SECS`: the earliest instant the
-    ///                        chain can confirm (0 = no chain).
+    ///                        chain can confirm — from then, reward earned while
+    ///                        flagged is forfeitable (0 = no chain).
     /// @return observeBy      `lastSeenAt + MAX_OBS_GAP_SECS`: the chain breaks, and
     ///                        the window restarts, unless it is observed again by then
     ///                        — a keeper's deadline (0 = no chain).
@@ -558,43 +560,49 @@ contract InteractionRewardsLensFacet {
         marker = s.sanctionsConfirmedFlagged[who];
     }
 
-    /// @notice #1566 sanctions slice — a page of `owner`'s reward entries the owner
-    ///         forfeit sweep's STAMP would mark forfeited at this state, should
-    ///         `owner` be confirmed.
-    /// @dev    Filters with {LibInteractionRewards.sanctionsStampBlocker}, the very
-    ///         function the stamp gates on, so the listed ids are exactly the ids a
-    ///         sweep at this state stamps — there is no second copy of the
-    ///         eligibility rule to drift. INDEPENDENT of the owner's verdict (pair it
-    ///         with {getRewardSanctionsStatus}); it lists nothing already forfeited,
-    ///         because such an entry is settled by the sweep, never stamped again.
-    ///         Scans at most `max` ids of the owner's list from index `from`,
-    ///         clamped to 500 for RPC-node friendliness — callers page.
-    /// @param  owner The wallet whose entries are screened.
-    /// @param  from  First index into {getUserRewardEntryIds}`(owner)`.
-    /// @param  max   Ids to scan, clamped to 500.
-    /// @return ids   Stampable entry ids among those scanned, in list order.
-    /// @return next  The index to resume from; at or past the list length when done.
-    function getSanctionsForfeitableRewardEntries(address owner, uint256 from, uint256 max)
+    /// @notice #1566 sanctions rule — the reward days `who` earned while a
+    ///         CONFIRMED flag stood: every recorded window, then the stored chain's
+    ///         window when that chain is confirmed. Reward on these days
+    ///         (inclusive) is forfeited whenever it settles.
+    /// @dev    Enumerates through {LibRewardSanctions.windowAt}, the one
+    ///         enumeration the settlement paths read, so the list cannot drift
+    ///         from what they forfeit. Two windows may share a boundary day (one
+    ///         chain ending and the next restarting on one day).
+    /// @param  who The wallet.
+    /// @return fromDays First day of each window.
+    /// @return toDays   Last day of each window.
+    function getRewardSanctionsWindows(address who)
         external
         view
-        returns (uint256[] memory ids, uint256 next)
+        returns (uint256[] memory fromDays, uint256[] memory toDays)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256[] storage all = s.userRewardEntryIds[owner];
-        uint256 end = all.length;
-        if (max > 500) max = 500;
-        if (from >= end) end = from;
-        else if (end - from > max) end = from + max;
-        ids = new uint256[](end - from);
+        uint256 n = LibRewardSanctions.windowSlots(s, who);
+        fromDays = new uint256[](n);
+        toDays = new uint256[](n);
         uint256 k;
-        for (uint256 i = from; i < end; ++i) {
-            uint256 id = all[i];
-            if (LibInteractionRewards.sanctionsStampBlocker(s, id, owner) == 0) ids[k++] = id;
+        for (uint256 i; i < n; ++i) {
+            (bool ok, uint256 a, uint256 b) = LibRewardSanctions.windowAt(s, who, i);
+            if (!ok) continue;
+            fromDays[k] = a;
+            toDays[k] = b;
+            ++k;
         }
         assembly ("memory-safe") {
-            mstore(ids, k)
+            mstore(fromDays, k)
+            mstore(toDays, k)
         }
-        next = end;
+    }
+
+    /// @notice #1566 sanctions rule — reward set apart for `who` (earned before a
+    ///         confirmed flag), which its first claim pays once it is no longer
+    ///         barred, and the total set apart for every wallet.
+    /// @return held      `who`'s held balance.
+    /// @return heldTotal Σ every wallet's held balance — what the `SanctionsHeld`
+    ///                   custody row holds once custody is active.
+    function getSanctionsHeldReward(address who) external view returns (uint256 held, uint256 heldTotal) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.rewardSanctionsHeld[who], s.rewardSanctionsHeldTotal);
     }
 
     // ─── #1218 M5 — recycling transparency series ────────────────────────────

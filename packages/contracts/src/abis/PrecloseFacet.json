@@ -1376,17 +1376,6 @@
   },
   {
     "type": "error",
-    "name": "DeliveryGateEraRegistryPending",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DeliveryGateNotMirror",
     "inputs": []
   },
@@ -3865,6 +3854,17 @@
   },
   {
     "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardEntrySetMismatch",
     "inputs": [
       {
@@ -5093,17 +5093,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportPacketEraQuarantined",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

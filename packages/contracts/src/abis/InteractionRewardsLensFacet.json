@@ -649,32 +649,46 @@
   },
   {
     "type": "function",
-    "name": "getSanctionsForfeitableRewardEntries",
+    "name": "getRewardSanctionsWindows",
     "inputs": [
       {
-        "name": "owner",
+        "name": "who",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "from",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "ids",
+        "name": "fromDays",
         "type": "uint256[]",
         "internalType": "uint256[]"
       },
       {
-        "name": "next",
+        "name": "toDays",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSanctionsHeldReward",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "heldTotal",
         "type": "uint256",
         "internalType": "uint256"
       }

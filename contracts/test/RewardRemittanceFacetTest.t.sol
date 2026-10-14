@@ -314,7 +314,9 @@ contract RewardRemittanceFacetTest is SetupTest {
         uint256 expected = _ceilDiv(dL * 20e18, 1e18) + _ceilDiv(dB * 10e18, 1e18);
         (uint256 total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         assertEq(total, expected, "the floor slice");
-        assertApproxEqAbs(total * 4, scheduleSlice, 8, "a quarter of the schedule slice, as the floor is of the schedule");
+        // Relative, not absolute: each side's per-unit figure is floored before it is
+        // scaled by the chain's numerator, so the two slices differ by rounding dust.
+        assertApproxEqRel(total * 4, scheduleSlice, 1e9, "a quarter of the schedule slice, as the floor is of the schedule");
         assertGt(scheduleSlice, left, "fixture: the schedule slice would not fit what is left");
 
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);

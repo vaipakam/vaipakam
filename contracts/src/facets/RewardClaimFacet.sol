@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -105,6 +106,15 @@ contract RewardClaimFacet is
         whenNotPaused
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
+        // #921 item 1 — Tier-1 sanctions gate: a direct VPFI payout to
+        // `msg.sender`. #1566 — the BARRED screen, not the fail-open one: a
+        // wallet carrying a committed flag (the #1123 marker) stays refused
+        // while the oracle is unreachable; the expiry clock pauses on exactly
+        // this predicate. A confirmed-flagged owner's reward settles through
+        // {settleSanctionedInteractionRewards} instead. Screened at each PUBLIC
+        // entry rather than in {_claimFor}, because that settlement runs the
+        // same body for a barred owner by design.
+        LibVaipakam.assertRecipientNotBarred(msg.sender);
         return _claimFor(msg.sender, LibVaipakam.RewardDelivery.Default);
     }
 
@@ -145,6 +155,8 @@ contract RewardClaimFacet is
         whenNotPaused
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
+        _requireSelectableVenue(deliverTo);
+        LibVaipakam.assertRecipientNotBarred(msg.sender); // as {claimInteractionRewards}
         return _claimFor(msg.sender, deliverTo);
     }
 
@@ -177,8 +189,91 @@ contract RewardClaimFacet is
         nonReentrant
         whenNotPaused
     {
+        _requireSelectableVenue(deliverTo);
+        LibVaipakam.assertRecipientNotBarred(user); // the claim's own refusal is the preview's answer
         (uint256 paid, uint256 fromDay, uint256 toDay) = _claimFor(user, deliverTo);
         revert InteractionRewardsSimulation(paid, fromDay, toDay);
+    }
+
+    /**
+     * @notice #1566 sanctions rule (owner 2026-10-14) — SETTLE the interaction
+     *         reward of `owner` once its sanctions flag is CONFIRMED.
+     *         Permissionless. The settlement is the claim itself, run on the
+     *         owner's behalf with one difference: nothing is delivered. Reward
+     *         the owner earned WHILE flagged — the days of a confirmed chain's
+     *         window ({LibRewardSanctions.dayForfeited}) — routes to the
+     *         treasury legs and is forfeited into the recycle bucket by the day
+     *         pricing itself; reward it earned BEFORE is SET APART for it (custody
+     *         row `SanctionsHeld`, every move evented) and is paid by its first
+     *         claim once the flag is revoked. Settling ends the reward obligation
+     *         the way any claim does, so a flag that is never lifted pins no day,
+     *         no delivery release, no staging record and no era.
+     * @dev    First records ONE sanctions observation of `owner` through the
+     *         evidence host ({LibRewardSanctions.callObserve}), so a keeper
+     *         driving this entry is also the heartbeat the confirmation chain
+     *         needs. On a Deliver or Hold verdict it returns WITHOUT reverting, so
+     *         that observation commits; only a Confirmed verdict settles. A
+     *         settlement with nothing to do reverts as the claim does
+     *         (`NoInteractionRewardsToClaim` and its siblings), taking the
+     *         observation with it — simulate first, and use
+     *         `RewardHorizonSweepFacet.recordRewardSanctionsEvidence` to keep a
+     *         chain alive without settling. Bounded per call exactly as a claim
+     *         is; repeat while it makes progress.
+     *
+     *         Deliberately NOT sanctions-gated on the caller: value moves only
+     *         into protocol custody (the recycle bucket, the owner's held row),
+     *         never to `msg.sender`. Emits no {InteractionRewardsClaimed}: the
+     *         owner received nothing; the held part is announced by
+     *         `RewardSanctionsHeldApart`, the forfeited part by the recycle
+     *         ledger's events.
+     * @param  owner The wallet whose reward is settled.
+     * @return decision  The observation's verdict (0 Deliver, 1 Hold, 2 Confirmed).
+     * @return heldApart VPFI wei set apart for the owner by this call.
+     * @return fromDay   First legacy-window day walked (inclusive).
+     * @return toDay     Last legacy-window day walked (inclusive).
+     */
+    function settleSanctionedInteractionRewards(address owner)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint8 decision, uint256 heldApart, uint256 fromDay, uint256 toDay)
+    {
+        LibRewardSanctions.Decision d = LibRewardSanctions.callObserve(owner);
+        decision = uint8(d);
+        if (d != LibRewardSanctions.Decision.Confirmed) return (decision, 0, 0, 0);
+        (heldApart, fromDay, toDay) = _claimFor(owner, LibVaipakam.RewardDelivery.SanctionsHeld);
+    }
+
+    /// @dev The claim's ENTRY legs. #1566 host split: the legacy (pre-`D*`)
+    ///      slices settle on their host (`RewardStagingDomainFacet`, beside the
+    ///      slice's domain and settle); the armed days are walked on the hosted
+    ///      walk (`RewardClaimWalkFacet`, which sits at EIP-170); the two results
+    ///      merge here. Order and figures are the
+    ///      inlined walk's: slices first, then the walk — whose budget is net of
+    ///      the slices' legacy fresh, and whose backing room was read before the
+    ///      slices moved anything (Codex #2276). `windowReward` reserves
+    ///      delivered headroom too (#1566 closure 2); `deliverTo` rides into any
+    ///      day the walk stages (3b-ii-A2, Codex #2308 r6).
+    function _entryLegs(
+        address user,
+        uint256 freshBudget,
+        uint256 windowReward,
+        LibVaipakam.RewardDelivery deliverTo
+    ) private returns (LibInteractionRewards.ClaimEntriesResult memory res) {
+        uint256 backingRoom;
+        (res, backingRoom) = LibInteractionRewards.callSettleLegacySlices(user);
+        LibInteractionRewards.foldEntriesResult(
+            res,
+            LibInteractionRewards.callClaimEntriesWalk(
+                user, freshBudget, LibInteractionRewards.legacyFreshOf(res), windowReward, backingRoom, deliverTo
+            )
+        );
+    }
+
+    /// @dev The held-apart venue is the settlement's alone: every public entry
+    ///      that takes a venue refuses it.
+    function _requireSelectableVenue(LibVaipakam.RewardDelivery deliverTo) private pure {
+        if (deliverTo == LibVaipakam.RewardDelivery.SanctionsHeld) revert RewardDeliveryNotSelectable(uint8(deliverTo));
     }
 
     /// @dev Shared claim body for `user` — the caller on the two claim
@@ -190,23 +285,8 @@ contract RewardClaimFacet is
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #921 item 1 — Tier-1 sanctions gate. This is a direct VPFI payout to
-        // `msg.sender`; every other payout/claim path screens the caller, but
-        // this one did not, leaving the "payouts blocked while flagged" policy
-        // enforced only by the alpha02 UI. Arrest it at the contract level so
-        // every integrator (keeper bots, third-party frontends, direct callers)
-        // gets the same protection. (The sibling `sweepForfeitedInteractionRewards`
-        // routes to the recycle bucket, not the caller, so it stays ungated by
-        // design; so does the owner forfeit sweep.)
-        // #1566 sanctions slice — the BARRED screen, not the fail-open one: a
-        // wallet carrying a committed flag (the #1123 marker) stays refused
-        // while the oracle is unreachable. The expiry clock pauses on exactly
-        // this predicate (the sweep seam reads {LibVaipakam.isRecipientBarred}
-        // too), so a refused claimant's entries never age toward removal while
-        // the refusal stands, and a confirmed flag forfeits them through the
-        // owner sweep instead.
-        // Same `SanctionedAddress` error; the simulation follows through here.
-        LibVaipakam.assertRecipientNotBarred(user);
+        // The sanctions gate is the CALLER's: each public entry screens before
+        // it gets here, and the owner settlement deliberately does not.
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
@@ -215,6 +295,16 @@ contract RewardClaimFacet is
 
         (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active || today == 0) revert NoInteractionRewardsToClaim();
+        // #1566 sanctions rule — reward set apart while the wallet was flagged
+        // is released with its first claim once it is no longer barred (the
+        // public entry has just screened that). Delivered here, from the
+        // Diamond, to the venue the claim names: it was charged to the pool and
+        // the delivered ledger when it was set apart, so it bypasses both.
+        // Carried in `paid` (no new local in this at-budget frame).
+        if (deliverTo != LibVaipakam.RewardDelivery.SanctionsHeld) {
+            paid = LibRewardCustody.callReleaseSanctionsHeld(user);
+            if (paid != 0) _deliverFromDiamond(user, vpfi, paid, _toVault(user, deliverTo), today);
+        }
 
         // Fold new entry-path rewards first. Forfeited entries accumulate
         // in the treasury split; PR-3c surfaces each aggregate's RECYCLED
@@ -271,12 +361,7 @@ contract RewardClaimFacet is
 
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
-        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.callClaimEntriesWalk(
-            user,
-            freshBudget,
-            windowReward, // #1566 closure 2 — the window reserves delivered headroom too
-            deliverTo // 3b-ii-A2 (Codex #2308 r6) — a day the walk stages carries the venue into its record
-        );
+        LibInteractionRewards.ClaimEntriesResult memory res = _entryLegs(user, freshBudget, windowReward, deliverTo);
         uint256 entryReward = res.toUser.total;
         uint256 treasuryDelta = res.toTreasury.total;
         uint256 paidRecycled = res.toUser.recycled;
@@ -318,6 +403,11 @@ contract RewardClaimFacet is
             // nothing moved, and the same claim pays once the proof lands.
             // Reads `fromDay` and `res` in place — no new local in this
             // at-viaIR-budget frame.
+            // A claim that only released a held balance is a claim.
+            if (paid != 0) {
+                emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
+                return (paid, fromDay, toDay);
+            }
             if (!walkedWindow) {
                 if (last >= lastFinalized) revert NoInteractionRewardsToClaim();
                 if (!s.knownGlobalSet[fromDay]) revert InteractionDayGlobalNotFinalized(fromDay);
@@ -477,7 +567,6 @@ contract RewardClaimFacet is
             revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }
 
-        paid = pending;
         // Fresh-pool accounting: interactionPoolPaidOut remains the
         // FRESH-only counter (recycled payouts debit the bucket instead).
         s.interactionPoolPaidOut = paidOut + freshPending + freshTreasury;
@@ -498,13 +587,14 @@ contract RewardClaimFacet is
             LibVpfiRecycle.consume(paidRecycled - res.transport.userRecycled, false, 0);
         }
 
-        if (paid > 0) {
+        if (pending > 0) {
             // #1566 closure 2 — the FRESH component travels with the
             // delivery so the chokepoint can bound and charge it before the
-            // transfer; `paid` itself includes the recycled share the bucket
+            // transfer; `pending` itself includes the recycled share the bucket
             // backs and must never be the operand.
-            _deliverReward(user, vpfi, paid, freshPending, res.transport, deliverTo, today);
+            _deliverReward(user, vpfi, pending, freshPending, res.transport, deliverTo, today);
         }
+        paid += pending; // with any held balance released above
         // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split: the
         // FRESH-funded share is genuine absorption and credits the recycle
         // bucket; the RECYCLED-funded share never physically left the bucket,
@@ -528,7 +618,10 @@ contract RewardClaimFacet is
             res.transport.treasuryEraFresh,
             0
         );
-        emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
+        // A settlement delivered nothing to the owner (#1566): no claim event.
+        if (deliverTo != LibVaipakam.RewardDelivery.SanctionsHeld) {
+            emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
+        }
     }
 
     /**
@@ -577,11 +670,18 @@ contract RewardClaimFacet is
         LibInteractionRewards.chargeDeliveredFresh(
             LibVaipakam.storageSlot(), fresh - tp.userFresh - tp.userEraFresh
         );
-        bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
-            || (
-                deliverTo == LibVaipakam.RewardDelivery.Default
-                    && user.code.length == 0
+        // #1566 sanctions rule — the owner settlement SETS the share APART for
+        // its confirmed-flagged owner: the same three legs a delivery takes,
+        // moved into the holder's `SanctionsHeld` row (the payout recorded
+        // there, once), or — not activated — left at the Diamond under the
+        // held ledger. Charged above exactly as a delivery is.
+        if (deliverTo == LibVaipakam.RewardDelivery.SanctionsHeld) {
+            LibRewardCustody.callSetApartReward(
+                user, fresh - tp.userFresh, amount - fresh - tp.userRecycled, tp.userFresh + tp.userRecycled
             );
+            return;
+        }
+        bool toVault = _toVault(user, deliverTo);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1566 slice 4 PR B — on an activated deployment the payout is ONE
         // atomic two-row debit of the holder (design §5d): the fresh
@@ -617,6 +717,28 @@ contract RewardClaimFacet is
             }
             return;
         }
+        _deliverFromDiamond(user, vpfi, amount, toVault, claimDayId);
+    }
+
+    /// @dev The RL-1 venue rule: `Vault`, or `Default` for an EOA-style
+    ///      claimant (`user.code.length == 0`); a contract caller keeps the raw
+    ///      transfer every pre-RL-1 integration observed.
+    function _toVault(address user, LibVaipakam.RewardDelivery deliverTo) private view returns (bool) {
+        return deliverTo == LibVaipakam.RewardDelivery.Vault
+            || (deliverTo == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
+    }
+
+    /// @dev Deliver `amount` the Diamond holds to `user`: the revert-isolated
+    ///      vault credit when asked, else (or when it cannot complete) the wallet
+    ///      transfer — exactly one destination is paid. The inactive-custody
+    ///      payout and the release of a held balance (#1566) both end here.
+    function _deliverFromDiamond(
+        address user,
+        address vpfi,
+        uint256 amount,
+        bool toVault,
+        uint256 claimDayId
+    ) private {
         if (toVault) {
             // slither-disable-next-line low-level-calls
             (bool ok, ) = address(this).call(

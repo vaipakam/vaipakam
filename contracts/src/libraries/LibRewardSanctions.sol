@@ -11,11 +11,27 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @notice #1566 — the ONE classifier that decides what happens to protocol
  *         interaction reward owed to a wallet the sanctions screen bars:
  *         DELIVER (not barred), HOLD (barred, flag not yet confirmed — the
- *         reward is withheld and nothing moves) or FORFEIT (the flag is
- *         CONFIRMED — reward not yet delivered goes to the recycle bucket as
- *         forfeited reward, permanently). Owner decision 2026-10-02:
- *         undelivered rewards of a flagged wallet are forfeited; value already
- *         in its vault stays frozen; loan value is unchanged.
+ *         reward is withheld and nothing moves) or CONFIRMED (the flag is
+ *         confirmed — the owner's reward may be settled: what it earned while
+ *         flagged is forfeited, what it earned before is set apart for it).
+ *         Owner rule 2026-10-14 (revising 2026-10-02's "forfeit everything
+ *         undelivered"): after a wallet is flagged nothing is paid to it until
+ *         the flag is revoked; reward earned WHILE it was flagged is forfeited
+ *         into the recycle bucket; reward earned BEFORE is held apart and paid
+ *         once the flag is revoked. Value already in its vault stays frozen;
+ *         loan value is unchanged.
+ *
+ *         WHAT "EARNED WHILE FLAGGED" MEANS: a confirmed chain's WINDOW — the
+ *         reward days from the day of its first Flagged observation through
+ *         the day of its last ({chainWindow}). A stored chain is confirmed
+ *         exactly when `lastSeenAt >= flaggedAt + CONFIRM_SECS`, because only
+ *         the confirming observation (row 7) writes such a word, so a window is
+ *         a property of the evidence alone. When a confirmed chain ends — a
+ *         Clean read clears it, or a new chain restarts over it — its window is
+ *         RECORDED ({_recordWindow}), so a day settled afterwards still
+ *         forfeits ({dayForfeited}). A chain that ends unconfirmed forfeits
+ *         nothing: one read, a vendor glitch or a listing lifted within the
+ *         confirmation window costs the wallet nothing.
  *
  * @dev    WHY A CHAIN OF OBSERVATIONS, NOT ONE READ. A forfeit is
  *         irreversible, so it must never follow a single oracle answer — a
@@ -43,16 +59,16 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *           4. Unavailable, marker           → Hold;    no write (the gap grows)
  *           5. Flagged, no live chain        → Hold;    marker set, chain started at now
  *           6. Flagged, live chain, age < W  → Hold;    `lastSeenAt` = now
- *           7. Flagged, live chain, age >= W → Forfeit; `lastSeenAt` = now
+ *           7. Flagged, live chain, age >= W → Confirmed; `lastSeenAt` = now
  *         INVARIANT: Deliver <=> `!LibVaipakam.isRecipientBarred(who)`, row for
  *         row, BY CONSTRUCTION: the barred bit is read from
  *         {LibVaipakam.recipientBarredRead}, the one body of that predicate.
- *         This library only splits "barred" into Hold and Forfeit; it never
+ *         This library only splits "barred" into Hold and Confirmed; it never
  *         re-decides it, so the claim gate, the expiry clock's pause and this
  *         classifier can never disagree about who is barred.
  *
- *         WHO OBSERVES: the owner forfeit sweep
- *         (`RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards`), the
+ *         WHO OBSERVES: the owner settlement
+ *         (`RewardClaimFacet.settleSanctionedInteractionRewards`), the
  *         permissionless evidence entry
  *         (`RewardHorizonSweepFacet.recordRewardSanctionsEvidence`, also the
  *         self-call target of {callObserve}), and a staged claim's last page
@@ -68,12 +84,13 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  */
 library LibRewardSanctions {
     /// @notice The classifier's answer. Deliver = not barred; Hold = barred,
-    ///         not yet confirmed (withhold, move nothing); Forfeit = barred and
-    ///         confirmed (undelivered interaction reward is forfeitable).
+    ///         not yet confirmed (withhold, move nothing); Confirmed = barred
+    ///         and confirmed (the owner's reward may be settled: window days
+    ///         forfeit, the rest is set apart for the wallet).
     enum Decision {
         Deliver,
         Hold,
-        Forfeit
+        Confirmed
     }
 
     /// @dev Which write {observe} makes for a row — the one hand-off between
@@ -108,10 +125,10 @@ library LibRewardSanctions {
     /// @notice `who`'s confirmation chain (re)started: an authoritative Flagged
     ///         read found no live chain — the first flag, a gap over
     ///         {MAX_OBS_GAP_SECS}, another oracle, or a marker a Clean read had
-    ///         cleared. Nothing moves now. Undelivered interaction reward
-    ///         becomes forfeitable at `forfeitableAt` only if Flagged
-    ///         observations keep coming at most {MAX_OBS_GAP_SECS} apart until
-    ///         then.
+    ///         cleared. Nothing moves now. The chain confirms at
+    ///         `forfeitableAt` — from then, reward earned while flagged is
+    ///         forfeitable — only if Flagged observations keep coming at most
+    ///         {MAX_OBS_GAP_SECS} apart until then.
     /// @custom:event-category state-change/reward-claim
     event RewardSanctionsEvidenceRecorded(
         address indexed who,
@@ -123,6 +140,107 @@ library LibRewardSanctions {
     ///         #1123 marker): a later flag starts a new confirmation window.
     /// @custom:event-category state-change/reward-claim
     event RewardSanctionsEvidenceCleared(address indexed who);
+    /// @notice A confirmed chain of `who` ended (cleared or restarted over) and
+    ///         its window was recorded: reward `who` earned on the days
+    ///         `fromDay..toDay` (inclusive) is forfeited whenever it settles.
+    /// @custom:event-category state-change/reward-claim
+    event RewardSanctionsWindowRecorded(address indexed who, uint256 fromDay, uint256 toDay);
+
+    /// @notice A window's one codec: `fromDay(128) | toDay(128)`, high to low.
+    function packWindow(uint256 fromDay, uint256 toDay) internal pure returns (uint256) {
+        return (fromDay << 128) | uint128(toDay);
+    }
+
+    /// @notice Inverse of {packWindow}.
+    function unpackWindow(uint256 w) internal pure returns (uint256 fromDay, uint256 toDay) {
+        fromDay = w >> 128;
+        toDay = uint128(w);
+    }
+
+    /// @notice The reward day a timestamp falls on — the day index every reward
+    ///         record uses (`(ts - launch) / 1 days`); a time before the
+    ///         interaction launch is day 0.
+    function dayOf(LibVaipakam.Storage storage s, uint256 ts) internal view returns (uint256) {
+        uint256 launch = s.interactionLaunchTimestamp;
+        return launch == 0 || ts < launch ? 0 : (ts - launch) / 1 days;
+    }
+
+    /// @notice The window a stored chain defines, if it is confirmed: from the
+    ///         day of its first Flagged observation through the day of its last.
+    ///         Read from the evidence alone — liveness is not required, so a
+    ///         confirmed chain that has since lapsed, or whose marker another
+    ///         path cleared, still names the days it covered until an
+    ///         observation records it.
+    function chainWindow(LibVaipakam.Storage storage s, uint64 flaggedAt, uint64 lastSeenAt)
+        internal
+        view
+        returns (bool confirmed, uint256 fromDay, uint256 toDay)
+    {
+        if (flaggedAt == 0 || uint256(lastSeenAt) < uint256(flaggedAt) + CONFIRM_SECS) return (false, 0, 0);
+        return (true, dayOf(s, flaggedAt), dayOf(s, lastSeenAt));
+    }
+
+    /// @notice How many window SLOTS {windowAt} serves for `who`: every
+    ///         recorded window plus one for the stored chain (which may or may
+    ///         not be confirmed).
+    function windowSlots(LibVaipakam.Storage storage s, address who) internal view returns (uint256) {
+        return s.rewardSanctionsWindows[who].length + 1;
+    }
+
+    /// @notice Window slot `i` of `who`: a recorded window, or — the last slot
+    ///         — the stored chain's window when it is confirmed (`ok == false`
+    ///         otherwise). The ONE enumeration every per-day reader uses.
+    function windowAt(LibVaipakam.Storage storage s, address who, uint256 i)
+        internal
+        view
+        returns (bool ok, uint256 fromDay, uint256 toDay)
+    {
+        uint256[] storage recorded = s.rewardSanctionsWindows[who];
+        if (i < recorded.length) {
+            (fromDay, toDay) = unpackWindow(recorded[i]);
+            return (true, fromDay, toDay);
+        }
+        (, uint64 flaggedAt, uint64 lastSeenAt) = unpackEvidence(s.rewardSanctionsEvidence[who]);
+        return chainWindow(s, flaggedAt, lastSeenAt);
+    }
+
+    /// @notice Whether reward `who` earned on day `d` was earned while a
+    ///         CONFIRMED flag stood — and so is forfeited, never delivered,
+    ///         whenever and by whichever path it settles. THE predicate: the day
+    ///         pricing's treasury routing, the legacy window and the staged
+    ///         payout all read it.
+    /// @dev    Two reads decide it for every wallet with no sanctions evidence
+    ///         and no recorded window — all but a handful — and only those are
+    ///         inlined into the reward walks, which sit at EIP-170. A wallet with
+    ///         evidence takes the window loop ({dayForfeitedFull}) on its ONE
+    ///         host, `RewardHorizonSweepFacet.rewardSanctionsDayForfeited`, by a
+    ///         self-staticcall.
+    function dayForfeited(LibVaipakam.Storage storage s, address who, uint256 d) internal view returns (bool) {
+        if (!hasSanctionsHistory(s, who)) return false;
+        (bool ok, bytes memory ret) =
+            address(this).staticcall(abi.encodeWithSignature("rewardSanctionsDayForfeited(address,uint256)", who, d));
+        // Fail CLOSED: an unrouted host on a partly refreshed Diamond, or a short
+        // answer, refuses — the host is a plain view, so no reason is carried.
+        if (!ok || ret.length < 32) revert IVaipakamErrors.RewardCustodyCallFailed();
+        return abi.decode(ret, (bool));
+    }
+
+    /// @notice Whether `who` has any sanctions evidence or recorded window —
+    ///         the fast path every per-day reader takes first.
+    function hasSanctionsHistory(LibVaipakam.Storage storage s, address who) internal view returns (bool) {
+        return s.rewardSanctionsEvidence[who] != 0 || s.rewardSanctionsWindows[who].length != 0;
+    }
+
+    /// @notice {dayForfeited}'s window loop — run on its host only.
+    function dayForfeitedFull(LibVaipakam.Storage storage s, address who, uint256 d) internal view returns (bool) {
+        uint256 n = windowSlots(s, who);
+        for (uint256 i; i < n; ) {
+            (bool ok, uint256 fromDay, uint256 toDay) = windowAt(s, who, i);
+            if (ok && d >= fromDay && d <= toDay) return true;
+            unchecked { ++i; }
+        }
+        return false;
+    }
 
     /// @notice The evidence word's one codec:
     ///         `oracle(160) | flaggedAt(48) | lastSeenAt(48)`, high to low.
@@ -179,9 +297,11 @@ library LibRewardSanctions {
         (d, w, word, flaggedAt, ) = _classify(s, who);
         if (w == EvidenceWrite.Clear) {
             // Row 2 — the heal every authoritative Clean read performs on the
-            // #1123 marker, plus this classifier's own chain.
+            // #1123 marker, plus this classifier's own chain. A confirmed
+            // chain's window is recorded before the chain goes.
             LibSanctionedLock.clearConfirmedFlag(s, who);
             if (word != 0) {
+                _recordWindow(s, who, word);
                 delete s.rewardSanctionsEvidence[who];
                 emit RewardSanctionsEvidenceCleared(who);
             }
@@ -190,6 +310,9 @@ library LibRewardSanctions {
             // start the chain at now under the configured oracle.
             address oracle = s.sanctionsOracle;
             uint64 nowTs = uint64(block.timestamp);
+            // A confirmed chain this one replaces (lapsed, foreign-oracle, or
+            // its marker cleared by another path) keeps its window.
+            _recordWindow(s, who, word);
             s.sanctionsConfirmedFlagged[who] = true;
             s.rewardSanctionsEvidence[who] = packEvidence(oracle, nowTs, nowTs);
             emit RewardSanctionsEvidenceRecorded(who, oracle, nowTs, nowTs + uint64(CONFIRM_SECS));
@@ -275,7 +398,20 @@ library LibRewardSanctions {
         // Row 5: Flagged with no live chain — start one; one read never forfeits.
         if (flaggedAt == 0) return (Decision.Hold, EvidenceWrite.Restart, word, 0, 0);
         // Rows 6 and 7: the chain continues, and confirms once it spans W.
-        d = block.timestamp < uint256(flaggedAt) + CONFIRM_SECS ? Decision.Hold : Decision.Forfeit;
+        d = block.timestamp < uint256(flaggedAt) + CONFIRM_SECS ? Decision.Hold : Decision.Confirmed;
         return (d, EvidenceWrite.Refresh, word, flaggedAt, lastSeenAt);
+    }
+
+    /// @dev Record the window of the stored chain `word` if it is confirmed —
+    ///      called ONLY where a chain ends (a Clear deletes it, a Restart
+    ///      overwrites it), so each confirmed chain is recorded exactly once.
+    ///      An unconfirmed chain records nothing: it forfeits nothing.
+    function _recordWindow(LibVaipakam.Storage storage s, address who, uint256 word) private {
+        if (word == 0) return;
+        (, uint64 flaggedAt, uint64 lastSeenAt) = unpackEvidence(word);
+        (bool confirmed, uint256 fromDay, uint256 toDay) = chainWindow(s, flaggedAt, lastSeenAt);
+        if (!confirmed) return;
+        s.rewardSanctionsWindows[who].push(packWindow(fromDay, toDay));
+        emit RewardSanctionsWindowRecorded(who, fromDay, toDay);
     }
 }

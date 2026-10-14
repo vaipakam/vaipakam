@@ -1,6 +1,123 @@
 [
   {
     "type": "function",
+    "name": "epochSettleLegacySlices",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "res",
+        "type": "tuple",
+        "internalType": "struct LibInteractionRewards.ClaimEntriesResult",
+        "components": [
+          {
+            "name": "toUser",
+            "type": "tuple",
+            "internalType": "struct LibInteractionRewards.EntrySplit",
+            "components": [
+              {
+                "name": "total",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "recycled",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "armedFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          },
+          {
+            "name": "toTreasury",
+            "type": "tuple",
+            "internalType": "struct LibInteractionRewards.EntrySplit",
+            "components": [
+              {
+                "name": "total",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "recycled",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "armedFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          },
+          {
+            "name": "advancedAnyDay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "transport",
+            "type": "tuple",
+            "internalType": "struct LibInteractionRewards.TransportLegs",
+            "components": [
+              {
+                "name": "userFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "userRecycled",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "treasuryFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "treasuryRecycled",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "userEraFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "treasuryEraFresh",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          },
+          {
+            "name": "awaitingDay",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "backingRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getLegacySliceDomain",
     "inputs": [
       {
@@ -623,9 +740,25 @@
         "name": "entryId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "hi",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "slice",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -2172,17 +2305,6 @@
   },
   {
     "type": "error",
-    "name": "DeliveryGateEraRegistryPending",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DeliveryGateNotMirror",
     "inputs": []
   },
@@ -3692,6 +3814,11 @@
   },
   {
     "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecycleBucketReservedShortfall",
     "inputs": [
       {
@@ -4575,6 +4702,17 @@
     "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -5779,17 +5917,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "TransportPacketEraQuarantined",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ]
   },

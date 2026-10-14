@@ -66,8 +66,6 @@ export const DELIBERATELY_NOT_SCOPED = {
     'fee-entitlement bookkeeping stamped at accept — an internal accounting record, not an event a user reads on a loan timeline',
   'FeeEntitlementRepriced.loanId':
     'twin of FeeEntitlementStamped — governance retune bookkeeping, not user-facing loan activity',
-  'RewardEntrySanctionsForfeited.loanId':
-    'the sanctions stamp on a reward entry — user-facing surfaces carry no sanctions wording (only the in-app banner for a flagged wallet does), and the forfeit itself reaches the loan timeline through its settle companion, RewardEntryForfeitSettled',
   'NotificationFeeBilled.loanId':
     'per-notification billing record — belongs to the notification subsystem, not the loan timeline',
 

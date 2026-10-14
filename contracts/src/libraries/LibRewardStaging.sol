@@ -84,19 +84,22 @@ library LibRewardStaging {
     ///         Emitted only when a delivery happened; a forfeited share emits
     ///         {StagingClaimantForfeited} instead, so no consumer reads a
     ///         venue for value that never moved to the claimant (Codex #2308
-    ///         r22).
+    ///         r22). A share SET APART for a confirmed-flagged claimant (#1566)
+    ///         reports the venue `SanctionsHeld`: it reached the claimant's held
+    ///         balance, not its vault or wallet.
     /// @custom:event-category state-change/reward-staging
     event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
-    /// @notice The record's claimant `user` has a CONFIRMED sanctions flag
-    ///         ({LibRewardSanctions}: a chain of authoritative Flagged
-    ///         observations spanning its confirmation window with no gap over
-    ///         its maximum observation gap), so the
-    ///         day's user share — `fresh` and `recycled`, every source — was
-    ///         FORFEITED into the recycle bucket instead of delivered, with the
-    ///         treasury's own forfeit legs (owner decision 2026-10-02: reward
-    ///         VPFI not yet delivered to a flagged wallet is forfeited; value
-    ///         already in their vault stays frozen). `StagingPaid` for the same
-    ///         record reports the user figures as zero.
+    /// @notice The record's claimant `user` earned this day while a CONFIRMED
+    ///         sanctions flag stood ({LibRewardSanctions.dayForfeited}: the day
+    ///         lies in the window of a chain of authoritative Flagged
+    ///         observations that spanned its confirmation window with no gap
+    ///         over its maximum observation gap), so the day's user share —
+    ///         `fresh` and `recycled`, every source — was FORFEITED into the
+    ///         recycle bucket instead of delivered, with the treasury's own
+    ///         forfeit legs (owner rule 2026-10-14: reward earned while flagged
+    ///         is forfeited; reward earned before is set apart; value already in
+    ///         the vault stays frozen). `StagingPaid` for the same record reports
+    ///         the user figures as zero.
     /// @custom:event-category state-change/reward-staging
     event StagingClaimantForfeited(bytes32 indexed key, address indexed user, uint256 fresh, uint256 recycled);
     /// @notice An unwind page returned `batchId`'s staged components for `key`.
@@ -186,6 +189,8 @@ library LibRewardStaging {
         if (caller != r.user || r.phase != LibVaipakam.StagingPhase.Staging) {
             revert IVaipakamErrors.StagingVenueNotSettable(key);
         }
+        // #1566 — the held-apart venue is the owner settlement's alone.
+        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld) revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
         LibRewardCustody.bindStagingVenue(key, r, venue);
     }
 
@@ -656,36 +661,40 @@ library LibRewardStaging {
         // Every term is the record's own, fixed at reservation, so the share
         // is known before anything is written.
         uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled + r.eraUserFresh;
-        // THE SANCTIONS SCREEN (#1566; owner decision 2026-10-02, rewards only
-        // — loan proceeds keep the wind-down freeze), decided by the ONE
+        // THE SANCTIONS SCREEN (#1566; owner rule 2026-10-14, rewards only —
+        // loan proceeds keep the wind-down freeze), decided by the ONE
         // classifier, {LibRewardSanctions}, through its evidence host: the
         // observation must COMMIT even when this page withholds, and the
         // classifier's writes are hosted once, there, rather than inlined on
-        // this facet ({LibRewardSanctions.callObserve}).
-        //   - Deliver (not barred): paid as below.
-        //   - Forfeit (the flag is CONFIRMED — a chain of authoritative Flagged
-        //     observations spanning the confirmation window, no gap over the
-        //     maximum observation gap): reward VPFI not yet delivered to a
-        //     flagged wallet is FORFEITED, while value already in their vault
-        //     stays frozen there. Their share settles exactly as the day's
-        //     forfeit (treasury) leg does, into the recycle bucket, so this
-        //     page cannot fail for it and the record can never be trapped in
-        //     `Resolving` (Codex #2308 r18, r21: a vault-only delivery
-        //     reverted for a claimant with no vault).
+        // this facet ({LibRewardSanctions.callObserve}). Observed FIRST, so a
+        // confirmed chain's window is current when the day is tested.
+        //   - The day was earned while a CONFIRMED flag stood
+        //     ({LibRewardSanctions.dayForfeited}): the claimant's share is
+        //     FORFEITED, settling exactly as the day's forfeit (treasury) leg
+        //     does, into the recycle bucket — whatever the claimant's status
+        //     now, so this page cannot fail for it and the record can never be
+        //     trapped in `Resolving` (Codex #2308 r18, r21).
         //   - Hold (barred, not confirmed — a first flag, a broken chain, or an
         //     outage over a committed flag): return BEFORE any write, so the
         //     record stays `Resolving` with its batches consumed and the next
-        //     page retries the payout alone. One read never forfeits (before
-        //     #1566 this page forfeited on one fail-open read).
+        //     page retries the payout alone. One read never forfeits.
+        //   - Confirmed, a day earned before the flag: the share is SET APART
+        //     for the claimant (custody row `SanctionsHeld`), paid by its first
+        //     claim once the flag is revoked. Value already in its vault stays
+        //     frozen there.
+        //   - Deliver (not barred): paid as below — or set apart when the
+        //     record was opened by the owner settlement (`SanctionsHeld` venue).
         // Screened only when there is a user share to decide on: a Claim
         // whose user share is zero, and every Expiry / Forfeit / legacy-slice
         // record (a sweep's record carries no user share, A2-ii), has nothing
         // to withhold, so it never waits on the screen or on an outage.
         bool forfeit;
+        bool setApart;
         if (op == LibVaipakam.StagingOp.Claim && userTotal != 0) {
             LibRewardSanctions.Decision d = LibRewardSanctions.callObserve(user);
-            if (d == LibRewardSanctions.Decision.Hold) return false;
-            forfeit = d == LibRewardSanctions.Decision.Forfeit;
+            if (LibRewardSanctions.dayForfeited(s, user, r.day)) forfeit = true;
+            else if (d == LibRewardSanctions.Decision.Hold) return false;
+            else setApart = d == LibRewardSanctions.Decision.Confirmed;
         }
         // What the pages CONSUMED of the epochs is paid out below, so it
         // leaves the staged earmark here and not a page earlier (Codex #2308
@@ -778,10 +787,18 @@ library LibRewardStaging {
         }
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
+        setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
         bool vaulted;
         if (forfeit) {
             emit StagingClaimantForfeited(
                 key, user, liveUserFresh + r.epochUserFresh + r.eraUserFresh, liveUserRecycled + r.epochUserRecycled
+            );
+        } else if (userTotal != 0 && setApart) {
+            // Set apart: the three legs a delivery takes, into `SanctionsHeld`
+            // (or the held ledger alone, not activated). Charged above exactly
+            // as a delivery is.
+            LibRewardCustody.callSetApartReward(
+                user, liveUserFresh + r.eraUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled
             );
         } else if (userTotal != 0 && !LibRewardCustody.active(s)) {
             // Custody inactive: the Diamond's balance pays, as it pays a
@@ -828,7 +845,14 @@ library LibRewardStaging {
         );
         if (!forfeit && userTotal != 0) {
             emit StagingDelivered(
-                key, user, userTotal, uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+                key,
+                user,
+                userTotal,
+                uint8(
+                    setApart
+                        ? LibVaipakam.RewardDelivery.SanctionsHeld
+                        : vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet
+                )
             );
         }
         emit StagingPaid(
@@ -1147,6 +1171,8 @@ library LibRewardStaging {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
         if (dom.legacy || dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
         if (caller != dom.user) revert IVaipakamErrors.StagingNotClaimant(dk, caller);
+        // #1566 — the held-apart venue is the owner settlement's alone.
+        if (venue == LibVaipakam.RewardDelivery.SanctionsHeld) revert IVaipakamErrors.RewardDeliveryNotSelectable(uint8(venue));
         bindDomainVenue(dk, dom, venue);
     }
 

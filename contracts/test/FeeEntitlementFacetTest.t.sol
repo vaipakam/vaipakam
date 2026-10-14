@@ -291,6 +291,24 @@ contract FeeEntitlementFacetTest is SetupTest {
         assertEq(mBefore - vpfiToken.balanceOf(mVault), 2 * c, "two slices, the whole signed ceiling, no more");
     }
 
+    /// A maker who signs the largest ceiling ("no cap") can still be filled in
+    /// slices: the slice's share is computed at full width, so the product of
+    /// the ceiling and the fill cannot overflow and refuse every partial fill.
+    /// The slice carries half the word (rounded up) and is charged its C*.
+    /// @dev Mutation: the plain `ceilDiv(maxCStar * fill, ceiling)` panics 0x11.
+    function testSigned_AHugeSignedCeiling_StillFillsInSlices() public {
+        uint256 b1 = _signedScaffold();
+        uint256 b2 = _createBorrowerErc20Offer();
+        uint256 c = _cStar();
+        LibSignedOffer.SignedOffer memory o = _signedLender(2 * PRINCIPAL, true, type(uint256).max, false);
+        bytes memory sig = _signMaker(o);
+        address mVault = _vault(signedMaker);
+        uint256 mBefore = vpfiToken.balanceOf(mVault);
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, 1 << 255, "half the word, rounded up");
+        assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "charged its C*, well inside the share");
+    }
+
     function _createLenderRentalOffer() internal returns (uint256) {
         vm.prank(lender);
         IERC721(mockNft721).setApprovalForAll(address(diamond), true);

@@ -324,9 +324,11 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s
     ) internal view returns (uint256 total) {
         // Through the last row: `Resolving` (3b-ii-A2, #2305) — a hold between
-        // resolution pages — and `Provisional` (#2459 r5) — a provisional
-        // compensation held apart — are attributed, never sweepable.
-        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Provisional);
+        // resolution pages — `Provisional` (#2459 r5) — a provisional
+        // compensation held apart — and `SanctionsHeld` (#1566 sanctions rule)
+        // — reward set apart for a flagged wallet — are attributed, never
+        // sweepable.
+        uint256 last = uint256(LibVaipakam.RewardCustodyRow.SanctionsHeld);
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
@@ -1230,6 +1232,83 @@ library LibRewardCustody {
     function holdProvisional(LibVaipakam.Storage storage s, uint256 amount) internal {
         if (amount == 0) return;
         relocateToHolder(s, LibVaipakam.RewardCustodyRow.Provisional, amount);
+    }
+
+    // ─── #1566 sanctions rule (owner 2026-10-14) — reward set apart ─────────
+    //
+    // A confirmed-flagged wallet's reward earned BEFORE its flag is settled as
+    // a claim would settle it and then SET APART for the wallet instead of
+    // delivered: the claim's own three legs move, in the holder, into the
+    // `SanctionsHeld` row — the live-fresh move recording the payout exactly
+    // once, as a delivery would — and the per-wallet ledger grows. Not
+    // activated, the tokens stay at the Diamond and only the ledger moves (the
+    // fresh backing room nets the total out). The wallet's next claim once it
+    // is no longer barred releases the whole balance: one debit of the row
+    // (which records nothing further: the payout was recorded when it was set
+    // apart) to the Diamond, from where the claim delivers it.
+
+    /// @notice Reward set apart for `user`: `amount` this time, `heldBalance`
+    ///         its whole held balance now.
+    /// @custom:event-category state-change/reward-claim
+    event RewardSanctionsHeldApart(address indexed user, uint256 amount, uint256 heldBalance);
+    /// @notice `user`'s held balance released to its claim: the wallet is no
+    ///         longer barred.
+    /// @custom:event-category state-change/reward-claim
+    event RewardSanctionsHeldReleased(address indexed user, uint256 amount);
+
+    /// @notice Set a claim's user share apart for `user`: `fresh` from the live
+    ///         row, `recycled` from the recycled row, `epoch` (the epoch-paid
+    ///         legs) from `Unclassified` — the three legs a delivery takes.
+    function setApartReward(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 epoch
+    ) internal {
+        uint256 amount = fresh + recycled + epoch;
+        if (amount == 0) return;
+        if (active(s)) {
+            move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.SanctionsHeld, fresh);
+            move(s, LibVaipakam.RewardCustodyRow.Recycled, LibVaipakam.RewardCustodyRow.SanctionsHeld, recycled);
+            move(s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.SanctionsHeld, epoch);
+        }
+        uint256 heldBalance = s.rewardSanctionsHeld[user] + amount;
+        s.rewardSanctionsHeld[user] = heldBalance;
+        s.rewardSanctionsHeldTotal += amount;
+        emit RewardSanctionsHeldApart(user, amount, heldBalance);
+    }
+
+    /// @notice Release `user`'s whole held balance to the Diamond (from the
+    ///         `SanctionsHeld` row once custody is active; it already rests
+    ///         there before) for the caller to deliver. The caller has checked
+    ///         the wallet is no longer barred.
+    function releaseSanctionsHeld(LibVaipakam.Storage storage s, address user) internal returns (uint256 amount) {
+        amount = s.rewardSanctionsHeld[user];
+        if (amount == 0) return 0;
+        delete s.rewardSanctionsHeld[user];
+        s.rewardSanctionsHeldTotal -= amount;
+        if (active(s)) releaseFromRow(s, LibVaipakam.RewardCustodyRow.SanctionsHeld, address(this), amount);
+        emit RewardSanctionsHeldReleased(user, amount);
+    }
+
+    /// @dev {setApartReward} on the custody facet (Diamond-internal self-call),
+    ///      so the claim and staging facets inline none of it.
+    function callSetApartReward(address user, uint256 fresh, uint256 recycled, uint256 epoch) internal {
+        if (fresh + recycled + epoch == 0) return;
+        _custody(
+            abi.encodeWithSignature(
+                "custodySetApartReward(address,uint256,uint256,uint256)", user, fresh, recycled, epoch
+            )
+        );
+    }
+
+    /// @dev {releaseSanctionsHeld} on the custody facet (Diamond-internal
+    ///      self-call); returns what was released to the Diamond.
+    function callReleaseSanctionsHeld(address user) internal returns (uint256 amount) {
+        amount = abi.decode(
+            _custodyReturning(abi.encodeWithSignature("custodyReleaseSanctionsHeld(address)", user)), (uint256)
+        );
     }
 
     /// @dev {creditFreshToEraFromRow} on {RewardEraFacet} (Diamond-internal self-call).
@@ -4951,8 +5030,19 @@ library LibRewardCustody {
         (ready, epochFresh, stepped) = abi.decode(ret, (bool, uint256, bool));
     }
 
-    function callLegacySliceSettled(uint256 entryId) internal {
-        _custody(abi.encodeWithSignature("legacySliceSettledInternal(uint256)", entryId));
+    /// @dev The legacy slice's settle on its host. #1566 sanctions rule — for
+    ///      a slice that PAYS its owner `slice`, also the part of it over
+    ///      `[startDay, hi)` the owner earned while a CONFIRMED flag stood, which
+    ///      the caller forfeits; zero when `slice` is zero (a forfeit, an expiry,
+    ///      an empty window — those pass zeros and ignore it) or the owner has no
+    ///      sanctions history. ONE seam, so a facet at EIP-170 carries one copy.
+    function callLegacySliceSettled(uint256 entryId, uint256 hi, uint256 slice) internal returns (uint256 share) {
+        share = abi.decode(
+            _custodyReturning(
+                abi.encodeWithSignature("legacySliceSettledInternal(uint256,uint256,uint256)", entryId, hi, slice)
+            ),
+            (uint256)
+        );
     }
 
     function callPrepareRecordInDomain(bytes32 key) internal {

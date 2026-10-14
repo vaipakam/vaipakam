@@ -4,6 +4,8 @@ pragma solidity 0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardStaging} from "../libraries/LibRewardStaging.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -81,9 +83,45 @@ contract RewardStagingDomainFacet is DiamondReentrancyGuard, DiamondPausable, IV
     /// @notice The legacy slice's settle, hosted here (A2-ii (c); EIP-170): the
     ///         settlement site that pays the slice reaches it by Diamond
     ///         self-call right before it routes the legs. Gated to the Diamond.
-    function legacySliceSettledInternal(uint256 entryId) external {
+    ///
+    ///         #1566 sanctions rule (owner 2026-10-14) — for a slice that pays
+    ///         its owner `slice`, it also returns the part over `[startDay, hi)`
+    ///         the owner earned while a CONFIRMED flag stood
+    ///         ({LibInteractionRewards.legacyWindowShareFull}), which the caller
+    ///         forfeits: hosted with the settle the claim walk already reaches,
+    ///         so the walk (at EIP-170) carries no copy of the window loop. Zero
+    ///         for `slice == 0` (a forfeit, an expiry or an empty window) or an
+    ///         owner with no sanctions history.
+    function legacySliceSettledInternal(uint256 entryId, uint256 hi, uint256 slice) external returns (uint256) {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        LibRewardStaging.legacySliceSettled(LibVaipakam.storageSlot(), entryId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardStaging.legacySliceSettled(s, entryId);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[entryId];
+        if (slice == 0 || !LibRewardSanctions.hasSanctionsHistory(s, e.user)) return 0;
+        // The window loop runs on the sanctions host (this facet sits at EIP-170).
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSignature(
+                "rewardSanctionsLegacyWindowShare(uint256,uint256,uint256,uint256)", entryId, e.startDay, hi, slice
+            )
+        );
+        if (!ok || ret.length < 32) revert RewardCustodyCallFailed();
+        return abi.decode(ret, (uint256));
+    }
+
+    /// @notice #1566 host split — the claim's LEGACY (pre-`D*`) slices for
+    ///         `user` ({LibInteractionRewards.settleLegacySlices}), run for the
+    ///         claim body on `RewardClaimFacet`, which reaches it by Diamond
+    ///         self-call before it walks the armed days. Hosted here, beside the
+    ///         legacy slice's domain and settle it drives. Gated to the Diamond.
+    /// @return res         The slices' legs.
+    /// @return backingRoom The live backing room, read before the slices moved
+    ///                     anything (Codex #2276), for the walk.
+    function epochSettleLegacySlices(address user)
+        external
+        returns (LibInteractionRewards.ClaimEntriesResult memory res, uint256 backingRoom)
+    {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibInteractionRewards.settleLegacySlices(user);
     }
 
     /// @notice The legacy-slice domain of `entryId`: its key, phase (0 none,

@@ -37,14 +37,24 @@ contract RewardClaimWalkFacet is IVaipakamErrors {
     ///         stages. The claimant, the fresh budget and the window's reserved
     ///         fresh are passed in rather than read from the caller, which is
     ///         the Diamond here.
+    ///         #1566 host split: the legacy (pre-`D*`) slices are settled in
+    ///         the claim body before this call
+    ///         ({LibInteractionRewards.settleLegacySlices}); this walks the armed
+    ///         days alone, against `legacyFresh` (the slices' net legacy fresh)
+    ///         and `backingRoom` (the live room read before the slices moved
+    ///         anything, Codex #2276).
     function epochClaimEntriesWalk(
         address user,
         uint256 freshBudget,
+        uint256 legacyFresh,
         uint256 windowFreshReserved,
+        uint256 backingRoom,
         LibVaipakam.RewardDelivery deliverTo
     ) external returns (LibInteractionRewards.ClaimEntriesResult memory) {
         _requireDiamondInternal();
-        return LibInteractionRewards.claimForUserEntries(user, freshBudget, windowFreshReserved, deliverTo);
+        return LibInteractionRewards.claimForUserEntries(
+            user, freshBudget, legacyFresh, windowFreshReserved, backingRoom, deliverTo
+        );
     }
 
     function _requireDiamondInternal() private view {

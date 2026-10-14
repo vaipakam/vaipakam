@@ -828,9 +828,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *           - on `Canonical`, per-receipt recovery attribution is armed
      *             — arming retires the legacy pooled position, and a recovery
      *             row funded before that retirement would be left over-backed;
-     *           - the recycled, recovery and overage rows each EQUAL their
-     *             ledger figure (`recycleBucket`, `recovered − redispatched`,
-     *             `strandedReturnOverage`) — funded, relocated or written
+     *           - the recycled, recovery, overage and sanctions-held rows
+     *             each EQUAL their ledger figure (`recycleBucket`,
+     *             `recovered − redispatched`, `strandedReturnOverage`,
+     *             `rewardSanctionsHeldTotal`) — funded, relocated or written
      *             down by the ceremony beforehand;
      *           - `Canonical`: `received == paid` (the zero-headroom
      *             baseline) and an empty live-fresh row — funding forward is
@@ -914,6 +915,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
             s.rewardBudgetRecovered - s.rewardBudgetRedispatched
         );
         _requireRowBacked(s, LibVaipakam.RewardCustodyRow.Overage, s.strandedReturnOverage);
+        // #1566 sanctions rule — the reward set apart for flagged wallets: once
+        // active, every release debits this row, so it must hold the total.
+        _requireRowBacked(s, LibVaipakam.RewardCustodyRow.SanctionsHeld, s.rewardSanctionsHeldTotal);
 
         uint256 received = s.rewardBudgetArmedFreshReceived;
         uint256 paid = s.rewardBudgetArmedFreshPaid;
@@ -1237,6 +1241,11 @@ contract RewardCustodyFacet is DiamondAccessControl {
             figure = s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
         } else if (row == LibVaipakam.RewardCustodyRow.Overage) {
             figure = s.strandedReturnOverage;
+        } else if (row == LibVaipakam.RewardCustodyRow.SanctionsHeld) {
+            // #1566 sanctions rule — reward set apart for flagged wallets
+            // before activation rests in the Diamond's balance; it is
+            // relocated (form b) as the bucket is.
+            figure = s.rewardSanctionsHeldTotal;
         } else {
             revert IVaipakamErrors.RewardCustodyBootstrapRowNotAllowed(uint8(row));
         }
@@ -1421,6 +1430,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, user);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, user);
         LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.setApartReward} — a claim's
+    ///         user share set apart for a confirmed-flagged `user` (#1566
+    ///         sanctions rule), the three legs a delivery would take.
+    function custodySetApartReward(address user, uint256 fresh, uint256 recycled, uint256 epoch) external {
+        _requireDiamondInternal();
+        LibRewardCustody.setApartReward(LibVaipakam.storageSlot(), user, fresh, recycled, epoch);
+    }
+
+    /// @notice Diamond-internal: {LibRewardCustody.releaseSanctionsHeld} —
+    ///         `user`'s held balance released to the Diamond for its claim to
+    ///         deliver. Returns the amount.
+    function custodyReleaseSanctionsHeld(address user) external returns (uint256) {
+        _requireDiamondInternal();
+        return LibRewardCustody.releaseSanctionsHeld(LibVaipakam.storageSlot(), user);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.drawForTransport}.

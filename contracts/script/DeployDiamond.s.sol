@@ -2509,7 +2509,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](26);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2541,7 +2541,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[22] = InteractionRewardsLensFacet.claimTransferable.selector;
         // #1566 sanctions slice — the forfeit rule's status and the stampable-entry page.
         s[23] = InteractionRewardsLensFacet.getRewardSanctionsStatus.selector;
-        s[24] = InteractionRewardsLensFacet.getSanctionsForfeitableRewardEntries.selector;
+        s[24] = InteractionRewardsLensFacet.getRewardSanctionsWindows.selector; // #1566 sanctions rule (owner 2026-10-14)
+        s[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -2551,10 +2552,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = RewardClaimFacet.claimInteractionRewards.selector;
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         s[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii: preview by execution
+        s[3] = RewardClaimFacet.settleSanctionedInteractionRewards.selector; // #1566 sanctions rule: the owner settlement
     }
 
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
@@ -2587,11 +2589,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
         s[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
-        s[2] = RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards.selector; // #1566 sanctions slice: the owner forfeit sweep
-        s[3] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566: the evidence host (also _pay's self-call target)
+        s[2] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566: the evidence host (the settlement's and _pay's self-call target)
+        s[3] = RewardHorizonSweepFacet.rewardSanctionsDayForfeited.selector; // #1566: the window loop's host (the walks' self-staticcall)
+        s[4] = RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare.selector; // #1566: the legacy split's window loop host
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
@@ -3297,7 +3300,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
     function _getRewardStagingDomainSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         s[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         s[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
@@ -3316,6 +3319,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (#2313: the in-place refresh removes the old route)
         s[14] = RewardStagingDomainFacet.isTransportBatchPriorityUsed.selector; // A2-ii
         s[15] = RewardStagingDomainFacet.getStagingEncumberedCount.selector;
+        s[16] = RewardStagingDomainFacet.epochSettleLegacySlices.selector; // #1566 host split: the claim's legacy slices (Diamond-gated)
     }
 
     function _getRewardStagingSettleSelectors()
@@ -3360,10 +3364,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
         s[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6): the retirement's hosted walk (Diamond-gated)
-        s[2] = RewardForfeitWalkFacet.epochForfeitEntryChunk.selector; // #1566 sanctions slice: the owner sweep's hosted chunk (Diamond-gated)
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -3420,7 +3423,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](41);
+        s = new bytes4[](43);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3469,6 +3472,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
+        s[41] = RewardCustodyFacet.custodySetApartReward.selector;
+        s[42] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.

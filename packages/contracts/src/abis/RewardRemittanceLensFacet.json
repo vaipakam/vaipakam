@@ -626,11 +626,6 @@
         "internalType": "bool"
       },
       {
-        "name": "quarantined",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
         "name": "classificationFinal",
         "type": "bool",
         "internalType": "bool"

@@ -383,6 +383,28 @@ contract MeshCommitRetirementTest is SetupTest {
         assertEq(u5, 40 ether, "uncapped: the pre-#2047 rule, the mirror's day figure within its headroom");
     }
 
+    /// A mirror reporting a near-max cumulative (a faulty or hostile Diamond's
+    /// unbounded figure) and labelling all of it today's credit: the ceiling
+    /// takes one day's worth and Base carries the rest as backlog, past half
+    /// the word. The NEXT day's report must still land: the backlog saturates
+    /// at the headroom before it joins the day's claim, instead of overflowing
+    /// and reverting the chain's every later report, interest numerators
+    /// included.
+    /// @dev Mutation: add `claimed + backlog` unsaturated and day 6 panics 0x11.
+    function test_2047_ANearMaxCumulative_CannotBlockTheNextDaysReport() public {
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 10 ether);
+        uint256 huge = type(uint256).max - 1 ether;
+        _reportArbWithDayCredit(5, huge, huge, 0, 0);
+        (uint256 c5, ) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
+        assertEq(c5, 10 ether, "the ceiling takes one day's worth");
+        assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), huge - 10 ether, "fixture: a backlog past half the word");
+        _reportArbWithDayCredit(6, huge, huge, 0, 0);
+        (uint256 c6, bool a6) = _agg().getChainDailyRecycledCredit(6, CHAIN_ARB);
+        assertTrue(a6, "the next day's report landed");
+        assertEq(c6, 10 ether, "and drips at the ceiling");
+        assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), huge - 20 ether, "the backlog is the headroom less the drip");
+    }
+
     /// The earmark is never armed uncapped: a bps needs a cap first; the cap
     /// cannot return to zero under a live bps; the canonical chain is no
     /// target for either knob.

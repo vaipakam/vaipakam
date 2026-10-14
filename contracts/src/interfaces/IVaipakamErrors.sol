@@ -346,6 +346,11 @@ interface IVaipakamErrors {
     ///         data; a different revert is what the claim itself would have
     ///         reverted with.
     error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay);
+
+    /// @notice #1566 sanctions rule — the reward-delivery venue `venue` is not
+    ///         one a caller may name: the held-apart venue (`SanctionsHeld`)
+    ///         belongs to the settlement of a confirmed-flagged owner alone.
+    error RewardDeliveryNotSelectable(uint8 venue);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition
