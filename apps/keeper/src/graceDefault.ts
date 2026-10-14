@@ -25,7 +25,8 @@
  *           liquidator cannot close one without a route, though, and
  *           `triggerDefault` closes a genuinely LTV-collapsed loan in kind
  *           with none — so under water this pass previews the empty list
- *           only and sends only an in-kind ending.
+ *           only and sends only a no-swap TERMINAL ending (never an
+ *           internal match, which the liquidator dispatches too).
  *        b. The sale interlock (#2078): `triggerDefault` does not inspect
  *           sale linkage, so closing a loan after a buyer accepted its
  *           lender-position sale strands the buyer's principal. An accepted
@@ -34,19 +35,21 @@
  *           quoted through the shared route builder for the loan's whole
  *           collateral. Anything else sends an empty list and lets the
  *           contract take its in-kind branch, or refuse.
- *        d. The preview. `previewCloseOut` runs the call on `eth_simulateV1`
- *           and reads its logs, because a plain simulation SUCCEEDS into
- *           the full-collateral fallback when every route fails. Only a
- *           `sale` or an `other` ending (in-kind, collapsed LTV, internal
- *           match, rental) is sent. A route that would fall back is not:
- *           the spec wants a liquid forced close to make a real market
- *           attempt, and a route already known to fail is not one.
- *        e. The final gate, at a fresh block: the health factor still on
- *           the side of the line step a judged it on, the sale state
- *           again, and the collateral amount the quotes were made for
- *           (#2472 — after a top-up the adapter sells only the quoted
- *           amount and the rest lands in no one's claim).
- *        f. Submit. The receipt is not awaited; the next tick's
+ *        d. The final gate, everything at ONE fresh block: the health
+ *           factor still on the side of the line step a judged it on, the
+ *           sale state again, the collateral amount the quotes were made
+ *           for (#2472 — after a top-up the adapter sells only the quoted
+ *           amount and the rest lands in no one's claim), and the preview.
+ *           `previewCloseOutDetail` runs the call on `eth_simulateV1` and
+ *           reads its logs, because a plain simulation SUCCEEDS into the
+ *           full-collateral fallback when every route fails. Only a `sale`
+ *           or an `other` ending (in-kind, collapsed LTV, internal match,
+ *           rental) is sent. A route that would fall back is not: the spec
+ *           wants a liquid forced close to make a real market attempt, and
+ *           a route already known to fail is not one. The preview is in
+ *           the gate, not before it, so the route is judged at the block
+ *           the other reads are.
+ *        e. Submit. The receipt is not awaited; the next tick's
  *           `isLoanDefaultable` read is what says whether it landed.
  *
  * Every defaultable loan is named in the log — attempted (with what
@@ -80,7 +83,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import { isRevert } from '@vaipakam/lib/contractRevert';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { previewCloseOut, type CloseOutPreview } from '@vaipakam/lib/routeBuilder';
+import { previewCloseOutDetail, type CloseOutPreview } from '@vaipakam/lib/routeBuilder';
 import {
   BOUNDED_LISTING_SELECTOR,
   probeSaleHoldLive,
@@ -402,34 +405,26 @@ export async function attemptGraceDefault(
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
   }
 
+  // THE FINAL GATE, pinned to one fresh block: the liquidator boundary, the
+  // sale state, the collateral the quotes were made for AND the preview,
+  // judged together. The preview belongs here rather than before the gate:
+  // pool liquidity, an adapter or a quote can change in the moments between,
+  // and a route that would already fall back at the block the send is
+  // judged against must not be sent on an earlier block's word.
+  //
+  // The health factor is read again because a price can cross the line, in
+  // either direction, while the route is quoted: the decision above (quote a
+  // sale, or preview the no-swap close only) holds only for the side of the
+  // line it was made on.
+  //
   // An empty list still previews: a liquid loan reverts, an illiquid or
   // collapsed one takes the in-kind branch, and only the chain knows which.
-  const preview = await previewCloseOut({ client, diamond, account: keeper, loanId, calls });
-  if (underWater && preview !== 'other') {
-    // Not an in-kind close (a liquid loan's empty list reverts, or the
-    // chain could not say): the liquidator's.
-    return { kind: 'skipped', reason: `${LEFT_TO_LIQUIDATOR} preview=${preview}` };
-  }
-  if (preview === 'fallback') {
-    return { kind: 'skipped', reason: `preview=fallback calls=${calls.length}${routeNote}` };
-  }
-  if (preview === 'unknown') {
-    // eth_simulateV1 unsupported, or the call reverts — e.g. a liquid loan
-    // with no quotable venue (`NoEnabledSwapRoute`).
-    return { kind: 'skipped', reason: `preview=unknown calls=${calls.length}${routeNote}` };
-  }
-
-  // THE FINAL GATE, pinned to one fresh block: the liquidator boundary, the
-  // sale state and the collateral the quotes were made for, judged together.
-  // The health factor is read again because a price can cross the line, in
-  // either direction, while the route is quoted and previewed: the decision
-  // above (quote a sale, or preview in kind only) holds only for the side
-  // of the line it was made on.
   const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
-  const [lateHf, lateSale, live] = await Promise.all([
+  const [lateHf, lateSale, live, detail] = await Promise.all([
     hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
+    previewCloseOutDetail({ client, diamond, account: keeper, loanId, calls, blockNumber: gateBlock }),
   ]);
   if (typeof lateHf === 'object') return { kind: 'skipped', reason: `gate:hf-unread:${lateHf.unread}` };
   if (lateHf !== hf) {
@@ -441,6 +436,24 @@ export async function attemptGraceDefault(
   if (lateSale !== null) return { kind: 'skipped', reason: `gate:${lateSale}` };
   if (swappable && live.collateralAmount !== loan.collateralAmount) {
     return { kind: 'skipped', reason: 'gate:collateral-changed' };
+  }
+
+  const preview = detail.ending;
+  if (underWater && !(preview === 'other' && detail.defaulted)) {
+    // Not a no-swap terminal close. A liquid loan's empty list reverts; an
+    // `other` that did not default the loan is an INTERNAL MATCH, which the
+    // liquidator dispatches too and may leave the loan Active; and a
+    // chain that could not say is no answer. All of them the liquidator's.
+    const shown = preview === 'other' ? 'other-without-default' : preview;
+    return { kind: 'skipped', reason: `${LEFT_TO_LIQUIDATOR} preview=${shown}` };
+  }
+  if (preview === 'fallback') {
+    return { kind: 'skipped', reason: `preview=fallback calls=${calls.length}${routeNote}` };
+  }
+  if (preview === 'unknown') {
+    // eth_simulateV1 unsupported, or the call reverts — e.g. a liquid loan
+    // with no quotable venue (`NoEnabledSwapRoute`).
+    return { kind: 'skipped', reason: `preview=unknown calls=${calls.length}${routeNote}` };
   }
 
   const tx = await wallet.writeContract({

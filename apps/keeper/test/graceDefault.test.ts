@@ -11,6 +11,7 @@ import type { Address, PublicClient, WalletClient } from 'viem';
 import {
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
+  LOAN_DEFAULTED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
@@ -52,8 +53,10 @@ interface Scene {
   lock?: number;
   teardown?: () => void;
   boundedListing?: boolean;
-  /** The preview's ending; null makes the node fail the simulation. */
-  ending?: 'sale' | 'fallback' | 'other' | null;
+  /** The preview's ending; null makes the node fail the simulation.
+   *  `other` is a terminal no-swap close (it emits LoanDefaulted); `match`
+   *  is an internal match, which does not. */
+  ending?: 'sale' | 'fallback' | 'other' | 'match' | null;
   calls?: number;
   /** Unmined keeper transactions on the chain (pending − latest nonce). */
   unmined?: number;
@@ -96,17 +99,19 @@ function harness(scene: Scene) {
     simulateCalls: async (args: unknown) => {
       previews.push(args);
       if (scene.ending === null) throw new Error('eth_simulateV1 unsupported');
-      const topic =
+      const topics =
         scene.ending === 'sale'
-          ? SWAP_ADAPTER_SUCCEEDED_TOPIC
+          ? [SWAP_ADAPTER_SUCCEEDED_TOPIC, LOAN_DEFAULTED_TOPIC]
           : scene.ending === 'fallback'
-            ? SWAP_ALL_ADAPTERS_FAILED_TOPIC
-            : null;
+            ? [SWAP_ALL_ADAPTERS_FAILED_TOPIC]
+            : scene.ending === 'other'
+              ? [LOAN_DEFAULTED_TOPIC]
+              : []; // 'match': an internal match returns before LoanDefaulted
       return {
         results: [
           {
             status: 'success',
-            logs: topic ? [{ address: DIAMOND, topics: [topic, LOAN_TOPIC] }] : [],
+            logs: topics.map((t) => ({ address: DIAMOND, topics: [t, LOAN_TOPIC] })),
           },
         ],
       };
@@ -276,6 +281,15 @@ describe('attemptGraceDefault', () => {
   });
 });
 
+describe('the preview is part of the final gate', () => {
+  it('simulates at the gate block, so the route is judged where the other reads are', async () => {
+    const h = harness({ ending: 'sale' });
+    await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(h.previews).toHaveLength(1);
+    expect(h.previews[0]).toMatchObject({ blockNumber: 100n });
+  });
+});
+
 describe('a send still pending from an earlier run', () => {
   it('waits while the keeper has an unmined transaction — no duplicate triggerDefault', async () => {
     const h = harness({ unmined: 1, ending: 'sale' });
@@ -312,6 +326,16 @@ describe('the liquidator boundary', () => {
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 0 });
     expect(h.routes).toHaveLength(0);
+  });
+
+  it('leaves an under-water INTERNAL MATCH to the liquidator — it is not an in-kind close', async () => {
+    const h = harness({ hf: 9n * 10n ** 17n, ending: 'match' });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({
+      kind: 'skipped',
+      reason: 'hf-liquidatable (left to the liquidator) preview=other-without-default',
+    });
+    expect(h.writes).toHaveLength(0);
   });
 
   it('never sends an under-water loan into a swap ending of its own', async () => {

@@ -643,14 +643,41 @@ export const SWAP_ALL_ADAPTERS_FAILED_TOPIC = toEventSelector(
   'SwapAllAdaptersFailed(uint256)',
 );
 
-export async function previewCloseOut(deps: {
+/** `DefaultedFacet.LoanDefaulted(uint256 indexed loanId, bool, uint8)` —
+ *  emitted on every TERMINAL default ending (sale, in-kind, rental), and not
+ *  by an internal match, which returns before it and may leave the loan
+ *  Active. */
+export const LOAN_DEFAULTED_TOPIC = toEventSelector('LoanDefaulted(uint256,bool,uint8)');
+
+/** A preview with the one extra fact an `other` ending does not carry:
+ *  whether the call DEFAULTED the loan. `other` + `defaulted` is a no-swap
+ *  terminal close — in kind, or a rental's — while `other` without it is an
+ *  internal match. */
+export interface CloseOutPreviewDetail {
+  ending: CloseOutPreview;
+  defaulted: boolean;
+}
+
+export interface PreviewCloseOutDeps {
   client: Pick<PublicClient, 'simulateCalls'>;
   diamond: Address;
   account: Address;
   loanId: bigint;
   calls: readonly AdapterCall[];
-}): Promise<CloseOutPreview> {
-  const { client, diamond, account, loanId, calls } = deps;
+  /** Simulate at this block rather than the node's latest — so a preview
+   *  can be judged together with reads pinned to the same block. */
+  blockNumber?: bigint;
+}
+
+export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseOutPreview> {
+  return (await previewCloseOutDetail(deps)).ending;
+}
+
+export async function previewCloseOutDetail(
+  deps: PreviewCloseOutDeps,
+): Promise<CloseOutPreviewDetail> {
+  const { client, diamond, account, loanId, calls, blockNumber } = deps;
+  const unknown: CloseOutPreviewDetail = { ending: 'unknown', defaulted: false };
   let results;
   try {
     ({ results } = await client.simulateCalls({
@@ -665,17 +692,18 @@ export async function previewCloseOut(deps: {
           }),
         },
       ],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
     }));
   } catch {
-    return 'unknown';
+    return unknown;
   }
   const result = results[0];
-  if (!result || result.status !== 'success') return 'unknown';
+  if (!result || result.status !== 'success') return unknown;
   // `logs` is optional in the response: a node that ran the call without
   // reporting events has not shown which ending it reached, which is not
   // the same as having shown that it reached neither.
   const logs = result.logs;
-  if (logs === undefined) return 'unknown';
+  if (logs === undefined) return unknown;
   const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
   const emitted = (topic: Hex) =>
     logs.some(
@@ -684,7 +712,8 @@ export async function previewCloseOut(deps: {
         log.topics[0] === topic &&
         log.topics[1]?.toLowerCase() === loanTopic,
     );
-  if (emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)) return 'sale';
-  if (emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)) return 'fallback';
-  return 'other';
+  const defaulted = emitted(LOAN_DEFAULTED_TOPIC);
+  if (emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)) return { ending: 'sale', defaulted };
+  if (emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)) return { ending: 'fallback', defaulted };
+  return { ending: 'other', defaulted };
 }
