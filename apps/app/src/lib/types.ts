@@ -69,15 +69,20 @@ export interface LiveReadState {
 
 /** Whether a live read's data describes the chain NOW: the query is
  *  running, and its last attempt neither failed, is retrying, nor is
- *  paused. The ONE predicate for every use of the page's live loan read —
- *  status reconciliation and the amount fold alike — so they cannot again
- *  disagree about when the cache is stale. */
+ *  paused. */
 export function isLiveReadUsable(read: LiveReadState): boolean {
   return read.enabled && !read.isError && !read.isPaused && read.failureCount === 0;
 }
 
-export function usableLiveStatus(read: LiveReadState & { status: number | undefined }): number | undefined {
-  return isLiveReadUsable(read) ? read.status : undefined;
+/** The live read's data while it is usable, `undefined` otherwise.
+ *
+ *  #2477 r2 — the page takes its live loan read through this ONCE and every
+ *  status-bearing use reads the result: the reconciliation, the amount fold,
+ *  the reopened-loan predicate, the take-back-collateral card and its
+ *  ceiling, the sale-hold confirmation. Gating each consumer separately is
+ *  how one of them kept trusting a paused read after the others stopped. */
+export function usableLiveData<T>(read: LiveReadState & { data: T | undefined }): T | undefined {
+  return isLiveReadUsable(read) ? read.data : undefined;
 }
 
 export function reconcileIndexedStatus<S extends string>(
