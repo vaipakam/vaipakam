@@ -59,7 +59,7 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
 | `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | live — and should not be (#1977) |
-| `vaipakam-keeper` | `* * * * *` | `apps/keeper` | live — re-armed 2026-10-14 from its #1896 reservation |
+| `vaipakam-keeper` | `* * * * *` | `apps/keeper` | live — re-armed 2026-10-14 from its #1896 reservation; the deploy registered the schedule without error 10072, but `--live` has NOT been re-run since the stamp below (no API token was available) |
 | `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
 **The table above is the whole inventory.** A Worker not listed holds no

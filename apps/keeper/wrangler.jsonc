@@ -50,13 +50,17 @@
   // a var. Deleting one is now a deliberate dashboard action.
   "keep_vars": true,
 
-  // ── KEEPER IS DEPLOYED BUT NOT SCHEDULED (#1896, operator decision) ──
+  // ── THE #1896 HOLD — ENDED 2026-10-14; THE SCHEDULE IS LIVE AGAIN ──
   //
-  // The schedule is deliberately EMPTY. Everything else about this
-  // Worker is untouched and stays deployed: the script, the D1 binding,
-  // all 17 secret / secrets-store / plain-text bindings, and the
-  // `KEEPER_ENABLED` secret. Nothing has to be recreated to bring it
-  // back — only this list.
+  // CURRENT STATE: `"crons": ["* * * * *"]` below is committed and deployed
+  // (#2493). Every pass runs again, including the UNGATED ones listed
+  // further down (watcher alerts, pre-grace warnings, the daily oracle
+  // snapshot, liquidity confidence) whatever `KEEPER_ENABLED` says.
+  //
+  // HISTORY, kept because the procedure below and its rollback still apply:
+  // from #1924 until 2026-10-14 the schedule was deliberately EMPTY while
+  // everything else stayed deployed — the script, the D1 binding, the
+  // secret / secrets-store / plain-text bindings, and `KEEPER_ENABLED`.
   //
   // WHY. Measured on 2026-08-24 (#1896): `outcome: exceededCpu` on
   // ~100% of invocations, cpuTime pinned at the 10 ms ceiling, over the

@@ -633,14 +633,13 @@ then deploy.
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    rate-limit namespaces + updated configs all exist first.
 
-   > **Deploy them with their SCHEDULES OFF.** `apps/indexer` and
-   > `apps/agent` declare `"crons": ["* * * * *"]`, so a
-   > plain `wrangler deploy` here arms every-minute scheduled work against a
-   > database that §§4–6 have not restored or verified yet. **The keeper is
-   > the exception and needs no action:** it commits `"crons": []` under
-   > #1896, so deploying it arms nothing — do not "fix" that empty list
-   > here, and do not read the resulting quiet as a successful restore.
-   > Concretely: the
+   > **Deploy them with their SCHEDULES OFF.** `apps/indexer`, `apps/agent`
+   > and — since its #1896 hold ended on 2026-10-14 (#2493) — `apps/keeper`
+   > all declare `"crons": ["* * * * *"]`, so a plain `wrangler deploy` here
+   > arms every-minute scheduled work against a database that §§4–6 have not
+   > restored or verified yet. **The keeper is no longer an exception:** an
+   > earlier revision of this step exempted it because it committed
+   > `"crons": []`; it does not any more. Concretely: the
    > indexer starts writing before §6 resets its cursor; the keeper's alert
    > passes are NOT behind `KEEPER_ENABLED` (only the signing passes are), so
    > `runWatcher` / `runPreGraceWatcher` begin messaging users off
@@ -652,9 +651,8 @@ then deploy.
    >
    > Same hazard the archive Worker gets its own warning for below, and the
    > same remedy: do not let a cron run before the data it reads is real.
-   > For the **indexer and the agent** — not the keeper, which already
-   > commits an empty list under #1896 and must stay that way — set the
-   > trigger list empty for this deploy —
+   > For the **indexer, the agent and the keeper** set the trigger list
+   > empty for this deploy —
    >
    > ```jsonc
    > "triggers": { "crons": [] }
@@ -709,13 +707,12 @@ then deploy.
    > is that the schedules stay off until each one's data is verified.
    >
    > **The keeper is NOT in that restore, and this is the sentence most
-   > likely to be skimmed.** Its schedule is not "off for the restore" and
-   > waiting to come back — it is off permanently until #1896's CPU work
-   > lands, because the Worker was being terminated for exceeding CPU on
-   > nearly every invocation. Restoring it here would re-arm an
-   > every-minute pass on the one Worker holding a transaction-signing
-   > key. Route it through §7a branch A, which covers this deliberately;
-   > do not treat it like the agent.
+   > likely to be skimmed.** Its schedule comes back LAST, at §7a step 3,
+   > through the re-enable sequence in `apps/keeper/wrangler.jsonc`
+   > (disarm `KEEPER_ENABLED` first, restore the schedule, validate
+   > unarmed ticks, only then arm) — never alongside the indexer or the
+   > agent. It is the one Worker holding a transaction-signing key; do not
+   > treat it like the agent.
 
    > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
@@ -1669,16 +1666,12 @@ caught at the cheapest stage.
    else), so they belong at the same, last step rather than being split
    across a "safe" and an "arming" half that does not exist.
 
-   > **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-   > `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-   > was terminated for exceeding CPU on ~100% of invocations.
-   >
-   > **This step is therefore SPLIT.** Branch **A** is the whole of it while
-   > the hold is active; branch **B** — arming `KEEPER_ENABLED` and restoring
-   > the schedule — is **deferred until #1896's CPU work has landed**. Do not
-   > read on past A and carry out B because it is the next thing on the page:
-   > that re-arms a Worker known to exhaust its CPU, and with it every
-   > fund-moving pass.
+   > **#1896 HOLD — ENDED 2026-10-14 (#2493); kept for the record.** The
+   > keeper was unscheduled (`"crons": []`) while it exceeded CPU on ~100% of
+   > invocations. Its every-minute schedule is committed again, so a restore
+   > follows **branch B**. Branch **A** applies only if the hold is ever
+   > reinstated — that is, if `apps/keeper/wrangler.jsonc` commits
+   > `"crons": []` again; check the file, not this note.
 
    Before deploying: confirm the keeper EOA is the address you expect and
    is funded on every chain it submits from.
