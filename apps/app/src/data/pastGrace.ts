@@ -16,8 +16,8 @@
  * outage, a KYC gate), so copy built on it says the close-out "may" be
  * possible and defers to the position page.
  */
-import { useSyncExternalStore } from 'react';
-import { onlineManager, useQuery } from '@tanstack/react-query';
+import { useState, useSyncExternalStore } from 'react';
+import { focusManager, onlineManager, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -38,6 +38,13 @@ function useLoanPastGraceQuery(loanId: number, enabled: boolean) {
     // session goes idle so an unattended Positions tab does not keep every
     // mounted row reading forever.
     refetchInterval: idleAware(60_000),
+    // The verdict is withheld after a refocus, reconnect or remount until a
+    // read sent after it lands (see `graceVerdictFrom`), so this query opts
+    // back into the revalidation the app turns off globally; one read per
+    // mounted open row (rows are windowed).
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchOnMount: true,
     // The answer carries when its request was SENT, so freshness can be
     // judged by when the chain was asked, not by when the reply landed.
     queryFn: async (): Promise<GraceAnswer> => {
@@ -60,55 +67,70 @@ export type GraceVerdict =
   | { read: 'checking' | 'unavailable'; verdict: undefined };
 
 /**
- * The single rule for when a cached answer may be shown (#2475 r2/r8/r9/
- * r10/r11 each found another way a stale answer outlived its moment, first
- * through TanStack's status flags, then through reply timing). The rule is
+ * The single rule for when a cached answer may be shown. Review rounds r2,
+ * r8, r9, r10 and r11 on #2475 each found another way a stale answer
+ * outlived its moment: an error, a paused fetch, a disconnect, a reconnect,
+ * a late reply, a remount. They share one cause, so they share one rule,
  * about the REQUEST: an answer is current only if the chain was asked after
- * the device last (re)gained connectivity (`connectedSince`, +Infinity
- * while offline), and the latest read did not fail or pause. A reply that
- * lands after a reconnect but was requested before it does not count; only
- * a read sent from the current connected session does.
+ * the row's current observation began (`validSince`): the later of when
+ * this row mounted and when the device last regained connectivity or
+ * focus. TanStack serves cached `data` at each of those moments while it
+ * revalidates, and governance may have changed the grace schedule in
+ * between. +Infinity means offline, and an errored or paused latest read is
+ * unavailable whatever it last returned.
  */
 export function graceVerdictFrom(q: {
   answer: { defaultable: boolean; requestedAt: number } | undefined;
   isError: boolean;
   isPaused: boolean;
-  connectedSince: number;
+  validSince: number;
 }): GraceVerdict {
-  if (q.isError || q.isPaused || q.connectedSince === Number.POSITIVE_INFINITY) {
+  if (q.isError || q.isPaused || q.validSince === Number.POSITIVE_INFINITY) {
     return { read: 'unavailable', verdict: undefined };
   }
-  if (q.answer === undefined || q.answer.requestedAt < q.connectedSince) {
-    // Not asked yet in this connected session: a read is in flight or due.
+  if (q.answer === undefined || q.answer.requestedAt < q.validSince) {
+    // Not asked yet in this observation: the revalidating read is in
+    // flight or due (stale-on-mount / on-focus / on-reconnect refetch).
     return { read: 'checking', verdict: undefined };
   }
   return { read: 'current', verdict: q.answer.defaultable };
 }
 
-// When connectivity was last REGAINED (0 = never lost in this session).
-// Tracked directly: TanStack marks a query paused only when its next fetch
-// starts, and clears that the moment it is back online, before the re-read
-// lands.
-let lastReconnectAt = 0;
+// When the device last RESUMED: regained connectivity or window focus
+// (0 = neither lost in this session). Tracked directly, because TanStack
+// keeps showing cached `data` through both transitions until its
+// revalidating read lands.
+let lastResumeAt = 0;
 let wasOnline = onlineManager.isOnline();
+let wasFocused = focusManager.isFocused();
 onlineManager.subscribe((online) => {
-  if (online && !wasOnline) lastReconnectAt = Date.now();
+  if (online && !wasOnline) lastResumeAt = Date.now();
   wasOnline = online;
 });
-function subscribeConnectivity(cb: () => void) {
-  return onlineManager.subscribe(cb);
+focusManager.subscribe((focused) => {
+  if (focused && !wasFocused) lastResumeAt = Date.now();
+  wasFocused = focused;
+});
+function subscribeResume(cb: () => void) {
+  const offOnline = onlineManager.subscribe(cb);
+  const offFocus = focusManager.subscribe(cb);
+  return () => {
+    offOnline();
+    offFocus();
+  };
 }
-function connectedSince() {
-  return onlineManager.isOnline() ? lastReconnectAt : Number.POSITIVE_INFINITY;
+function resumedSince() {
+  return onlineManager.isOnline() ? lastResumeAt : Number.POSITIVE_INFINITY;
 }
 
 export function useLoanPastGrace(loanId: number, enabled: boolean): GraceVerdict {
   const q = useLoanPastGraceQuery(loanId, enabled);
-  const since = useSyncExternalStore(subscribeConnectivity, connectedSince, connectedSince);
+  const [mountedAt] = useState(() => Date.now());
+  const resumed = useSyncExternalStore(subscribeResume, resumedSince, resumedSince);
   return graceVerdictFrom({
     answer: q.data,
     isError: q.isError,
     isPaused: q.isPaused,
-    connectedSince: since,
+    validSince: Math.max(mountedAt, resumed),
   });
 }
