@@ -13,8 +13,8 @@
  *  - the collateral really is LIQUID (`checkLiquidity`), which is what
  *    makes `ready-needs-route` the correct expectation here. `flows.ts`
  *    posts against `MOCKS.liquidToken`; if that ever changes to an
- *    illiquid asset the expected UI flips to the one WITH a button, and
- *    this test must fail rather than quietly assert the wrong arm.
+ *    illiquid asset the card lands on the in-kind arm instead, and this
+ *    test must fail rather than quietly assert the wrong arm.
  *  - the loan really is defaultable after the warp
  *    (`isLoanDefaultable`), so a grace bucket longer than the warp
  *    fails here instead of downstream as a confusing UI mismatch.
@@ -25,10 +25,16 @@
  *    arm — WITH a button — and every assertion below would fail on a
  *    wording mismatch instead of naming the reason.
  *
+ *  It also DRIVES the close-out (#2463): the fixture registers the
+ *  testnet `MockSwapAdapter` and records it in the deployment bundle, so
+ *  the app builds a one-venue route from the Diamond's own adapter list
+ *  and sends `triggerDefault(loanId, [route])`. The chain must then show
+ *  the loan no longer Active.
+ *
  *  What this does NOT cover, and the attempt that established why: the
- *  in-kind SUBMIT path, the only case where the app actually sends
- *  `triggerDefault(loanId, [])`. Reaching it needs unpriced collateral,
- *  since liquid collateral is precisely the arm with no button. A test
+ *  in-kind SUBMIT path, the case where the app sends
+ *  `triggerDefault(loanId, [])`. Reaching it needs unpriced collateral.
+ *  A test
  *  posting against `MOCKS.illiquidToken` got as far as the LENDER
  *  successfully publishing the offer, then failed on CI at the
  *  BORROWER's accept: "Borrow this now" never enabled inside
@@ -50,8 +56,8 @@ import {
   newestOfferIdFor,
   newestLoanIdFor,
 } from '../lib/flows';
-import { increaseTime } from '../lib/anvil';
-import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
+import { anvilRpc, increaseTime, setBalance } from '../lib/anvil';
+import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS, WETH } from '../lib/chain';
 
 /** How far past maturity to step, and how many steps to allow.
  *
@@ -203,6 +209,26 @@ test('the close-out card tracks the grace boundary for the lender', async ({
 
   // ---- After grace: the same card, a different answer ----
   const afterWarp = await launchWallet('lender', { advanced: true });
+  // The Positions row says so too (#2463 follow-up): "Past grace" on the
+  // chain's `isLoanDefaultable`, not on a client-side grace ladder.
+  await afterWarp.page.goto('/positions', { waitUntil: 'domcontentloaded' });
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-state'),
+  ).toHaveAttribute('data-state-key', 'pastGrace', { timeout: 30_000 });
+  // Its explanation is on the row itself, not only in a hover title.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-past-grace'),
+  ).toBeVisible();
+  // With the chain's answer in hand, the "still checking" line is gone.
+  await expect(
+    afterWarp.page
+      .locator(`a[href="/positions/${loanId}"]`)
+      .getByTestId('loan-row-grace-unread'),
+  ).toHaveCount(0);
   await afterWarp.page.goto(`/positions/${loanId}`, {
     waitUntil: 'domcontentloaded',
   });
@@ -214,14 +240,17 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     cardAfter.getByText(/borrower still has time/i),
   ).toHaveCount(0);
   // Liquid collateral: the card says the position is closable and that
-  // the sale needs routing, and offers NO button. A button here would
-  // spend the lender's gas reaching `NoEnabledSwapRoute`.
+  // the collateral is sold on an exchange, priced when the lender
+  // confirms (#2463). The button exists because the Diamond lists a
+  // venue the app can ask — here the fixture's testnet mock.
   await expect(
     cardAfter.getByText(/sold on an exchange/i),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
-    afterWarp.page.getByTestId('forced-close-submit'),
-  ).toHaveCount(0);
+    cardAfter.getByText(/exchanges it can reach among those the protocol uses/i),
+  ).toBeVisible({ timeout: 30_000 });
+  const submit = afterWarp.page.getByTestId('forced-close-submit');
+  await expect(submit).toBeVisible({ timeout: 30_000 });
   // Never promises exclusivity — a keeper may close it first.
   await expect(
     cardAfter.getByText(/anyone can close out an overdue loan/i),
@@ -234,6 +263,64 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     'ready-needs-route',
   );
   await expectDeclaredBlock(cardAfter, pub);
+
+  // ---- The lender closes it out, with a route the app built ----
+  //
+  // Precondition 4 — the venue can PAY in the lent asset. The fixture's
+  // `MockSwapAdapter` pays proceeds from its own balance and is seeded
+  // with the faucet tokens only, not with the canonical WETH this loan
+  // lends. Without this the sale reverts inside the adapter and the
+  // close-out lands in the protocol's fallback instead, which is the
+  // outcome the card discloses but not the one this spec is proving.
+  // The first run of this spec found exactly that (FallbackPending).
+  const lent = (
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getLoanDetails',
+      args: [loanId],
+    })) as { principalAsset: `0x${string}` }
+  ).principalAsset;
+  expect(lent.toLowerCase()).toBe(WETH.toLowerCase());
+  const venue = MOCKS!.mockSwapAdapter as `0x${string}`;
+  expect(venue).toMatch(/^0x[0-9a-fA-F]{40}$/);
+  await setBalance(venue, 1_000n * 10n ** 18n);
+  await anvilRpc('anvil_impersonateAccount', [venue]);
+  await anvilRpc('eth_sendTransaction', [
+    {
+      from: venue,
+      to: WETH,
+      value: `0x${(500n * 10n ** 18n).toString(16)}`,
+      data: '0xd0e30db0', // WETH9.deposit()
+    },
+  ]);
+  await anvilRpc('anvil_stopImpersonatingAccount', [venue]);
+
+  await expect(submit).toBeEnabled({ timeout: 30_000 });
+  await submit.click();
+  const confirm = cardAfter.getByTestId('confirm-receipt-confirm');
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await confirm.click();
+  // The chain is the judge, not the copy. Defaulted (2) when the mock's
+  // sale meets the protocol's minimum; anything else — FallbackPending
+  // (4) above all — means the route was sent but the sale did not take,
+  // which this fixture's prices should never produce.
+  await expect
+    .poll(
+      async () =>
+        Number(
+          (
+            (await pub.readContract({
+              address: DIAMOND,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getLoanDetails',
+              args: [loanId],
+            })) as { status: number }
+          ).status,
+        ),
+      { timeout: 120_000 },
+    )
+    .toBe(2);
   await afterWarp.ctx.close();
 
   // ---- The borrower is not offered their own default ----

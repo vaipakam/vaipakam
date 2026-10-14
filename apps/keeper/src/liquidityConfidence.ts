@@ -59,7 +59,11 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
-import { orchestrateServerQuotes } from './serverQuotes';
+import {
+  orchestrateServerQuotes,
+  readKeeperRouteStanding,
+  type RosterStanding,
+} from './serverQuotes';
 import { batchedRead } from './batchRead';
 import {
   getLiquidityConfidence,
@@ -387,12 +391,32 @@ async function aggregatorConfirmedTier(
   client: PublicClient,
   chain: ChainConfig,
   diamond: Address,
-  taker: Address,
+  /** The keeper EOA, when configured — 0x is asked only with an origin. */
+  txOrigin: Address | undefined,
   asset: Address,
   slippageBps: bigint,
   sizesPad: readonly [bigint, bigint, bigint, bigint],
   cache: TickCache,
+  /** The chain's adapter roster, read ONCE per tick by the caller (#2480
+   *  r2). This pass only MEASURES a price and discards the calldata, so a
+   *  roster from earlier in the tick is accurate enough, and re-reading it
+   *  per (asset × token × size) probe would spend the Worker's subrequest
+   *  budget on reads the measurement does not need. `null` means it could
+   *  not be read: no aggregator evidence this tick, the counter untouched. */
+  standing: RosterStanding | null,
 ): Promise<number | null> {
+  if (standing === null) return null;
+  // A fully read roster with no REAL venue enabled is not missing evidence:
+  // no market a liquidation could sell into is listed, so the asset tiers at
+  // 0 — the immediate-demotion direction — rather than keeping whatever tier
+  // it had (#2480 r6, r8). "Real" is every enabled adapter except the
+  // testnet mock (already filtered out of `slots` by the caller), counting
+  // ones this keeper cannot name. A real venue that is listed but cannot be
+  // asked from here (no key, say) is an unknown, not an absence, and stays
+  // `null` with any other evidence that could not be gathered.
+  if (!standing.read.incomplete && standing.slots.length === 0 && standing.read.unrecognized === 0) {
+    return 0;
+  }
   const assetPrice = await getAssetPadPrice(client, diamond, asset);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 
@@ -436,9 +460,10 @@ async function aggregatorConfirmedTier(
           sellToken: asset,
           buyToken: quote,
           sellAmount,
-          taker,
+          diamond,
+          txOrigin,
           slippageBps: Number(slippageBps),
-        });
+        }, standing);
       } catch {
         continue;
       }
@@ -774,12 +799,24 @@ async function runRelayForChain(
   const cfg = await loadConfig(client, diamond, env);
   if (!cfg) return; // facet not cut / RPC error / degenerate config
 
-  // The keeper EOA: used as the quote `taker` (read-only here) and the
-  // `setKeeperTier` signer. Reads work even without the key (taker
-  // falls back to the diamond); writes need `isKeeperEnabled`.
+  // The keeper EOA: the quotes' transaction origin (read-only here) and
+  // the `setKeeperTier` signer. Reads work without the key (0x is then
+  // not asked; each aggregator's taker is its adapter either way); writes
+  // need `isKeeperEnabled`.
   const ctx = buildKeeperContext(env, chain, client);
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
-  const taker = (ctx?.wallet.account?.address ?? diamond) as Address;
+  const txOrigin = ctx?.wallet.account?.address as Address | undefined;
+  // Lazily, once per chain tick — see `aggregatorConfirmedTier`. The
+  // testnet mock adapter is left out of the MEASUREMENT: it pays a fixed,
+  // prefunded amount, which is not market depth and must never earn a tier
+  // (#2480 r7). It stays on the liquidation path, which reads its own
+  // standing.
+  let standing: Promise<RosterStanding | null> | undefined;
+  const standingOnce = () =>
+    (standing ??= readKeeperRouteStanding(env, client, chain.id, diamond, txOrigin).then(
+      (st) => ({ ...st, slots: st.slots.filter((x) => x.kind !== 'testnetMock') }),
+      () => null,
+    ));
 
   const assets = await activeCollateralAssets(client, diamond);
   if (assets.length === 0) return;
@@ -813,11 +850,12 @@ async function runRelayForChain(
       client,
       chain,
       diamond,
-      taker,
+      txOrigin,
       asset,
       cfg.slippageBps,
       cfg.sizesPad,
       cache,
+      await standingOnce(),
     );
     if (aggTier === null) continue; // every quote failed — leave the counter alone
     // Cap the *aggregator-confirmed* tier at 2 unless the Tier-3

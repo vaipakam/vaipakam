@@ -222,7 +222,7 @@ export default {
         console.log(`[keeper] ${pass.name} skipped: ${skip}`);
         continue;
       }
-      ctx.waitUntil(timedPass(pass.name, () => pass.run(resolved)));
+      ctx.waitUntil(timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
     }
   },
 } satisfies ExportedHandler<WorkerEnv>;

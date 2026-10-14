@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { IndexedLoanStatus } from '../data/indexer';
 import {
   initiatedPrincipal,
+  initiatedTerms,
   lockedCollateralLine,
   withIndexedInitPrincipal,
   type LockedLineLabels,
@@ -92,5 +93,24 @@ describe('withIndexedInitPrincipal (#2461 r1)', () => {
 
   it('adds no row the chain did not return', () => {
     expect(withIndexedInitPrincipal(live, [{ loanId: 99, initPrincipal: '1' }])).toHaveLength(3);
+  });
+});
+
+describe('initiatedTerms (#2467)', () => {
+  it('reads the executed rate and duration, not the live ones', () => {
+    expect(initiatedTerms({ initRateBps: 500, initDurationDays: 30 })).toEqual({ rateBps: 500, durationDays: 30 });
+  });
+
+  it('is null unless BOTH are carried, and never falls back to live terms', () => {
+    expect(initiatedTerms({ initRateBps: 500, initDurationDays: null })).toBeNull();
+    expect(initiatedTerms({ initRateBps: null, initDurationDays: 30 })).toBeNull();
+    expect(initiatedTerms({})).toBeNull(); // an older worker
+  });
+
+  it('refuses values that are not a real term', () => {
+    expect(initiatedTerms({ initRateBps: 1.5, initDurationDays: 30 })).toBeNull();
+    expect(initiatedTerms({ initRateBps: -1, initDurationDays: 30 })).toBeNull();
+    expect(initiatedTerms({ initRateBps: 500, initDurationDays: 0 })).toBeNull();
+    expect(initiatedTerms({ initRateBps: 0, initDurationDays: 30 })).toEqual({ rateBps: 0, durationDays: 30 });
   });
 });

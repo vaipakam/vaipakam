@@ -142,6 +142,11 @@ interface BaseEnv {
   /** The single operator chat the ops bot posts to. */
   TG_OPS_CHAT_ID?: string;
 
+  // #2483 — time-based default pass. `secret_text` like the flags above.
+  /** 'true' arms the grace-default pass (in addition to KEEPER_ENABLED). It
+   *  submits `triggerDefault`, which sells a defaulted borrower's collateral. */
+  GRACE_DEFAULT_ENABLED?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -375,6 +380,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
+    GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

@@ -125,6 +125,7 @@ import {
   AssetType,
   reconcileIndexedStatus,
   LoanStatus,
+  usableLiveData,
 } from '../lib/types';
 import { tipAware } from '../chain/railHealth';
 
@@ -475,6 +476,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
   });
 
+  // #2470 / #2477 r2 — the ONE usable view of that read. A stopped query's
+  // cached snapshot, data kept across a failed refetch, a read waiting on its
+  // retry and a paused (offline) read are all `undefined` here, and every
+  // status-bearing use below reads THIS rather than `liveStatus.data`. Only
+  // the loan's fixed terms (interest mode, cadence, the seller-window
+  // readability) still read the raw query: they do not change with status.
+  const liveRead = usableLiveData({
+    enabled: liveStatusEnabled,
+    isError: liveStatus.isError,
+    isPaused: liveStatus.isPaused,
+    failureCount: liveStatus.failureCount,
+    data: liveStatus.data,
+  });
+
   // Effectively OPEN for the live-read enablements: a stale
   // `fallback_pending` row whose live status already CURED back to
   // Active must light up the same live reads an `active` row gets —
@@ -484,7 +499,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const effectivelyActive =
     loan.data?.status === 'active' ||
     (loan.data?.status === 'fallback_pending' &&
-      liveStatus.data?.status === LoanStatus.Active);
+      liveRead?.status === LoanStatus.Active);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
@@ -499,7 +514,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // #2389 r1 — the live status, when it has answered, outranks the
   // indexed row for the take-back-collateral surface.
   const liveSaysNotActive =
-    liveStatus.data !== undefined && liveStatus.data.status !== LoanStatus.Active;
+    liveRead !== undefined && liveRead.status !== LoanStatus.Active;
   const maxWithdrawable = useMaxWithdrawable({
     loanId: loan.data ? String(loan.data.loanId) : undefined,
     collateralAsset: loan.data?.collateralAsset,
@@ -515,7 +530,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     isError: maxWithdrawable.isError,
     // A failed refetch disqualifies a cached Active (#2389 r8): TanStack
     // keeps the old data through the error, and the loan may have closed.
-    liveActive: freshData(liveStatus)?.status === LoanStatus.Active,
+    liveActive: liveRead?.status === LoanStatus.Active,
   });
   // #2389 r7 — the take-back review is ACCOUNT-scoped as well as
   // chain-scoped: a review opened under one wallet must not reappear,
@@ -791,9 +806,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // loading render and called on the next one — "Rendered more hooks
   // than during the previous render", on every page load. It needs
   // nothing from the reconciled row, so it belongs up here.
-  const assertSaleSettlementSafe = useCallback(async (): Promise<
-    string | null
-  > => {
+  const assertSaleSettlementSafe = useCallback(async (
+    /** Judge the sale at this block rather than the latest, so a caller
+     *  can pair the verdict with its own reads from the same block. */
+    atBlock?: bigint,
+  ): Promise<string | null> => {
     // A loan that can never be listed (non-ERC-20 principal or
     // collateral) has nothing to probe (Codex #1511 r7).
     if (!saleEligible) return null;
@@ -807,6 +824,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loanId,
         loan.data.lenderTokenId,
         address ?? undefined,
+        atBlock,
       );
       if (state === 'accepted') {
         // Block ONLY while the loan is genuinely Active. A sale
@@ -820,6 +838,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           publicClient,
           walletChain.diamondAddress,
           loanId,
+          atBlock,
         );
         return Number(live.status) === LOAN_STATUS_ACTIVE
           ? copy.saleHold.completionPaused
@@ -1200,13 +1219,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // one the page's badge and action gate use below, so a payout is never
   // composed from an indexed status the chain has already moved past (a
   // repaid loan read as "recovered from the default").
+  // #2470 — ONE live status for every reconciliation on this page (the
+  // claim reads here, the badge and action gate below), from `liveRead`.
+  const liveStatusForReconcile = liveRead === undefined ? undefined : Number(liveRead.status);
   const claimLoan = loan.data
     ? {
         ...loan.data,
-        status: reconcileIndexedStatus(
-          loan.data.status,
-          liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
-        ),
+        status: reconcileIndexedStatus(loan.data.status, liveStatusForReconcile),
       }
     : undefined;
   const lenderClaim = useLoanClaim(claimLoan, 'lender');
@@ -1253,10 +1272,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // and the claim paths re-check live at submit anyway).
   // Indexed as a plain number map so an unknown FUTURE enum value
   // yields undefined (→ no override) instead of a lying type.
-  const reconciledStatus = reconcileIndexedStatus(
-    loan.data.status,
-    liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
-  );
+  const reconciledStatus = reconcileIndexedStatus(loan.data.status, liveStatusForReconcile);
   const statusIsReconciled = reconciledStatus !== loan.data.status;
   // #2461 r1/r2 — while the live read runs (the indexed row is still open)
   // the page's principal and collateral come from it, with or without a
@@ -1267,14 +1283,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // data: once the indexed row is terminal the query stops, and its last
   // cached result is the pre-transition snapshot.
   const liveAmounts =
-    // #2461 r3 — a failed refetch keeps the last good `data`; folding that
-    // in would pin amounts older than the indexed row, so an errored read
-    // falls back to the indexed figures (the same guard the other
-    // consumers of this query apply).
-    liveStatusEnabled && liveStatus.data && !liveStatus.isError
+    // #2461 r3 / #2477 r1 — a failed, retrying or paused read keeps its last
+    // `data`; folding that in would pin amounts older than the indexed row.
+    // The same predicate the status reconciliation uses.
+    liveRead
       ? {
-          principal: liveStatus.data.principal.toString(),
-          collateralAmount: liveStatus.data.collateralAmount.toString(),
+          principal: liveRead.principal.toString(),
+          collateralAmount: liveRead.collateralAmount.toString(),
         }
       : null;
   const row = {
@@ -1298,7 +1313,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // its only effect is a protective pause on flows that would revert
   // on a terminal loan anyway.
   const liveActiveConfirmed =
-    liveStatus.data?.status === LoanStatus.Active;
+    liveRead?.status === LoanStatus.Active;
   const saleListingHeld =
     row.status === 'active' &&
     (saleHold.data === 'live' ||
@@ -1553,10 +1568,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       settled: sourceSettled(loanLive),
     },
     {
-      status:
-        liveStatus.data && !liveStatus.isError
-          ? (liveStatus.data.status as LoanStatus)
-          : undefined,
+      status: liveRead ? (liveRead.status as LoanStatus) : undefined,
       fresh: liveStatusEnabled,
       settled: sourceSettled(liveStatus),
     },
@@ -3179,7 +3191,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       ? hasCollateral
                         ? copy.positions.owedDefaulted
                         : copy.positions.owedDefaultedNoCollateral
-                      : copy.positions.owedClosed
+                      : row.status === 'internal_matched'
+                        ? // #2466 — closed by the match, but not settled:
+                          // it settles only once its claims are collected.
+                          copy.positions.owedInternalMatched
+                        : copy.positions.owedClosed
                   : copy.positions.details.owedPrincipalUpToInterest(principalStr, interestStr)}
             </dd>
           </div>

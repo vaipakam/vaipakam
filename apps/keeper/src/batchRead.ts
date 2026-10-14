@@ -19,12 +19,28 @@ export async function batchedRead(
   client: ReturnType<typeof createPublicClient>,
   contracts: readonly unknown[],
   label: string,
+  /** Read every entry at this block — on the aggregate AND on the serial
+   *  fallback, so a degraded read still describes the same block. viem's
+   *  `multicall` ignores a per-contract `blockNumber`; it must go here. */
+  blockNumber?: bigint,
+  /** What a rejected or throwing aggregate degrades to. `'serial'` (the
+   *  default) retries one read per entry, which costs one subrequest per
+   *  entry. `'unread'` returns every entry as a failure carrying the
+   *  aggregate's error, so the call costs exactly one subrequest whatever
+   *  happens: for a pass whose per-run budget must not depend on the
+   *  RPC's health (graceDefault, #2483). */
+  onAggregateFailure: 'serial' | 'unread' = 'serial',
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   if (contracts.length === 0) return [];
+  const degrade = (error: unknown) =>
+    onAggregateFailure === 'serial'
+      ? serialRead(client, contracts, blockNumber)
+      : Promise.resolve(contracts.map(() => ({ status: 'failure' as const, error })));
   try {
     const results = (await client.multicall({
       contracts: contracts as never,
       allowFailure: true,
+      blockNumber,
       // REQUIRED — see src/multicall3.ts (#1946).
       multicallAddress: MULTICALL3_ADDRESS,
       // Disable viem's byte-size re-split (1024 B default), which would turn
@@ -50,16 +66,20 @@ export async function batchedRead(
       );
     if (aggregateFailed) {
       console.error(
-        `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — retrying serially`,
+        `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — ${
+          onAggregateFailure === 'serial' ? 'retrying serially' : 'marking the chunk unread'
+        }`,
       );
-      return serialRead(client, contracts);
+      return degrade(results[0].error);
     }
     return results;
   } catch (err) {
     console.error(
-      `[keeper] ${label} multicall failed, falling back to serial: ${String(err).slice(0, 200)}`,
+      `[keeper] ${label} multicall failed, ${
+        onAggregateFailure === 'serial' ? 'falling back to serial' : 'marking the chunk unread'
+      }: ${String(err).slice(0, 200)}`,
     );
-    return serialRead(client, contracts);
+    return degrade(err);
   }
 }
 
@@ -67,12 +87,18 @@ export async function batchedRead(
 async function serialRead(
   client: ReturnType<typeof createPublicClient>,
   contracts: readonly unknown[],
+  blockNumber: bigint | undefined,
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   const out: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
   for (const c of contracts) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      out.push({ status: 'success', result: await client.readContract(c as never) });
+      out.push({
+        status: 'success',
+        result: await client.readContract(
+          (blockNumber === undefined ? c : { ...(c as object), blockNumber }) as never,
+        ),
+      });
     } catch (e) {
       out.push({ status: 'failure', error: e });
     }

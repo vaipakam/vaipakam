@@ -27,6 +27,20 @@ export function initiatedPrincipal(loan: Pick<IndexedLoan, 'initPrincipal'>): bi
   return BigInt(raw);
 }
 
+/** #2467 — the rate and duration the loan executed at, or `null` when this
+ *  row does not carry BOTH (a live-chain row, an older worker, or terms the
+ *  indexer cannot back against the initiation event). Never the live terms:
+ *  an extension rewrites those, and a history row showing them would move a
+ *  past fill into a market it never traded in. */
+export function initiatedTerms(
+  loan: Pick<IndexedLoan, 'initRateBps' | 'initDurationDays'>,
+): { rateBps: number; durationDays: number } | null {
+  const { initRateBps: r, initDurationDays: d } = loan;
+  if (typeof r !== 'number' || typeof d !== 'number' || !Number.isInteger(r) || !Number.isInteger(d)) return null;
+  if (r < 0 || d <= 0) return null;
+  return { rateBps: r, durationDays: d };
+}
+
 /** Carry each loan's indexed `initPrincipal` onto the chain-read rows.
  *
  *  When the wallet's RPC answers, the live enumeration is the SOLE row

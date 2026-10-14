@@ -84,6 +84,18 @@
     "./d1Maintenance": {
       "types": "./src/d1Maintenance.ts",
       "default": "./src/d1Maintenance.ts"
+    },
+    "./swapRoutes": {
+      "types": "./src/swapRoutes.ts",
+      "default": "./src/swapRoutes.ts"
+    },
+    "./routeBuilder": {
+      "types": "./src/routeBuilder.ts",
+      "default": "./src/routeBuilder.ts"
+    },
+    "./saleHold": {
+      "types": "./src/saleHold.ts",
+      "default": "./src/saleHold.ts"
     }
   },
   "scripts": {

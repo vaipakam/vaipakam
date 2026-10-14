@@ -361,6 +361,8 @@ export async function readLoanLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   loanId: number | bigint,
+  /** Read at this block instead of the latest. */
+  blockNumber?: bigint,
 ): Promise<LoanLive> {
   // Two reads, one round trip. The paid-through mark lives in appended
   // Diamond storage with no field on the loan struct, so `getLoanDetails`
@@ -397,7 +399,9 @@ export async function readLoanLive(
   // a torn pair again, one field further out, and it can clamp the forfeiture
   // interval to zero. The snapshot now carries the timestamp of the block it
   // was read at, so a caller cannot combine it with a different one.
-  const atBlock = await publicClient.getBlock({ blockTag: 'latest' });
+  const atBlock = await publicClient.getBlock(
+    blockNumber !== undefined ? { blockNumber } : { blockTag: 'latest' },
+  );
   const at = atBlock.number;
   const [rawResult, windowResult] = await Promise.allSettled([
     publicClient.readContract({

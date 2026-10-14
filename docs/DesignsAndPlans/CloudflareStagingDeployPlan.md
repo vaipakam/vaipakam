@@ -546,8 +546,17 @@ from the owning Worker's directory:
   `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`. Set
   them only if the rollout intends to arm those passes, and only after the
   keeper EOA is authorized on-chain.
+- `GRACE_DEFAULT_ENABLED` (keeper, #2483) — same mechanism, optional, and
+  it ships **unset**, which keeps `graceDefault` dark: a fourth scheduled
+  pass. That pass submits the permissionless `triggerDefault` for loans
+  past their grace period, which sells or transfers the borrower's
+  collateral, so arming it is an explicit owner decision for the
+  deployment in question — never a default step of this rollout. When it
+  is decided: `( cd apps/keeper && wrangler secret put GRACE_DEFAULT_ENABLED )`,
+  entering `true`. It needs no on-chain role. While it is unset, nothing
+  closes a past-grace loan automatically on that deployment.
 
-> **`apps/keeper/wrangler.jsonc`'s comment on these three is now correct**
+> **`apps/keeper/wrangler.jsonc`'s comment on the three reward/master flags is now correct**
 > (#2223, closing #1465). It described them as "operator-managed vars
 > (non-secret config — plain `vars`)" while the committed `vars` block held
 > only `TG_BOT_USERNAME` and `apps/keeper/src/env.ts` stated they are

@@ -527,11 +527,12 @@ then deploy.
 
       | Flag | While unset | Arms |
       |---|---|---|
-      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` flags below as well |
+      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` and `GRACE_DEFAULT_ENABLED` flags below as well |
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
+      | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`
       (`wrangler secret put`), is captured the same way: while unset the
@@ -542,7 +543,7 @@ then deploy.
       Any optional tuning knobs actually in use (`REWARD_REMIT_LOOKBACK_DAYS`,
       `REWARD_REMIT_LANE_CAP`, `REWARD_COMMIT_LOOKBACK_DAYS`, the `LIQ_*` /
       `SPLIT_*` / `PARTIAL_LIQ_*` set) belong in that record too; unlike the
-      three above, those have safe defaults, so an omission degrades tuning
+      four above, those have safe defaults, so an omission degrades tuning
       rather than turning a duty off.
 
       **Do NOT set them here.** They arm signing against a database §§4–6
@@ -1758,7 +1759,7 @@ caught at the cheapest stage.
 
    **Skip step 4 entirely — it cannot be satisfied while the hold is
    active, and it is not a step to "wait out".** Step 4 confirms the flags
-   *from a tick* and holds the restore incomplete until all six gated passes
+   *from a tick* and holds the restore incomplete until all seven gated passes
    emit. With `"crons": []` there is never a tick, so an operator following
    the numbered order lands in a wait that cannot end. A quiet tail here is
    the expected state, not a pending check.
@@ -1814,7 +1815,7 @@ caught at the cheapest stage.
    restored the schedule after it — the exact inverse of the sequence kept
    beside the empty list in `apps/keeper/wrangler.jsonc`, and it skipped the
    production validation entirely. Arming before a schedule exists means the
-   six fund-moving passes begin submitting on the FIRST tick after the
+   seven fund-moving passes begin submitting on the FIRST tick after the
    schedule lands, on a Worker whose CPU fix has not been observed working.
    The whole point of the canonical order is that everything provable while
    the passes are inert gets proved first.
@@ -1984,7 +1985,8 @@ caught at the cheapest stage.
    9. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
       further down this step.
   10. Validate the gated passes, again across every cadence, including one
-      full 5-minute cycle for `rewardBudgetRemit`.
+      full 5-minute cycle for `rewardBudgetRemit` and, if it was armed, for
+      `graceDefault` (it runs at :03 of every 5).
   11. Clear the checks branch A deferred — step 4's flag confirmations, and
       the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
       hold.
@@ -2002,6 +2004,9 @@ caught at the cheapest stage.
    passes dark, not two: `rewardBudgetRemit` and `remitAck` both gate on
    `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`.
    Reading the two flag names as two duties misses the remit-ACK one.
+   `GRACE_DEFAULT_ENABLED` (#2483) ships unset, so `graceDefault` is dark
+   too unless an owner armed it — check the offline record, not the
+   default, to know which state to restore.
 
    `apps/keeper/wrangler.jsonc` used to describe all three flags as
    "operator-managed vars (non-secret config — plain `vars`)", and this
@@ -2162,7 +2167,7 @@ caught at the cheapest stage.
    # Wait for one tick.
    ```
 
-   **One tick now resolves all three flags** (#1475). Every *gated* pass emits
+   **One tick now resolves all four flags** (#1475). Every *gated* pass emits
    exactly one line per tick, whichever way its gate goes, and the skip line
    names each binding that stopped it:
 
@@ -2206,8 +2211,9 @@ caught at the cheapest stage.
    line names all three — you are never fixing one and waiting a tick to
    discover the next.
 
-   The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-   `rewardBudgetRemit`, `remitAck` and `commitmentReport`. `watcher`,
+   The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+   `graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`.
+   `watcher`,
    `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
    and `liquidityConfidence` always runs and consults the gate only to decide
    whether to submit — **absent lines from those four are normal**, not a
@@ -2215,7 +2221,7 @@ caught at the cheapest stage.
 
    > **One exception, and it is the whole point of branch B's ordering: while
    > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
-   > `false` ON PURPOSE.** All six gated passes therefore emit
+   > `false` ON PURPOSE.** All seven gated passes therefore emit
    > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
    > state, not a fault to repair — "fixing" them here arms the fund-moving
    > passes before the CPU and cadence validation has finished, which is
@@ -2229,7 +2235,7 @@ caught at the cheapest stage.
 
    | binding | how it is bound | command |
    |---|---|---|
-   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`, `TG_OPS_BOT_TOKEN`, `TG_OPS_CHAT_ID` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
+   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`, `GRACE_DEFAULT_ENABLED`, `TG_OPS_BOT_TOKEN`, `TG_OPS_CHAT_ID` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
    | `KEEPER_PRIVATE_KEY` — **missing** | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
    | `KEEPER_PRIVATE_KEY` — **present but malformed** | same store, entry already exists | list to get its id, then `wrangler secrets-store secret update <STORE_ID> --secret-id <ID> --scopes workers --remote` |
 
@@ -2301,7 +2307,7 @@ caught at the cheapest stage.
    > are now obsolete. If you are reading a stale copy, prefer this one.
 
    Do not conclude the restore is complete until one tick has produced a
-   line from **each of the six gated passes**, and every line reads the way
+   line from **each of the seven gated passes**, and every line reads the way
    you intended. The other four emit nothing by design — waiting for them
    would be waiting forever.
 
@@ -2313,7 +2319,7 @@ caught at the cheapest stage.
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`, `GRACE_DEFAULT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
    So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
    **off but reported**, not silently so. That is the whole point of the
@@ -2321,7 +2327,7 @@ caught at the cheapest stage.
    flags require lowercase \`true\``, naming the asymmetry rather than
    leaving you to deduce it. (It WAS silent until #1475; if you are working
    from memory of the old behaviour, that is the change.) Use lowercase
-   `true` for all three and the asymmetry never arises.
+   `true` for every flag and the asymmetry never arises.
 
    Note the second half of the `KEEPER_ENABLED` row: the settings readback
    shows *variables*, and `isKeeperEnabled` also requires the
@@ -2336,7 +2342,7 @@ caught at the cheapest stage.
 
    Only reachable if you came through branch B (the #1896 hold has lifted).
    Everything above has run with `KEEPER_ENABLED` at `false`, which is what
-   made the CPU validation meaningful: the six fund-moving passes were inert
+   made the CPU validation meaningful: the seven fund-moving passes were inert
    while the Worker was proved to survive a production tick.
 
    Before running this, confirm all of the following from the ticks you just
@@ -2373,12 +2379,13 @@ caught at the cheapest stage.
      wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
    ```
 
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way and at
-   this same point, and only if they were on before.
+   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` /
+   `GRACE_DEFAULT_ENABLED` the same way and at this same point, and only if
+   they were on before.
 
    Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit`.
+   `rewardBudgetRemit` (and `graceDefault` if it was armed).
 
    **IF STEP 10 FAILS, ROLL BACK BOTH HALVES — and note this rollback is
    NOT the one above.** That one covers the still-disarmed validation
@@ -2386,7 +2393,7 @@ caught at the cheapest stage.
    nothing. Past this point the fund-moving passes are genuinely armed, so
    the order matters and the schedule alone is not enough:
 
-   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the six
+   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the seven
       fund-moving passes, and it takes effect without waiting for a
       schedule change to propagate.
    2. Then restore `"crons": []`, **commit that**, and redeploy

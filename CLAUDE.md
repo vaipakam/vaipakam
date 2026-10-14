@@ -764,7 +764,8 @@ artifacts and stay in their respective env / config:
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
-  `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`,
+  `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
+  `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
   `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
@@ -773,9 +774,12 @@ artifacts and stay in their respective env / config:
   which left THREE scheduled passes dark — `rewardBudgetRemit` and
   `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
-  `REWARD_SANCTIONS_KEEPER_ENABLED` and `deliveryProof` (#1944) on
-  `REWARD_DELIVERY_PROOF_ENABLED`, both added after it. All are
-  provisioned the same way when armed. Their `*_LOOKBACK_DAYS` /
+  `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
+  `REWARD_DELIVERY_PROOF_ENABLED` and `graceDefault` (#2483) on
+  `GRACE_DEFAULT_ENABLED`, all added after it. `graceDefault` submits
+  `triggerDefault` for past-grace loans; it ships unset, so that pass is
+  dark until an owner arms it. All are provisioned the same way when
+  armed. Their `*_LOOKBACK_DAYS` /
   `*_LANE_CAP` knobs are plain vars, not secrets.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
