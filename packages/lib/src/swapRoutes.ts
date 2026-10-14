@@ -157,22 +157,41 @@ const ADAPTER_NAME_ABI = [
   },
 ] as const;
 
+/** How {@link readSwapAdapterEntries} may batch its per-entry reads. */
+export interface AdapterEntryReadOptions {
+  /** Multicall3 address. Given, every entry's name and disabled flag are
+   *  read in ONE `aggregate3` — two requests in all, whatever the roster's
+   *  length, instead of one plus two per adapter. A caller with a fixed
+   *  per-invocation request allowance (the keeper's Workers) needs that
+   *  bound; a browser caller may omit it. */
+  multicallAddress?: Address;
+}
+
 /**
  * Read the Diamond's adapter list with each entry's name and disabled
  * flag. A failure on the LIST read throws — there is no roster without
  * it. A failure on one entry's name or flag leaves that field
  * `undefined`, which {@link resolveAdapterRoster} treats as unusable
  * rather than guessing.
+ *
+ * Batched (`opts.multicallAddress`), a rejected or throwing aggregate is
+ * NOT retried one read at a time — that would restore the per-adapter cost
+ * the batch exists to remove. Every entry's fields are left `undefined`
+ * instead, so the roster reads as incomplete, which is what it is.
  */
 export async function readSwapAdapterEntries(
-  client: Pick<PublicClient, 'readContract'>,
+  client: Pick<PublicClient, 'readContract'> & Partial<Pick<PublicClient, 'multicall'>>,
   diamond: Address,
+  opts: AdapterEntryReadOptions = {},
 ): Promise<SwapAdapterEntry[]> {
   const addresses = (await client.readContract({
     address: diamond,
     abi: ADAPTER_LIST_ABI,
     functionName: 'getSwapAdapters',
   })) as readonly Address[];
+  if (opts.multicallAddress !== undefined && client.multicall !== undefined) {
+    return readEntriesBatched(client.multicall.bind(client), diamond, addresses, opts.multicallAddress);
+  }
   return Promise.all(
     addresses.map(async (address) => {
       const [name, disabled] = await Promise.all([
@@ -193,6 +212,58 @@ export async function readSwapAdapterEntries(
       return { address, name, disabled };
     }),
   );
+}
+
+async function readEntriesBatched(
+  multicall: PublicClient['multicall'],
+  diamond: Address,
+  addresses: readonly Address[],
+  multicallAddress: Address,
+): Promise<SwapAdapterEntry[]> {
+  if (addresses.length === 0) return [];
+  const contracts = addresses.flatMap((address) => [
+    { address, abi: ADAPTER_NAME_ABI, functionName: 'adapterName' } as const,
+    {
+      address: diamond,
+      abi: ADAPTER_LIST_ABI,
+      functionName: 'isSwapAdapterDisabled',
+      args: [address],
+    } as const,
+  ]);
+  let results: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[];
+  try {
+    results = (await multicall({
+      contracts: contracts as never,
+      allowFailure: true,
+      multicallAddress,
+      // One request for the whole roster: viem's default byte-size split
+      // would turn a long roster back into several.
+      batchSize: 0,
+    })) as typeof results;
+  } catch {
+    return addresses.map((address) => ({ address, name: undefined, disabled: undefined }));
+  }
+  // A rejected aggregate does not throw under `allowFailure`: viem returns
+  // one failure per call carrying the SAME error object. Per-call reverts
+  // carry their own. Treat the shared-error case as the aggregate failing.
+  const aggregateFailed =
+    results.length > 0 &&
+    results.every((r) => r.status === 'failure' && r.error !== undefined && r.error === results[0].error);
+  return addresses.map((address, i) => {
+    const name = results[2 * i];
+    const flag = results[2 * i + 1];
+    return {
+      address,
+      name:
+        !aggregateFailed && name?.status === 'success' && typeof name.result === 'string'
+          ? name.result
+          : undefined,
+      disabled:
+        !aggregateFailed && flag?.status === 'success' && typeof flag.result === 'boolean'
+          ? flag.result
+          : undefined,
+    };
+  });
 }
 
 // ─── Wire formats (must match the on-chain decoders) ────────────────────

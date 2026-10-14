@@ -39,6 +39,7 @@ import {
   quoteUniV3Tiers,
   rankRoutes,
   readSwapAdapterEntries,
+  type AdapterEntryReadOptions,
   resolveAdapterRoster,
   TESTNET_MOCK_DATA,
   UNIV3_VENUES,
@@ -362,11 +363,14 @@ export function routePosture(read: CloseOutRoster, slots: readonly ClassifiedSlo
 
 /** Read the roster for one chain's Diamond. */
 export async function readCloseOutRoster(
-  client: Pick<PublicClient, 'readContract'>,
+  client: Pick<PublicClient, 'readContract'> & Partial<Pick<PublicClient, 'multicall'>>,
   diamond: Address,
   testnetMockAdapter: Address | undefined,
+  /** Passed to {@link readSwapAdapterEntries}: a Multicall3 address makes
+   *  the roster read two requests however many adapters are listed. */
+  opts: AdapterEntryReadOptions = {},
 ): Promise<CloseOutRoster> {
-  const entries = await readSwapAdapterEntries(client, diamond);
+  const entries = await readSwapAdapterEntries(client, diamond, opts);
   return {
     roster: resolveAdapterRoster(entries, { testnetMockAdapter }),
     // A disabled entry's name is irrelevant — it is skipped either way —

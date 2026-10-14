@@ -50,6 +50,7 @@ import {
 } from '@vaipakam/lib/routeBuilder';
 import type { AdapterCall, SwapVenueKind } from '@vaipakam/lib/swapRoutes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { MULTICALL3_ADDRESS } from './multicall3';
 import type { Env } from './env';
 
 export interface ServerQuoteRequest {
@@ -118,7 +119,11 @@ export async function readKeeperRouteStanding(
   txOrigin: Address | undefined,
 ): Promise<RosterStanding> {
   const mock = getDeployment(chainId)?.testnetMocks?.mockSwapAdapter as Address | undefined;
-  const read = await readCloseOutRoster(client, diamond, mock);
+  // One aggregate for every adapter's name and flag (#2488): the roster's
+  // length must not set how many requests a route build costs.
+  const read = await readCloseOutRoster(client, diamond, mock, {
+    multicallAddress: MULTICALL3_ADDRESS,
+  });
   const slots = await classifySlots({
     client,
     chainId,
