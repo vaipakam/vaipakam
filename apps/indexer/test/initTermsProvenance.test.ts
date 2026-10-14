@@ -110,3 +110,28 @@ describe('0058 — initiation terms backed by LoanInitiatedDetails', () => {
     expect(byId.get(8)).toMatchObject({ interestRateBps: 900, initRateBps: null, initDurationDays: null });
   });
 });
+
+describe('reverifyInitTerms — cost (#2478 r1)', () => {
+  it('probes the details index per flagged loan rather than scanning the chain’s details rows', async () => {
+    // A loan whose terms the ledger never carries stays flagged, so this runs
+    // on every tick: the lookup must stay one index probe as the ledger grows.
+    const h = harness();
+    h.db.exec(MIGRATION);
+    const seen: string[] = [];
+    const d1 = h.d1 as { prepare(sql: string): unknown };
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          seen.push(sql);
+          return d1.prepare(sql);
+        },
+      },
+    } as unknown as Env;
+    await reverifyInitTerms(env, 84532);
+    expect(seen).toHaveLength(1);
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${seen[0]}`).all(84532) as { detail: string }[])
+      .map((r) => r.detail)
+      .join('\n');
+    expect(plan).toMatch(/USING INDEX idx_activity_initiated_details_loan/);
+  });
+});

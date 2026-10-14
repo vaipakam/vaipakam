@@ -3756,7 +3756,9 @@ export async function reverifyInitPrincipal(env: Env, chainId: number): Promise<
  * values the chain's own initiation event carries, so a value stamped from a
  * chain-head read after an extension never becomes "backed". The details
  * rows carry the loan id inside `args_json` (no `loan_id` ref), the shape
- * 0032 reads. Bounded by the partial index on flagged rows.
+ * 0032 reads. Bounded by the partial index on flagged rows; each flagged row
+ * is one probe of `idx_activity_initiated_details_loan` (0058), whose
+ * expression the loan-id comparison below must keep matching exactly.
  */
 export async function reverifyInitTerms(env: Env, chainId: number): Promise<number> {
   const res = await env.DB.prepare(

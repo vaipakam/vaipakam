@@ -26,9 +26,23 @@
 -- `LoanInitiatedDetails` ledger rows carry the loan id inside `args_json`
 -- (no `loan_id` column ref — the shape 0032 already reads).
 --
--- Plain ALTER TABLE ADD COLUMN per the repo idiom; the UPDATE and the index
+-- Plain ALTER TABLE ADD COLUMN per the repo idiom; the UPDATE and the indexes
 -- are independently idempotent. Additive: the deployed code never reads it.
 ALTER TABLE loans ADD COLUMN init_terms_unbacked INTEGER NOT NULL DEFAULT 1;
+
+-- The lookup both the backfill below and every tick's re-verification make:
+-- a details row by its loan id. With the id only inside `args_json`, the
+-- planner's best was `idx_activity_chain_kind`, i.e. every details row of
+-- the chain per flagged loan — and a loan whose terms the ledger never
+-- carries stays flagged, so that cost would recur on every tick and grow
+-- with the ledger (#2478 r1). A partial expression index on exactly the
+-- expression the queries compare makes it one probe. Partial on the kind so
+-- it covers only these rows; created before the backfill so that uses it
+-- too. (`loan_id` stays NULL on these rows by design — see
+-- DELIBERATELY_NOT_SCOPED in scripts/lib/activity-refs-surface.mjs.)
+CREATE INDEX IF NOT EXISTS idx_activity_initiated_details_loan
+  ON activity_events(chain_id, CAST(json_extract(args_json, '$.loanId') AS INTEGER))
+  WHERE kind = 'LoanInitiatedDetails';
 
 UPDATE loans
    SET init_terms_unbacked = 0
