@@ -13,6 +13,7 @@
 
 import { createSchemaGate, type SchemaCheck } from '../../indexer/src/schemaGate';
 import type { WorkerEnv } from '../src/env';
+import { claimRunnerLease } from '../src/runnerLease';
 import { runKeeperTick } from '../src/tick';
 import { buildHostEnv } from './hostEnv';
 
@@ -52,5 +53,22 @@ export function createHostTick(deps: HostTickDeps) {
       }
     }
     await runTick(env, scheduledTimeMs, launch);
+  };
+}
+
+/**
+ * Renews the one-runner lease on a minute the scheduler skipped because the
+ * previous tick is still running (#2503). Renewal only: a claim by a runner
+ * that does not already hold the lease is the same statement, so this can
+ * never take the lease from another runner, and a decline is logged rather
+ * than acted on (the next tick that starts declines by itself).
+ */
+export function createHostLeaseRenewal(deps: Pick<HostTickDeps, 'vars' | 'log' | 'fetchFn'> & { nowMs?: () => number }) {
+  const now = deps.nowMs ?? (() => Date.now());
+  return async (): Promise<void> => {
+    const { env } = buildHostEnv(deps.vars(), deps.fetchFn);
+    if (env.DB === undefined) return;
+    const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID, now());
+    if (!lease.held) deps.log(`[keeper-host] lease not renewed during a long tick: ${lease.reason}`);
   };
 }

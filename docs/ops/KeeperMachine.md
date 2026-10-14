@@ -9,8 +9,8 @@ the Workers Free plan's 10 ms CPU limit ended every scheduled tick (#1896,
 #2493). The machine runs the same passes through the same tick, with no CPU
 limit.
 
-**Status.** The kit exists. The one-keeper-at-a-time lease (#2503) has NOT
-landed, so §2 holds by procedure only. Read §2 before starting anything.
+**Status.** The kit exists, and every tick claims a one-runner lease (§2)
+before it does anything. Read §2 before starting anything.
 
 ## 1. What runs
 
@@ -90,15 +90,30 @@ Files on the machine, all root's:
 The keeper holds the one on-chain signing key. If a machine and a scheduled
 Worker both ran, every fund-moving pass would submit twice: double
 liquidations, double `triggerDefault`s, and transaction-number collisions on
-the one key. Two machines would do the same. Until the lease lands:
+the one key. Two machines would do the same.
+
+**The lease.** Every tick, on the Worker or a machine, first claims one row in
+the shared database (`keeper_runner_lease`) under its `KEEPER_RUNNER_ID`. The
+Worker's is `cloudflare-worker` (set in `apps/keeper/wrangler.jsonc`); the
+install writes `host:<host name>` into a machine's env file. While another
+runner holds an unexpired lease, the tick runs nothing and logs `tick
+declined: runner "<name>" holds the one-runner lease until <time>`. A tick
+that cannot claim it at all (no runner id, the database unreachable) declines
+too. A holder renews every minute, and a lease it stops renewing expires after
+10 minutes, so a dead machine hands over by itself.
+
+The lease is a guard, not the plan. It cannot tell two runners apart if they
+share a name, and a pass stuck for longer than 10 minutes could overlap a
+successor. So the procedure still holds:
 
 1. **The Worker's schedule stays EMPTY** while any machine runs.
    `apps/keeper/wrangler.jsonc` commits `"crons": []`. Confirm the live account
    agrees with `node .github/scripts/check-cron-slots.mjs --live` (read-only,
    see [`CloudflareCronSlots.md`](CloudflareCronSlots.md)). Never deploy the
    keeper Worker from a branch that carries a schedule while a machine runs.
-2. **Exactly one machine.** Stop the old one (§6) and wait until its process
-   has exited before starting a new one.
+2. **Exactly one machine, with its own `KEEPER_RUNNER_ID`.** Stop the old one
+   (§6) and wait until its process has exited before starting a new one. The
+   new one declines until the old lease expires, up to 10 minutes.
 
 `KEEPER_ENABLED=false` does not make a second copy safe. Disarmed passes still
 write to the database and send alerts, so two of them double-notify.
@@ -151,6 +166,8 @@ a commit. The template documents each line. In short:
   with the account's D1 Edit permission only. Cloudflare cannot limit a token
   to one database, so it can reach every D1 database on the account. Make one
   for this machine; never reuse a deploy token. `D1_DATABASE_ID` is prefilled.
+- **Runner id:** `KEEPER_RUNNER_ID` is filled in with this machine's name.
+  Keep it unique; never copy another machine's env file without changing it.
 - **Arming:** leave `KEEPER_ENABLED=false` and the three per-pass flags empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
   `TG_BOT_TOKEN` (the user bot, never `TG_OPS_BOT_TOKEN`), `PUSH_CHANNEL_PK`
@@ -175,7 +192,9 @@ journalctl -u vaipakam-keeper -f
    three hold:
    - its `[keeper] chains resolved: …` line names exactly the chains served;
    - no pass logged an error, of any kind;
-   - no `tick declined` line and no skipped-minute line.
+   - no `tick declined` line and no skipped-minute line. The first tick logs
+     `runner "host:…" acquired the one-runner lease`; a `holds the one-runner
+     lease` decline means another runner is live, so stop and find it.
 
    Cover a full 15-minute cycle (`preGraceWatcher`) and the 00:00–00:09 UTC
    window (`dailyOracleSnapshot`). Neither checks `KEEPER_ENABLED`, so both
@@ -234,7 +253,10 @@ empty.
 
 ## 7. Not yet true
 
-- **No lease** (#2503). §2 holds by procedure only.
+- **The lease is not a fencing token** (§2). It stops a second runner from
+  starting ticks, not a pass that outlives the lease from finishing.
+- **The lease is in the shared database.** It is keeper-only state and moves
+  to the keeper's private database (#2497) with the other keeper tables.
 - **Batch atomicity over the D1 HTTP API is unverified, and nothing relies on
   it.** Both `batch` call sites ([`apps/keeper/src/hfBandNotifications.ts`](../../apps/keeper/src/hfBandNotifications.ts)) are idempotent
   and already run as two separate batches, so a partial write leaves the same

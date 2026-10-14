@@ -193,6 +193,8 @@ main() {
   install -d -o root -g root -m 750 /etc/vaipakam
   if [ ! -e /etc/vaipakam/keeper.env ]; then
     install -m 600 -o root -g root "$kit/keeper.env.example" /etc/vaipakam/keeper.env
+    # Each machine claims the one-runner lease under its own name.
+    sed -i "s/^KEEPER_RUNNER_ID=\$/KEEPER_RUNNER_ID=host:$(hostname -s)/" /etc/vaipakam/keeper.env
     log "created /etc/vaipakam/keeper.env from the template; fill it in before the cutover"
   fi
   # Enforced on every run, not only at creation: a file or directory made
