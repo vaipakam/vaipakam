@@ -49,7 +49,9 @@ export interface ChainIngestState {
   lastBlock: number;
   /** When the cursor last advanced (unix seconds). */
   scannedAt: number;
-  /** `checkedAt − scannedAt`, never negative. */
+  /** `checkedAt − scannedAt`. NEGATIVE when the cursor's timestamp is ahead
+   *  of this Worker's clock (a restored row, clock skew) — kept as it is
+   *  rather than clamped to 0, which would report an unknown as fresh. */
   ageSeconds: number;
 }
 
@@ -81,7 +83,7 @@ export async function readIngestHealth(
     chainId: r.chain_id,
     lastBlock: r.last_block,
     scannedAt: r.updated_at,
-    ageSeconds: Math.max(0, nowSec - r.updated_at),
+    ageSeconds: nowSec - r.updated_at,
   }));
   return { checkedAt: nowSec, schema, chains };
 }

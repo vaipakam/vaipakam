@@ -50,7 +50,11 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
   }
   const { schema } = body;
   if (schema.state === 'pending') {
-    const missing = Array.isArray(schema.missing) ? schema.missing.join(', ') : '(unnamed)';
+    // Migration FILE NAMES only — the value came over the network and travels
+    // into workflow outputs and the alert issue.
+    const missing = Array.isArray(schema.missing)
+      ? schema.missing.map((m) => (typeof m === 'string' && /^[0-9A-Za-z_.-]{1,80}$/.test(m) ? m : '(unprintable name)')).join(', ')
+      : '(unnamed)';
     problems.push(
       `schema gate PENDING — scheduled ingest is declining until these D1 migrations are applied: ${missing}. ` +
         'Apply them (cd apps/indexer && npx wrangler d1 migrations apply vaipakam-warm --remote); ingest resumes on the next tick.',
@@ -64,6 +68,8 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
     const c = body.chains.find((x) => x && x.chainId === id);
     if (!c) {
       problems.push(`chain ${id}: no diamond cursor reported — it has never been scanned`);
+    } else if (typeof c.ageSeconds === 'number' && c.ageSeconds < 0) {
+      problems.push(`chain ${id}: the cursor's timestamp is ${-c.ageSeconds}s AHEAD of the indexer's clock — its freshness is unknown`);
     } else if (!isCount(c.ageSeconds) || !isCount(c.lastBlock) || !isCount(c.scannedAt)) {
       // A defaulted or corrupt row (a negative age, a missing block) must not
       // read as fresh: every documented field is a non-negative finite number.
@@ -114,6 +120,8 @@ function selftest() {
   const stale = { ...healthy, chains: healthy.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: 3600 } : c)) };
   const s = judgeIngestHealth(stale, opts);
   ok(s.length === 1 && s[0].includes('84532') && s[0].includes('STALE'), 'a watched chain past the threshold fails, named');
+  const hostile = { ...healthy, schema: { state: 'pending', missing: ['0058_ok.sql', 'x\nEOF\nevil=1'] } };
+  ok(judgeIngestHealth(hostile, opts).every((p) => !p.includes('\n') && !p.includes('evil')), 'a migration name that is not a file name is never echoed');
   const pending = { ...healthy, schema: { state: 'pending', missing: ['0058_init_terms_unbacked.sql'] } };
   ok(judgeIngestHealth(pending, opts).some((p) => p.includes('0058_init_terms_unbacked.sql')), 'a pending gate fails, naming the migration');
   ok(judgeIngestHealth({ ...healthy, schema: { state: 'unknown' } }, opts).length === 1, 'an unknown gate fails');
@@ -125,7 +133,7 @@ function selftest() {
   const partial = { ...healthy, chains: [{ chainId: 84532, ageSeconds: 0 }, ...healthy.chains.filter((c) => c.chainId === 421614)] };
   ok(judgeIngestHealth(partial, opts).some((p) => p.includes('84532')), 'a partial row (age only) fails rather than reading as fresh');
   const negative = { ...healthy, chains: healthy.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: -1 } : c)) };
-  ok(judgeIngestHealth(negative, opts).some((p) => p.includes('84532')), 'a negative age fails');
+  ok(judgeIngestHealth(negative, opts).some((p) => p.includes('84532') && p.includes('AHEAD')), 'a negative age fails, as unknown freshness');
   const { checkedAt: _omit, ...noChecked } = healthy;
   ok(judgeIngestHealth(noChecked, opts).length === 1, 'an answer without checkedAt fails');
   let threw = false;

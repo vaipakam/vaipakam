@@ -64,10 +64,11 @@ describe('readIngestHealth', () => {
     expect(out.schema).toEqual({ state: 'unknown' });
   });
 
-  it('never reports a negative age when the cursor is ahead of the clock', async () => {
+  it('reports a cursor ahead of the clock as a NEGATIVE age, never as fresh (#2482 r2)', async () => {
     const h = seeded(REQUIRED_D1_MIGRATIONS);
     const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 900);
-    expect(out.chains.every((c) => c.ageSeconds >= 0)).toBe(true);
+    // 84532 was stamped at 1_000 and 97 at 1_090: both ahead of 900.
+    expect(out.chains.map((c) => c.ageSeconds)).toEqual([-190, -100]);
   });
 });
 

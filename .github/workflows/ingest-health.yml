@@ -70,16 +70,24 @@ jobs:
     timeout-minutes: 5
     env:
       INDEXER_ORIGIN: https://indexer.vaipakam.com
-      # The chains in active testing (owner, 2026-10-14). Sepolia and BSC
-      # testnet are still reported by the route but no longer scanned; their
-      # cursors stand still for good, so watching them would alert forever.
-      INGEST_CHAINS: '84532,421614'
+      # Every chain the indexer still SCANS: Base Sepolia and Arbitrum Sepolia
+      # (in active testing, owner 2026-10-14) and BNB testnet, whose RPC is
+      # still configured live (apps/indexer/wrangler.jsonc) — a stall there
+      # is a stall, tested or not (#2482 r2). Sepolia is reported by the
+      # route but no longer scanned; its cursor stands still for good, so
+      # watching it would alert forever.
+      INGEST_CHAINS: '84532,421614,97'
       # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
       # old; 15 min of standing still is a stall, not a slow tick.
       INGEST_STALE_SECONDS: '900'
       # Who the alert issue is assigned to — the operator who acts on it.
       INGEST_ALERT_ASSIGNEE: vaipakam
-      ALERT_TITLE: Indexer ingest stalled
+      STALL_TITLE: Indexer ingest stalled
+      # A run that failed WITHOUT a verdict (checkout, setup, the checker's
+      # own configuration) says nothing about ingest; it gets its own issue
+      # so the operator is never told ingest is stalled when its state is
+      # unknown (#2482 r2).
+      BROKEN_TITLE: Indexer ingest probe not running
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -97,46 +105,60 @@ jobs:
             echo
             printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
-      # The operator path: one open issue per stall. Opened on the first
-      # failing run, left alone while the stall lasts, closed on recovery.
+      # The operator path: one open issue per condition. Opened on the first
+      # failing run, left alone while it lasts, closed on recovery.
       - id: alert
         name: Alert issue
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
+          VERDICT: ${{ steps.check.outcome }}
           PROBLEMS: ${{ steps.check.outputs.problems }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
-            --search "in:title \"$ALERT_TITLE\"" --json number,title \
-            -q "[.[] | select(.title == \"$ALERT_TITLE\")][0].number // empty")
-          if [ -n "$open" ]; then
-            echo "Already open as #$open — the stall continues; not opening another."
-            echo "opened=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "$VERDICT" = "failure" ] && [ -n "$PROBLEMS" ]; then
+            title="$STALL_TITLE"
+            {
+              echo "The scheduled ingest probe found the indexer's ingest is not healthy:"
+              echo
+              printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
+            } > "$RUNNER_TEMP/alert.md"
+          else
+            title="$BROKEN_TITLE"
+            {
+              echo "The scheduled ingest probe failed before it could judge ingest (step outcome: ${VERDICT:-not run})."
+              echo "Ingest itself is UNKNOWN, not known to be stalled — the run log says what broke."
+            } > "$RUNNER_TEMP/alert.md"
           fi
           {
-            echo "The scheduled ingest probe found the indexer's ingest is not healthy:"
-            echo
-            printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
             echo
             echo "First failing run: $RUN_URL"
             echo
             echo "This issue closes itself on the first healthy run. See .github/workflows/ingest-health.yml (#2469)."
-          } > "$RUNNER_TEMP/alert.md"
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --label infra \
+          } >> "$RUNNER_TEMP/alert.md"
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$title\"" --json number,title \
+            -q "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$open" ]; then
+            echo "Already open as #$open — the condition continues; not opening another."
+            echo "opened=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label infra \
             --assignee "$INGEST_ALERT_ASSIGNEE" --body-file "$RUNNER_TEMP/alert.md"
           echo "opened=true" >> "$GITHUB_OUTPUT"
-      - name: Close a recovered alert
+      - name: Close recovered alerts
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
-              --search "in:title \"$ALERT_TITLE\"" --json number,title \
-              -q ".[] | select(.title == \"$ALERT_TITLE\") | .number"); do
-            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+          for title in "$STALL_TITLE" "$BROKEN_TITLE"; do
+            for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+                --search "in:title \"$title\"" --json number,title \
+                -q ".[] | select(.title == \"$title\") | .number"); do
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+            done
           done
       # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
       # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
@@ -154,7 +176,11 @@ jobs:
             echo "Telegram secrets not set — the alert issue is the notification."
             exit 0
           fi
-          text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
+          if [ -n "$PROBLEMS" ]; then
+            text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
+          else
+            text=$(printf 'The indexer ingest probe failed before it could judge ingest (state unknown)\n\n%s' "$RUN_URL")
+          fi
           curl -sS -o /dev/null -w '%{http_code}\n' \
             "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TG_CHAT}" \
