@@ -436,8 +436,10 @@ describe('liquidityConfidence read budget (#1896)', () => {
       spy.mockRestore();
       log.mockRestore();
     }
-    for (const l of lines.filter((x) => x.includes('liq-confidence') && x.includes('asset='))) {
-      expect(l).not.toMatch(/agg=[1-9]|→[1-9]/);
-    }
+    // A mock-only roster lists no real market, so every asset tiers at 0
+    // rather than keeping its tier (#2480 r8).
+    const tierLines = lines.filter((x) => x.includes('liq-confidence') && x.includes('asset='));
+    expect(tierLines.length).toBe(ASSETS.length);
+    for (const l of tierLines) expect(l).toMatch(/agg=0|keeperTier 1→0/);
   });
 });

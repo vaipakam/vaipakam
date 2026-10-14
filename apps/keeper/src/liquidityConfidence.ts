@@ -406,12 +406,17 @@ async function aggregatorConfirmedTier(
   standing: RosterStanding | null,
 ): Promise<number | null> {
   if (standing === null) return null;
-  // A fully read roster with nothing enabled is not missing evidence: it is
-  // a deployment with no route a liquidation could execute through, so the
-  // asset tiers at 0 — the immediate-demotion direction — rather than
-  // keeping whatever tier it had (#2480 r6). `null` stays reserved for
-  // evidence that could not be gathered.
-  if (!standing.read.incomplete && standing.read.enabledCount === 0) return 0;
+  // A fully read roster with no REAL venue enabled is not missing evidence:
+  // no market a liquidation could sell into is listed, so the asset tiers at
+  // 0 — the immediate-demotion direction — rather than keeping whatever tier
+  // it had (#2480 r6, r8). "Real" is every enabled adapter except the
+  // testnet mock (already filtered out of `slots` by the caller), counting
+  // ones this keeper cannot name. A real venue that is listed but cannot be
+  // asked from here (no key, say) is an unknown, not an absence, and stays
+  // `null` with any other evidence that could not be gathered.
+  if (!standing.read.incomplete && standing.slots.length === 0 && standing.read.unrecognized === 0) {
+    return 0;
+  }
   const assetPrice = await getAssetPadPrice(client, diamond, asset);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 
