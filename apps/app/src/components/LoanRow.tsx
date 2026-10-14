@@ -36,7 +36,17 @@ export function LoanRow({
   // A failed refresh keeps TanStack's last `data`; that is a STALE verdict
   // (governance may have lengthened grace meanwhile), so an errored read
   // counts as unread rather than as the last answer.
-  const view = withGraceVerdict(timeView, pastGrace.isError ? undefined : pastGrace.data);
+  const verdict = pastGrace.isError ? undefined : pastGrace.data;
+  const view = withGraceVerdict(timeView, verdict);
+  // An overdue row whose grace answer is not in hand may already be past
+  // grace: say the answer is pending or unavailable instead of letting
+  // "Past due" read as the whole lifecycle state.
+  const graceUnread =
+    loan.status === 'active' && view.state === 'overdue' && view.labelKey !== 'pastGrace' && verdict === undefined
+      ? pastGrace.isError
+        ? { note: copy.loanRow.graceUnknown, title: copy.loanRow.graceUnknownTitle }
+        : { note: copy.loanRow.graceChecking, title: copy.loanRow.graceCheckingTitle }
+      : null;
   const pastGraceTitle =
     view.labelKey !== 'pastGrace'
       ? undefined
@@ -128,11 +138,12 @@ export function LoanRow({
       ) : (
         <span
           className={`badge badge-${view.badge}`}
-          title={pastGraceTitle}
+          title={pastGraceTitle ?? graceUnread?.title}
           data-testid="loan-row-state"
           data-state-key={view.labelKey}
         >
           {loanStateLabel(view, copy.loanState)}
+          {graceUnread ? ` · ${graceUnread.note}` : null}
         </span>
       )}
       {claim ? <span className="btn btn-primary btn-sm">{copy.claims.claim}</span> : null}
