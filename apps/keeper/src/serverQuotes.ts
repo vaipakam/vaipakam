@@ -223,6 +223,9 @@ export async function orchestrateServerQuotes(
     .filter((o) => o.outcome !== 'quoted')
     .map((o) => `${o.kind}:${o.outcome}`);
   if (read.incomplete) failed.push('roster-incomplete');
+  // No enabled adapter at all is a governance condition, not a quote
+  // failure, and is said as such (#2480 r3 `4267485505`).
+  else if (read.enabledCount === 0) failed.push('no-enabled-adapters');
   // An enabled adapter this module cannot name is a venue that exists and
   // was not asked — said, not dropped (#2480 r1 `4267324316`).
   if (read.unrecognized > 0) failed.push(`unrecognized-adapters:${read.unrecognized}`);

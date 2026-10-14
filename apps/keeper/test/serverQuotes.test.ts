@@ -134,6 +134,16 @@ describe('orchestrateServerQuotes (#2468)', () => {
     expect(out.failed).toEqual(['unrecognized-adapters:1']);
   });
 
+  it('says no adapter is enabled, rather than an empty failure list', async () => {
+    const out = await orchestrateServerQuotes({} as Env, chain([]), {
+      chainId: BASE_SEPOLIA,
+      diamond: DIAMOND,
+      ...sale,
+    });
+    expect(out.calls).toEqual([]);
+    expect(out.failed).toEqual(['no-enabled-adapters']);
+  });
+
   it('reports an unreadable roster instead of throwing, without the RPC URL', async () => {
     const client = {
       readContract: async () => {
