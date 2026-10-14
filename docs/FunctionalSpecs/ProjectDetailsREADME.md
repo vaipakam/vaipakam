@@ -2842,6 +2842,7 @@ General design requirements:
   the app falls back to direct chain reads instead of showing an empty list.
 - periodic-interest events should land in the same append-only `activity_events` ledger as ordinary loan lifecycle events so Loan Details timelines, Activity, and watcher reconciliation all read one event source.
 - internal-match liquidation events should land in the same append-only activity ledger. The indexer should update each matched leg's principal and collateral according to the protocol's match fraction, mark fully cleared legs as internally matched, and preserve a user-visible event row with the matcher as actor.
+- A stalled ingest must be observable from outside the indexer, not only from its logs. The indexer should expose a read-only health answer stating, per scanned chain, how far ingest has reached and when it last advanced, and whether its schema requirements are met (naming any unapplied migration). The answer should never be cached, and it should not depend on any service that can itself be the cause of a stall. Deciding what counts as stale, and alerting the operator, belongs to whatever reads that answer.
 - Indexer handlers must be replay-safe across partial-tick failures and catch-up
   re-scans. When a scan writes domain rows but fails before advancing its cursor,
   re-processing the same block range must converge to the same rows rather than
