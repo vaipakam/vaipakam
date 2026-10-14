@@ -31,6 +31,8 @@ pnpm --filter @vaipakam/keeper run deploy   # verifies the shared D1 schema, the
 **The deploy verifies the shared D1 schema first** (#2409). This Worker binds the shared `vaipakam-warm` database, whose schema `apps/indexer` owns, so `run deploy` runs `apps/indexer/scripts/deploy-shared-d1.mjs verify` before publishing: a read-only check that every migration the build carries is recorded. It waits up to ten minutes for the indexer's deploy to apply pending ones, then refuses to publish onto an older schema. It never applies migrations itself. So the token needs **D1 read** as well as Worker publish rights, and on a release that carries a migration, **deploy the indexer first**. `run deploy` takes no arguments; a dry run is `run deploy:dry`, which never touches the database.
 
 
+**On an always-on machine instead of Cloudflare:** `pnpm --filter @vaipakam/keeper start:host` runs the same tick in one long-lived Node process, reaching the same D1 database over Cloudflare's HTTP API. Setup, configuration, the one-copy rule and the differences from the Worker are in [`host/README.md`](host/README.md).
+
 ## How to test
 
 ```bash

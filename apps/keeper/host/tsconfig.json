@@ -1,0 +1,8 @@
+{
+  // The always-on machine runtime is typechecked in its OWN program, like
+  // bench/, so its `process` shim (host/globals.d.ts) stays scoped here and
+  // never leaks the Node global into src/**, where a Worker has no `process`
+  // and an accidental `process.env` must still fail the src typecheck.
+  "extends": "../tsconfig.json",
+  "include": ["**/*.ts"]
+}

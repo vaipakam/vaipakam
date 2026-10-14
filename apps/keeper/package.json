@@ -9,9 +9,10 @@
     "deploy": "node ../indexer/scripts/deploy-shared-d1.mjs verify",
     "deploy:dry": "wrangler deploy --dry-run",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-keep-vars.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && tsc -p host --noEmit && node scripts/check-keep-vars.mjs",
     "test": "vitest run",
-    "bench:cpu": "tsx bench/passCpu.ts"
+    "bench:cpu": "tsx bench/passCpu.ts",
+    "start:host": "tsx host/main.ts"
   },
   "dependencies": {
     "@pushprotocol/restapi": "^1.7.32",
