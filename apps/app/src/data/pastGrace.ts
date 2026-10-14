@@ -44,6 +44,8 @@ export type GraceVerdict =
  * - `gcTime: 0` drops a key's answer as soon as nothing observes it, so a
  *   remounted row, or a chain switched away from and back to, starts from
  *   "checking" with a fresh read rather than from a remembered answer.
+ * - A row that is not observing (loan not active, tab hidden) parks on a
+ *   separate key, so the same drop applies when it starts observing again.
  *
  * What remains is a plain rule over one live query.
  */
@@ -89,15 +91,25 @@ function subscribeResume(cb: () => void) {
 }
 const getResumeEpoch = () => resumeEpoch;
 const getOnline = () => onlineManager.isOnline();
+const getFocused = () => focusManager.isFocused();
 
 export function useLoanPastGrace(loanId: number, enabled: boolean): GraceVerdict {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const epoch = useSyncExternalStore(subscribeResume, getResumeEpoch, getResumeEpoch);
   const online = useSyncExternalStore(subscribeResume, getOnline, getOnline);
+  const focused = useSyncExternalStore(subscribeResume, getFocused, getFocused);
+  // An observation is live only while the loan is active, the tab is
+  // visible and a client exists. Outside it the hook PARKS on a separate
+  // key, so the live key loses its observer and `gcTime: 0` drops its
+  // answer: a row that becomes active again (a cured fallback) or a tab
+  // shown again starts from a fresh read, and a hidden tab sends none.
+  const live = enabled && focused && Boolean(publicClient);
   const q = useQuery({
-    queryKey: ['loanPastGrace', readChain.chainId, loanId, epoch],
-    enabled: enabled && Boolean(publicClient),
+    queryKey: live
+      ? ['loanPastGrace', readChain.chainId, loanId, epoch]
+      : ['loanPastGrace', readChain.chainId, loanId, 'parked'],
+    enabled: live,
     // See the block comment above: an answer lives only as long as the
     // observation that read it.
     gcTime: 0,
