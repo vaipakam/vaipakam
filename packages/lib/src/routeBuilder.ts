@@ -67,11 +67,16 @@ export interface CloseOutSale {
  * folded "could not tell" into "no price").
  *
  *  - `quoted` — produced at least one candidate.
- *  - `declined` — the venue ANSWERED and had nothing usable: no route, no
- *    pool at any tier, a target its adapter does not allow, a mock that
- *    would not pay.
+ *  - `declined` — the venue ANSWERED and had nothing usable: an explicit
+ *    no-liquidity answer, no pool at any tier, a mock that would not pay.
+ *  - `target-not-allowed` — an aggregator answered with a route through a
+ *    swap target its adapter has not been allowed to call (0x rotating to
+ *    a new Settler, typically). The adapter would refuse it, so it is not
+ *    sent; kept distinct from `declined` because it is a governance task
+ *    (the allowlist rotation in the incident runbook), not a market answer.
  *  - `unanswered` — no answer the builder could judge: a timeout,
- *    transport failure, rate limit or 5xx, a malformed body, or a failed
+ *    transport failure, rate limit or 5xx, a body that is neither a quote
+ *    nor an explicit no-liquidity answer, or a failed
  *    read of something the route depends on.
  *  - `no-proxy` — an aggregator this caller has no way to reach (the app
  *    without a quote proxy), so it was not asked.
@@ -88,6 +93,7 @@ export interface CloseOutSale {
 export type SlotOutcome =
   | 'quoted'
   | 'declined'
+  | 'target-not-allowed'
   | 'unanswered'
   | 'no-proxy'
   | 'unconfigured'
@@ -152,7 +158,10 @@ export function noQuoteReason(
   const unaskable = has('other-pools') || has('origin-bound') || has('unpriceable');
   const leftOut = configGap || unaskable;
   if (has('unanswered')) return leftOut ? 'unanswered-partly-reached' : 'unanswered';
-  if (!has('declined')) {
+  // A refused swap target was an answer with nothing this route can use,
+  // which is what `declined` says to a reader; the distinct outcome is for
+  // operators, who read it in the keeper's log.
+  if (!has('declined') && !has('target-not-allowed')) {
     return configGap && !unaskable ? 'unconfigured' : 'unreachable';
   }
   return leftOut ? 'partly-reached' : 'declined';
@@ -371,6 +380,18 @@ export async function readCloseOutRoster(
   };
 }
 
+/**
+ * Whether a 200 body that is not a quote is the aggregator saying, in its
+ * own words, that it has no route. 0x v2 answers 200 with
+ * `liquidityAvailable: false`. 1inch says so with a 4xx (handled by
+ * {@link aggregatorAnswerForStatus}), so a 200 from it that is not a quote
+ * is never a decline.
+ */
+function saysNoLiquidity(kind: AggregatorKind, body: unknown): boolean {
+  if (kind !== 'zeroex' || typeof body !== 'object' || body === null) return false;
+  return (body as { liquidityAvailable?: unknown }).liquidityAvailable === false;
+}
+
 /** `ConfigFacet.getLiquidationConfig` — the EFFECTIVE values, with the
  *  defaults applied for any knob governance left unset. */
 const LIQUIDATION_CONFIG_ABI = [
@@ -467,9 +488,11 @@ export async function buildCloseOutRoute(deps: {
         if (typeof answer === 'string') return none(answer);
         const q =
           kind === 'zeroex' ? parseZeroExQuote(answer.body) : parseOneInchQuote(answer.body);
-        // A well-formed answer with no usable route in it is a decline
-        // (0x answers 200 with no liquidity, for one).
-        if (!q) return none('declined');
+        // Only an EXPLICIT no-liquidity answer is a decline. Any other body
+        // that is not a quote (a changed response schema, an empty `{}`) is
+        // an answer the builder cannot judge, and saying "no route" for it
+        // would claim a market fact nobody stated (#2480 r5).
+        if (!q) return none(saysNoLiquidity(kind, answer.body) ? 'declined' : 'unanswered');
         // The adapter calls only swap targets governance has allowed on it
         // (`AggregatorAdapterBase.swapTargetAllowed`). A quote naming any
         // other target — a router the aggregator has rotated to — is an
@@ -485,7 +508,7 @@ export async function buildCloseOutRoute(deps: {
         } catch {
           return none('unanswered');
         }
-        if (!allowed) return none('declined');
+        if (!allowed) return none('target-not-allowed');
         return {
           outcome: 'quoted',
           candidates: [

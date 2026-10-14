@@ -29,4 +29,13 @@ is left out rather than sent on a guess. Using it again needs a decision
 on a reliable source. The liquidity-confidence pass, which only measures
 prices, uses the same builder.
 
+The keeper's log now names two conditions it used to fold into "no
+route". When 0x quotes through a swap target its adapter has not been
+allowed to call, the log says so, even when a back-up venue closes the
+loan; that is the signal to rotate the adapter's allowlist. And an
+aggregator reply that is neither a quote nor an explicit "no liquidity"
+answer is recorded as unanswered rather than as a decline, in the app
+and the keeper alike. The deploy scripts no longer require the UniV3
+adapter to sit at a fixed position in the adapter list.
+
 No contract change.

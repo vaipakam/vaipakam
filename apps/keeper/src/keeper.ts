@@ -465,6 +465,15 @@ export async function maybeAutonomousLiquidate(
       );
       return false;
     }
+    // A route that will be sent can still have lost a venue — 0x quoting a
+    // swap target its adapter is not allowed to call is the runbook's
+    // allowlist-rotation signal, and a working back-up would otherwise
+    // hide it entirely (#2480 r5).
+    if (quotes.failed.length > 0) {
+      console.log(
+        `[keeper] loan=${loanId} chain=${chain.name} route-degraded (failed: ${quotes.failed.join(',')})`,
+      );
+    }
 
     const account = ctx.wallet.account;
     if (!account) return false;

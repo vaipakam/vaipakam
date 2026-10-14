@@ -20,7 +20,7 @@ const BASE_SEPOLIA = 84532;
 const MOCK = getDeployment(BASE_SEPOLIA)!.testnetMocks!.mockSwapAdapter as Address;
 
 /** A Diamond listing `adapters` (address → adapterName), all enabled. */
-function chain(adapters: [Address, string][]): PublicClient {
+function chain(adapters: [Address, string][], targetAllowed = true): PublicClient {
   const names = new Map(adapters.map(([a, n]) => [a.toLowerCase(), n]));
   return {
     readContract: async (args: { address: Address; functionName: string }) => {
@@ -34,7 +34,7 @@ function chain(adapters: [Address, string][]): PublicClient {
         case 'getLiquidationConfig':
           return [0n, 600n, 0n];
         case 'swapTargetAllowed':
-          return true;
+          return targetAllowed;
         // The testnet mock: live, unrestricted, 1:1, funded.
         case 'shouldRevert':
           return false;
@@ -121,6 +121,35 @@ describe('orchestrateServerQuotes (#2468)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(out.calls).toEqual([]);
     expect(out.failed).toEqual(['zeroex:origin-bound']);
+  });
+
+  describe('what a 0x answer that is not a usable quote is called (#2480 r5)', () => {
+    const zeroEx = A(0x0e);
+    const ask = async (body: unknown, targetAllowed = true) => {
+      vi.stubGlobal('fetch', async () => new Response(JSON.stringify(body), { status: 200 }));
+      return orchestrateServerQuotes({ ZEROEX_API_KEY: 'k' } as Env, chain([[zeroEx, 'ZeroEx']], targetAllowed), {
+        chainId: BASE_SEPOLIA,
+        diamond: DIAMOND,
+        txOrigin: KEEPER,
+        ...sale,
+      });
+    };
+
+    it('a swap target the adapter does not allow is its own outcome, not a decline', async () => {
+      const out = await ask({ transaction: { to: SWAP_TARGET, data: '0xabcd' }, buyAmount: '5' }, false);
+      expect(out.calls).toEqual([]);
+      expect(out.failed).toEqual(['zeroex:target-not-allowed']);
+    });
+
+    it("an explicit no-liquidity answer is a decline", async () => {
+      const out = await ask({ liquidityAvailable: false });
+      expect(out.failed).toEqual(['zeroex:declined']);
+    });
+
+    it('a body that is neither is unanswered, not a market fact', async () => {
+      const out = await ask({});
+      expect(out.failed).toEqual(['zeroex:unanswered']);
+    });
   });
 
   it('says an enabled adapter it cannot name exists, rather than dropping it', async () => {
