@@ -609,6 +609,26 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
+  it('0059 marks a previous Worker’s scan-time settlement unknown, and the heal re-dates it from the chain (#2476 r14)', async () => {
+    const FILES = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    const BEFORE = FILES.filter((f) => f < '0059').map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
+    const M0059 = readFileSync(new URL('0059_terminal_by_repair.sql', MIGRATIONS_DIR), 'utf8');
+    const h = createSqliteD1(BEFORE);
+    // What the old handler wrote: the right block, the scan's clock.
+    seedLoan(h, 81, 'settled');
+    h.db.prepare('UPDATE loans SET terminal_block = 2200, terminal_at = 1_999_999_999 WHERE chain_id = ? AND loan_id = 81').run(CHAIN);
+    ledger(h, 81, 'LoanSettled', 2200, 1_999_999_999);
+    // A repair-settled row (no block) and a settled row with no ledger event.
+    seedLoan(h, 82, 'settled');
+    seedLoan(h, 83, 'settled');
+    h.db.prepare('UPDATE loans SET terminal_block = 2300, terminal_at = 77 WHERE chain_id = ? AND loan_id = 83').run(CHAIN);
+    h.db.exec(M0059);
+    expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: null });
+    expect(row(h, 83).terminal_at).toBe(77);
+    expect(await heal(h, chain({ 2200: 1_234 }))).toEqual([81]);
+    expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: 1_234 });
+  });
+
   it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 78, 'internal_matched');

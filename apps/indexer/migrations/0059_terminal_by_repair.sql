@@ -21,3 +21,27 @@ ALTER TABLE loans ADD COLUMN terminal_by_repair INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_loans_settled_unknown_provenance
   ON loans(chain_id, loan_id)
   WHERE status = 'settled' AND (terminal_block IS NULL OR terminal_at IS NULL);
+
+-- #2476 r14 — settlement times the previous Worker made up. Its LoanSettled
+-- handler stored the SCAN's wall clock as `terminal_at` (correct block, wrong
+-- time), so every row it settled presents when the indexer noticed the
+-- settlement as when it happened. Those times are marked UNKNOWN here, never
+-- rewritten from a guess: the ledger heal revisits a settled row whose time is
+-- unknown and, when the ledgered event is confirmed on chain, fills it from a
+-- fresh read of that block. Scope: rows with a known block and a ledgered
+-- LoanSettled — exactly what that handler wrote. Repair-settled rows (NULL
+-- block) and rows without a ledgered event are untouched.
+--
+-- Data-only and compatible with the deployed code, whose readers already
+-- tolerate a NULL terminal_at (a repaired row carries one). Like the ALTER
+-- above, it relies on wrangler's ledger applying this file exactly once.
+UPDATE loans
+   SET terminal_at = NULL
+ WHERE status = 'settled'
+   AND terminal_block IS NOT NULL
+   AND terminal_at IS NOT NULL
+   AND EXISTS (
+     SELECT 1 FROM activity_events ae
+      WHERE ae.chain_id = loans.chain_id AND ae.loan_id = loans.loan_id
+        AND ae.kind = 'LoanSettled'
+   );
