@@ -468,10 +468,20 @@ export function planNotifications(
 }
 
 /**
- * Materialize inbox rows for a scan's logs. Fail-open: a notification
- * failure must never wedge the ingest scan (the rows are a derived
- * convenience — the authoritative `activity_events` / `loans` writes
- * already succeeded). Returns the number of rows inserted.
+ * Materialize inbox rows for a scan's logs. Returns the number of rows
+ * inserted.
+ *
+ * A failed INSERT propagates (Codex #2489 r3). The scan itself stays
+ * fail-open — its caller catches, because the authoritative
+ * `activity_events` / `loans` writes already succeeded and a derived row
+ * must never wedge the cursor — but the `notified` watermark must not
+ * advance over rows that never landed: a one-shot row (a reward's final
+ * notice, a loan's close-out) has no later event to re-derive it from in a
+ * scan, so swallowing the failure here lost it for good. The watermark's
+ * owner replays the gap from the archive instead
+ * ({@link replayNotificationsFromArchive}). A failed loan-PARTY lookup is
+ * still fail-open inside: that is a read, and the owner rows never depend on
+ * it.
  */
 export async function materializeNotifications(
   db: D1Database,
@@ -496,13 +506,98 @@ export async function materializeNotifications(
     }
   }
   if (rows.length === 0) return 0;
+  return insertNotificationRows(db, rows);
+}
 
-  try {
-    return await insertNotificationRows(db, rows);
-  } catch (err) {
-    console.error('[notifications] insert failed', err);
-    return 0;
+// ─── #2489 r3 — the `notified` watermark means what it says ──────────────────
+
+/** Blocks one archive replay covers at most, so a long gap is drained over
+ *  several ticks rather than in one unbounded read. */
+export const NOTIFIED_REPLAY_MAX_BLOCKS = 20_000n;
+
+/** What the watermark's owner does on one tick — pure, pinned by the tests.
+ *  `prev` is the stored watermark (null: never stamped); `through` the block
+ *  the tick is complete to (`scanTo`, or the cursor on a quiet tick);
+ *  `freshFrom` the first block whose rows THIS tick wrote successfully, or
+ *  null when it wrote none (a quiet tick, or a failed insert). Any block in
+ *  `(prev, freshFrom)` has archived events whose rows may be missing, so it
+ *  is replayed before the stamp. A never-stamped chain stamps without
+ *  replay: on a restored environment the archive is whole and the inbox is
+ *  deliberately empty, and replaying history would re-mint every old row. */
+export interface NotifiedPlan {
+  replayAfter?: bigint;
+  replayThrough?: bigint;
+  stampTo: bigint;
+}
+export function planNotifiedWatermark(
+  prev: bigint | null,
+  through: bigint,
+  freshFrom: bigint | null,
+  maxBlocks: bigint = NOTIFIED_REPLAY_MAX_BLOCKS,
+): NotifiedPlan {
+  if (prev === null) return { stampTo: through };
+  const gapEnd = freshFrom === null ? through : freshFrom - 1n;
+  if (prev >= gapEnd) return { stampTo: through };
+  const replayThrough = prev + maxBlocks < gapEnd ? prev + maxBlocks : gapEnd;
+  return { replayAfter: prev, replayThrough, stampTo: replayThrough === gapEnd ? through : replayThrough };
+}
+
+/** The kinds the planners act on — the only archive rows a replay re-plans. */
+const REPLAYED_KINDS: ReadonlySet<string> = new Set([...Object.keys(EVENT_NOTIF_MAP), ...Object.keys(EVENT_OWNER_NOTIF_MAP)]);
+
+/**
+ * `activity_events.args_json` back to the shape the planners read. The
+ * archive's one writer (`serializeArgs` in chainIndexer.ts) maps every bigint
+ * to its decimal string and nothing else to one — addresses are hex, the rest
+ * stay JSON numbers, booleans and strings — so a decimal string is a bigint,
+ * exactly. Without this `toLoanId` reads a string id as null and a replay
+ * would drop every loan row while reporting success.
+ */
+export function reviveArchiveArgs(argsJson: string): Record<string, unknown> {
+  return JSON.parse(argsJson, (_k, v) => (typeof v === 'string' && /^-?\d+$/.test(v) ? BigInt(v) : v)) as Record<
+    string,
+    unknown
+  >;
+}
+
+/**
+ * Re-derive the inbox rows for every notification-worthy event the archive
+ * holds in `(afterBlock, throughBlock]` and insert them (INSERT OR IGNORE: a
+ * row that did land is untouched). The archive is the authoritative record
+ * the rows derive from, so this makes the `notified` watermark a promise the
+ * indexer keeps rather than a stamp it writes. Throws when the insert fails,
+ * so the caller leaves the watermark where it was.
+ */
+export async function replayNotificationsFromArchive(
+  db: D1Database,
+  chainId: number,
+  afterBlock: bigint,
+  throughBlock: bigint,
+  nowSec: number,
+): Promise<number> {
+  const logs: NotifSourceLog[] = [];
+  const blockTimestamps = new Map<bigint, number>();
+  // A STATIC statement, filtered by kind in code rather than by an
+  // interpolated `IN (...)`: the SQL schema guard checks every static
+  // statement against the real migrated schema, and this path is cold (a
+  // replay happens only after a failed insert), so reading the window's
+  // other kinds costs nothing that matters.
+  const rows = await db
+    .prepare(
+      `SELECT kind, args_json, block_number, log_index, block_at FROM activity_events
+        WHERE chain_id = ? AND block_number > ? AND block_number <= ?
+        ORDER BY block_number, log_index`,
+    )
+    .bind(chainId, Number(afterBlock), Number(throughBlock))
+    .all<{ kind: string; args_json: string; block_number: number; log_index: number; block_at: number }>();
+  for (const r of rows.results ?? []) {
+    if (!REPLAYED_KINDS.has(r.kind)) continue;
+    const blockNumber = BigInt(r.block_number);
+    logs.push({ eventName: r.kind, args: reviveArchiveArgs(r.args_json), blockNumber, logIndex: r.log_index });
+    blockTimestamps.set(blockNumber, r.block_at);
   }
+  if (logs.length === 0) return 0;
+  return materializeNotifications(db, chainId, logs, blockTimestamps, nowSec);
 }
 
 /**

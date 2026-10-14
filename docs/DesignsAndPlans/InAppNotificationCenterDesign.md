@@ -83,7 +83,10 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > caught-up scan finishes materializing notifications — the main
 > `diamond` cursor advances before materialization, so stamping against
 > it could out-sort a block's still-pending event rows under the
-> client's read cursor) + the cron log-index sentinel, so the
+> client's read cursor; since #2489 r3 the stamp is also a PROMISE: a
+> failed notification insert holds the watermark, and the next tick
+> re-derives the missing rows from `activity_events` before it moves,
+> so "complete through `last_block`" is true rather than asserted) + the cron log-index sentinel, so the
 > chain-ordered feed sorts them as current; the pass DEFERS whenever
 > that watermark is stale (indexer behind → D1 ownership could lag the
 > live HF reads), whenever the `diamond` cursor is AHEAD of it (a scan

@@ -104,7 +104,9 @@ import {
 import {
   materializeNotifications,
   notificationInsertStatement,
+  planNotifiedWatermark,
   planReconciledNotifications,
+  replayNotificationsFromArchive,
 } from './notifications';
 import {
   applyRewardLoopLedger,
@@ -201,14 +203,58 @@ const CURSOR_KIND = 'diamond';
  *  materialization. */
 const NOTIFIED_CURSOR_KIND = 'notified';
 
-/** Upsert the notified watermark. Fail-open: a missed stamp just makes
- *  the keeper's band pass defer a tick (its staleness gate), never
- *  fails a scan whose authoritative writes already landed. */
+/** The stored notified watermark, or null when never stamped. */
+async function readNotifiedWatermark(env: Env, chainId: number): Promise<bigint | null> {
+  const row = await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
+    .bind(chainId, NOTIFIED_CURSOR_KIND)
+    .first<{ last_block: number }>();
+  return row ? BigInt(row.last_block) : null;
+}
+
+/**
+ * Advance the notified watermark to `through` — and FIRST make it true
+ * (Codex #2489 r3). `freshFrom` is the first block whose rows this tick's
+ * `materializeNotifications` wrote successfully (null: it wrote none — a quiet
+ * tick, or the insert failed). Any archived event between the stored
+ * watermark and that point may have no inbox row, so its rows are re-derived
+ * from `activity_events` before the stamp ({@link planNotifiedWatermark} for
+ * the exact window); a replay whose own insert fails leaves the watermark
+ * where it was, and the next tick tries again. Fail-open for the scan: a
+ * missed stamp makes the keeper's band pass defer a tick (its staleness
+ * gate), never fails a scan whose authoritative writes already landed.
+ */
 async function stampNotifiedWatermark(
   env: Env,
   chainId: number,
-  block: bigint,
+  through: bigint,
+  freshFrom: bigint | null,
 ): Promise<void> {
+  let stampTo: bigint;
+  try {
+    const plan = planNotifiedWatermark(await readNotifiedWatermark(env, chainId), through, freshFrom);
+    if (plan.replayAfter !== undefined && plan.replayThrough !== undefined) {
+      const n = await replayNotificationsFromArchive(
+        env.DB,
+        chainId,
+        plan.replayAfter,
+        plan.replayThrough,
+        Math.floor(Date.now() / 1000),
+      );
+      console.warn(
+        `[chainIndexer] notifications replayed from the archive on chain ${chainId}: blocks ` +
+          `${plan.replayAfter + 1n}..${plan.replayThrough}, ${n} row(s) inserted`,
+      );
+    }
+    stampTo = plan.stampTo;
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', err);
+    return;
+  }
+  await _writeNotifiedWatermark(env, chainId, stampTo);
+}
+
+/** The raw upsert behind {@link stampNotifiedWatermark}. */
+async function _writeNotifiedWatermark(env: Env, chainId: number, block: bigint): Promise<void> {
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -2077,8 +2123,9 @@ async function runChainPass(
       Number(settledHead.timestamp),
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
-    // valid "notifications complete through lastBlock" point too.
-    await stampNotifiedWatermark(env, chainId, lastBlock);
+    // valid "notifications complete through lastBlock" point too — once any
+    // gap a failed insert left below it has been replayed (#2489 r3).
+    await stampNotifiedWatermark(env, chainId, lastBlock, null);
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
@@ -2384,7 +2431,17 @@ async function runChainPass(
     ? reconcileOutcome.repairedLoanIds
     : [];
 
-  await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+  // Fail-open for the SCAN (the cursor above already advanced on the
+  // authoritative writes), but remembered: a failed insert holds the
+  // `notified` watermark below this scan, and the archive replays the rows
+  // before it moves (#2489 r3).
+  let notifiedFrom: bigint | null = scanFrom;
+  try {
+    await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+  } catch (err) {
+    notifiedFrom = null;
+    console.error(`[notifications] insert failed on chain ${chainId} — the watermark holds, the archive replays`, err);
+  }
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
@@ -2445,7 +2502,7 @@ async function runChainPass(
   // reached the safe head — so `updated_at` fresh ⇒ D1's notification
   // and ownership rows are current through `last_block`.
   if (scanTo === head) {
-    await stampNotifiedWatermark(env, chainId, scanTo);
+    await stampNotifiedWatermark(env, chainId, scanTo, notifiedFrom);
   }
 
   // #1245 measurement rail — one structured line per scan that touched

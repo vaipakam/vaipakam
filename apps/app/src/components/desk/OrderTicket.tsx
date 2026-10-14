@@ -1579,7 +1579,7 @@ export function OrderTicket({
       )}
       {/* UX-009 — the first unmet gate, so the greyed button says why. */}
       {blockReason ? (
-        <p className="field-hint" style={{ textAlign: 'center', marginTop: 6 }}>
+        <p data-testid="post-blocker" className="field-hint" style={{ textAlign: 'center', marginTop: 6 }}>
           {blockReason}
         </p>
       ) : null}

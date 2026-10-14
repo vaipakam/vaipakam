@@ -2423,7 +2423,12 @@ is the borrower's own money.
   the reward, not a loan, and open the Claim Center. They reach the reward's
   owner through this free inbox and never only through a paid channel, because
   a paid channel would skip exactly the dormant claimants the notice exists
-  for.
+  for. A notice that could not be written at the moment its event was
+  recorded is not lost: the inbox's completion mark does not move past that
+  event until the notice has been re-derived from the recorded event and
+  written, so a passing storage failure delays the notice rather than
+  dropping it. This holds for every inbox entry the recorded events produce,
+  not only the reward notices.
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

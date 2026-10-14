@@ -107,9 +107,11 @@ test('signed-order maker Full tariff: dark hides it; enabled signs the maker’s
     const seeded = await ceilingInput.inputValue();
     await ceilingInput.fill('');
     if (!(await termsConsent.isChecked())) await termsConsent.check();
-    await expect(
-      maker.page.getByText(/before opting in — a Full opt-in without a ceiling can’t be signed\./),
-    ).toBeVisible();
+    // The TICKET's own blocker line, by its tag: the opt-in card repeats the
+    // same sentence as its field hint, so a page-wide text match is ambiguous.
+    await expect(maker.page.getByTestId('post-blocker')).toHaveText(
+      /before opting in — a Full opt-in without a ceiling can’t be signed\./,
+    );
     await expect(post).toBeDisabled();
     await ceilingInput.fill(seeded);
     await consentAndWaitEnabled(maker.page, post, termsConsent);

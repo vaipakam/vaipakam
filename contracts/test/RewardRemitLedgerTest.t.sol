@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
@@ -5264,6 +5265,37 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
         (uint256 a3, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
         assertEq(a3, recycledSent, "once");
+    }
+
+    /// @dev Codex #2489 r3 — a SHORT delivery books what the mirror relocated,
+    ///      `floor(recycled * received / total)`, never the declared share: the
+    ///      mesh watcher holds the mirror's relocated custody to this figure.
+    ///      Mutation: booking the declared share makes both asserts fail.
+    function test_AShortDelivery_BooksTheDeliveredShare_NotTheDeclaredOne() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        uint256 total = rlens.getRemitReservation(1).total;
+        uint256 received = total - total / 10; // a 10% fee on transfer
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, received);
+        (uint256 acked, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        uint256 relocated = Math.mulDiv(recycledSent, received, total);
+        assertLt(relocated, recycledSent, "fixture-live: the short delivery scales the share down");
+        assertEq(acked, relocated, "booked as the mirror relocated it");
+    }
+
+    /// @dev Codex #2489 r3 — the forced bucket keeps the DECLARED share, and a
+    ///      later short authentic acknowledgement moves exactly that off it and
+    ///      the DELIVERED share onto the acked figure.
+    function test_ForcedThenShortAcked_MovesDeclaredOff_DeliveredOn() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        remit.finalizeRemitReservation(1);
+        (, uint256 forcedBefore) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(forcedBefore, recycledSent, "fixture-live: the declared share is booked as forced");
+        uint256 total = rlens.getRemitReservation(1).total;
+        uint256 received = total - total / 10;
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, received);
+        (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(forced, 0, "the declared share comes off the forced figure");
+        assertEq(acked, Math.mulDiv(recycledSent, received, total), "the delivered share goes on the acked one");
     }
 
     /// @dev #1452 — a forced finalization later confirmed by the delivery's own

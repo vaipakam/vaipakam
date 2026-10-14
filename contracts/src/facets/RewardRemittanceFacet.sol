@@ -16,6 +16,7 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title RewardRemittanceFacet — #776 Base→mirror reward-budget bridge (send).
@@ -1212,7 +1213,7 @@ contract RewardRemittanceFacet is
                     ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                     // #1452 — a consumption first attested by this
                     // re-presentation (or confirming a forced one) is booked.
-                    _bookRecycledDelivered(s, r, false);
+                    _bookRecycledDelivered(s, r, amountReceived, false);
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
                 if (r.forcedFinalized && consumed && !ackConflict) {
@@ -1258,7 +1259,7 @@ contract RewardRemittanceFacet is
                     bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                     // #1452 — the mirror credited it after all: relocated
                     // custody it must hold, so it is booked as delivered.
-                    _bookRecycledDelivered(s, r, false);
+                    _bookRecycledDelivered(s, r, amountReceived, false);
                     // #1662 r2 (self-review) — a CLEAN consumption on a
                     // released reservation CLEARS the gate. The release
                     // held it pending the value's fate; a consumed
@@ -1582,28 +1583,51 @@ contract RewardRemittanceFacet is
     ///      the mirror reported crediting it, and booking is the stricter
     ///      direction for this check — the opposite of the stranded settle,
     ///      which refuses to resolve on it, also the stricter direction there.
+    ///
+    ///      An authentic acknowledgement books what the mirror RELOCATED, not
+    ///      what was declared (Codex #2489 r3): on a short delivery (fee on
+    ///      transfer) the receiver relocates the declared share scaled to what
+    ///      landed, `floor(recycled * received / total)`, and the mesh watcher
+    ///      holds the mirror's relocated custody to this figure — booking the
+    ///      declared share there was a permanent false critical for every short
+    ///      delivery. The forced bucket keeps the declared share: a forced
+    ///      finalization carries no received figure (its `amountReceived` is a
+    ///      zero sentinel), and that bucket is evidence, not delivery. The move
+    ///      from forced to acked takes the declared share OFF the forced figure
+    ///      (what was put there) and puts the delivered share ON the acked one.
     function _bookRecycledDelivered(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
+        uint256 amountReceived,
         bool forced
     ) private {
         uint8 booked = r.recycledBooked;
         if (booked == RECYCLED_BOOKED_ACKED) return;
         uint32 dst = r.dstChainId;
-        uint256 share = r.recycled;
+        uint256 declared = r.recycled;
         if (forced) {
             // Only a PENDING reservation is force-finalized, and nothing books
             // before finalization, so a forced booking is always the first.
-            s.chainRemittedRecycledForceFinalized[dst] += share;
+            s.chainRemittedRecycledForceFinalized[dst] += declared;
             r.recycledBooked = RECYCLED_BOOKED_FORCED;
             return;
         }
         if (booked == RECYCLED_BOOKED_FORCED) {
             uint256 f = s.chainRemittedRecycledForceFinalized[dst];
-            s.chainRemittedRecycledForceFinalized[dst] = f > share ? f - share : 0;
+            s.chainRemittedRecycledForceFinalized[dst] = f > declared ? f - declared : 0;
         }
-        s.chainRemittedRecycledAcked[dst] += share;
+        s.chainRemittedRecycledAcked[dst] += _deliveredShare(declared, amountReceived, r.total);
         r.recycledBooked = RECYCLED_BOOKED_ACKED;
+    }
+
+    /// @dev The share of `declared` that a delivery of `received` out of `total`
+    ///      relocated on the mirror — the receiver's own flooring
+    ///      (`RewardRemittanceReceiver`: `mulDiv(share, actualReceived,
+    ///      declaredTotal)`), so the two sides compute one figure. A full or
+    ///      over-delivery, or a reservation with no total, is the declared share.
+    function _deliveredShare(uint256 declared, uint256 received, uint256 total) private pure returns (uint256) {
+        if (received >= total || total == 0) return declared;
+        return Math.mulDiv(declared, received, total);
     }
 
     /// @dev {RemitReservation.recycledBooked} states (0 = not booked).
@@ -1635,7 +1659,7 @@ contract RewardRemittanceFacet is
         // #1452 — only an attested CONSUMPTION books the recycled share: the
         // mirror relocates custody when it credits a delivery, never for a
         // quarantined or provisional one.
-        if (consumed) _bookRecycledDelivered(s, r, forced);
+        if (consumed) _bookRecycledDelivered(s, r, amountReceived, forced);
         // #1434 P2-w4 (§5.1 R6) — a finalized COMPENSATION reservation
         // clears the chain's one-in-flight gate. The consumption ACK is
         // the ratified clearing evidence; the operator-evidenced forced
