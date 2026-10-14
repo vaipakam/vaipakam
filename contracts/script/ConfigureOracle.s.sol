@@ -71,6 +71,20 @@ contract ConfigureOracle is Script {
         revert(string.concat("ConfigureOracle: unsupported chainId ", vm.toString(chainId)));
     }
 
+    /// @dev Warn when no registered adapter is the UniV3 one on a no-0x chain,
+    ///      where it is the only liquidation route. Advisory (see the
+    ///      liquidation-route note in `run`), so an adapter whose
+    ///      `adapterName()` reverts is skipped, not fatal. Position is not
+    ///      checked: route builders read it from the Diamond (#2468).
+    function _warnIfNoUniV3Adapter(address[] memory adapters) internal view {
+        for (uint256 i = 0; i < adapters.length; i++) {
+            try ISwapAdapter(adapters[i]).adapterName() returns (string memory nm) {
+                if (keccak256(bytes(nm)) == keccak256(bytes("UniswapV3"))) return;
+            } catch {}
+        }
+        console.log("WARNING: no-0x chain but no registered swap adapter is UniswapV3 - liquidations have no route the keeper can quote. Register one via DeployUniV3Adapter.");
+    }
+
     /// @dev Chains where 0x has NO Swap-API/Settler backend, so ConfigureOracle
     ///      may omit the ZEROX_* vars and route liquidations via an on-chain DEX
     ///      adapter instead. 0x covers every mainnet we target (incl. BNB
@@ -223,28 +237,18 @@ contract ConfigureOracle is Script {
         //     BEFORE the swap-adapters phase (e.g. an out-of-order
         //     `--phase configure`) must not be allowed to mark the chain
         //     configured with no route at all.
-        //   • ORDERING/index — advisory only. Which adapter sits at which slot is
-        //     the swap-adapters phase's + the keeper's CHAIN_SWAP responsibility;
-        //     HARD-requiring a specific slot here was the coupling that cascaded
-        //     into a pile of index/marker edge cases, so it stays a warning.
+        //   • ORDERING/index — not checked. The keeper and the app read each
+        //     adapter's position from the Diamond when they build a route
+        //     (#2468), so no slot is reserved for any venue. On a no-0x chain
+        //     the one thing worth saying is whether a UniV3 adapter exists at
+        //     all, and that stays advisory.
         address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
         require(
             adapters.length > 0,
             "ConfigureOracle: no swap adapter registered - LibSwap.swapWithFailover reverts on an empty list, so liquidations would fail. Run the swap-adapters phase / DeployUniV3Adapter before --phase configure."
         );
-        if (zeroEx == address(0)) {
-            // No-0x chain: the keeper routes univ3=0, so slot 0 SHOULD be the UniV3
-            // adapter. Advisory (see above), so the adapterName() read must NOT
-            // revert and re-couple the phases — a broken/stale slot-0 adapter that
-            // can't answer adapterName() has to surface as a warning, not an abort.
-            try ISwapAdapter(adapters[0]).adapterName() returns (string memory nm) {
-                if (keccak256(bytes(nm)) != keccak256(bytes("UniswapV3"))) {
-                    console.log("WARNING: no-0x chain but swap-adapter index 0 is not the UniV3 adapter - the keeper (univ3=0) would misroute. Reorder / re-register via DeployUniV3Adapter.");
-                }
-            } catch {
-                console.log("WARNING: no-0x chain but swap-adapter index 0 did not answer adapterName() - it looks broken/stale. Remove it and re-register via DeployUniV3Adapter so UniV3 sits at index 0.");
-            }
-        }
+        // No-0x chain: the on-chain DEX adapter is the only liquidation route.
+        if (zeroEx == address(0)) _warnIfNoUniV3Adapter(adapters);
 
         vm.startBroadcast(deployerKey);
 
