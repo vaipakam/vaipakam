@@ -11,17 +11,22 @@ target chain (testnet → mainnet, lowest-TVL first).
 
 All commands run from `contracts/` unless noted otherwise.
 
-> **⚠ DOCUMENT-WIDE HOLD — #1896: THERE IS NO NEXT TICK.**
-> The keeper commits `"crons": []` because the Worker was terminated for
-> exceeding CPU on ~100% of invocations. **Every "on next tick" / "the keeper
-> picks it up" statement in this runbook is suspended**, including the ones
-> that offer reassurance — most importantly the repeated promise that deleting
-> a flag or a `liquidator:` line leaves the *legacy* partial / split / atomic
-> branches running. Those branches do not run either. Our bot performs no
-> liquidation at all right now.
+> **⚠ DOCUMENT-WIDE NOTE — #1896: THE KEEPER TICKS BUT IS DISARMED.**
+> As of 2026-10-14 the keeper commits `["* * * * *"]` again and is deployed
+> with that schedule (from #1896 until then it committed `"crons": []`,
+> because the Worker was terminated for exceeding CPU on ~100% of
+> invocations). But the live Worker has `KEEPER_ENABLED=false`, and
+> liquidation is a gated pass, so it returns from its gate on every tick.
+> **Every "on next tick" / "the keeper picks it up" statement in this runbook
+> about liquidation is suspended while `KEEPER_ENABLED` is false**, including
+> the ones that offer reassurance — most importantly the repeated promise that
+> deleting a flag or a `liquidator:` line leaves the *legacy* partial / split /
+> atomic branches running. Those branches do not run either. Our bot performs
+> no liquidation at all right now. Arming waits on #1896 (still open): a fresh
+> owner OK after live ticks show no `exceededCpu`.
 >
 > Config changes here are still worth making: they latch correctly for when
-> the schedule returns. What they are not is a *response*. With our bot
+> the keeper is armed. What they are not is a *response*. With our bot
 > stopped, the **§3 global protocol pause is the only immediate on-chain stop**
 > for the discounted path **on a chain whose admin handover has completed**.
 > Note specifically that `AdminFacet.pauseAsset` is
@@ -39,7 +44,7 @@ All commands run from `contracts/` unless noted otherwise.
 > that path. Escalating to the global pause there would stop unrelated
 > protocol activity for no gain. `IncidentRunbook.md` §3.5 draws the same
 > distinction; the unqualified "only immediate" wording here contradicted it.
-> Full tier breakdown under this hold in
+> Full tier breakdown for this posture in
 > [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
 >
 > Treat our own liquidation coverage as manual until the **five-point**
@@ -225,9 +230,10 @@ one file makes the cross-cutting concern reviewable in one
 place. It's also a tactical override surface — to disable the
 flash-loan path on a chain without redeploying anything, just
 delete the `liquidator` line (the chain falls back to legacy
-partial/split/atomic immediately on next tick — **not while #1896
-holds: there is no next tick and the legacy branches do not run
-either**; see the document-wide hold above).
+partial/split/atomic immediately on next tick — **not while the
+keeper is disarmed (`KEEPER_ENABLED=false`, #1896): the ticks run but
+the legacy branches do not run either**; see the document-wide note
+above).
 
 Commit + redeploy the keeper Worker so it picks up the new
 config:
@@ -242,26 +248,31 @@ pnpm --filter @vaipakam/keeper run deploy
 > carries `--keep-vars`; going straight to wrangler bypasses it and deletes
 > every var not in `wrangler.jsonc` — which is exactly the dashboard-managed
 > `HF_SCALE` / `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning this rollout is
-> about to depend on. **And note before you run it:** the keeper is currently
-> unscheduled (`"crons": []`, #1896), so this deploy updates the script and
-> bindings but starts nothing. That is fine and expected here — the rollout's
+> about to depend on. **And note before you run it:** since 2026-10-14 a
+> deploy from a clean checkout REGISTERS the `* * * * *` schedule (from #1896
+> until then it kept the keeper unscheduled). With `KEEPER_ENABLED=false` the
+> ungated passes run every tick but liquidation does not, so this deploy
+> starts no liquidation. That is fine and expected here — the rollout's
 > config and flags stay latched — but do not read a quiet `wrangler tail`
-> afterwards as evidence the branch works. See the hold in §5.
+> afterwards as evidence the branch works. See the note in §5.
 
 ---
 
 ## 5. Flip the runtime env flag in the keeper Worker
 
-> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-> was terminated for exceeding CPU on ~100% of invocations. **Do not
-> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
-> until #1896's CPU work has landed. With no schedule, no pass runs, so a
-> quiet `wrangler tail` here proves nothing — it is the expected state,
-> not a passing check. Re-enable only via the sequence kept beside the
-> empty list in `apps/keeper/wrangler.jsonc`. Setting the two flags below
-> is still correct — they are the rollout's own preconditions and stay
-> latched for when the schedule returns.
+> **⚠ #1896 — the keeper is scheduled but DISARMED.** As of 2026-10-14
+> `apps/keeper/wrangler.jsonc` commits `["* * * * *"]` again and the keeper
+> is deployed with it (from #1896 until then it committed `"crons": []`,
+> because the Worker was terminated for exceeding CPU on ~100% of
+> invocations). The live keeper has `KEEPER_ENABLED=false`, so the
+> liquidation pass returns from its gate on every tick. #1896 is still
+> open: **do not arm `KEEPER_ENABLED` as part of this procedure** — arming
+> needs a fresh owner OK after live ticks show no `exceededCpu`. A quiet
+> liquidator in `wrangler tail` here proves nothing — it is the expected
+> state, not a passing check. Arm only via the re-enable sequence kept
+> beside the cron list in `apps/keeper/wrangler.jsonc`. Setting the two
+> flags below is still correct — they are the rollout's own preconditions
+> and stay latched for when the keeper is armed.
 
 Two things must be true at runtime for the flash-loan branch to
 fire:
@@ -418,11 +429,12 @@ will show one of:
   (price moved past slippage tolerance between quote and
   submit). Also healthy.
 
-No action needed **once the keeper is scheduled again**. The legacy
+No action needed **once the keeper is armed**. The legacy
 partial/split/atomic branches in the keeper run on the next tick — the
 loan still gets liquidated, just via the atomic path instead. **While
-#1896 holds there is no next tick**, so the loan is not liquidated by us
-at all; it depends on external liquidators. See the document-wide hold.
+`KEEPER_ENABLED` is false (#1896) the liquidation pass does not run on
+any tick**, so the loan is not liquidated by us at all; it depends on
+external liquidators. See the document-wide note.
 
 ### Profitable trades available but bot logs nothing
 
@@ -467,9 +479,10 @@ order of preference (least to most disruptive):
    pnpm --filter @vaipakam/keeper exec wrangler secret delete DISCOUNT_PATH_ENABLED_8453
    ```
    Worker reads `undefined` on next tick → discount branch
-   skips → legacy partial/split/atomic still runs. **Not while #1896
-   holds** — no tick, and the legacy branches are stopped too, so this
-   is already the posture rather than a change to it.
+   skips → legacy partial/split/atomic still runs. **Not while the
+   keeper is disarmed** (`KEEPER_ENABLED=false`, #1896) — the legacy
+   branches are stopped too, so this is already the posture rather than
+   a change to it.
 
 2. **Delete the `liquidator` line in `flashLoanProviders.ts`**
    + redeploy Worker — slower (needs git commit + wrangler

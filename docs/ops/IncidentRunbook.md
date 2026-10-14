@@ -197,17 +197,21 @@ recoverable back-pressure — not a fund-loss event.
 
 ### Automated remittance (keeper, #925)
 
-> **⚠ HOLD — #1896: there is no cron tick, so this automation is NOT running.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker was
-> terminated for exceeding CPU on ~100% of invocations. Everything below
-> describes the pass accurately **for when a schedule exists**; right now it
-> never executes, whatever the two flags say. **Treat the manual steps above as
-> the only remittance path** until **both** a live schedule is read back
-> (Settings → Trigger Events — not merely a quiet `wrangler tail`, which proves
-> nothing here) **and** you have seen this pass actually run. A restored cron
-> alone is not enough: the pass is gated TWICE, on `KEEPER_ENABLED` and
-> `REWARD_REMIT_ENABLED`, and the re-enable sequence keeps the first false
-> through its unarmed-validation step. Worse, `timedPass` logs
+> **⚠ This automation does not run yet — it is gated, not unscheduled.** As of
+> 2026-10-14 `apps/keeper/wrangler.jsonc` commits `["* * * * *"]` again and the
+> keeper is deployed with that schedule (from #1896 until then it committed
+> `"crons": []`, because the Worker was terminated for exceeding CPU on ~100%
+> of invocations; #1896 is still open). But the pass is gated TWICE, on
+> `KEEPER_ENABLED` and `REWARD_REMIT_ENABLED`: the live keeper has
+> `KEEPER_ENABLED=false` and `REWARD_REMIT_ENABLED` is absent, so it returns
+> from its gate on every tick. Everything below describes the pass accurately
+> **for when both are armed**. **Treat the manual steps above as the only
+> remittance path** until **both** a live schedule is read back (Settings →
+> Trigger Events — not merely a quiet `wrangler tail`, which proves nothing
+> here) **and** you have seen this pass actually run. Arming
+> `KEEPER_ENABLED=true` itself waits on a fresh owner OK after live ticks show
+> no `exceededCpu`, and the re-enable sequence keeps it false through its
+> unarmed-validation step. Worse, `timedPass` logs
 > `rewardBudgetRemit done in Nms` even when the pass returned instantly from
 > its gate — so read the accompanying `passIsArmed` skip line, which names the
 > blocking binding, rather than the `done` line. Then require this pass's own
@@ -469,17 +473,20 @@ protocol pause. The atomic-swap path (`triggerLiquidation`,
 `triggerLiquidationSplit`, `triggerPartialLiquidation`) keeps
 running.
 
-> **⚠ HOLD — #1896: Tiers 1 and 2 currently change NOTHING, and their
-> stated safety property does not hold.** The keeper commits
-> `"crons": []` because the Worker was terminated for exceeding CPU on
-> ~100% of invocations, so there is no next tick. Our bot already runs
-> neither the flash-loan branch **nor** the legacy partial / split /
-> atomic branches — the reassurance below that "legacy still runs" is
-> false while the hold is in force, and a successful secret deletion
-> must not be read as preserving automated liquidation.
+> **⚠ #1896 / disarmed keeper: Tiers 1 and 2 currently change NOTHING,
+> and their stated safety property does not hold.** The keeper is
+> scheduled again (`["* * * * *"]`, since 2026-10-14; from #1896 until
+> then it committed `"crons": []`), but the live Worker has
+> `KEEPER_ENABLED=false`, so `runLiquidator` returns from its gate on
+> every tick. Our bot already runs neither the flash-loan branch **nor**
+> the legacy partial / split / atomic branches — the reassurance below
+> that "legacy still runs" is false while `KEEPER_ENABLED` is false, and
+> a successful secret deletion must not be read as preserving automated
+> liquidation. Arming it waits on #1896: a fresh owner OK after live
+> ticks show no `exceededCpu`.
 >
 > **What this means in an incident:**
-> - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
+> - **Tier 1 / Tier 2** — already achieved by the disarmed keeper, as far as our
 >   bot is concerned. Doing them is harmless and leaves the posture
 >   correctly latched for re-enable, but neither is the *response*.
 > - **The immediate on-chain stop is the §3 GLOBAL protocol pause — not
@@ -492,7 +499,7 @@ running.
 >   `requireAssetNotPaused` nowhere). `triggerLiquidationDiscounted`
 >   gates on the GLOBAL `whenNotPaused` alone. So pausing the asset
 >   leaves the vulnerable discounted path fully callable by external
->   liquidators — and during the hold Tier 1 is a no-op as well, which
+>   liquidators — and while the keeper is disarmed Tier 1 is a no-op as well, which
 >   would leave an operator with two levers engaged and nothing stopped.
 > - **Tier 3 still binds external liquidators — but it is not fast.**
 >   Post-handover it is a Timelock-scheduled tx with the 48h delay (see
@@ -596,8 +603,8 @@ can always be closed out (see the `assetPaused` note in
 discounted path fully callable by external liquidators.
 
 So post-handover the immediate levers are **Tier 1** (our bot
-only — and see the #1896 hold above, which makes it a no-op
-today) and the **§3 global protocol pause** (everyone). If the
+only — and see the disarmed-keeper note above, which makes it a
+no-op today) and the **§3 global protocol pause** (everyone). If the
 defect is in the diamond's discount-path code and external
 callers must be stopped now, the global pause is the only
 immediate option; Tier 3 follows behind it as the targeted
@@ -997,17 +1004,15 @@ is `wrangler tail`, so verify there rather than assuming success.
    been attempted yet" and "every attempt is failing" equally. Wait for a
    real send, or trigger one, before calling the migration done.
 
-   > **⚠ HOLD — #1896: verify the AGENT only; defer the keeper.** The
-   > keeper is deliberately unscheduled (`"crons": []`, because the Worker
-   > was terminated for exceeding CPU on ~100% of invocations) and it has
-   > no HTTP surface, so it has no invocation from which to send and this
-   > check can never complete against it. Complete the rotation on the
-   > agent, which can satisfy it, and **record the keeper's Push
-   > verification as deferred** — do not wait indefinitely, and do not
-   > drop the check. It carries a real risk: an incompatible signer would
-   > stay undetected until the keeper is re-enabled, so the deferral must
-   > be re-run as part of the re-enable sequence in
-   > `apps/keeper/wrangler.jsonc`, at its armed-tick step.
+   > **Keeper: verify on an UNGATED send.** The keeper is scheduled again
+   > (`["* * * * *"]`, since 2026-10-14; from #1896 until then it was
+   > unscheduled and this check was deferred). It has no HTTP surface, so
+   > its sends come only from ticks, and with `KEEPER_ENABLED=false` only
+   > the UNGATED passes run — the watcher's HF-band notifications and the
+   > pre-grace warnings. Those can satisfy this check when an eligible
+   > subscriber event occurs; the gated passes cannot. Do not drop the
+   > check if no such event arrives — re-run it as part of the re-enable
+   > sequence in `apps/keeper/wrangler.jsonc`, at its armed-tick step.
 7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
    to the OLD channel and nothing migrates them.
 

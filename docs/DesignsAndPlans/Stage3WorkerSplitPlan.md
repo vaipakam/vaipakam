@@ -37,9 +37,11 @@ The split unblocks four follow-on changes that are awkward today:
    deployment nor an independent schedule. The coupling is real — a
    matcher fault would share a tick with liquidation — and is recorded
    here rather than presented as satisfied. Note the tense: that trigger
-   was `* * * * *` and is now `[]` (#1896), so nothing on this Worker
-   ticks today. The coupling is a property of the code and unchanged;
-   the execution is not happening at all.
+   was `[]` from #1896 until 2026-10-14 and is `* * * * *` again, so the
+   Worker ticks — but with `KEEPER_ENABLED=false` the matcher and the
+   liquidation passes are gated off, and only the ungated passes run. The
+   coupling is a property of the code and unchanged; the matcher's
+   execution is not happening yet.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -261,9 +263,10 @@ After PR2 / PR3 / PR4 have all been validated in production:
 > cited `index.ts:141-146`, which was the wiring before the passes were
 > extracted into their own schedule; those lines now close `timedPass` and
 > open `scheduled()`, so the citation sent readers to unrelated code.) The matcher pass is IMPLEMENTED — do not re-implement
-> or re-schedule it — but it does not EXECUTE today: that cron is committed
-> as `[]` under #1896, so the Worker takes no ticks for `runMatcher` to
-> ride. Read "live" here as shipped code, not as running work, and do not
+> or re-schedule it — but it does not EXECUTE today: the cron is `* * * * *`
+> again (since 2026-10-14; it was `[]` under #1896 until then), but the
+> live keeper has `KEEPER_ENABLED=false`, so `runMatcher` returns from its
+> gate on every tick. Read "live" here as shipped code, not as running work, and do not
 > diagnose an absence of matches as a matcher fault.
 >
 > Two things this banner previously overstated, both corrected:
@@ -345,9 +348,11 @@ status marked per item — read the items, not this sentence:
 
 - Cron triggers loose enough for a matcher pass — **done**, and tighter
   than planned: `apps/keeper/wrangler.jsonc` was set to `* * * * *`, not
-  the `*/5 * * * *` this section assumed. **It runs neither today** —
-  that file now commits `"crons": []` under #1896, so the matcher pass
-  described here does not execute until the hold lifts.
+  the `*/5 * * * *` this section assumed. **The matcher does not run
+  today, though** — that file committed `"crons": []` under #1896 until
+  2026-10-14 and commits `* * * * *` again, but the matcher is gated by
+  `KEEPER_ENABLED`, which is false, so it does not execute until the
+  keeper is armed.
 - The keeper-side `db.ts` subset reading the indexer's `offers` table
   (cross-Worker D1 read, same database, different bindings) — **STILL
   OUTSTANDING.** `matcher.ts:41-43` states discovery is on-chain (count +
@@ -367,7 +372,7 @@ and Stage 3 is about the FIRST-party one.
 
 | Surface | Repo | Purpose |
 | --- | --- | --- |
-| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, and wired to the keeper cron, though that cron is `[]` today under #1896 so it does not currently run — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
+| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, and wired to the keeper cron (`* * * * *` again since 2026-10-14, after `[]` under #1896), though it does not currently run because it is gated by `KEEPER_ENABLED`, which is false — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
 | **`vaipakam-keeper-bot`** | Sibling repo at `~/Codes/Vaipakam/vaipakam-keeper-bot` (per [`CLAUDE.md`](../../CLAUDE.md)) | Public reference implementation of a keeper bot for third-party operators to run themselves. Read-only ABI surface, OSS-licensed, designed for community liquidators. |
 
 They share the contract surface (same `RiskFacet.calculateHealthFactor`

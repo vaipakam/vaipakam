@@ -83,7 +83,7 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-warm
 | `vaipakam-defi` | `defi.vaipakam.com` ✅ live (200), verified 2026-08-27 — was "cert provisioning" at the May snapshot | dApp frontend — **source deleted in #1854**; the Worker still serves and cannot be rebuilt. No longer the only host for `/analytics` and `/protocol-console` — #1959 ported both to `apps/app` — so it is retirable as a link target; retiring it OUTRIGHT waits on the `/recover` links, which are held by same-origin storage rather than by any missing route | none | none |
 | `vaipakam-agent` | `agent.vaipakam.com` ✅ live, verified 2026-08-27 — was "cert provisioning" at the May snapshot | D1 → users (REST, Telegram, Push, frames). Origin-gated: see the binding table below before reading a 403 as an outage | every minute | yes |
 | `vaipakam-indexer` | `indexer.vaipakam.com` ✅ live (200), verified 2026-08-27 — this row said "no public domain — cron only", which was true at the May snapshot and stopped being true when the route was added | Chain → D1, plus the public read-API | every minute | yes |
-| `vaipakam-keeper` | (no public domain — cron only) | Chain writes | **NONE — `"crons": []`, #1896** (was `* * * * *`; the "5-min HF + 00:05 UTC daily oracle" this row used to claim was already wrong) | yes |
+| `vaipakam-keeper` | (no public domain — cron only) | Chain writes | every minute — `* * * * *` restored and deployed 2026-10-14, after `"crons": []` from #1896 until then (the "5-min HF + 00:05 UTC daily oracle" this row once claimed was already wrong). **Disarmed:** `KEEPER_ENABLED=false`, so only the ungated passes run (watcher alerts, pre-grace warnings, the daily oracle snapshot — which signs — and liquidity confidence); #1896 is still open | yes |
 
 Workers default URLs (for direct reachability before custom-domain SSL is fully live):
 - https://vaipakam-app.dawn-fire-139e.workers.dev — **also the standing post-deploy review target**, not just a fallback: a deploy reaches this URL before `app.vaipakam.com` does, so the domain can lag or answer for an older version. Review here unless you have confirmed both serve the same `/assets/index-*.js` hash. This exact origin is in the agent's `FRONTEND_ORIGIN` for that reason — do not remove it
@@ -110,12 +110,15 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 - [ ] Set `RPC_*` per chain on `vaipakam-indexer` and `vaipakam-keeper`
 - [ ] Set `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, aggregator API keys on `vaipakam-agent`
 - [ ] Set `KEEPER_ENABLED=false` on `vaipakam-keeper` initially. **#1896: flipping it
-      true is NO LONGER sufficient to start the keeper, and must not be done yet.**
-      The Worker has no cron (`"crons": []`), so the flag alone arms nothing — every
-      pass stays stopped. Restoring the schedule is a prerequisite and has its own
-      sequence, kept beside the empty list in `apps/keeper/wrangler.jsonc`; that
-      sequence begins by setting this flag to `false` explicitly, because a secret's
-      value cannot be read back and "it should still be off" is not a check.
+      true must not be done yet.** The schedule is back (`* * * * *` since
+      2026-10-14; from #1896 until then the Worker had no cron), and the live
+      keeper is disarmed — so the ungated passes already run every tick and the
+      gated ones (matching, liquidation, lifecycle upkeep, grace-default, reward
+      remittance/acks, commitment reports) do not. Arming needs a fresh owner OK
+      after live ticks show no `exceededCpu`, and follows the re-enable sequence
+      kept beside the cron list in `apps/keeper/wrangler.jsonc`; that sequence
+      begins by setting this flag to `false` explicitly, because a secret's value
+      cannot be read back and "it should still be off" is not a check.
 
 ## Pending — author action
 

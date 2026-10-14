@@ -130,9 +130,11 @@ revision of this section told you to do both, which is incoherent — the file
 change has no effect without a deploy, and a deploy is exactly what the next
 paragraph forbids.
 
-**The repository now commits an EMPTY cron** (`"crons": []`) — #1896, done
-deliberately after measurement, and this section previously told you the
-opposite. The follow-up it used to recommend has been taken:
+**The repository commits `["* * * * *"]` again** (as of 2026-10-14). From
+#1896 until that date it committed an EMPTY cron, done deliberately after
+measurement because every invocation hit the free-tier CPU limit; #1896 is
+still open, and no live tick has yet been confirmed free of `exceededCpu`. The
+empty form is the rollback, kept beside the list in `wrangler.jsonc`:
 
 ```jsonc
 "triggers": { "crons": [] }
@@ -197,19 +199,23 @@ Keeping vars costs nothing here: the only var this config declares is
 `TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
 nowhere in the Worker.
 
-**What that means for an incident.** The keeper is not currently scheduled,
-so there is nothing to emergency-stop — the dashboard steps above apply only
-after someone has re-armed it. A deploy from a clean checkout no longer
-re-arms it; it now *keeps it stopped*, which is the inversion to remember if
-you last read this section before #1896.
+**What that means for an incident.** The keeper is scheduled again (since
+2026-10-14), so the dashboard emergency-stop steps above apply again. A deploy
+from a clean checkout now *registers* the schedule — from #1896 until
+2026-10-14 it kept the keeper stopped instead, which is the inversion to
+remember if you last read this section during that hold. The live Worker has
+`KEEPER_ENABLED=false`, so the gated signing passes do not run, but the
+ungated ones do on every tick — watcher alerts, pre-grace warnings, liquidity
+confidence, and the daily oracle snapshot, which signs an on-chain
+transaction in its UTC window.
 
-**And it means the reverse is now the risky direction.** Re-arming requires
-editing `wrangler.jsonc` **and** running `wrangler deploy` — the file alone
+**Returning to the hold goes through the file too.** Re-holding requires
+setting `"crons": []` in `wrangler.jsonc` **and** deploying — the file alone
 changes nothing, exactly as this section says about stopping. The full
-re-enable sequence, including the trigger-aware readback and the
-up-to-15-minute propagation window, is kept beside the empty list in
-`wrangler.jsonc` rather than here, so it cannot drift from the thing it
-describes.
+re-enable sequence and the rollback, including the trigger-aware readback and
+the up-to-15-minute propagation window, are kept beside the cron list in
+`wrangler.jsonc` rather than here, so they cannot drift from the thing they
+describe.
 
 **Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
 the whole Worker configuration to change one schedule, which is more surface

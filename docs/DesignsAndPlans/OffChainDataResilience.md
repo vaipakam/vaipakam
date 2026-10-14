@@ -295,9 +295,12 @@ Worker fits.
 Two design points do survive independently of the count, and they are
 what this section is actually for:
 
-- **`apps/keeper`'s empty `"crons": []` is a reservation.** Its re-enable
-  procedure begins by confirming a free trigger, so spending that one
-  leaves the keeper stopped at the account cap.
+- **`apps/keeper` holds its trigger again.** From #1896 until 2026-10-14 its
+  `"crons": []` was a reservation; on that date the repository restored
+  `["* * * * *"]` and the deploy registered it, so the keeper now occupies
+  the slot it had reserved. Rolling it back to `"crons": []` frees that slot
+  again, and spending it elsewhere would then leave the keeper stopped at the
+  account cap on its next re-enable.
 - **`ops/mesh-watcher` needs a trigger on its first deploy** (§4.5),
   which is a cost to plan for rather than a slot already set aside.
 

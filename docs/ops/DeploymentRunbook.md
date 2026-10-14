@@ -1798,7 +1798,7 @@ pointed at.
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
-| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-only and deliberately unbound — **and currently UNSCHEDULED**: `apps/keeper/wrangler.jsonc:269` commits `"crons": []` under #1896, so no pass runs at all. Quiet keeper metrics are not evidence of health until that hold lifts. |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-only and deliberately unbound. Scheduled again since 2026-10-14 (`apps/keeper/wrangler.jsonc` commits `["* * * * *"]`; from #1896 until then it committed `"crons": []`), but **disarmed** — `KEEPER_ENABLED=false`, so only the ungated passes run (watcher alerts, pre-grace warnings, the daily oracle snapshot, liquidity confidence). Quiet gated-pass metrics are not evidence of health while it stays disarmed; #1896 is still open. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
 | `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
 | `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
@@ -2137,19 +2137,21 @@ a cron and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
 **not** repeat per-chain deploy.
 
-> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-> was terminated for exceeding CPU on ~100% of invocations. **Do the
-> setup in 8a and 8b anyway** — the bot, the channel and the secrets are
-> all still needed, and they stay latched for when the schedule returns.
-> What cannot pass is **8c**: with no cron there is no tick, so the smoke
-> test has nothing to observe and must be recorded as deferred rather
-> than waited on or quietly skipped. The `cf-keeper` phase in
-> `contracts/script/deploy-{testnet,mainnet}.sh` will still report
-> success — it deploys and checks an RPC secret, and does not inspect the
-> schedule — so its green result does not contradict this hold. Restore
-> the schedule only via the sequence kept beside the empty list in
-> `apps/keeper/wrangler.jsonc`, which disarms `KEEPER_ENABLED` first.
+> **Schedule posture (#1896).** As of 2026-10-14
+> `apps/keeper/wrangler.jsonc` commits `["* * * * *"]` again and the keeper
+> is deployed with it; from #1896 until then it committed `"crons": []`,
+> because the Worker was terminated for exceeding CPU on ~100% of
+> invocations. #1896 is still open — no live tick has yet been confirmed
+> free of `exceededCpu`. The live keeper has `KEEPER_ENABLED=false`, which
+> stops the gated signing passes but not the watcher this section sets up:
+> HF-band alerts are ungated and run every tick, so **8c can run now**.
+> The `cf-keeper` phase in `contracts/script/deploy-{testnet,mainnet}.sh`
+> deploys and checks an RPC secret, and does not inspect the schedule, so
+> its green result says nothing about ticks either way. Arming
+> `KEEPER_ENABLED=true` waits on a fresh owner OK after live ticks show no
+> `exceededCpu`; the re-enable sequence and the rollback (`"crons": []`
+> again, commit, deploy) are kept beside the list in
+> `apps/keeper/wrangler.jsonc`.
 
 ### 8a. Telegram bot
 
@@ -2272,11 +2274,11 @@ Telegram + Push Protocol. This section is one-time setup and does
 
 ### 8c. Smoke test the watcher
 
-> **⚠ HOLD — #1896.** This test cannot pass while the keeper is
-> unscheduled: step 4 below waits for a cron tick that will never fire.
-> Record it as deferred in the deploy log and resume it when the schedule
-> is restored. Do not substitute a shorter wait or read the quiet tail as
-> a pass.
+> **Runs again since 2026-10-14** — from #1896 until then the keeper was
+> unscheduled and this test was recorded as deferred. With
+> `KEEPER_ENABLED=false` it can observe only the UNGATED passes; the
+> HF-band alert it exercises is one of them, so it can pass. A quiet tail
+> is still not a pass — wait for the band-crossing lines below.
 
 ```bash
 cd apps/keeper
@@ -2286,8 +2288,8 @@ npx wrangler tail        # tail logs in another terminal
 #   1. Subscribe to the Push channel at the URL in 8b.2
 #   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
 #   3. Lower one threshold below the connected wallet's HF
-#   4. Wait for the next cron tick (HELD — see above; the canonical
-#      schedule is per-minute, not 5-minute, and is currently empty)
+#   4. Wait for the next cron tick (the canonical schedule is
+#      per-minute, not 5-minute)
 # Expect: log lines for `tg send` + Push API success on band crossings.
 ```
 
