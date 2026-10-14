@@ -163,12 +163,12 @@ describe('planCalendarRows (pure window + dedup logic)', () => {
 
   it('fires grace_ended for BOTH parties once grace has closed, for one week only', () => {
     // 30d loan → 3d grace. 4 days past due: grace has ended.
-    const ended = planCalendarRows(CHAIN, [maturingIn(5, -4 * DAY)], NOW, HEAD);
+    const ended = planCalendarRows(CHAIN, [maturingIn(5, -4 * DAY)], NOW, HEAD, null, NOW);
     expect(ended.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
     expect(ended.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
     expect(ended[0].dedupKey).toContain(':grace_ended:5:');
     // Past grace end + 7d → quiet; the loan was already announced.
-    const stale = planCalendarRows(CHAIN, [maturingIn(9, -11 * DAY)], NOW, HEAD);
+    const stale = planCalendarRows(CHAIN, [maturingIn(9, -11 * DAY)], NOW, HEAD, null, NOW);
     expect(stale).toHaveLength(0);
   });
 
@@ -176,18 +176,31 @@ describe('planCalendarRows (pure window + dedup logic)', () => {
     // isLoanDefaultable is `block.timestamp > maturity + grace`, so at the
     // exact second grace ends the loan is not yet defaultable and nothing
     // may say it is.
-    const atEdge = planCalendarRows(CHAIN, [maturingIn(10, -3 * DAY)], NOW, HEAD);
+    const atEdge = planCalendarRows(CHAIN, [maturingIn(10, -3 * DAY)], NOW, HEAD, null, NOW);
     expect(atEdge.filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
-    const justPast = planCalendarRows(CHAIN, [maturingIn(10, -3 * DAY - 1)], NOW, HEAD);
+    const justPast = planCalendarRows(CHAIN, [maturingIn(10, -3 * DAY - 1)], NOW, HEAD, null, NOW);
     expect(justPast.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
+  });
+
+  it('judges grace_ended on the CHAIN clock, and withholds it without one (#2479 r1)', () => {
+    // triggerDefault compares block.timestamp, not the indexer's wall clock.
+    // A chain whose settled head lags wall time must not be told a loan is
+    // past grace before the chain itself would agree.
+    const loan = maturingIn(12, -3 * DAY - 60); // 60s past grace by WALL time
+    const behind = planCalendarRows(CHAIN, [loan], NOW, HEAD, null, NOW - 120);
+    expect(behind.filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
+    const unknown = planCalendarRows(CHAIN, [loan], NOW, HEAD, null, null);
+    expect(unknown.filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
+    const caughtUp = planCalendarRows(CHAIN, [loan], NOW, HEAD, null, NOW);
+    expect(caughtUp.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
   });
 
   it('times grace_ended against the CONFIGURED schedule, not the default', () => {
     const buckets: GraceBucketJson[] = [{ maxDurationDays: '0', graceSeconds: String(10 * DAY) }];
     // 4 days past due: past the default 3d grace, but inside a 10d one.
-    const inCustomGrace = planCalendarRows(CHAIN, [maturingIn(11, -4 * DAY)], NOW, HEAD, buckets);
+    const inCustomGrace = planCalendarRows(CHAIN, [maturingIn(11, -4 * DAY)], NOW, HEAD, buckets, NOW);
     expect(inCustomGrace.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
-    const pastCustom = planCalendarRows(CHAIN, [maturingIn(11, -11 * DAY)], NOW, HEAD, buckets);
+    const pastCustom = planCalendarRows(CHAIN, [maturingIn(11, -11 * DAY)], NOW, HEAD, buckets, NOW);
     expect(pastCustom.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
   });
 
@@ -656,16 +669,16 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedGraceConfig(h);
     seedLoan(h, 21, NOW - 1 * DAY - 30 * DAY, 30); // 1d past due, 3d grace
-    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
     expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
     // Three days later grace has closed. The loan ALREADY carries both
     // parties' grace_entered rows, so a lender probe keyed on a fixed
     // 'grace_entered' would read as satisfied and drop it from the window.
-    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 3 * DAY, HEAD + 5);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 3 * DAY, HEAD + 5, new Set(), NOW + 3 * DAY);
     const ended = rowsInDb(h).filter((r) => r.kind === 'grace_ended');
     expect(ended.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
     // Re-tick: one-shot.
-    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 3 * DAY + 60, HEAD + 10);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 3 * DAY + 60, HEAD + 10, new Set(), NOW + 3 * DAY + 60);
     expect(rowsInDb(h)).toHaveLength(4);
   });
 
@@ -689,9 +702,9 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
       stmt.run(CHAIN, i, LENDER, BORROWER, LENDER, BORROWER, NOW - overdue - 30 * DAY);
     }
     seedLoan(h, 3000, NOW - 12 * 3_600 - 30 * DAY, 30); // in grace, latest maturity
-    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
     expect(rowsInDb(h).filter((r) => r.loan_id === 3000)).toHaveLength(0); // tick 1: starved
-    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5, new Set(), NOW + 60);
     const straggler = rowsInDb(h).filter((r) => r.loan_id === 3000);
     expect(straggler.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']); // tick 2: served
   });

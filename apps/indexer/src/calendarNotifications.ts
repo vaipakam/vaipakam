@@ -193,6 +193,11 @@ interface Milestone {
   /** Window end relative to maturity (exclusive). */
   toOffset: (durationDays: number, buckets: GraceBucketJson[] | null) => number;
   recipients: 'borrower' | 'both';
+  /** Which clock opens the window. A reminder (`wall`) is advice and may
+   *  run on the Worker's clock; a lifecycle claim (`chain`) states what the
+   *  CONTRACT now holds, so it is judged on the chain's own clock — the
+   *  settled head's timestamp — and is withheld when that is unknown. */
+  clock: 'wall' | 'chain';
 }
 
 /** How long past grace end `grace_ended` stays emittable. Bounds the
@@ -210,13 +215,14 @@ export const GRACE_ENDED_WINDOW_SECONDS = 7 * DAY;
  *  window closed one second before the contract agrees. The terminal row
  *  for an actual default arrives via the default/liquidation events. */
 const MILESTONES: Milestone[] = [
-  { kind: 'maturity_7d', fromOffset: () => -7 * DAY, toOffset: () => 0, recipients: 'borrower' },
-  { kind: 'maturity_1d', fromOffset: () => -1 * DAY, toOffset: () => 0, recipients: 'borrower' },
+  { kind: 'maturity_7d', fromOffset: () => -7 * DAY, toOffset: () => 0, recipients: 'borrower', clock: 'wall' },
+  { kind: 'maturity_1d', fromOffset: () => -1 * DAY, toOffset: () => 0, recipients: 'borrower', clock: 'wall' },
   {
     kind: 'grace_entered',
     fromOffset: () => 0,
     toOffset: (durationDays, buckets) => effectiveGraceSeconds(durationDays, buckets),
     recipients: 'both',
+    clock: 'wall',
   },
   {
     kind: 'grace_ended',
@@ -224,6 +230,10 @@ const MILESTONES: Milestone[] = [
     toOffset: (durationDays, buckets) =>
       effectiveGraceSeconds(durationDays, buckets) + GRACE_ENDED_WINDOW_SECONDS,
     recipients: 'both',
+    // "Grace has ended" is the contract's own predicate, so it is read
+    // against chain time: a wall clock that has run ahead of the chain (a
+    // block gap, a stalled sequencer) must not announce it early.
+    clock: 'chain',
   },
 ];
 
@@ -239,6 +249,9 @@ export function planCalendarRows(
   nowSec: number,
   headBlock: number,
   graceBuckets: GraceBucketJson[] | null = null,
+  /** The settled head's block timestamp, for `chain`-clock milestones.
+   *  `null` withholds them: no lifecycle claim without the chain's time. */
+  chainNowSec: number | null = null,
 ): NotifRow[] {
   const rows: NotifRow[] = [];
   for (const loan of loans) {
@@ -253,9 +266,11 @@ export function planCalendarRows(
       isSaleVehicle: false,
     };
     for (const m of MILESTONES) {
+      const clockNow = m.clock === 'chain' ? chainNowSec : nowSec;
+      if (clockNow === null) continue;
       const from = maturity + m.fromOffset(loan.duration_days, graceBuckets);
       const to = maturity + m.toOffset(loan.duration_days, graceBuckets);
-      if (nowSec < from || nowSec >= to) continue;
+      if (clockNow < from || clockNow >= to) continue;
       const sides: ('lender' | 'borrower')[] =
         m.recipients === 'both' ? ['lender', 'borrower'] : ['borrower'];
       const seen = new Set<string>();
@@ -437,6 +452,8 @@ export async function sweepCalendarNotifications(
    * their holders should hear about them.
    */
   excludeLoanIds: ReadonlySet<number> = new Set(),
+  /** The settled head's block timestamp (see `planCalendarRows`). */
+  chainNowSec: number | null = null,
 ): Promise<CalendarSweepResult> {
   try {
     // The effective grace schedule — snapshotted governance buckets
@@ -585,7 +602,7 @@ export async function sweepCalendarNotifications(
       );
     }
     if (eligible.length === 0) return EMPTY_SWEEP;
-    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets);
+    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets, chainNowSec);
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);
     if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new
