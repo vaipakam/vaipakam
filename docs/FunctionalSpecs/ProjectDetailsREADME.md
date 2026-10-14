@@ -2840,7 +2840,7 @@ General design requirements:
   serve a requested chain, it should return a clear not-configured response so
   the app falls back to direct chain reads instead of showing an empty list.
 - periodic-interest events should land in the same append-only `activity_events` ledger as ordinary loan lifecycle events so Loan Details timelines, Activity, and watcher reconciliation all read one event source.
-- internal-match liquidation events should land in the same append-only activity ledger. The indexer should update each matched leg's principal and collateral according to the protocol's match fraction, mark fully cleared legs as internally matched, and preserve a user-visible event row with the matcher as actor.
+- internal-match liquidation events should land in the same append-only activity ledger. The indexer should update each matched leg's principal and collateral according to the protocol's match fraction, mark fully cleared legs as internally matched, and preserve a user-visible event row with the matcher as actor. When the claims on an internally matched loan clear and the protocol settles it, the indexed status must become settled like any other fully claimed loan: the protocol's settlement signal is authoritative for every prior status, so an indexed loan never stays internally matched (or in any other prior state) after the protocol has settled it.
 - Indexer handlers must be replay-safe across partial-tick failures and catch-up
   re-scans. When a scan writes domain rows but fails before advancing its cursor,
   re-processing the same block range must converge to the same rows rather than

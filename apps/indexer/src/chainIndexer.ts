@@ -4898,13 +4898,25 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
-      // status was to 'settled' to mark "all claims resolved" — the
-      // status order is logical (active → repaid/defaulted/liquidated
-      // → settled), and querying for "is anything left to claim"
-      // becomes `status != 'settled'` instead of joining activity_events.
+      // status was to 'settled' to mark "all claims resolved", so
+      // querying for "is anything left to claim" becomes
+      // `status != 'settled'` instead of joining activity_events.
+      //
+      // #2464 — the event is AUTHORITATIVE, so it settles any row that
+      // is not settled already. This used to name the prior statuses by
+      // hand (`repaid`, `defaulted`, `liquidated`) and left out
+      // `internal_matched`: an internally matched loan's claims settle it
+      // on chain, and the `LoanStatusChanged` edge handler deliberately
+      // leaves terminal → Settled to this one ("the claim handlers own
+      // this edge"), so the row stayed `internal_matched` for good. The
+      // contract emits `LoanSettled` only where it moves the loan to
+      // Settled, some of them via `transitionFromAny`, so a hand list of
+      // prior states is a second copy of the contract's rules that can only
+      // drift. Migration 0057 re-projects rows the ledger already shows
+      // settled.
       const r = await env.DB.prepare(
         `UPDATE loans SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
-         WHERE chain_id = ? AND loan_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')`,
+         WHERE chain_id = ? AND loan_id = ? AND status <> 'settled'`,
       )
         .bind(
           Number(log.blockNumber),

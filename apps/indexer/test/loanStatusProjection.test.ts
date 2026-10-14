@@ -331,3 +331,82 @@ describe('processLoanLogs — safety net defers to specific handlers (#1782)', (
     expect(res.statusUpdates).toBe(1);
   });
 });
+
+describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
+  const settledLog = (loanId: number, block = 100, logIndex = 0) => ({
+    eventName: 'LoanSettled',
+    args: { loanId: BigInt(loanId) },
+    blockNumber: BigInt(block),
+    transactionHash: `0x${'ef'.repeat(32)}`,
+    logIndex,
+  });
+  const run = (h: SqliteD1, logs: unknown[]) =>
+    processLoanLogs(logs as never, { DB: h.d1 } as unknown as Env, CHAIN, new Map([[100n, 500]]), stubClient, DIAMOND);
+
+  it('settles an internally matched row — the case the hand-listed statuses left out', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'internal_matched');
+    const res = await run(h, [settledLog(40)]);
+    expect(res.statusUpdates).toBe(1);
+    expect(statusOf(h, 40)).toBe('settled');
+  });
+
+  it('still settles the terminal statuses it always did, and is idempotent on an already-settled row', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (const [id, st] of [
+      [41, 'repaid'],
+      [42, 'defaulted'],
+      [43, 'liquidated'],
+    ] as const) {
+      seedLoan(h, id, st);
+    }
+    seedLoan(h, 44, 'settled');
+    const res = await run(h, [settledLog(41, 100, 0), settledLog(42, 100, 1), settledLog(43, 100, 2), settledLog(44, 100, 3)]);
+    expect(res.statusUpdates).toBe(3);
+    for (const id of [41, 42, 43, 44]) expect(statusOf(h, id)).toBe('settled');
+  });
+
+  it('a claim transaction’s edge plus LoanSettled ends settled, as the chain does', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 45, 'internal_matched');
+    // The real claim receipt on Base Sepolia loan 24: LoanStatusChanged(5→3)
+    // then LoanSettled, in that order, in one transaction.
+    await run(h, [statusChangedLog(45, 5, 3, 100, 0), settledLog(45, 100, 1)]);
+    expect(statusOf(h, 45)).toBe('settled');
+  });
+});
+
+describe('migration 0057 — settle rows the ledger shows settled (#2464)', () => {
+  const FILES = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+  const TARGET = '0057_settle_from_ledger.sql';
+  const BEFORE = FILES.filter((f) => f < TARGET).map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
+  const MIGRATION = readFileSync(new URL(TARGET, MIGRATIONS_DIR), 'utf8');
+  const ledger = (h: SqliteD1, loanId: number, kind: string, block: number, at: number) =>
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+         VALUES (?, ?, 0, '0x1', ?, ?, '{}', ?)`,
+      )
+      .run(CHAIN, block, kind, loanId, at);
+  const row = (h: SqliteD1, id: number) =>
+    h.db.prepare('SELECT status, terminal_block, terminal_at FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, id) as {
+      status: string;
+      terminal_block: number | null;
+      terminal_at: number | null;
+    };
+
+  it('settles a stuck row from its ledger event, dated by that event, and touches nothing else', () => {
+    const h = createSqliteD1(BEFORE);
+    seedLoan(h, 24, 'internal_matched'); // settled on chain — ledger has it
+    ledger(h, 24, 'LoanSettled', 48004228, 1791775970);
+    seedLoan(h, 28, 'internal_matched'); // still unclaimed — no LoanSettled
+    ledger(h, 28, 'OwedAtInternalMatchRecorded', 48059980, 1791888248);
+    seedLoan(h, 30, 'active');
+    h.db.exec(MIGRATION);
+    expect(row(h, 24)).toEqual({ status: 'settled', terminal_block: 48004228, terminal_at: 1791775970 });
+    expect(row(h, 28).status).toBe('internal_matched');
+    expect(row(h, 30).status).toBe('active');
+    h.db.exec(MIGRATION); // idempotent
+    expect(row(h, 24).status).toBe('settled');
+  });
+});
