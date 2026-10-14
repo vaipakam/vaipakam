@@ -732,6 +732,12 @@ export async function launch({
   // could POST a write straight at an RPC or a first-party endpoint and the
   // wallet gate would never see it. Implied by readOnly.
   readOnlyEgress = false,
+  // allowQuoteProxy: under readOnlyEgress, let the page POST to OUR quote
+  // proxy (`/quote/<venue>` on a first-party host) and nothing else. The
+  // close-out card prices a sale through it (`buildCloseOutRoute`); a quote
+  // is a price request that changes no state, while every other first-party
+  // POST stays refused (#2481 r6). Exact path shape, never a host-wide pass.
+  allowQuoteProxy = false,
   // preAuthorized: whether `eth_accounts` reports the account BEFORE
   // the page ever calls `eth_requestAccounts`. Default true mirrors a
   // returning user whose wallet already authorized the site (the
@@ -1077,6 +1083,15 @@ export async function launch({
     if (!readOnly && !readOnlyEgress) return null;
     const method = req.method().toUpperCase();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
+    if (allowQuoteProxy && method === 'POST' && isFirstParty(req.url())) {
+      let path = '';
+      try {
+        path = new URL(req.url()).pathname;
+      } catch {
+        /* unparseable: not exempt */
+      }
+      if (/^\/quote\/[a-z0-9]+$/i.test(path)) return null;
+    }
     const body = req.postData();
     if (body) {
       // The exemption needs the DESTINATION and the VERB, not just a

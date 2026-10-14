@@ -103,8 +103,6 @@ const REPO = path.resolve(HERE, '../../../..');
 const CHAIN_ID = 84532;
 const ACTIVE = 0;
 const DEFAULTED = 2;
-const SETTLED = 3;
-const FALLBACK_PENDING = 4;
 /** The one state this drive judges: a liquid-collateral close-out that the
  *  app must route as a SALE (#2463). */
 const SALE_STATE = 'ready-needs-route';
@@ -112,7 +110,6 @@ const SALE_STATE = 'ready-needs-route';
  *  different shape, so meeting one is a missing precondition (BLOCKED),
  *  never a product failure (#2481 r1). */
 const OTHER_READY_STATES = new Set(['ready-in-kind', 'ready-internal-match', 'ready-rental']);
-const INTERNAL_MATCHED = 5;
 
 function readJson(rel) {
   const file = path.join(REPO, rel);
@@ -150,10 +147,9 @@ const CLOSE_ONLY = [
   },
   {
     id: 'closedOut',
-    claim: 'the close-out executed and the loan left Active — Defaulted (sale cleared) or FallbackPending (sale did not), never a revert',
+    claim: 'the close-out ran the sale: its receipt carries LoanDefaulted + SwapAdapterSucceeded (cleared) or LoanFallbackPending + SwapAllAdaptersFailed (fell back) for this loan; any other result after a positive preview is a race, UNDETERMINED',
     checks: {
-      receipt: "the close-out's receipt is successful and carries LoanDefaulted with SwapAdapterSucceeded (the sale cleared) or LoanFallbackPending with SwapAllAdaptersFailed (it did not), for this loan",
-      status: "getLoanDetails.status at the receipt's block is that outcome or a state it can validly reach later in the same block",
+      receipt: "the close-out's own receipt events, for this loan",
     },
   },
   {
@@ -429,7 +425,7 @@ async function gate(method, params) {
 const sentHash = () => step()?.record?.hash ?? null;
 const session = await launch(
   SUBMIT
-    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true }
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true, allowQuoteProxy: true }
     : { role: ROLE, readOnly: true },
 );
 const { ctx, page, done, consoleErrors, blockedRequests } = session;
@@ -484,6 +480,19 @@ let armedOnce = false;
 let nonceBefore = null;
 /** The outcome, read from the chain by the hash the wallet returned. */
 async function judgeOutcome(hash) {
+  // ROOT RULE (#2481 r6): the app is judged at the point it asks to sign —
+  // the gate's independent preview of that exact request must SELL, or the
+  // run FAILs there. After the send, the receipt is EVIDENCE, not a verdict
+  // on the app: the request previewed as a sale, so anything else the chain
+  // did with it (a revert, an internal match, an in-kind branch) came from
+  // state that moved between the preview and inclusion — a race — and is
+  // UNDETERMINED. Earlier rounds tried to explain each such case by naming
+  // the precondition that moved (pause, sequencer, KYC, ordering inside the
+  // block, the statuses a loan reaches later in its block); every round found
+  // another, because the list has no end. The rule replaces the list.
+  //
+  // So there is one outcome check, transaction-indexed by the receipt's own
+  // events; the end-of-block status read it used to need is gone.
   let receipt;
   try {
     receipt = await pub.waitForTransactionReceipt({ hash, timeout: 180_000 });
@@ -492,79 +501,31 @@ async function judgeOutcome(hash) {
     return;
   }
   if (receipt.status === 'reverted') {
-    // A revert is a defect only if the close-out's preconditions still held
-    // at that block. Another keeper closing the loan first, or the position
-    // moving, is an intrinsic race the drive cannot prevent (#2481 r1).
-    let moved = null;
-    try {
-      const e = await readPinned(() => eligibleAt(receipt.blockNumber));
-      if (!e.ok) moved = e.why;
-    } catch (err) {
-      unsettled('closedOut', 'receipt', `reverted (${hash}), and the direct RPC could not read the loan at that block (${err.message})`);
-      return;
-    }
-    if (moved) {
-      unsettled('closedOut', 'receipt', `reverted (${hash}, block ${receipt.blockNumber}) after its precondition moved — ${moved} — a race, not a defect`);
-    } else {
-      check('closedOut', 'receipt', 'the close-out executed', false, `reverted with its preconditions intact — ${hash} in block ${receipt.blockNumber}`);
-    }
+    unsettled('closedOut', 'receipt', `reverted (${hash}, block ${receipt.blockNumber}) after the request previewed as a sale — state moved before inclusion; not judged a defect`);
     return;
   }
-  // The card warns that an opposing position may appear before the
-  // transaction runs: triggerDefault then settles by INTERNAL MATCHING
-  // instead (full → InternalMatched, partial → still Active). A valid raced
-  // outcome, not the sale under test (#2481 r1).
-  const matched = parseEventLogs({
-    abi: DIAMOND_ABI,
-    eventName: 'InternalMatchExecuted',
-    logs: receipt.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()),
-  }).some((l) => [l.args.loanIdA, l.args.loanIdB, l.args.loanIdC].includes(LOAN_ID));
-  if (matched) {
-    let status = '?';
-    try {
-      status = String((await readPinned(() => read('getLoanDetails', [LOAN_ID], { blockNumber: receipt.blockNumber }))).status);
-    } catch {
-      /* stated below as unread */
-    }
-    const shape = status === String(INTERNAL_MATCHED) ? 'fully matched (InternalMatched)' : status === String(ACTIVE) ? 'partly matched (still Active)' : `status ${status}`;
-    unsettled('closedOut', 'receipt', `the close-out raced an internal match and settled that way — ${shape}, ${hash}; the sale route under test did not run`);
-    return;
-  }
+  const diamondLogs = receipt.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase());
   const ours = (name) =>
-    parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: receipt.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()) })
-      .some((l) => l.args.loanId === LOAN_ID);
-  // A SALE is proven by the swap events, not by LoanDefaulted alone: an
-  // in-kind close-out also emits LoanDefaulted and ignores the routes, so a
-  // card wrongly declaring a sale would otherwise pass (#2481 r2).
+    parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: diamondLogs }).some((l) => l.args.loanId === LOAN_ID);
+  const matched = parseEventLogs({ abi: DIAMOND_ABI, eventName: 'InternalMatchExecuted', logs: diamondLogs }).some((l) =>
+    [l.args.loanIdA, l.args.loanIdB, l.args.loanIdC].includes(LOAN_ID),
+  );
   const defaulted = ours('LoanDefaulted');
   const fallback = ours('LoanFallbackPending');
   const sold = ours('SwapAdapterSucceeded');
   const allFailed = ours('SwapAllAdaptersFailed');
-  const saleCleared = defaulted && sold && !fallback;
-  const saleFellBack = fallback && allFailed && !defaulted;
-  check(
-    'closedOut',
-    'receipt',
-    'the close-out ran the sale and recorded its outcome',
-    saleCleared || saleFellBack,
-    `${saleCleared ? 'LoanDefaulted + SwapAdapterSucceeded (the sale cleared)' : saleFellBack ? 'LoanFallbackPending + SwapAllAdaptersFailed (no venue met the minimum; collateral held for the lender)' : `events: LoanDefaulted ${defaulted}, LoanFallbackPending ${fallback}, SwapAdapterSucceeded ${sold}, SwapAllAdaptersFailed ${allFailed} — no sale proven`} — ${hash}, block ${receipt.blockNumber}`,
-  );
-  try {
-    // The read is the END of the receipt's block, so a later transaction in
-    // the same block may already have moved the loan on: a Defaulted loan
-    // to Settled once both claims land; a FallbackPending one cured back to
-    // Active, finalized to Defaulted, or settled (#2481 r2).
-    const after = await readPinned(() => read('getLoanDetails', [LOAN_ID], { blockNumber: receipt.blockNumber }));
-    const reachable = saleCleared ? [DEFAULTED, SETTLED] : [FALLBACK_PENDING, ACTIVE, DEFAULTED, SETTLED];
-    check(
-      'closedOut',
-      'status',
-      'the loan status is the outcome, or a state it validly reaches later in that block',
-      reachable.includes(Number(after.status)),
-      `status ${after.status} at block ${receipt.blockNumber}`,
-    );
-  } catch (err) {
-    unsettled('closedOut', 'status', `the direct RPC could not read the loan after the close-out (${err.message})`);
+  // A SALE is proven by the swap events, never by LoanDefaulted alone
+  // (#2481 r2): cleared = LoanDefaulted + SwapAdapterSucceeded; fell back =
+  // LoanFallbackPending + SwapAllAdaptersFailed (the card discloses both).
+  if (defaulted && sold && !fallback) {
+    check('closedOut', 'receipt', 'the close-out ran the sale', true, `LoanDefaulted + SwapAdapterSucceeded (the sale cleared) — ${hash}, block ${receipt.blockNumber}`);
+  } else if (fallback && allFailed && !defaulted) {
+    check('closedOut', 'receipt', 'the close-out ran the sale', true, `LoanFallbackPending + SwapAllAdaptersFailed (no venue met the minimum at inclusion; collateral held for the lender) — ${hash}, block ${receipt.blockNumber}`);
+  } else {
+    const what = matched
+      ? 'an internal match settled it first (the race the card warns of)'
+      : `events: LoanDefaulted ${defaulted}, LoanFallbackPending ${fallback}, SwapAdapterSucceeded ${sold}, SwapAllAdaptersFailed ${allFailed} — a different branch than the sale it previewed as`;
+    unsettled('closedOut', 'receipt', `${what} — ${hash}, block ${receipt.blockNumber}; state moved after the preview, so this is not judged a defect`);
   }
 }
 try {

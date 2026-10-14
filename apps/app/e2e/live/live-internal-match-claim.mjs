@@ -575,8 +575,19 @@ try {
   const posNav = await page
     .goto(`${SITE_URL.replace(/\/$/, '')}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     .then((r) => ({ status: r?.status() ?? 200 }), (e) => ({ error: e.message }));
+  // The page must still BE this loan's (#2481 r6): a redirect to another
+  // position would let its copy stand in for this loan's.
+  const landedOn = (() => {
+    try {
+      return new URL(page.url()).pathname.replace(/\/$/, '');
+    } catch {
+      return '';
+    }
+  })();
   if (posNav.error || posNav.status >= 400) {
     check('owedLine', 'pending', 'the position page loaded', false, posNav.error ?? `HTTP ${posNav.status}`);
+  } else if (landedOn !== `/positions/${LOAN_ID}`) {
+    check('owedLine', 'pending', `the position page stayed on loan ${LOAN_ID}`, false, `landed on ${landedOn}`);
   } else {
     let owedText = '';
     const owedDeadline = Date.now() + 45_000;
