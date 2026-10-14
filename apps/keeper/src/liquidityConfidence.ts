@@ -801,10 +801,15 @@ async function runRelayForChain(
   const ctx = buildKeeperContext(env, chain, client);
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
   const txOrigin = ctx?.wallet.account?.address as Address | undefined;
-  // Lazily, once per chain tick — see `aggregatorConfirmedTier`.
+  // Lazily, once per chain tick — see `aggregatorConfirmedTier`. The
+  // testnet mock adapter is left out of the MEASUREMENT: it pays a fixed,
+  // prefunded amount, which is not market depth and must never earn a tier
+  // (#2480 r7). It stays on the liquidation path, which reads its own
+  // standing.
   let standing: Promise<RosterStanding | null> | undefined;
   const standingOnce = () =>
-    (standing ??= readKeeperRouteStanding(env, client, chain.id, diamond, txOrigin).catch(
+    (standing ??= readKeeperRouteStanding(env, client, chain.id, diamond, txOrigin).then(
+      (st) => ({ ...st, slots: st.slots.filter((x) => x.kind !== 'testnetMock') }),
       () => null,
     ));
 

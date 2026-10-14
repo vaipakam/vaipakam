@@ -426,37 +426,40 @@ export async function maybeAutonomousLiquidate(
       ctx.diamond,
       txOrigin,
     ).catch(() => undefined);
+    // EVERY build for this loan goes through here, so a venue lost from any
+    // try-list that may be sent — full, half, partial or a re-sized partial
+    // — is logged, even when a back-up venue makes the route usable. 0x
+    // quoting a swap target its adapter is not allowed to call is the
+    // runbook's allowlist-rotation signal (#2480 r5, r7).
+    const buildRoute = async (
+      sellAmount: bigint,
+      label: string,
+    ): Promise<ServerOrchestrationResult> => {
+      const res = await orchestrateServerQuotes(env, publicClient, {
+        chainId: chain.id,
+        sellToken: loan.collateralAsset,
+        buyToken: loan.principalAsset,
+        sellAmount,
+        diamond: ctx.diamond,
+        txOrigin,
+      }, standing);
+      if (res.calls.length > 0 && res.failed.length > 0) {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} route-degraded size=${label} (failed: ${res.failed.join(',')})`,
+        );
+      }
+      return res;
+    };
     const [quotes, halfQuotes, partialQuotes] = await Promise.all([
-      orchestrateServerQuotes(env, publicClient, {
-        chainId: chain.id,
-        sellToken: loan.collateralAsset,
-        buyToken: loan.principalAsset,
-        sellAmount: loan.collateralAmount,
-        diamond: ctx.diamond,
-        txOrigin,
-      }, standing),
-      orchestrateServerQuotes(env, publicClient, {
-        chainId: chain.id,
-        sellToken: loan.collateralAsset,
-        buyToken: loan.principalAsset,
-        sellAmount: halfAmount,
-        diamond: ctx.diamond,
-        txOrigin,
-      }, standing),
+      buildRoute(loan.collateralAmount, 'full'),
+      buildRoute(halfAmount, 'half'),
       // Skip the third quote when partial isn't viable — keeps the
       // hot-path RPC volume the same as before in the common "full
       // liquidation" case. When partial IS viable, all three run in
       // parallel so per-loan latency stays at the max of the three
       // rather than serializing.
       partialEligible && partialAmount !== halfAmount
-        ? orchestrateServerQuotes(env, publicClient, {
-            chainId: chain.id,
-            sellToken: loan.collateralAsset,
-            buyToken: loan.principalAsset,
-            sellAmount: partialAmount,
-            diamond: ctx.diamond,
-        txOrigin,
-          }, standing)
+        ? buildRoute(partialAmount, 'partial')
         : Promise.resolve(null),
     ]);
     if (quotes.calls.length === 0) {
@@ -464,15 +467,6 @@ export async function maybeAutonomousLiquidate(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
       );
       return false;
-    }
-    // A route that will be sent can still have lost a venue — 0x quoting a
-    // swap target its adapter is not allowed to call is the runbook's
-    // allowlist-rotation signal, and a working back-up would otherwise
-    // hide it entirely (#2480 r5).
-    if (quotes.failed.length > 0) {
-      console.log(
-        `[keeper] loan=${loanId} chain=${chain.name} route-degraded (failed: ${quotes.failed.join(',')})`,
-      );
     }
 
     const account = ctx.wallet.account;
@@ -546,14 +540,7 @@ export async function maybeAutonomousLiquidate(
           fractionBps,
         );
         if (sellAmount === 0n) return null;
-        const q = await orchestrateServerQuotes(env, publicClient, {
-          chainId: chain.id,
-          sellToken: loan.collateralAsset,
-          buyToken: loan.principalAsset,
-          sellAmount,
-          diamond: ctx.diamond,
-        txOrigin,
-        }, standing);
+        const q = await buildRoute(sellAmount, `partial-${fractionBps}bps`);
         return q.calls.length > 0 ? q : null;
       };
       // Read the live close-factor cap; default to BPS (no cap) on any failure.

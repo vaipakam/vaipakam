@@ -71,18 +71,25 @@ contract ConfigureOracle is Script {
         revert(string.concat("ConfigureOracle: unsupported chainId ", vm.toString(chainId)));
     }
 
-    /// @dev Warn when no registered adapter is the UniV3 one on a no-0x chain,
+    /// @dev Warn when no ENABLED registered adapter is the UniV3 one on a no-0x chain,
     ///      where it is the only liquidation route. Advisory (see the
     ///      liquidation-route note in `run`), so an adapter whose
     ///      `adapterName()` reverts is skipped, not fatal. Position is not
     ///      checked: route builders read it from the Diamond (#2468).
-    function _warnIfNoUniV3Adapter(address[] memory adapters) internal view {
+    function _warnIfNoUniV3Adapter(address diamond, address[] memory adapters) internal view {
         for (uint256 i = 0; i < adapters.length; i++) {
+            // A disabled adapter is skipped by every route builder, so it
+            // is not a route however it names itself (#2480 r7).
+            try AdminFacet(diamond).isSwapAdapterDisabled(adapters[i]) returns (bool disabled) {
+                if (disabled) continue;
+            } catch {
+                continue;
+            }
             try ISwapAdapter(adapters[i]).adapterName() returns (string memory nm) {
                 if (keccak256(bytes(nm)) == keccak256(bytes("UniswapV3"))) return;
             } catch {}
         }
-        console.log("WARNING: no-0x chain but no registered swap adapter is UniswapV3 - liquidations have no route the keeper can quote. Register one via DeployUniV3Adapter.");
+        console.log("WARNING: no-0x chain but no enabled swap adapter is UniswapV3 - liquidations have no route the keeper can quote. Register one via DeployUniV3Adapter.");
     }
 
     /// @dev Chains where 0x has NO Swap-API/Settler backend, so ConfigureOracle
@@ -248,7 +255,7 @@ contract ConfigureOracle is Script {
             "ConfigureOracle: no swap adapter registered - LibSwap.swapWithFailover reverts on an empty list, so liquidations would fail. Run the swap-adapters phase / DeployUniV3Adapter before --phase configure."
         );
         // No-0x chain: the on-chain DEX adapter is the only liquidation route.
-        if (zeroEx == address(0)) _warnIfNoUniV3Adapter(adapters);
+        if (zeroEx == address(0)) _warnIfNoUniV3Adapter(diamond, adapters);
 
         vm.startBroadcast(deployerKey);
 
