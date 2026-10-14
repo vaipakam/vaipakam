@@ -31,10 +31,18 @@ import { splitBlocked } from './readOnlyFindings.mjs';
 const SITE_URL = requireSiteUrl();
 const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
 if (!REFERENCE_SITE_URL) blockedSync('REFERENCE_SITE_URL is required: the workers.dev URL of the deploy under review.');
+// A malformed URL is a configuration problem — BLOCKED, never a FAIL (#2492 r1).
+const hostOf = (u) => {
+  try {
+    return new URL(u).host;
+  } catch {
+    return blockedSync(`${u} is not a URL — check SITE_URL and REFERENCE_SITE_URL.`);
+  }
+};
 for (const u of [SITE_URL, REFERENCE_SITE_URL]) {
-  if (/alpha02\./i.test(new URL(u).host)) blockedSync(`${u} is alpha02 — not the deploy under review.`);
+  if (/alpha02\./i.test(hostOf(u))) blockedSync(`${u} is alpha02 — not the deploy under review.`);
 }
-if (!/\.workers\.dev$/i.test(new URL(REFERENCE_SITE_URL).host)) {
+if (!/\.workers\.dev$/i.test(hostOf(REFERENCE_SITE_URL))) {
   blockedSync(`REFERENCE_SITE_URL ${REFERENCE_SITE_URL} is not a workers.dev host — pass the URL the deploy printed.`);
 }
 const ROLE = process.env.ROLE ?? 'lender';
@@ -48,6 +56,18 @@ const EN = JSON.parse(fs.readFileSync(path.join(REPO, 'apps/app/src/i18n/locales
 const HISTORY = EN?.desk?.history ?? {};
 for (const k of ['tab', 'termsUnknown']) {
   if (typeof HISTORY[k] !== 'string') blockedSync(`en.json no longer carries copy.desk.history.${k}`);
+}
+const UNITS = EN?.units ?? {};
+for (const k of ['durationDay_one', 'durationDay_other', 'durationMonth_one', 'durationMonth_other', 'durationYear_one', 'durationYear_other']) {
+  if (typeof UNITS[k] !== 'string') blockedSync(`en.json no longer carries copy.units.${k}`);
+}
+/** The app's `formatDurationDays` (src/lib/format.ts) in English. */
+function formatDurationDays(days) {
+  const unit = (key, n) => (n === 1 ? UNITS[`${key}_one`] : UNITS[`${key}_other`].replace('{{count, number}}', n.toLocaleString('en-US')));
+  if (days < 30) return unit('durationDay', days);
+  if (days % 365 === 0) return unit('durationYear', days / 365);
+  if (days % 30 === 0) return unit('durationMonth', days / 30);
+  return unit('durationDay', days);
 }
 
 let failures = 0;
@@ -82,7 +102,23 @@ try {
   await blocked('the indexer could not be read for this wallet', err);
 }
 if (loans.length === 0) await blocked(`${ROLE} ${WALLET} has no loans to judge`);
-console.log(`indexer: ${loans.length} loan(s) for ${ROLE}; ${loans.filter((l) => l.initRateBps === null).length} without backed terms`);
+// A row DISTINGUISHES the fix from the pre-#2467 code (which showed the live
+// terms) only if what it must show differs from the live terms: a backed row
+// whose live rate or duration was rewritten (an extension), or a withheld row
+// (the old code would have shown the live terms instead of "not available").
+// Without at least one, every row reads the same either way and a PASS would
+// prove nothing (#2492 r1).
+const withheld = (l) => l.initRateBps === null || l.initRateBps === undefined;
+const distinguishing = loans.filter(
+  (l) => withheld(l) || l.initRateBps !== l.interestRateBps || l.initDurationDays !== l.durationDays,
+);
+console.log(
+  `indexer: ${loans.length} loan(s) for ${ROLE}; ${loans.filter(withheld).length} without backed terms; ` +
+    `${distinguishing.length} distinguishing row(s): ${distinguishing.map((l) => l.loanId).join(', ') || 'none'}`,
+);
+if (distinguishing.length === 0) {
+  await blocked(`no row for ${ROLE} tells executed terms from live ones (none extended, none withheld) — nothing here could show the fix`);
+}
 
 // ── The History panel ──────────────────────────────────────────────────
 const session = await launch({ role: ROLE, readOnly: true });
@@ -108,7 +144,14 @@ try {
       check(false, `loan ${l.loanId} has a History row`);
       continue;
     }
-    const titles = await row.locator('[title$=" bps"]').evaluateAll((els) => els.map((e) => e.getAttribute('title')));
+    // Only VISIBLE rate elements count: a node kept in the DOM but hidden
+    // shows the user nothing (#2492 r1).
+    const rateEls = row.locator('[title$=" bps"]');
+    const titles = [];
+    for (let k = 0; k < (await rateEls.count()); k++) {
+      const el = rateEls.nth(k);
+      if (await el.isVisible()) titles.push(await el.getAttribute('title'));
+    }
     const text = (await row.innerText()).replace(/\s+/g, ' ');
     if (l.initRateBps === null || l.initRateBps === undefined) {
       check(
@@ -120,7 +163,15 @@ try {
       check(
         titles.length === 1 && titles[0] === `${l.initRateBps} bps`,
         `loan ${l.loanId}: shows the executed rate (${l.initRateBps} bps)`,
-        `row title ${titles.join(', ') || 'none'}${l.interestRateBps !== l.initRateBps ? `; live rate ${l.interestRateBps} bps must not appear` : ''}`,
+        `visible rate ${titles.join(', ') || 'none'}${l.interestRateBps !== l.initRateBps ? `; live rate ${l.interestRateBps} bps must not appear` : ''}`,
+      );
+      // And the executed DURATION (#2492 r1), formatted as the app formats it.
+      const want = formatDurationDays(l.initDurationDays);
+      const live = formatDurationDays(l.durationDays);
+      check(
+        text.includes(want) && (l.durationDays === l.initDurationDays || !text.includes(live)),
+        `loan ${l.loanId}: shows the executed duration (${want})`,
+        l.durationDays !== l.initDurationDays ? `live duration ${live} must not appear` : '',
       );
     }
   }
