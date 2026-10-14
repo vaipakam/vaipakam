@@ -16,13 +16,14 @@
  * outage, a KYC gate), so copy built on it says the close-out "may" be
  * possible and defers to the position page.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useSyncExternalStore } from 'react';
+import { onlineManager, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
 
-export function useLoanPastGrace(loanId: number, enabled: boolean) {
+function useLoanPastGraceQuery(loanId: number, enabled: boolean) {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   return useQuery({
@@ -43,4 +44,46 @@ export function useLoanPastGrace(loanId: number, enabled: boolean) {
         args: [BigInt(loanId)],
       }) as Promise<boolean>,
   });
+}
+
+/** What a row may say about grace right now. `verdict` is set ONLY when the
+ *  chain's answer is current; otherwise `read` says why it is not. */
+export type GraceVerdict =
+  | { read: 'current'; verdict: boolean }
+  | { read: 'checking' | 'unavailable'; verdict: undefined };
+
+/**
+ * The single rule for when a cached answer may still be shown (#2475
+ * r2/r8/r9 — each round found another way a stale `data` outlived the
+ * read that produced it, so the rule lives here and nowhere else).
+ * TanStack keeps the last `data` through an error, through a paused fetch,
+ * and while the browser is offline with no fetch yet attempted; in every
+ * one of those the protocol's current answer is not in hand, and governance
+ * may have changed the grace schedule meanwhile.
+ */
+export function graceVerdictFrom(q: {
+  data: boolean | undefined;
+  isError: boolean;
+  isPaused: boolean;
+  online: boolean;
+}): GraceVerdict {
+  if (q.isError || q.isPaused || !q.online) return { read: 'unavailable', verdict: undefined };
+  if (q.data === undefined) return { read: 'checking', verdict: undefined };
+  return { read: 'current', verdict: q.data };
+}
+
+function subscribeOnline(cb: () => void) {
+  return onlineManager.subscribe(cb);
+}
+function isOnline() {
+  return onlineManager.isOnline();
+}
+
+export function useLoanPastGrace(loanId: number, enabled: boolean): GraceVerdict {
+  const q = useLoanPastGraceQuery(loanId, enabled);
+  // Tracked directly: TanStack only marks a query paused when its NEXT fetch
+  // starts, so a cached `true` would otherwise outlive a disconnect until
+  // the next interval.
+  const online = useSyncExternalStore(subscribeOnline, isOnline, isOnline);
+  return graceVerdictFrom({ data: q.data, isError: q.isError, isPaused: q.isPaused, online });
 }

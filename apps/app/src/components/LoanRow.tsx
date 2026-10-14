@@ -32,15 +32,10 @@ export function LoanRow({
   // only its `true` turns the time-based badge into "Past grace". Asked
   // for every open loan, not only past-due ones by this device's clock,
   // because the chain's clock is the one the contract uses.
-  const pastGrace = useLoanPastGrace(loan.loanId, loan.status === 'active');
-  // A failed refresh keeps TanStack's last `data`; that is a STALE verdict
-  // (governance may have lengthened grace meanwhile), so an errored read
-  // counts as unread rather than as the last answer. So does a PAUSED read
-  // (the browser is offline): TanStack keeps the cached `data` without
-  // setting `isError`, and the current protocol state is not in hand
-  // (#2475 r8).
-  const graceReadUnavailable = pastGrace.isError || pastGrace.isPaused;
-  const verdict = graceReadUnavailable ? undefined : pastGrace.data;
+  const grace = useLoanPastGrace(loan.loanId, loan.status === 'active');
+  // Only a CURRENT chain answer counts; a failed, paused or offline read
+  // never re-shows the last cached one (rule in `graceVerdictFrom`).
+  const verdict = grace.verdict;
   const view = withGraceVerdict(timeView, verdict);
   // Any open row whose grace answer is not in hand may already be past
   // grace — the device clock can run behind the chain's, so "On track" or
@@ -51,7 +46,7 @@ export function LoanRow({
   // it (#2475 r7).
   const graceUnreadNote =
     loan.status === 'active' && view.labelKey !== 'pastGrace' && verdict === undefined
-      ? graceReadUnavailable
+      ? grace.read === 'unavailable'
         ? copy.loanRow.graceUnknownTitle
         : copy.loanRow.graceCheckingTitle
       : null;
