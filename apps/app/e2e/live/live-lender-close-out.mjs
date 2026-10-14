@@ -197,6 +197,12 @@ const MANIFEST = createManifest({
       ? []
       : CLOSE_ONLY.map((c) => ({ id: c.id, claim: c.claim, reason: 'CLOSE=1 was not set — the close-out is one-shot', coveredBy: null }))),
     {
+      id: 'submitterIncentive',
+      claim: "the incentive a successful routed close-out pays the caller (msg.sender) before the lender/borrower waterfall, and the card's statement about it",
+      reason: 'neither the incentive disclosure on the card nor the incentive transfer in the receipt is asserted by this drive',
+      coveredBy: null,
+    },
+    {
       id: 'saleAmount',
       claim: 'how much the sale fetched, and what each party can claim afterwards',
       reason: 'the claims after a close-out are their own surface; this drive judges the close-out itself',
@@ -269,10 +275,18 @@ if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap
 /** The facts the card's readiness rests on, at one block: still Active,
  *  past grace, and the lender position held by this wallet. */
 async function eligibleAt(blockNumber) {
-  const at = blockNumber === undefined ? {} : { blockNumber };
-  const [l, b] = await Promise.all([
+  // EVERY read pinned to ONE block (#2481 r4): for "now", the head is taken
+  // first and the rest read at it, so a transaction landing between the reads
+  // cannot mix an old status with later facts into an eligible verdict that
+  // no single block supports.
+  const pinned = blockNumber ?? (await pub.getBlockNumber());
+  const at = { blockNumber: pinned };
+  const [l, b, paused] = await Promise.all([
     read('getLoanDetails', [LOAN_ID], at),
-    blockNumber === undefined ? pub.getBlock() : pub.getBlock({ blockNumber }),
+    pub.getBlock({ blockNumber: pinned }),
+    // triggerDefault is whenNotPaused: an emergency pause is a moved
+    // precondition like any other (#2481 r4).
+    read('paused', [], at),
   ]);
   // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
   // an admin retune between startup and the inspected block changes what
@@ -283,6 +297,7 @@ async function eligibleAt(blockNumber) {
   ]);
   const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
+  if (paused) why.push('the protocol is paused');
   if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
   if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
   if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
@@ -335,6 +350,16 @@ async function gate(method, params) {
   const kind = method === 'eth_sendTransaction' ? 'tx' : method;
   if (kind === 'tx' && PLAN.armed() !== null) {
     const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
+    // The roster AT JUDGING TIME (#2481 r4): the app re-reads it at confirm,
+    // so a venue governance enabled since startup is a valid index now. An
+    // unreadable roster leaves the startup set, which can only refuse more.
+    try {
+      const adapters = await read('getSwapAdapters');
+      const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
+      enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
+    } catch (err) {
+      console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); judging against the startup set`);
+    }
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
       console.log(`GATE  fresh estimate for the requested call: ${gasFloor} gas`);
@@ -637,8 +662,35 @@ try {
     // From here on the close-out may have been written: an exception is never
     // a product verdict. The page leaving its confirm step is recorded, and
     // the chain is the judge.
-    const settled = await confirm.waitFor({ state: 'detached', timeout: 180_000 }).then(() => true, () => false);
-    check('pageConfirmed', 'settled', 'the page left its confirm step', settled);
+    // The card may instead REFUSE at confirm time — every venue declined, the
+    // preview says it would fall back, the loan changed — keeping the
+    // confirmation open with an explicit "nothing was sent" message. That is
+    // the app working, on a sale not routable right now: BLOCKED, not a FAIL
+    // (#2481 r4).
+    const refusals = Object.entries(FC)
+      .filter(([k, v]) => /^route[A-Z]/.test(k) && typeof v === 'string')
+      .map(([k, v]) => [k, v]);
+    let settled = false;
+    let refusedWith = null;
+    const until = Date.now() + 180_000;
+    while (Date.now() < until) {
+      if ((await confirm.count()) === 0) {
+        settled = true;
+        break;
+      }
+      const t = (await card.innerText().catch(() => '')).replace(/\s+/g, ' ');
+      const hit = refusals.find(([, v]) => t.includes(v));
+      if (hit) {
+        refusedWith = hit[0];
+        break;
+      }
+      await page.waitForTimeout(1_000);
+    }
+    if (refusedWith && !wrote()) {
+      PLAN.close();
+      await blocked(`the card refused at confirm time and sent nothing (copy.forcedClose.${refusedWith}) — the sale is not routable right now`, null, done);
+    }
+    check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
     PLAN.close();
     await shot(`lender-close-out-sent-${LOAN_ID}`);
     if (wrote()) {
