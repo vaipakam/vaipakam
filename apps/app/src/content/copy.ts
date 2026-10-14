@@ -2423,8 +2423,32 @@ const copySource = {
     // `triggerDefault`. Telling a lender an automated service will
     // collect for them, when none exists, is the one sentence on this
     // card that could leave a position open indefinitely.
+    // #2463 — now shown only when this build has NO route service (no
+    // agent configured). With one, the card says which of the route
+    // states below it is in.
     readyNeedsRoute:
-      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This build of the app has no route service configured, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    // #2463 — the route states of a liquid, past-grace close-out. The
+    // route comes from the agent; none of these names an amount, because
+    // what the sale raises is decided when the transaction runs.
+    readyRouted:
+      'The grace period has passed, so you can close this loan out now. Its collateral is sold on an exchange as part of the close-out, and a route for that sale has been found. You claim what it raises afterwards from the Claims page.',
+    readyNeedsRouteChecking:
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it — looking for a route for that sale…',
+    readyNeedsRouteNone:
+      'The grace period has passed and this loan can be closed out, but its collateral has to be sold on an exchange to do it, and no exchange can quote that sale right now. This is checked again every minute; if it stays this way, contact support.',
+    readyNeedsRouteUnreadable:
+      'The grace period has passed and this loan can be closed out, but its collateral has to be sold on an exchange, and the service that finds a route for that sale could not be reached just now. It is tried again every minute.',
+    // #2463 — what happens if the sale cannot complete when the
+    // transaction runs: `swapWithFailover` reports failure and the
+    // contract takes the full-collateral fallback (FallbackPending), it
+    // does not revert. The borrower can still cure until the lender
+    // claims (spec: Fallback Claim Model).
+    routeFallbackNote:
+      'If none of the routes can complete the sale when the transaction runs, the loan moves to the protocol’s fallback instead of being sold: the collateral is held for settlement, the borrower can still repay or add collateral until you claim, and your claim then pays out of that collateral.',
+    routeGone: 'No exchange route is available for this sale any more, so nothing was sent. Try again shortly.',
+    routeChanged:
+      'This loan’s collateral changed after the sale route was found, so nothing was sent. Close this and try again so the sale is routed for the current amount.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can
     // settle against an opposing one. `triggerDefault` dispatches that
     // match BEFORE the swap branch, so the app CAN close this today;

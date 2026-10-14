@@ -1,0 +1,591 @@
+/**
+ * The one swap-route builder (#2463): fetches quotes from every DEX venue a
+ * chain has — 0x / 1inch (aggregators), UniV3 (on-chain quoter), Balancer V2
+ * (subgraph estimate), and on test networks the faucet's MockSwapAdapter —
+ * ranks them by expected output, and returns the ready-to-submit
+ * `AdapterCall[]` (`LibSwap.AdapterCall`) the Diamond's liquidation entry
+ * points take (`triggerLiquidation`, `triggerDefault`, …).
+ *
+ * Moved here from `apps/keeper/src/serverQuotes.ts` so that every server that
+ * builds a try-list — the keeper's liquidation passes, and the agent's
+ * `/liquidation-route` for the app's lender close-out — runs the same
+ * registry, the same adapter-data encoders and the same ranking. Two copies
+ * of an encoder is how a wire format drifts.
+ *
+ * Runs only server-side: the aggregator calls need API keys, which are
+ * passed in (`SwapRouteDeps`) and never reach a browser.
+ *
+ * SAFETY: ranking does NOT weaken any on-chain guard. The Diamond enforces
+ * the oracle-derived `minOutputAmount` per adapter; a stale or hostile quote
+ * can only fail that check, and the next-best entry tries.
+ */
+import {
+  type Address,
+  type Hex,
+  type PublicClient,
+  encodeAbiParameters,
+  encodeFunctionData,
+} from 'viem';
+
+/** What to sell, for what, and who executes the swap (the Diamond). */
+export interface SwapRouteRequest {
+  chainId: number;
+  sellToken: Address;
+  buyToken: Address;
+  sellAmount: bigint;
+  taker: Address;
+  slippageBps?: number;
+}
+
+/** One `LibSwap.AdapterCall` entry. */
+export interface SwapAdapterCall {
+  adapterIdx: bigint;
+  data: Hex;
+}
+
+/** Every venue the builder knows. `testnetMock` is the faucet's
+ *  MockSwapAdapter, present only on test networks. */
+export type SwapVenue = 'zeroex' | 'oneinch' | 'univ3' | 'balancerv2' | 'testnetMock';
+
+export interface RankedSwapRoute {
+  kind: SwapVenue;
+  expectedOutput: bigint;
+  call: SwapAdapterCall;
+}
+
+export interface SwapRouteResult {
+  ranked: RankedSwapRoute[];
+  calls: SwapAdapterCall[];
+  failed: SwapVenue[];
+}
+
+/** What the caller supplies: the operator's aggregator keys (absent = that
+ *  venue is skipped). Kept out of any Worker `Env` type so both the keeper
+ *  and the agent can pass their own. */
+export interface SwapRouteDeps {
+  zeroExApiKey?: string;
+  oneInchApiKey?: string;
+}
+
+// ─── Per-chain registry. ───────────────────────────────────────────────
+
+type AdapterIdxMap = {
+  zeroex: number | null;
+  oneinch: number | null;
+  univ3: number | null;
+  balancerv2: number | null;
+};
+
+interface ChainSwap {
+  uniV3Quoter: Address | null;
+  balancerVault: Address;
+  /** Balancer V2 subgraph URL — null disables the venue. Hosted-
+   *  service URLs by default; production deployments override via
+   *  env to point at a paid / decentralized-network endpoint. */
+  balancerV2SubgraphUrl: string | null;
+  uniV3FeeTiers: readonly number[];
+  adapters: AdapterIdxMap;
+}
+
+const COMMON_FEE_TIERS = [500, 3000, 10000] as const;
+// PancakeSwap V3 uses different fee tiers than Uniswap V3 (0.25% instead of
+// 0.3%): 0.01% / 0.05% / 0.25% / 1%. Used on chains routed through PancakeSwap.
+const PANCAKE_V3_FEE_TIERS = [100, 500, 2500, 10000] as const;
+const BALANCER_V2_VAULT_CANONICAL =
+  '0xBA12222222228d8Ba445958a75a0704d566BF2C8' as const;
+
+const CHAIN_SWAP: Record<number, ChainSwap> = {
+  1: {
+    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2',
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
+  },
+  8453: {
+    uniV3Quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-base-v2',
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
+  },
+  42161: {
+    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2',
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
+  },
+  10: {
+    uniV3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-optimism-v2',
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: 2, balancerv2: 3 },
+  },
+  1101: {
+    uniV3Quoter: null,
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-zk-v2',
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
+  },
+  56: {
+    uniV3Quoter: null,
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    // Balancer V2 not deployed on BNB Chain.
+    balancerV2SubgraphUrl: null,
+    uniV3FeeTiers: COMMON_FEE_TIERS,
+    adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
+  },
+  // BNB testnet — 0x/1inch have NO testnet backend (0x's API covers BNB
+  // mainnet 56, not 97), so the ONLY liquidation route is the on-chain
+  // PancakeSwap V3 UniV3Adapter. `univ3: 0` is a STATIC index into the
+  // Diamond's on-chain getSwapAdapters() list (same static-mirror pattern as
+  // every other chain here) and MUST equal the index DeployUniV3Adapter.s.sol
+  // logs at registration — the UniV3 adapter is the sole/first entry on this
+  // no-aggregator chain, so index 0 (verified on-chain). If aggregator adapters
+  // are ever registered before it, bump this to match. Quote via PancakeSwap's
+  // V3 QuoterV2 (factory-matched to the oracle's UNISWAP_V3_FACTORY) over
+  // Pancake's fee tiers. Balancer V2 not on BNB.
+  97: {
+    uniV3Quoter: '0xbC203d7f83677c7ed3F7acEc959963E7F4ECC5C2',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: null,
+    uniV3FeeTiers: PANCAKE_V3_FEE_TIERS,
+    adapters: { zeroex: null, oneinch: null, univ3: 0, balancerv2: null },
+  },
+};
+
+// ─── Aggregator API helpers. ───────────────────────────────────────────
+
+interface ZeroExResp {
+  transaction?: { to?: string; data?: string };
+  buyAmount?: string;
+}
+interface OneInchResp {
+  tx?: { to?: string; data?: string };
+  dstAmount?: string;
+  toAmount?: string;
+}
+
+/**
+ * Pack `(swapTarget, swapCalldata)` for the diamond's
+ * `AggregatorAdapterBase`. On-chain decoder is
+ * `abi.decode(adapterData, (address, bytes))` so the wire format must
+ * match the keeper-bot and frontend equivalents — centralised here so
+ * 0x and 1inch can't drift.
+ *
+ * 0x v2 / Settler / AllowanceHolder splits the approve recipient
+ * (immutable AllowanceHolder pinned at adapter construction) from the
+ * swap-call destination (rotating Settler, allowlist-gated). The
+ * watcher passes `transaction.to` here; the adapter rejects anything
+ * not in the allowlist before forwarding the calldata. 1inch v6 uses
+ * AggregationRouterV6 for both today, but the same packing keeps the
+ * adapter's allowlist defending against a rogue `tx.to` and is
+ * forward-compat with a future v7 split.
+ */
+function packAdapterData(swapTarget: Address, swapCalldata: Hex): Hex {
+  return encodeAbiParameters(
+    [{ type: 'address' }, { type: 'bytes' }],
+    [swapTarget, swapCalldata],
+  ) as Hex;
+}
+
+const ADDRESS_HEX_LEN = 42; // 0x + 40 hex chars
+
+function isAddressLike(s: string | undefined): s is Address {
+  return typeof s === 'string' && s.startsWith('0x') && s.length === ADDRESS_HEX_LEN;
+}
+
+async function fetchZeroEx(
+  deps: SwapRouteDeps,
+  req: SwapRouteRequest,
+): Promise<RankedSwapRoute | null> {
+  if (!deps.zeroExApiKey) return null;
+  const cs = CHAIN_SWAP[req.chainId];
+  if (!cs?.adapters.zeroex && cs?.adapters.zeroex !== 0) return null;
+  const url = new URL('https://api.0x.org/swap/allowance-holder/quote');
+  url.searchParams.set('chainId', String(req.chainId));
+  url.searchParams.set('sellToken', req.sellToken);
+  url.searchParams.set('buyToken', req.buyToken);
+  url.searchParams.set('sellAmount', req.sellAmount.toString());
+  url.searchParams.set('taker', req.taker);
+  url.searchParams.set('slippageBps', String(req.slippageBps ?? 600));
+  try {
+    const res = await fetch(url.toString(), {
+      headers: {
+        '0x-api-key': deps.zeroExApiKey,
+        '0x-version': 'v2',
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as ZeroExResp;
+    const swapTo = body.transaction?.to;
+    const data = body.transaction?.data;
+    const out = body.buyAmount;
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !out) return null;
+    return {
+      kind: 'zeroex',
+      expectedOutput: BigInt(out),
+      call: {
+        adapterIdx: BigInt(cs.adapters.zeroex),
+        data: packAdapterData(swapTo, data as Hex),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOneInch(
+  deps: SwapRouteDeps,
+  req: SwapRouteRequest,
+): Promise<RankedSwapRoute | null> {
+  if (!deps.oneInchApiKey) return null;
+  const cs = CHAIN_SWAP[req.chainId];
+  if (cs?.adapters.oneinch == null) return null;
+  const url = new URL(
+    `https://api.1inch.dev/swap/v6.0/${req.chainId}/swap`,
+  );
+  url.searchParams.set('src', req.sellToken);
+  url.searchParams.set('dst', req.buyToken);
+  url.searchParams.set('amount', req.sellAmount.toString());
+  url.searchParams.set('from', req.taker);
+  url.searchParams.set('slippage', String((req.slippageBps ?? 600) / 100));
+  url.searchParams.set('disableEstimate', 'true');
+  try {
+    const res = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${deps.oneInchApiKey}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as OneInchResp;
+    const swapTo = body.tx?.to;
+    const data = body.tx?.data;
+    const amount = body.dstAmount ?? body.toAmount;
+    if (!isAddressLike(swapTo) || !data || !data.startsWith('0x') || !amount) return null;
+    return {
+      kind: 'oneinch',
+      expectedOutput: BigInt(amount),
+      call: {
+        adapterIdx: BigInt(cs.adapters.oneinch),
+        data: packAdapterData(swapTo, data as Hex),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+// QuoterV2.quoteExactInputSingle minimal ABI.
+const QUOTER_V2_ABI = [
+  {
+    inputs: [
+      {
+        components: [
+          { internalType: 'address', name: 'tokenIn', type: 'address' },
+          { internalType: 'address', name: 'tokenOut', type: 'address' },
+          { internalType: 'uint256', name: 'amountIn', type: 'uint256' },
+          { internalType: 'uint24', name: 'fee', type: 'uint24' },
+          { internalType: 'uint160', name: 'sqrtPriceLimitX96', type: 'uint160' },
+        ],
+        internalType: 'struct IQuoterV2.QuoteExactInputSingleParams',
+        name: 'params',
+        type: 'tuple',
+      },
+    ],
+    name: 'quoteExactInputSingle',
+    outputs: [
+      { internalType: 'uint256', name: 'amountOut', type: 'uint256' },
+      { internalType: 'uint160', name: 'sqrtPriceX96After', type: 'uint160' },
+      { internalType: 'uint32', name: 'initializedTicksCrossed', type: 'uint32' },
+      { internalType: 'uint256', name: 'gasEstimate', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+] as const;
+
+async function fetchUniV3(
+  client: PublicClient,
+  req: SwapRouteRequest,
+): Promise<RankedSwapRoute | null> {
+  const cs = CHAIN_SWAP[req.chainId];
+  if (!cs?.uniV3Quoter || cs.adapters.univ3 == null) return null;
+  let best: { fee: number; out: bigint } | null = null;
+  for (const fee of cs.uniV3FeeTiers) {
+    try {
+      const data = encodeFunctionData({
+        abi: QUOTER_V2_ABI,
+        functionName: 'quoteExactInputSingle',
+        args: [
+          {
+            tokenIn: req.sellToken,
+            tokenOut: req.buyToken,
+            amountIn: req.sellAmount,
+            fee,
+            sqrtPriceLimitX96: 0n,
+          },
+        ],
+      });
+      const result = await client.call({ to: cs.uniV3Quoter, data });
+      if (!result.data) continue;
+      const out = BigInt('0x' + result.data.slice(2, 66));
+      if (out > 0n && (!best || out > best.out)) best = { fee, out };
+    } catch {
+      continue;
+    }
+  }
+  if (!best) return null;
+  return {
+    kind: 'univ3',
+    expectedOutput: best.out,
+    call: {
+      adapterIdx: BigInt(cs.adapters.univ3),
+      data: encodeAbiParameters([{ type: 'uint24' }], [best.fee]) as Hex,
+    },
+  };
+}
+
+/**
+ * Phase 7a polish — Balancer V2 quote via subgraph.
+ *
+ * Mirror of the frontend `fetchBalancerV2Quote` in
+ * `frontend/src/lib/swapQuoteService.ts`. Two-step:
+ *   1. GraphQL query against the per-chain Balancer V2 subgraph for
+ *      the deepest pool containing both tokens.
+ *   2. Constant-product spot estimate from the pool's reserves.
+ *
+ * Returns null on any "data unavailable" path (no subgraph, no pool,
+ * degenerate balances, network / parse error). The on-chain Balancer
+ * V2 adapter enforces the oracle-derived `minOutputAmount` exactly,
+ * so a rough ranking estimate can't push proceeds below the floor.
+ */
+async function fetchBalancerV2(
+  req: SwapRouteRequest,
+): Promise<RankedSwapRoute | null> {
+  const cs = CHAIN_SWAP[req.chainId];
+  if (!cs?.balancerV2SubgraphUrl || cs.adapters.balancerv2 == null) return null;
+
+  const sellLower = req.sellToken.toLowerCase();
+  const buyLower = req.buyToken.toLowerCase();
+  const query = `
+    query {
+      pools(
+        where: {
+          tokensList_contains: ["${sellLower}", "${buyLower}"]
+          totalLiquidity_gt: "10000"
+        }
+        orderBy: totalLiquidity
+        orderDirection: desc
+        first: 1
+      ) {
+        id
+        tokens { address balance decimals }
+      }
+    }
+  `;
+
+  let resJson: unknown;
+  try {
+    const res = await fetch(cs.balancerV2SubgraphUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return null;
+    resJson = await res.json();
+  } catch {
+    return null;
+  }
+
+  const pools = (resJson as { data?: { pools?: unknown[] } })?.data?.pools;
+  if (!Array.isArray(pools) || pools.length === 0) return null;
+  const pool = pools[0] as {
+    id?: string;
+    tokens?: Array<{ address?: string; balance?: string; decimals?: number }>;
+  };
+  const poolId = pool.id;
+  if (!poolId || !poolId.startsWith('0x') || poolId.length < 66) return null;
+  const tokens = pool.tokens ?? [];
+  const sellEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === sellLower,
+  );
+  const buyEntry = tokens.find(
+    (t) => (t.address ?? '').toLowerCase() === buyLower,
+  );
+  if (!sellEntry || !buyEntry) return null;
+  const sellBal = decimalStringToBigInt(
+    sellEntry.balance ?? '0',
+    sellEntry.decimals ?? 18,
+  );
+  const buyBal = decimalStringToBigInt(
+    buyEntry.balance ?? '0',
+    buyEntry.decimals ?? 18,
+  );
+  if (sellBal === 0n || buyBal === 0n) return null;
+
+  const out = (req.sellAmount * buyBal) / sellBal;
+  if (out === 0n) return null;
+
+  const data = encodeAbiParameters(
+    [{ type: 'bytes32' }],
+    [poolId as `0x${string}`],
+  ) as Hex;
+  return {
+    kind: 'balancerv2',
+    expectedOutput: out,
+    call: { adapterIdx: BigInt(cs.adapters.balancerv2), data },
+  };
+}
+
+function decimalStringToBigInt(s: string, decimals: number): bigint {
+  if (!s) return 0n;
+  const trimmed = s.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return 0n;
+  const negative = trimmed.startsWith('-');
+  const abs = negative ? trimmed.slice(1) : trimmed;
+  const dot = abs.indexOf('.');
+  const intPart = dot === -1 ? abs : abs.slice(0, dot);
+  let fracPart = dot === -1 ? '' : abs.slice(dot + 1);
+  if (fracPart.length > decimals) fracPart = fracPart.slice(0, decimals);
+  const padded = fracPart.padEnd(decimals, '0');
+  try {
+    const v = BigInt((intPart + padded) || '0');
+    return negative ? -v : v;
+  } catch {
+    return 0n;
+  }
+}
+
+// ─── Test-network venue: the faucet MockSwapAdapter. ──────────────────
+
+/** Chains whose Diamond may carry the faucet's MockSwapAdapter
+ *  (`script/DeployTestnetMocks.s.sol`): the test networks it supports and
+ *  the local Anvil fixture. Never a mainnet. */
+const TESTNET_MOCK_CHAINS: ReadonlySet<number> = new Set([84532, 11155111, 97, 421614, 11155420, 31337]);
+/** The name DeployTestnetMocks gives its adapter, and prunes stale copies by. */
+const TESTNET_MOCK_NAME = 'vaipakam-testnet-mock';
+
+const DIAMOND_SWAP_ADAPTERS_ABI = [
+  {
+    type: 'function',
+    name: 'getSwapAdapters',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'adapters', type: 'address[]' }],
+  },
+  {
+    type: 'function',
+    name: 'isSwapAdapterDisabled',
+    stateMutability: 'view',
+    inputs: [{ name: 'adapter', type: 'address' }],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+
+const MOCK_SWAP_ADAPTER_ABI = [
+  { type: 'function', name: 'adapterName', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  {
+    type: 'function',
+    name: 'tokenUsdPrice8',
+    stateMutability: 'view',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  { type: 'function', name: 'outputMultiplierBps', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+] as const;
+
+/**
+ * The faucet MockSwapAdapter as a venue, on test networks only.
+ *
+ * Its index is DISCOVERED, not pinned: the Diamond's adapter list is read and
+ * the entry named `vaipakam-testnet-mock` that governance has not disabled is
+ * used. DeployTestnetMocks appends or reuses that adapter per chain, so a
+ * static index would drift. `adapterData` is ignored by the mock, so the call
+ * carries none. The expected output is the mock's own payout formula, read
+ * from its public state — `amountIn × price(in) / price(out) × multiplier` —
+ * so the ranking states what the venue will actually pay, not a placeholder.
+ */
+async function fetchTestnetMock(
+  client: PublicClient,
+  req: SwapRouteRequest,
+): Promise<RankedSwapRoute | null> {
+  if (!TESTNET_MOCK_CHAINS.has(req.chainId)) return null;
+  try {
+    const adapters = (await client.readContract({
+      address: req.taker,
+      abi: DIAMOND_SWAP_ADAPTERS_ABI,
+      functionName: 'getSwapAdapters',
+    })) as readonly Address[];
+    for (let idx = 0; idx < adapters.length; idx++) {
+      const adapter = adapters[idx];
+      let name: string;
+      try {
+        name = (await client.readContract({
+          address: adapter,
+          abi: MOCK_SWAP_ADAPTER_ABI,
+          functionName: 'adapterName',
+        })) as string;
+      } catch {
+        continue; // not a named adapter — not ours
+      }
+      if (name !== TESTNET_MOCK_NAME) continue;
+      const disabled = (await client.readContract({
+        address: req.taker,
+        abi: DIAMOND_SWAP_ADAPTERS_ABI,
+        functionName: 'isSwapAdapterDisabled',
+        args: [adapter],
+      })) as boolean;
+      if (disabled) continue;
+      const [pIn, pOut, mult] = (await Promise.all([
+        client.readContract({ address: adapter, abi: MOCK_SWAP_ADAPTER_ABI, functionName: 'tokenUsdPrice8', args: [req.sellToken] }),
+        client.readContract({ address: adapter, abi: MOCK_SWAP_ADAPTER_ABI, functionName: 'tokenUsdPrice8', args: [req.buyToken] }),
+        client.readContract({ address: adapter, abi: MOCK_SWAP_ADAPTER_ABI, functionName: 'outputMultiplierBps' }),
+      ])) as [bigint, bigint, bigint];
+      const base = pIn !== 0n && pOut !== 0n ? (req.sellAmount * pIn) / pOut : req.sellAmount;
+      const out = (base * mult) / 10_000n;
+      if (out === 0n) return null;
+      return { kind: 'testnetMock', expectedOutput: out, call: { adapterIdx: BigInt(idx), data: '0x' } };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Orchestrator entrypoint. ──────────────────────────────────────────
+
+/** Quote every venue the chain has and return them ranked by expected
+ *  output, best first, with the matching `AdapterCall[]`. A venue that is
+ *  absent, unkeyed or fails is listed in `failed`; it never throws. */
+export async function orchestrateSwapRoutes(
+  deps: SwapRouteDeps,
+  client: PublicClient,
+  req: SwapRouteRequest,
+): Promise<SwapRouteResult> {
+  const kinds: SwapVenue[] = ['zeroex', 'oneinch', 'univ3', 'balancerv2', 'testnetMock'];
+  const settled = await Promise.allSettled([
+    fetchZeroEx(deps, req),
+    fetchOneInch(deps, req),
+    fetchUniV3(client, req),
+    fetchBalancerV2(req),
+    fetchTestnetMock(client, req),
+  ]);
+  const ranked: RankedSwapRoute[] = [];
+  const failed: SwapVenue[] = [];
+  for (let i = 0; i < settled.length; ++i) {
+    const r = settled[i];
+    if (r.status === 'fulfilled' && r.value) ranked.push(r.value);
+    else failed.push(kinds[i]);
+  }
+  ranked.sort((a, b) => (b.expectedOutput > a.expectedOutput ? 1 : -1));
+  return { ranked, calls: ranked.map((q) => q.call), failed };
+}
+
+/** Exported for tests: the encoders and the registry lookup. */
+export const swapRouteInternals = { packAdapterData, decimalStringToBigInt, TESTNET_MOCK_NAME, TESTNET_MOCK_CHAINS };

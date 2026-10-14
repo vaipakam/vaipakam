@@ -556,6 +556,30 @@ describe('forcedCloseVerdict', () => {
       expect(legacy.verdict).toBe('pass');
     });
 
+    it('#2463 — a state with SEVERAL bodies matches any of them, and each still contradicts another state', () => {
+      const routed = {
+        ...declaredCopy,
+        withheldCopy: [...declaredCopy.withheldCopy, FORCED_CLOSE.readyNeedsRouteNone],
+        recognisedCopy: [...declaredCopy.recognisedCopy, FORCED_CLOSE.readyNeedsRouteNone],
+        stateCopy: {
+          ...declaredCopy.stateCopy,
+          'ready-needs-route': [FORCED_CLOSE.readyNeedsRoute, FORCED_CLOSE.readyNeedsRouteNone],
+        },
+      };
+      const chain = { defaultable: true, internalMatch: false };
+      const own = forcedCloseVerdict(
+        { ...painting(FORCED_CLOSE.readyNeedsRouteNone), declaredState: 'ready-needs-route', declaredBlock: '100', declaredChain: chain },
+        routed,
+      );
+      expect(own.verdict).toBe('pass');
+      const other = forcedCloseVerdict(
+        { ...painting(FORCED_CLOSE.readyNeedsRouteNone), declaredState: 'ready-in-kind', declaredBlock: '100', declaredChain: chain },
+        routed,
+      );
+      expect(other.verdict).toBe('fail');
+      expect(other.why).toMatch(/declares "ready-in-kind" while painting the "ready-needs-route" explanation/);
+    });
+
     it('judges the specific state on intermediate renders too', () => {
       const v = forcedCloseVerdict(
         {

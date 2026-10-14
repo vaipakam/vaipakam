@@ -215,7 +215,9 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   ).toHaveCount(0);
   // Liquid collateral: the card says the position is closable and that
   // the sale needs routing, and offers NO button. A button here would
-  // spend the lender's gas reaching `NoEnabledSwapRoute`.
+  // spend the lender's gas reaching `NoEnabledSwapRoute`. This server has
+  // no agent (`VITE_AGENT_ORIGIN` unset), so this is the no-route-service
+  // state; the ROUTED arm, with a button, is spec 37 (#2463).
   await expect(
     cardAfter.getByText(/sold on an exchange/i),
   ).toBeVisible({ timeout: 30_000 });

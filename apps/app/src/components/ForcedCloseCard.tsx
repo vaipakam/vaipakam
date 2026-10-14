@@ -59,10 +59,12 @@ import {
   type ForcedCloseSubmission,
 } from '../data/forcedCloseHold';
 import {
-  canSubmitFromApp,
+  canSubmitCloseOut,
+  closeOutRoute,
   shouldRenderForcedClose,
   type ForcedCloseReadiness,
 } from '../data/forcedClose';
+import { fetchLiquidationRoute, useLiquidationRoute } from '../data/liquidationRoute';
 
 /** How long a close-out may go unaccounted for before the card SAYS SO.
  *
@@ -196,6 +198,15 @@ export function ForcedCloseCard({
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const sanctions = useSanctionsCheck();
   const queryClient = useQueryClient();
+  /** #2463 — the sale route a `ready-needs-route` close-out needs, from the
+   *  agent (the same builder the keeper runs). Read only in that state; for
+   *  display. `closeOut` fetches a fresh one before sending. */
+  const routeRead = useLiquidationRoute(
+    walletChain?.chainId,
+    String(loanId),
+    readiness === 'ready-needs-route',
+  );
+  const route = closeOutRoute(readiness, routeRead.data);
   const [error, setError] = useState<string | null>(null);
   /** Stamped when a close-out confirms, and released as soon as the
    *  reads have caught up with it.
@@ -863,7 +874,7 @@ export function ForcedCloseCard({
   // history lives with the case table rather than beside the render,
   // because arguing this predicate from a comment instead of from cases
   // is what broke it four rounds running.
-  const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
+  const submittable = canSubmitCloseOut(readiness, route) && !holdingAfterSubmit;
 
   async function closeOut() {
     // Belt and braces on a money path: no render path may reach a
@@ -874,14 +885,15 @@ export function ForcedCloseCard({
     setError(null);
     setBusy(true);
     try {
-      // The empty try-list is correct for both submittable states, and
-      // for different reasons. `ready-in-kind` — NFT rentals, illiquid
+      // The empty try-list is correct for the readiness-submittable states,
+      // and for different reasons. `ready-in-kind` — NFT rentals, illiquid
       // collateral, >110% LTV collapses — is routed to in-kind
       // disposition without a swap adapter ever being consulted.
       // `ready-internal-match` never reaches the swap branch either:
       // `attemptInternalMatchAutoDispatch` runs first and returns.
-      // Anywhere else this array reverts `NoEnabledSwapRoute`, which is
-      // why the button does not exist there.
+      // Anywhere else an empty array reverts `NoEnabledSwapRoute`, which
+      // is why `ready-needs-route` sends the agent's route instead (#2463)
+      // and has no button without one.
       // The sale interlock FIRST, because it is the one the chain will
       // not enforce for us: `triggerDefault` terminalizes the loan
       // regardless of an accepted sale awaiting completion, so the
@@ -891,6 +903,43 @@ export function ForcedCloseCard({
       if (saleBlock) {
         setError(saleBlock);
         return;
+      }
+      // #2463 — the try-list. Empty everywhere it is correct to be (see
+      // above); on `ready-needs-route` it is the sale route, fetched FRESH
+      // here rather than taken from the displayed read: quotes go stale
+      // within minutes and the confirmation can stay open longer.
+      //
+      // And checked against the LIVE collateral before it is sent. The
+      // agent sized the route from the loan's collateral when it read it,
+      // and `triggerDefault` sells whatever the collateral is when it runs.
+      // A route for a different amount fails each venue, and a try-list in
+      // which every entry fails does not revert — it moves the loan to the
+      // fallback instead of selling it. So a changed amount stops here, in
+      // words, rather than becoming a different outcome on chain. The
+      // window between this read and the transaction mining remains, and
+      // the card's fallback note says what happens in it.
+      let adapterCalls: { adapterIdx: bigint; data: `0x${string}` }[] = [];
+      if (readiness === 'ready-needs-route') {
+        if (!publicClient || !walletChain) {
+          setError(copy.forcedClose.routeGone);
+          return;
+        }
+        const fresh = await fetchLiquidationRoute(walletChain.chainId, String(loanId));
+        if (fresh.kind !== 'route') {
+          setError(copy.forcedClose.routeGone);
+          return;
+        }
+        const live = (await publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [BigInt(loanId)],
+        })) as { collateralAmount: bigint };
+        if (live.collateralAmount !== fresh.route.sellAmount) {
+          setError(copy.forcedClose.routeChanged);
+          return;
+        }
+        adapterCalls = fresh.route.calls;
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -913,7 +962,7 @@ export function ForcedCloseCard({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'triggerDefault',
-          args: [BigInt(loanId), []],
+          args: [BigInt(loanId), adapterCalls],
           account: address,
         });
       }
@@ -977,7 +1026,7 @@ export function ForcedCloseCard({
         return;
       }
 
-      await write('triggerDefault', [BigInt(loanId), []], {
+      await write('triggerDefault', [BigInt(loanId), adapterCalls], {
         onSubmitted: (hash) => {
           const record = { at: Date.now(), hash };
           setSubmissions((prev) => ({ ...prev, [key]: record }));
@@ -1120,10 +1169,22 @@ export function ForcedCloseCard({
       rentalReceipt: false,
     },
     'ready-needs-route': {
-      body: copy.forcedClose.readyNeedsRoute,
+      // #2463 — what the card can say depends on the route read: found,
+      // still looking, none quotable, the service unreachable, or no
+      // service in this build at all. Each is a different sentence.
+      body:
+        route === 'available'
+          ? copy.forcedClose.readyRouted
+          : route === 'checking'
+            ? copy.forcedClose.readyNeedsRouteChecking
+            : route === 'none'
+              ? copy.forcedClose.readyNeedsRouteNone
+              : route === 'unreadable'
+                ? copy.forcedClose.readyNeedsRouteUnreadable
+                : copy.forcedClose.readyNeedsRoute,
       overdue: true,
-      // No button here, but its whole message is that a sale must be
-      // routed — which a match appearing makes wrong too.
+      // Its whole message is that a sale must be routed — which a match
+      // appearing makes wrong too, whether or not a route is in hand.
       matchRace: true,
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNote,
@@ -1320,6 +1381,7 @@ export function ForcedCloseCard({
       className="card"
       data-testid="forced-close-card"
       data-forced-close-state={readiness}
+      data-forced-close-route={route}
       data-forced-close-block={
         resolvedBlock === undefined ? undefined : String(resolvedBlock)
       }
@@ -1500,6 +1562,15 @@ export function ForcedCloseCard({
               flagged. Rendering it beside the claim note rather than
               inside it is what lets the two vary independently without
               composing a sentence at runtime. */}
+          {/* #2463 — a routed sale can still end without one: if every
+              route fails when the transaction runs, the contract moves the
+              loan to its fallback rather than reverting. Shown only where
+              the card is about to send a route. */}
+          {readiness === 'ready-needs-route' && route === 'available' ? (
+            <p className="field-hint" data-testid="forced-close-route-fallback">
+              {copy.forcedClose.routeFallbackNote}
+            </p>
+          ) : null}
           {readiness === 'ready-internal-match' ? (
             <p className="field-hint" data-testid="forced-close-incentive">
               {matcherIncentiveNote}

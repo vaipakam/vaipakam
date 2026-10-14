@@ -699,6 +699,9 @@ function readForcedCloseCopy() {
       need(fc.readyInKind, 'readyInKind'),
       need(fc.readyInternalMatch, 'readyInternalMatch'),
       need(fc.readyRental, 'readyRental'),
+      // #2463 — the liquid arm WITH a route in hand: ready and actionable,
+      // so the absence of an action under it is the defect.
+      need(fc.readyRouted, 'readyRouted'),
     ],
     // ROUND 8 P2 — the states that must NOT offer an enabled control.
     // `readyNeedsRoute` belongs here rather than in `readyCopy`: it is
@@ -711,6 +714,11 @@ function readForcedCloseCopy() {
       need(fc.blockedSequencer, 'blockedSequencer'),
       need(fc.blockedNoConsent, 'blockedNoConsent'),
       need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+      // #2463 — the liquid arm without a route: still looking, none
+      // quotable, or the route service unreachable. Correctly unactionable.
+      need(fc.readyNeedsRouteChecking, 'readyNeedsRouteChecking'),
+      need(fc.readyNeedsRouteNone, 'readyNeedsRouteNone'),
+      need(fc.readyNeedsRouteUnreadable, 'readyNeedsRouteUnreadable'),
     ],
     // ROUND 11 P2 — every state this card can legitimately be in. A
     // card matching none of them has said SOMETHING without saying
@@ -727,7 +735,8 @@ function readForcedCloseCopy() {
     // The check would have passed while the lender was told nothing
     // about where the position stands now.
     //
-    // These nine are the states the body itself can be in. A watch-only
+    // These are the bodies the card itself can paint (#2463 added the
+    // route states of `ready-needs-route`). A watch-only
     // drive never submits, so a submitted/outcome body is not a state
     // this run can legitimately produce; if one appears, `blocked` is
     // the honest answer rather than a pass.
@@ -741,8 +750,12 @@ function readForcedCloseCopy() {
       need(fc.readyInternalMatch, 'readyInternalMatch'),
       need(fc.readyRental, 'readyRental'),
       need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+      need(fc.readyRouted, 'readyRouted'),
+      need(fc.readyNeedsRouteChecking, 'readyNeedsRouteChecking'),
+      need(fc.readyNeedsRouteNone, 'readyNeedsRouteNone'),
+      need(fc.readyNeedsRouteUnreadable, 'readyNeedsRouteUnreadable'),
     ],
-    // #2148 ROUND 4 P2 — THE SAME NINE, KEYED BY THE STATE THE CARD DECLARES.
+    // #2148 ROUND 4 P2 — THE SAME BODIES, KEYED BY THE STATE THE CARD DECLARES.
     // `data-forced-close-state` carries the resolver's name for the state,
     // and the verdict compares that name with the copy the card paints —
     // not merely "resolved versus still checking", which let a card declare
@@ -758,7 +771,14 @@ function readForcedCloseCopy() {
       'ready-in-kind': need(fc.readyInKind, 'readyInKind'),
       'ready-internal-match': need(fc.readyInternalMatch, 'readyInternalMatch'),
       'ready-rental': need(fc.readyRental, 'readyRental'),
-      'ready-needs-route': need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+      // #2463 — every body this state can paint, one per route state.
+      'ready-needs-route': [
+        need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+        need(fc.readyRouted, 'readyRouted'),
+        need(fc.readyNeedsRouteChecking, 'readyNeedsRouteChecking'),
+        need(fc.readyNeedsRouteNone, 'readyNeedsRouteNone'),
+        need(fc.readyNeedsRouteUnreadable, 'readyNeedsRouteUnreadable'),
+      ],
     },
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.

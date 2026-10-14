@@ -1713,13 +1713,17 @@ function judgeDeclared(obs, copy) {
   // Absent from an older constructed record, in which case only the
   // class checks run.
   const stateCopy = copy?.stateCopy && typeof copy.stateCopy === 'object' ? copy.stateCopy : null;
+  // #2463 — a state may paint one of SEVERAL bodies: `ready-needs-route`
+  // says which route state it is in (found, checking, none, unreachable,
+  // no service), so its entry is a list. A string is a one-item list.
+  const sentencesOf = (v) =>
+    (Array.isArray(v) ? v : [v]).filter((x) => typeof x === 'string' && x);
   const paintedStateOtherThan = (state, painted) => {
     if (!stateCopy) return null;
-    const own = stateCopy[state];
-    if (typeof own === 'string' && own && painted.includes(own)) return null;
-    for (const [other, sentence] of Object.entries(stateCopy)) {
+    if (sentencesOf(stateCopy[state]).some((own) => painted.includes(own))) return null;
+    for (const [other, sentences] of Object.entries(stateCopy)) {
       if (other === state) continue;
-      if (typeof sentence === 'string' && sentence && painted.includes(sentence)) return other;
+      if (sentencesOf(sentences).some((sentence) => painted.includes(sentence))) return other;
     }
     return null;
   };

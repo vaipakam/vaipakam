@@ -1573,10 +1573,24 @@ is the borrower's own money.
   the lender's own asset exactly where it is, and makes the rent paid up front
   claimable less fees. Nothing belonging to the borrower moves, and no
   valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
-  the app states that the position is closable and that the sale must be routed
-  by whoever submits it, and offers no button it cannot honour. Presenting an
-  action that is certain to be refused is worse than presenting none: the user
-  pays a network fee for the refusal.
+  the sale must be routed by whoever submits the close-out (owner request
+  2026-10-13, #2463): the app asks the operator's route service for that route
+  — built by the same route builder the protocol's keepers use, sized from the
+  loan as the protocol will sell it (the whole collateral, executed by the
+  protocol), with exchange API keys that never reach the browser — and offers
+  the close-out once a route is in hand. Immediately before sending, it fetches
+  the route afresh and confirms it is for the loan's current collateral; if the
+  collateral has changed, or no route is available any more, nothing is sent
+  and the lender is told why. Where no route can be had, the app says which of
+  three things is true — no exchange can quote the sale right now, the route
+  service could not be reached, or this build has no route service — and
+  offers no button it cannot honour: presenting an action that is certain to
+  be refused is worse than presenting none, since the user pays a network fee
+  for the refusal. Where it does offer the close-out, it also says what happens
+  if every route fails when the transaction runs: the protocol moves the loan
+  to its fallback settlement instead of selling it, the borrower can still
+  cure until the lender claims, and the claim then pays from the collateral.
+  It names no amount, because what the sale raises is decided when it runs.
 - A third route is available where the protocol can settle the overdue
   position against an opposing one instead of selling anything. The app
   can perform that close-out directly, and says so — it is distinguished

@@ -411,11 +411,10 @@ function inKindIfConsented(
  *  and pays in the lent asset — but it shares the property that
  *  matters here: `triggerDefault(loanId, [])` succeeds, because the
  *  match is dispatched before the swap branch is ever reached.
- *  `ready-needs-route` is genuinely
- *  eligible on-chain — a keeper can close it this second — but the app
- *  cannot build the `AdapterCall[]` the contract requires, so offering
- *  a submit button for it would be offering a revert. The card still
- *  SHOWS that state; it just does not pretend to act on it. */
+ *  `ready-needs-route` is genuinely eligible on-chain, but the empty
+ *  try-list would revert `NoEnabledSwapRoute`, so it is never submittable
+ *  on readiness ALONE — {@link canSubmitCloseOut} adds the route the
+ *  agent builds for it (#2463). */
 export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
   return (
     readiness === 'ready-in-kind' ||
@@ -431,6 +430,42 @@ export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
  *  this route exists and what it is waiting on; hiding the card until
  *  it happens to be actionable is how the feature stayed invisible in
  *  the first place. */
+/** Whether a sale route is in hand for a `ready-needs-route` close-out
+ *  (#2463). `not-needed` for every other readiness — the empty try-list
+ *  is correct there, for the reasons on {@link canSubmitFromApp}. */
+export type CloseOutRoute =
+  | 'not-needed'
+  | 'checking'
+  | 'available'
+  | 'none'
+  | 'unconfigured'
+  | 'unreadable';
+
+/** The route state for the card, from the readiness and the agent read
+ *  (`useLiquidationRoute`). An unread route while one is needed is
+ *  `checking`, never `available`. Pure, so it is tested. */
+export function closeOutRoute(
+  readiness: ForcedCloseReadiness,
+  read: { kind: 'route' | 'none' | 'unconfigured' | 'unreadable' } | undefined,
+): CloseOutRoute {
+  if (readiness !== 'ready-needs-route') return 'not-needed';
+  if (read === undefined) return 'checking';
+  return read.kind === 'route' ? 'available' : read.kind;
+}
+
+/** Whether the card may offer the close-out (#2463).
+ *
+ *  `ready-needs-route` becomes submittable once a route is AVAILABLE — the
+ *  app then sends that try-list rather than an empty one, so the call is
+ *  no longer the guaranteed `NoEnabledSwapRoute` revert that kept this
+ *  state button-less. Every other state is exactly {@link canSubmitFromApp}.
+ *  The submit path re-fetches the route and re-checks it against the live
+ *  collateral; this answers only whether to offer the button. */
+export function canSubmitCloseOut(readiness: ForcedCloseReadiness, route: CloseOutRoute): boolean {
+  if (readiness === 'ready-needs-route') return route === 'available';
+  return canSubmitFromApp(readiness);
+}
+
 export function shouldRenderForcedClose(readiness: ForcedCloseReadiness): boolean {
   return readiness !== 'not-applicable';
 }

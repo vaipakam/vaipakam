@@ -90,6 +90,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
+import { handleLiquidationRoute } from './liquidationRoute';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
 import { handleOpenSeaCollection } from './openseaCollectionProxy';
@@ -332,6 +333,11 @@ export default {
 
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
       return handlePutThresholds(req, resolved);
+    }
+    // #2463 — the ranked swap try-list for closing out a past-due loan
+    // (the app's lender close-out card). Behind the Origin gate above.
+    if (url.pathname === '/liquidation-route' && req.method === 'POST') {
+      return handleLiquidationRoute(req, resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
       return handleIssueTelegramLink(req, resolved);

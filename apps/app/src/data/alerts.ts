@@ -45,6 +45,7 @@ import {
   buildTelegramUnlinkMessage,
 } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
+import { agentOrigin } from './agentOrigin';
 
 /* The four signed messages come from `@vaipakam/lib/alertsMessage`
  * (#2014) — ONE builder per action, imported by both this client and
@@ -59,11 +60,6 @@ import { copy } from '../content/copy';
 
 const TIMEOUT_MS = 6_000;
 
-function agentOrigin(): string | null {
-  const url = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
-  if (!url) return null;
-  return url.replace(/\/$/, '');
-}
 
 export function alertsConfigured(): boolean {
   return agentOrigin() !== null;

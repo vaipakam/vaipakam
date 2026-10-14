@@ -12,12 +12,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  canSubmitCloseOut,
   canSubmitFromApp,
+  closeOutRoute,
   decideForcedClose,
   forcedCloseWithoutMatch,
   resolveForcedCloseActive,
   shouldRenderForcedClose,
   type ForcedCloseInput,
+  type ForcedCloseReadiness,
 } from './forcedClose';
 
 /** An overdue loan with liquid, non-collapsed ERC-20 collateral and
@@ -623,5 +626,48 @@ describe('resolveForcedCloseActive — which loans the card applies to (UX3-001)
   it('defers to the aggregate once the chain says the loan is still active', () => {
     expect(resolveForcedCloseActive({ ...open, chainStatusSettled: false, aggregateActive: true })).toBe(true);
     expect(resolveForcedCloseActive({ ...open, chainStatusSettled: false, aggregateActive: false })).toBe(false);
+  });
+});
+
+describe('closeOutRoute / canSubmitCloseOut (#2463)', () => {
+  const states: ForcedCloseReadiness[] = [
+    'ready-in-kind',
+    'ready-needs-route',
+    'ready-internal-match',
+    'ready-rental',
+    'not-yet',
+    'blocked-sequencer',
+    'blocked-paused',
+    'blocked-no-consent',
+    'unknown',
+    'not-applicable',
+  ];
+
+  it('needs a route only on ready-needs-route, and an unread one there is checking, never available', () => {
+    for (const s of states) {
+      if (s === 'ready-needs-route') continue;
+      expect(closeOutRoute(s, { kind: 'route' })).toBe('not-needed');
+    }
+    expect(closeOutRoute('ready-needs-route', undefined)).toBe('checking');
+    expect(closeOutRoute('ready-needs-route', { kind: 'route' })).toBe('available');
+    expect(closeOutRoute('ready-needs-route', { kind: 'none' })).toBe('none');
+    expect(closeOutRoute('ready-needs-route', { kind: 'unconfigured' })).toBe('unconfigured');
+    expect(closeOutRoute('ready-needs-route', { kind: 'unreadable' })).toBe('unreadable');
+  });
+
+  it('offers ready-needs-route only with a route in hand', () => {
+    expect(canSubmitCloseOut('ready-needs-route', 'available')).toBe(true);
+    for (const r of ['checking', 'none', 'unconfigured', 'unreadable', 'not-needed'] as const) {
+      expect(canSubmitCloseOut('ready-needs-route', r)).toBe(false);
+    }
+  });
+
+  it('leaves every other state exactly as canSubmitFromApp decides it, whatever the route says', () => {
+    for (const s of states) {
+      if (s === 'ready-needs-route') continue;
+      for (const r of ['available', 'none', 'not-needed'] as const) {
+        expect(canSubmitCloseOut(s, r)).toBe(canSubmitFromApp(s));
+      }
+    }
   });
 });
