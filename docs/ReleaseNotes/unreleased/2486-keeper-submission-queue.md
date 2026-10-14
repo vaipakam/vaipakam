@@ -1,4 +1,4 @@
-## Thread — The keeper's transactions on one network go out one at a time (PR #NUM)
+## Thread — The keeper's transactions on one network go out one at a time (PR #2495)
 
 Every signing duty of the keeper (matching, liquidation, lifecycle upkeep, the grace-period close-out, reward remittance and acknowledgement, commitment reports, the liquidity-confidence write and the daily oracle snapshot) signs with the same key, and each runs as its own task. Two of them sending on the same network in the same tick could both read the same pending transaction number, so one was refused or replaced the other even when they acted on different loans.
 
