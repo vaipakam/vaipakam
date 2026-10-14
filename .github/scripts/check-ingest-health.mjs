@@ -45,8 +45,8 @@
  */
 export function judgeIngestHealth(body, { chains, staleSeconds }) {
   const problems = [];
-  if (!body || typeof body !== 'object' || !Array.isArray(body.chains) || !body.schema) {
-    return ['the route answered, but not with the documented shape (schema + chains)'];
+  if (!body || typeof body !== 'object' || !Array.isArray(body.chains) || !body.schema || !isCount(body.checkedAt)) {
+    return ['the route answered, but not with the documented shape (checkedAt + schema + chains)'];
   }
   const { schema } = body;
   if (schema.state === 'pending') {
@@ -64,8 +64,10 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
     const c = body.chains.find((x) => x && x.chainId === id);
     if (!c) {
       problems.push(`chain ${id}: no diamond cursor reported — it has never been scanned`);
-    } else if (typeof c.ageSeconds !== 'number' || !Number.isFinite(c.ageSeconds)) {
-      problems.push(`chain ${id}: the route reported no usable age`);
+    } else if (!isCount(c.ageSeconds) || !isCount(c.lastBlock) || !isCount(c.scannedAt)) {
+      // A defaulted or corrupt row (a negative age, a missing block) must not
+      // read as fresh: every documented field is a non-negative finite number.
+      problems.push(`chain ${id}: the route reported an incomplete or invalid cursor row`);
     } else if (c.ageSeconds > staleSeconds) {
       problems.push(
         `chain ${id}: ingest STALE — the cursor last advanced ${Math.round(c.ageSeconds / 60)} min ago ` +
@@ -74,6 +76,11 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
     }
   }
   return problems;
+}
+
+/** A non-negative finite number — every count and unix time the route reports. */
+function isCount(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
 /** Parse the watched chain list; refuses an empty or malformed one rather
@@ -114,7 +121,13 @@ function selftest() {
   ok(judgeIngestHealth(missing, opts).some((p) => p.includes('421614')), 'a watched chain absent from the answer fails');
   ok(judgeIngestHealth({ error: 'x' }, opts).length === 1, 'an answer of the wrong shape fails');
   ok(judgeIngestHealth(null, opts).length === 1, 'no answer fails');
-  ok(judgeIngestHealth({ ...healthy, chains: [{ chainId: 84532 }, { chainId: 421614, ageSeconds: 1 }] }, opts).length === 1, 'a chain with no age fails');
+  ok(judgeIngestHealth({ ...healthy, chains: [{ chainId: 84532 }, ...healthy.chains.filter((c) => c.chainId === 421614)] }, opts).length === 1, 'a chain with no age fails');
+  const partial = { ...healthy, chains: [{ chainId: 84532, ageSeconds: 0 }, ...healthy.chains.filter((c) => c.chainId === 421614)] };
+  ok(judgeIngestHealth(partial, opts).some((p) => p.includes('84532')), 'a partial row (age only) fails rather than reading as fresh');
+  const negative = { ...healthy, chains: healthy.chains.map((c) => (c.chainId === 84532 ? { ...c, ageSeconds: -1 } : c)) };
+  ok(judgeIngestHealth(negative, opts).some((p) => p.includes('84532')), 'a negative age fails');
+  const { checkedAt: _omit, ...noChecked } = healthy;
+  ok(judgeIngestHealth(noChecked, opts).length === 1, 'an answer without checkedAt fails');
   let threw = false;
   try {
     parseChains('');
@@ -140,7 +153,9 @@ async function main() {
     const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
     const text = await res.text();
     if (res.status !== 200) {
-      problems = [`${url} answered HTTP ${res.status}: ${text.slice(0, 200)}`];
+      // The status only: the body is the network's text, and it would travel
+      // into workflow outputs, the issue and the chat message.
+      problems = [`${url} answered HTTP ${res.status}`];
     } else {
       try {
         body = JSON.parse(text);
@@ -164,10 +179,16 @@ async function main() {
     return;
   }
   for (const p of problems) console.log(`::error title=Indexer ingest::${p}`);
-  // For the workflow's optional Telegram step and its job summary.
+  // For the workflow's summary, alert issue and Telegram steps. Every line is
+  // made single-line, and the heredoc delimiter is random, so no text in a
+  // problem — some of it derived from the network — can end the value early
+  // and write a second output.
   if (process.env.GITHUB_OUTPUT) {
     const { appendFileSync } = await import('node:fs');
-    appendFileSync(process.env.GITHUB_OUTPUT, `problems<<__END__\n${problems.join('\n')}\n__END__\n`);
+    const { randomUUID } = await import('node:crypto');
+    const delimiter = `EOF_${randomUUID()}`;
+    const lines = problems.map((p) => p.replace(/[\r\n]+/g, ' ').slice(0, 500));
+    appendFileSync(process.env.GITHUB_OUTPUT, `problems<<${delimiter}\n${lines.join('\n')}\n${delimiter}\n`);
   }
   process.exitCode = 1;
 }

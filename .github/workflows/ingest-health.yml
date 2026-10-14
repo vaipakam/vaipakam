@@ -6,8 +6,20 @@ name: Indexer ingest health
 # stale screen. This probe reads the indexer's own `GET /health/ingest` from
 # outside the Worker every 15 minutes and FAILS when a watched chain's ingest
 # has stopped, when the schema gate is waiting on a migration (naming it), or
-# when the route cannot be read. A failed scheduled run is how GitHub notifies
-# the owner; the Telegram step below is optional on top of that.
+# when the route cannot be read.
+#
+# HOW THE OPERATOR HEARS OF IT. Not from the failed run alone: GitHub sends
+# scheduled-workflow notifications only to the account that last edited the
+# cron line, and only if that account has Actions notifications on, so a red
+# run is not an alert anyone is guaranteed to receive (#2482 r1). The probe
+# therefore OPENS AN ISSUE — titled "Indexer ingest stalled", labelled
+# `infra`, assigned to INGEST_ALERT_ASSIGNEE — on the first failing run, adds
+# nothing while it stays failing, and closes it with a comment on the first
+# healthy run. An issue assignment notifies by the assignee's own settings, and
+# the issue reaches the board through project-board-reconcile.yml's sweep (an
+# issue opened with GITHUB_TOKEN does not trigger add-to-project.yml). That
+# issue is also the alert STATE: the optional Telegram post below goes out
+# only when it is newly opened.
 #
 # Why a workflow and not a Worker: every Cloudflare cron trigger on the
 # account is spoken for (docs/ops/CloudflareCronSlots.md), and a watcher
@@ -31,10 +43,13 @@ on:
 
 permissions:
   contents: read
-  actions: read # the Telegram step reads this workflow's previous run
+  issues: write # the alert issue: open on a stall, close on recovery
 
+# Probes and PR selftests in SEPARATE groups (#2482 r1): a concurrency group
+# keeps one pending run and replaces it with the next one queued, so a shared
+# group would let PR activity displace a pending production probe.
 concurrency:
-  group: ingest-health
+  group: ingest-health-${{ github.event_name == 'pull_request' && 'selftest' || 'probe' }}
   cancel-in-progress: false
 
 jobs:
@@ -62,6 +77,9 @@ jobs:
       # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
       # old; 15 min of standing still is a stall, not a slow tick.
       INGEST_STALE_SECONDS: '900'
+      # Who the alert issue is assigned to — the operator who acts on it.
+      INGEST_ALERT_ASSIGNEE: vaipakam
+      ALERT_TITLE: Indexer ingest stalled
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -79,28 +97,61 @@ jobs:
             echo
             printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
-      # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
-      # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
-      # also post to the ops chat. Only on a TRANSITION into failure (the
-      # previous completed run succeeded), so a long stall posts once rather
-      # than every 15 minutes; the failed runs themselves keep showing it.
-      - name: Telegram (optional)
+      # The operator path: one open issue per stall. Opened on the first
+      # failing run, left alone while the stall lasts, closed on recovery.
+      - id: alert
+        name: Alert issue
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$ALERT_TITLE\"" --json number,title \
+            -q "[.[] | select(.title == \"$ALERT_TITLE\")][0].number // empty")
+          if [ -n "$open" ]; then
+            echo "Already open as #$open — the stall continues; not opening another."
+            echo "opened=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "The scheduled ingest probe found the indexer's ingest is not healthy:"
+            echo
+            printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
+            echo
+            echo "First failing run: $RUN_URL"
+            echo
+            echo "This issue closes itself on the first healthy run. See .github/workflows/ingest-health.yml (#2469)."
+          } > "$RUNNER_TEMP/alert.md"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --label infra \
+            --assignee "$INGEST_ALERT_ASSIGNEE" --body-file "$RUNNER_TEMP/alert.md"
+          echo "opened=true" >> "$GITHUB_OUTPUT"
+      - name: Close a recovered alert
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+              --search "in:title \"$ALERT_TITLE\"" --json number,title \
+              -q ".[] | select(.title == \"$ALERT_TITLE\") | .number"); do
+            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+          done
+      # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
+      # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
+      # also post to the ops chat — once per stall, when the alert issue is
+      # newly opened.
+      - name: Telegram (optional)
+        if: failure() && steps.alert.outputs.opened == 'true'
+        env:
           TG_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TG_OPS_CHAT_ID }}
           PROBLEMS: ${{ steps.check.outputs.problems }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
-            echo "Telegram secrets not set — GitHub's own failure notification is the alert."
-            exit 0
-          fi
-          prev=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ingest-health.yml \
-            --status completed --limit 1 --json conclusion -q '.[0].conclusion // ""')
-          if [ "$prev" = "failure" ]; then
-            echo "The previous run already failed — not posting again."
+            echo "Telegram secrets not set — the alert issue is the notification."
             exit 0
           fi
           text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
