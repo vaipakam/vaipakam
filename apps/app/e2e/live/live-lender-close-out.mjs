@@ -263,6 +263,8 @@ const ANY_INDEX = { has: () => true };
 const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null, possiblyEnabled: ANY_INDEX });
 /** The custom error a viem revert decoded to, or null. */
 const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
+/** Whether the node ANSWERED with a revert, decoded or not (an outage is not one). */
+const isRevert = (err) => Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError'));
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 const LOCK_SALE = 2;
 /**
@@ -354,9 +356,11 @@ try {
 
 /**
  * The facts the card's readiness rests on, at one block: the loan record
- * exactly as it was at startup (so still Active), past grace, the lender position held by this wallet, and the same
- * enabled swap-adapter roster the drive started from, which is what the
- * card's route posture was built on.
+ * exactly as it was at startup, the lender position held by this wallet and
+ * not withheld by a lock, the same enabled swap-adapter roster the drive
+ * started from (what the card's route posture was built on), and the chain's
+ * own answer to an empty-list `triggerDefault`, which stands in for every
+ * gate the contract applies (#2505 r34).
  *
  * NEVER THROWS (#2505 r13). Every caller gets one shape: `ok`, or a move
  * (`why`), or `unknown` (with its `err`) when nothing moved but some read got
@@ -387,15 +391,20 @@ async function eligibleAt(blockNumber) {
   // Reads that need the loan use the startup snapshot's immutable fields
   // (token id, start, duration) when the loan read itself is unanswered.
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
-  const [loanR, blockR, pausedR, seqR, adaptersR] = await Promise.all([
+  const [loanR, simR, adaptersR] = await Promise.all([
     settle(read('getLoanDetails', [LOAN_ID], at)),
-    settle(pub.getBlock({ blockNumber: pinned })),
-    // triggerDefault is whenNotPaused: an emergency pause is a moved
-    // precondition like any other (#2481 r4).
-    settle(read('paused', [], at)),
-    // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
-    // its recovery window) — another operational precondition (#2481 r5).
-    settle(read('sequencerHealthy', [], at)),
+    // The chain's own answer to the call the card makes before it signs
+    // (#2505 r34): `triggerDefault` with an empty try-list, which for a loan
+    // whose collateral must be SOLD gets through every gate the contract
+    // applies (the pause, the status, the lender's KYC tier, the grace
+    // period, the sequencer, an internal match) and then reverts
+    // `NoEnabledSwapRoute`. That revert is the expected answer. Any other
+    // revert is a gate that now refuses the close-out, and a success is a
+    // loan that closes without a sale: either way the card is right to
+    // withhold the sale, and this drive does not have to list the gates.
+    settle(
+      pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET, blockNumber: pinned }),
+    ),
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
     // disabled, or one venue replaced by another the app cannot ask, even in
@@ -405,11 +414,7 @@ async function eligibleAt(blockNumber) {
     settle(read('getSwapAdapters', [], at)),
   ]);
   const fixed = loanR.value ?? loan;
-  const [graceR, holderR, lockR, disabledR] = await Promise.all([
-    // The grace end AT THIS BLOCK, from this block's grace schedule: an admin
-    // retune between startup and the inspected block changes what
-    // triggerDefault itself evaluates there (#2481 r3).
-    settle(read('getEffectiveGraceSeconds', [fixed.durationDays], at)),
+  const [holderR, lockR, disabledR] = await Promise.all([
     settle(read('ownerOf', [fixed.lenderTokenId], at)),
     settle(lockWithholds(fixed.lenderTokenId, pinned)),
     // One settled read per adapter, so a flag that answered still counts
@@ -419,8 +424,15 @@ async function eligibleAt(blockNumber) {
   const why = [];
   const unanswered = [];
   const judge = (r, fn) => (r.err ? unanswered.push(r.err) : fn(r.value));
-  judge(pausedR, (v) => v && why.push('the protocol is paused'));
-  judge(seqR, (v) => !v && why.push('the sequencer is not healthy'));
+  if (simR.err) {
+    const name = revertName(simR.err);
+    if (name === 'NoEnabledSwapRoute') {
+      // Every gate passed; the sale still needs the route the card builds.
+    } else if (isRevert(simR.err)) why.push(`the chain now refuses the close-out (${name ?? describeErr(simR.err)})`);
+    else unanswered.push(simR.err);
+  } else {
+    why.push('the chain would now close it without a sale (an internal match or an in-kind branch)');
+  }
   // The WHOLE loan record against startup (#2505 r33): it changes only by a
   // transaction, and the card reads more of it than the status (an
   // added-collateral top-up re-sizes the sale it quoted), so any field that
@@ -429,14 +441,6 @@ async function eligibleAt(blockNumber) {
     const changed = changedFields(loan, v);
     if (changed.length > 0) why.push(`the loan record changed since startup (${changed.map((k) => `${k} ${loan[k]} → ${v[k]}`).join(', ')})`);
   });
-  // Each failed read is recorded on its own (#2505 r22).
-  if (blockR.err) unanswered.push(blockR.err);
-  if (graceR.err) unanswered.push(graceR.err);
-  // The grace comparison needs both.
-  if (!blockR.err && !graceR.err) {
-    const graceEndHere = fixed.startTime + fixed.durationDays * 86_400n + graceR.value;
-    if (blockR.value.timestamp <= graceEndHere) why.push(`not past grace (chain time ${blockR.value.timestamp}, grace ends ${graceEndHere})`);
-  }
   // The holder: a position claimed after the loan closed is burned, and the
   // node then answers that the token has no owner. That answer is itself a
   // fact (the position this drive held is gone), never an unknown.
@@ -1127,7 +1131,7 @@ const resolved = resolveSettlement({
   stopped,
   suspect,
   findings: failedCount(),
-  subject: `loan ${LOAN_ID}'s close-out eligibility`,
+  subject: `loan ${LOAN_ID}'s close-out`,
 });
 if (resolved.blocked) await blocked(resolved.blocked);
 if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.check.label, false, suspect.check.detail ?? '');

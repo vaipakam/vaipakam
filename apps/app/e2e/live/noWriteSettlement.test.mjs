@@ -18,6 +18,7 @@ const pubWith = (pending, latest = pending) => ({
 describe('nonceBaseline', () => {
   it('refuses a wallet with a pending transaction', async () => {
     expect((await nonceBaseline(pubWith(5, 4), W)).blocked).toMatch(/1 transaction\(s\) pending/);
+    expect((await nonceBaseline(pubWith(4, 5), W)).blocked).toMatch(/inconsistent/);
     expect(await nonceBaseline(pubWith(5), W)).toEqual({ nonce: 5 });
   });
 });
@@ -80,7 +81,7 @@ describe('settleRun', () => {
     expect(out).toEqual({ plan: true });
   });
 
-  it('still judges and reads the nonce when the browser fails to close', async () => {
+  it('reads a browser that did not close as an unprovable write', async () => {
     const out = await settleRun({
       closeBrowser: async () => {
         throw new Error('gone');
@@ -92,13 +93,15 @@ describe('settleRun', () => {
       wallet: W,
       baseline: 3,
     });
-    expect(out.nonce.kind).toBe('escaped');
+    // Nothing the nonce shows can be trusted while the browser may still run.
+    expect(out.nonce.kind).toBe('unknown');
+    expect(out.nonce.why).toMatch(/could not be closed/);
   });
 });
 
 describe('resolveSettlement', () => {
   const unchanged = (facts = {}) => ({ plan: false, facts, nonce: { kind: 'unchanged' } });
-  const base = { held: null, stopped: null, suspect: null, findings: 0, subject: 'loan 1' };
+  const base = { held: null, stopped: null, suspect: null, findings: 0, subject: "loan 1's claim" };
 
   it('is BLOCKED for a hold on a provably write-free run', () => {
     expect(resolveSettlement({ ...base, settled: unchanged(), held: 'underfunded' }).blocked).toMatch(/^underfunded; this wallet's nonce shows no transaction/);
@@ -106,7 +109,7 @@ describe('resolveSettlement', () => {
 
   it('is BLOCKED for a stop or a suspect the facts may explain, with the order unknown', () => {
     const r = resolveSettlement({ ...base, settled: unchanged({ moved: 'status 2' }), stopped: 'wait ran out' });
-    expect(r.blocked).toMatch(/the drive stopped \(wait ran out\), and loan 1 moved by the verdict \(status 2\); which came first is unknown/);
+    expect(r.blocked).toMatch(/the drive stopped \(wait ran out\), and what loan 1's claim rests on changed by the verdict \(status 2\); which came first is unknown/);
     const s = new Suspect('row missing', { row: 'r', key: 'k', label: 'l' });
     expect(resolveSettlement({ ...base, settled: unchanged({ unknown: 'rpc down' }), suspect: s }).blocked).toMatch(/could not be re-read/);
   });

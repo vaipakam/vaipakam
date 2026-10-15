@@ -382,6 +382,10 @@ const asBig = (v) => {
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
+/** The custom error a viem revert decoded to, or null. */
+const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
+/** Whether the node ANSWERED with a revert, decoded or not (an outage is not one). */
+const isRevert = (err) => Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError'));
 /** `ownerOf` answering that the token does not exist (a burned position).
  *  Only that decoded error counts: any other revert, broken routing included,
  *  establishes nothing about the position (#2505 r29). */
@@ -581,25 +585,24 @@ async function lifecycleNow() {
   // got no answer. The holder is asked by the startup token id when the loan
   // read is unanswered — a loan's position NFTs never change id.
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
-  const [loanR, claimR, pausedR, sanctionedR] = await Promise.all([
+  const [loanR, claimR, simR] = await Promise.all([
     settle(read('getLoanDetails', [LOAN_ID])),
     // The FULL claim, not getClaimableAmount: a payout held entirely in
     // heldForLender reads amount 0 there and is still claimable (#2505 r14).
     settle(read('getClaimable', [LOAN_ID, true])),
-    // claimAsLender is whenNotPaused: a pause withholds the claim while every
-    // other fact here reads unchanged (#2505 r29).
-    settle(read('paused')),
-    // claimAsLender is a Tier-1 entry point, so a wallet the sanctions oracle
-    // flags is refused it, and the page withholds the claim (#2505 r30).
-    settle(read('isSanctionedAddress', [WALLET])),
+    // The chain's own answer to the claim itself (#2505 r34): a simulation of
+    // `claimAsLender` from this wallet. Every gate the contract applies (a
+    // pause, a sanctions flag, the holder check, a claim already collected)
+    // then shows as the revert it is, without this drive listing the gates.
+    settle(pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET })),
   ]);
   const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
   const why = [];
   const unanswered = [];
-  if (pausedR.err) unanswered.push(pausedR.err);
-  else if (pausedR.value) why.push('the protocol is paused');
-  if (sanctionedR.err) unanswered.push(sanctionedR.err);
-  else if (sanctionedR.value) why.push(`${ROLE} ${WALLET} is flagged by the sanctions oracle`);
+  if (simR.err) {
+    if (isRevert(simR.err)) why.push(`the chain now refuses the claim (${revertName(simR.err) ?? simR.err?.shortMessage ?? simR.err?.message})`);
+    else unanswered.push(simR.err);
+  }
   // The WHOLE loan record and the WHOLE lender claim against startup
   // (#2505 r33): both change only by a transaction, so any field that
   // changed is the loan moving, whichever of them the page reads.
@@ -838,8 +841,22 @@ try {
         () => true,
         () => false,
       );
-    check('pageConfirmed', 'complete', 'the page confirmed the claim ("Claim complete")', confirmed);
     PLAN.close();
+    // Armed and clicked, and nothing reached the wallet: the page may rightly
+    // have withheld the claim (its own pre-wallet checks refuse a paused or
+    // flagged claim), so this is a FAIL only if the settlement's re-read,
+    // which asks the chain the same question, finds the claim still
+    // executable (#2505 r34). Nothing after it is judged: no payout or list
+    // change is expected of a claim that was never sent.
+    if (!wrote()) {
+      throw new Suspect('the page sent no claim after its claim was clicked', {
+        row: 'writeDiscipline',
+        key: 'planned',
+        label: 'the claim was sent through the gated wallet, exactly once',
+        detail: `plan step ${claimStep()?.status}; page ${confirmed ? 'said "Claim complete"' : 'never confirmed'}`,
+      });
+    }
+    check('pageConfirmed', 'complete', 'the page confirmed the claim ("Claim complete")', confirmed);
     await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own receipt, by the hash the wallet returned — not a log
     // search, which a claim still pending would make read as "no payout".
@@ -847,10 +864,7 @@ try {
     // unjudged, which is UNDETERMINED, never a product FAIL.
     const hash = claimHash();
     let receipt = null;
-    if (!wrote()) {
-      // Nothing was sent through the plan: `planned` states it, and no payout
-      // is expected of a send that never happened.
-    } else if (!hash) {
+    if (!hash) {
       unsettled('payout', 'paid', 'the wallet returned no hash — the claim may still land; check the lender wallet by hand');
     } else {
       try {
@@ -1022,7 +1036,7 @@ const settled = await settleRun({
   wallet: WALLET,
   baseline: nonceAtStart,
 });
-const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}` });
+const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}'s claim` });
 if (resolved.blocked) await blocked(resolved.blocked);
 if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.check.label, false, suspect.check.detail ?? '');
 // Armed, clicked, provably nothing sent, and nothing that explains it: the

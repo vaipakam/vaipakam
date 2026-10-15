@@ -25,7 +25,11 @@
  *     is closed, all three are frozen.
  *  2. JUDGE THE PAGE LEDGERS, now complete.
  *  3. If the plan sent, stop here: the drive's own outcome checks decide.
- *  4. RE-READ THE FACTS the drive's judgements rested on, once.
+ *  4. RE-READ THE FACTS the drive's judgements rested on, once. Each driver
+ *     reads its loan-scoped records whole and asks the chain the question
+ *     the page asks before it signs: a simulation of the very call. Every
+ *     gate the contract applies (a pause, a sanctions flag, a KYC tier, the
+ *     sequencer, the grace period) is then covered without being listed.
  *  5. READ THE NONCE, LAST. Nothing was pending at startup (the baseline
  *     refuses a wallet with a pending transaction), so an unchanged count
  *     proves no transaction from this wallet is pending or mined since.
@@ -71,8 +75,14 @@ export async function nonceBaseline(pub, wallet) {
     pub.getTransactionCount({ address: wallet, blockTag: 'pending' }),
     pub.getTransactionCount({ address: wallet, blockTag: 'latest' }),
   ]);
-  if (pending !== mined) {
+  if (pending > mined) {
     return { blocked: `${wallet} has ${pending - mined} transaction(s) pending at startup; its nonce could not tell a replacement from no send` };
+  }
+  // Pending below mined is no pending transaction: it is the node's view
+  // disagreeing with itself (another backend, a reorg between the reads),
+  // the same inconsistency the reconciliation reads as unknown (#2505 r34).
+  if (pending < mined) {
+    return { blocked: `${wallet}'s pending nonce (${pending}) read below its mined nonce (${mined}), so the node's view is inconsistent and no startup baseline can be established` };
   }
   return { nonce: pending };
 }
@@ -119,12 +129,16 @@ export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNo
     await closeBrowser();
   } catch (err) {
     closeFailed = describe(err);
-    console.log(`(browser close failed: ${closeFailed} — the nonce, read last, still covers any send)`);
+    console.log(`(browser close failed: ${closeFailed})`);
   }
   judgeLedgers();
   if (wrotePlan()) return { plan: true };
   const facts = await factsNow();
-  const nonce = await reconcileNonce(pub, wallet, baseline);
+  // A browser that did not close may still be running, and could send after
+  // the nonce read below, so no read here can rule a send out (#2505 r34).
+  const nonce = closeFailed
+    ? { kind: 'unknown', why: `the browser could not be closed (${closeFailed}), so a send after the final nonce read cannot be ruled out` }
+    : await reconcileNonce(pub, wallet, baseline);
   return { plan: false, facts, nonce };
 }
 
@@ -171,9 +185,9 @@ export function resolveSettlement({ settled, held, stopped, suspect, findings, s
   // Provably no write from here on.
   if (findings > 0) return { wrote: false, gateEscape: false, stopped: join(stopText, held), recordSuspect: Boolean(suspect?.check) };
   const moved = facts.moved
-    ? `${subject} moved by the verdict (${facts.moved})`
+    ? `what ${subject} rests on changed by the verdict (${facts.moved})`
     : facts.unknown
-      ? `whether ${subject} moved could not be re-read (${facts.unknown})`
+      ? `whether what ${subject} rests on changed could not be re-read (${facts.unknown})`
       : null;
   const order = stopText !== null && moved !== null ? '; which came first is unknown' : '';
   const tail = "; this wallet's nonce shows no transaction pending or mined since startup";
