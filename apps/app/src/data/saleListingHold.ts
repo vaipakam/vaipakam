@@ -28,142 +28,25 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import type { PublicClient } from 'viem';
+import { zeroAddress } from 'viem';
 import {
-  BaseError,
-  ContractFunctionRevertedError,
-  toFunctionSelector,
-  zeroAddress,
-} from 'viem';
+  BOUNDED_LISTING_SELECTOR,
+  probeSaleHoldLive,
+  type SaleListingHoldState,
+} from '@vaipakam/lib/saleHold';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
 
-export type SaleListingHoldState =
-  | 'none'
-  | 'live'
-  | 'clearable'
-  | 'accepted'
-  | 'unknown';
-
-/** LibERC721.LockReason.EarlyWithdrawalSale — the lender NFT's lock
- *  while a sale lifecycle (listing OR accepted-awaiting-completion)
- *  is in flight. Mirrors data/loanSalePending.ts. */
-const LOCK_EARLY_WITHDRAWAL_SALE = 2;
-
-/** The PR-A bounded-listing selector — the positive facet-version
- *  signal. The PRE-refresh Diamond routes the same one-argument
- *  teardown selector but with the OLD semantics (terminal-loans-only,
- *  pause-gated, no expiry admission), and it shares error names with
- *  the new facet — so a raw probe against it would misclassify a
- *  legacy GTC listing as boundedly `live` (Codex #1511 r1 P1). Only a
- *  Diamond that routes the 4-arg `createLoanSaleOffer` carries the
- *  lifecycle this surface describes; anything else stays `unknown`
- *  (render nothing). */
-const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
-);
-
-/** Pure classifier for the teardown probe outcome — split from the
- *  hook so the mapping is unit-testable without a chain.
- *
- *  `saleLocked` corroborates the ambiguous arm (Codex #1511 r3): the
- *  teardown reverts `NoStaleSaleListing` BOTH when no listing exists
- *  AND for an accepted sale awaiting its documented manual-recovery
- *  completion — but only the latter keeps the lender NFT sale-locked,
- *  and it still holds the borrower's offset path
- *  (`loanToSaleOfferId` is retained). Mapping it to `none` would hide
- *  a real hold. */
-export function classifyTeardownProbe(input: {
-  ok: boolean;
-  errorName?: string | null;
-  saleLocked?: boolean;
-}): SaleListingHoldState {
-  if (input.ok) return 'clearable';
-  switch (input.errorName) {
-    case 'NoStaleSaleListing':
-      return input.saleLocked ? 'accepted' : 'none';
-    case 'SaleListingLoanStillLive':
-      return 'live';
-    default:
-      return 'unknown';
-  }
-}
-
-/** The probe core, extracted so SUBMIT preflights can re-run it LIVE
- *  (Codex #1511 r5 P1): the hook's cached state can be up to a tip
- *  interval old, and an acceptance landing inside that window must
- *  not slip a settlement write through. Throws on RPC failure — the
- *  caller decides how to fail closed. */
-export async function probeSaleHoldLive(
-  client: Pick<PublicClient, 'simulateContract' | 'readContract'>,
-  diamondAddress: `0x${string}`,
-  loanId: number,
-  lenderTokenId: string,
-  account: `0x${string}` | undefined,
-  /** Read every fact at this block instead of the latest, so a caller can
-   *  judge this beside other reads from the same block. */
-  blockNumber?: bigint,
-): Promise<SaleListingHoldState> {
-  // LOCK FIRST. The lender position NFT carries the EarlyWithdrawalSale
-  // lock for the WHOLE listing lifecycle — stamped at creation, released
-  // only by the teardown or the completion — so an unlocked position
-  // PROVES there is nothing to classify, without simulating anything.
-  //
-  // This is the overwhelmingly common case (most loans were never
-  // listed), and it is the case that used to cost the most: the
-  // simulation reverted NoStaleSaleListing and we then read the lock
-  // anyway to disambiguate, so every poll spent two calls to learn
-  // "no listing". This probe rides the tip-driven invalidation set, so
-  // that doubled every visible borrower tab's call volume — and the
-  // rate-limit failures it invited are precisely what puts this hook
-  // into its errored state. One read now answers it.
-  let saleLocked: boolean | undefined;
-  if (lenderTokenId) {
-    saleLocked =
-      Number(
-        await client.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(lenderTokenId)],
-          blockNumber,
-        }),
-      ) === LOCK_EARLY_WITHDRAWAL_SALE;
-    if (!saleLocked) return 'none';
-  }
-  // Locked (or the token id is unknown, so the lock can't rule it out):
-  // simulate to tell a live listing from an ended one from an accepted
-  // sale. The lock reading already in hand answers the ambiguous
-  // NoStaleSaleListing arm at no extra cost.
-  try {
-    await client.simulateContract({
-      address: diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'teardownStaleSaleListing',
-      args: [BigInt(loanId)],
-      account,
-      blockNumber,
-    });
-    return classifyTeardownProbe({ ok: true });
-  } catch (err) {
-    const errorName = probeErrorName(err);
-    if (errorName === null) throw err;
-    return classifyTeardownProbe({ ok: false, errorName, saleLocked });
-  }
-}
-
-/** Extract the custom-error name from a viem simulate/write failure;
- *  null when the revert doesn't decode against the Diamond ABI. */
-export function probeErrorName(err: unknown): string | null {
-  if (err instanceof BaseError) {
-    const revert = err.walk(
-      (e) => e instanceof ContractFunctionRevertedError,
-    ) as ContractFunctionRevertedError | null;
-    return revert?.data?.errorName ?? null;
-  }
-  return null;
-}
+// The probe and its classifier live in `@vaipakam/lib/saleHold` (#2483):
+// the keeper's grace-default pass must refuse an accepted sale by exactly
+// the rule this app's close-out card applies, so there is one copy of it.
+export {
+  classifyTeardownProbe,
+  probeErrorName,
+  probeSaleHoldLive,
+  type SaleListingHoldState,
+} from '@vaipakam/lib/saleHold';
 
 /** Query state as this module consumes it — the three fields the gate
  *  below actually reads, so it can be exercised without a QueryClient. */

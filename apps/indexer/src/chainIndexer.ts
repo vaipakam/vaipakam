@@ -194,7 +194,7 @@ const DETAILS_REFRESH_BATCH = 50;
 /** Single shared cursor across every domain handler. Adding a new
  *  domain in Phase B+ does NOT add a new cursor row — every handler
  *  consumes the same scan window. */
-const CURSOR_KIND = 'diamond';
+export const CURSOR_KIND = 'diamond';
 
 /** #1213 PR 2b — "notifications complete through last_block" watermark
  *  for independent writers of the notifications table (the keeper's
@@ -3800,7 +3800,7 @@ const LOAN_TOKEN_ID_BATCH = 50;
  *   the time of the write.
  * - `at`, when given, is the chain's own time for `block` — never a scan
  *   clock — and the write records that as `terminal_at_verified = 1`
- *   (migration 0059). That marker, not the row's shape, is what says a
+ *   (migration 0060). That marker, not the row's shape, is what says a
  *   settlement time is known (#2476 r15).
  * - A row already settled is left alone, EXCEPT where this write knows more
  *   (#2476 r3, r12, r15): a supplied block replaces a missing or DIFFERENT
@@ -5914,7 +5914,7 @@ export async function processLoanLogs(
       // A CLOSE, not a listing end — the loan goes Active→Settled in this
       // same call — so the shared close-out cleanup applies.
       await _clearClosedLoanSideTables(env, chainId, loanId);
-      // #2476 r16 — the event block's chain time, VERIFIED (0059), or unknown
+      // #2476 r16 — the event block's chain time, VERIFIED (0060), or unknown
       // when that block's read failed — never the scan's clock. This close
       // emits no LoanSettled, so the ledger heal can never date it later; a
       // time written here is the only one it will get.

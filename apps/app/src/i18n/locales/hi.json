@@ -1440,7 +1440,7 @@
       "graceUnknownLender": "यह loan past due है — अभी exact grace deadline read नहीं कर सके। Grace window end और default record होने के बाद collateral claim यहाँ आएगा।",
       "graceUnknownViewer": "यह loan past due है। Grace window end होने पर lender collateral claim कर सकता है।",
       "graceOverBorrower": "Grace period end हो गया — protocol अब repayment accept नहीं करता, और lender किसी भी समय collateral ले सकता है। वे claim करेंगे तो outcome यहाँ दिखेगा।",
-      "graceOverLender": "Grace period end हो गया — यह loan अब defaulted mark हो सकता है। यह normally shortly automatic होता है; default record होने पर collateral claim यहाँ आएगा।",
+      "graceOverLender": "Grace period end हो गया — यह loan अब default के रूप में close हो सकता है। इस deployment पर automatic close-out बंद हो सकता है, और app यह नहीं जान सकता कि बंद है या नहीं, इसलिए उसका इंतज़ार न करें। इस page पर overdue-loan card दिखने पर वह बताएगा कि आप अभी खुद loan close कर सकते हैं या नहीं, और नहीं तो क्या रुकावट है। कोई और भी पहले close कर सकता है। Close-out होने के बाद यह page बताएगा कि आप क्या और कब claim कर सकते हैं।",
       "fallbackCureBorrower": "यह loan grace period past है और default settle हो रहा है। आप अभी भी full repay करके cure कर सकते हैं और collateral वापस पा सकते हैं — लेकिन सिर्फ lender default finalize करने तक, जो कभी भी हो सकता है।",
       "owedRepaid": "कुछ नहीं — {{principal}} plus interest full repay हो चुका है।",
       "owedDefaulted": "अब repay करने को कुछ नहीं — यह loan default में ended और collateral इसे cover करती है।",

@@ -56,5 +56,6 @@
   "0055_activity_value.sql",
   "0056_init_principal_unbacked.sql",
   "0058_init_terms_unbacked.sql",
-  "0059_terminal_by_repair.sql"
+  "0059_keeper_runner_lease.sql",
+  "0060_terminal_by_repair.sql"
 ]

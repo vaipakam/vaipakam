@@ -1,0 +1,3 @@
+## Thread — The ingest-health alert can no longer hang or close nothing silently (PR #<n>)
+
+The scheduled ingest probe opens and closes a GitHub issue to alert the operator, and posts to the ops Telegram chat as a fallback. Two gaps are closed. First, each GitHub call now has its own short deadline, and each step has one, so a GitHub API that accepts the connection and never answers fails that step quickly instead of running the job into its five-minute limit, where the job would be cancelled before the Telegram fallback could send. Second, a failed lookup of the open alert issues used to look like "none open" and leave the run green with a recovered alert still open; it now fails the step, so the run shows it. Closes #2506.

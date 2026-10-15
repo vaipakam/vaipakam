@@ -611,7 +611,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
-  it('a previous Worker’s scan-time settlement — even one written after 0059 — is re-dated from the chain (#2476 r15)', async () => {
+  it('a previous Worker’s scan-time settlement — even one written after 0060 — is re-dated from the chain (#2476 r15)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     // What the old handler writes, before OR after the migration: the right
     // block, the scan's clock, and (being old code) no verification marker.

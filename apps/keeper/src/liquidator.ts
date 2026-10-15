@@ -39,6 +39,7 @@ import { createPublicClient, http, type Abi, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { MULTICALL3_ADDRESS } from './multicall3';
+import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
@@ -56,8 +57,9 @@ const HF_MULTICALL_CHUNK = 100;
  *  bounds the keeper EOA's gas budget so a sudden cluster of underwater
  *  loans can't burn the whole allowance in one cron pass. */
 const MAX_LIQUIDATIONS_PER_TICK = 12;
-/** HF below which the loan is autonomously liquidatable on-chain. */
-const HF_LIQUIDATION_THRESHOLD = 10n ** 18n;
+/** HF below which the loan is autonomously liquidatable on-chain. Defined
+ *  in `hfLine.ts`, which every pass that must agree on it imports. */
+export { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 
 export async function runLiquidator(env: Env): Promise<void> {
   if (!passIsArmed(env, 'liquidator')) return;

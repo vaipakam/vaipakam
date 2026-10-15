@@ -143,6 +143,13 @@ for (const k of ['title', 'checking', 'unavailable']) {
 const CONNECT_FIRST = readJson('apps/app/src/i18n/locales/en.json')?.copy?.wallet?.connectFirst;
 if (typeof CONNECT_FIRST !== 'string') blockedSync('en.json no longer carries copy.wallet.connectFirst');
 const ROW = CLAIMS.row ?? {};
+// #2466 / #2470 — the position page's Owed line for an unclaimed internally
+// matched loan, and the line it must NOT show (the loan is closed but not
+// yet settled).
+const POSITIONS = readJson('apps/app/src/i18n/locales/en.json')?.copy?.positions ?? {};
+for (const k of ['owedInternalMatched', 'owedClosed']) {
+  if (typeof POSITIONS[k] !== 'string') blockedSync(`en.json no longer carries copy.positions.${k}`);
+}
 for (const k of ['matchCleared', 'matchClearedNoCharges', 'matchPaidShort', 'matchPaidFull', 'whyInternalMatchLender']) {
   if (typeof ROW[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.row.${k}`);
 }
@@ -212,6 +219,14 @@ const MANIFEST = createManifest({
         why: 'the row carries copy.claims.row.whyInternalMatchLender',
         note: 'the row carries the line rebuilt from getOwedAtInternalMatch and the en catalogue',
         noFallback: 'the row carries none of the fallback lines',
+      },
+    },
+    {
+      id: 'owedLine',
+      claim: "the position page says internal matching closed the loan and that it settles once its claims are collected — never 'closed and settled' (#2466, #2470)",
+      checks: {
+        pending: 'the position page carries copy.positions.owedInternalMatched',
+        notSettled: 'the position page does not carry copy.positions.owedClosed',
       },
     },
     ...(SUBMIT_CLAIM ? CLAIM_ONLY : []),
@@ -550,6 +565,54 @@ try {
   check('claimRow', 'note', 'row states what matching cleared, and the payout comparison', flat.includes(EXPECTED_NOTE));
   check('claimRow', 'noFallback', 'row shows no fallback line', !FALLBACK_LINES.some((l) => flat.includes(l)));
   await shot(`internal-match-claim-row-${LOAN_ID}`);
+
+  // The position page's Owed line (#2466, #2470), before any claim: an
+  // unclaimed internally matched loan is closed but not settled.
+  // Not `visit()`: that helper is for the FIRST navigation and reads any
+  // failure as infrastructure (BLOCKED). /positions is a product route
+  // reached after /claims loaded, so a failure here is a finding (#2481 r3).
+  resetWindow();
+  const posNav = await page
+    .goto(`${SITE_URL.replace(/\/$/, '')}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    .then((r) => ({ status: r?.status() ?? 200 }), (e) => ({ error: e.message }));
+  // The page must still BE this loan's (#2481 r6): a redirect to another
+  // position would let its copy stand in for this loan's.
+  const landedOn = (() => {
+    try {
+      return new URL(page.url()).pathname.replace(/\/$/, '');
+    } catch {
+      return '';
+    }
+  })();
+  if (posNav.error || posNav.status >= 400) {
+    check('owedLine', 'pending', 'the position page loaded', false, posNav.error ?? `HTTP ${posNav.status}`);
+  } else if (landedOn !== `/positions/${LOAN_ID}`) {
+    check('owedLine', 'pending', `the position page stayed on loan ${LOAN_ID}`, false, `landed on ${landedOn}`);
+  } else {
+    let owedText = '';
+    const owedDeadline = Date.now() + 45_000;
+    while (Date.now() < owedDeadline) {
+      owedText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+      if (owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) break;
+      await page.waitForTimeout(1_000);
+    }
+    // Neither line within the wait, and the page's own RPC answered nothing in
+    // that window: the page never had the facts, so nothing was observed —
+    // BLOCKED, never a FAIL on the copy (#2481 r1).
+    if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
+      await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
+    }
+    check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
+    check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
+  }
+  await shot(`internal-match-owed-${LOAN_ID}`);
+  if (SUBMIT_CLAIM) {
+    // The claim flow starts from the claims list.
+    resetWindow();
+    const back = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
+    await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+  }
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
   if (SUBMIT_CLAIM && preClaimFails() > 0) {

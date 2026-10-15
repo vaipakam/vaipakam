@@ -122,8 +122,8 @@ interface LoanRow {
   start_at: number;
   terminal_block: number | null;
   terminal_at: number | null;
-  // 0059 — 1 when a settled row's `terminal_at` is the chain's time for its
-  // settlement block. Absent on a database 0059 has not reached.
+  // 0060 — 1 when a settled row's `terminal_at` is the chain's time for its
+  // settlement block. Absent on a database 0060 has not reached.
   terminal_at_verified?: number;
   updated_at: number;
 }
@@ -173,7 +173,7 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     startBlock: row.start_block,
     startAt: row.start_at,
     terminalBlock: row.terminal_block,
-    // #2476 r15 — a SETTLED row's time is served only when verified (0059):
+    // #2476 r15 — a SETTLED row's time is served only when verified (0060):
     // an unverified one may be a previous Worker's scan clock, and stating
     // when the indexer noticed a settlement as when it happened is the claim
     // this withholds. Other terminal statuses are served as stored.

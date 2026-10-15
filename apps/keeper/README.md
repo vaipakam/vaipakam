@@ -31,6 +31,8 @@ pnpm --filter @vaipakam/keeper run deploy   # verifies the shared D1 schema, the
 **The deploy verifies the shared D1 schema first** (#2409). This Worker binds the shared `vaipakam-warm` database, whose schema `apps/indexer` owns, so `run deploy` runs `apps/indexer/scripts/deploy-shared-d1.mjs verify` before publishing: a read-only check that every migration the build carries is recorded. It waits up to ten minutes for the indexer's deploy to apply pending ones, then refuses to publish onto an older schema. It never applies migrations itself. So the token needs **D1 read** as well as Worker publish rights, and on a release that carries a migration, **deploy the indexer first**. `run deploy` takes no arguments; a dry run is `run deploy:dry`, which never touches the database.
 
 
+**On an always-on machine instead of Cloudflare:** `pnpm --filter @vaipakam/keeper start:host` runs the same tick in one long-lived Node process, reaching the same D1 database over Cloudflare's HTTP API. Setup, configuration, the one-copy rule and the differences from the Worker are in [`host/README.md`](host/README.md).
+
 ## How to test
 
 ```bash
@@ -55,11 +57,12 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-warm --remote` from `apps/indexer/`). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
-| `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation swap aggregator credentials. |
+| `GRACE_DEFAULT_ENABLED` | Arms the #2483 time-based default pass (in addition to `KEEPER_ENABLED`): it submits `triggerDefault` for loans past their grace period, which sells or transfers the borrower's collateral. Needs no on-chain role (`triggerDefault` is permissionless). It skips, with a logged reason, any loan whose route would fall into the full-collateral fallback, whose lender position has an accepted sale, or whose collateral changed after quoting. |
+| `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation and time-based-default swap aggregator credentials. |
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 
-The three arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
-`REWARD_COMMIT_ENABLED`) are `secret_text` bindings, not entries in
+The four arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
+`REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`) are `secret_text` bindings, not entries in
 `wrangler.jsonc`'s `vars` block — see that file's `vars` comment for why they
 must not be moved there. Their values cannot be read back from the API or
 dashboard, which is why each gated pass reports at runtime how it resolved
@@ -81,6 +84,12 @@ secrets — they sat in the secrets table above until #2223, where the
 `wrangler secret put` instruction would have provisioned them as unreadable
 values for no benefit.
 
+Config-owned var — its value is committed in `wrangler.jsonc`'s `vars`, so every deploy writes it. It is **not** a secret and not dashboard-managed: never set it with `wrangler secret put` or in the dashboard, where the next deploy would overwrite it.
+
+| Var | Purpose |
+|---|---|
+| `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
+
 `TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
 note above: this config **declares** it, so every deploy uploads the declared
 value and a dashboard edit is overwritten rather than preserved. Note though
@@ -94,9 +103,9 @@ See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret lis
 
 ### What the kill-switch does and does not stop (#1548)
 
-`KEEPER_ENABLED=false` disables the six **gated** passes: `matcher`,
-`liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck` and
-`commitmentReport`.
+`KEEPER_ENABLED=false` disables the seven **gated** passes: `matcher`,
+`liquidator`, `autoLifecycle`, `graceDefault`, `rewardBudgetRemit`, `remitAck`
+and `commitmentReport`.
 
 **`dailyOracleSnapshot` is not among them and still signs.** It is gated only
 on `KEEPER_PRIVATE_KEY` being present, so with the kill-switch off it
@@ -302,8 +311,8 @@ goes, and one `wrangler tail` cycle resolves all of them:
 [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
 ```
 
-The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-`rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
+The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+`graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
 (`watcher`, `dailyOracleSnapshot`, `preGraceWatcher`) have no on/off binding
 of their own and so have nothing to report; `liquidityConfidence` always runs
 and consults the keeper gate only to decide whether to submit. **Absent lines

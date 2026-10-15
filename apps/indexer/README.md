@@ -101,6 +101,8 @@ Any schema change — even for a table only keeper or agent writes — lands as 
 
 **Recommended Workers Builds setting (operator, Cloudflare dashboard → each Worker → Settings → Builds):** deploy command `pnpm run deploy` for all three. The indexer's build token needs **D1 Edit** (it applies); the keeper's and agent's need D1 read (they verify). That makes the auto-deploys migrate-then-verify too, and the gate becomes a backstop rather than the mechanism. Until it is set, a merge that adds a migration pauses scheduled ingest until someone runs the apply.
 
+**Current state, as last verified (2026-10-14, #2469):** the INDEXER's Workers Builds deploy command was changed in the dashboard to `pnpm run deploy`, and its build token carries D1 Edit. The first merge after that change (#2478) applied `0058_init_terms_unbacked.sql` at 04:49:53 UTC and published at 04:49:59, with no manual step. The keeper's and agent's build commands were NOT checked. This is dashboard configuration the repository cannot pin, so it can be changed back without a trace here: the schema gate stays, and `.github/workflows/ingest-health.yml` alerts if ingest stalls for any reason, a gated tick included.
+
 ## Related
 
 - `apps/app` — primary consumer (frontend reads loan / offer data from here).

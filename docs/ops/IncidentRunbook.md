@@ -304,12 +304,13 @@ tier-write path.
 
 Derive it from source rather than from any prose list, this one included — but
 derive it from the **right** entry point, because there are two and the obvious
-one is the minority case. `keeperBlockers` (`keeper.ts:866`) is the shared
+one is the minority case. `keeperBlockers` (`keeper.ts:891`) is the shared
 gate: `isKeeperEnabled` wraps it, and `passIsArmed` calls it directly, which is
-how `matcher`, `liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck`
-and `commitmentReport` are gated. Only two call sites reach `isKeeperEnabled`
-by name (`keeper.ts:257`, `liquidityConfidence.ts:781`), so grepping for that
-alone finds two of eight and looks conclusive. Enumerate `keeperBlockers`
+how `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+`rewardBudgetRemit`, `remitAck` and `commitmentReport` are gated. Only two call
+sites reach `isKeeperEnabled` by name (`keeper.ts:268`,
+`liquidityConfidence.ts:807`), so grepping for that alone finds two of nine and
+looks conclusive. Enumerate `keeperBlockers`
 callers, then `passIsArmed` callers.
 
 So do not flip it from this procedure to turn remittance on. Either it is
@@ -341,11 +342,28 @@ remit it with the manual §2b procedure — it will not be picked up otherwise.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
-running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
+running) or `KEEPER_ENABLED=false` (stops the seven GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
 #1466). That flag is a per-Worker `secret_text`, so `wrangler secret put` is
 the right tool for it.
+
+**`graceDefault` has its own switch, and it is the one that sells collateral.**
+The pass submits `triggerDefault` for loans past their grace period, which
+swaps or transfers the borrower's collateral, and it runs whenever both
+`KEEPER_ENABLED` and `GRACE_DEFAULT_ENABLED` are `true`. So if that flag was
+left `true` while the master switch was off, re-arming `KEEPER_ENABLED`
+restarts autonomous defaults too. Check it before re-arming, and to stop only
+this pass in an incident (a bad route source, a mispriced oracle) while the
+rest of the keeper keeps running:
+
+```bash
+( cd apps/keeper && wrangler secret put GRACE_DEFAULT_ENABLED ) # enter: false
+```
+
+`triggerDefault` is permissionless, so stopping the pass stops only this
+keeper's submissions; the lender's own close-out button and any third party
+can still default a past-grace loan.
 
 A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
 whatever is live, with or without `--keep-vars` — but that is harmless here
@@ -1437,7 +1455,7 @@ assembled from two existing levers, in this order:
    liquidation or user claims. This is the proportionate first move for
    a ledger-relation breach: it stops the books being written to while
    the discrepancy is understood.
-   > Remember §3's scope note on `KEEPER_ENABLED`: it stops six jobs
+   > Remember §3's scope note on `KEEPER_ENABLED`: it stops seven jobs
    > and leaves four running, **including the watchers that message
    > users.** If the incident is one where users should not be hearing
    > from the system, stopping the keeper's schedule is the lever, not

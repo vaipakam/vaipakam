@@ -92,6 +92,11 @@ interface BaseEnv {
   // `wrangler secret put`, not in `vars`.
   KEEPER_ENABLED?: string;
 
+  // #2503 — this runner's name for the one-runner lease (`runnerLease.ts`).
+  // A plain var: the Worker's is set in wrangler.jsonc, a machine's in its
+  // env file (the install writes the host name). Unset declines every tick.
+  KEEPER_RUNNER_ID?: string;
+
   // #925 — reward-budget remittance pass knobs. The `*_ENABLED` flags are
   // `secret_text` like KEEPER_ENABLED (so equally unreadable — see the
   // note above); the numeric tuning knobs below are plain vars.
@@ -107,6 +112,11 @@ interface BaseEnv {
   REWARD_COMMIT_ENABLED?: string;
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
+
+  // #2483 — time-based default pass. `secret_text` like the flags above.
+  /** 'true' arms the grace-default pass (in addition to KEEPER_ENABLED). It
+   *  submits `triggerDefault`, which sells a defaulted borrower's collateral. */
+  GRACE_DEFAULT_ENABLED?: string;
 
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
@@ -193,6 +203,70 @@ export interface WorkerEnv extends BaseEnv {
   // signing key (staging plan §2 least-privilege contract).
   KEEPER_PRIVATE_KEY?: SecretBinding;
 }
+
+/**
+ * Every `WorkerEnv` field delivered as a Secrets Store binding, named once.
+ *
+ * The Worker gets these as `{ get() }` bindings from `wrangler.jsonc`. A host
+ * that is not a Worker (`host/`, the always-on-machine runtime) has plain
+ * strings instead, and wraps exactly these keys so `resolveEnv` runs
+ * unchanged on both. `satisfies` keeps every entry a real `WorkerEnv` key;
+ * `test/secretBindingKeys.test.ts` checks the list against `resolveEnv`, so
+ * a secret added there and not here fails a test instead of reaching the
+ * machine as a raw string where a binding was expected.
+ */
+export const SECRET_BINDING_KEYS = [
+  'RPC_BASE',
+  'RPC_ETH',
+  'RPC_ARB',
+  'RPC_OP',
+  'RPC_BNB',
+  'RPC_SEPOLIA',
+  'RPC_BASE_SEPOLIA',
+  'RPC_ARB_SEPOLIA',
+  'RPC_OP_SEPOLIA',
+  'RPC_BNB_TESTNET',
+  'TG_BOT_TOKEN',
+  'PUSH_CHANNEL_PK',
+  'ZEROEX_API_KEY',
+  'ONEINCH_API_KEY',
+  'KEEPER_PRIVATE_KEY',
+] as const satisfies readonly (keyof WorkerEnv)[];
+
+/**
+ * Every plain-string knob a host can set, named once (`BaseEnv`'s keys).
+ *
+ * The machine host's env template (`host/deploy/keeper.env.example`) is
+ * checked against this list and `SECRET_BINDING_KEYS`, so the template
+ * cannot omit a setting the keeper reads or list one it does not. The
+ * `PlainVarKeysComplete` check below fails to compile if a knob is added to
+ * `BaseEnv` without being added here.
+ */
+export const PLAIN_VAR_KEYS = [
+  'TG_BOT_USERNAME',
+  'FRONTEND_ORIGIN',
+  'KEEPER_ENABLED',
+  'KEEPER_RUNNER_ID',
+  'REWARD_REMIT_ENABLED',
+  'REWARD_REMIT_LOOKBACK_DAYS',
+  'REWARD_REMIT_LANE_CAP',
+  'REWARD_COMMIT_ENABLED',
+  'REWARD_COMMIT_LOOKBACK_DAYS',
+  'GRACE_DEFAULT_ENABLED',
+  'LIQ_CONFIDENCE_MIN_CHECKS',
+  'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
+  'LIQ_TIER3_MIN_TVL_USD',
+  'LIQ_TIER3_DISABLE_DEFI_LISTING',
+  'LIQ_TIER3_MIN_MCAP_USD',
+  'LIQ_TIER3_MIN_VOL_USD',
+  'SPLIT_MIN_IMPROVEMENT_BPS',
+  'PARTIAL_LIQ_MIN_HF_BPS',
+] as const satisfies readonly (keyof BaseEnv)[];
+
+type PlainVarKeysComplete =
+  Exclude<keyof BaseEnv, (typeof PLAIN_VAR_KEYS)[number]> extends never ? true : false;
+const plainVarKeysComplete: PlainVarKeysComplete = true;
+void plainVarKeysComplete;
 
 /**
  * The RESOLVED env passed to all downstream code. Every field is a
@@ -315,6 +389,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
+    GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

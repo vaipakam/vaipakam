@@ -23,6 +23,7 @@
  *     entire path is no-op.
  */
 
+import { queuedWallet } from './submissionQueue';
 import {
   type Address,
   createWalletClient,
@@ -33,13 +34,17 @@ import {
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AdminFacetABI,
+  DefaultedFacetABI,
   FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
   RiskFacetABI,
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
+import { attemptCloseOut } from './closeOut';
+import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -248,6 +253,73 @@ export function resetKeeperDedupe(): void {
 
 function dedupeKey(chainId: number, loanId: number): string {
   return `${chainId}:${loanId}`;
+}
+
+/**
+ * Null when every build for this loan was a no-quote the market gave — each
+ * venue asked, each venue's own outcome `declined` — so the
+ * in-kind close may be considered; otherwise the reason it may not. A venue
+ * that was not heard from might have quoted, and an in-kind close cannot be
+ * undone, so anything short of `declined` keeps the loan waiting (#2487 r1).
+ */
+export function inKindBlocker(
+  builds: readonly Pick<ServerOrchestrationResult, 'calls' | 'noQuote' | 'marketDeclined'>[],
+): string | null {
+  for (const b of builds) {
+    if (b.calls.length > 0) return 'another size quoted';
+    if (b.noQuote !== 'declined') return `no-quote reason ${b.noQuote ?? 'none'}`;
+    // `declined` as worded for readers also covers a quote whose swap
+    // target governance has not allowed: a route exists (#2487 r2).
+    if (!b.marketDeclined) return 'a venue quoted a swap target its adapter does not allow';
+  }
+  return builds.length > 0 ? null : 'no builds';
+}
+
+/**
+ * The liquidator's no-route fallback (#2487): when the loan is past grace,
+ * close it in kind through the attempt the grace-default pass uses, in its
+ * `in-kind` role. Returns true when a transaction was submitted or may have
+ * been broadcast. Every other outcome is logged with its reason.
+ */
+export async function tryInKindCloseOut(
+  chain: Pick<ChainConfig, 'id' | 'name'>,
+  ctx: KeeperContext,
+  publicClient: PublicClient,
+  loanIdBig: bigint,
+): Promise<boolean> {
+  const defaultable = (await publicClient
+    .readContract({
+      address: ctx.diamond,
+      abi: DefaultedFacetABI,
+      functionName: 'isLoanDefaultable',
+      args: [loanIdBig],
+    })
+    .catch(() => null)) as boolean | null;
+  if (defaultable !== true) {
+    const why = defaultable === null ? 'defaultable-unread' : 'not-past-grace';
+    console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${why}`);
+    return false;
+  }
+  const outcome = await attemptCloseOut(
+    {
+      client: publicClient,
+      wallet: ctx.wallet,
+      diamond: ctx.diamond,
+      chainId: chain.id,
+      // The in-kind role sends an empty list and never builds a route.
+      buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
+    },
+    loanIdBig,
+    'in-kind',
+  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
+  if (outcome.kind === 'skipped') {
+    console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${outcome.reason}`);
+    return false;
+  }
+  console.log(
+    `[keeper] loan=${loanIdBig} chain=${chain.name} in-kind ${outcome.kind === 'submitted' ? 'submitted' : `send-unconfirmed (${outcome.reason})`} tx=${outcome.tx} preview=${outcome.preview}`,
+  );
+  return true;
 }
 
 /**
@@ -466,6 +538,28 @@ export async function maybeAutonomousLiquidate(
       console.log(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
       );
+      // #2501 — `triggerLiquidation` asks the internal-match auto-dispatch
+      // before it reads the swap list, so an opposing position can still
+      // close this loan at oracle price with an empty list. Sent only when
+      // the preview shows that match; it comes first because the in-kind
+      // close below refuses an ending that is a match and leaves it here.
+      if (await tryMatchLiquidation(chain, ctx, publicClient, loanIdBig)) return true;
+      // #2487 — if every venue was asked about every size and every one
+      // DECLINED, and the loan is also past grace, it is still this pass's
+      // (it is under water) and the grace-default pass will not touch it,
+      // so the liquidator sends the in-kind close-out itself:
+      // `triggerDefault` with an empty list, where the contract's
+      // collapsed-LTV branch hands the collateral to the lender. The shared
+      // attempt sends only when the preview shows that terminal default,
+      // with no swap and no internal match.
+      //
+      // An empty list is NOT enough on its own (#2487 r1): an unread
+      // roster, a venue that did not answer, or one this keeper cannot ask
+      // also leaves it empty, and a route might exist there. Only the
+      // shared `declined` verdict says the market was asked and said no.
+      const blocker = inKindBlocker([quotes, halfQuotes, ...(partialQuotes ? [partialQuotes] : [])]);
+      if (blocker === null) return tryInKindCloseOut(chain, ctx, publicClient, loanIdBig);
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} in-kind not considered: ${blocker}`);
       return false;
     }
 
@@ -764,7 +858,10 @@ export async function maybeAutonomousLiquidate(
  * forever, leaving the pass permanently dark. Which is the same failure this
  * module's logging exists to expose, one layer down.
  */
-export type PassArmingFlag = 'REWARD_REMIT_ENABLED' | 'REWARD_COMMIT_ENABLED';
+export type PassArmingFlag =
+  | 'REWARD_REMIT_ENABLED'
+  | 'REWARD_COMMIT_ENABLED'
+  | 'GRACE_DEFAULT_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.
@@ -963,6 +1060,9 @@ export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
+  /** The fetch the wallet's requests go through — a pass that caps its
+   *  requests passes its budget's (see subrequestBudget.ts). */
+  fetchFn?: typeof fetch,
 ): KeeperContext | null {
   if (!env.KEEPER_PRIVATE_KEY) return null;
   // The same call the gate makes, so a key that logged `start` cannot be
@@ -973,10 +1073,15 @@ export function buildKeeperContext(
     return null;
   }
   const { account } = resolved;
-  const wallet = createWalletClient({
-    account,
-    transport: http(chain.rpc),
-  });
+  // Queued (#2486): every pass signs with this one key, so its sends on
+  // this chain are admitted one at a time with a fresh nonce each.
+  const wallet = queuedWallet(
+    createWalletClient({
+      account,
+      transport: http(chain.rpc, fetchFn ? { fetchFn } : undefined),
+    }),
+    chain.id,
+  );
   return {
     wallet,
     client: publicClient,

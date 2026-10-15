@@ -794,7 +794,7 @@ export function notificationInsertStatement(
  * So the insert self-gates on what the CAS writes: the status, this pass's
  * own `updated_at` second, and `terminal_by_repair = 1` — an EXPLICIT marker
  * only the repair's UPDATE sets, and every other terminal writer clears
- * (#2476 r12, migration 0059). Earlier revisions inferred the repair from
+ * (#2476 r12, migration 0060). Earlier revisions inferred the repair from
  * the row's shape — a NULL `terminal_at`, then a NULL `terminal_block` too —
  * and each inference was broken by a legitimate writer producing the same
  * shape (an event whose block time could not be read; the ledger heal

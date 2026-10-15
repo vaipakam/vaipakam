@@ -614,7 +614,15 @@ function assertInjectedAccount(requested, account) {
 export async function ensureConnected(page) {
   const connect = page.getByRole('button', { name: /connect wallet/i }).first();
   if (!(await connect.isVisible().catch(() => false))) return;
-  await connect.click();
+  // The injected wallet can auto-reconnect between the visibility check and
+  // the click, hiding the CTA: a click that misses because the button went
+  // away is the connected state, not a failure (#2463 live drive).
+  try {
+    await connect.click({ timeout: 10_000 });
+  } catch (err) {
+    if (await connect.isVisible().catch(() => false)) throw err;
+    return;
+  }
   // A remembered session can complete right after the click and hide
   // the modal before the provider option is clickable — treat "the
   // connect CTA left the header" as connected, and only try the
@@ -694,6 +702,10 @@ export const READ_METHODS = new Set([
   'eth_getTransactionCount',
   'eth_getTransactionReceipt',
   'eth_maxPriorityFeePerGas',
+  // A stateless multi-call simulation: nothing is signed or broadcast. The
+  // close-out card previews a route with it to tell a sale from the fallback
+  // (src/data/closeOutRoute.ts, #2463).
+  'eth_simulateV1',
   'eth_syncing',
   'eth_subscribe',
   'eth_unsubscribe',
@@ -720,6 +732,12 @@ export async function launch({
   // could POST a write straight at an RPC or a first-party endpoint and the
   // wallet gate would never see it. Implied by readOnly.
   readOnlyEgress = false,
+  // allowQuoteProxy: under readOnlyEgress, let the page POST to OUR quote
+  // proxy (`/quote/<venue>` on a first-party host) and nothing else. The
+  // close-out card prices a sale through it (`buildCloseOutRoute`); a quote
+  // is a price request that changes no state, while every other first-party
+  // POST stays refused (#2481 r6). Exact path shape, never a host-wide pass.
+  allowQuoteProxy = false,
   // preAuthorized: whether `eth_accounts` reports the account BEFORE
   // the page ever calls `eth_requestAccounts`. Default true mirrors a
   // returning user whose wallet already authorized the site (the
@@ -1065,6 +1083,15 @@ export async function launch({
     if (!readOnly && !readOnlyEgress) return null;
     const method = req.method().toUpperCase();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
+    if (allowQuoteProxy && method === 'POST' && isFirstParty(req.url())) {
+      let path = '';
+      try {
+        path = new URL(req.url()).pathname;
+      } catch {
+        /* unparseable: not exempt */
+      }
+      if (/^\/quote\/[a-z0-9]+$/i.test(path)) return null;
+    }
     const body = req.postData();
     if (body) {
       // The exemption needs the DESTINATION and the VERB, not just a

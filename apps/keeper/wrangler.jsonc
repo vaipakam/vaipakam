@@ -225,7 +225,7 @@
   //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
   //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
   //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
-  //      before observing a live tick means the six gated passes can
+  //      before observing a live tick means the seven gated passes can
   //      submit transactions on an invocation that still dies — the CPU
   //      fix being incomplete or regressed is exactly the case this
   //      sequence exists for, so it must be ruled out while the passes
@@ -295,25 +295,31 @@
   //      per tick.
   //  10. Now validate the GATED passes, again across every cadence they
   //      run at (Codex #1924 r5 P1). Step 8 has already cleared the
-  //      ungated set; what step 9 newly switched on is the six gated
+  //      ungated set; what step 9 newly switched on is the seven gated
   //      passes, and one armed tick exercises only the
-  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` is
-  //      gated AND staggered (5 min, offset 2), so cover at least one
-  //      full 5-minute cycle before declaring re-enable complete — or
-  //      profile that pass in production by other means.
+  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` (5 min,
+  //      offset 2) and `graceDefault` (5 min, offset 3) are gated AND
+  //      staggered, so cover at least one full 5-minute cycle before
+  //      declaring re-enable complete — or profile those passes in
+  //      production by other means.
   //      A `done in Nms` LINE IS NOT PROOF THE PASS RAN (Codex #1924
   //      r7). `timedPass` logs it whenever `run()` returns, and a gated
   //      pass returns immediately from `passIsArmed`. That matters most
   //      for `rewardBudgetRemit` and `remitAck`, which are gated TWICE —
-  //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — and for
-  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`). Step 9 flips
-  //      only the master gate, so with the reward flags off, waiting out
-  //      the 5-minute cycle produces a reassuring line from a pass that
-  //      did nothing. Read the accompanying `passIsArmed` skip line,
-  //      which NAMES the blocking binding: if the reward flags are off
-  //      in this deployment, record those passes' CPU validation as
-  //      DEFERRED until they are enabled — do not count the skip as
-  //      coverage.
+  //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — for
+  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`), and for
+  //      `graceDefault` (plus `GRACE_DEFAULT_ENABLED`, which ships UNSET —
+  //      so on a fresh restore this pass is dark by default). Step 9 flips
+  //      only the master gate, so with those flags off, waiting out the
+  //      5-minute cycle produces a reassuring line from a pass that did
+  //      nothing. Read the accompanying `passIsArmed` skip line, which
+  //      NAMES the blocking binding: for each double-gated pass whose flag
+  //      is off in this deployment, record its CPU validation as DEFERRED
+  //      until that flag is armed — do not count the skip as coverage.
+  //      `graceDefault` is the one that sells or transfers collateral, so
+  //      arming it is its own owner decision, never a step of this
+  //      procedure; when it is armed later, validate one full 5-minute
+  //      cycle then, reading its per-loan `submitted` / `skipped` lines.
   //      Otherwise confirm each tick ends `ok` and that every due pass
   //      emits its `done in Nms` line — an absent line means the pass
   //      was still in flight when the invocation ended. If any of it
@@ -468,7 +474,8 @@
   //     two REWARD_* flags are ABSENT there, which leaves THREE scheduled
   //     passes dark, not two — rewardBudgetRemit and remitAck both gate on
   //     REWARD_REMIT_ENABLED, commitmentReport on REWARD_COMMIT_ENABLED —
-  //     and are held the same way once armed. Their VALUES cannot be read
+  //     and are held the same way once armed. GRACE_DEFAULT_ENABLED (#2483)
+  //     ships unset too, which keeps graceDefault dark: a FOURTH. Their VALUES cannot be read
   //     back from the API or dashboard, which is why each gated pass
   //     reports how it resolved them (#1475).
   //
@@ -485,7 +492,7 @@
   //
   //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
   //                        matcher / liquidity-confidence submit paths,
-  //                        and gates the two flags below as well.
+  //                        and gates the three flags below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
   //     (only after the keeper EOA is authorized on-chain) AND the #1222
   //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
@@ -493,6 +500,10 @@
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
+  //   - GRACE_DEFAULT_ENABLED — 'true' arms the #2483 time-based default
+  //     pass, which submits the permissionless `triggerDefault` for
+  //     past-grace loans and so sells or transfers the borrower's
+  //     collateral. Needs no on-chain role. Arming it is an owner decision.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
@@ -537,6 +548,9 @@
     // post-provision; the worker accepts an empty string and returns
     // bot_url: null in the handshake response when not configured.
     "TG_BOT_USERNAME": "",
+    // #2503 — this runner's name for the one-runner lease. A machine host
+    // uses its own name, so the Worker and a machine can never both run.
+    "KEEPER_RUNNER_ID": "cloudflare-worker",
   },
 
   "observability": {

@@ -43,10 +43,12 @@ Provisioned 2026-05-17:
 `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` keeper tuning knobs. These are
 configuration, not secrets.
 
-**Also not migrated, but for the opposite reason** — the keeper's three
+**Also not migrated, but for the opposite reason** — the keeper's four
 arming flags (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
-`REWARD_COMMIT_ENABLED`) are per-Worker `secret_text` bindings, set with
-`wrangler secret put`. They stay out of the Secrets Store because they are
+`REWARD_COMMIT_ENABLED`, and `GRACE_DEFAULT_ENABLED` from #2483, which
+ships unset and is armed only by an explicit owner decision because the
+pass it arms sells or transfers collateral) are per-Worker `secret_text`
+bindings, set with `wrangler secret put`. They stay out of the Secrets Store because they are
 operator switches rather than credentials, **not** because they are
 non-secret — `KEEPER_ENABLED` was listed in the paragraph above until
 #2223, which is the misclassification #1465 tracked. They are not entries
