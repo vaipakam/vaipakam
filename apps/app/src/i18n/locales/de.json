@@ -327,7 +327,7 @@
         "hf_critical": "Die Gesundheit eines Kredits fiel unter 1,05, nahe an der Liquidationslinie 1,0 — öffnen Sie ihn, um zu handeln.",
         "generic": "Es gibt ein Update zu Ihrem Kredit.",
         "reward_final_notice": "Eine deiner Interaktionsbelohnungen ist in ihre letzte Hinweisfrist eingetreten – fordere sie im Claim Center an, bevor sie an das Belohnungsprogramm zurückgeht.",
-        "reward_expired": "Eine nicht angeforderte Interaktionsbelohnung von dir hat das Ende ihres Anforderungszeitraums erreicht und ist an das Belohnungsprogramm zurückgegangen.",
+        "reward_expired": "Eine nicht angeforderte Interaktionsbelohnung von dir hat das Ende ihres Anforderungszeitraums erreicht; ihre Rückführung ins Belohnungsprogramm hat begonnen, und sie kann nicht mehr angefordert werden.",
         "grace_ended": "Die Nachfrist eines Kredits ist abgelaufen — öffnen Sie ihn, um den Stand zu sehen."
       },
       "loanRef": "Kredit #{{loanId}} · antippen zum Anzeigen",

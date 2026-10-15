@@ -2026,8 +2026,9 @@ is the borrower's own money.
   change to the claim window itself can replace it with an earlier date; the
   card says both. Inside the final notice period the card switches to a
   final-notice warning. The card shows no date while the claim window is
-  off. It reads every one of the wallet's rewards, however many, all as of one
-  moment; when it cannot read every reward's date it says the check could not
+  off. It considers every one of the wallet's LIVE rewards — not settled, not
+  already expiring — however many, all as of one moment, and never re-prices
+  the wallet's settled history; when it cannot read every reward's date it says the check could not
   be completed, rather than showing a date that might be later than the real
   one, or nothing at all (which would read as "no deadline").
 - A wallet with interaction rewards set aside for it can always take them on

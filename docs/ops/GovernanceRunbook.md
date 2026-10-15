@@ -2339,6 +2339,14 @@ ceremony that stops at Step 5 leaves it that way — which is a coherent state,
 but an operator who marks recycling "activated" without noticing will believe
 RL-3 is live when nothing sweeps.
 
+**Precondition — the keeper's horizon heartbeat (#2517) must be deployed and
+verified on the chain first.** An entry's executable-time accumulator advances
+only when something touches it (`sweepExpiredInteractionRewards`,
+permissionless); the spec assigns that heartbeat to the platform keeper and no
+production caller exists yet. Armed without it, nothing expires, no final notice
+is filed and the knob reads as live while the path is dark (Codex #2489 r14).
+Arm only after #2517 is running there.
+
 **Read back the RL-4 allocation weights — and do it BEFORE Step 4, not here.**
 The register is consulted during armed-day finalization independently of the
 horizon knob, so on a deployment that defers Step 6 this check never runs before

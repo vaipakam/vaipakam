@@ -265,6 +265,34 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
         _assertIds(ids, all, "a limit past the end: the whole order");
     }
 
+    /// @notice Codex #2489 r14 — the LIVE page returns only entries not yet
+    ///         settled and not yet expiring, scanning `limit` index positions
+    ///         (not returning `limit` ids), with the index length as `total`.
+    /// @dev   Mutation: drop the `processed` / `expiryBegun` filter → the
+    ///        settled and the expiring entry are returned as live.
+    function test_Page_LiveEntryIds_FiltersSettledAndExpiring() public {
+        address p = makeAddr("Q");
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        uint256[] memory all = new uint256[](5);
+        for (uint256 i; i < 5; ++i) {
+            all[i] = TestMutatorFacet(address(diamond)).pushRewardEntry(
+                p, uint64(200 + i), LibVaipakam.RewardSide.Lender, 1e18, 1
+            );
+        }
+        TestMutatorFacet(address(diamond)).setRewardEntryProcessedRaw(all[1], true);
+        TestMutatorFacet(address(diamond)).setRewardEntryExpiryBegunRaw(all[3], true);
+        (uint256[] memory live, uint256 total) = lens.getUserLiveRewardEntryIdsPage(p, 0, 100);
+        assertEq(total, 5, "total is the index length");
+        uint256[] memory want = new uint256[](3);
+        want[0] = all[0]; want[1] = all[2]; want[2] = all[4];
+        _assertIds(live, want, "settled and expiring entries are not live");
+        (live, total) = lens.getUserLiveRewardEntryIdsPage(p, 1, 2);
+        assertEq(total, 5);
+        _assertIds(live, _one(all[2]), "scans positions 1..2: one live");
+        (live, ) = lens.getUserLiveRewardEntryIdsPage(p, 5, 10);
+        assertEq(live.length, 0, "past the end: empty");
+    }
+
     function _one(uint256 x) internal pure returns (uint256[] memory r) {
         r = new uint256[](1);
         r[0] = x;

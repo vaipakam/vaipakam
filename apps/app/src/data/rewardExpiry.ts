@@ -34,13 +34,17 @@ import { signalAware } from '../chain/railHealth';
  *  wording. */
 export const REWARD_CLAIM_NOTICE_DAYS = 90;
 
-/** Entry ids per page of the index, and entries per expiry multicall. EVERY
- *  entry is read: the card may never show a date later than the contract would
- *  enforce, and a capped or partial read could miss the soonest entry and do
- *  exactly that. The index is read one PAGE at a time (`getUserRewardEntryIdsPage`,
- *  Codex #2489 r5): it keeps processed entries, so a long-lived account's whole
- *  list can outgrow one response. */
+/** Entries per expiry multicall. EVERY live entry is read: the card may never
+ *  show a date later than the contract would enforce, and a capped or partial
+ *  read could miss the soonest entry and do exactly that. */
 const ENTRY_CHUNK = 100;
+
+/** Index positions scanned per page of `getUserLiveRewardEntryIdsPage`
+ *  (Codex #2489 r14). The index keeps every entry a wallet ever had, so the
+ *  LIVE filter (not settled, not expiring) runs on chain, a few storage reads
+ *  per position, and only the live ids come back — the expiry multicalls below
+ *  are then bounded by the wallet's live rewards, not its lifetime history. */
+const LIVE_PAGE = 500;
 
 /** Walk the whole entry index for `user` as of ONE block. The pages are
  *  pinned to a block because the index swap-removes a retired entry (the tail
@@ -49,18 +53,17 @@ const ENTRY_CHUNK = 100;
  *  every page is the proof of completeness: the walk ends only at it. */
 export async function readAllRewardEntryIds(
   read: (offset: bigint, limit: bigint) => Promise<readonly [readonly bigint[], bigint]>,
-  chunk = ENTRY_CHUNK,
+  chunk = LIVE_PAGE,
 ): Promise<bigint[]> {
   const ids: bigint[] = [];
   let offset = 0n;
   for (;;) {
     const [page, total] = await read(offset, BigInt(chunk));
     ids.push(...page);
-    offset += BigInt(page.length);
+    // The page SCANNED `chunk` positions and returned the live ones among them
+    // (fewer, possibly none), so the cursor advances by what was scanned.
+    offset += BigInt(chunk);
     if (offset >= total) return ids;
-    // A short page before the end would loop forever; it cannot happen at a
-    // pinned block, so it is a transport fault, not a state.
-    if (page.length === 0) throw new Error(`reward entry page at ${offset} came back empty before ${total}`);
   }
 }
 
@@ -139,7 +142,7 @@ export function useRewardExpiryCountdown() {
             (await client.readContract({
               address: diamond,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getUserRewardEntryIdsPage',
+              functionName: 'getUserLiveRewardEntryIdsPage',
               args: [address!, offset, limit],
               blockNumber,
             })) as readonly [readonly bigint[], bigint],

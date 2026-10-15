@@ -345,7 +345,7 @@
         "hf_alert": "A loan’s health dipped below 1.2 — open it to see where it stands.",
         "hf_critical": "A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.",
         "reward_final_notice": "One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.",
-        "reward_expired": "An unclaimed interaction reward of yours reached the end of its claim window and returned to the rewards programme.",
+        "reward_expired": "An unclaimed interaction reward of yours reached the end of its claim window; its return to the rewards programme has begun and it can no longer be claimed.",
         "generic": "There’s an update on your loan."
       },
       "loanRef": "Loan #{{loanId}} · tap to view",

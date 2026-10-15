@@ -790,8 +790,12 @@ const copySource = {
       // place to act, and the outcome line says plainly what happened.
       reward_final_notice:
         'One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.',
+      // Filed from `RewardEntryExpiryBegun` — the FIRST value-bearing chunk, not
+      // the terminal `RewardEntryExpired`: the right to claim is gone, but a
+      // long entry's later chunks can still be deferred, so the line says the
+      // return has BEGUN, never that it completed (Codex #2489 r14).
       reward_expired:
-        'An unclaimed interaction reward of yours reached the end of its claim window and returned to the rewards programme.',
+        'An unclaimed interaction reward of yours reached the end of its claim window; its return to the rewards programme has begun and it can no longer be claimed.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,

@@ -467,6 +467,48 @@ contract InteractionRewardsLensFacet {
         return LibVaipakam.storageSlot().userRewardEntryIds[user];
     }
 
+    /// @notice Codex #2489 r14 — the LIVE entries among `[offset, offset + limit)`
+    ///         of `user`'s index: not yet settled (`processed`) and not already
+    ///         expiring (`expiryBegun`) — the only entries a claim-deadline
+    ///         countdown can concern. The index keeps every entry a wallet ever
+    ///         had (an id leaves it only on a repoint), so a reader that
+    ///         evaluates each entry's expiry off chain grew with the wallet's
+    ///         lifetime history; this page does the filtering on chain in a few
+    ///         storage reads per id, and the reader prices only what it returns.
+    /// @param  user   Address whose index to scan.
+    /// @param  offset Position in registration order to start at.
+    /// @param  limit  How many index positions to scan (not how many to return).
+    /// @return ids    The live entries among the scanned positions, in order.
+    /// @return total  The index's length, so a reader knows when it scanned all.
+    function getUserLiveRewardEntryIdsPage(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ids, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage all = s.userRewardEntryIds[user];
+        total = all.length;
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+        uint256 n;
+        for (uint256 i = offset; i < end; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[all[i]];
+            if (!e.processed && !e.expiryBegun) { unchecked { ++n; } }
+            unchecked { ++i; }
+        }
+        ids = new uint256[](n);
+        uint256 k;
+        for (uint256 i = offset; i < end && k < n; ) {
+            uint256 id = all[i];
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            if (!e.processed && !e.expiryBegun) {
+                ids[k] = id;
+                unchecked { ++k; }
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): the
     ///         index keeps processed entries, so a long-lived account's whole
     ///         list can outgrow one response, and a reader that must consider

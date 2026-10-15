@@ -2226,7 +2226,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](28);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2260,6 +2260,7 @@ contract HelperTest {
         selectors[24] = InteractionRewardsLensFacet.getRewardSanctionsWindows.selector; // #1566 sanctions rule
         selectors[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
         selectors[26] = InteractionRewardsLensFacet.getUserRewardEntryIdsPage.selector; // #2489 r5: the paged entry index
+        selectors[27] = InteractionRewardsLensFacet.getUserLiveRewardEntryIdsPage.selector; // #2489 r14: the live entries of a page
         return selectors;
     }
 

@@ -327,7 +327,7 @@
         "hf_critical": "La santé d'un prêt est passée sous 1.05, proche de la ligne de liquidation 1.0 — ouvrez-le pour agir.",
         "generic": "Il y a une mise à jour sur votre prêt.",
         "reward_final_notice": "L’une de vos récompenses d’interaction est entrée dans sa période de dernier avis : réclamez-la dans le Centre de réclamation avant qu’elle ne retourne au programme de récompenses.",
-        "reward_expired": "Une de vos récompenses d’interaction non réclamées a atteint la fin de sa période de réclamation et est retournée au programme de récompenses.",
+        "reward_expired": "L’une de vos récompenses d’interaction non réclamées a atteint la fin de sa période de réclamation ; son retour au programme de récompenses a commencé et elle ne peut plus être réclamée.",
         "grace_ended": "Le délai de grâce d’un prêt a pris fin — ouvrez-le pour voir où il en est."
       },
       "loanRef": "Prêt n°{{loanId}} · toucher pour voir",

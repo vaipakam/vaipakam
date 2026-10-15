@@ -2510,7 +2510,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
+        s = new bytes4[](28);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2545,6 +2545,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[24] = InteractionRewardsLensFacet.getRewardSanctionsWindows.selector; // #1566 sanctions rule (owner 2026-10-14)
         s[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
         s[26] = InteractionRewardsLensFacet.getUserRewardEntryIdsPage.selector; // #2489 r5: the paged entry index
+        s[27] = InteractionRewardsLensFacet.getUserLiveRewardEntryIdsPage.selector; // #2489 r14: the live entries of a page
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
