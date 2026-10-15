@@ -256,7 +256,9 @@ const rosterKey = (adapters, disabled) =>
     .join(',');
 const describeErr = (err) => err?.shortMessage ?? err?.message ?? String(err);
 /** An eligibility result that established nothing: some read got no answer. */
-const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null });
+/** Every index: what a roster that could not be read at all may enable. */
+const ANY_INDEX = { has: () => true };
+const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null, possiblyEnabled: ANY_INDEX });
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
@@ -373,13 +375,19 @@ async function eligibleAt(blockNumber) {
   // The roster, slot by slot against startup, so each answer counts on its
   // own (#2505 r13). The address list alone settles whether a startup slot's
   // venue is still there; a flag settles only its own slot.
+  // `enabled`: indices KNOWN enabled. `possiblyEnabled`: indices not known
+  // to be disabled or unlisted — a flag that got no answer may be enabled, and
+  // an unreadable list may enable any index (#2505 r21). One view, so a held
+  // request is matched against exactly what the gate could not rule out.
   let enabled = null;
+  let possiblyEnabled = ANY_INDEX;
   if (adaptersR.err) unanswered.push(adaptersR.err);
   else {
     const adapters = adaptersR.value;
     const slot = (i) => `${i}:${String(adapters[i]).toLowerCase()}`;
     const startupSlots = new Set(startupRoster ? startupRoster.split(',') : []);
     enabled = new Set(adapters.map((_, i) => i).filter((i) => !disabledR[i].err && disabledR[i].value === false));
+    possiblyEnabled = new Set(adapters.map((_, i) => i).filter((i) => Boolean(disabledR[i].err) || disabledR[i].value === false));
     const changes = [];
     for (const s of startupSlots) {
       const i = Number(s.split(':')[0]);
@@ -388,17 +396,15 @@ async function eligibleAt(blockNumber) {
     }
     for (const i of enabled) if (!startupSlots.has(slot(i))) changes.push(`${slot(i)} newly enabled`);
     if (changes.length > 0) why.push(`the enabled adapters changed (at startup [${startupRoster}]; here ${changes.join(', ')})`);
-    else {
-      const flagErr = disabledR.find((r) => r.err);
-      if (flagErr) unanswered.push(flagErr.err);
-    }
+    // Every flag that got no answer is named, moved or not (#2505 r21).
+    for (const r of disabledR) if (r.err) unanswered.push(r.err);
   }
   // EVERY unanswered read is named, not only the first (#2505 r20): a reason
   // that lists one gap implies the other facts were established.
   const gaps = unanswered.map(describeErr).join('; ');
-  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), unknown: `${unanswered.length} read(s) got no answer: ${gaps}`, enabled };
+  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), unknown: `${unanswered.length} read(s) got no answer: ${gaps}`, enabled, possiblyEnabled };
   if (unanswered.length > 0) why.push(`${unanswered.length} other read(s) got no answer (${gaps})`);
-  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled, unknown: null };
+  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled, possiblyEnabled, unknown: null };
 }
 
 // ── Wallet posture ─────────────────────────────────────────────────────
@@ -473,7 +479,7 @@ const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
  * before the estimate ran; after it, the bound is judged too). Any other request is refused by the closed
  * plan, unmarked, and judged like every other refusal.
  */
-const holdSend = (params, gateEnabled = null, { gasChecked = false, rosterUnknown = false } = {}) => {
+const holdSend = (params, gatePossible = null, { gasChecked = false } = {}) => {
   PLAN.close();
   const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
   const expected = step()?.expected;
@@ -495,15 +501,10 @@ const holdSend = (params, gateEnabled = null, { gasChecked = false, rosterUnknow
       enabledAdapters = startupEnabled;
     }
   };
-  // When the gate could not read the roster at all, which indices are enabled
-  // is unknown there, so the route is held to its shape only (a non-empty
-  // try-list of well-formed calls): any index may be one the roster now
-  // enables, and the hold says only that eligibility is unknown (#2505 r18).
-  const ANY_INDEX = { has: () => true };
-  const planned =
-    matchesUnder(startupEnabled) ||
-    (gateEnabled !== null && matchesUnder(gateEnabled)) ||
-    (rosterUnknown && matchesUnder(ANY_INDEX));
+  // At the gate, every index it could not rule out counts: one whose flag got
+  // no answer, or any index when the list itself was unreadable (#2505 r18,
+  // r21). A known-disabled or unlisted index still fails the match.
+  const planned = matchesUnder(startupEnabled) || (gatePossible !== null && matchesUnder(gatePossible));
   if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
@@ -545,16 +546,16 @@ async function holdIfIneligible(params, gasChecked = false) {
     if (e.ok) enabledAdapters = e.enabled;
     else if (e.unknown) movedAtGate = `unknown: the eligibility could not be re-read at signing (${e.unknown})`;
     else movedAtGate = `at block ${e.block}: ${e.why}`;
-    // The indices known enabled here, complete or not: a held request naming
-    // only those is still the planned one (#2505 r13).
-    gateEnabled = e.enabled;
+    // The indices not ruled out here: a held request naming only those is
+    // still the planned one (#2505 r13, r21).
+    gatePossible = e.possiblyEnabled;
   }
   if (movedAtGate === null) return null;
   console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-  return holdSend(params, gateEnabled, { gasChecked, rosterUnknown: gateEnabled === null });
+  return holdSend(params, gatePossible, { gasChecked });
 }
-/** The roster known enabled at the gate's latest eligibility read. */
-let gateEnabled = null;
+/** The indices the gate's latest eligibility read could not rule out. */
+let gatePossible = null;
 async function gate(method, params) {
   if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
   const kind = method === 'eth_sendTransaction' ? 'tx' : method;
