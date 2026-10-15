@@ -66,7 +66,7 @@ import {
 } from './driver.mjs';
 import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, GATE_EVENTS } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, GATE_EVENTS, blockMark } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createCallLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -374,8 +374,9 @@ try {
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceBefore = base.nonce;
   // The first block of the window the settlement reads the chain's own
-  // events over (#2505 r42).
-  windowStart = await pub.getBlockNumber();
+  // events over (#2505 r42), by number and hash so a reorganisation across
+  // it is detected rather than read as a quiet chain (#2505 r46).
+  windowStart = await blockMark(pub);
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -1212,8 +1213,10 @@ const settled = await settleRun({
   // Read for every run the plan did not write for, held or stopped included:
   // a move after a hold (an accepted sale, a transfer, a pause, a retune, a
   // roster change) is named rather than going unreported (#2505 r28).
-  factsNow: async () => {
-    const now = await eligibleAt(null);
+  factsNow: async (cutoff) => {
+    // At the browser's close, not the head: a move after it cannot explain
+    // what the page did (#2505 r46).
+    const now = await eligibleAt(cutoff?.number ?? null);
     if (now.unknown) return { unknown: now.unknown };
     if (!now.ok) return { moved: `block ${now.block}: ${now.why}` };
     return {};
@@ -1223,14 +1226,16 @@ const settled = await settleRun({
   baseline: nonceBefore,
   // A change that came and went between the endpoint reads (a transfer away
   // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: () =>
+  activity: (cutoff) =>
     loanActivity({
       pub,
       diamond: DIAMOND,
       abi: DIAMOND_ABI,
-      // The block after the startup reads' block: a log in that block cannot
-      // be dated against them, and the endpoint comparison covers it (#2505 r43).
-      fromBlock: windowStart + 1n,
+      // Strictly after the startup mark (a log in that block cannot be dated
+      // against the startup reads, and the endpoint comparison covers it,
+      // #2505 r43), up to the browser's close (#2505 r46).
+      start: windowStart,
+      cutoff,
       loanId: LOAN_ID,
       gates: GATE_EVENTS,
       tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],

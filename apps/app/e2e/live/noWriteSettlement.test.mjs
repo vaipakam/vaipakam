@@ -73,6 +73,36 @@ describe('settleRun', () => {
     expect(out).toEqual({ plan: false, facts: {}, nonce: { kind: 'unchanged' } });
   });
 
+  it('marks a cutoff after the close and pins the re-read and the window to it', async () => {
+    const order = [];
+    const mark = { number: 9n, hash: `0x${'09'.repeat(32)}` };
+    const pub = {
+      getBlock: async () => {
+        order.push('cutoff');
+        return mark;
+      },
+      getTransactionCount: async () => 3,
+    };
+    const seen = [];
+    const out = await settleRun({
+      closeBrowser: async () => order.push('close'),
+      judgeLedgers: () => {},
+      wrotePlan: () => false,
+      factsNow: async (c) => (seen.push(['facts', c]), {}),
+      activity: async (c) => (seen.push(['activity', c]), {}),
+      pub,
+      wallet: W,
+      baseline: 3,
+    });
+    expect(order).toEqual(['close', 'cutoff']);
+    expect(seen).toEqual([['facts', mark], ['activity', mark]]);
+    expect(out.facts).toEqual({});
+    // No cutoff, no window: the activity is unknown, never clean (#2505 r46).
+    const failing = { getBlock: async () => { throw new Error('timeout'); }, getTransactionCount: async () => 3 };
+    const out2 = await settleRun({ closeBrowser: async () => {}, judgeLedgers: () => {}, wrotePlan: () => false, factsNow: async () => ({}), activity: async () => ({}), pub: failing, wallet: W, baseline: 3 });
+    expect(out2.facts.unknown).toMatch(/could not read the head at the browser's close/);
+  });
+
   it('stops after the ledgers when the plan sent', async () => {
     const order = [];
     const out = await settleRun({
@@ -175,12 +205,11 @@ describe('resolveSettlement', () => {
 
 describe('loanActivity', () => {
   const abi = parseAbi([
-    'event LoanRepaid(uint256 indexed loanId, uint256 amount)',
+    'event LoanStatusChanged(uint256 indexed loanId, uint8 from, uint8 to)',
+    'event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled)',
     'event OfferCreated(uint256 indexed offerId)',
-    'event InternalMatchExecuted(uint256 indexed loanIdA, uint256 indexed loanIdB)',
     'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
     'event Paused(address account)',
-    'event NotificationFeeBilled(uint256 indexed loanId, bool lenderSide)',
     'event KYCTierUpdated(address indexed user, uint8 tier)',
     'event AssetPauseEnabled(address indexed asset)',
     'event SwapAdapterAdded(address indexed adapter)',
@@ -192,18 +221,42 @@ describe('loanActivity', () => {
     transactionHash: `0x${'ab'.repeat(32)}`,
     blockNumber: block,
   });
-  const pubOf = (logs) => ({ getBlockNumber: async () => 12n, getLogs: async () => logs });
+  const h = (n) => `0x${n.toString(16).padStart(64, '0')}`;
+  const start = { number: 4n, hash: h(4n) };
+  const cutoff = { number: 12n, hash: h(12n) };
+  // A chain whose block at each height has hash h(height), unless `hashes`
+  // overrides one; `ranges` records every getLogs window asked for.
+  const chainOf = (logs, hashes = {}) => {
+    const ranges = [];
+    return {
+      ranges,
+      getBlock: async ({ blockNumber }) => ({ number: blockNumber, hash: hashes[blockNumber] ?? h(blockNumber) }),
+      getLogs: async ({ fromBlock, toBlock }) => {
+        ranges.push([fromBlock, toBlock]);
+        return logs;
+      },
+    };
+  };
   const W = '0x00000000000000000000000000000000000000aa';
   const X = '0x00000000000000000000000000000000000000bb';
-  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS, tokenIds: [41n, 42n], wallets: [W], assets: [D] });
+  const opts = (pub, extra = {}) => ({ pub, diamond: D, abi, start, cutoff, loanId: 21n, gates: GATE_EVENTS, tokenIds: [41n, 42n], wallets: [W], assets: [D], ...extra });
+  const run = (logs, extra) => loanActivity(opts(chainOf(logs), extra));
+  const status = encodeAbiParameters([{ type: 'uint8' }, { type: 'uint8' }], [0, 2]);
 
-  it('counts what touched this loan, its positions or a gate, and nothing else', async () => {
-    expect(await run([log('OfferCreated', { offerId: 21n }), log('Transfer', { from: D, to: D, tokenId: 7n })])).toEqual({});
-    expect(await run([log('NotificationFeeBilled', { loanId: 21n }, encodeAbiParameters([{ type: 'bool' }], [true]))])).toEqual({});
-    expect((await run([log('Transfer', { from: D, to: D, tokenId: 41n }), log('Transfer', { from: D, to: D, tokenId: 41n })])).moved).toMatch(/^2 event\(s\) since startup block 5/);
-    expect((await run([log('InternalMatchExecuted', { loanIdA: 9n, loanIdB: 21n })])).moved).toMatch(/InternalMatchExecuted/);
+  it('reads strictly after the startup mark up to the cutoff', async () => {
+    const pub = chainOf([]);
+    expect(await loanActivity(opts(pub))).toEqual({});
+    expect(pub.ranges).toEqual([[5n, 12n]]);
+  });
+
+  it('counts a status edge of this loan, a position transfer and a gate, and nothing else', async () => {
+    const keeper = encodeAbiParameters([{ type: 'bool' }], [true]);
+    expect(await run([log('OfferCreated', { offerId: 21n }), log('Transfer', { from: D, to: D, tokenId: 7n }), log('LoanStatusChanged', { loanId: 9n }, status)])).toEqual({});
+    // An event that only carries this loan's id is not movement (#2505 r46).
+    expect(await run([log('LoanKeeperEnabled', { loanId: 21n, keeper: X }, keeper)])).toEqual({});
+    expect((await run([log('LoanStatusChanged', { loanId: 21n }, status)])).moved).toMatch(/^1 event\(s\) in blocks 5–12 touched it: LoanStatusChanged/);
+    expect((await run([log('Transfer', { from: D, to: D, tokenId: 41n }), log('Transfer', { from: D, to: D, tokenId: 41n })])).moved).toMatch(/^2 event/);
     expect((await run([log('Paused', {}, encodeAbiParameters([{ type: 'address' }], [D]))])).moved).toMatch(/Paused/);
-    expect((await run([log('LoanRepaid', { loanId: 21n }, encodeAbiParameters([{ type: 'uint256' }], [1n]))])).moved).toMatch(/LoanRepaid/);
   });
 
   it('counts a user or asset gate only for this drive\'s wallet and this loan\'s assets', async () => {
@@ -213,23 +266,24 @@ describe('loanActivity', () => {
     expect((await run([log('AssetPauseEnabled', { asset: D })])).moved).toMatch(/AssetPauseEnabled/);
   });
 
-  it('is unknown, never clean, when the events cannot be read', async () => {
-    const pub = { getBlockNumber: async () => 12n, getLogs: async () => { throw new Error('range too large'); } };
-    expect((await loanActivity({ pub, diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).unknown).toMatch(/could not read the Diamond's events/);
-  });
-
   it('counts only the gates the surface names, and requires them', async () => {
-    const roster = [log('SwapAdapterAdded', { adapter: X })];
-    expect((await run(roster)).moved).toMatch(/SwapAdapterAdded/);
-    expect(await loanActivity({ pub: pubOf(roster), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: CLAIM_GATE_EVENTS })).toEqual({});
-    expect(CLAIM_GATE_EVENTS).toEqual(expect.arrayContaining(['Paused', 'AssetPauseEnabled', 'SanctionsOracleSet', 'KYCEnforcementSet']));
-    await expect(loanActivity({ pub: pubOf([]), diamond: D, abi, fromBlock: 5n, loanId: 21n })).rejects.toThrow(/gates/);
+    const tier = encodeAbiParameters([{ type: 'uint8' }], [2]);
+    const unrelated = [log('SwapAdapterAdded', { adapter: X }), log('AssetPauseEnabled', { asset: D }), log('KYCTierUpdated', { user: W }, tier)];
+    expect((await run(unrelated)).moved).toMatch(/^3 event/);
+    expect(await run(unrelated, { gates: CLAIM_GATE_EVENTS })).toEqual({});
+    expect(CLAIM_GATE_EVENTS).toEqual(['Paused', 'Unpaused', 'AutoPaused', 'SanctionsOracleSet', 'SanctionsFlagRefreshed']);
+    await expect(loanActivity({ ...opts(chainOf([])), gates: undefined })).rejects.toThrow(/gates/);
   });
 
-  it('an empty window is clean, a head behind startup is unknown', async () => {
-    const at = (head) => ({ getBlockNumber: async () => head, getLogs: async () => [] });
-    expect(await loanActivity({ pub: at(4n), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).toEqual({});
-    expect((await loanActivity({ pub: at(3n), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).unknown).toMatch(/behind the startup block 4/);
+  it('is unknown, never clean, when the window cannot be read as one chain', async () => {
+    const failing = { ...chainOf([]), getLogs: async () => { throw new Error('range too large'); } };
+    expect((await loanActivity(opts(failing))).unknown).toMatch(/could not read the Diamond's events in blocks 5–12/);
+    expect((await loanActivity(opts(chainOf([]), { cutoff: null }))).unknown).toMatch(/not marked/);
+    expect((await loanActivity(opts(chainOf([]), { cutoff: { number: 3n, hash: h(3n) } }))).unknown).toMatch(/behind the startup block 4/);
+    // The startup block replaced at the same height, or the cutoff block
+    // replaced: a reorganisation, whatever the head now reads (#2505 r46).
+    expect((await loanActivity(opts(chainOf([], { 4: h(99n) })))).unknown).toMatch(/block 4 is no longer the one marked/);
+    expect((await loanActivity(opts(chainOf([], { 12: h(98n) })))).unknown).toMatch(/block 12 is no longer the one marked/);
   });
 
   it('merges with the endpoint reading: a move either shows wins', () => {

@@ -79,7 +79,7 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, CLAIM_GATE_EVENTS } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, CLAIM_GATE_EVENTS, blockMark } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -313,7 +313,7 @@ console.log(`build: ${siteBundle} on both hosts`);
 
 // ── 2. Chain state ─────────────────────────────────────────────────────
 const { pub } = clientsFor(CHAIN_ID);
-const read = (functionName, args = []) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args });
+const read = (functionName, args = [], blockNumber) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, blockNumber });
 const ERC20 = parseAbi(['function symbol() view returns (string)', 'function decimals() view returns (uint8)']);
 const ERC20_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
 let loan;
@@ -473,8 +473,9 @@ try {
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceAtStart = base.nonce;
   // The first block of the window the settlement reads the chain's own
-  // events over (#2505 r42).
-  windowStart = await pub.getBlockNumber();
+  // events over (#2505 r42), by number and hash so a reorganisation across
+  // it is detected rather than read as a quiet chain (#2505 r46).
+  windowStart = await blockMark(pub);
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -611,24 +612,27 @@ const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
  * what changed, `{ unknown }` when the re-read got no answer (an outage says
  * nothing about the loan), or `{}` when nothing moved.
  */
-async function lifecycleNow() {
+async function lifecycleNow(cutoff = null) {
+  // At the browser's close when the settlement gives one, not the head: a
+  // move after it cannot explain what the page did (#2505 r46).
+  const at = cutoff?.number;
   // Every read settles on its own and every fact is judged from whichever
   // reads answered (#2505): a move any of them shows wins over a sibling that
   // got no answer. The holder is asked by the startup token id when the loan
   // read is unanswered — a loan's position NFTs never change id.
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
   const [loanR, claimR, simR] = await Promise.all([
-    settle(read('getLoanDetails', [LOAN_ID])),
+    settle(read('getLoanDetails', [LOAN_ID], at)),
     // The FULL claim, not getClaimableAmount: a payout held entirely in
     // heldForLender reads amount 0 there and is still claimable (#2505 r14).
-    settle(read('getClaimable', [LOAN_ID, true])),
+    settle(read('getClaimable', [LOAN_ID, true], at)),
     // The chain's own answer to the claim itself (#2505 r34): a simulation of
     // `claimAsLender` from this wallet. Every gate the contract applies (a
     // pause, a sanctions flag, the holder check, a claim already collected)
     // then shows as the revert it is, without this drive listing the gates.
-    settle(pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET })),
+    settle(pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET, blockNumber: at })),
   ]);
-  const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
+  const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId], at));
   const why = [];
   const unanswered = [];
   if (simR.err) {
@@ -1088,14 +1092,16 @@ const settled = await settleRun({
   baseline: nonceAtStart,
   // A change that came and went between the endpoint reads (a transfer away
   // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: () =>
+  activity: (cutoff) =>
     loanActivity({
       pub,
       diamond: DIAMOND,
       abi: DIAMOND_ABI,
-      // The block after the startup reads' block: a log in that block cannot
-      // be dated against them, and the endpoint comparison covers it (#2505 r43).
-      fromBlock: windowStart + 1n,
+      // Strictly after the startup mark (a log in that block cannot be dated
+      // against the startup reads, and the endpoint comparison covers it,
+      // #2505 r43), up to the browser's close (#2505 r46).
+      start: windowStart,
+      cutoff,
       loanId: LOAN_ID,
       gates: CLAIM_GATE_EVENTS,
       tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],

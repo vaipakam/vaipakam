@@ -131,10 +131,6 @@ export async function reconcileNonce(pub, wallet, baseline) {
  */
 export const LOAN_BOOKKEEPING_FIELDS = Object.freeze(['lenderNotifBilled', 'borrowerNotifBilled']);
 
-/** Events the bookkeeping fields above are written with: activity, but not
- *  the loan moving. */
-export const LOAN_BOOKKEEPING_EVENTS = Object.freeze(['NotificationFeeBilled']);
-
 /**
  * Diamond events that change a gate either surface sits behind, whatever
  * loan they concern: the protocol and asset pauses, the swap-adapter roster,
@@ -165,36 +161,60 @@ export const GATE_EVENTS = Object.freeze([
 ]);
 
 /**
- * The gates the lender CLAIM sits behind: the protocol and asset pauses, KYC
- * and the sanctions oracle. `claimAsLender` consults neither the swap-adapter
- * roster nor the grace schedule, so a roster or schedule change during a
- * claim run is not movement (#2505 r45). The close-out, which routes a sale
- * past grace, sits behind all of {@link GATE_EVENTS}.
+ * The gates the lender CLAIM sits behind, and only those: `claimAsLender` is
+ * `whenNotPaused` and screens the caller against the sanctions oracle
+ * (`ClaimFacet._claimAsLenderImpl`); it reads no asset pause, no KYC tier, no
+ * adapter roster and no grace schedule, so a change to any of those during a
+ * claim run is not movement (#2505 r45, r46). The close-out, which routes a
+ * sale past grace, sits behind all of {@link GATE_EVENTS}.
  */
-export const CLAIM_GATE_EVENTS = Object.freeze(
-  GATE_EVENTS.filter((e) => !/^(SwapAdapter|AggregatorAdapters|GraceBuckets)/.test(e)),
-);
+export const CLAIM_GATE_EVENTS = Object.freeze(['Paused', 'Unpaused', 'AutoPaused', 'SanctionsOracleSet', 'SanctionsFlagRefreshed']);
 
 /**
- * Every transaction that touched what the drive rests on, in the window from
- * `fromBlock` (read at startup, before the browser) to now (#2505 r42).
- * Endpoint comparison cannot see a change that came and went (a position
- * transferred away and back, a pause lifted again); the chain's own logs
- * can. Counted, from the Diamond: any event with an argument it names a
- * loan id equal to this loan's, a Transfer of one of `tokenIds` (the
- * position NFTs live on the Diamond), and any event in `gates` (the
- * surface's own: {@link CLAIM_GATE_EVENTS} or {@link GATE_EVENTS}) that applies (one naming a user or an asset only for `wallets` or
- * `assets`); less {@link LOAN_BOOKKEEPING_EVENTS}. `fromBlock` is the first
- * block AFTER the startup reads' block: a log in that block cannot be
- * dated against them, and the endpoint comparison covers it anyway.
+ * What can move the LOAN itself without leaving a trace at the endpoints,
+ * which is all this window is for: a status edge, which every status write
+ * announces from the one chokepoint (`LibLifecycle`, `LoanStatusChanged` for
+ * `loan.id`), and a Transfer of a position NFT, which can go away and come
+ * back. Every other change to the loan (an amount, a stamp, a keeper flag)
+ * persists in the record or the claim the endpoints compare, so it needs no
+ * window, and an event that merely carries this loan's id is not movement
+ * (#2505 r46). The list is explicit; it does not grow by matching names.
+ */
+export const LOAN_MOVEMENT_EVENTS = Object.freeze(['LoanStatusChanged', 'Transfer']);
+
+/** A block named by number AND hash, so a reorganisation can be told apart
+ *  from a quiet chain: `{ number, hash }`. */
+export async function blockMark(pub, blockTag = 'latest') {
+  const b = await pub.getBlock({ blockTag });
+  return { number: b.number, hash: b.hash };
+}
+
+/**
+ * Every transaction that touched what the drive rests on, in the window
+ * strictly after `start` (a block marked at startup, before the browser) up
+ * to and including `cutoff` (marked when the browser closed, so nothing the
+ * page could not have seen counts, #2505 r46). Endpoint comparison cannot
+ * see a change that came and went (a status that moved and was cured, a
+ * position transferred away and back, a pause lifted again); the chain's own
+ * logs can. Counted, from the Diamond: {@link LOAN_MOVEMENT_EVENTS} for this
+ * loan (a Transfer only of one of `tokenIds`, the position NFTs living on the
+ * Diamond), and any event in `gates` (the surface's own:
+ * {@link CLAIM_GATE_EVENTS} or {@link GATE_EVENTS}) that applies (one naming
+ * a user or an asset only for `wallets` or `assets`).
+ *
+ * Both ends are checked by hash, before and after the scan: a block at either
+ * height that is no longer the one marked means the chain was reorganised
+ * across the window, and the logs read describe a chain the page may not have
+ * seen, so the window is unknown (#2505 r46). So is a cutoff below the start.
  *
  * Returns `{ moved }`, `{ unknown }` or `{}`; an RPC failure never throws
  * (it is `unknown`), and only a caller that names no `gates` does.
  */
-export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, gates, tokenIds = [], wallets = [], assets = [] }) {
+export async function loanActivity({ pub, diamond, abi, start, cutoff, loanId, gates, tokenIds = [], wallets = [], assets = [] }) {
   // Each surface names the gates it sits behind; there is no default, so a
   // new caller cannot inherit another surface's (#2505 r45).
   if (!Array.isArray(gates)) throw new TypeError('loanActivity: `gates` (the surface\'s gate events) is required');
+  if (!start?.hash || !cutoff?.hash) return { unknown: 'the window of blocks the drive ran across was not marked, so the Diamond\'s events in it could not be read' };
   const ids = new Set(tokenIds.filter((t) => t !== undefined && t !== null).map((t) => BigInt(t)));
   const want = BigInt(loanId);
   const lower = (x) => String(x ?? '').toLowerCase();
@@ -210,27 +230,32 @@ export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, gates
     if (ev.eventName === 'AssetPauseEnabled' || ev.eventName === 'AssetPauseDisabled') return ours.has(lower(a.asset));
     return true;
   };
-  // Decoded against the Diamond's own ABI, so only an argument the contract
-  // NAMES a loan id counts (`loanId`, `loanIdA`…`loanIdC`, `oldLoanId`, `newLoanId`, …), never an
-  // offer or a request that happens to share the number.
-  const scopedTo = (ev) => {
+  const movesLoan = (ev) => {
+    if (!LOAN_MOVEMENT_EVENTS.includes(ev.eventName)) return false;
     if (ev.eventName === 'Transfer') return ids.has(BigInt(ev.args?.tokenId ?? -1n));
-    return Object.entries(ev.args ?? {}).some(([k, v]) => /^(loanId[A-Z]?|\w+LoanId)$/.test(k) && typeof v === 'bigint' && v === want);
+    return typeof ev.args?.loanId === 'bigint' && ev.args.loanId === want;
   };
+  const span = `blocks ${start.number + 1n}–${cutoff.number}`;
   try {
-    const toBlock = await pub.getBlockNumber();
-    // The head exactly one block before `fromBlock` is an empty window
-    // (nothing mined since startup); a head further back is a lagging
-    // backend or a reorg below startup, and a window never observed proves
-    // nothing (#2505 r44).
-    if (toBlock < fromBlock - 1n) {
-      return { unknown: `the direct RPC's head (block ${toBlock}) is behind the startup block ${fromBlock - 1n}, so the Diamond's events since startup could not be read` };
+    if (cutoff.number < start.number) {
+      return { unknown: `the block marked at the browser's close (${cutoff.number}) is behind the startup block ${start.number}, so the Diamond's events across the drive could not be read` };
     }
+    const reorganised = async () => {
+      for (const m of [start, cutoff]) {
+        const now = await pub.getBlock({ blockNumber: m.number });
+        if (lower(now.hash) !== lower(m.hash)) return m.number;
+      }
+      return null;
+    };
+    const before = await reorganised();
+    if (before !== null) return { unknown: `block ${before} is no longer the one marked during the drive (the chain was reorganised), so the Diamond's events in ${span} do not describe what the page saw` };
     const logs = [];
-    for (let from = fromBlock; from <= toBlock; from += 2000n) {
-      const to = from + 1999n < toBlock ? from + 1999n : toBlock;
+    for (let from = start.number + 1n; from <= cutoff.number; from += 2000n) {
+      const to = from + 1999n < cutoff.number ? from + 1999n : cutoff.number;
       logs.push(...(await pub.getLogs({ address: diamond, fromBlock: from, toBlock: to })));
     }
+    const after = await reorganised();
+    if (after !== null) return { unknown: `block ${after} changed while the Diamond's events in ${span} were read (the chain was reorganised), so they do not describe what the page saw` };
     const hits = [];
     for (const log of logs) {
       let ev;
@@ -241,14 +266,13 @@ export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, gates
         // not counted (the union ABI carries every facet's events, #2394).
         continue;
       }
-      if (LOAN_BOOKKEEPING_EVENTS.includes(ev.eventName)) continue;
-      if (!((gates.includes(ev.eventName) && gateApplies(ev)) || scopedTo(ev))) continue;
+      if (!((gates.includes(ev.eventName) && gateApplies(ev)) || movesLoan(ev))) continue;
       hits.push(`${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`);
     }
     if (hits.length === 0) return {};
-    return { moved: `${hits.length} event(s) since startup block ${fromBlock} touched it: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', …' : ''}` };
+    return { moved: `${hits.length} event(s) in ${span} touched it: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', …' : ''}` };
   } catch (err) {
-    return { unknown: `the direct RPC could not read the Diamond's events since startup block ${fromBlock} (${describe(err)})` };
+    return { unknown: `the direct RPC could not read the Diamond's events in ${span} (${describe(err)})` };
   }
 }
 
@@ -271,8 +295,10 @@ export function changedFields(before, after, ignore = []) {
 }
 
 /**
- * Steps 1 to 5 above, in that order. `factsNow` returns `{ moved }`,
- * `{ unknown }` or `{}` and never throws; `judgeLedgers` records the page
+ * Steps 1 to 5 above, in that order. `factsNow(cutoff)` reads the facts AT
+ * the cutoff block (`{ number, hash }`, or null when there is none, when it
+ * reads the head) and returns `{ moved }`, `{ unknown }` or `{}`, never
+ * throwing; `activity(cutoff)` reads the event window up to it; `judgeLedgers` records the page
  * checks. Returns `{ plan: true }` when the plan sent, else the facts and
  * the nonce.
  */
@@ -288,9 +314,24 @@ export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNo
   // After a send, a browser that did not close may have recorded more after
   // the ledgers were judged, so the run cannot PASS on them (#2505 r35).
   if (wrotePlan()) return { plan: true, closeFailed };
+  // The cutoff: the head once the browser is closed. Nothing after it can
+  // explain what the page did, so the re-read and the event window both stop
+  // there (#2505 r46). A browser that did not close leaves no such boundary.
+  let cutoff = null;
+  let noCutoff = closeFailed ? `the browser could not be closed (${closeFailed}), so the drive has no block the page stopped observing at` : null;
+  if (!closeFailed) {
+    try {
+      cutoff = await blockMark(pub);
+    } catch (err) {
+      noCutoff = `the direct RPC could not read the head at the browser's close (${describe(err)})`;
+    }
+  }
   // The endpoint comparison and the window's transactions, one reading: a
   // change either shows counts (#2505 r42).
-  const facts = mergeFacts(await factsNow(), activity ? await activity() : {});
+  const facts = mergeFacts(
+    await factsNow(cutoff),
+    activity ? (cutoff ? await activity(cutoff) : { unknown: noCutoff }) : {},
+  );
   // A browser that did not close may still be running, and could send after
   // the nonce read below, so no read here can rule a send out (#2505 r34).
   const nonce = closeFailed
