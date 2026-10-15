@@ -764,7 +764,26 @@ const violationsSoFar = () => [
   ...wsViolations,
 ];
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
-const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+/** The gate's marked refusal of the one request it withheld for a held
+ *  precondition: this drive's own doing, never a finding (#2505 r24). */
+const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
+// Every count of what stands before a send sets that one marked refusal
+// aside, so a stop after a gate hold is still resolved as the hold rather
+// than counted as a failure of its own (#2505 r32).
+const preSendFails = () => failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length;
+/** Why the gate withheld the planned request, when it did; null otherwise. */
+const gateHeldReason = () => {
+  if (!heldMarked || wrote()) return null;
+  if (movedAtGate !== null) {
+    return movedAtGate.startsWith('unknown: ')
+      ? `whether loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed is ${movedAtGate}, so the plan signed nothing`
+      : `loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed (${movedAtGate}), so the plan signed nothing`;
+  }
+  if (previewVerdict === 'unknown') {
+    return 'the node could not run the independent preview of the requested route, so a sale could not be established and the plan signed nothing';
+  }
+  return null;
+};
 /**
  * BLOCKED for a precondition met before any write, unless a failure was
  * already recorded, which stands: the drive then stops there and the verdict
@@ -1024,11 +1043,7 @@ try {
     }
     if (!wrote() && movedAtGate) {
       PLAN.close();
-      throw new Held(
-        movedAtGate.startsWith('unknown: ')
-          ? `whether loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed is ${movedAtGate}, so the plan signed nothing`
-          : `loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed (${movedAtGate}), so the plan signed nothing`,
-      );
+      throw new Held(gateHeldReason() ?? `loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed (${movedAtGate}), so the plan signed nothing`);
     }
     if (!wrote() && previewVerdict === 'unknown') {
       PLAN.close();
@@ -1075,6 +1090,12 @@ try {
   PLAN?.close();
   if (err instanceof Held) {
     held = err.message;
+  } else if (gateHeldReason() !== null && preSendFails() === 0) {
+    // The gate already withheld the planned request for a held precondition,
+    // and the drive then stopped (typically a UI wait that ran out while the
+    // page reacted to the refusal). The hold explains the stop, so the run
+    // resolves as held, BLOCKED once the nonce is reconciled (#2505 r32).
+    held = `${gateHeldReason()}; the drive then stopped (${err.message})`;
   } else if (!wrote() && preSendFails() === 0) {
     // An unexpected stop before any write with nothing recorded — typically a
     // UI wait that ran out — is judged against the chain first (#2505 r19):
@@ -1132,6 +1153,13 @@ if (!wrote()) {
     if (statusR.status === 'rejected' && held !== null) {
       held = `${held}; loan ${LOAN_ID}'s status could not be re-read at the verdict, so whether it has since closed is unknown (${describeErr(statusR.reason)})`;
     }
+    if (nonceBefore !== null && nonceAfter < nonceBefore) {
+      // Below the startup baseline: the node's view moved backwards (a
+      // reorg, or a different backend), and a send could have restored the
+      // count unseen, so neither equality nor the status proves anything
+      // (#2505 r32).
+      throw new Error(`the nonce read ${nonceAfter}, below the startup ${nonceBefore}, so the node's view moved backwards`);
+    }
     escaped = nonceBefore !== null && nonceAfter > nonceBefore;
     if (escaped) {
       console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
@@ -1145,7 +1173,7 @@ if (!wrote()) {
     // run stays on the pre-write path, where a failed check is a FAIL.
   } catch (err) {
     writeUnknown = true;
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce (${err.message}) — a send through another connector cannot be ruled out`;
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not establish the wallet nonce (${err.message}) — a send through another connector cannot be ruled out`;
   }
 }
 // The final eligibility read is taken BEFORE the page's ledgers are judged:
@@ -1163,7 +1191,6 @@ check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0,
 // request it withheld, are not findings (`HELD_REFUSAL`); every other refusal
 // is. Judged after the nonce reconciliation, which can itself hold the run.
 const heldRun = held !== null;
-const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
 const violations = heldRun ? violationsSoFar().filter((b) => !ownHold(b)) : violationsSoFar();
 check(
   'writeDiscipline',

@@ -1032,6 +1032,37 @@ try {
 // Read for every run the plan wrote nothing for, armed or held included
 // (#2505 r28): whether it is used is decided once the nonce is reconciled.
 const finalLifecycle = !wrote() ? await lifecycleNow() : null;
+// Every run the plan wrote nothing for, armed or not, is reconciled against
+// the startup nonce (#2505 r25, r28). Nothing was pending at startup, so an
+// unchanged count means this wallet has nothing pending or mined since: the
+// run is provably before any write, even after the claim was clicked (the
+// page's own pre-wallet simulation may rightly have withheld it). A moved
+// count is a gate escape whatever was sent, so its evidence names the nonce,
+// never a claim nobody read (#2505 r26); an unreadable one is UNDETERMINED.
+// It is read BEFORE the page's ledgers are judged, with the final lifecycle,
+// so an error or refusal the page records while it is awaited still lands in
+// the checks below (#2505 r32).
+let escaped = false;
+let escapeUnknown = null;
+let nonceEscape = null;
+if (!wrote()) {
+  try {
+    const nonceNow = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+    if (nonceNow < nonceAtStart) {
+      // A count below the startup baseline means the node's view moved
+      // backwards (a reorg, or a different backend). A send could have
+      // restored it to the baseline unseen, so equality would prove
+      // nothing: the run is UNDETERMINED (#2505 r32).
+      escapeUnknown = `${ROLE}'s nonce read ${nonceNow}, below the startup ${nonceAtStart}, so the node's view moved backwards and a send through another connector cannot be ruled out`;
+    } else if (nonceNow > nonceAtStart) {
+      nonceEscape = `${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send — some transaction went through another connector (see the ESCAPE line above)`;
+      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send`);
+      escaped = true;
+    }
+  } catch (err) {
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce, so a send through another connector cannot be ruled out (${err?.shortMessage ?? err?.message})`;
+  }
+}
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
 // session: the plan's refusals, the chain pin's (recorded at the wallet
@@ -1045,28 +1076,6 @@ check(
   violations.length === 0,
   violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
 );
-// Every run the plan wrote nothing for, armed or not, is reconciled against
-// the startup nonce (#2505 r25, r28). Nothing was pending at startup, so an
-// unchanged count means this wallet has nothing pending or mined since: the
-// run is provably before any write, even after the claim was clicked (the
-// page's own pre-wallet simulation may rightly have withheld it). A moved
-// count is a gate escape whatever was sent, so its evidence names the nonce,
-// never a claim nobody read (#2505 r26); an unreadable one is UNDETERMINED.
-let escaped = false;
-let escapeUnknown = null;
-let nonceEscape = null;
-if (!wrote()) {
-  try {
-    const nonceNow = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
-    if (nonceNow > nonceAtStart) {
-      nonceEscape = `${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send — some transaction went through another connector (see the ESCAPE line above)`;
-      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send`);
-      escaped = true;
-    }
-  } catch (err) {
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce, so a send through another connector cannot be ruled out (${err?.shortMessage ?? err?.message})`;
-  }
-}
 const wroteAny = wrote() || escaped || escapeUnknown !== null;
 // On a provably write-free run the loan is re-read once more before any
 // verdict (#2505). A move, or a re-read that gets no answer, holds the run;
