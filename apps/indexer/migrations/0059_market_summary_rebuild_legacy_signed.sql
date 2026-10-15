@@ -1,0 +1,13 @@
+-- #1949 / Codex #2489 r12 — rebuild every persisted market summary once.
+--
+-- The summary recompute now excludes signed rows of the pre-#1949 shape
+-- (no `creatorFull` in order_json), as the book already does: such a row can
+-- no longer fill, so it is not depth. Summaries persisted before this change
+-- still count those rows, and the scan-tail sweep only recomputes markets
+-- TOUCHED since its cursor — a market whose only depth is a legacy row would
+-- stay advertised until something else touched it. Resetting the sweep cursor
+-- to 0 makes the next sweep's touched window cover every market ever written
+-- (its scope is a subquery, so the one-time full set costs no extra binds);
+-- it then advances as usual. Idempotent: a chain with no cursor row is seeded
+-- at the tick as before.
+UPDATE indexer_cursor SET last_block = 0 WHERE kind = 'market_summary_sweep';

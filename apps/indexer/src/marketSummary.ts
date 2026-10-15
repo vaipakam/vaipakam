@@ -153,6 +153,11 @@ function recomputeSql(scope: string): string {
          AND asset_type = 0 AND collateral_asset_type = 0
          AND (expires_at = 0 OR expires_at > ?3)
          AND (deadline = 0 OR deadline > ?3)
+         -- #1949 / Codex #2489 r12: the same predicate the book applies. A
+         -- row signed under the pre-#1949 shape (no creatorFull field) can no
+         -- longer fill, so it is neither depth nor a best rate; without this
+         -- the desk advertised a market whose book served no fillable order.
+         AND json_extract(order_json, '$.creatorFull') IS NOT NULL
          AND (lending_asset, collateral_asset, duration_days) IN (${scope})
        GROUP BY lending_asset, collateral_asset, duration_days
     )

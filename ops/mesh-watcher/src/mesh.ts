@@ -329,6 +329,7 @@ async function readHistoryReceipts(
   target: ChainTarget,
   remitter: Address,
   rows: readonly HistoryBookedRow[],
+  blockNumber: bigint,
 ): Promise<Map<bigint, HistoryReceipt | undefined>> {
   const out = new Map<bigint, HistoryReceipt | undefined>();
   const CHUNK = 200;
@@ -336,6 +337,9 @@ async function readHistoryReceipts(
     const chunk = rows.slice(i, i + CHUNK);
     const res = (await target.client.multicall({
       allowFailure: true,
+      // Pinned to the block the chain's ledger was read at, so the receipts
+      // and the `custodyRelocated` they are compared against are one snapshot.
+      blockNumber,
       contracts: chunk.map((r) => ({
         address: target.diamond,
         abi: REWARD_REMITTANCE_LENS_ABI,
@@ -558,6 +562,11 @@ async function readBaseBooks(
 /** A chain's own ledger — read against that chain's own Diamond. */
 interface LocalRead {
   ledger: RawLocalLedger;
+  /** The block every figure in `ledger` was read at — the pin for any later
+   *  read that is compared against them (the history receipts; Codex #2489
+   *  r12: a receipt read at the moving head could include a delivery the
+   *  pinned `custodyRelocated` predates and page a false critical). */
+  blockNumber: bigint;
   /**
    * Gaps produced by the OPTIONAL views — empty when everything read.
    *
@@ -866,6 +875,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     observedAt: block.timestamp,
     },
     gaps: viewGaps,
+    blockNumber,
   };
 }
 
@@ -1127,7 +1137,12 @@ export async function observeMesh(
       const book = books.find((b) => b.chainId === id);
       if (book?.historyBooked && book.historyBooked.length > 0 && id !== canonical.chainId) {
         try {
-          const receipts = await readHistoryReceipts(target, canonical.diamond, book.historyBooked);
+          const receipts = await readHistoryReceipts(
+            target,
+            canonical.diamond,
+            book.historyBooked,
+            localResult.value.blockNumber,
+          );
           const r = reconstructHistoryActual(book.historyBooked, receipts);
           book.historyReceiptsMissing = r.missing;
           book.historyNeverDelivered = r.neverDelivered;

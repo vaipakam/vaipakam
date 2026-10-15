@@ -1868,11 +1868,22 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   list a day stays recorded, and a repeat proof writes nothing. A proof moves no
   value.
 - **Keeper reconstruction rule — the funded list is NOT the reservation's day
-  list.** `getRemitReservation(remitId).dayIds` is every day the remit CLOSED, a
-  superset; the wire lists only the FUNDED days. Rebuild the wire's list as that
-  array, in order, filtered by `getRewardBudgetRemitted(dstChainId, d) != 0`, and
-  verify it against `getRemitReservation(remitId).dayListRoot` with the wire's own
-  chunking (`RemitWire.d6Chunks` / `d6Root`) before submitting any chunk proof.
+  list, and it is read from the IMMUTABLE bitmap.** `getRemitReservation(remitId)`
+  returns `dayIds` — every day the remit CLOSED, a superset — and `fundedDayBits`,
+  a bitmap over that array written at the send and never rewritten: bit `i`
+  (word `i >> 8`, bit `i & 255`) set means `dayIds[i]` was FUNDED on the wire.
+  Rebuild the wire's list as `dayIds` filtered by that bitmap, in order, and
+  verify it against `dayListRoot` with the wire's own chunking
+  (`RemitWire.d6Chunks` / `d6Root`) before submitting any chunk proof. Do NOT
+  filter by `getRewardBudgetRemitted(dstChainId, d)`: that map is live state —
+  `releaseRemitReservation` deletes the released remit's markers and a
+  replacement remit rewrites the same slots — so for a released-and-resent
+  packet it reconstructs an empty or replacement-funded list that fails the root
+  (Codex #2489 r12). A reservation dispatched before the bitmap existed has an
+  empty `fundedDayBits` with a non-empty `dayIds`; for it the authenticated
+  fallback is the wire payload itself — decode the `RemitWire` body of the CCIP
+  message the dispatch transaction sent (its id is in `RewardBudgetRemitted`,
+  the payload is on chain in that transaction's message), never the live map.
   `RewardBudgetRemitted` carries only the funded-day COUNT, never the list.
 - **Readbacks.** `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` returns
   `(gateArmed, stamped, freshStamped, landed, provedBy, epochCount, reported,

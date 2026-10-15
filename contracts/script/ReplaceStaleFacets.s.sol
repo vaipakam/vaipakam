@@ -156,11 +156,13 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Ten facets, so at most two cuts each, plus one retired-selector
-        // Remove (#2459 r4); empty partitions are skipped
-        // and the staging array is trimmed to what was actually used (a
-        // zero-selector cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](21);
+        // Ten facets, so at most two cuts each, plus TWO retired-selector
+        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 22 at most
+        // (Codex #2489 r12: a 21-slot array would panic on a fully mixed stale
+        // Diamond before diamondCut ran); empty partitions are skipped and the
+        // staging array is trimmed to what was actually used (a zero-selector
+        // cut reverts).
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](22);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -232,25 +234,33 @@ contract ReplaceStaleFacets is DeployDiamond {
                 functionSelectors: gone
             });
         }
-        // Security review of #2489 — the selectors #2489 retired on ConfigFacet
-        // and OfferCreateFacet (a deleted setter; two entries whose shape
-        // changed), each Removed wherever still routed, for the same reason as
-        // `previewIntent` above.
+        // Security review of #2489 — the ETH·day tariff setter #2489 deleted
+        // from ConfigFacet, Removed wherever still routed, for the same reason
+        // as `previewIntent` above (no caller exists).
+        bytes4 retiredTariff = FacetSelectors.retiredTariffSetterSelector();
+        if (IDiamondLoupe(diamond).facetAddress(retiredTariff) != address(0)) {
+            bytes4[] memory gone = new bytes4[](1);
+            gone[0] = retiredTariff;
+            staging[n++] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: gone
+            });
+        }
+        // Codex #2489 r12 — a Diamond still routing the pre-#1949 signed-offer
+        // entry shapes is one this PARTIAL refresh cannot carry: the new
+        // OfferCreateFacet below would be cut while SignedOfferFacet,
+        // OfferMatchFacet and OfferMatchIntentFacet (not in this script's set)
+        // keep self-calling the old shapes — removing those would revert every
+        // signed accept / match, keeping them would split OfferCreateFacet
+        // across two builds. Refuse by name; the complete refresh carries it.
         {
-            bytes4[] memory retired = FacetSelectors.retiredSelectors2489();
-            bytes4[] memory gone = new bytes4[](retired.length);
-            uint256 g;
-            for (uint256 i; i < retired.length; ++i) {
-                if (IDiamondLoupe(diamond).facetAddress(retired[i]) != address(0)) gone[g++] = retired[i];
-            }
-            if (g != 0) {
-                bytes4[] memory trimmed = new bytes4[](g);
-                for (uint256 i; i < g; ++i) trimmed[i] = gone[i];
-                staging[n++] = IDiamondCut.FacetCut({
-                    facetAddress: address(0),
-                    action: IDiamondCut.FacetCutAction.Remove,
-                    functionSelectors: trimmed
-                });
+            bytes4[] memory old = FacetSelectors.pre1949SignedOfferSelectors();
+            for (uint256 i; i < old.length; ++i) {
+                require(
+                    IDiamondLoupe(diamond).facetAddress(old[i]) == address(0),
+                    "ReplaceStaleFacets: this Diamond still routes a pre-#1949 createSignedOffer shape -- the signed-offer callers are not in this partial refresh's set, so it cannot carry the #1949 change; run RefreshAllFacetsInPlace (it re-cuts every caller and sweeps the retired shapes from the loupe)"
+                );
             }
         }
         n = _appendPartitioned(

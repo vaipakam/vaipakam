@@ -499,6 +499,9 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         );
         (uint256 received, uint256 paid) = c.armedFreshLedger();
         (bool activated, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , , ) = c.rewardCustodyLedger();
+        // Codex #2489 r12 — the ledger tuple predates the row; read it directly
+        // so the durable record carries the confirmed figure like every other.
+        uint256 held = c.rewardCustodyRow(LibVaipakam.RewardCustodyRow.SanctionsHeld);
         // The one ledger fact a write-down leaves behind: `received` equals
         // `paid + live row` at the moment of activation. Checked for a
         // write-down record only while nothing has moved the ledger since
@@ -514,6 +517,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         console.log("Confirmed -- received / paid:", received, paid);
         console.log("Confirmed rows -- live / recycled:", live, recycled);
         console.log("Confirmed rows -- recovery / overage:", recovery, overage);
+        console.log("Confirmed row  -- sanctions-held:", held);
         string memory durable = _recordPath(DURABLE_KIND);
         if (_nonBroadcastWritesEnabled()) {
             string memory obj = "confirmed";
@@ -526,6 +530,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             vm.serializeUint(obj, "confirmedRowRecycled", recycled);
             vm.serializeUint(obj, "confirmedRowRecovery", recovery);
             vm.serializeUint(obj, "confirmedRowOverage", overage);
+            vm.serializeUint(obj, "confirmedRowSanctionsHeld", held);
             vm.serializeUint(obj, "confirmedAtBlock", block.number);
             string memory confirmed = vm.serializeString(obj, "stagedRecord", json);
             vm.writeFile(durable, confirmed);
