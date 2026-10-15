@@ -353,6 +353,19 @@ async function movedReason() {
   if (holder.toLowerCase() !== WALLET.toLowerCase()) return `the lender position is now held by ${holder}`;
   return null;
 }
+/** A stop whose cause can be the loan moving (#2512 r5): a wait for an
+ *  element whose presence depends on the loan's state. Only these are
+ *  re-judged against the chain at the verdict; any other stop (an HTTP error,
+ *  a page that failed to load) stands as observed. */
+class StateStop extends Error {}
+/** Await a state-dependent page step; a failure becomes a `StateStop`. */
+async function stateWait(what, promise) {
+  try {
+    return await promise;
+  } catch (err) {
+    throw new StateStop(`${what}: ${err.message}`);
+  }
+}
 async function requireUnmoved(what) {
   let moved = null;
   try {
@@ -557,6 +570,8 @@ const preClaimFails = () => failedCount() + violationsSoFar().length + pageError
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
+/** Whether that stop was a `StateStop` — the only kind the verdict re-judges. */
+let stoppedByState = false;
 /** Set when the driver armed the plan for its own claim click. */
 let armedOnce = false;
 try {
@@ -656,7 +671,7 @@ try {
       const listState = await claimsListSettled(15_000);
       if (listState !== 'available') await blocked(`the claims list did not settle on the return to /claims (${listState}), so the row's absence says nothing`, null, done);
       await requireUnmoved('judging the missing claim row');
-      throw new Error('the claim row did not reappear on /claims');
+      throw new StateStop('the claim row did not reappear on /claims');
     }
   }
 
@@ -665,11 +680,11 @@ try {
     console.log(`SKIP claim — ${preClaimFails()} check(s) failed above; the claim would end the card under test`);
   } else if (SUBMIT_CLAIM) {
     resetWindow();
-    await rowFor().first().click();
-    await page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 });
+    await stateWait('the claim row could not be opened', rowFor().first().click());
+    await stateWait('the claim row did not lead to the position page', page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 }));
     // The position page states the same line above its claim button.
     const claimButton = page.getByRole('button', { name: /^claim my funds$/i }).first();
-    await claimButton.waitFor({ state: 'visible', timeout: 60_000 });
+    await stateWait('the position page showed no claim button', claimButton.waitFor({ state: 'visible', timeout: 60_000 }));
     // The button renders before the payout line loads ("checking the exact
     // amount…"), so the line is waited for: a read taken with the button
     // alone failed loan 25's drive although the page went on to state it.
@@ -680,6 +695,8 @@ try {
       if (posText.includes(cleared) || FALLBACK_LINES.some((l) => posText.includes(l))) break;
       await page.waitForTimeout(1_000);
     }
+    // State-dependent: a claim made elsewhere changes this line correctly.
+    if (!posText.includes(EXPECTED_NOTE)) await requireUnmoved('judging the position page line');
     check('positionLine', 'note', 'position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
     if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
@@ -868,6 +885,7 @@ try {
   // browser teardown must not pass the gate after this verdict is chosen.
   PLAN?.close();
   stopped = err.message;
+  stoppedByState = err instanceof StateStop;
   await shot(`internal-match-claim-error-${LOAN_ID}`);
   if (wrote()) {
     // A claim the gate allowed moved (or failed to move) funds whatever the
@@ -962,15 +980,15 @@ try {
 } catch (err) {
   console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
 }
-// ROOT RULE (#2512 r2, scoped in r3): a pre-write STOP — a step that could
-// not complete, such as a row that never came back or a wait that timed out —
-// rests on the startup facts, so before it is reported the loan is read ONCE
+// ROOT RULE (#2512 r2, scoped in r3 and r5): a pre-write STOP raised as a
+// `StateStop` — a wait for an element whose presence depends on the loan's
+// state — rests on the startup facts, so before it is reported the loan is read ONCE
 // more. A loan that moved while the drive ran (claimed, transferred, settled
 // elsewhere) makes the stop BLOCKED whichever step hit it, and so does a chain
 // that cannot be read to tell. RECORDED check failures are never overridden:
 // the Owed-line checks are taken only after `requireUnmoved` confirmed the
 // loan, and page errors and writes do not depend on the loan's state at all.
-if (!wroteAny && stopped && failedCount() === 0) {
+if (!wroteAny && stoppedByState && failedCount() === 0) {
   let moved = null;
   try {
     moved = await movedReason();
