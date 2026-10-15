@@ -327,6 +327,28 @@ if (nowSec <= graceEnd) {
   console.log(`chain: loan ${LOAN_ID} Active, past grace by ${((nowSec - graceEnd) / 86_400n).toString()} day(s); ${enabledAdapters.size} enabled adapter(s)`);
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
+// The chain's own answer to an empty-list close-out, at startup (#2505 r35):
+// every later re-read compares with it. A loan whose collateral must be SOLD
+// passes every gate and then reverts `NoEnabledSwapRoute`; any other answer
+// (a pause, the lender's KYC tier, an internal match, an in-kind branch) is
+// not the routed sale this drive judges, so it is BLOCKED here, named.
+{
+  let answer;
+  try {
+    await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET });
+    answer = 'success';
+  } catch (err) {
+    if (!isRevert(err)) await blocked('the direct RPC could not simulate the close-out at startup', err);
+    answer = revertName(err) ?? `an undecoded revert (${describeErr(err)})`;
+  }
+  if (answer !== 'NoEnabledSwapRoute') {
+    await blocked(
+      answer === 'success'
+        ? `loan ${LOAN_ID} would close without a sale at startup (an internal match or an in-kind branch), not the routed sale this drive judges`
+        : `the chain refuses loan ${LOAN_ID}'s close-out at startup before any route is consulted (${answer}); this drive judges the routed sale only`,
+    );
+  }
+}
 // The lender position's lock (#2505 r25): an in-flight lifecycle on it — an
 // accepted or listed sale above all — makes the page withhold the close-out
 // (it unmounts the card for an accepted sale) while every other fact here
@@ -428,10 +450,10 @@ async function eligibleAt(blockNumber) {
     const name = revertName(simR.err);
     if (name === 'NoEnabledSwapRoute') {
       // Every gate passed; the sale still needs the route the card builds.
-    } else if (isRevert(simR.err)) why.push(`the chain now refuses the close-out (${name ?? describeErr(simR.err)})`);
+    } else if (isRevert(simR.err)) why.push(`the chain's answer to an empty-list close-out changed since startup (then NoEnabledSwapRoute; now ${name ?? describeErr(simR.err)})`);
     else unanswered.push(simR.err);
   } else {
-    why.push('the chain would now close it without a sale (an internal match or an in-kind branch)');
+    why.push("the chain's answer to an empty-list close-out changed since startup (then NoEnabledSwapRoute; now it would close without a sale)");
   }
   // The WHOLE loan record against startup (#2505 r33): it changes only by a
   // transaction, and the card reads more of it than the status (an

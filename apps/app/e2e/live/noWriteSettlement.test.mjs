@@ -78,7 +78,7 @@ describe('settleRun', () => {
       baseline: 0,
     });
     expect(order).toEqual(['close', 'ledgers']);
-    expect(out).toEqual({ plan: true });
+    expect(out).toEqual({ plan: true, closeFailed: null });
   });
 
   it('reads a browser that did not close as an unprovable write', async () => {
@@ -133,6 +133,12 @@ describe('resolveSettlement', () => {
     expect(unk.wrote).toBe(true);
     expect(unk.gateEscape).toBe(false);
     expect(unk.stopped).toMatch(/whether this wallet sent anyway cannot be established: rpc down/);
+  });
+
+  it('never lets a sent run pass on ledgers a still-open browser could add to', () => {
+    const r = resolveSettlement({ ...base, settled: { plan: true, closeFailed: 'gone' } });
+    expect(r.wrote).toBe(true);
+    expect(r.stopped).toMatch(/could not be closed \(gone\)/);
   });
 
   it('continues a clean, unmoved run to the normal verdict', () => {

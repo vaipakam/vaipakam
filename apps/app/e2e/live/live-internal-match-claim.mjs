@@ -343,6 +343,20 @@ if (rec.incomplete || rec.recordedAt === 0n) {
 if (lenderHolder.toLowerCase() !== WALLET.toLowerCase()) {
   await blocked(`loan ${LOAN_ID}'s lender position is held by ${lenderHolder}, not ${ROLE} ${WALLET}`);
 }
+// The chain's own answer to the claim, at startup (#2505 r35): every later
+// re-read compares with it, so a refusal at the verdict is a change the drive
+// measured, never one it cannot date. A claim the chain already refuses (a
+// pause, a sanctions flag, a broken claim path) is not a card this drive can
+// judge, so it is BLOCKED here, with the revert named, before the browser
+// starts. Whether that refusal is itself a defect is outside what this drive
+// observes; it says which call was refused and why.
+try {
+  await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET });
+} catch (err) {
+  if (!err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')) await blocked('the direct RPC could not simulate the claim at startup', err);
+  const name = err.walk((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName;
+  await blocked(`the chain already refuses claimAsLender(${LOAN_ID}) for ${ROLE} ${WALLET} at startup (${name ?? err.shortMessage ?? err.message}); no claim card can be judged against it`);
+}
 const fmt = (v) => `${formatTokenAmount(v, Number(decimals))} ${symbol}`;
 console.log(
   `record: principal ${fmt(rec.principal)}, interest ${fmt(rec.interest)}, late fee ${fmt(rec.lateFee)}, ` +
@@ -600,7 +614,9 @@ async function lifecycleNow() {
   const why = [];
   const unanswered = [];
   if (simR.err) {
-    if (isRevert(simR.err)) why.push(`the chain now refuses the claim (${revertName(simR.err) ?? simR.err?.shortMessage ?? simR.err?.message})`);
+    // At startup the chain accepted this exact call, so a refusal now is a
+    // change the drive measured.
+    if (isRevert(simR.err)) why.push(`the chain accepted claimAsLender at startup and now refuses it (${revertName(simR.err) ?? simR.err?.shortMessage ?? simR.err?.message})`);
     else unanswered.push(simR.err);
   }
   // The WHOLE loan record and the WHOLE lender claim against startup

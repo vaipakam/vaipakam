@@ -30,6 +30,10 @@
  *     the page asks before it signs: a simulation of the very call. Every
  *     gate the contract applies (a pause, a sanctions flag, a KYC tier, the
  *     sequencer, the grace period) is then covered without being listed.
+ *     Each fact is compared with the same fact read at startup, where the
+ *     simulation must have given the answer the drive needs (a refusal there
+ *     is BLOCKED before the browser starts), so "changed" is always a
+ *     comparison the drive made, never a refusal it cannot date.
  *  5. READ THE NONCE, LAST. Nothing was pending at startup (the baseline
  *     refuses a wallet with a pending transaction), so an unchanged count
  *     proves no transaction from this wallet is pending or mined since.
@@ -132,7 +136,9 @@ export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNo
     console.log(`(browser close failed: ${closeFailed})`);
   }
   judgeLedgers();
-  if (wrotePlan()) return { plan: true };
+  // After a send, a browser that did not close may have recorded more after
+  // the ledgers were judged, so the run cannot PASS on them (#2505 r35).
+  if (wrotePlan()) return { plan: true, closeFailed };
   const facts = await factsNow();
   // A browser that did not close may still be running, and could send after
   // the nonce read below, so no read here can rule a send out (#2505 r34).
@@ -163,7 +169,10 @@ const join = (...parts) => parts.filter(Boolean).join('; ') || null;
  */
 export function resolveSettlement({ settled, held, stopped, suspect, findings, subject }) {
   const stopText = join(stopped, suspect?.message);
-  if (settled.plan) return { wrote: true, stopped: join(stopText, held), gateEscape: false };
+  if (settled.plan) {
+    const unclosed = settled.closeFailed ? `the browser could not be closed (${settled.closeFailed}), so the page's ledgers may be incomplete` : null;
+    return { wrote: true, stopped: join(stopText, held, unclosed), gateEscape: false };
+  }
   const { facts, nonce } = settled;
   if (nonce.kind === 'escaped') {
     return {
