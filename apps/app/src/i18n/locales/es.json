@@ -2341,7 +2341,8 @@
       "heldNote": "Puedes reclamarlos por separado, aunque tus otras recompensas no puedan reclamarse ahora.",
       "claimHeld": "Reclamar recompensas apartadas",
       "expiryCountdown": "Reclama antes del {{date}}: una recompensa que se deja sin reclamar durante todo su plazo de reclamación vuelve al programa de recompensas. La fecha solo puede retrasarse: el tiempo en que tu recompensa no se puede reclamar no cuenta.",
-      "expiryFinalNotice": "Aviso final: reclama antes del {{date}}, o esta recompensa volverá al programa de recompensas. El tiempo en que tu recompensa no se puede reclamar no cuenta para la fecha."
+      "expiryFinalNotice": "Aviso final: reclama antes del {{date}}, o esta recompensa volverá al programa de recompensas. El tiempo en que tu recompensa no se puede reclamar no cuenta para la fecha.",
+      "expiryUnavailable": "No se pudo comprobar el plazo de reclamación ahora mismo. Tus recompensas no se ven afectadas; la fecha volverá a mostrarse cuando la comprobación tenga éxito."
     },
     "sanctions": {
       "title": "Esta billetera está marcada por el control de sanciones de Vaipakam.",

@@ -2448,7 +2448,8 @@
       "heldNote": "You can claim it on its own, even when your other rewards can’t be claimed right now.",
       "claimHeld": "Claim set-aside rewards",
       "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.",
-      "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date."
+      "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.",
+      "expiryUnavailable": "Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds."
     },
     "sanctions": {
       "title": "This wallet is flagged by Vaipakam’s sanctions screen.",

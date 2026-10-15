@@ -2016,10 +2016,13 @@ is the borrower's own money.
   act — it assumes the reward stays claimable from now on — so it can only move
   later, and the card says so; inside the final notice period the card switches
   to a final-notice warning. The card shows no date while the claim window is
-  off, and when it cannot read every reward's date it shows none rather than one
-  that might be later than the real one.
+  off. It reads every one of the wallet's rewards, however many, all as of one
+  moment; when it cannot read every reward's date it says the check could not
+  be completed, rather than showing a date that might be later than the real
+  one, or nothing at all (which would read as "no deadline").
 - A wallet with interaction rewards set aside for it can always take them on
-  their own. When the card cannot preview the wallet's whole claim (for
+  their own, and the page does not describe the wallet's claims as empty while
+  such a balance is ready. When the card cannot preview the wallet's whole claim (for
   example because the claim cannot complete), it still shows the set-aside
   balance and offers a claim that pays exactly that balance. When the whole
   claim can be previewed, its figure already includes the set-aside balance,

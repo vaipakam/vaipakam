@@ -5,7 +5,7 @@
  * final notice (no more than the notice period away; straddled by a second).
  */
 import { describe, expect, it } from 'vitest';
-import { REWARD_CLAIM_NOTICE_DAYS, inFinalNotice, soonestRewardExpiry } from './rewardExpiry';
+import { REWARD_CLAIM_NOTICE_DAYS, inFinalNotice, readAllRewardEntryIds, soonestRewardExpiry } from './rewardExpiry';
 
 describe('soonestRewardExpiry', () => {
   it('picks the soonest non-zero estimate and skips entries with no countdown', () => {
@@ -34,5 +34,40 @@ describe('inFinalNotice', () => {
   });
   it('never for an entry with no countdown', () => {
     expect(inFinalNotice(0, NOW)).toBe(false);
+  });
+});
+
+describe('readAllRewardEntryIds', () => {
+  const index = (all: bigint[]) => {
+    const calls: [bigint, bigint][] = [];
+    const read = async (offset: bigint, limit: bigint): Promise<readonly [readonly bigint[], bigint]> => {
+      calls.push([offset, limit]);
+      return [all.slice(Number(offset), Number(offset + limit)), BigInt(all.length)];
+    };
+    return { read, calls };
+  };
+
+  it('walks every page to the reported total, in order', async () => {
+    const all = Array.from({ length: 250 }, (_, i) => BigInt(i + 1));
+    const { read, calls } = index(all);
+    expect(await readAllRewardEntryIds(read, 100)).toEqual(all);
+    expect(calls).toEqual([
+      [0n, 100n],
+      [100n, 100n],
+      [200n, 100n],
+    ]);
+  });
+
+  it('reads an empty index in one page', async () => {
+    const { read, calls } = index([]);
+    expect(await readAllRewardEntryIds(read, 100)).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('fails rather than stop short when a page comes back empty before the total', async () => {
+    // Mutation: return the partial walk → a capped read, which the card must
+    // never show (the missing entry could be the soonest).
+    const read = async (): Promise<readonly [readonly bigint[], bigint]> => [[], 7n];
+    await expect(readAllRewardEntryIds(read, 100)).rejects.toThrow(/before 7/);
   });
 });

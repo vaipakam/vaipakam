@@ -165,18 +165,27 @@ library LibRewardSanctions {
         return launch == 0 || ts < launch ? 0 : (ts - launch) / 1 days;
     }
 
-    /// @notice The window a stored chain defines, if it is confirmed: from the
-    ///         day of its first Flagged observation through the day of its last.
-    ///         Read from the evidence alone — liveness is not required, so a
-    ///         confirmed chain that has since lapsed, or whose marker another
-    ///         path cleared, still names the days it covered until an
-    ///         observation records it.
+    /// @notice The window a stored chain defines, if it is confirmed AND names
+    ///         at least one reward day: from the day of its first Flagged
+    ///         observation through the day of its last. Read from the evidence
+    ///         alone — liveness is not required, so a confirmed chain that has
+    ///         since lapsed, or whose marker another path cleared, still names
+    ///         the days it covered until an observation records it.
+    ///
+    ///         A chain that ended before the interaction launch (or while no
+    ///         launch is set) names NO day: {dayOf} maps every pre-launch
+    ///         instant to day 0, so such a chain used to read as the window
+    ///         `[0, 0]` and forfeit the real day 0 of a wallet that was clean by
+    ///         then (Codex #2489 r5). Only a chain that straddles the launch is
+    ///         clamped to begin at day 0 — that chain really did cover it.
     function chainWindow(LibVaipakam.Storage storage s, uint64 flaggedAt, uint64 lastSeenAt)
         internal
         view
         returns (bool confirmed, uint256 fromDay, uint256 toDay)
     {
         if (flaggedAt == 0 || uint256(lastSeenAt) < uint256(flaggedAt) + CONFIRM_SECS) return (false, 0, 0);
+        uint256 launch = s.interactionLaunchTimestamp;
+        if (launch == 0 || uint256(lastSeenAt) < launch) return (false, 0, 0);
         return (true, dayOf(s, flaggedAt), dayOf(s, lastSeenAt));
     }
 
@@ -231,15 +240,30 @@ library LibRewardSanctions {
         return s.rewardSanctionsEvidence[who] != 0 || s.rewardSanctionsWindows[who].length != 0;
     }
 
-    /// @notice {dayForfeited}'s window loop — run on its host only.
+    /// @notice {dayForfeited}'s window lookup — run on its host only. The
+    ///         recorded windows are sorted by `fromDay` and non-overlapping
+    ///         ({_recordWindow}), so the LAST one starting at or before `d` is
+    ///         the only one that can cover it: a binary search, then the live
+    ///         chain's own window (the last slot of {windowAt}). Bounded by
+    ///         log(windows) reads per day, so a wallet with a long listing
+    ///         history prices a claim's days in bounded gas (Codex #2489 r5;
+    ///         the linear scan grew as windows × days).
     function dayForfeitedFull(LibVaipakam.Storage storage s, address who, uint256 d) internal view returns (bool) {
-        uint256 n = windowSlots(s, who);
-        for (uint256 i; i < n; ) {
-            (bool ok, uint256 fromDay, uint256 toDay) = windowAt(s, who, i);
-            if (ok && d >= fromDay && d <= toDay) return true;
-            unchecked { ++i; }
+        uint256[] storage recorded = s.rewardSanctionsWindows[who];
+        uint256 lo;
+        uint256 hi = recorded.length;
+        while (lo < hi) {
+            uint256 mid = (lo + hi) >> 1;
+            (uint256 fromDay, ) = unpackWindow(recorded[mid]);
+            if (fromDay <= d) lo = mid + 1;
+            else hi = mid;
         }
-        return false;
+        if (lo != 0) {
+            (, uint256 toDay) = unpackWindow(recorded[lo - 1]);
+            if (toDay >= d) return true;
+        }
+        (bool ok, uint256 f, uint256 t) = windowAt(s, who, recorded.length);
+        return ok && d >= f && d <= t;
     }
 
     /// @notice The evidence word's one codec:
@@ -406,12 +430,31 @@ library LibRewardSanctions {
     ///      called ONLY where a chain ends (a Clear deletes it, a Restart
     ///      overwrites it), so each confirmed chain is recorded exactly once.
     ///      An unconfirmed chain records nothing: it forfeits nothing.
+    ///
+    ///      Windows are recorded in CHAIN ORDER (a chain starts no earlier than
+    ///      the previous one's last observation), so the array is sorted by
+    ///      `fromDay` and the readers binary-search it ({dayForfeitedFull}). A
+    ///      window that touches or overlaps the last recorded one is MERGED
+    ///      into it (the same set of days, one slot), so a wallet listed and
+    ///      delisted in quick succession does not grow the array per cycle
+    ///      (Codex #2489 r5). The event still announces each chain's own
+    ///      window.
     function _recordWindow(LibVaipakam.Storage storage s, address who, uint256 word) private {
         if (word == 0) return;
         (, uint64 flaggedAt, uint64 lastSeenAt) = unpackEvidence(word);
         (bool confirmed, uint256 fromDay, uint256 toDay) = chainWindow(s, flaggedAt, lastSeenAt);
         if (!confirmed) return;
-        s.rewardSanctionsWindows[who].push(packWindow(fromDay, toDay));
+        uint256[] storage recorded = s.rewardSanctionsWindows[who];
+        uint256 n = recorded.length;
+        if (n != 0) {
+            (uint256 lastFrom, uint256 lastTo) = unpackWindow(recorded[n - 1]);
+            if (fromDay <= lastTo + 1) {
+                recorded[n - 1] = packWindow(lastFrom, toDay > lastTo ? toDay : lastTo);
+                emit RewardSanctionsWindowRecorded(who, fromDay, toDay);
+                return;
+            }
+        }
+        recorded.push(packWindow(fromDay, toDay));
         emit RewardSanctionsWindowRecorded(who, fromDay, toDay);
     }
 }

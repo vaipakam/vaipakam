@@ -467,6 +467,31 @@ contract InteractionRewardsLensFacet {
         return LibVaipakam.storageSlot().userRewardEntryIds[user];
     }
 
+    /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): the
+    ///         index keeps processed entries, so a long-lived account's whole
+    ///         list can outgrow one response, and a reader that must consider
+    ///         EVERY entry (the claim-center countdown picks the soonest expiry)
+    ///         pages through it with `total` as its proof of completeness.
+    /// @param  user   Address whose entry ids to enumerate.
+    /// @param  offset Position in registration order to start at.
+    /// @param  limit  At most this many ids.
+    /// @return ids    `[offset, offset + limit)` of the order, clipped to its end.
+    /// @return total  The order's length, so a reader knows when it has them all.
+    function getUserRewardEntryIdsPage(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ids, uint256 total)
+    {
+        uint256[] storage all = LibVaipakam.storageSlot().userRewardEntryIds[user];
+        total = all.length;
+        uint256 n = offset >= total ? 0 : (total - offset < limit ? total - offset : limit);
+        ids = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            ids[i] = all[offset + i];
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice RL-3 — claim-center countdown view: the horizon state of a
     ///         reward entry.
     /// @param  entryId Entry to inspect.

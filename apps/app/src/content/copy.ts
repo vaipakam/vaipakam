@@ -5156,6 +5156,11 @@ const copySource = {
       'Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.',
       ['date'],
     ),
+    // #2489 r5 — the countdown scan failed (a transport fault, or an entry it
+    // could not read). Shown instead of nothing, which would read as "no
+    // deadline". States only that the check failed, not that any date moved.
+    expiryUnavailable:
+      'Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds.',
   },
 
   sanctions: {

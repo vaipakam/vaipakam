@@ -7349,7 +7349,16 @@ on the live era alone.
 > **Mechanism.**
 > - *One predicate, applied where a claimant's day settles.* "Day `d` was
 >   earned while a confirmed flag stood" is ONE function (it reads the
->   recorded windows and the stored chain's own window). It is applied at
+>   recorded windows and the stored chain's own window). The recorded
+>   windows are sorted by first day — chains end in order — and a window
+>   that touches or overlaps the last recorded one is MERGED into it, so
+>   the predicate binary-searches them and a day costs log(windows) reads
+>   however long the listing history (#2489 r5; the linear scan grew as
+>   windows × settled days). A chain that ended before the interaction
+>   launch, or while no launch is set, names NO day: every pre-launch instant
+>   maps to day 0, so such a chain read as the window `[0, 0]` and forfeited
+>   the real day 0 of a wallet clean by then; only a chain straddling the
+>   launch is clamped to begin at day 0. It is applied at
 >   exactly the two places a claimant's day is SETTLED: the claim walk's
 >   day loop marks the day so the pricing routes every entry's share to the
 >   treasury (forfeit) legs, and a staged day's payout page forfeits the

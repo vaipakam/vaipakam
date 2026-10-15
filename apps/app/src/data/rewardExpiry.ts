@@ -32,10 +32,35 @@ import { signalAware } from '../chain/railHealth';
  *  wording. */
 export const REWARD_CLAIM_NOTICE_DAYS = 90;
 
-/** Entries read per multicall. EVERY entry is read: the card may never show a
- *  date later than the contract would enforce, and a capped or partial read
- *  could miss the soonest entry and do exactly that. */
+/** Entry ids per page of the index, and entries per expiry multicall. EVERY
+ *  entry is read: the card may never show a date later than the contract would
+ *  enforce, and a capped or partial read could miss the soonest entry and do
+ *  exactly that. The index is read one PAGE at a time (`getUserRewardEntryIdsPage`,
+ *  Codex #2489 r5): it keeps processed entries, so a long-lived account's whole
+ *  list can outgrow one response. */
 const ENTRY_CHUNK = 100;
+
+/** Walk the whole entry index for `user` as of ONE block. The pages are
+ *  pinned to a block because the index swap-removes a retired entry (the tail
+ *  moves into its slot), so a retirement between two unpinned page reads could
+ *  move an unread entry across the boundary and out of the walk. `total` from
+ *  every page is the proof of completeness: the walk ends only at it. */
+export async function readAllRewardEntryIds(
+  read: (offset: bigint, limit: bigint) => Promise<readonly [readonly bigint[], bigint]>,
+  chunk = ENTRY_CHUNK,
+): Promise<bigint[]> {
+  const ids: bigint[] = [];
+  let offset = 0n;
+  for (;;) {
+    const [page, total] = await read(offset, BigInt(chunk));
+    ids.push(...page);
+    offset += BigInt(page.length);
+    if (offset >= total) return ids;
+    // A short page before the end would loop forever; it cannot happen at a
+    // pinned block, so it is a transport fault, not a state.
+    if (page.length === 0) throw new Error(`reward entry page at ${offset} came back empty before ${total}`);
+  }
+}
 
 export interface RewardExpirySoonest {
   entryId: bigint;
@@ -91,18 +116,25 @@ export function useRewardExpiryCountdown() {
           }),
         );
         if (horizonDays === 0) return { horizonDays: 0, soonest: null };
-        const ids = (await client.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getUserRewardEntryIds',
-          args: [address!],
-        })) as readonly bigint[];
+        // One block for the whole scan — see readAllRewardEntryIds.
+        const blockNumber = await client.getBlockNumber();
+        const ids = await readAllRewardEntryIds(
+          async (offset, limit) =>
+            (await client.readContract({
+              address: diamond,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getUserRewardEntryIdsPage',
+              args: [address!, offset, limit],
+              blockNumber,
+            })) as readonly [readonly bigint[], bigint],
+        );
         const entries: { id: bigint; expiresAt: number }[] = [];
         for (let i = 0; i < ids.length; i += ENTRY_CHUNK) {
           const chunk = ids.slice(i, i + ENTRY_CHUNK);
           // Sequential by design: one bounded multicall per chunk.
           const res = (await client.multicall({
             allowFailure: true,
+            blockNumber,
             contracts: chunk.map((id) => ({
               address: diamond,
               abi: DIAMOND_ABI_VIEM,

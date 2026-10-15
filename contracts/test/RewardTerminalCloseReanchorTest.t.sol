@@ -224,6 +224,47 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
 
     // ─── tiny array helpers ────────────────────────────────────────────────────
 
+    /// @notice The paged entry index (Codex #2489 r5) returns exactly the slice
+    ///         `[offset, offset + limit)` of the registration order, clipped at
+    ///         its end, with the order's length as `total` on every page — so a
+    ///         reader that must consider EVERY entry (the claim-center
+    ///         countdown) can walk the pages and prove it reached the end.
+    /// @dev   Mutations: an unclipped last page reads past the array (revert);
+    ///        `total` from the page rather than the order → the walk stops early.
+    function test_Page_EntryIdsPage_ClipsToTheOrder_andReportsItsLength() public {
+        address p = makeAddr("P");
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        (uint256[] memory none, uint256 total0) = lens.getUserRewardEntryIdsPage(p, 0, 10);
+        assertEq(none.length, 0, "no entries: an empty page");
+        assertEq(total0, 0, "no entries: total 0");
+
+        uint256[] memory all = new uint256[](5);
+        for (uint256 i; i < 5; ++i) {
+            all[i] = TestMutatorFacet(address(diamond)).pushRewardEntry(
+                p, uint64(100 + i), LibVaipakam.RewardSide.Lender, 1e18, 1
+            );
+        }
+        _assertIds(TestMutatorFacet(address(diamond)).getUserRewardEntryIds(p), all, "fixture: five entries in order");
+
+        (uint256[] memory ids, uint256 total) = lens.getUserRewardEntryIdsPage(p, 0, 2);
+        assertEq(total, 5, "page 1: total is the order's length");
+        _assertIds(ids, _two(all[0], all[1]), "page 1: the first two");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 2, 2);
+        assertEq(total, 5, "page 2: total unchanged");
+        _assertIds(ids, _two(all[2], all[3]), "page 2: the next two");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 4, 2);
+        assertEq(total, 5, "last page: total unchanged");
+        _assertIds(ids, _one(all[4]), "last page: clipped to the one remaining");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 5, 2);
+        assertEq(ids.length, 0, "past the end: empty");
+        assertEq(total, 5, "past the end: total still reported");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 1, 0);
+        assertEq(ids.length, 0, "a zero limit: empty");
+        assertEq(total, 5, "a zero limit: total still reported");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 0, 100);
+        _assertIds(ids, all, "a limit past the end: the whole order");
+    }
+
     function _one(uint256 x) internal pure returns (uint256[] memory r) {
         r = new uint256[](1);
         r[0] = x;

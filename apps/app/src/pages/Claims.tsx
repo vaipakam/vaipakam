@@ -201,6 +201,13 @@ function RewardsCard() {
             {copy.rewards.expiryCountdown(formatDate(expiry.data.soonest.expiresAt))}
           </p>
         )
+      ) : expiry.isError ? (
+        // The scan failed (a transport fault, or an entry it could not read):
+        // say so rather than show nothing, which reads as "no deadline" (Codex
+        // #2489 r5). A revert is the dark state, not an error.
+        <p className="muted" style={{ margin: '12px 0 0' }} data-testid="reward-expiry-unavailable">
+          {copy.rewards.expiryUnavailable}
+        </p>
       ) : null}
     </section>
   );
@@ -253,7 +260,12 @@ export function Claims() {
   // for it would leave a dead screen with nothing actionable, Codex
   // #1291 r2.) The hook dedupes with RewardsCard's read (same key).
   const rewards = useInteractionRewards();
-  const hasOtherClaimable = (rewards.data?.pending ?? 0n) > 0n;
+  // A set-aside balance shows (and is claimable) only where the combined
+  // preview is unavailable — where it does, "Nothing to claim" under it would
+  // be false too (Codex #2489 r5). Same key as the card's own read.
+  const held = useHeldReward();
+  const hasOtherClaimable =
+    (rewards.data?.pending ?? 0n) > 0n || (rewards.isError && (held.data ?? 0n) > 0n);
 
   return (
     <div>

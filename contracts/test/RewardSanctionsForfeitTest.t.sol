@@ -444,6 +444,122 @@ contract RewardSanctionsClassifierTest is Test {
         assertFalse(h.dayForfeited(TWIN, 21), "and forfeits nothing");
     }
 
+    /// @notice T0d - a chain that ENDED before the interaction launch names no
+    ///         reward day (Codex #2489 r5): {dayOf} maps every pre-launch instant
+    ///         to day 0, so such a chain used to read as the window `[0, 0]` and
+    ///         forfeit the real day 0 of a wallet that was clean by then.
+    ///         Straddles: a chain that crosses the launch is clamped to BEGIN at
+    ///         day 0 and does forfeit it; with no launch set no chain names a day.
+    /// @dev   Mutation: drop the launch check in `chainWindow` → the pre-launch
+    ///        chain reads `[0, 0]`, day 0 forfeits, and a window is recorded.
+    function test_sanc_T0d_aChainWhollyBeforeLaunch_namesNoDay_aStraddlingOneBeginsAtDayZero() public {
+        h.setOracle(address(m));
+        h.setMarker(WHO, true);
+        h.setMarker(TWIN, true);
+        // WHO: confirmed (exactly W long), over a week before the launch.
+        uint64 f = uint64(LAUNCH - 10 days);
+        h.setEvidence(WHO, address(m), f, f + uint64(W));
+        // TWIN: first seen 2 days before the launch, last seen 2 days after it
+        // (4 days > W: confirmed).
+        h.setEvidence(TWIN, address(m), uint64(LAUNCH - 2 days), uint64(LAUNCH + 2 days));
+        (bool ok, , ) = h.storedChainWindow(WHO);
+        assertFalse(ok, "wholly before the launch: no window, though the chain is confirmed");
+        assertFalse(h.dayForfeited(WHO, 0), "and day 0 is not forfeited");
+        (bool okTwin, uint256 a, uint256 b) = h.storedChainWindow(TWIN);
+        assertTrue(okTwin, "straddling the launch: a window");
+        assertEq(a, 0, "clamped to begin at day 0");
+        assertEq(b, 2, "through the day of its last observation");
+        assertTrue(h.dayForfeited(TWIN, 0), "day 0 forfeits for the straddling chain");
+        assertTrue(h.dayForfeited(TWIN, 2), "and its last day");
+        assertFalse(h.dayForfeited(TWIN, 3), "not the day after");
+
+        // Both end with a Clean read: only the straddling chain records a window.
+        m.setFlagged(WHO, false);
+        m.setFlagged(TWIN, false);
+        assertEq(h.observe(WHO), DELIVER, "a Clean read delivers");
+        assertEq(h.observe(TWIN), DELIVER);
+        assertEq(h.windowCount(WHO), 0, "nothing recorded for the pre-launch chain");
+        assertFalse(h.dayForfeited(WHO, 0), "and day 0 stays clean with the evidence gone");
+        assertEq(h.windowCount(TWIN), 1, "the straddling chain's window is recorded");
+        (a, b) = h.recordedWindow(TWIN, 0);
+        assertEq(a, 0, "recorded: from day 0");
+        assertEq(b, 2, "recorded: through day 2");
+
+        // No launch set: a confirmed chain names no day at all.
+        h.setLaunch(0);
+        f = uint64(BASE - 10 days);
+        h.setEvidence(WHO, address(m), f, f + uint64(W));
+        (ok, , ) = h.storedChainWindow(WHO);
+        assertFalse(ok, "no launch: no window");
+        assertFalse(h.dayForfeited(WHO, 0), "no launch: day 0 is not forfeited");
+    }
+
+    /// @notice T0e - recorded windows MERGE when they touch or overlap and stay
+    ///         apart across a gap day, and the day lookup is bounded: 64
+    ///         recorded windows price a day in a fraction of the linear scan's
+    ///         cost (Codex #2489 r5 — the scan grew as windows × claimed days).
+    /// @dev   Mutations: no merge in `_recordWindow` → three windows here and
+    ///        W3 fails; the linear loop back in `dayForfeitedFull` → the gas
+    ///        bound fails (measured 54k with the slots still warm from this
+    ///        fixture; a real claim reads them cold, at 2,100 each).
+    function test_sanc_T0e_touchingWindowsMerge_gappedOnesDoNot_andTheLookupIsBounded() public {
+        h.setOracle(address(m));
+        // [10,13] then [14,17] (touching) then [16,19] (overlapping): one window
+        // [10,19]; then [21,24] across the clean day 20: a second.
+        _endChain(WHO, 10, 13);
+        _endChain(WHO, 14, 17);
+        assertEq(h.windowCount(WHO), 1, "touching windows merge");
+        (uint256 a, uint256 b) = h.recordedWindow(WHO, 0);
+        assertEq(a, 10, "merged: the first chain's first day");
+        assertEq(b, 17, "merged: the second chain's last day");
+        _endChain(WHO, 16, 19);
+        assertEq(h.windowCount(WHO), 1, "overlapping windows merge");
+        (a, b) = h.recordedWindow(WHO, 0);
+        assertEq(a, 10, "merged: still from day 10");
+        assertEq(b, 19, "merged: extended to day 19");
+        _endChain(WHO, 21, 24);
+        assertEq(h.windowCount(WHO), 2, "a gap day keeps the next window apart");
+        for (uint256 d = 10; d <= 19; ++d) assertTrue(h.dayForfeited(WHO, d), "every merged day forfeits");
+        assertFalse(h.dayForfeited(WHO, 20), "the gap day is clean");
+        assertTrue(h.dayForfeited(WHO, 21), "the second window's first day");
+        assertTrue(h.dayForfeited(WHO, 24), "and its last");
+        assertFalse(h.dayForfeited(WHO, 9), "before every window");
+        assertFalse(h.dayForfeited(WHO, 25), "after every window");
+
+        // 64 separate windows [10 + 5i, 13 + 5i] for TWIN.
+        for (uint256 i; i < 64; ++i) _endChain(TWIN, 10 + 5 * i, 13 + 5 * i);
+        assertEq(h.windowCount(TWIN), 64, "fixture: 64 recorded windows");
+        uint256 g0 = gasleft();
+        bool hit = h.rewardSanctionsDayForfeited(TWIN, 10 + 5 * 63);
+        uint256 used = g0 - gasleft();
+        assertTrue(hit, "the last window's first day forfeits");
+        assertLt(used, 40_000, "bounded: log(64) reads, not 64");
+        g0 = gasleft();
+        hit = h.rewardSanctionsDayForfeited(TWIN, 14);
+        used = g0 - gasleft();
+        assertFalse(hit, "the first gap day is clean");
+        assertLt(used, 40_000, "a miss is bounded too");
+        assertTrue(h.rewardSanctionsDayForfeited(TWIN, 10), "the first window's first day");
+        assertTrue(h.rewardSanctionsDayForfeited(TWIN, 13 + 5 * 31), "a middle window's last day");
+        assertFalse(h.rewardSanctionsDayForfeited(TWIN, 9), "before every window");
+        assertFalse(h.rewardSanctionsDayForfeited(TWIN, 14 + 5 * 63), "after every window");
+    }
+
+    /// @dev Ends a confirmed chain for `who` whose window is `[fromDay, toDay]`:
+    ///      first seen an hour into `fromDay`, last seen an hour into `toDay`
+    ///      (so `toDay - fromDay` days apart, which must reach `W`), then read
+    ///      Clean so the window is recorded. Warps past the chain's last day.
+    function _endChain(address who, uint256 fromDay, uint256 toDay) internal {
+        uint256 f = LAUNCH + fromDay * 1 days + 1 hours;
+        uint256 l = LAUNCH + toDay * 1 days + 1 hours;
+        require(l >= f + W, "fixture: a chain shorter than W cannot confirm");
+        if (block.timestamp < l + 1 days) vm.warp(l + 1 days);
+        h.setMarker(who, true);
+        h.setEvidence(who, address(m), uint64(f), uint64(l));
+        m.setFlagged(who, false);
+        assertEq(h.observe(who), DELIVER, "fixture: the Clean read ends the chain");
+    }
+
     /// @notice T24 - a keeper carrying a CONFIRMED flag is not paid during an
     ///         oracle outage: the keeper screen reads the barred view, which
     ///         falls back to the committed marker when the oracle cannot answer.
@@ -1330,6 +1446,10 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
     ///        (`next = b + 1`, or the `a < next` clamp) in
     ///        `legacyWindowShareFull` -> day L's step counted twice: the user
     ///        is short by it and the bucket over by it.
+    /// @dev Codex #2489 r5 — two chains sharing a boundary day are RECORDED as
+    ///      one merged window (the same set of days in one slot; each chain's
+    ///      end is still announced), and the slice share counts the shared day
+    ///      once. Mutation: no merge → two windows recorded.
     function test_sanc_W3_twoWindowsSharingABoundaryDay_countThatDayOnce_inTheSliceShare() public {
         uint256 id = _mut().pushRewardEntry(alice, LOAN_A, LibVaipakam.RewardSide.Lender, 1e18, 5);
         _mut().closeRewardEntryRaw(id, 15);
@@ -1347,11 +1467,9 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(_observe(alice), DELIVER, "chain two ends on day L + 3");
         {
             (uint256[] memory a, uint256[] memory b) = _lens().getRewardSanctionsWindows(alice);
-            assertEq(a.length, 2, "two windows recorded");
-            assertEq(a[0], F, "window one: from day F");
-            assertEq(b[0], L, "through day L");
-            assertEq(a[1], L, "window two: from day L - the shared boundary");
-            assertEq(b[1], L + 3, "through day L + 3");
+            assertEq(a.length, 1, "the two chains merged into one recorded window");
+            assertEq(a[0], F, "from day F");
+            assertEq(b[0], L + 3, "through day L + 3 - the shared boundary day once");
         }
         _finalize(5, 14);
         vm.warp(_dayStart(16));
