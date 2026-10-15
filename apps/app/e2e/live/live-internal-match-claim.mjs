@@ -342,17 +342,21 @@ if (lenderHolder.toLowerCase() !== WALLET.toLowerCase()) {
  *  InternalMatched, the lender side not yet claimed, and the lender position
  *  still held by this wallet. Any change is a lifecycle move made outside the
  *  drive, so it exits BLOCKED; an unreadable chain is BLOCKED too (#2512 r1). */
+/** Why the loan is no longer in its startup state, or null if it still is.
+ *  Throws when the chain cannot be read. */
+async function movedReason() {
+  // getClaimableAmount returns (asset, amount, claimed).
+  const [nowLoan, lenderClaim] = await Promise.all([read('getLoanDetails', [LOAN_ID]), read('getClaimableAmount', [LOAN_ID, true])]);
+  if (Number(nowLoan.status) !== INTERNAL_MATCHED) return `its status is now ${nowLoan.status}`;
+  if (lenderClaim[2] === true) return 'the lender has already claimed';
+  const holder = await read('ownerOf', [loan.lenderTokenId]);
+  if (holder.toLowerCase() !== WALLET.toLowerCase()) return `the lender position is now held by ${holder}`;
+  return null;
+}
 async function requireUnmoved(what) {
   let moved = null;
   try {
-    // getClaimableAmount returns (asset, amount, claimed).
-    const [nowLoan, lenderClaim] = await Promise.all([read('getLoanDetails', [LOAN_ID]), read('getClaimableAmount', [LOAN_ID, true])]);
-    if (Number(nowLoan.status) !== INTERNAL_MATCHED) moved = `its status is now ${nowLoan.status}`;
-    else if (lenderClaim[2] === true) moved = 'the lender has already claimed';
-    else {
-      const holder = await read('ownerOf', [loan.lenderTokenId]);
-      if (holder.toLowerCase() !== WALLET.toLowerCase()) moved = `the lender position is now held by ${holder}`;
-    }
+    moved = await movedReason();
   } catch (err) {
     await blocked(`the direct RPC could not re-read the loan before ${what}`, err, done);
   }
@@ -646,7 +650,11 @@ try {
       .then(() => true, () => false);
     if (!rowBack) {
       if ((await answered()) === 0) await blocked('the page RPC answered nothing after returning to /claims, so the claim row could not reappear', null, done);
-      // A claim or transfer made elsewhere removes the row correctly (#2512 r1).
+      // A list the page itself reports as unavailable (or never settled) has
+      // no rows to judge (#2512 r2), and a claim or transfer made elsewhere
+      // removes the row correctly (#2512 r1). Both are BLOCKED.
+      const listState = await claimsListSettled(15_000);
+      if (listState !== 'available') await blocked(`the claims list did not settle on the return to /claims (${listState}), so the row's absence says nothing`, null, done);
       await requireUnmoved('judging the missing claim row');
       throw new Error('the claim row did not reappear on /claims');
     }
@@ -945,6 +953,19 @@ try {
   await done();
 } catch (err) {
   console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
+}
+// ROOT RULE (#2512 r2): every pre-write FAIL rests on the startup facts, so
+// before one is reported the loan is read ONCE more. A loan that moved while
+// the drive ran (claimed, transferred, settled elsewhere) is BLOCKED whichever
+// step noticed it, rather than a re-check at each step that can stall.
+if (!wroteAny && (failedCount() > 0 || stopped)) {
+  let moved = null;
+  try {
+    moved = await movedReason();
+  } catch (err) {
+    console.log(`(could not re-read the loan before the verdict: ${err.message}; the verdict below stands)`);
+  }
+  if (moved) await blocked(`loan ${LOAN_ID} moved while the drive ran (${moved}); the failures above rest on startup facts that no longer hold`);
 }
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
