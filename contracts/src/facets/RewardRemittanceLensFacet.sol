@@ -242,6 +242,51 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().chainRemittedRecycledAckedFromHistory[chainId];
     }
 
+    /// @notice Codex #2489 r10 — the reservations to `dst` in `[fromId, fromId +
+    ///         count)` (clipped to the nonce) that the history walk booked at
+    ///         their DECLARED share (booked state 3), with the declared split
+    ///         each was sent with. The mesh watcher joins these with the
+    ///         destination's own receipt records (`getReceivedRemit` there,
+    ///         which hold the amount that actually arrived) to reconstruct what
+    ///         the destination relocated for them — `recycled × received /
+    ///         total`, the receiver's own flooring — so the relocated-custody
+    ///         invariant stays HARD across an in-place upgrade instead of
+    ///         carrying the history as a cushion or a false alarm.
+    /// @return ids      Reservation ids, in id order.
+    /// @return recycled Each one's declared recycled share.
+    /// @return totals   Each one's declared total.
+    function getRemitHistoryBooked(uint32 dst, uint256 fromId, uint256 count)
+        external
+        view
+        returns (uint256[] memory ids, uint256[] memory recycled, uint256[] memory totals)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        uint256 n;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (r.recycledBooked == 3 && r.dstChainId == dst) { unchecked { ++n; } }
+            unchecked { ++id; }
+        }
+        ids = new uint256[](n);
+        recycled = new uint256[](n);
+        totals = new uint256[](n);
+        uint256 k;
+        for (uint256 id = fromId; id < end && k < n; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (r.recycledBooked == 3 && r.dstChainId == dst) {
+                ids[k] = id;
+                recycled[k] = r.recycled;
+                totals[k] = r.total;
+                unchecked { ++k; }
+            }
+            unchecked { ++id; }
+        }
+    }
+
     /// @notice Codex #2489 r7 — how many reservations in `[fromId, fromId +
     ///         count)` (clipped to the nonce) the history rule would still
     ///         write ({RewardRemittanceFacet.backfillRemitHistory}): stranded

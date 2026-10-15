@@ -187,6 +187,15 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     outputs: ['ackedDeclared:uint256'],
     facet: 'remittanceLens',
   },
+  // Codex #2489 r10 — the rows behind that figure, joined with the chain's own
+  // receipt records (`getReceivedRemit`, a struct view read through the
+  // compiled ABI) to reconstruct what the chain actually relocated for them.
+  {
+    name: 'getRemitHistoryBooked',
+    inputs: ['uint32', 'uint256', 'uint256'],
+    outputs: ['ids:uint256[]', 'recycled:uint256[]', 'totals:uint256[]'],
+    facet: 'remittanceLens',
+  },
   // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
   // `expectedAvail` and the subject of the `keeper-cap` check. On the
   // aggregator facet (it reads the same per-chain books), so no separate

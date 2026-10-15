@@ -106,6 +106,24 @@ contract RemitHistoryBackfillTest is SetupTest {
         assertEq(rlens.getRemitReservation(2).recycledBooked, 1, "row 2 booked forced");
         assertEq(rlens.getRemitReservation(4).recycledBooked, 0, "a row that moved nothing stays unbooked");
 
+        // The history-booked list the watcher joins with the destination's
+        // receipts (r10): ARB rows 1 and 5 with their declared splits, in id
+        // order; OP row 3; clipped to the range asked for.
+        {
+            (uint256[] memory ids, uint256[] memory rec, uint256[] memory tot) = rlens.getRemitHistoryBooked(ARB, 1, 100);
+            assertEq(ids.length, 2, "ARB: two history-booked rows");
+            assertEq(ids[0], 1); assertEq(rec[0], 10e18); assertEq(tot[0], 30e18);
+            assertEq(ids[1], 5); assertEq(rec[1], 3e18); assertEq(tot[1], 10e18);
+            (ids, rec, tot) = rlens.getRemitHistoryBooked(OP, 1, 100);
+            assertEq(ids.length, 1, "OP: the forced-then-acknowledged row");
+            assertEq(ids[0], 3); assertEq(rec[0], 4e18); assertEq(tot[0], 9e18);
+            (ids, , ) = rlens.getRemitHistoryBooked(ARB, 2, 2);
+            assertEq(ids.length, 0, "a range holding only forced / unbooked rows");
+            (ids, , ) = rlens.getRemitHistoryBooked(ARB, 5, 100);
+            assertEq(ids.length, 1, "a range starting at row 5");
+            assertEq(ids[0], 5);
+        }
+
         // Idempotent: a second pass writes nothing and moves no counter.
         (uint256 s3, uint256 b3) = remit.backfillRemitHistory(1, 100);
         assertEq(s3 + b3, 0, "second pass: nothing to write");

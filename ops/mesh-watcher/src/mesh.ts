@@ -152,7 +152,7 @@ export function keeperDrawUnavailableGap(
 export function remittedRecycledUnavailableGap(
   chainId: number,
   err: unknown,
-  view: 'getChainRemittedRecycled' | 'getRemitHistoryPending' | 'getChainRemittedRecycledHistory' = 'getChainRemittedRecycled',
+  view: 'getChainRemittedRecycled' | 'getRemitHistoryPending' = 'getChainRemittedRecycled',
 ): CoverageGap {
   const failure = classify(err, view);
   const missing = isMissingSelector(err);
@@ -215,6 +215,132 @@ export async function readRemitHistoryPending(
     if (from > nonce) return { bookingPending, nonce, covered: true };
   }
   return { bookingPending, nonce, covered: false };
+}
+
+/**
+ * Codex #2489 r10 — a gap for the HISTORY side of the relocated leg only: the
+ * exact hard check still ran this tick. `what` says which read failed —
+ * the declared-share figure (the advisory is skipped), the history-booked
+ * list on Base, or the chain's receipt records (the reconstruction is
+ * skipped, so the hard leg ran on the exact share alone and the declared
+ * advisory stood in).
+ */
+export function remitHistoryReadUnavailableGap(
+  chainId: number,
+  err: unknown,
+  what: 'getChainRemittedRecycledHistory' | 'getRemitHistoryBooked' | 'getReceivedRemit',
+): CoverageGap {
+  const failure = classify(err, what);
+  const consequence =
+    what === 'getChainRemittedRecycledHistory'
+      ? `the declared-share history ADVISORY was skipped this tick; the hard relocated leg on the exact acknowledged share still ran`
+      : what === 'getRemitHistoryBooked'
+        ? `the history could not be reconstructed this tick, so the hard relocated leg ran on the exact acknowledged share alone (pre-upgrade history is a cushion in that comparison) and the declared-share advisory stood in`
+        : `the chain's receipt records could not be read, so the history could not be reconstructed this tick: the hard relocated leg ran on the exact acknowledged share alone and the declared-share advisory stood in`;
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'base-books-relocation',
+    detail:
+      `${what}() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `Coverage this tick: ${consequence}.` +
+      (isMissingSelector(err)
+        ? `\n\nThe selector does not exist in that Diamond's CURRENT CUT — a refresh that has not reached the remittance lens yet. Cut it in to close this gap.`
+        : `\n\nThe failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
+/** One history-booked reservation as Base lists it (`getRemitHistoryBooked`). */
+export interface HistoryBookedRow {
+  id: bigint;
+  recycled: bigint;
+  total: bigint;
+}
+
+/** A chain's receipt for one remittance, as far as the reconstruction needs. */
+export interface HistoryReceipt {
+  receivedAt: bigint;
+  amount: bigint;
+}
+
+/**
+ * Codex #2489 r10 — what the chain actually relocated for Base's history-booked
+ * rows: each row's declared recycled share scaled to what arrived, the
+ * receiver's own flooring (`recycled × received / total`; a full or
+ * over-delivery, or a zero total, is the declared share). A row whose receipt
+ * is missing (never delivered here, or unreadable) is COUNTED, not guessed:
+ * with any missing the caller leaves the figure undefined. Pure, for the unit
+ * test.
+ */
+export function reconstructHistoryActual(
+  rows: readonly HistoryBookedRow[],
+  receipts: ReadonlyMap<bigint, HistoryReceipt | undefined>,
+): { actual: bigint; missing: number } {
+  let actual = 0n;
+  let missing = 0;
+  for (const r of rows) {
+    const rc = receipts.get(r.id);
+    if (!rc || rc.receivedAt === 0n) {
+      missing++;
+      continue;
+    }
+    actual += r.total === 0n || rc.amount >= r.total ? r.recycled : (r.recycled * rc.amount) / r.total;
+  }
+  return { actual, missing };
+}
+
+/** Page Base's history-booked rows for a destination over `1..nonce` (the
+ *  paging {@link readRemitHistoryPending} uses). Undefined when the pages did
+ *  not reach the end. */
+export async function readRemitHistoryBooked(
+  read: (fromId: bigint, count: bigint) => Promise<readonly [readonly bigint[], readonly bigint[], readonly bigint[]]>,
+  nonce: bigint,
+  scan: bigint = REMIT_HISTORY_SCAN,
+  maxPages: number = REMIT_HISTORY_MAX_PAGES,
+): Promise<HistoryBookedRow[] | undefined> {
+  const rows: HistoryBookedRow[] = [];
+  let from = 1n;
+  for (let page = 0; page < maxPages && from <= nonce; page++) {
+    const [ids, recycled, totals] = await read(from, scan);
+    ids.forEach((id, i) => rows.push({ id, recycled: recycled[i]!, total: totals[i]! }));
+    from += scan;
+  }
+  return from > nonce ? rows : undefined;
+}
+
+/** The chain's receipt records for Base's history-booked rows, in bounded
+ *  multicalls; a receipt the chain does not hold reads as `receivedAt` 0 and is
+ *  counted missing by {@link reconstructHistoryActual}. A failed call for one
+ *  row counts as missing too (never a substituted figure). */
+async function readHistoryReceipts(
+  target: ChainTarget,
+  remitter: Address,
+  rows: readonly HistoryBookedRow[],
+): Promise<Map<bigint, HistoryReceipt | undefined>> {
+  const out = new Map<bigint, HistoryReceipt | undefined>();
+  const CHUNK = 200;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const res = (await target.client.multicall({
+      allowFailure: true,
+      contracts: chunk.map((r) => ({
+        address: target.diamond,
+        abi: REWARD_REMITTANCE_LENS_ABI,
+        functionName: 'getReceivedRemit',
+        args: [remitter, r.id],
+      })) as never,
+    })) as readonly { status: 'success' | 'failure'; result?: unknown }[];
+    res.forEach((x, j) => {
+      const id = chunk[j]!.id;
+      if (x.status !== 'success') {
+        out.set(id, undefined);
+        return;
+      }
+      const rec = x.result as { receivedAt: bigint; amount: bigint };
+      out.set(id, { receivedAt: BigInt(rec.receivedAt), amount: BigInt(rec.amount) });
+    });
+  }
+  return out;
 }
 
 /** The gap for a share read but not comparable ({@link remitHistoryHidesAcked}). */
@@ -350,11 +476,12 @@ async function readBaseBooks(
       );
     } catch (err) {
       recycledAckedHistory = undefined;
-      gaps.push(remittedRecycledUnavailableGap(chainId, err, 'getChainRemittedRecycledHistory'));
+      gaps.push(remitHistoryReadUnavailableGap(chainId, err, 'getChainRemittedRecycledHistory'));
     }
   }
   // Codex #2489 r7 — comparable only once Base's reservation history is
   // booked; otherwise read as UNKNOWN (see remitHistoryHidesAcked).
+  let historyBooked: HistoryBookedRow[] | undefined;
   if (recycledAcked !== undefined) {
     try {
       const h = await readRemitHistoryPending((fromId, count) =>
@@ -370,6 +497,27 @@ async function readBaseBooks(
       if (remitHistoryHidesAcked(h.bookingPending, h.covered)) {
         recycledAcked = undefined;
         gaps.push(remitHistoryPendingGap(chainId, h.bookingPending, h.nonce, h.covered));
+      } else if (recycledAckedHistory !== undefined && recycledAckedHistory > 0n) {
+        // Codex #2489 r10 — the rows behind the history figure, for the
+        // reconstruction against the chain's own receipts (observeMesh joins
+        // them once the chain's ledger is read).
+        try {
+          historyBooked = await readRemitHistoryBooked(
+            (fromId, count) =>
+              readView<readonly [readonly bigint[], readonly bigint[], readonly bigint[]]>(
+                canonical.client,
+                canonical.diamond,
+                'getRemitHistoryBooked',
+                [chainId, fromId, count],
+                blockNumber,
+                REWARD_REMITTANCE_LENS_ABI,
+              ),
+            h.nonce,
+          );
+        } catch (err) {
+          historyBooked = undefined;
+          gaps.push(remitHistoryReadUnavailableGap(chainId, err, 'getRemitHistoryBooked'));
+        }
       }
     } catch (err) {
       recycledAcked = undefined;
@@ -382,6 +530,7 @@ async function readBaseBooks(
     keeperDraw,
     recycledAcked,
     recycledAckedHistory,
+    historyBooked,
     reported: ledger[0],
     consumed: ledger[1],
     avail: ledger[2],
@@ -958,6 +1107,20 @@ export async function observeMesh(
           ),
         });
         return;
+      }
+      // Codex #2489 r10 — reconstruct what this chain actually relocated for
+      // the history Base booked at the declared share: Base's rows joined with
+      // this chain's own receipt records (the amount that arrived).
+      const book = books.find((b) => b.chainId === id);
+      if (book?.historyBooked && book.historyBooked.length > 0 && id !== canonical.chainId) {
+        try {
+          const receipts = await readHistoryReceipts(target, canonical.diamond, book.historyBooked);
+          const r = reconstructHistoryActual(book.historyBooked, receipts);
+          book.historyReceiptsMissing = r.missing;
+          book.recycledAckedHistoryActual = r.missing === 0 ? r.actual : undefined;
+        } catch (err) {
+          gaps.push(remitHistoryReadUnavailableGap(id, err, 'getReceivedRemit'));
+        }
       }
       if (identity) {
         // Ledger read fine, `eth_chainId` failed: identity UNKNOWN, not

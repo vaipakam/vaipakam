@@ -856,6 +856,45 @@
   },
   {
     "type": "function",
+    "name": "getRemitHistoryBooked",
+    "inputs": [
+      {
+        "name": "dst",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "totals",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitHistoryPending",
     "inputs": [
       {
