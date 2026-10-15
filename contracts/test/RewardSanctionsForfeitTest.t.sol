@@ -1004,6 +1004,8 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
     uint64 internal constant LOAN_O = 92; // an open (Active) loan
     uint64 internal constant LOAN_V = 93; // a terminal loan carrying loan value
     uint64 internal constant LOAN_S = 94; // the loan sweep's loan
+    uint64 internal constant LOAN_R = 95; // Codex #2489 r13: a repoint with sanctions history
+    uint64 internal constant LOAN_R2 = 96; // its inverse
     uint64 internal constant LOAN_PRE = 51; // day F - 1
     uint64 internal constant LOAN_F = 52; // day F
     uint64 internal constant LOAN_L = 53; // day L
@@ -1623,6 +1625,76 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         (from, to, ) = abi.decode(_nth(logs, T_CLAIMED, 0).data, (uint256, uint256, uint256));
         assertEq(from, L, "walked: from day L");
         assertEq(to, L + 1, "walked: through day L + 1");
+    }
+
+    /// @notice R5 - a reward entry is NOT laundered by a repoint: a confirmed
+    ///         owner is delisted, the position's entry would move to a clean
+    ///         holder at close, and the clean holder would claim the flagged
+    ///         days as paid. The entry stays with its earner (announced); the
+    ///         earner's own claim forfeits days F..L and is paid the rest, and
+    ///         the holder has nothing from it (Codex #2489 r13).
+    /// @dev   Mutation: drop the history check in `repointRewardEntry` → bob
+    ///        owns the entry and is paid days F..L.
+    function test_sanc_R5_aRepointWithSanctionsHistory_keepsTheEntryWithItsEarner() public {
+        uint256 id = _mut().pushRewardEntry(alice, LOAN_R, LibVaipakam.RewardSide.Lender, 1e18, uint32(F));
+        _mut().setRewardEntryEndDayRaw(id, uint32(L + 3));
+        _mut().setLoanActiveLenderEntryId(LOAN_R, id);
+        _legacyWindowScene();
+        vm.warp(_dayStart(L + 1) + 1);
+        oracle.setFlagged(alice, false);
+        assertEq(_observe(alice), DELIVER, "delisted: the window [F, L] is recorded");
+
+        vm.warp(_dayStart(L + 2));
+        vm.recordLogs();
+        _mut().callRepointRewardEntry(LOAN_R, bob, true);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_entry(id).user, alice, "the entry stays with its earner");
+        assertEq(_lens().getUserRewardEntryIds(bob).length, 0, "the holder got nothing");
+        assertEq(_count(logs, keccak256("RewardEntryRepointRefused(uint256,address,address)")), 1, "announced");
+
+        _finalize(L, L + 2);
+        _mut().closeRewardEntryRaw(id, uint32(L + 3));
+        uint256 bucket0 = _bucket();
+        uint256 paid = _claimWallet(alice);
+        // Of this entry: days F..L forfeit, L + 1 and L + 2 pay; the scene's own
+        // day F - 1 and L + 1 entries pay, its F and L entries forfeit.
+        uint256 forfeitMine;
+        uint256 payMine;
+        for (uint256 d = F; d <= L + 2; ++d) {
+            if (d <= L) forfeitMine += _value(d);
+            else payMine += _value(d);
+        }
+        assertEq(paid, payMine + _value(F - 1) + _value(L + 1), "the earner is paid the unflagged days");
+        assertEq(_bucket() - bucket0, forfeitMine + _value(F) + _value(L), "the flagged days forfeit");
+        assertEq(vpfi.balanceOf(bob), 0, "nothing reached the holder");
+    }
+
+    /// @notice R6 - the inverse: a CLEAN earner's entry is not forfeited under a
+    ///         flagged holder's windows. The entry stays with the clean earner,
+    ///         who is paid every day of it.
+    /// @dev   Mutation: drop the history check → alice owns it and her windows
+    ///        forfeit days F..L of bob's earnings.
+    function test_sanc_R6_aCleanEarnersEntry_isNotForfeitedUnderAFlaggedHolder() public {
+        uint256 id = _mut().pushRewardEntry(bob, LOAN_R2, LibVaipakam.RewardSide.Lender, 1e18, uint32(F));
+        _mut().setRewardEntryEndDayRaw(id, uint32(L + 3));
+        _mut().setLoanActiveLenderEntryId(LOAN_R2, id);
+        _legacyWindowScene();
+        vm.warp(_dayStart(L + 1) + 1);
+        oracle.setFlagged(alice, false);
+        assertEq(_observe(alice), DELIVER, "alice delisted, her window recorded");
+
+        vm.warp(_dayStart(L + 2));
+        _mut().callRepointRewardEntry(LOAN_R2, alice, true);
+        assertEq(_entry(id).user, bob, "the entry stays with its clean earner");
+
+        _finalize(L, L + 2);
+        _mut().closeRewardEntryRaw(id, uint32(L + 3));
+        uint256 bucket0 = _bucket();
+        uint256 paid = _claimWallet(bob);
+        uint256 all;
+        for (uint256 d = F; d <= L + 2; ++d) all += _value(d);
+        assertEq(paid, all, "every day of a clean earner's entry pays, days F..L included");
+        assertEq(_bucket(), bucket0, "nothing forfeited");
     }
 
     /// @notice L2 - REVOCATION: a Clean read on day L + 1 records the window

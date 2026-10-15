@@ -692,11 +692,28 @@ library LibInteractionRewards {
         // through here, so repay / default / HF-liquidation / preclose all
         // inherit it — Codex #1147 r2 F6). Skips already-closed entries so a
         // frozen slice is never moved to a later holder (F8).
-        LibVaipakam.Loan storage l = s.loans[loanId];
-
+        // Codex #2489 r13 — both re-anchors run on THEIR host
+        // (`InteractionRewardsFacet.reanchorRewardEntriesInternal`) behind one
+        // Diamond self-call: `closeLoan` is inlined into every loan-closing
+        // facet (RiskFacet and DefaultedFacet sit at the EIP-170 limit), so the
+        // two `ownerOf` reads, the repoint body and the sanctions-history rule
+        // it now carries live once, on a roomy facet. Fails CLOSED on an
+        // unrouted host (a partial refresh that missed it), like every custody
+        // seam — the refresh set names the facet.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
+        uint256 borrowerId = s.loanBorrowerEntryId[loanId];
+        if (lenderId != 0 || borrowerId != 0) {
+            (bool ok, bytes memory ret) =
+                address(this).call(abi.encodeWithSignature("reanchorRewardEntriesInternal(uint256)", loanId));
+            if (!ok) {
+                if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+                assembly ("memory-safe") {
+                    revert(add(ret, 0x20), mload(ret))
+                }
+            }
+        }
+
         if (lenderId != 0) {
-            _reanchorOpenSide(s, loanId, lenderId, l.lenderTokenId, true);
             _closeEntry(
                 s,
                 lenderId,
@@ -707,9 +724,7 @@ library LibInteractionRewards {
             );
             s.loanActiveLenderEntryId[loanId] = 0;
         }
-        uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0) {
-            _reanchorOpenSide(s, loanId, borrowerId, l.borrowerTokenId, false);
             _closeEntry(
                 s,
                 borrowerId,
@@ -730,6 +745,18 @@ library LibInteractionRewards {
     ///      hand a prior holder's slice to a later one). Tolerates a burned/absent
     ///      token via try/catch. `repointRewardEntry` is O(1) (see
     ///      {rewardEntryUserIdx}), so this is safe on the fund-critical close path.
+    /// @notice Codex #2489 r13 — `closeLoan`'s holder re-anchor for both sides,
+    ///         run on its host (`InteractionRewardsFacet.reanchorRewardEntriesInternal`)
+    ///         behind a Diamond self-call. Re-points each OPEN entry to the live
+    ///         position-NFT holder — unless the sanctions-history rule keeps it
+    ///         with its earner ({repointRewardEntry}).
+    function reanchorEntriesForClose(uint256 loanId) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage l = s.loans[loanId];
+        _reanchorOpenSide(s, loanId, s.loanActiveLenderEntryId[loanId], l.lenderTokenId, true);
+        _reanchorOpenSide(s, loanId, s.loanBorrowerEntryId[loanId], l.borrowerTokenId, false);
+    }
+
     function _reanchorOpenSide(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -842,6 +869,10 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         address oldUser = e.user;
         if (oldUser == newUser) return;
+        // Codex #2489 r13 — the sanctions day rule prices against the entry's
+        // user, so an entry whose earner or holder carries sanctions history
+        // stays with its earner and settles under the earner's own rule.
+        if (LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser)) return;
 
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);

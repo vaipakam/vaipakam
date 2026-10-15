@@ -205,6 +205,31 @@
   },
   {
     "type": "event",
+    "name": "RewardEntryRepointRefused",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "earner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "holder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SanctionedProceedsLocked",
     "inputs": [
       {

@@ -240,6 +240,38 @@ library LibRewardSanctions {
         return s.rewardSanctionsEvidence[who] != 0 || s.rewardSanctionsWindows[who].length != 0;
     }
 
+    // ─── Codex #2489 r13 — a reward entry stays with the wallet that EARNED it ──
+
+    /// @notice A loan's reward entry was NOT re-pointed to the position's current
+    ///         holder at close: `earner` or `holder` carries sanctions history,
+    ///         so the entry stays with `earner` and settles under the earner's
+    ///         own rule (flagged days forfeit, the rest pay or are set apart).
+    /// @custom:event-category informational/reward
+    event RewardEntryRepointRefused(uint256 indexed entryId, address indexed earner, address indexed holder);
+
+    /// @notice The repoint rule (Codex #2489 r13): the sanctions day rule prices
+    ///         a day against `RewardEntry.user`, so moving an entry intact to a
+    ///         new holder would re-price every earned day against the HOLDER —
+    ///         a confirmed-flagged owner could launder flagged days by being
+    ///         delisted and handing the position to a clean wallet, and a clean
+    ///         owner's days could be forfeited under a flagged recipient's
+    ///         windows. When either wallet carries history the entry is kept
+    ///         with its earner (announced); a transfer between two wallets with
+    ///         no history moves it intact as before. Returns true when kept.
+    function repointKeepsEarner(LibVaipakam.Storage storage s, uint256 id, address earner, address holder)
+        internal
+        returns (bool)
+    {
+        // Evidence or a recorded window ({hasSanctionsHistory}), or the committed
+        // marker — anything the day rule or the claim gate could read.
+        if (
+            !hasSanctionsHistory(s, earner) && !s.sanctionsConfirmedFlagged[earner]
+                && !hasSanctionsHistory(s, holder) && !s.sanctionsConfirmedFlagged[holder]
+        ) return false;
+        emit RewardEntryRepointRefused(id, earner, holder);
+        return true;
+    }
+
     /// @notice {dayForfeited}'s window lookup — run on its host only. The
     ///         recorded windows are sorted by `fromDay` and non-overlapping
     ///         ({_recordWindow}), so the LAST one starting at or before `d` is

@@ -2141,7 +2141,7 @@ contract HelperTest {
         // + the RL-3 (#1305) claim-horizon sweep.
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170).
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2153,6 +2153,7 @@ contract HelperTest {
         selectors[5] = InteractionRewardsFacet.liquidationRewardClose.selector;
         selectors[6] = InteractionRewardsFacet.terminalRewardClose.selector;
         selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        selectors[8] = InteractionRewardsFacet.reanchorRewardEntriesInternal.selector; // #2489 r13: closeLoan's re-anchor host (self-call)
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
         return selectors;

@@ -5171,8 +5171,10 @@ const copySource = {
       'Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.',
       ['date'],
     ),
+    // The final-notice date carries the same two directions (Codex #2489 r13):
+    // a shortened claim window re-baselines the entry and can bring it earlier.
     expiryFinalNotice: tmpl(
-      'Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.',
+      'Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.',
       ['date'],
     ),
     // #2489 r5 — the countdown scan failed (a transport fault, or an entry it

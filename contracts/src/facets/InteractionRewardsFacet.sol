@@ -375,4 +375,16 @@ contract InteractionRewardsFacet is
             return fallbackAddr;
         }
     }
+
+    /// @notice Codex #2489 r13 — the host of `closeLoan`'s holder re-anchor
+    ///         ({LibInteractionRewards.reanchorEntriesForClose}), reached through a
+    ///         Diamond self-call so the two `ownerOf` reads, the repoint body and
+    ///         the sanctions-history rule that keeps an entry with its earner are
+    ///         inlined ONCE here rather than into every loan-closing facet.
+    ///         Diamond-internal only; no reentrancy guard (the outer close may
+    ///         hold one).
+    function reanchorRewardEntriesInternal(uint256 loanId) external {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        LibInteractionRewards.reanchorEntriesForClose(loanId);
+    }
 }

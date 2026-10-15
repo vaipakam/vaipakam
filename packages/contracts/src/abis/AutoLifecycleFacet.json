@@ -832,6 +832,11 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SafeCastOverflowedUintDowncast",
     "inputs": [
       {

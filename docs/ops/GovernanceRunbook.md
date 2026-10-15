@@ -1814,8 +1814,11 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   (`REWARD_DELIVERY_PROOF_ENABLED`): every few minutes it indexes each epoch
   delivery's days and proves the list of each delivery that holds no epoch
   (arming the gate without it makes every funded day wait on a human). That
-  pass ships separately (#2496); until it is deployed and armed, leave the
-  gate dark. A mirror past custody era 0 may arm:
+  pass is the keeper track's #2516 (specified there: discovery from
+  `getDayDeliveryState` / `getPacketDeliveryProof`, the three routes, the
+  bitmap reconstruction rule below, alerts); it does NOT exist yet, so until
+  it is deployed and verified on that mirror, leave the gate dark — the arm
+  is irreversible and its precondition is that pass (Codex #2489 r13). A mirror past custody era 0 may arm:
   Base stamps every remittance with the destination's own reported era and a
   retired era's delivery opens its epoch (the custody-era revision), so no
   delivery is held inert. The setter refuses a `fromDay` at or
@@ -1831,8 +1834,11 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RewardStagingDomainFacet`, `RewardStagingSettleFacet`,
   `RewardHorizonSweepFacet` and `RewardCustodyFacet` (the set-apart / release
   seams, the observation and day-forfeit hosts, and the legacy-slice settle whose
-  entry changed shape) — carry one behaviour across inlined library code and
-  several self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
+  entry changed shape), plus `InteractionRewardsFacet` (every loan close
+  self-calls its `repointRewardEntryInternal`, which keeps an entry with its
+  earner when sanctions history exists; an unrouted host fails every close
+  CLOSED) — carry one behaviour across inlined library code and several
+  self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
   refreshes all of them and removes retired selectors from the loupe. The expiry sweep reaches its transfer test by staticcall to
   `InteractionRewardsLensFacet.claimTransferable` on EVERY chain, gate armed or
   not, so a sweep host refreshed without that selector routed reverts every
