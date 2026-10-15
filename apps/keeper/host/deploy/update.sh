@@ -29,8 +29,19 @@
 # Any failure exits non-zero before `current` moves, so the running keeper is
 # untouched and the next run retries. A run interrupted after the switch, or
 # whose restart could not be queued, leaves `restart-pending`, and the next
-# run queues the restart. The only state is `current` itself, so
-# there is no record of "already built" to fall out of step with it.
+# run queues the restart.
+#
+# The kit and the release are bound by `kit-commit`, which names the commit
+# whose units are installed and loaded. It is removed before a deploy touches
+# the units and written again only once `current` is that commit's release,
+# and the keeper unit refuses to start unless it matches current/SOURCE_COMMIT.
+# So however a deploy is interrupted, the keeper never starts one commit's
+# bundle under another commit's units; every run first puts back the kit of
+# whatever `current` is, which also makes the keeper startable again.
+#
+# `update.sh --kit-only [<commit>]` does only that last step, under the same
+# lock, for the installer: it installs the kit of the running release, or of
+# <commit> on a machine with no release yet.
 #
 # What this cannot protect against is stated in docs/ops/KeeperMachine.md
 # §1: whoever can merge to the branch, or tamper with a dependency the build
@@ -45,6 +56,63 @@ KEEP_RELEASES=5
 log() { echo "[keeper-update] $*"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
+umask 022
+
+# One deploy lock, shared with install.sh, so a reinstall and a deploy never
+# interleave their writes to the units, the scripts or `current`. The
+# installer takes it itself and says so when it runs --kit-only.
+if [ "${VAIPAKAM_DEPLOY_LOCK_HELD:-}" != 1 ]; then
+  exec 9>/run/vaipakam-keeper-deploy.lock
+  flock 9
+fi
+
+KIT_COMMIT="$ROOT/kit-commit"
+WORK=""
+incoming=""
+# A run that fails part-way leaves neither its scratch nor a half-written
+# release behind (the glob that prunes releases skips dot-directories).
+trap 'rm -rf ${WORK:+"$WORK"} ${incoming:+"$incoming"}' EXIT
+WORK="$(mktemp -d)"
+
+# Replace a file only when its content changed (a unit's mtime is what
+# install.sh's restart check reads), and by rename, so the copy of this
+# script bash is running stays intact.
+place() { # place <source> <destination> <mode>
+  if ! cmp -s "$1" "$2"; then
+    install -m "$3" -o root -g root "$1" "$2.new"
+    mv -Tf "$2.new" "$2"
+    return 0
+  fi
+  return 1
+}
+
+# Install <commit>'s units and update.sh, reloading systemd if a unit changed.
+# Sets keeper_unit_changed=yes when the keeper's own unit changed.
+keeper_unit_changed=no
+install_kit() {
+  local commit="$1" dir="$WORK/kit-$1" unit units_changed=no
+  mkdir -p "$dir"
+  git -C "$REPO" archive "$commit" apps/keeper/host/deploy | tar -x --no-same-owner -C "$dir"
+  dir="$dir/apps/keeper/host/deploy"
+  for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
+    if place "$dir/$unit" "/etc/systemd/system/$unit" 644; then
+      units_changed=yes
+      if [ "$unit" = vaipakam-keeper.service ]; then keeper_unit_changed=yes; fi
+    fi
+  done
+  if [ "$units_changed" = yes ]; then systemctl daemon-reload; fi
+  place "$dir/update.sh" "$ROOT/update.sh" 755 || true
+}
+# Record that <commit>'s kit is installed and loaded.
+record_kit() {
+  echo "$1" > "$KIT_COMMIT.new"
+  mv -Tf "$KIT_COMMIT.new" "$KIT_COMMIT"
+}
+running_commit() {
+  local c
+  c="$(cat "$ROOT/current/SOURCE_COMMIT" 2>/dev/null || true)"
+  if [[ "$c" =~ ^[0-9a-f]{40}$ ]]; then echo "$c"; fi
+}
 
 # Written just before `current` moves to a release the keeper must restart
 # onto, and removed once that restart is queued. So a run that was stopped,
@@ -56,6 +124,29 @@ queue_restart() {
   systemctl try-restart --no-block vaipakam-keeper.service
   rm -f "$PENDING"
 }
+
+if [ "${1:-}" = --kit-only ]; then
+  commit="$(running_commit)"
+  commit="${commit:-${2:-}}"
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "--kit-only: no release and no commit given" >&2; exit 1; }
+  rm -f "$KIT_COMMIT"
+  install_kit "$commit"
+  record_kit "$commit"
+  # A running keeper is on its old unit until it restarts; install.sh's
+  # restart check sees the changed unit and restarts it.
+  exit 0
+fi
+
+# Put back the kit of the release in use, if an interrupted run left another
+# one (or none) recorded. Until this runs, the keeper refuses to start.
+running="$(running_commit)"
+if [ -n "$running" ] && [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ]; then
+  log "installing the units of $running, which is the release in use"
+  install_kit "$running"
+  record_kit "$running"
+  if [ "$keeper_unit_changed" = yes ]; then touch "$PENDING"; fi
+fi
+
 # Finish a restart an earlier run left pending, before anything that can
 # fail (the fetch, a build of a newer commit), so a failing newer build can
 # never leave the keeper on a bundle older than `current`.
@@ -72,18 +163,13 @@ if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
 fi
 
 log "building $BRANCH at $target"
-tmp="$(mktemp -d)"
-incoming=""
-# A run that fails part-way leaves neither its scratch nor a half-written
-# release behind (the glob that prunes releases skips dot-directories).
-trap 'rm -rf "$tmp" ${incoming:+"$incoming"}' EXIT
+tmp="$WORK/build"
+mkdir -m 700 "$tmp"
 git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
 chmod 644 "$tmp/src.tar"
-# This commit's own deploy kit: its build.sh builds it, and its units and
-# scripts are installed with it below.
-mkdir "$tmp/kit"
-git -C "$REPO" archive "$target" apps/keeper/host/deploy | tar -x --no-same-owner -C "$tmp/kit"
-kit="$tmp/kit/apps/keeper/host/deploy"
+# This commit's own build.sh builds it; its units go in with it below.
+git -C "$REPO" archive "$target" apps/keeper/host/deploy/build.sh | tar -x --no-same-owner -C "$tmp"
+build_script="$tmp/apps/keeper/host/deploy/build.sh"
 # The one directory the sandbox may write. `$tmp` itself stays 0700, so no
 # other account on the machine can reach it; the sandbox sees only the
 # bind-mounted paths below.
@@ -100,7 +186,7 @@ systemd-run --quiet --wait --pipe --collect \
   --unit=vaipakam-keeper-build \
   -p PartOf=vaipakam-keeper-update.service \
   -p DynamicUser=yes \
-  -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $kit/build.sh:/run/keeper-build.sh" \
+  -p BindReadOnlyPaths="$tmp/src.tar:/run/keeper-src.tar $build_script:/run/keeper-build.sh" \
   -p BindPaths="$tmp/out:/run/keeper-out" \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
@@ -129,35 +215,20 @@ if [ -f "$ROOT/current/keeper-host.mjs" ] && cmp -s "$incoming/keeper-host.mjs" 
   restart=no
 fi
 
-# Install this commit's kit, last before the switch so a failed build changes
-# nothing. Each file is replaced only when its content changed (a unit's mtime
-# is what install.sh's restart check reads), and by rename, so the copy of
-# this script bash is running stays intact.
-place() { # place <source> <destination> <mode>
-  if ! cmp -s "$1" "$2"; then
-    install -m "$3" -o root -g root "$1" "$2.new"
-    mv -Tf "$2.new" "$2"
-    return 0
-  fi
-  return 1
-}
-units_changed=no
-for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
-  if place "$kit/$unit" "/etc/systemd/system/$unit" 644; then
-    units_changed=yes
-    # The keeper's own unit changed: it must restart onto it even when its
-    # bundle did not.
-    if [ "$unit" = vaipakam-keeper.service ]; then restart=yes; fi
-  fi
-done
-if [ "$units_changed" = yes ]; then systemctl daemon-reload; fi
-place "$kit/update.sh" "$ROOT/update.sh" 755 || true
+# This commit's kit goes in only now, after the build succeeded. From removing
+# kit-commit until it names this commit again, the keeper refuses to start.
+rm -f "$KIT_COMMIT"
+install_kit "$target"
+# The keeper's own unit changed: it must restart onto it even when its bundle
+# did not.
+if [ "$keeper_unit_changed" = yes ]; then restart=yes; fi
 rm -rf "$release"
 mv -T "$incoming" "$release"
 incoming=""
 if [ "$restart" = yes ]; then touch "$PENDING"; fi
 ln -sfn "$release" "$ROOT/current.next"
 mv -Tf "$ROOT/current.next" "$ROOT/current"
+record_kit "$target"
 if [ "$restart" = yes ]; then
   log "deployed $target; a running keeper restarts onto it after its current tick"
   queue_restart

@@ -22,6 +22,12 @@ After=network-online.target
 Type=simple
 DynamicUser=yes
 LoadCredential=keeper.env:/etc/vaipakam/keeper.env
+# Starts only when the units loaded are those of the release it would run:
+# update.sh writes kit-commit once a deploy's units and `current` agree, and
+# removes it while they may not (docs/ops/KeeperMachine.md §1). A refused
+# start retries every RestartSec and succeeds once the next deploy run has
+# put the release's own units back.
+ExecStartPre=/usr/bin/cmp /opt/vaipakam-keeper/kit-commit /opt/vaipakam-keeper/current/SOURCE_COMMIT
 ExecStart=/usr/bin/env -i /usr/local/bin/node --env-file=%d/keeper.env /opt/vaipakam-keeper/current/keeper-host.mjs
 
 # SIGTERM stops new ticks and lets the one in flight finish, which may be

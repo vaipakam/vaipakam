@@ -108,33 +108,51 @@ describe('host deploy kit paths', () => {
     expect(unit).toMatch(/^ExecStart=\/usr\/bin\/env -i \/usr\/local\/bin\/node --env-file=%d\/keeper.env /m);
   });
 
-  it('installs every unit in the kit', () => {
+  it('reinstalls the kit of the running commit, under the deploy lock, through the updater', () => {
     const install = read('install.sh');
-    for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer', 'update.sh']) {
-      expect(install, unit).toContain(unit);
-    }
     // A reinstall takes the kit of the commit that is running, not the branch tip.
     expect(install).toContain('kit_commit="$(cat "$ROOT/current/SOURCE_COMMIT"');
-    // One trust rule for the whole tree, and a fresh inode for the env file.
+    expect(install).toContain('VAIPAKAM_DEPLOY_LOCK_HELD=1 "$ROOT/update.sh" --kit-only "$kit_commit"');
+    // The lock is taken before the trust rule and released before a deploy starts.
+    const lock = install.indexOf('flock 9');
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(install.indexOf('rm -rf "$ROOT"'));
+    expect(install.indexOf('exec 9>&-')).toBeLessThan(install.indexOf('systemctl start vaipakam-keeper-update.service'));
+    // One trust rule for each tree it runs code from, and a fresh inode for the env file.
     expect(install).toContain('rm -rf "$ROOT"');
+    expect(install).toContain('rm -rf "$NODE_HOME"');
+    expect(install.indexOf('rm -rf "$NODE_HOME"')).toBeLessThan(install.indexOf('"$NODE_HOME/current/bin/node" -v'));
     expect(install).toContain('umask 022');
     expect(install).toContain('mv -Tf /etc/vaipakam/.keeper.env.new /etc/vaipakam/keeper.env');
   });
 
-  it('deploys each commit with its own build.sh, units and updater', () => {
+  it('deploys each commit with its own build.sh, units and updater, and binds them with kit-commit', () => {
     const update = read('update.sh');
-    expect(update).toContain('git -C "$REPO" archive "$target" apps/keeper/host/deploy');
-    expect(update).toContain('$kit/build.sh:/run/keeper-build.sh');
+    expect(update).toContain('exec 9>/run/vaipakam-keeper-deploy.lock');
+    expect(update).toContain('git -C "$REPO" archive "$commit" apps/keeper/host/deploy');
+    expect(update).toContain('$build_script:/run/keeper-build.sh');
     expect(update).not.toContain('$ROOT/build.sh');
     for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer']) {
       expect(update, unit).toContain(unit);
     }
-    expect(update).toContain('place "$kit/$unit" "/etc/systemd/system/$unit" 644');
-    expect(update).toContain('place "$kit/update.sh" "$ROOT/update.sh" 755');
+    expect(update).toContain('place "$dir/$unit" "/etc/systemd/system/$unit" 644');
+    expect(update).toContain('place "$dir/update.sh" "$ROOT/update.sh" 755');
     // A changed keeper unit restarts the keeper even when the bundle is identical.
-    expect(update).toMatch(/if \[ "\$unit" = vaipakam-keeper\.service \]; then restart=yes; fi/);
-    // The kit goes in after the build succeeds and before `current` moves.
-    expect(update.indexOf('place "$kit/$unit"')).toBeGreaterThan(update.indexOf('built="$tmp/out/keeper-host.mjs"'));
-    expect(update.indexOf('place "$kit/$unit"')).toBeLessThan(update.indexOf('mv -Tf "$ROOT/current.next" "$ROOT/current"'));
+    expect(update).toContain('if [ "$keeper_unit_changed" = yes ]; then restart=yes; fi');
+    // The kit goes in after the build succeeds; kit-commit is cleared first and
+    // written only once `current` names the same commit.
+    const built = update.indexOf('built="$tmp/out/keeper-host.mjs"');
+    const clear = update.indexOf('rm -f "$KIT_COMMIT"\ninstall_kit "$target"');
+    const swap = update.indexOf('mv -Tf "$ROOT/current.next" "$ROOT/current"');
+    const record = update.indexOf('record_kit "$target"');
+    expect(clear).toBeGreaterThan(built);
+    expect(swap).toBeGreaterThan(clear);
+    expect(record).toBeGreaterThan(swap);
+    // Every run first puts back the running release's kit if another is recorded.
+    expect(update.indexOf('install_kit "$running"')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
+    // The keeper refuses to start unless the loaded kit is the release's.
+    expect(read('vaipakam-keeper.service')).toContain(
+      'ExecStartPre=/usr/bin/cmp /opt/vaipakam-keeper/kit-commit /opt/vaipakam-keeper/current/SOURCE_COMMIT',
+    );
   });
 });

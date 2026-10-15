@@ -36,7 +36,18 @@ A merge to `main` is the deploy. Each run of `update.sh` does the following:
    unit changed (a merge that did not touch the keeper).
 
 Any failure leaves the running keeper untouched, and the next run retries.
-The only state is `current`.
+
+The units and the release are bound by one file, `kit-commit`, naming the
+commit whose units are installed and loaded. A deploy removes it before it
+touches the units and writes it again only once `current` is that commit's
+release, and the keeper unit refuses to start unless it matches `current`.
+So however a deploy is interrupted, the keeper never starts one commit's code
+under another commit's units: a start in between fails (`cmp` reports the two
+files differ, in `journalctl -u vaipakam-keeper`) and retries every 30
+seconds. Every deploy run first puts back the units of whatever `current` is,
+which makes the keeper startable again; with deploys paused, `sudo
+/opt/vaipakam-keeper/update.sh --kit-only` does that one step by hand. A
+reinstall and a deploy share one lock, so they never interleave.
 
 The build user is new for every build. It can read neither the env file nor
 write the releases, and nothing it writes survives the build: its source
@@ -113,7 +124,7 @@ the latest 22.x release. When Node or the keeper's unit changed, it restarts
 a running keeper onto them, after its current tick. So re-run it to take Node
 security releases. Node lives in `/usr/local/lib/vaipakam-node`, which the
 script owns outright: it keeps the version in use and the one before it, and
-removes older ones. A re-run keeps the branch the machine follows unless
+removes older ones. Nothing in it is run, not even to read its version, unless all of it is root's and writable only by root; otherwise it is deleted and Node is installed again. A re-run keeps the branch the machine follows unless
 `KEEPER_DEPLOY_BRANCH` is set again, and leaves paused deploys paused (§6):
 only the first install to complete turns the update timer on. One rule
 decides whether `/opt/vaipakam-keeper` is trusted: unless a completed install
@@ -198,9 +209,10 @@ empty.
   --now vaipakam-keeper-update.timer`.
 - **Roll back:** pause deploys (above) first. Then point `current` at an
   earlier release (`sudo ln -sfn /opt/vaipakam-keeper/releases/<commit>
-  /opt/vaipakam-keeper/current`), re-run the install script (§3) so the
-  units and `update.sh` are that release's own again, and run `sudo systemctl
-  restart vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
+  /opt/vaipakam-keeper/current`), run `sudo /opt/vaipakam-keeper/update.sh
+  --kit-only` so the units are that release's own again (until then the
+  keeper refuses to start, §1), and run `sudo systemctl restart
+  vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
   sees that `current` is not `main`'s release and deploys it.
 - **Move hosts:** on the old machine run `sudo systemctl disable --now
   vaipakam-keeper vaipakam-keeper-update.timer`. Then enable the new machine

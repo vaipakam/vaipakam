@@ -72,7 +72,18 @@ main() {
   # rule below applies only there: versions side by side, `current` naming
   # the one in use, and the four commands in /usr/local/bin pointing through
   # it. Nothing outside NODE_HOME is ever chowned, chmodded or pruned.
+  #
+  # Nothing in it is run, not even `node -v`, unless the whole tree is root's
+  # and writable only by root; otherwise it is deleted and installed again.
   local NODE_HOME=/usr/local/lib/vaipakam-node
+  if [ -L "$NODE_HOME" ]; then
+    echo "$NODE_HOME must not be a link; remove it by hand and re-run" >&2
+    exit 1
+  fi
+  if [ -e "$NODE_HOME" ] && [ -n "$(find "$NODE_HOME" \( ! -user root -o ! -group root -o \( ! -type l -perm /022 \) \) -print -quit)" ]; then
+    log "$NODE_HOME is not entirely root's; installing Node again from nothing"
+    rm -rf "$NODE_HOME"
+  fi
   install -d -o root -g root -m 755 "$NODE_HOME"
   local installed=""
   if [ -x "$NODE_HOME/current/bin/node" ]; then
@@ -105,9 +116,6 @@ main() {
       *) rm -rf "$entry" ;;
     esac
   done
-  # Enforced every run, within NODE_HOME only.
-  chown -R root:root "$NODE_HOME"
-  chmod -R go-w "$NODE_HOME"
   local bin
   for bin in node npm npx corepack; do ln -sfn "$NODE_HOME/current/bin/$bin" "/usr/local/bin/$bin"; done
 
@@ -124,6 +132,11 @@ main() {
   # be rebuilt, and a tree another account could ever have written (a
   # planted git config, a pre-made release, a linked state file) is not
   # something to repair piece by piece.
+  #
+  # The whole section holds the deploy lock update.sh takes, so a deploy
+  # never runs while this rebuilds the tree or reinstalls the kit.
+  exec 9>/run/vaipakam-keeper-deploy.lock
+  flock 9
   if [ -L "$ROOT" ]; then
     echo "$ROOT must not be a link; remove it by hand and re-run" >&2
     exit 1
@@ -164,9 +177,11 @@ main() {
   git -C "$ROOT/repo" archive "$kit_commit" apps/keeper/host/deploy | tar -x --no-same-owner -C "$kit"
   kit="$kit/apps/keeper/host/deploy"
 
-  # Only the updater is installed here. From then on each deploy installs the
-  # units and the updater of the commit it deploys, and builds with that
-  # commit's own build.sh, so code never runs under another commit's kit.
+  # Only the updater is installed from here. It then installs the units (and
+  # itself again) through --kit-only below, and from then on each deploy
+  # installs the units and the updater of the commit it deploys and builds
+  # with that commit's own build.sh, so code never runs under another
+  # commit's kit.
   install -m 755 -o root -g root "$kit/update.sh" "$ROOT/.update.sh.new"
   mv -Tf "$ROOT/.update.sh.new" "$ROOT/update.sh"
   rm -f "$ROOT/build.sh"
@@ -195,15 +210,12 @@ main() {
   install -m 600 -o root -g root /etc/vaipakam/keeper.env /etc/vaipakam/.keeper.env.new
   mv -Tf /etc/vaipakam/.keeper.env.new /etc/vaipakam/keeper.env
 
-  # A unit file is replaced only when its content changed, so its mtime says
+  # The units, from the same code that deploys them, still under the lock.
+  # It replaces a unit only when its content changed, so a unit's mtime says
   # when it last changed; the restart check below relies on that.
-  local unit
-  for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
-    if ! cmp -s "$kit/$unit" "/etc/systemd/system/$unit"; then
-      install -m 644 "$kit/$unit" "/etc/systemd/system/$unit"
-    fi
-  done
-  systemctl daemon-reload
+  VAIPAKAM_DEPLOY_LOCK_HELD=1 "$ROOT/update.sh" --kit-only "$kit_commit"
+  # Released before starting a deploy below, which takes the lock itself.
+  exec 9>&-
   # Deploys are turned on once, by the install that first completes. After
   # that the timer's state is the operator's: a reinstall (say, for a Node
   # security release) while deploys are paused for a rollback must not
