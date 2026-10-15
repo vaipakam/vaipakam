@@ -12,6 +12,10 @@
  * same loan twice. A minute whose previous tick is still running is skipped,
  * and the skip is logged with the passes still in flight, so a pass that has
  * stopped finishing is visible rather than silently starving the rest.
+ *
+ * A skipped minute still calls `onSkip`, which the host uses to renew the
+ * one-runner lease (#2503): a tick that runs long must not let the lease
+ * lapse to another runner while its passes are still sending.
  */
 
 export const MINUTE_MS = 60_000;
@@ -33,6 +37,8 @@ export interface TickRunnerDeps {
     launch: (passName: string, run: Promise<void>) => void,
   ): Promise<void>;
   log(line: string): void;
+  /** Called for a minute skipped because the previous tick is still running. Must not reject. */
+  onSkip?(scheduledTimeMs: number): Promise<void>;
 }
 
 export interface TickRunner {
@@ -54,6 +60,7 @@ export function createTickRunner(deps: TickRunnerDeps): TickRunner {
       deps.log(
         `[keeper-host] tick ${new Date(scheduledTimeMs).toISOString()} skipped: the previous tick is still running (${names.join(', ') || 'launching'})`,
       );
+      void deps.onSkip?.(scheduledTimeMs);
       return false;
     }
     const launched: Promise<void>[] = [];

@@ -92,6 +92,11 @@ interface BaseEnv {
   // `wrangler secret put`, not in `vars`.
   KEEPER_ENABLED?: string;
 
+  // #2503 — this runner's name for the one-runner lease (`runnerLease.ts`).
+  // A plain var: the Worker's is set in wrangler.jsonc, a machine's in its
+  // env file (the install writes the host name). Unset declines every tick.
+  KEEPER_RUNNER_ID?: string;
+
   // #925 — reward-budget remittance pass knobs. The `*_ENABLED` flags are
   // `secret_text` like KEEPER_ENABLED (so equally unreadable — see the
   // note above); the numeric tuning knobs below are plain vars.
@@ -241,6 +246,7 @@ export const PLAIN_VAR_KEYS = [
   'TG_BOT_USERNAME',
   'FRONTEND_ORIGIN',
   'KEEPER_ENABLED',
+  'KEEPER_RUNNER_ID',
   'REWARD_REMIT_ENABLED',
   'REWARD_REMIT_LOOKBACK_DAYS',
   'REWARD_REMIT_LANE_CAP',

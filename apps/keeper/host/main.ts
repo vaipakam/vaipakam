@@ -26,7 +26,7 @@
  */
 
 import { buildHostEnv } from './hostEnv';
-import { createHostTick } from './hostTick';
+import { createHostLeaseRenewal, createHostTick } from './hostTick';
 import { createTickRunner, minuteFloor, msUntilNextMinute } from './scheduler';
 
 function log(line: string): void {
@@ -51,6 +51,7 @@ function main(): void {
 
   const runner = createTickRunner({
     runTick: createHostTick({ vars: () => process.env, log }),
+    onSkip: createHostLeaseRenewal({ vars: () => process.env, log }),
     log,
   });
 

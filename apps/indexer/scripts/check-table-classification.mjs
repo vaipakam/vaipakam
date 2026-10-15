@@ -173,6 +173,10 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: 'keeper remit-ack frontier cursor; derivation unaudited — #1481',
   },
+  keeper_runner_lease: {
+    class: 'decision-needed',
+    reason: 'one-runner keeper lease (#2503); self-expires within 10 min, so restore needs no step either way — moves to the keeper DB with #2497',
+  },
 };
 
 // Tables written by tooling/infra, not domain state.

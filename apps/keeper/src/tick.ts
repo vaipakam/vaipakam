@@ -17,6 +17,7 @@ import {
   maintenanceSkipNotice,
 } from '@vaipakam/lib/d1Maintenance';
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
+import { claimRunnerLease } from './runnerLease';
 /**
  * Run one pass and report what it cost.
  *
@@ -73,10 +74,24 @@ export async function runKeeperTick(
   // that can see the whole tick, is what an operator can actually read —
   // and declining before `resolveEnv` also means a maintenance build stops
   // fetching secrets it has no use for.
-  if (!hasD1Binding(env.DB)) {
+  if (env.DB === undefined || !hasD1Binding(env.DB)) {
     // eslint-disable-next-line no-console
     console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
     return;
+  }
+
+  // #2503 — one runner at a time. Claimed before anything else reads a
+  // secret or the chain, so a runner that is not the holder does no work and
+  // says whose lease it is waiting on. A failure to claim declines too.
+  const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID);
+  if (!lease.held) {
+    // eslint-disable-next-line no-console
+    console.warn(`[keeper] tick declined: ${lease.reason}`);
+    return;
+  }
+  if (lease.acquired) {
+    // eslint-disable-next-line no-console
+    console.log(`[keeper] runner "${env.KEEPER_RUNNER_ID}" acquired the one-runner lease`);
   }
 
   // T-078 — resolve the Secrets Store bindings once, here at the

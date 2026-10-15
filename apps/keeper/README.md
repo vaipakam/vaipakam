@@ -84,6 +84,12 @@ secrets — they sat in the secrets table above until #2223, where the
 `wrangler secret put` instruction would have provisioned them as unreadable
 values for no benefit.
 
+Config-owned var — its value is committed in `wrangler.jsonc`'s `vars`, so every deploy writes it. It is **not** a secret and not dashboard-managed: never set it with `wrangler secret put` or in the dashboard, where the next deploy would overwrite it.
+
+| Var | Purpose |
+|---|---|
+| `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
+
 `TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
 note above: this config **declares** it, so every deploy uploads the declared
 value and a dashboard edit is overwritten rather than preserved. Note though
