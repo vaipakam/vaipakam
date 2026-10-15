@@ -191,7 +191,7 @@ const DETAILS_REFRESH_BATCH = 50;
 /** Single shared cursor across every domain handler. Adding a new
  *  domain in Phase B+ does NOT add a new cursor row — every handler
  *  consumes the same scan window. */
-const CURSOR_KIND = 'diamond';
+export const CURSOR_KIND = 'diamond';
 
 /** #1213 PR 2b — "notifications complete through last_block" watermark
  *  for independent writers of the notifications table (the keeper's

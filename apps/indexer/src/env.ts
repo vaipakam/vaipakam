@@ -179,10 +179,13 @@ export function isDoIngestEnabled(raw: WorkerEnv): boolean {
 /**
  * The resolved env for a route that must SKIP `resolveEnv`.
  *
- * One route does: `/metrics/recycling` bypasses the Secrets Store resolution
+ * Two routes do. `/metrics/recycling` bypasses the Secrets Store resolution
  * for latency, because it needs D1, the ingest gate and the deployment
  * artifact — none of which come from Secrets Store — and paying for the
  * secrets binding could push the response past the browser's abort.
+ * `/health/ingest` (#2469) bypasses it because a health signal must still
+ * answer while that fan-out — one of the things that stalls ingest — is
+ * degraded; it reads D1 only.
  *
  * It exists as a named function because the bare cast that used to do this
  * job got it wrong the moment the gate became a resolved field (#2202 r1):

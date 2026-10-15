@@ -121,6 +121,7 @@ describe('orchestrateServerQuotes (#2468)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(out.calls).toEqual([]);
     expect(out.failed).toEqual(['zeroex:origin-bound']);
+    expect(out.noQuote).toBe('unreachable');
   });
 
   describe('what a 0x answer that is not a usable quote is called (#2480 r5)', () => {
@@ -139,16 +140,22 @@ describe('orchestrateServerQuotes (#2468)', () => {
       const out = await ask({ transaction: { to: SWAP_TARGET, data: '0xabcd' }, buyAmount: '5' }, false);
       expect(out.calls).toEqual([]);
       expect(out.failed).toEqual(['zeroex:target-not-allowed']);
+      expect(out.noQuote).toBe('declined');
+      expect(out.marketDeclined).toBe(false);
     });
 
     it("an explicit no-liquidity answer is a decline", async () => {
       const out = await ask({ liquidityAvailable: false });
       expect(out.failed).toEqual(['zeroex:declined']);
+      expect(out.noQuote).toBe('declined');
+      expect(out.marketDeclined).toBe(true);
     });
 
     it('a body that is neither is unanswered, not a market fact', async () => {
       const out = await ask({});
       expect(out.failed).toEqual(['zeroex:unanswered']);
+      expect(out.noQuote).toBe('unanswered');
+      expect(out.marketDeclined).toBe(false);
     });
   });
 
@@ -161,6 +168,7 @@ describe('orchestrateServerQuotes (#2468)', () => {
     });
     expect(out.calls).toEqual([]);
     expect(out.failed).toEqual(['unrecognized-adapters:1']);
+    expect(out.noQuote).toBe('unreachable');
   });
 
   it('says no adapter is enabled, rather than an empty failure list', async () => {
@@ -186,6 +194,7 @@ describe('orchestrateServerQuotes (#2468)', () => {
     });
     expect(out.calls).toEqual([]);
     expect(out.failed[0]).toMatch(/^roster-unread:/);
+    expect(out.noQuote).toBe('unread');
     expect(out.failed[0]).not.toContain('SECRET_KEY');
   });
 });

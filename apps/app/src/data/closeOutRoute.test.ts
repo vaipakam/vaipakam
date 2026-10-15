@@ -19,6 +19,11 @@ import {
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from './closeOutRoute';
+import {
+  INTERNAL_MATCH_EXECUTED_TOPIC,
+  LOAN_DEFAULTED_TOPIC,
+  previewCloseOutDetail,
+} from '@vaipakam/lib/routeBuilder';
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 10n ** 18n };
@@ -474,6 +479,50 @@ describe('previewCloseOut', () => {
 
   it('says unknown, not a changed ending, when the node reports no logs field', async () => {
     expect(await run(async () => ({ results: [{ status: 'success' }] }))).toBe('unknown');
+  });
+});
+
+describe('previewCloseOutDetail (#2487)', () => {
+  const diamond = A(0xd);
+  const loanTopic = `0x${(21).toString(16).padStart(64, '0')}`;
+  const otherLoan = `0x${(22).toString(16).padStart(64, '0')}`;
+  const run = (logs: unknown[]) =>
+    previewCloseOutDetail({
+      client: { simulateCalls: async () => ({ results: [{ status: 'success', logs }] }) } as any,
+      diamond,
+      account: A(0xe),
+      loanId: 21n,
+      calls: [],
+    });
+
+  it('marks a terminal default only for THIS loan, from the Diamond', async () => {
+    expect(await run([{ address: diamond, topics: [LOAN_DEFAULTED_TOPIC, loanTopic] }])).toEqual({
+      preview: 'other',
+      defaulted: true,
+      internalMatch: false,
+    });
+    expect((await run([{ address: diamond, topics: [LOAN_DEFAULTED_TOPIC, otherLoan] }])).defaulted).toBe(false);
+    expect((await run([{ address: A(0xbad), topics: [LOAN_DEFAULTED_TOPIC, loanTopic] }])).defaulted).toBe(false);
+  });
+
+  it('marks any internal match the Diamond emitted, whichever leg the loan is in', async () => {
+    const out = await run([
+      { address: diamond, topics: [INTERNAL_MATCH_EXECUTED_TOPIC, otherLoan] },
+      { address: diamond, topics: [LOAN_DEFAULTED_TOPIC, loanTopic] },
+    ]);
+    expect(out).toEqual({ preview: 'other', defaulted: true, internalMatch: true });
+    expect((await run([{ address: A(0xbad), topics: [INTERNAL_MATCH_EXECUTED_TOPIC, loanTopic] }])).internalMatch).toBe(false);
+  });
+
+  it('claims neither fact when the preview is unknown', async () => {
+    const out = await previewCloseOutDetail({
+      client: { simulateCalls: async () => Promise.reject(new Error('unsupported')) } as any,
+      diamond,
+      account: A(0xe),
+      loanId: 21n,
+      calls: [],
+    });
+    expect(out).toEqual({ preview: 'unknown', defaulted: false, internalMatch: false });
   });
 });
 

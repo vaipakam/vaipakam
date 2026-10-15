@@ -1,0 +1,7 @@
+## Thread — The keeper sends the internal-match liquidation when no venue quotes (PR #<n>)
+
+The contract's health-factor liquidation checks for an opposing position it can match the loan against at oracle price before it uses any swap route. The keeper's liquidation stopped as soon as no venue quoted the collateral, so a loan that an internal match could have closed was never sent at all. The in-kind close added in #2487 deliberately refuses an ending that is a match and leaves it to the liquidation, which made the gap visible.
+
+Now, when no venue quotes, the keeper first previews the liquidation with an empty swap list and sends it only when the chain shows that the call settles this loan through an internal match. Any other preview result, including one the network cannot run, sends nothing, and the keeper moves on to the in-kind check as before. The send waits while an earlier keeper transaction is still unconfirmed and goes through the same one-at-a-time submission path as the keeper's other sends. A send whose answer is lost is reported as unknown, with its transaction hash. That send logic is now one shared piece used by both the close-out and this liquidation.
+
+Internal matching is off by governance default, so nothing changes until it is turned on. The behaviour belongs to the liquidation duty and is armed by the keeper-wide switch, which is off on the live deployment. Closes #2501.

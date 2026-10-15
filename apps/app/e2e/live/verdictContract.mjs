@@ -154,6 +154,16 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'when a chain read contradicts the payout or the lifecycle; anything else ' +
       'is UNDETERMINED (exit 3) (#2427)',
   ],
+  [
+    'live-lender-close-out.mjs',
+    // Exits 2 when the build differs from the reference deploy, or LOAN_ID is
+    // not an Active, past-grace loan whose lender position the role holds, or
+    // the Diamond lists no enabled adapter: a missing precondition, never a
+    // card defect. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+    'with CLOSE=1, after the close-out was sent the shared runVerdict FAILs only ' +
+      'when a chain read contradicts the close-out (a revert, or a status that ' +
+      'disagrees with its event); anything else is UNDETERMINED (exit 3) (#2463)',
+  ],
 ]);
 
 /**
@@ -190,6 +200,12 @@ export const TWO_VERDICT_DRIVERS = new Map([
  * reading a green batch can see what it did not cover.
  */
 export const MANUAL_ONLY_DRIVERS = new Map([
+  [
+    'live-lender-close-out.mjs',
+    'needs LOAN_ID naming a real Active loan past its grace period whose lender ' +
+      'position ROLE holds, and with CLOSE=1 it closes that loan out, which ends ' +
+      'the card it checks — run it by hand (#2463)',
+  ],
   [
     'live-internal-match-claim.mjs',
     'needs LOAN_ID naming a real internally matched loan (set up by ' +

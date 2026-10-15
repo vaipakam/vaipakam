@@ -39,6 +39,7 @@ import {
   aggregatorAnswerForStatus,
   buildCloseOutRoute,
   classifySlots,
+  noQuoteReason,
   readCloseOutRoster,
   type ClassifiedSlot,
   type AggregatorAnswer,
@@ -47,9 +48,11 @@ import {
   type AggregatorSource,
   type CloseOutRoster,
   type CloseOutRoute,
+  type NoQuoteReason,
 } from '@vaipakam/lib/routeBuilder';
 import type { AdapterCall, SwapVenueKind } from '@vaipakam/lib/swapRoutes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { MULTICALL3_ADDRESS } from './multicall3';
 import type { Env } from './env';
 
 export interface ServerQuoteRequest {
@@ -90,6 +93,19 @@ export interface ServerOrchestrationResult {
   failed: string[];
   /** The shared builder's own result, for a caller that reports it. */
   route: CloseOutRoute | null;
+  /** Why nothing was quoted — the shared `noQuoteReason` rule, applied to
+   *  the roster this build read — or null when there is a route. Only
+   *  `declined` says every venue was asked and every one declined; any
+   *  other reason means some venue was not heard from, so a caller must
+   *  not treat the empty list as the market's answer (#2487 r1). */
+  noQuote: NoQuoteReason | null;
+  /** True only when nothing was quoted, the roster was read whole, and
+   *  EVERY venue's own outcome was `declined`: the market was asked and said
+   *  no. Stricter than `noQuote === 'declined'`, which, for its reader-facing
+   *  wording, also counts a quote whose swap target the adapter does not
+   *  allow (#2487 r2). That is a route blocked by governance, not a market
+   *  without one, so an irreversible in-kind close must not rest on it. */
+  marketDeclined: boolean;
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
@@ -118,7 +134,11 @@ export async function readKeeperRouteStanding(
   txOrigin: Address | undefined,
 ): Promise<RosterStanding> {
   const mock = getDeployment(chainId)?.testnetMocks?.mockSwapAdapter as Address | undefined;
-  const read = await readCloseOutRoster(client, diamond, mock);
+  // One aggregate for every adapter's name and flag (#2488): the roster's
+  // length must not set how many requests a route build costs.
+  const read = await readCloseOutRoster(client, diamond, mock, {
+    multicallAddress: MULTICALL3_ADDRESS,
+  });
   const slots = await classifySlots({
     client,
     chainId,
@@ -218,6 +238,8 @@ export async function orchestrateServerQuotes(
       calls: [],
       failed: [`roster-unread:${describeFailure(err)}`],
       route: null,
+      noQuote: 'unread',
+      marketDeclined: false,
     };
   }
   const { read, slots } = standing;
@@ -240,9 +262,16 @@ export async function orchestrateServerQuotes(
   // An enabled adapter this module cannot name is a venue that exists and
   // was not asked — said, not dropped (#2480 r1 `4267324316`).
   if (read.unrecognized > 0) failed.push(`unrecognized-adapters:${read.unrecognized}`);
-  if (route.kind === 'no-quote') return { ranked: [], calls: [], failed, route };
+  if (route.kind === 'no-quote') {
+    const noQuote = noQuoteReason(route, read);
+    const marketDeclined =
+      noQuote === 'declined' &&
+      route.outcomes.length > 0 &&
+      route.outcomes.every((o) => o.outcome === 'declined');
+    return { ranked: [], calls: [], failed, route, noQuote, marketDeclined };
+  }
   const ranked: ServerRankedQuote[] = route.candidates.flatMap((c) =>
     c.expectedOutput === null ? [] : [{ kind: c.kind, expectedOutput: c.expectedOutput, call: c.call }],
   );
-  return { ranked, calls: route.calls, failed, route };
+  return { ranked, calls: route.calls, failed, route, noQuote: null, marketDeclined: false };
 }

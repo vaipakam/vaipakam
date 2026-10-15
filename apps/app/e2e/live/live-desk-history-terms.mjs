@@ -178,6 +178,14 @@ try {
   if (!body || typeof body !== 'object' || (body.loans !== undefined && !Array.isArray(body.loans))) {
     throw new Blocked(`the page's History response (HTTP ${res.status()}) is not a readable loan list`);
   }
+  // The app discards a page whose `chainId` is not the chain it asked for and
+  // shows History as unavailable (`useDeskHistory`), so such a payload has no
+  // rows on screen to judge: BLOCKED, the same rule, not a missing-row FAIL
+  // (#2492 r4).
+  const askedChain = Number(new URL(res.url()).searchParams.get('chainId'));
+  if (body.chainId !== askedChain) {
+    throw new Blocked(`the page's History response is for chain ${body.chainId}, not the chain it asked for (${askedChain}); the app shows History as unavailable`);
+  }
   loans = body.loans ?? [];
   if (loans.length === 0) throw new Blocked(`${ROLE} ${WALLET} has no History rows to judge`);
 
@@ -231,8 +239,10 @@ try {
       const liveLeaks = l.interestRateBps !== t.rateBps && hasToken(rowText, liveRate);
       check(
         kind === 'executed' &&
-          Number(await termsEl.getAttribute('data-rate-bps')) === t.rateBps &&
-          Number(await termsEl.getAttribute('data-duration-days')) === t.durationDays &&
+          // Compared as strings (#2492 r4): `Number(null)` is 0, so a MISSING
+          // attribute would pass for an interest-free loan.
+          (await termsEl.getAttribute('data-rate-bps')) === String(t.rateBps) &&
+          (await termsEl.getAttribute('data-duration-days')) === String(t.durationDays) &&
           shown === want &&
           !liveLeaks,
         `loan ${l.loanId}: shows the executed terms exactly (${want})`,

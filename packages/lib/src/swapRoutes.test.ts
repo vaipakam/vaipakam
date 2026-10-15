@@ -102,6 +102,56 @@ describe('readSwapAdapterEntries', () => {
       { address: A(2), name: undefined, disabled: true },
     ]);
   });
+
+  const MC = A(0xca11);
+  const listOnly = async (args: { functionName: string }) => {
+    if (args.functionName === 'getSwapAdapters') return [A(1), A(2), A(3)];
+    throw new Error(`per-entry read ${args.functionName} should not happen`);
+  };
+
+  it('batched: reads the whole roster in ONE aggregate, never per entry', async () => {
+    const batches: { contracts: unknown[]; multicallAddress: Address; batchSize: number }[] = [];
+    const client = {
+      readContract: listOnly,
+      multicall: async (args: { contracts: unknown[]; multicallAddress: Address; batchSize: number }) => {
+        batches.push(args);
+        return [
+          { status: 'success', result: 'ZeroEx' },
+          { status: 'success', result: false },
+          { status: 'failure', error: new Error('reverted') },
+          { status: 'success', result: true },
+          { status: 'success', result: 'UniswapV3' },
+          { status: 'success', result: false },
+        ];
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entries = await readSwapAdapterEntries(client as any, A(100), { multicallAddress: MC });
+    expect(batches).toHaveLength(1);
+    expect(batches[0].contracts).toHaveLength(6);
+    expect(batches[0].multicallAddress).toBe(MC);
+    expect(batches[0].batchSize).toBe(0);
+    expect(entries).toEqual([
+      { address: A(1), name: 'ZeroEx', disabled: false },
+      { address: A(2), name: undefined, disabled: true },
+      { address: A(3), name: 'UniswapV3', disabled: false },
+    ]);
+  });
+
+  it('batched: a rejected or throwing aggregate leaves every field unread, with no serial retry', async () => {
+    const shared = new Error('aggregate3 rejected');
+    for (const multicall of [
+      async (args: { contracts: unknown[] }) => args.contracts.map(() => ({ status: 'failure', error: shared })),
+      async () => {
+        throw new Error('multicall unavailable');
+      },
+    ]) {
+      const client = { readContract: listOnly, multicall };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entries = await readSwapAdapterEntries(client as any, A(100), { multicallAddress: MC });
+      expect(entries).toEqual([A(1), A(2), A(3)].map((address) => ({ address, name: undefined, disabled: undefined })));
+    }
+  });
 });
 
 describe('aggregator parsers', () => {
