@@ -968,7 +968,8 @@ try {
     // A failure the page records during this re-read makes blockPre throw;
     // it is kept as part of the stop and the run finalizes normally (#2505 r20).
     try {
-      await blockIfLifecycleMoved(`when the drive stopped (${err.message})`);
+      // Read after the stop, so it cannot say which came first (#2505 r23).
+      await blockIfLifecycleMoved(`by the re-read after the drive stopped (${err.message}); which came first is unknown`);
     } catch (recheckErr) {
       stopped += `; ${recheckErr.message}`;
     }

@@ -985,12 +985,16 @@ try {
     // the page may rightly have withdrawn a close-out whose precondition
     // moved, so a move or an unreadable precondition holds the run (BLOCKED
     // once the nonce is reconciled). Only an unmoved loan leaves it a stop.
+    // The read comes after the stop, so it cannot say which came first: a
+    // move it shows is reported with that order unknown (#2505 r23). It is
+    // BLOCKED rather than a FAIL because a stop the move may have caused is
+    // not a finding the drive can substantiate.
     const now = await eligibleAt(null);
     if (now.ok) stopped = err.message;
     else {
       held = now.unknown
         ? `the drive stopped (${err.message}) and loan ${LOAN_ID}'s eligibility could not be re-read, so whether it moved is unknown (${now.unknown})`
-        : `the drive stopped (${err.message}) after loan ${LOAN_ID} moved (block ${now.block}): ${now.why}`;
+        : `the drive stopped (${err.message}), and by block ${now.block} loan ${LOAN_ID} had moved (${now.why}); which came first is unknown`;
     }
   } else {
     stopped = err.message;
