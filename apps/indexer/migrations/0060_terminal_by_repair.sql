@@ -26,22 +26,19 @@ ALTER TABLE loans ADD COLUMN terminal_by_repair INTEGER NOT NULL DEFAULT 0;
 -- Set to 1 only by `settleLoanRow` when it writes a time read from the chain
 -- for a confirmed block; DEFAULT 0, so every existing settled row — legacy
 -- scan times included — and every row an older Worker writes later starts
--- unverified. The ledger heal revisits settled rows whose time is unverified
--- and dates them from the chain; the loan routes serve an unverified
--- settlement time as unknown. Nothing is destroyed: the old value stays in
+-- unverified. The loan routes serve an unverified settlement time as
+-- unknown; a replayed LoanSettled for a confirmed block can still verify it.
+-- (Nothing revisits settled rows to re-date them — #2476 r18.) Nothing is destroyed: the old value stays in
 -- the row until a verified one replaces it.
 --
 -- Additive: DEFAULT 0, and the deployed code neither reads nor writes it.
 ALTER TABLE loans ADD COLUMN terminal_at_verified INTEGER NOT NULL DEFAULT 0;
 
--- The heal's two candidate sets, each seekable by the rotation pointer
--- (#2476 r13, r15): terminal rows by (status, loan_id), and settled rows
--- whose time is unverified by a partial index on exactly that predicate.
+-- The heal's candidate set, seekable by the rotation pointer (#2476 r13):
+-- terminal rows by (status, loan_id). Settled rows are never revisited
+-- (#2476 r18), so they need no index of their own.
 CREATE INDEX IF NOT EXISTS idx_loans_chain_status_loan
   ON loans(chain_id, status, loan_id);
-CREATE INDEX IF NOT EXISTS idx_loans_settled_unverified
-  ON loans(chain_id, loan_id)
-  WHERE status = 'settled' AND terminal_at_verified = 0;
 
 -- #2476 r16/r17 — a settlement closed by a prepay collateral sale emits no
 -- LoanSettled, so the ledger heal can never date it; its handler now stamps

@@ -418,6 +418,15 @@ describe('processLoanLogs — LoanSettled is authoritative (#2464)', () => {
     await run(h, [statusChangedLog(45, 5, 3, 100, 0), settledLog(45, 100, 1)]);
     expect(statusOf(h, 45)).toBe('settled');
   });
+
+  it('an ACTIVE row whose Settled edge and LoanSettled share a scan stays for the repair — the safety net does not promote it (#2476 r18)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 46);
+    // The row missed its whole terminal: the settlement handler leaves it to
+    // the reconciliation repair, and the deferred edge must not settle it.
+    await run(h, [statusChangedLog(46, 0, 3, 100, 0), settledLog(46, 100, 1)]);
+    expect(statusOf(h, 46)).toBe('active');
+  });
 });
 
 describe('settleFromLedger — the terminal→Settled edge the ledger and the chain both show (#2464, #2476 r6)', () => {
@@ -578,72 +587,35 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(row(h, 77).status).toBe('internal_matched');
   });
 
-  it('revisits an undated settlement and fills it once a receipt can be read (#2476 r13)', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    seedLoan(h, 79, 'internal_matched');
-    ledger(h, 79, 'LoanSettled', 2100, 1);
-    await heal(h, chain({ 2100: 9 }, () => 3, undefined, new Set([2100]))); // receipt unavailable
-    expect(row(h, 79)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
-    // A later lap, the receipt is readable: the same lane fills the provenance.
-    expect(await heal(h, chain({ 2100: 9 }))).toEqual([79]);
-    expect(row(h, 79)).toEqual({ status: 'settled', terminal_block: 2100, terminal_at: 9 });
-    // A fully dated settlement is not selected again.
-    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
-    await heal(h, chain({ 2100: 9 }, () => 3, seen));
-    expect(seen.reads.map((r) => r.id)).not.toContain(79);
-  });
-
   it('selects candidates through their indexes, never a walk over every loan (#2476 r13)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     const seen: string[] = [];
     const d1 = h.d1 as { prepare(sql: string): unknown };
     const spy = { DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)) } } as unknown as Env;
     await settleFromLedger(chain({}) as never, DIAMOND, spy, CHAIN, budget(), 777n);
-    const select = seen.find((q) => q.includes('UNION'));
+    const select = seen.find((q) => q.includes('idx_loans_chain_status_loan'));
     expect(select).toBeDefined();
     const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20) as { detail: string }[])
       .map((r) => r.detail)
       .join('\n');
-    // Both branches SEEK on the rotation bound, not just on the chain.
+    // It SEEKS on the rotation bound, not just on the chain.
     expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?\)/);
-    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_settled_unverified \(chain_id=\? AND loan_id>\?\)/);
     expect(plan).toMatch(/USING (COVERING )?INDEX idx_activity_chain_loan/);
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
-  it('a previous Worker’s scan-time settlement — even one written after 0060 — is re-dated from the chain (#2476 r15)', async () => {
+  it('never revisits an ALREADY-settled row, whatever its provenance (#2476 r18, root fix)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
-    // What the old handler writes, before OR after the migration: the right
-    // block, the scan's clock, and (being old code) no verification marker.
+    // Settled with an unverified time (a previous Worker's scan clock) and an
+    // unverified block: the routes serve the time as unknown, and this lane
+    // leaves the row alone rather than re-dating it.
     seedLoan(h, 81, 'settled');
     h.db.prepare('UPDATE loans SET terminal_block = 2200, terminal_at = 1_999_999_999 WHERE chain_id = ? AND loan_id = 81').run(CHAIN);
     ledger(h, 81, 'LoanSettled', 2200, 1_999_999_999);
-    expect(await heal(h, chain({ 2200: 1_234 }))).toEqual([81]);
-    expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: 1_234 });
-    const v = h.db.prepare('SELECT terminal_at_verified AS v FROM loans WHERE chain_id = ? AND loan_id = 81').get(CHAIN) as { v: number };
-    expect(v.v).toBe(1);
-    // Verified now: not selected again.
     const seen = { reads: [] as Array<{ id: number; block: bigint }> };
-    await heal(h, chain({ 2200: 1_234 }, () => 3, seen));
+    expect(await heal(h, chain({ 2200: 1_234 }, () => 3, seen))).toEqual([]);
     expect(seen.reads.map((r) => r.id)).not.toContain(81);
-  });
-
-  it('works at most a few already-settled rows per tick, so a wrong status keeps priority (#2476 r16)', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    // Eight settled rows whose provenance cannot be confirmed (receipts gone)…
-    for (let id = 300; id < 308; id++) {
-      seedLoan(h, id, 'settled');
-      ledger(h, id, 'LoanSettled', id, 1);
-    }
-    // …and one terminal row whose STATUS is wrong, later in the same page.
-    seedLoan(h, 310, 'internal_matched');
-    ledger(h, 310, 'LoanSettled', 310, 1);
-    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
-    const discarded = new Set([300, 301, 302, 303, 304, 305, 306, 307]);
-    expect(await heal(h, chain({ 310: 9 }, () => 3, seen, discarded))).toEqual([310]);
-    // Only three settled rows were worked; the terminal row still was.
-    expect(seen.reads.filter((r) => r.id < 310)).toHaveLength(3);
-    expect(row(h, 310).status).toBe('settled');
+    expect(row(h, 81)).toEqual({ status: 'settled', terminal_block: 2200, terminal_at: 1_999_999_999 });
   });
 
   it('a later confirmed LoanSettled dates a settlement the heal recorded undated', async () => {
