@@ -33,7 +33,11 @@
  *     Each fact is compared with the same fact read at startup, where the
  *     simulation must have given the answer the drive needs (a refusal there
  *     is BLOCKED before the browser starts), so "changed" is always a
- *     comparison the drive made, never a refusal it cannot date.
+ *     comparison the drive made, never a refusal it cannot date. Two
+ *     endpoints cannot see a change that came and went, so the chain's own
+ *     events over the drive's window are read too ({@link loanActivity}).
+ *     Where the page withheld a write, the drive also keeps what the page
+ *     itself was told (its sanctions read, its simulation of the call).
  *  5. READ THE NONCE, LAST. Nothing was pending at startup (the baseline
  *     refuses a wallet with a pending transaction), so an unchanged count
  *     proves no transaction from this wallet is pending or mined since.
@@ -43,6 +47,8 @@
  * {@link Held} (a precondition) or a {@link Suspect} (an observation that is
  * a FAIL only if nothing moved), and the rule decides at the end.
  */
+
+import { decodeEventLog } from 'viem';
 
 /**
  * A precondition that stopped the drive without a finding. It becomes
@@ -125,6 +131,97 @@ export async function reconcileNonce(pub, wallet, baseline) {
  */
 export const LOAN_BOOKKEEPING_FIELDS = Object.freeze(['lenderNotifBilled', 'borrowerNotifBilled']);
 
+/** Events the bookkeeping fields above are written with: activity, but not
+ *  the loan moving. */
+export const LOAN_BOOKKEEPING_EVENTS = Object.freeze(['NotificationFeeBilled']);
+
+/**
+ * Diamond events that change a gate either surface sits behind, whatever
+ * loan they concern: the protocol and asset pauses, the swap-adapter roster,
+ * the KYC tiers and enforcement, the sanctions oracle, the grace schedule. A
+ * pair of them (paused, then unpaused) leaves both endpoint reads identical,
+ * so only the window sees it (#2505 r42). The list is explicit, and what it
+ * does not reach is stated: a gate kept on another contract (the sanctions
+ * list itself, a price feed, the sequencer feed) is seen only at the two
+ * endpoints and in what the page was told.
+ */
+export const GATE_EVENTS = Object.freeze([
+  'Paused',
+  'Unpaused',
+  'AutoPaused',
+  'AssetPauseEnabled',
+  'AssetPauseDisabled',
+  'AggregatorAdaptersPausedSet',
+  'SwapAdapterAdded',
+  'SwapAdapterRemoved',
+  'SwapAdapterDisabledSet',
+  'SwapAdaptersReordered',
+  'KYCTierUpdated',
+  'KYCStatusUpdated',
+  'KYCEnforcementSet',
+  'SanctionsOracleSet',
+  'SanctionsFlagRefreshed',
+  'GraceBucketsUpdated',
+]);
+
+/**
+ * Every transaction that touched what the drive rests on, in the window from
+ * `fromBlock` (read at startup, before the browser) to now (#2505 r42).
+ * Endpoint comparison cannot see a change that came and went (a position
+ * transferred away and back, a pause lifted again); the chain's own logs
+ * can. Counted, from the Diamond: any event with an argument it names a
+ * loan id equal to this loan's, a Transfer of one of `tokenIds` (the
+ * position NFTs live on the Diamond), and any {@link GATE_EVENTS} event;
+ * less {@link LOAN_BOOKKEEPING_EVENTS}.
+ *
+ * Returns `{ moved }`, `{ unknown }` or `{}`, never throws.
+ */
+export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, tokenIds = [] }) {
+  const ids = new Set(tokenIds.filter((t) => t !== undefined && t !== null).map((t) => BigInt(t)));
+  const want = BigInt(loanId);
+  // Decoded against the Diamond's own ABI, so only an argument the contract
+  // NAMES a loan id counts (`loanId`, `loanIdA`…`loanIdC`, `oldLoanId`, `newLoanId`, …), never an
+  // offer or a request that happens to share the number.
+  const scopedTo = (ev) => {
+    if (ev.eventName === 'Transfer') return ids.has(BigInt(ev.args?.tokenId ?? -1n));
+    return Object.entries(ev.args ?? {}).some(([k, v]) => /^(loanId[A-Z]?|\w+LoanId)$/.test(k) && typeof v === 'bigint' && v === want);
+  };
+  try {
+    const toBlock = await pub.getBlockNumber();
+    const logs = [];
+    for (let from = fromBlock; from <= toBlock; from += 2000n) {
+      const to = from + 1999n < toBlock ? from + 1999n : toBlock;
+      logs.push(...(await pub.getLogs({ address: diamond, fromBlock: from, toBlock: to })));
+    }
+    const hits = [];
+    for (const log of logs) {
+      let ev;
+      try {
+        ev = decodeEventLog({ abi, data: log.data, topics: log.topics });
+      } catch {
+        // Not an event the Diamond declares: it cannot be named, so it is
+        // not counted (the union ABI carries every facet's events, #2394).
+        continue;
+      }
+      if (LOAN_BOOKKEEPING_EVENTS.includes(ev.eventName)) continue;
+      if (!(GATE_EVENTS.includes(ev.eventName) || scopedTo(ev))) continue;
+      hits.push(`${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`);
+    }
+    if (hits.length === 0) return {};
+    return { moved: `${hits.length} event(s) since startup block ${fromBlock} touched it: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', …' : ''}` };
+  } catch (err) {
+    return { unknown: `the direct RPC could not read the Diamond's events since startup block ${fromBlock} (${describe(err)})` };
+  }
+}
+
+/** Two fact readings as one: a move either shows wins, then an unknown. */
+export function mergeFacts(...readings) {
+  const moved = readings.map((r) => r?.moved).filter(Boolean);
+  if (moved.length) return { moved: moved.join('; ') };
+  const unknown = readings.map((r) => r?.unknown).filter(Boolean);
+  return unknown.length ? { unknown: unknown.join('; ') } : {};
+}
+
 /** Fields of two decoded records that differ, by name (positional arrays by
  *  index), less any in `ignore`. Every other field counts: a record changes
  *  only by a transaction, so any change is the loan moving, whichever field
@@ -141,7 +238,7 @@ export function changedFields(before, after, ignore = []) {
  * checks. Returns `{ plan: true }` when the plan sent, else the facts and
  * the nonce.
  */
-export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNow, pub, wallet, baseline }) {
+export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNow, activity, pub, wallet, baseline }) {
   let closeFailed = null;
   try {
     await closeBrowser();
@@ -153,7 +250,9 @@ export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNo
   // After a send, a browser that did not close may have recorded more after
   // the ledgers were judged, so the run cannot PASS on them (#2505 r35).
   if (wrotePlan()) return { plan: true, closeFailed };
-  const facts = await factsNow();
+  // The endpoint comparison and the window's transactions, one reading: a
+  // change either shows counts (#2505 r42).
+  const facts = mergeFacts(await factsNow(), activity ? await activity() : {});
   // A browser that did not close may still be running, and could send after
   // the nonce read below, so no read here can rule a send out (#2505 r34).
   const nonce = closeFailed

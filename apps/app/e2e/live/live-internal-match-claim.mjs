@@ -79,7 +79,7 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -467,10 +467,14 @@ const claimHash = () => claimStep()?.record?.hash ?? null;
 // This wallet's nonce BEFORE any browser activity (#2505 r25): every run the
 // plan did not let write is settled against it (`noWriteSettlement.mjs`).
 let nonceAtStart;
+let windowStart;
 try {
   const base = await nonceBaseline(pub, WALLET);
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceAtStart = base.nonce;
+  // The first block of the window the settlement reads the chain's own
+  // events over (#2505 r42).
+  windowStart = await pub.getBlockNumber();
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -1078,6 +1082,9 @@ const settled = await settleRun({
   pub,
   wallet: WALLET,
   baseline: nonceAtStart,
+  // A change that came and went between the endpoint reads (a transfer away
+  // and back, a pause lifted again) shows only here (#2505 r42).
+  activity: () => loanActivity({ pub, diamond: DIAMOND, abi: DIAMOND_ABI, fromBlock: windowStart, loanId: LOAN_ID, tokenIds: [loan.lenderTokenId, loan.borrowerTokenId] }),
 });
 const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}'s claim` });
 if (resolved.blocked) await blocked(resolved.blocked);

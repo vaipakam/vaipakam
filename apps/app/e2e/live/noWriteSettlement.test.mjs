@@ -5,7 +5,8 @@
  * one rule that turns a settled run into a verdict input.
  */
 import { describe, expect, it } from 'vitest';
-import { LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { encodeAbiParameters, encodeEventTopics, parseAbi } from 'viem';
+import { LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, mergeFacts, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 
 const W = '0x00000000000000000000000000000000000000aa';
 const pubWith = (pending, latest = pending) => ({
@@ -169,5 +170,46 @@ describe('resolveSettlement', () => {
 
   it('continues a clean, unmoved run to the normal verdict', () => {
     expect(resolveSettlement({ ...base, settled: unchanged() })).toEqual({ wrote: false, gateEscape: false, stopped: null, recordSuspect: false });
+  });
+});
+
+describe('loanActivity', () => {
+  const abi = parseAbi([
+    'event LoanRepaid(uint256 indexed loanId, uint256 amount)',
+    'event OfferCreated(uint256 indexed offerId)',
+    'event InternalMatchExecuted(uint256 indexed loanIdA, uint256 indexed loanIdB)',
+    'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+    'event Paused(address account)',
+    'event NotificationFeeBilled(uint256 indexed loanId, bool lenderSide)',
+  ]);
+  const D = '0x00000000000000000000000000000000000000d1';
+  const log = (eventName, args, data = '0x', block = 10n) => ({
+    topics: encodeEventTopics({ abi, eventName, args }),
+    data,
+    transactionHash: `0x${'ab'.repeat(32)}`,
+    blockNumber: block,
+  });
+  const pubOf = (logs) => ({ getBlockNumber: async () => 12n, getLogs: async () => logs });
+  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, tokenIds: [41n, 42n] });
+
+  it('counts what touched this loan, its positions or a gate, and nothing else', async () => {
+    expect(await run([log('OfferCreated', { offerId: 21n }), log('Transfer', { from: D, to: D, tokenId: 7n })])).toEqual({});
+    expect(await run([log('NotificationFeeBilled', { loanId: 21n }, encodeAbiParameters([{ type: 'bool' }], [true]))])).toEqual({});
+    expect((await run([log('Transfer', { from: D, to: D, tokenId: 41n }), log('Transfer', { from: D, to: D, tokenId: 41n })])).moved).toMatch(/^2 event\(s\) since startup block 5/);
+    expect((await run([log('InternalMatchExecuted', { loanIdA: 9n, loanIdB: 21n })])).moved).toMatch(/InternalMatchExecuted/);
+    expect((await run([log('Paused', {}, encodeAbiParameters([{ type: 'address' }], [D]))])).moved).toMatch(/Paused/);
+    expect((await run([log('LoanRepaid', { loanId: 21n }, encodeAbiParameters([{ type: 'uint256' }], [1n]))])).moved).toMatch(/LoanRepaid/);
+  });
+
+  it('is unknown, never clean, when the events cannot be read', async () => {
+    const pub = { getBlockNumber: async () => 12n, getLogs: async () => { throw new Error('range too large'); } };
+    expect((await loanActivity({ pub, diamond: D, abi, fromBlock: 5n, loanId: 21n })).unknown).toMatch(/could not read the Diamond's events/);
+  });
+
+  it('merges with the endpoint reading: a move either shows wins', () => {
+    expect(mergeFacts({}, { moved: 'a' })).toEqual({ moved: 'a' });
+    expect(mergeFacts({ unknown: 'u' }, { moved: 'a' })).toEqual({ moved: 'a' });
+    expect(mergeFacts({ unknown: 'u' }, {})).toEqual({ unknown: 'u' });
+    expect(mergeFacts({}, {})).toEqual({});
   });
 });

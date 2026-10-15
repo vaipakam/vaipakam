@@ -66,7 +66,7 @@ import {
 } from './driver.mjs';
 import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createCallLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -368,10 +368,14 @@ if (startupHold !== null) await blocked(`loan ${LOAN_ID}: ${startupHold}, so the
 // baseline every no-write run is settled against is taken here
 // (`noWriteSettlement.mjs`).
 let nonceBefore;
+let windowStart;
 try {
   const base = await nonceBaseline(pub, WALLET);
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceBefore = base.nonce;
+  // The first block of the window the settlement reads the chain's own
+  // events over (#2505 r42).
+  windowStart = await pub.getBlockNumber();
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -1192,6 +1196,9 @@ const settled = await settleRun({
   pub,
   wallet: WALLET,
   baseline: nonceBefore,
+  // A change that came and went between the endpoint reads (a transfer away
+  // and back, a pause lifted again) shows only here (#2505 r42).
+  activity: () => loanActivity({ pub, diamond: DIAMOND, abi: DIAMOND_ABI, fromBlock: windowStart, loanId: LOAN_ID, tokenIds: [loan.lenderTokenId, loan.borrowerTokenId] }),
 });
 // The gate's own hold, when it withheld the planned request: the stop that
 // followed it (a UI wait that ran out) is explained by it (#2505 r32), so it
