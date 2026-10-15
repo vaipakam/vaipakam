@@ -436,6 +436,9 @@ const PLAN = SUBMIT
     ])
   : null;
 let gasFloor = 0n;
+/** Whether THIS judgement's fresh estimate succeeded: only then is a held
+ *  request's gas bound judged (#2505 r16). */
+let estimated = false;
 /** The gate's own preview of the request it was asked to sign. */
 let previewVerdict = null;
 /** Set when the gate found the close-out's eligibility moved since startup,
@@ -551,13 +554,16 @@ async function gate(method, params) {
     const heldBefore = await holdIfIneligible(params);
     if (heldBefore) return heldBefore;
     try {
+      estimated = false;
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
       console.log(`GATE  fresh estimate for the requested call: ${gasFloor} gas`);
+      estimated = true;
     } catch (err) {
       // The plan then refuses any request carrying a gas limit, and one with
       // none is signed with the wallet's own estimate — which would fail the
       // same way, before anything is broadcast.
       gasFloor = 0n;
+      estimated = false;
       console.log(`GATE  could not estimate the requested call: ${err.shortMessage ?? err.message}`);
     }
   }
@@ -574,14 +580,14 @@ async function gate(method, params) {
     // An unrunnable preview is a held precondition; any other non-sale is
     // the app's route, judged at confirm.
     if (previewVerdict === 'unknown') {
-      const heldRefusal = holdSend(params, null, { gasChecked: true });
+      const heldRefusal = holdSend(params, null, { gasChecked: estimated });
       if (heldRefusal) return heldRefusal;
     }
     if (previewVerdict !== 'sale') PLAN.close();
   }
   // The eligibility once more, AFTER the awaited simulations (#2505 r14).
   if (judging) {
-    const heldAfter = await holdIfIneligible(params, true);
+    const heldAfter = await holdIfIneligible(params, estimated);
     if (heldAfter) return heldAfter;
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
