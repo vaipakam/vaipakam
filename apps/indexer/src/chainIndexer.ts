@@ -103,6 +103,8 @@ import {
 } from './marketSummary';
 import {
   materializeNotifications,
+  notifiedFloor,
+  type NotifiedPlan,
   notificationInsertStatement,
   planNotifiedWatermark,
   planReconciledNotifications,
@@ -230,9 +232,15 @@ async function stampNotifiedWatermark(
   scanFrom: bigint | null,
   wroteOk: boolean,
 ): Promise<void> {
+  let plan: NotifiedPlan;
+  try {
+    plan = planNotifiedWatermark(await readNotifiedWatermark(env, chainId), through, scanFrom, wroteOk);
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark read failed — the watermark holds', err);
+    return;
+  }
   let stampTo: bigint;
   try {
-    const plan = planNotifiedWatermark(await readNotifiedWatermark(env, chainId), through, scanFrom, wroteOk);
     if (plan.replayAfter !== undefined && plan.replayThrough !== undefined) {
       const n = await replayNotificationsFromArchive(
         env.DB,
@@ -248,10 +256,31 @@ async function stampNotifiedWatermark(
     }
     stampTo = plan.stampTo;
   } catch (err) {
+    // The watermark holds — and when this tick's own insert failed above a
+    // stored stamp (or no stamp), "holds" means LOWERED to just below the
+    // failed scan, or the failure leaves no record (Codex #2489 r6).
     console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', err);
+    if (plan.holdAt !== undefined) await _writeNotifiedWatermark(env, chainId, plan.holdAt);
     return;
   }
   await _writeNotifiedWatermark(env, chainId, stampTo);
+}
+
+/**
+ * A catch-up pass short of the head stamps nothing forward (the stamp means
+ * "current through the head" to its readers), but a FAILED insert on such a
+ * pass must still be remembered (Codex #2489 r6): the same floor rule as the
+ * head pass pins the watermark just below the failed scan, initializing it on
+ * a never-stamped chain, so the pass that reaches the head replays from there
+ * instead of stamping straight through a multi-tick catch-up's lost rows.
+ */
+async function holdNotifiedWatermark(env: Env, chainId: number, scanFrom: bigint): Promise<void> {
+  try {
+    const hold = notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false);
+    if (hold !== null) await _writeNotifiedWatermark(env, chainId, hold);
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark hold failed', err);
+  }
 }
 
 /** The raw upsert behind {@link stampNotifiedWatermark}. */
@@ -2501,9 +2530,13 @@ async function runChainPass(
   // them unread. This kind advances only at the scan tail, after the
   // event materializer AND the calendar sweep, and only when the scan
   // reached the safe head — so `updated_at` fresh ⇒ D1's notification
-  // and ownership rows are current through `last_block`.
+  // and ownership rows are current through `last_block`. A pass short of
+  // the head whose insert FAILED still pins the watermark below the scan
+  // (Codex #2489 r6) — the head pass replays from there.
   if (scanTo === head) {
     await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);
+  } else if (!notifiedOk) {
+    await holdNotifiedWatermark(env, chainId, scanFrom);
   }
 
   // #1245 measurement rail — one structured line per scan that touched

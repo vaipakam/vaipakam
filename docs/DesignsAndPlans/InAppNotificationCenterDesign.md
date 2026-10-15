@@ -86,7 +86,11 @@ Claim Center and re-verify there (indexed-hints-only discipline).
 > client's read cursor; since #2489 r3 the stamp is also a PROMISE: a
 > failed notification insert holds the watermark, and the next tick
 > re-derives the missing rows from `activity_events` before it moves,
-> so "complete through `last_block`" is true rather than asserted) + the cron log-index sentinel, so the
+> so "complete through `last_block`" is true rather than asserted; and a
+> failed insert on a catch-up pass SHORT of the head pins the watermark
+> just below that scan — initializing it on a never-stamped chain — so the
+> pass that reaches the head replays from there instead of stamping
+> straight through a multi-tick catch-up's lost rows, #2489 r6) + the cron log-index sentinel, so the
 > chain-ordered feed sorts them as current; the pass DEFERS whenever
 > that watermark is stale (indexer behind → D1 ownership could lag the
 > live HF reads), whenever the `diamond` cursor is AHEAD of it (a scan

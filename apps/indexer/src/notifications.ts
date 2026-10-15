@@ -525,13 +525,37 @@ export const NOTIFIED_REPLAY_MAX_BLOCKS = 20_000n;
  *  stamp. A never-stamped chain replays no HISTORY (on a restored
  *  environment the archive is whole and the inbox is deliberately empty, and
  *  replaying would re-mint every old row), but it does not get to skip its
- *  own failure either (Codex #2489 r4): a first scan whose insert failed
- *  stamps `scanFrom - 1`, so the next tick replays exactly that scan. */
+ *  own failure either (Codex #2489 r4, r6): a failed insert HOLDS the
+ *  watermark below the scan ({@link notifiedFloor}) — the replay starts
+ *  there, and when the replay fails too, `holdAt` is what the caller writes
+ *  instead, so the failure is on record whether or not a stamp existed. */
 export interface NotifiedPlan {
   replayAfter?: bigint;
   replayThrough?: bigint;
   stampTo: bigint;
+  /** Write THIS if the replay fails: the stored watermark (or none) sits above
+   *  a scan whose rows failed, and must be lowered to just below it. */
+  holdAt?: bigint;
 }
+
+/**
+ * Where a FAILED insert pins the watermark: just below the scan, because
+ * nothing from `scanFrom` on is proven — whatever the stored watermark says
+ * (a re-scan below it included) and whether or not one exists. Null when the
+ * tick proves nothing about the floor (insert ok, or a quiet tick) or the
+ * stored watermark already sits at or below it. ONE rule for the head pass
+ * ({@link planNotifiedWatermark}) and for a catch-up pass short of the head,
+ * which stamps nothing forward but must still remember its failure
+ * (Codex #2489 r6): a never-stamped chain's multi-tick catch-up used to lose
+ * a mid-way failure entirely, and the head pass then stamped straight
+ * through it.
+ */
+export function notifiedFloor(prev: bigint | null, scanFrom: bigint | null, wroteOk: boolean): bigint | null {
+  if (wroteOk || scanFrom === null) return null;
+  const floor = scanFrom - 1n;
+  return prev === null || floor < prev ? floor : null;
+}
+
 export function planNotifiedWatermark(
   prev: bigint | null,
   through: bigint,
@@ -539,14 +563,15 @@ export function planNotifiedWatermark(
   wroteOk: boolean,
   maxBlocks: bigint = NOTIFIED_REPLAY_MAX_BLOCKS,
 ): NotifiedPlan {
-  if (prev === null) {
-    // First stamp: never history; and never past a scan whose rows failed.
-    return { stampTo: scanFrom !== null && !wroteOk ? scanFrom - 1n : through };
-  }
+  const hold = notifiedFloor(prev, scanFrom, wroteOk);
+  const base = hold ?? prev;
+  // Never stamped and nothing failed: no history.
+  if (base === null) return { stampTo: through };
+  const tail = hold === null ? {} : { holdAt: hold };
   const gapEnd = wroteOk && scanFrom !== null ? scanFrom - 1n : through;
-  if (prev >= gapEnd) return { stampTo: through };
-  const replayThrough = prev + maxBlocks < gapEnd ? prev + maxBlocks : gapEnd;
-  return { replayAfter: prev, replayThrough, stampTo: replayThrough === gapEnd ? through : replayThrough };
+  if (base >= gapEnd) return { stampTo: through, ...tail };
+  const replayThrough = base + maxBlocks < gapEnd ? base + maxBlocks : gapEnd;
+  return { replayAfter: base, replayThrough, stampTo: replayThrough === gapEnd ? through : replayThrough, ...tail };
 }
 
 /** The kinds the planners act on — the only archive rows a replay re-plans. */

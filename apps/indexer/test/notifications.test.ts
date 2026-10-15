@@ -15,7 +15,7 @@ import {
   type NotifSourceLog,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
-import { planNotifiedWatermark, replayNotificationsFromArchive, reviveArchiveArgs } from '../src/notifications';
+import { notifiedFloor, planNotifiedWatermark, replayNotificationsFromArchive, reviveArchiveArgs } from '../src/notifications';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -558,18 +558,72 @@ describe('replayNotificationsFromArchive — the rows re-derived from activity_e
   });
 });
 
+describe('notifiedFloor — where a failed insert pins the watermark (one rule for head and catch-up passes)', () => {
+  it('a failed insert pins a never-stamped chain just below its scan; a stamped one only when the scan is below the stamp', () => {
+    expect(notifiedFloor(null, 400n, false)).toBe(399n);
+    expect(notifiedFloor(1000n, 900n, false), 're-scan below the watermark').toBe(899n);
+    expect(notifiedFloor(300n, 400n, false), 'the watermark already sits below the scan').toBeNull();
+    expect(notifiedFloor(399n, 400n, false), 'exactly at the floor: nothing to write').toBeNull();
+  });
+  it('proves nothing on a successful or quiet tick', () => {
+    expect(notifiedFloor(null, 400n, true)).toBeNull();
+    expect(notifiedFloor(null, null, false)).toBeNull();
+    expect(notifiedFloor(1000n, 900n, true)).toBeNull();
+  });
+});
+
+describe('the scan tail remembers a failed insert on a catch-up pass short of the head (Codex #2489 r6)', () => {
+  // Source-shape pin, as the healer tests pin their order: there is no tick
+  // harness, and this wiring is exactly what the finding showed missing.
+  const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+  it('stamps at the head, and otherwise holds the watermark below a failed scan', () => {
+    const gate = src.indexOf('if (scanTo === head) {\n    await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);');
+    expect(gate).toBeGreaterThan(-1);
+    const tail = src.slice(gate, gate + 400);
+    expect(tail).toContain('} else if (!notifiedOk) {\n    await holdNotifiedWatermark(env, chainId, scanFrom);');
+  });
+  it('the hold and the head stamp share one floor rule, and a failed replay writes the hold', () => {
+    const hold = src.slice(src.indexOf('async function holdNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function holdNotifiedWatermark(')));
+    expect(hold).toContain('notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false)');
+    const stamp = src.slice(src.indexOf('async function stampNotifiedWatermark('), src.indexOf('async function holdNotifiedWatermark('));
+    expect(stamp).toContain('if (plan.holdAt !== undefined) await _writeNotifiedWatermark(env, chainId, plan.holdAt);');
+  });
+});
+
 describe('planNotifiedWatermark — what one tick replays and where it stamps (straddles)', () => {
   it('a never-stamped chain stamps without replaying history — unless its OWN first scan failed (Codex #2489 r4)', () => {
     expect(planNotifiedWatermark(null, 500n, 400n, true)).toEqual({ stampTo: 500n });
     expect(planNotifiedWatermark(null, 500n, null, false), 'quiet tick, nothing to write').toEqual({ stampTo: 500n });
-    // The first scan's insert failed: the stamp sits just below the scan, so
-    // the next tick replays exactly it — nothing older, nothing skipped.
-    expect(planNotifiedWatermark(null, 500n, 400n, false)).toEqual({ stampTo: 399n });
+    // The first scan's insert failed: the watermark is held just below the
+    // scan and the scan is replayed from the archive from there; if that
+    // replay fails too, `holdAt` is written — so the next tick replays
+    // exactly the failed scan, nothing older, nothing skipped (r6: the
+    // previous shape stamped 399 and deferred; a lost hold left no record).
+    expect(planNotifiedWatermark(null, 500n, 400n, false)).toEqual({
+      replayAfter: 399n,
+      replayThrough: 500n,
+      stampTo: 500n,
+      holdAt: 399n,
+    });
     expect(planNotifiedWatermark(399n, 600n, 501n, true), 'the next tick replays the failed scan').toEqual({
       replayAfter: 399n,
       replayThrough: 500n,
       stampTo: 600n,
     });
+  });
+
+  it('a failed re-scan BELOW the stored watermark lowers it to the scan (Codex #2489 r6)', () => {
+    // Mutation: replay from the stored watermark → blocks 900..1000 of the
+    // failed scan are never replayed, and the stamp certifies them.
+    expect(planNotifiedWatermark(1000n, 1100n, 900n, false)).toEqual({
+      replayAfter: 899n,
+      replayThrough: 1100n,
+      stampTo: 1100n,
+      holdAt: 899n,
+    });
+    // A failed scan above the watermark holds nothing extra: the gap replay
+    // already starts below it.
+    expect(planNotifiedWatermark(399n, 500n, 400n, false)).toEqual({ replayAfter: 399n, replayThrough: 500n, stampTo: 500n });
   });
 
   it('a healthy scanning tick (the watermark meets the fresh rows) stamps, no replay', () => {
