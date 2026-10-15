@@ -7361,12 +7361,21 @@ on the live era alone.
 >   launch is clamped to begin at day 0. The predicate prices against
 >   `RewardEntry.user`, so a loan-close REPOINT to the position's holder
 >   would re-price every earned day against the holder; when either wallet
->   carries sanctions history the entry is kept with its earner instead
->   (`repointKeepsEarner`, announced; Codex #2489 r13) — a per-day earner
+>   carries sanctions history the entry is never re-priced against the
+>   holder (Codex #2489 r13/r15): at loan close it is kept whole with its
+>   earner (`repointKeepsEarner`, announced); at a consolidation of an OPEN
+>   entry (`LibConsolidation`, an active loan) it is SPLIT at today
+>   (`_splitAtTransfer`: the earner's `[start, today+1)` closes as a
+>   claimable entry — the `transferLenderEntry` shrink minus its forfeit —
+>   and a fresh `[today+1, end)` entry opens for the holder with the loan
+>   pointer on it; the per-day series is unchanged). A per-day earner
 >   history was tried and withdrawn: it put bytes into the pricing loop every
->   staging host inlines, and `RewardStagingFacet` has 207 B of room. The
->   repoint itself now runs on `InteractionRewardsFacet` behind a self-call
->   (RiskFacet inlines `closeLoan` and sits at the limit). The legacy slice's window share
+>   staging host inlines, and `RewardStagingFacet` has 207 B of room. Both
+>   repoints run on `InteractionRewardsFacet` behind self-calls
+>   (`reanchorRewardEntriesInternal` from `closeLoan`,
+>   `repointRewardEntryInternal` from the consolidation): `closeLoan` is
+>   inlined into every loan-closing facet and the consolidation into eleven,
+>   several at the limit. The legacy slice's window share
 >   (`legacyWindowShareFull`) reads the same sorted array the same way
 >   (#2489 r7): it binary-searches the first window that reaches the slice
 >   and stops at the first that starts past it, then the live chain's own

@@ -387,4 +387,15 @@ contract InteractionRewardsFacet is
         if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
         LibInteractionRewards.reanchorEntriesForClose(loanId);
     }
+
+    /// @notice Codex #2489 r15 — the host of the CONSOLIDATION repoint
+    ///         ({LibInteractionRewards.repointRewardEntry}: an open entry under
+    ///         the earner rule is SPLIT at today), reached from
+    ///         `LibConsolidation` through a Diamond self-call so the split body
+    ///         is inlined once here and not into the eleven facets that inline
+    ///         the consolidation. Diamond-internal only; no reentrancy guard.
+    function repointRewardEntryInternal(uint256 loanId, address newUser, bool isLenderSide) external {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        LibInteractionRewards.repointRewardEntry(loanId, newUser, isLenderSide);
+    }
 }

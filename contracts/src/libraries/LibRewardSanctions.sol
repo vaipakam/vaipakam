@@ -262,14 +262,22 @@ library LibRewardSanctions {
         internal
         returns (bool)
     {
-        // Evidence or a recorded window ({hasSanctionsHistory}), or the committed
-        // marker — anything the day rule or the claim gate could read.
-        if (
-            !hasSanctionsHistory(s, earner) && !s.sanctionsConfirmedFlagged[earner]
-                && !hasSanctionsHistory(s, holder) && !s.sanctionsConfirmedFlagged[holder]
-        ) return false;
+        if (!repointNeedsEarnerRule(s, earner, holder)) return false;
         emit RewardEntryRepointRefused(id, earner, holder);
         return true;
+    }
+
+    /// @notice Whether a repoint between `earner` and `holder` falls under the
+    ///         earner rule: either carries evidence or a recorded window
+    ///         ({hasSanctionsHistory}) or the committed marker — anything the day
+    ///         rule or the claim gate could read.
+    function repointNeedsEarnerRule(LibVaipakam.Storage storage s, address earner, address holder)
+        internal
+        view
+        returns (bool)
+    {
+        return hasSanctionsHistory(s, earner) || s.sanctionsConfirmedFlagged[earner]
+            || hasSanctionsHistory(s, holder) || s.sanctionsConfirmedFlagged[holder];
     }
 
     /// @notice {dayForfeited}'s window lookup — run on its host only. The

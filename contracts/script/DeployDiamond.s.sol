@@ -2476,7 +2476,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170: the ShareOfPool day walk inlines ~5.8 KB
         // and this facet had 481 B of headroom).
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         s[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2489,6 +2489,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = InteractionRewardsFacet.terminalRewardClose.selector;
         s[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         s[8] = InteractionRewardsFacet.reanchorRewardEntriesInternal.selector; // #2489 r13: closeLoan's re-anchor host (self-call)
+        s[9] = InteractionRewardsFacet.repointRewardEntryInternal.selector; // #2489 r15: the consolidation repoint host (self-call)
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off

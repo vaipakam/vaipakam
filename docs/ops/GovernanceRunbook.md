@@ -1835,10 +1835,11 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RewardHorizonSweepFacet` and `RewardCustodyFacet` (the set-apart / release
   seams, the observation and day-forfeit hosts, and the legacy-slice settle whose
   entry changed shape), plus `InteractionRewardsFacet` (every loan close
-  self-calls its `repointRewardEntryInternal`, which keeps an entry with its
-  earner when sanctions history exists; an unrouted host fails every close
-  CLOSED) — carry one behaviour across inlined library code and several
-  self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
+  self-calls its `reanchorRewardEntriesInternal`, and every position
+  consolidation its `repointRewardEntryInternal` — the hosts of the rule that
+  keeps or splits an entry under sanctions history; an unrouted host fails
+  every close and every consolidation CLOSED) — carry one behaviour across
+  inlined library code and several self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
   refreshes all of them and removes retired selectors from the loupe. The expiry sweep reaches its transfer test by staticcall to
   `InteractionRewardsLensFacet.claimTransferable` on EVERY chain, gate armed or
   not, so a sweep host refreshed without that selector routed reverts every

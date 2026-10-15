@@ -2608,6 +2608,12 @@ contract TestMutatorFacet {
         r.quarantineAcked = quarantineAcked;
     }
 
+    /// @notice Codex #2489 r15 test-only — the per-loan reward entry pointers.
+    function getLoanEntryIdsRaw(uint256 loanId) external view returns (uint256 lenderId, uint256 borrowerId) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.loanActiveLenderEntryId[loanId], s.loanBorrowerEntryId[loanId]);
+    }
+
     function setRemitReservationReleasedRaw(uint256 remitId, uint256 recycled) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];

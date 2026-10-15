@@ -181,6 +181,16 @@ library LibInteractionRewards {
     /// @custom:event-category state-change/reward-claim
     event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
 
+    /// @notice Codex #2489 r15 — an OPEN reward entry changed hands by
+    ///         consolidation while its earner or holder carries sanctions
+    ///         history: the days through `splitDay - 1` stay with `earner` as
+    ///         the (now closed, claimable) entry `oldId`, and the days from
+    ///         `splitDay` accrue to `holder` as the new open entry `newId`.
+    /// @custom:event-category informational/reward
+    event RewardEntrySplitAtTransfer(
+        uint256 indexed oldId, uint256 indexed newId, address indexed earner, address holder, uint256 splitDay
+    );
+
     /// @notice #1566 — one settled CHUNK of a forfeited entry, from the loan
     ///         forfeit sweep ({sweepForfeitedByLoanId}). `fresh` is
     ///         the fresh this chunk forfeited into the recycle bucket — the
@@ -768,7 +778,7 @@ library LibInteractionRewards {
         if (s.rewardEntries[entryId].closed) return;
         try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
             if (holder != address(0)) {
-                repointRewardEntry(loanId, holder, isLenderSide);
+                repointRewardEntryAtClose(loanId, holder, isLenderSide);
             }
         } catch {
             // Token burned / absent — nothing to re-anchor.
@@ -860,6 +870,18 @@ library LibInteractionRewards {
         address newUser,
         bool isLenderSide
     ) internal {
+        _repoint(loanId, newUser, isLenderSide, /* allowSplit */ true);
+    }
+
+    /// @notice {repointRewardEntry} as `closeLoan`'s re-anchor uses it: the loan
+    ///         ends now, so nothing remains to accrue for the holder and an entry
+    ///         under the earner rule is kept whole with its earner — never split
+    ///         (a split here would open a zero-length entry only to close it).
+    function repointRewardEntryAtClose(uint256 loanId, address newUser, bool isLenderSide) internal {
+        _repoint(loanId, newUser, isLenderSide, /* allowSplit */ false);
+    }
+
+    function _repoint(uint256 loanId, address newUser, bool isLenderSide, bool allowSplit) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 id = isLenderSide
             ? s.loanActiveLenderEntryId[loanId]
@@ -869,10 +891,18 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         address oldUser = e.user;
         if (oldUser == newUser) return;
-        // Codex #2489 r13 — the sanctions day rule prices against the entry's
-        // user, so an entry whose earner or holder carries sanctions history
-        // stays with its earner and settles under the earner's own rule.
-        if (LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser)) return;
+        // Codex #2489 r13/r15 — the sanctions day rule prices against the
+        // entry's user, so an entry whose earner or holder carries sanctions
+        // history is never re-priced against the holder: at a consolidation
+        // of an OPEN entry it is SPLIT at today — the earned days stay with the
+        // earner as a closed, claimable entry, the remaining window opens for
+        // the holder — and at loan close (nothing left to accrue) it is kept
+        // whole with the earner.
+        if (LibRewardSanctions.repointNeedsEarnerRule(s, oldUser, newUser)) {
+            if (allowSplit) _splitAtTransfer(s, id, e, loanId, oldUser, newUser, isLenderSide);
+            else LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser);
+            return;
+        }
 
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);
@@ -881,6 +911,60 @@ library LibInteractionRewards {
         e.user = newUser;
         // Per-loan pointer already references `id`; sweep + per-user claim now
         // resolve to `newUser`.
+    }
+
+    /// @dev Codex #2489 r15 — split an OPEN entry at today between its earner
+    ///      and the holder consolidating the position: the earner keeps
+    ///      `[startDay, today + 1)` as a CLOSED (claimable) entry — the same
+    ///      shrink `transferLenderEntry` applies, minus its forfeit — and the
+    ///      holder gets a fresh open entry over `[today + 1, originalEnd)` with
+    ///      the per-loan pointer moved onto it; the global per-day series is
+    ///      unchanged (the close un-stamps the original end and stamps the
+    ///      shrunk one, the new entry stamps both ends back). With nothing left
+    ///      to accrue (the window ends by today, the entry is already closed,
+    ///      or the programme is inactive) the entry is kept whole with its
+    ///      earner, announced as kept.
+    function _splitAtTransfer(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e,
+        uint256 loanId,
+        address oldUser,
+        address newUser,
+        bool isLenderSide
+    ) private {
+        (uint256 today, bool active) = currentDayOrZero();
+        uint256 originalEnd = e.endDay;
+        uint256 newStart = today + 1;
+        if (!active || e.closed || newStart >= originalEnd) {
+            LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser);
+            return;
+        }
+        uint256 perDay = e.perDayNumeraire18;
+        if (isLenderSide) {
+            _closeEntry(s, id, today, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
+        } else {
+            _closeEntry(s, id, today, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
+        }
+        uint256 newId = _allocEntry(
+            s,
+            newUser,
+            loanId,
+            newStart,
+            originalEnd,
+            isLenderSide ? LibVaipakam.RewardSide.Lender : LibVaipakam.RewardSide.Borrower,
+            perDay
+        );
+        if (isLenderSide) {
+            s.loanActiveLenderEntryId[loanId] = newId;
+            _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, SafeCast.toInt256(perDay));
+            _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
+        } else {
+            s.loanBorrowerEntryId[loanId] = newId;
+            _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, newStart, SafeCast.toInt256(perDay));
+            _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
+        }
+        emit RewardEntrySplitAtTransfer(id, newId, oldUser, newUser, newStart);
     }
 
     /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` in O(1) via the
