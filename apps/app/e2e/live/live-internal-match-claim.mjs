@@ -531,6 +531,28 @@ const violationsSoFar = () => [
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
+/**
+ * Why the loan is no longer the one this drive judges (#2505), or null. A
+ * lender claim made elsewhere during the drive can legitimately settle the
+ * loan or clear the lender's claim, and the page then states the new truth;
+ * judged against the startup snapshot that reads as a copy FAIL. A move is
+ * a precondition that changed under the drive — BLOCKED. A read that gets
+ * no answer cannot say, and is reported as such.
+ */
+async function lifecycleMoved() {
+  try {
+    const [now, [, lAmount, lClaimed]] = await Promise.all([
+      read('getLoanDetails', [LOAN_ID]),
+      read('getClaimableAmount', [LOAN_ID, true]),
+    ]);
+    const why = [];
+    if (Number(now.status) !== INTERNAL_MATCHED) why.push(`status ${now.status}, no longer InternalMatched`);
+    if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
+    return why.length > 0 ? why.join(', ') : null;
+  } catch (err) {
+    return `the direct RPC could not re-read the loan (${err.shortMessage ?? err.message})`;
+  }
+}
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
 /** Set when the driver armed the plan for its own claim click. */
@@ -602,6 +624,14 @@ try {
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
       await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
     }
+    // Anything but the expected line: first rule out the loan having moved
+    // during the drive, which the page would be right to report (#2505).
+    if (!owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) {
+      const moved = await lifecycleMoved();
+      if (moved !== null) {
+        await blocked(`loan ${LOAN_ID} moved while the position page was read — ${moved}`, null, done);
+      }
+    }
     check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
     check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   }
@@ -611,7 +641,18 @@ try {
     resetWindow();
     const back = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
-    await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+    const rowBack = await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
+    if (!rowBack) {
+      // The same two preconditions the first load is held to (#2505): an
+      // RPC that answered nothing in this window means the list was never
+      // observed, and a loan that moved meanwhile has rightly left it.
+      if ((await answered()) === 0) {
+        await blocked('the page RPC answered nothing while /claims reloaded, so its row was never observed', null, done);
+      }
+      const moved = await lifecycleMoved();
+      if (moved !== null) await blocked(`loan ${LOAN_ID} moved before the claim — ${moved}`, null, done);
+      throw new Error(`the loan's /claims row did not render on the way back`);
+    }
   }
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
