@@ -262,6 +262,44 @@ const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(er
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
+/** The custom error a viem revert decoded to, or null. */
+const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
+/** LibERC721.LockReason.EarlyWithdrawalSale. */
+const LOCK_SALE = 2;
+/**
+ * What the lender position's lock says about the close-out at `blockNumber`
+ * (#2505 r25, r26): `null` when nothing on it withholds the close-out, else
+ * the reason. The sale lock is stamped for the whole listing lifecycle, and
+ * the app withholds the close-out only once a sale is ACCEPTED, so a sale
+ * lock is classified the way the app classifies it: simulating
+ * `teardownStaleSaleListing` (`NoStaleSaleListing` on a locked position is an
+ * accepted sale; `SaleListingLoanStillLive`, or a teardown that would
+ * succeed, is a listing the close-out does not wait for). Any other lock is
+ * a lifecycle this drive does not judge, and counts as withholding. Throws
+ * when a read gets no answer, or the simulation ends in a revert it cannot
+ * name.
+ */
+async function lockWithholds(lenderTokenId, blockNumber) {
+  const lock = Number(await read('positionLock', [lenderTokenId], blockNumber === undefined ? {} : { blockNumber }));
+  if (lock === 0) return null;
+  if (lock !== LOCK_SALE) return `the lender position is locked (LibERC721.LockReason ${lock}), a lifecycle this drive does not judge`;
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI,
+      functionName: 'teardownStaleSaleListing',
+      args: [LOAN_ID],
+      account: WALLET,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return null;
+  } catch (err) {
+    const name = revertName(err);
+    if (name === 'SaleListingLoanStillLive') return null;
+    if (name === 'NoStaleSaleListing') return 'an accepted sale of the lender position is awaiting completion';
+    throw err;
+  }
+}
 /** The roster the drive started from; the gate re-reads `enabledAdapters`. */
 let startupRoster;
 try {
@@ -293,13 +331,13 @@ if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap
 // (it unmounts the card for an accepted sale) while every other fact here
 // reads unchanged. A locked position is not the shape this drive judges, and
 // a lock appearing later is a moved precondition.
-let startupLock;
+let startupHold;
 try {
-  startupLock = Number(await read('positionLock', [loan.lenderTokenId]));
+  startupHold = await lockWithholds(loan.lenderTokenId);
 } catch (err) {
-  await blocked("the direct RPC could not read the lender position's lock", err);
+  await blocked("the direct RPC could not establish what the lender position's lock means for the close-out", err);
 }
-if (startupLock !== 0) await blocked(`loan ${LOAN_ID}'s lender position is locked (LibERC721.LockReason ${startupLock}): a lifecycle on it is in flight, so the page may rightly withhold the close-out`);
+if (startupHold !== null) await blocked(`loan ${LOAN_ID}: ${startupHold}, so the page rightly withholds the close-out`);
 // This wallet's nonce BEFORE any browser activity (#2505 r25): a page can
 // send through another connector before the plan is ever armed, so the
 // baseline every no-write verdict is reconciled against is taken here.
@@ -369,7 +407,7 @@ async function eligibleAt(blockNumber) {
     // triggerDefault itself evaluates there (#2481 r3).
     settle(read('getEffectiveGraceSeconds', [fixed.durationDays], at)),
     settle(read('ownerOf', [fixed.lenderTokenId], at)),
-    settle(read('positionLock', [fixed.lenderTokenId], at)),
+    settle(lockWithholds(fixed.lenderTokenId, pinned)),
     // One settled read per adapter, so a flag that answered still counts
     // when a sibling's does not.
     adaptersR.err ? Promise.resolve(null) : Promise.all(adaptersR.value.map((a) => settle(read('isSwapAdapterDisabled', [a], at)))),
@@ -397,14 +435,11 @@ async function eligibleAt(blockNumber) {
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`lender position held by ${holderR.value}`);
   }
-  // A lock on the lender position since startup (#2505 r25): an accepted
-  // sale leaves the loan Active and the seller its holder, yet the page
-  // withholds the close-out. A burned position is reported by the holder.
-  if (lockR.err) {
-    if (!isExecutionRevert(lockR.err)) unanswered.push(lockR.err);
-  } else if (Number(lockR.value) !== 0) {
-    why.push(`the lender position is locked (LibERC721.LockReason ${lockR.value})`);
-  }
+  // A hold on the lender position since startup (#2505 r25, r26): an
+  // accepted sale leaves the loan Active and the seller its holder, yet the
+  // page withholds the close-out. A live listing does not.
+  if (lockR.err) unanswered.push(lockR.err);
+  else if (lockR.value !== null) why.push(lockR.value);
   // The roster, slot by slot against startup, so each answer counts on its
   // own (#2505 r13). The address list alone settles whether a startup slot's
   // venue is still there; a flag settles only its own slot.
