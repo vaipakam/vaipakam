@@ -17,6 +17,7 @@
 
 import { createPublicClient, http, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
+import { classifyHfReadFailure } from './hfRevert';
 import type { ChainConfig } from './env';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
@@ -156,6 +157,17 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       try {
         const hfRes = hfResults[i];
         if (!hfRes || hfRes.status !== 'success') {
+          // An illiquid loan has no health factor by design, and a loan whose
+          // asset has no price feed cannot have one computed right now: both
+          // are the protocol's state, not a keeper failure (hfRevert.ts).
+          const kind = classifyHfReadFailure(hfRes?.error);
+          if (kind === 'illiquid') continue;
+          if (kind === 'noPriceFeed') {
+            console.warn(
+              `[watcher] loan=${loanId} chain=${chain.name} no band evaluated: an asset this loan needs has no price feed (NoPriceFeed)`,
+            );
+            continue;
+          }
           throw new Error(String(hfRes?.error ?? 'no result'));
         }
         {
