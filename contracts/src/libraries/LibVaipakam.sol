@@ -8045,6 +8045,22 @@ library LibVaipakam {
         ///      must equal at custody activation, and the earmark the fresh
         ///      backing room nets out of the Diamond's balance before it.
         uint256 rewardSanctionsHeldTotal;
+        /// @dev Codex #2489 r16 — per wallet, the first position of its
+        ///      `userRewardEntryIds` that MAY hold a LIVE reward entry: every
+        ///      position below it holds an entry that is settled (`processed`)
+        ///      or already expiring (`expiryBegun`) — both terminal, never live
+        ///      again ({LibInteractionRewards.isEntryLive} is the one
+        ///      predicate). A reader looking for the wallet's live entries (the
+        ///      Claim Center countdown) starts here and skips the settled
+        ///      history the index keeps forever. Advanced ONLY over terminal
+        ///      entries ({LibInteractionRewards.advanceUserEntryLiveFrom}: the
+        ///      wallet's own claim at its end, and the permissionless
+        ///      {InteractionRewardsFacet.compactRewardEntryIndex}); lowered by
+        ///      the index's one swap-pop ({LibInteractionRewards._removeUserEntry})
+        ///      when it lands a tail entry below it, so the invariant holds
+        ///      across repoints. May exceed the index length after pops;
+        ///      readers clamp.
+        mapping(address => uint256) userRewardEntryLiveFrom;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

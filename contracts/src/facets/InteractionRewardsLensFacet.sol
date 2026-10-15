@@ -492,21 +492,86 @@ contract InteractionRewardsLensFacet {
         if (end > total) end = total;
         uint256 n;
         for (uint256 i = offset; i < end; ) {
-            LibVaipakam.RewardEntry storage e = s.rewardEntries[all[i]];
-            if (!e.processed && !e.expiryBegun) { unchecked { ++n; } }
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[all[i]])) { unchecked { ++n; } }
             unchecked { ++i; }
         }
         ids = new uint256[](n);
         uint256 k;
         for (uint256 i = offset; i < end && k < n; ) {
             uint256 id = all[i];
-            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            if (!e.processed && !e.expiryBegun) {
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[id])) {
                 ids[k] = id;
                 unchecked { ++k; }
             }
             unchecked { ++i; }
         }
+    }
+
+    /// @notice Codex #2489 r16 — the SOONEST removal estimate among `user`'s
+    ///         LIVE reward entries over ONE bounded page of its index, computed
+    ///         on chain, so the Claim Center countdown costs a number of calls
+    ///         that follows the wallet's live rewards rather than its lifetime
+    ///         history. The page starts at the LATER of `offset` and the
+    ///         wallet's live-from cursor ({getUserRewardEntryLiveFrom}: every
+    ///         position below it is settled or expiring), scans at most `limit`
+    ///         positions (a few storage reads each) and prices at most `maxLive`
+    ///         live entries ({getRewardEntryExpiry} each — the costly part); it
+    ///         ends at whichever bound is reached first and says where to
+    ///         continue. It always makes progress: at least one live entry is
+    ///         priced per non-empty page whatever `maxLive` says.
+    /// @param  user    Address whose index to scan.
+    /// @param  offset  Position to start at (raised to the cursor).
+    /// @param  limit   Index positions to scan at most.
+    /// @param  maxLive Live entries to price at most.
+    /// @return soonestId        The live entry with the earliest NON-ZERO
+    ///                          estimate on this page (0 = none on this page: a
+    ///                          dark horizon, unstarted or forfeited entries).
+    /// @return soonestExpiresAt Its estimate, unix seconds (0 = none).
+    /// @return nextOffset       The first position this page did NOT cover; the
+    ///                          walk is complete once `nextOffset >= total`.
+    /// @return total            The index's length.
+    function getUserSoonestRewardExpiry(address user, uint256 offset, uint256 limit, uint256 maxLive)
+        external
+        view
+        returns (uint256 soonestId, uint64 soonestExpiresAt, uint256 nextOffset, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage all = s.userRewardEntryIds[user];
+        total = all.length;
+        uint256 i = s.userRewardEntryLiveFrom[user];
+        if (offset > i) i = offset;
+        // Saturating: a cursor past the end (a popped tail) scans nothing and
+        // reports itself, which is already `>= total`; a huge `limit` is the
+        // whole remainder.
+        uint256 end = total;
+        if (i < total && total - i > limit) end = i + limit;
+        uint256 priced;
+        while (i < end) {
+            uint256 id = all[i];
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[id])) {
+                // The page ends BEFORE an entry it will not price, so the next
+                // page prices it; the first live entry is always priced.
+                if (priced != 0 && priced >= maxLive) break;
+                unchecked { ++priced; }
+                (, uint64 exp) = LibInteractionRewards.rewardEntryExpiry(id);
+                if (exp != 0 && (soonestExpiresAt == 0 || exp < soonestExpiresAt)) {
+                    soonestExpiresAt = exp;
+                    soonestId = id;
+                }
+            }
+            unchecked { ++i; }
+        }
+        nextOffset = i;
+    }
+
+    /// @notice Codex #2489 r16 — `user`'s live-from cursor: the first position
+    ///         of its reward entry index that may hold a live entry (every
+    ///         position below it is settled or expiring). Advanced by the
+    ///         wallet's own claim and by anyone through
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}; may exceed the
+    ///         index length after a repoint popped the tail.
+    function getUserRewardEntryLiveFrom(address user) external view returns (uint256) {
+        return LibVaipakam.storageSlot().userRewardEntryLiveFrom[user];
     }
 
     /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): the

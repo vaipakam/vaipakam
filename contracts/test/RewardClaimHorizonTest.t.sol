@@ -199,6 +199,66 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
+    /// @notice Codex #2489 r16 — the on-chain soonest view: over a page of the
+    ///         wallet's index it reports the live entry with the EARLIEST
+    ///         estimate (the same figure {getRewardEntryExpiry} gives), skips a
+    ///         settled entry, prices at most `maxLive` live entries per page and
+    ///         ends the page before the entry it will not price, so a walk over
+    ///         pages still sees every live entry once.
+    /// @dev   Mutations: pricing an entry the page then excludes (`priced` bump
+    ///        after the break test) → page 1 reports `next == 2`; picking the
+    ///        latest instead of the earliest → `soonestId == late`.
+    function testSoonestViewPicksTheEarliestLiveEstimate_PagesByLiveEntries() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 early = _seedClaimableEntry();
+        _sweeper().sweepExpiredInteractionRewards(_ids(early)); // stamp
+        _accrue(early, 60 days);
+        uint256 late = _seedClaimableEntry();
+        _sweeper().sweepExpiredInteractionRewards(_ids(late)); // stamp, 60 days behind
+        uint256 settled = _seedClaimableEntry();
+        _mut().setRewardEntryProcessedRaw(settled, true);
+        (, uint64 earlyAt) = _lens().getRewardEntryExpiry(early);
+        (, uint64 lateAt) = _lens().getRewardEntryExpiry(late);
+        assertGt(earlyAt, 0, "fixture: the early entry counts down");
+        assertLt(earlyAt, lateAt, "fixture: it is the sooner of the two");
+
+        (uint256 id, uint64 at, uint256 next, uint256 total) =
+            _lens().getUserSoonestRewardExpiry(alice, 0, 100, 100);
+        assertEq(total, 3);
+        assertEq(next, 3, "one page covered the index");
+        assertEq(id, early, "the earliest live estimate");
+        assertEq(at, earlyAt, "the same figure as the per-entry view");
+
+        // maxLive = 1: page 1 prices `early` and ends BEFORE `late`.
+        (id, at, next, ) = _lens().getUserSoonestRewardExpiry(alice, 0, 100, 1);
+        assertEq(next, 1, "page ends before the live entry it would not price");
+        assertEq(id, early);
+        (id, at, next, ) = _lens().getUserSoonestRewardExpiry(alice, next, 100, 1);
+        assertEq(next, 3, "page 2 prices `late` and passes the settled entry");
+        assertEq(id, late);
+        assertEq(at, lateAt);
+    }
+
+    /// @notice Codex #2489 r16 — a wallet's own claim advances its live-from
+    ///         cursor past the entries the claim settled.
+    /// @dev   Mutation: drop the advance at the claim's end → the cursor reads 0.
+    function testClaimAdvancesTheLiveFromCursor() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        assertEq(_lens().getUserRewardEntryLiveFrom(alice), 0, "before: nothing settled");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+        assertGt(paid, 0, "fixture: the claim settled the entry");
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "fixture: settled");
+        assertEq(_lens().getUserRewardEntryLiveFrom(alice), 1, "the claim passed its settled entry");
+        (, , uint256 next, uint256 total) = _lens().getUserSoonestRewardExpiry(alice, 0, 100, 100);
+        assertEq(total, 1);
+        assertEq(next, 1, "nothing left to scan");
+    }
+
     function testClaimBeforeExpiryAlwaysWins() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();

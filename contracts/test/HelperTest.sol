@@ -2142,7 +2142,7 @@ contract HelperTest {
         // + the RL-3 (#1305) claim-horizon sweep.
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170).
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11); // #2489 r16 +compactRewardEntryIndex
         selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2156,6 +2156,7 @@ contract HelperTest {
         selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         selectors[8] = InteractionRewardsFacet.reanchorRewardEntriesInternal.selector; // #2489 r13: closeLoan's re-anchor host (self-call)
         selectors[9] = InteractionRewardsFacet.repointRewardEntryInternal.selector; // #2489 r15: the consolidation repoint host (self-call)
+        selectors[10] = InteractionRewardsFacet.compactRewardEntryIndex.selector; // #2489 r16: the permissionless live-from cursor advance
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
         return selectors;
@@ -2228,7 +2229,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](30); // #2489 r16 +getUserSoonestRewardExpiry +getUserRewardEntryLiveFrom
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2263,6 +2264,8 @@ contract HelperTest {
         selectors[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
         selectors[26] = InteractionRewardsLensFacet.getUserRewardEntryIdsPage.selector; // #2489 r5: the paged entry index
         selectors[27] = InteractionRewardsLensFacet.getUserLiveRewardEntryIdsPage.selector; // #2489 r14: the live entries of a page
+        selectors[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
+        selectors[29] = InteractionRewardsLensFacet.getUserRewardEntryLiveFrom.selector; // #2489 r16: the live-from cursor
         return selectors;
     }
 

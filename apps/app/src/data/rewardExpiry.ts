@@ -12,7 +12,11 @@
  * LATER than the estimate; a forfeited entry reads zero and shows no countdown.
  * The one thing that can move it EARLIER is governance shortening the claim
  * horizon — the estimate follows the new horizon at once, and the copy says
- * so (Codex #2489 r8). The card shows the soonest such date.
+ * so (Codex #2489 r8). The card shows the soonest such date, which the
+ * contract computes over bounded pages of the wallet's LIVE entries
+ * (`getUserSoonestRewardExpiry`, Codex #2489 r16) starting past its settled
+ * history, so the read costs a number of calls that follows the wallet's live
+ * rewards, not its lifetime.
  *
  * Dark until the horizon knob is set: while `getRewardClaimHorizonDays()` is
  * zero no entry can expire and nothing renders.
@@ -34,36 +38,48 @@ import { signalAware } from '../chain/railHealth';
  *  wording. */
 export const REWARD_CLAIM_NOTICE_DAYS = 90;
 
-/** Entries per expiry multicall. EVERY live entry is read: the card may never
- *  show a date later than the contract would enforce, and a capped or partial
- *  read could miss the soonest entry and do exactly that. */
-const ENTRY_CHUNK = 100;
+/** Index positions one page of `getUserSoonestRewardExpiry` scans at most
+ *  (Codex #2489 r16). A position costs the contract a few storage reads; the
+ *  page starts at the wallet's live-from cursor (every position below it is
+ *  settled or expiring — the wallet's own claims advance it, and anyone may),
+ *  so the lifetime history the index keeps is not re-walked on every refresh. */
+const SCAN_POSITIONS = 1_000n;
 
-/** Index positions scanned per page of `getUserLiveRewardEntryIdsPage`
- *  (Codex #2489 r14). The index keeps every entry a wallet ever had, so the
- *  LIVE filter (not settled, not expiring) runs on chain, a few storage reads
- *  per position, and only the live ids come back — the expiry multicalls below
- *  are then bounded by the wallet's live rewards, not its lifetime history. */
-const LIVE_PAGE = 500;
+/** Live entries one page prices at most. Pricing an entry's estimate is the
+ *  costly part (it mirrors the sweep's executability test), so the pages are
+ *  bounded by live entries too — the contract ends a page BEFORE an entry it
+ *  will not price and always prices at least one, so a walk over pages sees
+ *  every live entry exactly once. */
+const PRICE_LIVE = 100n;
 
-/** Walk the whole entry index for `user` as of ONE block. The pages are
- *  pinned to a block because the index swap-removes a retired entry (the tail
- *  moves into its slot), so a retirement between two unpinned page reads could
- *  move an unread entry across the boundary and out of the walk. `total` from
- *  every page is the proof of completeness: the walk ends only at it. */
-export async function readAllRewardEntryIds(
-  read: (offset: bigint, limit: bigint) => Promise<readonly [readonly bigint[], bigint]>,
-  chunk = LIVE_PAGE,
-): Promise<bigint[]> {
-  const ids: bigint[] = [];
+/** One page of the contract's soonest-deadline view:
+ *  `[soonestId, soonestExpiresAt, nextOffset, total]`. */
+export type SoonestExpiryPage = readonly [bigint, bigint, bigint, bigint];
+
+/** The soonest estimate across ALL of `user`'s live entries, as of ONE block,
+ *  by walking the contract's paged view from its returned `nextOffset` until
+ *  it reaches `total`. EVERY live entry is priced: the card may never show a
+ *  date later than the contract would enforce, and a capped or partial read
+ *  could miss the soonest entry and do exactly that. Pinned to a block
+ *  because the index swap-removes a repointed entry (the tail moves into its
+ *  slot), so a repoint between two unpinned pages could move an unread entry
+ *  across the boundary. A page that makes no progress short of the total is
+ *  an error, never a silent early end. */
+export async function readSoonestRewardExpiry(
+  read: (offset: bigint, limit: bigint, maxLive: bigint) => Promise<SoonestExpiryPage>,
+  positions = SCAN_POSITIONS,
+  maxLive = PRICE_LIVE,
+): Promise<RewardExpirySoonest | null> {
+  const pages: { id: bigint; expiresAt: number }[] = [];
   let offset = 0n;
   for (;;) {
-    const [page, total] = await read(offset, BigInt(chunk));
-    ids.push(...page);
-    // The page SCANNED `chunk` positions and returned the live ones among them
-    // (fewer, possibly none), so the cursor advances by what was scanned.
-    offset += BigInt(chunk);
-    if (offset >= total) return ids;
+    const [id, expiresAt, nextOffset, total] = await read(offset, positions, maxLive);
+    pages.push({ id, expiresAt: Number(expiresAt) });
+    if (nextOffset >= total) return soonestRewardExpiry(pages);
+    if (nextOffset <= offset) {
+      throw new Error(`reward expiry scan made no progress at position ${offset} of ${total}`);
+    }
+    offset = nextOffset;
   }
 }
 
@@ -135,46 +151,24 @@ export function useRewardExpiryCountdown() {
       }
       if (horizonDays === 0) return { horizonDays: 0, soonest: null };
       {
-        // One block for the whole scan — see readAllRewardEntryIds.
+        // One block for the whole walk — see readSoonestRewardExpiry. A page
+        // that fails FAILS the read rather than being skipped: the missing
+        // page could hold the soonest entry, and showing the next-soonest
+        // would report a date LATER than the contract would enforce. The card
+        // keeps its last good answer (or shows none) until a full read
+        // succeeds.
         const blockNumber = await client.getBlockNumber();
-        const ids = await readAllRewardEntryIds(
-          async (offset, limit) =>
+        const soonest = await readSoonestRewardExpiry(
+          async (offset, limit, maxLive) =>
             (await client.readContract({
               address: diamond,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getUserLiveRewardEntryIdsPage',
-              args: [address!, offset, limit],
+              functionName: 'getUserSoonestRewardExpiry',
+              args: [address!, offset, limit, maxLive],
               blockNumber,
-            })) as readonly [readonly bigint[], bigint],
+            })) as SoonestExpiryPage,
         );
-        const entries: { id: bigint; expiresAt: number }[] = [];
-        for (let i = 0; i < ids.length; i += ENTRY_CHUNK) {
-          const chunk = ids.slice(i, i + ENTRY_CHUNK);
-          // Sequential by design: one bounded multicall per chunk.
-          const res = (await client.multicall({
-            allowFailure: true,
-            blockNumber,
-            contracts: chunk.map((id) => ({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getRewardEntryExpiry',
-              args: [id],
-            })) as never,
-          })) as readonly { status: 'success' | 'failure'; result?: unknown }[];
-          res.forEach((r, j) => {
-            // An unread entry FAILS the read rather than being skipped: the
-            // missing one could be the soonest, and showing the next-soonest
-            // would report a date LATER than the contract would enforce. The
-            // card keeps its last good answer (or shows none) until a full
-            // read succeeds.
-            if (r.status !== 'success') {
-              throw new Error(`reward expiry read failed for entry ${chunk[j]}`);
-            }
-            const [, expiresAt] = r.result as readonly [bigint, bigint];
-            entries.push({ id: chunk[j], expiresAt: Number(expiresAt) });
-          });
-        }
-        return { horizonDays, soonest: soonestRewardExpiry(entries) };
+        return { horizonDays, soonest };
       }
     },
   });

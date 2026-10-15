@@ -1838,7 +1838,11 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   self-calls its `reanchorRewardEntriesInternal`, and every position
   consolidation its `repointRewardEntryInternal` — the hosts of the rule that
   keeps or splits an entry under sanctions history; an unrouted host fails
-  every close and every consolidation CLOSED) — carry one behaviour across
+  every close and every consolidation CLOSED; and, Codex #2489 r16, its
+  `compactRewardEntryIndex` with the lens's `getUserSoonestRewardExpiry` /
+  `getUserRewardEntryLiveFrom` are NEW selectors the complete refresh ADDS —
+  the Claim Center countdown reads the view and shows an error, not a dark
+  state, where it is unrouted) — carry one behaviour across
   inlined library code and several self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
   refreshes all of them and removes retired selectors from the loupe. The expiry sweep reaches its transfer test by staticcall to
   `InteractionRewardsLensFacet.claimTransferable` on EVERY chain, gate armed or

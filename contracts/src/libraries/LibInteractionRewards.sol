@@ -987,9 +987,69 @@ library LibInteractionRewards {
             uint256 moved = ids[lastIdx];
             ids[i] = moved;
             s.rewardEntryUserIdx[moved] = i + 1; // rewrite the moved entry's index
+            // Codex #2489 r16 — the tail entry now sits at `i`; if that is
+            // below the wallet's live-from cursor the cursor's invariant
+            // (every position below it is terminal) no longer holds for a
+            // live tail, so pull the cursor down to the slot. Unconditional
+            // on the moved entry's state: the cursor re-advances over a
+            // terminal one at the next compaction, and reading the state
+            // here would cost the same as that step.
+            if (i < s.userRewardEntryLiveFrom[user]) s.userRewardEntryLiveFrom[user] = i;
         }
         ids.pop();
         s.rewardEntryUserIdx[id] = 0;
+    }
+
+    /// @dev Codex #2489 r16 — THE live predicate for a reward entry, shared by
+    ///      the lens's live page and soonest-expiry view and by the live-from
+    ///      cursor's advance, so the three cannot disagree about what "live"
+    ///      means: not yet settled (`processed`) and not already expiring
+    ///      (`expiryBegun`) — the only entries a claim deadline can concern.
+    ///      Both flags are terminal (nothing unsets either), which is what
+    ///      makes a position below the cursor safe to skip forever.
+    function isEntryLive(LibVaipakam.RewardEntry storage e) internal view returns (bool) {
+        return !e.processed && !e.expiryBegun;
+    }
+
+    /// @notice Codex #2489 r16 — `user`'s live-from cursor moved past the
+    ///         terminal entries at the head of its reward entry index.
+    /// @custom:event-category state-change/reward-entry
+    event RewardEntryIndexCompacted(address indexed user, uint256 liveFrom);
+
+    /// @dev Codex #2489 r16 — positions a claim passes at its end (the claim
+    ///      has just settled every entry it could, so the index head is where
+    ///      settled entries pile up). Bounded so a long history never makes
+    ///      the claim's gas grow; the permissionless compactor covers the rest.
+    uint256 internal constant CLAIM_INDEX_COMPACT_STEPS = 256;
+
+    /// @notice Codex #2489 r16 — advance `user`'s live-from cursor over the
+    ///         TERMINAL entries at the head of its index, at most `maxSteps`
+    ///         positions, stopping at the first live entry or the index end.
+    ///         Bookkeeping only: moves no value, never passes a live entry,
+    ///         idempotent. Never lowers the cursor here — only
+    ///         {_removeUserEntry} does, when a swap-pop lands a tail below it.
+    /// @return liveFrom The cursor after the advance (clamped to the index
+    ///                  length, which a pop may have left it above).
+    function advanceUserEntryLiveFrom(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 maxSteps
+    ) internal returns (uint256 liveFrom) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        liveFrom = s.userRewardEntryLiveFrom[user];
+        if (liveFrom > len) liveFrom = len;
+        uint256 start = liveFrom;
+        // Saturating: `liveFrom <= len` here, so a huge `maxSteps` is the rest.
+        uint256 stop = len - liveFrom > maxSteps ? liveFrom + maxSteps : len;
+        while (liveFrom < stop) {
+            if (isEntryLive(s.rewardEntries[ids[liveFrom]])) break;
+            unchecked { ++liveFrom; }
+        }
+        if (liveFrom != start) {
+            s.userRewardEntryLiveFrom[user] = liveFrom;
+            emit RewardEntryIndexCompacted(user, liveFrom);
+        }
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────

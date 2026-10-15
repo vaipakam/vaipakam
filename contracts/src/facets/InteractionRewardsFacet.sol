@@ -398,4 +398,19 @@ contract InteractionRewardsFacet is
         if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
         LibInteractionRewards.repointRewardEntry(loanId, newUser, isLenderSide);
     }
+
+    /// @notice Codex #2489 r16 — advance `user`'s live-from cursor over up to
+    ///         `maxSteps` settled or expiring entries at the head of its reward
+    ///         entry index, so readers of the wallet's LIVE entries (the Claim
+    ///         Center countdown through
+    ///         {InteractionRewardsLensFacet.getUserSoonestRewardExpiry}) skip
+    ///         its settled history. Permissionless bookkeeping: it moves no
+    ///         value, makes no external call, and only ever passes entries that
+    ///         can never be live again — the wallet's own claim does the same at
+    ///         its end. Callable while paused: it changes nothing a pause
+    ///         protects.
+    /// @return liveFrom The cursor after the advance.
+    function compactRewardEntryIndex(address user, uint256 maxSteps) external returns (uint256 liveFrom) {
+        return LibInteractionRewards.advanceUserEntryLiveFrom(LibVaipakam.storageSlot(), user, maxSteps);
+    }
 }

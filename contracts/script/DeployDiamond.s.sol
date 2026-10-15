@@ -2476,7 +2476,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170: the ShareOfPool day walk inlines ~5.8 KB
         // and this facet had 481 B of headroom).
-        s = new bytes4[](10);
+        s = new bytes4[](11); // #2489 r16 +compactRewardEntryIndex
         s[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         s[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2490,6 +2490,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         s[8] = InteractionRewardsFacet.reanchorRewardEntriesInternal.selector; // #2489 r13: closeLoan's re-anchor host (self-call)
         s[9] = InteractionRewardsFacet.repointRewardEntryInternal.selector; // #2489 r15: the consolidation repoint host (self-call)
+        s[10] = InteractionRewardsFacet.compactRewardEntryIndex.selector; // #2489 r16: the permissionless live-from cursor advance
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
@@ -2511,7 +2512,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](30); // #2489 r16 +getUserSoonestRewardExpiry +getUserRewardEntryLiveFrom
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2547,6 +2548,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
         s[26] = InteractionRewardsLensFacet.getUserRewardEntryIdsPage.selector; // #2489 r5: the paged entry index
         s[27] = InteractionRewardsLensFacet.getUserLiveRewardEntryIdsPage.selector; // #2489 r14: the live entries of a page
+        s[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
+        s[29] = InteractionRewardsLensFacet.getUserRewardEntryLiveFrom.selector; // #2489 r16: the live-from cursor
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
