@@ -602,6 +602,22 @@ try {
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
       await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
     }
+    // A wrong-looking line is judged against the loan AS IT IS NOW, not the
+    // startup snapshot (#2505): a lender claim made elsewhere while this drive
+    // navigated can settle the loan, and then the settled copy is correct. A
+    // lifecycle move is BLOCKED, never a FAIL on the copy.
+    if (!owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) {
+      let moved = null;
+      try {
+        const [nowLoan, lenderClaimable] = await Promise.all([read('getLoanDetails', [LOAN_ID]), read('getClaimableAmount', [LOAN_ID, true])]);
+        if (Number(nowLoan.status) !== INTERNAL_MATCHED) moved = `its status is now ${nowLoan.status}`;
+        // getClaimableAmount returns (asset, amount, claimed).
+        else if (lenderClaimable[2] === true) moved = 'the lender has already claimed';
+      } catch (err) {
+        await blocked('the direct RPC could not re-read the loan to judge its Owed line', err, done);
+      }
+      if (moved) await blocked(`loan ${LOAN_ID} moved while the drive navigated (${moved}), so the startup facts no longer judge its Owed line`, null, done);
+    }
     check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
     check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   }
@@ -611,7 +627,17 @@ try {
     resetWindow();
     const back = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
-    await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+    // The reload cleared the page's state, so the row's return depends on the
+    // page RPC again: a row that does not come back while that RPC answered
+    // nothing is an outage, BLOCKED, not a pre-write FAIL (#2505).
+    const rowBack = await rowFor()
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 })
+      .then(() => true, () => false);
+    if (!rowBack) {
+      if ((await answered()) === 0) await blocked('the page RPC answered nothing after returning to /claims, so the claim row could not reappear', null, done);
+      throw new Error('the claim row did not reappear on /claims');
+    }
   }
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
