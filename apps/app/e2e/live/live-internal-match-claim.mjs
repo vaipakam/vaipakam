@@ -683,6 +683,11 @@ try {
     check('positionLine', 'note', 'position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
     if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
+    // The claim authorization boundary (#2512 r4): the loan must still be in
+    // its startup state before the estimate and the arm, or a claim/transfer
+    // made elsewhere since the last check would surface as a reverted
+    // estimate — a recorded failure no later re-check may re-classify.
+    await requireUnmoved('authorizing the claim');
     // The driver's own RPC, before anything is sent: an outage here is a
     // precondition, not a verdict on the page.
     try {
@@ -700,6 +705,9 @@ try {
         // The node ANSWERED that this exact claim cannot execute (a paused
         // Diamond, a broken claim path): an observation, not an outage.
         if (isExecutionRevert(err)) {
+          // A move between the check above and the estimate is still a race,
+          // not a broken claim path: judged before the failure is recorded.
+          await requireUnmoved('judging the reverted claim estimate');
           check('claimable', 'estimate', 'the claim can execute for this wallet', false, `eth_estimateGas reverted: ${err.shortMessage ?? err.message}`);
           throw new Error('the claim estimate reverted; not claiming');
         }
