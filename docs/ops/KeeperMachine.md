@@ -94,8 +94,11 @@ the one key. Two machines would do the same.
 
 **The lease.** Every tick, on the Worker or a machine, first claims one row in
 the shared database (`keeper_runner_lease`) under its `KEEPER_RUNNER_ID`. The
-Worker's is `cloudflare-worker` (set in `apps/keeper/wrangler.jsonc`); the
-install writes `host:<host name>` into a machine's env file. While another
+Worker's is `cloudflare-worker` (set in `apps/keeper/wrangler.jsonc`); a
+machine's is `host:<host name>` unless its env file sets another. Which runner
+holds the lease, and until when, is decided by the database's clock, never a
+runner's own, so a machine whose clock drifts cannot take a live lease or
+hold one past its time. While another
 runner holds an unexpired lease, the tick runs nothing and logs `tick
 declined: runner "<name>" holds the one-runner lease until <time>`. A tick
 that cannot claim it at all (no runner id, the database unreachable) declines
@@ -166,8 +169,9 @@ a commit. The template documents each line. In short:
   with the account's D1 Edit permission only. Cloudflare cannot limit a token
   to one database, so it can reach every D1 database on the account. Make one
   for this machine; never reuse a deploy token. `D1_DATABASE_ID` is prefilled.
-- **Runner id:** `KEEPER_RUNNER_ID` is filled in with this machine's name.
-  Keep it unique; never copy another machine's env file without changing it.
+- **Runner id:** leave `KEEPER_RUNNER_ID` empty and the machine uses
+  `host:<host name>`. Set it only if two machines could share a host name;
+  never give two machines the same one.
 - **Arming:** leave `KEEPER_ENABLED=false` and the three per-pass flags empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
   `TG_BOT_TOKEN` (the user bot, never `TG_OPS_BOT_TOKEN`), `PUSH_CHANNEL_PK`

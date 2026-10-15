@@ -14,6 +14,10 @@
  *     arrive as `''` and a numeric knob could read it as 0 instead of its
  *     default;
  *   - the keys in `SECRET_BINDING_KEYS` are wrapped as bindings;
+ *   - `KEEPER_RUNNER_ID` (the one-runner lease's name for this copy, #2503)
+ *     defaults to `host:<host name>` when the env file leaves it unset, so a
+ *     machine set up before the setting existed still claims the lease
+ *     instead of declining every tick;
  *   - `DB` is the D1 HTTP adapter, pointed at the same database the Worker
  *     binds (`D1_DATABASE_ID`), with the account id and an API token.
  *
@@ -22,6 +26,7 @@
  * than running passes against no database.
  */
 
+import { hostname as osHostname } from 'node:os';
 import { SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
 import { createD1HttpDatabase } from './d1Http';
 
@@ -44,6 +49,7 @@ export interface HostEnvResult {
 export function buildHostEnv(
   vars: Record<string, string | undefined>,
   fetchFn?: typeof fetch,
+  hostname: () => string = osHostname,
 ): HostEnvResult {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(vars)) {
@@ -59,6 +65,8 @@ export function buildHostEnv(
     }
     out[key] = { get: async () => value };
   }
+
+  if (out.KEEPER_RUNNER_ID === undefined) out.KEEPER_RUNNER_ID = `host:${hostname()}`;
 
   const accountId = vars[HOST_SETTINGS.accountId];
   const databaseId = vars[HOST_SETTINGS.databaseId];

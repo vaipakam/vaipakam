@@ -83,7 +83,7 @@ export async function runKeeperTick(
   // #2503 — one runner at a time. Claimed before anything else reads a
   // secret or the chain, so a runner that is not the holder does no work and
   // says whose lease it is waiting on. A failure to claim declines too.
-  const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID, Date.now());
+  const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID);
   if (!lease.held) {
     // eslint-disable-next-line no-console
     console.warn(`[keeper] tick declined: ${lease.reason}`);

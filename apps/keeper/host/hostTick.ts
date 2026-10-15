@@ -63,12 +63,11 @@ export function createHostTick(deps: HostTickDeps) {
  * never take the lease from another runner, and a decline is logged rather
  * than acted on (the next tick that starts declines by itself).
  */
-export function createHostLeaseRenewal(deps: Pick<HostTickDeps, 'vars' | 'log' | 'fetchFn'> & { nowMs?: () => number }) {
-  const now = deps.nowMs ?? (() => Date.now());
+export function createHostLeaseRenewal(deps: Pick<HostTickDeps, 'vars' | 'log' | 'fetchFn'>) {
   return async (): Promise<void> => {
     const { env } = buildHostEnv(deps.vars(), deps.fetchFn);
     if (env.DB === undefined) return;
-    const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID, now());
+    const lease = await claimRunnerLease(env.DB, env.KEEPER_RUNNER_ID);
     if (!lease.held) deps.log(`[keeper-host] lease not renewed during a long tick: ${lease.reason}`);
   };
 }

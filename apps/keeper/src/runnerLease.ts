@@ -15,15 +15,20 @@
  *     it (a renewal), or when it has expired;
  *   - a successful claim moves the expiry to `now + LEASE_TTL_MS`, and keeps
  *     `acquired_at` unless the holder changed;
+ *   - "now" is the DATABASE's clock, read inside the statement, never the
+ *     claimant's. The Worker and a machine keep independent clocks, so a
+ *     runner whose clock ran ahead would otherwise see a live lease as
+ *     expired and take it, and one whose clock ran behind would hold it past
+ *     its TTL;
  *   - nothing else touches the row, so a runner that stops renewing (its
  *     machine died, its schedule was removed) hands over by itself once its
  *     lease runs out, and a live runner renews every minute.
  *
- * Identity is `KEEPER_RUNNER_ID`, which must be set: the Worker's comes from
- * `wrangler.jsonc`, and the machine install writes the host name into the
- * machine's env file. A tick with no identity declines rather than guessing
- * one, because two runners that guessed the same name would each think they
- * held the lease.
+ * Identity is `KEEPER_RUNNER_ID`. The Worker's comes from `wrangler.jsonc`;
+ * on a machine it defaults to `host:<host name>` (`host/hostEnv.ts`) unless
+ * the env file sets one. Here, a tick with no identity declines rather than
+ * guessing one, because two runners that guessed the same name would each
+ * think they held the lease.
  *
  * Every failure declines. A tick that cannot confirm it is the only runner
  * (the table is missing, the database is unreachable) does not run, which is
@@ -54,7 +59,6 @@ export type LeaseClaim =
 export async function claimRunnerLease(
   db: D1Database,
   holder: string | undefined,
-  nowMs: number,
   ttlMs: number = LEASE_TTL_MS,
 ): Promise<LeaseClaim> {
   if (holder === undefined || holder.trim() === '') {
@@ -64,13 +68,18 @@ export async function claimRunnerLease(
     };
   }
   try {
-    // SET assignments read the OLD row, so `acquired_at` compares against
-    // the previous holder. The WHERE makes the upsert a no-op (no RETURNING
-    // row) while someone else holds an unexpired lease.
+    // `now` is the database's clock in milliseconds, fixed for the whole
+    // statement (julianday works on every SQLite D1 runs). SET assignments
+    // read the OLD row, so `acquired_at` compares against the previous
+    // holder. The upsert WHERE makes it a no-op (no RETURNING row) while
+    // someone else holds an unexpired lease; `WHERE true` is the SELECT's own
+    // clause, which SQLite requires before ON CONFLICT.
     const row = await db
       .prepare(
         `INSERT INTO keeper_runner_lease (lease, holder, acquired_at, renewed_at, expires_at)
-         VALUES (?1, ?2, ?3, ?3, ?4)
+         SELECT ?1, ?2, now, now, now + ?3
+           FROM (SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS now)
+          WHERE true
          ON CONFLICT (lease) DO UPDATE SET
            acquired_at = CASE WHEN keeper_runner_lease.holder = excluded.holder
                               THEN keeper_runner_lease.acquired_at
@@ -80,12 +89,12 @@ export async function claimRunnerLease(
            expires_at = excluded.expires_at
          WHERE keeper_runner_lease.holder = excluded.holder
             OR keeper_runner_lease.expires_at <= excluded.renewed_at
-         RETURNING acquired_at`,
+         RETURNING acquired_at, renewed_at`,
       )
-      .bind(LEASE_NAME, holder, nowMs, nowMs + ttlMs)
-      .first<{ acquired_at: number }>();
+      .bind(LEASE_NAME, holder, ttlMs)
+      .first<{ acquired_at: number; renewed_at: number }>();
     if (row !== null) {
-      return { held: true, acquired: Number(row.acquired_at) === nowMs };
+      return { held: true, acquired: Number(row.acquired_at) === Number(row.renewed_at) };
     }
     const other = await db
       .prepare('SELECT holder, expires_at FROM keeper_runner_lease WHERE lease = ?1')
