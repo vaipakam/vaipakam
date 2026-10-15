@@ -181,6 +181,8 @@ describe('loanActivity', () => {
     'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
     'event Paused(address account)',
     'event NotificationFeeBilled(uint256 indexed loanId, bool lenderSide)',
+    'event KYCTierUpdated(address indexed user, uint8 tier)',
+    'event AssetPauseEnabled(address indexed asset)',
   ]);
   const D = '0x00000000000000000000000000000000000000d1';
   const log = (eventName, args, data = '0x', block = 10n) => ({
@@ -190,7 +192,9 @@ describe('loanActivity', () => {
     blockNumber: block,
   });
   const pubOf = (logs) => ({ getBlockNumber: async () => 12n, getLogs: async () => logs });
-  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, tokenIds: [41n, 42n] });
+  const W = '0x00000000000000000000000000000000000000aa';
+  const X = '0x00000000000000000000000000000000000000bb';
+  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, tokenIds: [41n, 42n], wallets: [W], assets: [D] });
 
   it('counts what touched this loan, its positions or a gate, and nothing else', async () => {
     expect(await run([log('OfferCreated', { offerId: 21n }), log('Transfer', { from: D, to: D, tokenId: 7n })])).toEqual({});
@@ -199,6 +203,13 @@ describe('loanActivity', () => {
     expect((await run([log('InternalMatchExecuted', { loanIdA: 9n, loanIdB: 21n })])).moved).toMatch(/InternalMatchExecuted/);
     expect((await run([log('Paused', {}, encodeAbiParameters([{ type: 'address' }], [D]))])).moved).toMatch(/Paused/);
     expect((await run([log('LoanRepaid', { loanId: 21n }, encodeAbiParameters([{ type: 'uint256' }], [1n]))])).moved).toMatch(/LoanRepaid/);
+  });
+
+  it('counts a user or asset gate only for this drive\'s wallet and this loan\'s assets', async () => {
+    const tier = encodeAbiParameters([{ type: 'uint8' }], [2]);
+    expect(await run([log('KYCTierUpdated', { user: X }, tier), log('AssetPauseEnabled', { asset: X })])).toEqual({});
+    expect((await run([log('KYCTierUpdated', { user: W }, tier)])).moved).toMatch(/KYCTierUpdated/);
+    expect((await run([log('AssetPauseEnabled', { asset: D })])).moved).toMatch(/AssetPauseEnabled/);
   });
 
   it('is unknown, never clean, when the events cannot be read', async () => {

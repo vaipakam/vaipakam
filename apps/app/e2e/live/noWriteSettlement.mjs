@@ -171,14 +171,30 @@ export const GATE_EVENTS = Object.freeze([
  * transferred away and back, a pause lifted again); the chain's own logs
  * can. Counted, from the Diamond: any event with an argument it names a
  * loan id equal to this loan's, a Transfer of one of `tokenIds` (the
- * position NFTs live on the Diamond), and any {@link GATE_EVENTS} event;
- * less {@link LOAN_BOOKKEEPING_EVENTS}.
+ * position NFTs live on the Diamond), and any {@link GATE_EVENTS} event
+ * that applies (one naming a user or an asset only for `wallets` or
+ * `assets`); less {@link LOAN_BOOKKEEPING_EVENTS}. `fromBlock` is the first
+ * block AFTER the startup reads' block: a log in that block cannot be
+ * dated against them, and the endpoint comparison covers it anyway.
  *
  * Returns `{ moved }`, `{ unknown }` or `{}`, never throws.
  */
-export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, tokenIds = [] }) {
+export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, tokenIds = [], wallets = [], assets = [] }) {
   const ids = new Set(tokenIds.filter((t) => t !== undefined && t !== null).map((t) => BigInt(t)));
   const want = BigInt(loanId);
+  const lower = (x) => String(x ?? '').toLowerCase();
+  const people = new Set(wallets.map(lower));
+  const ours = new Set(assets.map(lower));
+  // A gate event that names ONE user or ONE asset counts only for this
+  // drive's wallets or this loan's assets (#2505 r43); a protocol-wide one
+  // (a pause, the adapter roster, enforcement, the oracle) always counts.
+  const gateApplies = (ev) => {
+    const a = ev.args ?? {};
+    if ('user' in a) return people.has(lower(a.user));
+    if ('who' in a) return people.has(lower(a.who));
+    if (ev.eventName === 'AssetPauseEnabled' || ev.eventName === 'AssetPauseDisabled') return ours.has(lower(a.asset));
+    return true;
+  };
   // Decoded against the Diamond's own ABI, so only an argument the contract
   // NAMES a loan id counts (`loanId`, `loanIdA`…`loanIdC`, `oldLoanId`, `newLoanId`, …), never an
   // offer or a request that happens to share the number.
@@ -204,7 +220,7 @@ export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, token
         continue;
       }
       if (LOAN_BOOKKEEPING_EVENTS.includes(ev.eventName)) continue;
-      if (!(GATE_EVENTS.includes(ev.eventName) || scopedTo(ev))) continue;
+      if (!((GATE_EVENTS.includes(ev.eventName) && gateApplies(ev)) || scopedTo(ev))) continue;
       hits.push(`${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`);
     }
     if (hits.length === 0) return {};

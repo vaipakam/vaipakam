@@ -629,6 +629,11 @@ async function previewSale(tx) {
   try {
     const { results } = await pub.simulateCalls({ account: WALLET, calls: [{ to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) }] });
     const r = results?.[0];
+    // A completed simulation that REVERTED is an answer, not a missing one
+    // (#2505 r43): the node established that the requested route fails, so it
+    // is non-sale evidence. Only a preview the node could not perform, or one
+    // without logs, is unknown.
+    if (r?.status === 'failure') return 'reverted';
     if (!r || r.status !== 'success' || r.logs === undefined) return 'unknown';
     const ours = (name) =>
       parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: r.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()) })
@@ -1084,7 +1089,7 @@ try {
     if (previewVerdict === 'sale') {
       check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', true, 'independent preview: SwapAdapterSucceeded');
     }
-    if (!wrote() && (previewVerdict === 'fallback' || previewVerdict === 'other')) {
+    if (!wrote() && (previewVerdict === 'fallback' || previewVerdict === 'other' || previewVerdict === 'reverted')) {
       check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', false, `independent preview: ${previewVerdict} — the app should have refused this route`);
     }
     if (refusedWith && !wrote()) {
@@ -1198,7 +1203,19 @@ const settled = await settleRun({
   baseline: nonceBefore,
   // A change that came and went between the endpoint reads (a transfer away
   // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: () => loanActivity({ pub, diamond: DIAMOND, abi: DIAMOND_ABI, fromBlock: windowStart, loanId: LOAN_ID, tokenIds: [loan.lenderTokenId, loan.borrowerTokenId] }),
+  activity: () =>
+    loanActivity({
+      pub,
+      diamond: DIAMOND,
+      abi: DIAMOND_ABI,
+      // The block after the startup reads' block: a log in that block cannot
+      // be dated against them, and the endpoint comparison covers it (#2505 r43).
+      fromBlock: windowStart + 1n,
+      loanId: LOAN_ID,
+      tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
+      wallets: [WALLET],
+      assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
+    }),
 });
 // The gate's own hold, when it withheld the planned request: the stop that
 // followed it (a UI wait that ran out) is explained by it (#2505 r32), so it

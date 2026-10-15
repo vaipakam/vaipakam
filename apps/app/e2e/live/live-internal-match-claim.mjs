@@ -1084,7 +1084,19 @@ const settled = await settleRun({
   baseline: nonceAtStart,
   // A change that came and went between the endpoint reads (a transfer away
   // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: () => loanActivity({ pub, diamond: DIAMOND, abi: DIAMOND_ABI, fromBlock: windowStart, loanId: LOAN_ID, tokenIds: [loan.lenderTokenId, loan.borrowerTokenId] }),
+  activity: () =>
+    loanActivity({
+      pub,
+      diamond: DIAMOND,
+      abi: DIAMOND_ABI,
+      // The block after the startup reads' block: a log in that block cannot
+      // be dated against them, and the endpoint comparison covers it (#2505 r43).
+      fromBlock: windowStart + 1n,
+      loanId: LOAN_ID,
+      tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
+      wallets: [WALLET],
+      assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
+    }),
 });
 const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}'s claim` });
 if (resolved.blocked) await blocked(resolved.blocked);
