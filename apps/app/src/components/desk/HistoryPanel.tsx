@@ -49,14 +49,25 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
           · {pairLabel} ·{' '}
           {/* #2467 — the terms the fill executed at, never the live ones an
               extension rewrites; said to be unknown rather than substituted. */}
-          {terms === null ? (
-            text.termsUnknown
-          ) : (
-            <>
-              {formatDurationDays(terms.durationDays)} ·{' '}
-              <span title={`${terms.rateBps} bps`}>{formatBpsAsPercent(terms.rateBps)}</span>
-            </>
-          )}
+          {/* One element holds the terms, and says which kind it states:
+              executed (with the values it shows) or unknown. The live review
+              compares THIS element against the page's own data instead of
+              searching the row's free text (#2492). */}
+          <span
+            data-testid="history-terms"
+            data-terms={terms === null ? 'unknown' : 'executed'}
+            data-rate-bps={terms?.rateBps}
+            data-duration-days={terms?.durationDays}
+          >
+            {terms === null ? (
+              text.termsUnknown
+            ) : (
+              <>
+                {formatDurationDays(terms.durationDays)} ·{' '}
+                <span title={`${terms.rateBps} bps`}>{formatBpsAsPercent(terms.rateBps)}</span>
+              </>
+            )}
+          </span>
         </span>
         <br />
         <span className="row-sub">
