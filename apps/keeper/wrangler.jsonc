@@ -548,6 +548,9 @@
     // post-provision; the worker accepts an empty string and returns
     // bot_url: null in the handshake response when not configured.
     "TG_BOT_USERNAME": "",
+    // #2503 — this runner's name for the one-runner lease. A machine host
+    // uses its own name, so the Worker and a machine can never both run.
+    "KEEPER_RUNNER_ID": "cloudflare-worker",
   },
 
   "observability": {

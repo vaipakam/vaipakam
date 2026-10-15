@@ -94,55 +94,16 @@
  * (`/diag/record`) all live on `apps/{indexer,agent}`. The keeper
  * is intentionally cron-only so it has no public attack surface.
  *
- * T-078 — `scheduled()` calls `resolveEnv()` first. The secrets
+ * T-078 — the tick (`./tick`, shared with the always-on machine runtime
+ * in `host/`) calls `resolveEnv()` first. The secrets
  * (RPC_*, the Telegram bot token, the Push signer, the aggregator
  * API keys and `KEEPER_PRIVATE_KEY`) are Cloudflare Secrets Store
  * bindings read asynchronously; `resolveEnv` fetches them once, at
  * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; every pass in `KEEPER_PASSES` is scheduled below.)
  */
 
-import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
-import {
-  hasD1Binding,
-  maintenanceSkipNotice,
-} from '@vaipakam/lib/d1Maintenance';
-import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
-
-/**
- * Run one pass and report what it cost.
- *
- * The card's acceptance asks for per-pass CPU **attribution** rather
- * than a guess about which pass is expensive, and asks that the numbers
- * be recorded so nobody re-derives them. One line per pass per run is
- * what makes that a read of `wrangler tail` instead of an
- * investigation.
- *
- * This measures WALL time, and the distinction matters for how the
- * numbers are read: a Worker's limit is CPU time, which excludes
- * waiting on I/O, so a pass that spends its time on RPC round-trips
- * will look expensive here and cost little against the limit. Wall time
- * is still the right thing to log — it is available without a profiler,
- * it bounds CPU from above, and a pass that is cheap here cannot be the
- * one blowing the budget. Read it to EXCLUDE suspects; use the
- * dashboard's per-invocation CPU to confirm the culprit.
- */
-async function timedPass(name: string, run: () => Promise<void>): Promise<void> {
-  const startedAt = Date.now();
-  try {
-    await run();
-    // eslint-disable-next-line no-console
-    console.log(`[keeper] ${name} done in ${Date.now() - startedAt}ms`);
-  } catch (err) {
-    // Still reports its cost: a pass that fails slowly is a finding,
-    // and the old code logged the error without any notion of how long
-    // it had been running first.
-    // eslint-disable-next-line no-console
-    console.error(
-      `[keeper] ${name} pass failed after ${Date.now() - startedAt}ms:`,
-      err,
-    );
-  }
-}
+import type { WorkerEnv } from './env';
+import { runKeeperTick } from './tick';
 
 export default {
   async scheduled(
@@ -150,68 +111,8 @@ export default {
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
-    // #2239 — decline the whole tick when this build has no D1 binding.
-    //
-    // Every pass below reads or writes the database, so without this the tick
-    // would launch a dozen `waitUntil` continuations that each discover the
-    // refusal separately and each log a failure. One line, at the one place
-    // that can see the whole tick, is what an operator can actually read —
-    // and declining before `resolveEnv` also means a maintenance build stops
-    // fetching secrets it has no use for.
-    if (!hasD1Binding(env.DB)) {
-      // eslint-disable-next-line no-console
-      console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
-      return;
-    }
-
-    // T-078 — resolve the Secrets Store bindings once, here at the
-    // entry point; every scheduled pass gets the plain resolved env.
-    const resolved = await resolveEnv(env);
-
-    // #1896 — name the RESOLVED chain set, once per tick.
-    //
-    // A chain drops out silently: `readSecret` collapses an absent binding or
-    // a failing Secrets Store fetch to `undefined` (deliberately — see its
-    // comment), and `getChainConfigs` then skips any chain with no RPC. The
-    // passes log per-chain, so a dropped chain produces NO line at all, and
-    // absence is not something an operator can read off a tail.
-    //
-    // That matters most for the CPU validation this Worker is unscheduled
-    // for: a tick can end `ok` purely because it ran against fewer chains
-    // than production will once the binding recovers, and the work scales
-    // with the chain set. This line turns that into a positive assertion to
-    // check against the expected deployments (Codex #1924 r13).
-    const chains = getChainConfigs(resolved);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[keeper] chains resolved: ${chains.length} — ${
-        chains.map((c) => `${c.name}(${c.id})`).join(', ') || 'NONE'
-      }`,
-    );
-
-    // ONE loop over the declared table (#1896), rather than ten
-    // hand-written blocks. Each pass still gets its own `waitUntil` and
-    // its own `.catch`, so a transient failure in one cannot wedge the
-    // next — that property is now structural instead of being repeated
-    // ten times and relied upon to stay repeated.
-    //
-    // `controller.scheduledTime` is the tick's SCHEDULED epoch, not the
-    // moment it ran, so a late delivery cannot make a `% n` cadence
-    // skip its minute. It was previously ignored entirely (`_controller`).
-    const scheduledTimeMs: number | undefined = controller?.scheduledTime;
-
-    for (const pass of KEEPER_PASSES) {
-      const skip = cadenceSkipReason(pass, scheduledTimeMs);
-      if (skip !== null) {
-        // Legible, not silent — the contract `passIsArmed` established
-        // for arming (#1475), extended to cadence. A pass that is idle
-        // because it is not due and a pass that is idle because it is
-        // wedged must never look the same in `wrangler tail`.
-        // eslint-disable-next-line no-console
-        console.log(`[keeper] ${pass.name} skipped: ${skip}`);
-        continue;
-      }
-      ctx.waitUntil(timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
-    }
+    // The tick itself lives in ./tick so the always-on machine runtime
+    // (host/main.ts) runs the same one. Each pass gets its own `waitUntil`.
+    await runKeeperTick(env, controller?.scheduledTime, (_name, run) => ctx.waitUntil(run));
   },
 } satisfies ExportedHandler<WorkerEnv>;

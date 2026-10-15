@@ -61,7 +61,7 @@ describe('isDoIngestEnabled — both halves, or it is off', () => {
   });
 });
 
-describe('earlyRouteEnv — the one route that skips resolveEnv', () => {
+describe('earlyRouteEnv — the routes that skip resolveEnv', () => {
   // `/metrics/recycling` bypasses `resolveEnv` for latency. It used to get a
   // bare `raw as unknown as Env`, which type-checks and yields
   // `doIngestEnabled: undefined` — falsy, so the route always read "legacy",

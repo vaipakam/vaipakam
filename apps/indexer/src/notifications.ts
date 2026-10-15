@@ -987,7 +987,7 @@ export function notificationInsertStatement(
         WHERE EXISTS (
           SELECT 1 FROM loans
            WHERE chain_id = ? AND loan_id = ?
-             AND status = ? AND terminal_at IS NULL AND updated_at = ?
+             AND status = ? AND terminal_by_repair = 1 AND updated_at = ?
         )`,
     )
     .bind(
@@ -1016,13 +1016,17 @@ export function notificationInsertStatement(
  *
  * D1 offers no "did the previous statement in this batch match" primitive,
  * and splitting the batch would give back the atomicity round 3 established.
- * So the insert self-gates on the fingerprint the CAS writes: the status,
- * a NULL `terminal_at` — which only a repair leaves, since every event
- * handler stamps a real one — and this pass's own `updated_at` second. The
- * residual is stated rather than hidden: another writer would have to have
- * set the same status, left the terminal time unknown, and done it in the
- * same second. In that coincidence the notice is still substantively right;
- * only its provenance would be.
+ * So the insert self-gates on what the CAS writes: the status, this pass's
+ * own `updated_at` second, and `terminal_by_repair = 1` — an EXPLICIT marker
+ * only the repair's UPDATE sets, and every other terminal writer clears
+ * (#2476 r12, migration 0060). Earlier revisions inferred the repair from
+ * the row's shape — a NULL `terminal_at`, then a NULL `terminal_block` too —
+ * and each inference was broken by a legitimate writer producing the same
+ * shape (an event whose block time could not be read; the ledger heal
+ * settling with its provenance unconfirmed). A marker only the repair writes
+ * cannot be imitated that way. The residual is stated: a repair's own row,
+ * rewritten by the repair of another pass in the same second, would match —
+ * and that notice would still be a repair's.
  */
 export interface RepairFingerprint {
   chainId: number;

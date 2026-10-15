@@ -65,6 +65,7 @@ import {
   resolveD1Binding,
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
+import { handleIngestHealth } from './healthRoutes';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -480,10 +481,22 @@ export default {
     if (url.pathname === '/metrics/recycling') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') {
-        // The ONE route that skips `resolveEnv` — see `earlyRouteEnv` for
-        // why it is a named function rather than a cast (#2202 r1).
+        // Skips `resolveEnv` — see `earlyRouteEnv` for why it is a named
+        // function rather than a cast (#2202 r1).
         return handleRecyclingSeries(req, earlyRouteEnv(env));
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /health/ingest ─────────────────────────────────────────
+    // #2469 — whether scheduled ingest is advancing, and the schema gate's
+    // answer when it is not. Dispatched BEFORE `resolveEnv` for the reason
+    // a health signal must be: it reads D1 only, and it must still answer
+    // while the Secrets Store fan-out — one of the things that can stall
+    // ingest — is degraded.
+    if (url.pathname === '/health/ingest') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleIngestHealth(earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 

@@ -1,0 +1,13 @@
+# Checks main for a new keeper build every five minutes. A merge to main is
+# therefore the keeper's deploy, as it is for the Workers.
+
+[Unit]
+Description=Vaipakam keeper: check main for a new build
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

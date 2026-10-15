@@ -1,0 +1,60 @@
+# The keeper, as one long-running process (docs/ops/KeeperMachine.md).
+#
+# install.sh installs this unit but never enables or starts it. Enabling it
+# (`systemctl enable --now`) is the cutover in the runbook's §5, done only
+# once the env file is filled in and no other keeper runs. Logs:
+#   journalctl -u vaipakam-keeper -f
+#
+# The env file stays root-only (0600). LoadCredential hands a copy to this
+# service's dynamic user alone, so the file's mode never has to be loosened
+# and no long-lived account owns the signing key. `env -i` starts Node with an
+# EMPTY environment, so the file is the only source of settings: Node's
+# --env-file never overrides a variable already set, and a value inherited
+# from the service manager would otherwise win over the file.
+
+[Unit]
+Description=Vaipakam keeper
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/docs/ops/KeeperMachine.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+LoadCredential=keeper.env:/etc/vaipakam/keeper.env
+# Starts only when the units loaded are those of the release it would run:
+# update.sh writes kit-commit once a deploy's units and `current` agree, and
+# removes it while they may not (docs/ops/KeeperMachine.md §1). A refused
+# start retries every RestartSec and succeeds once the next deploy run has
+# put the release's own units back.
+ExecStartPre=/usr/bin/cmp /opt/vaipakam-keeper/kit-commit /opt/vaipakam-keeper/current/SOURCE_COMMIT
+ExecStart=/usr/bin/env -i /usr/local/bin/node --env-file=%d/keeper.env /opt/vaipakam-keeper/current/keeper-host.mjs
+
+# SIGTERM stops new ticks and lets the one in flight finish, which may be
+# waiting on a transaction receipt. systemd never escalates to SIGKILL on its
+# own: a kill could cut a pass off between sending and recording, and the
+# process's in-memory send ordering would be lost with it. A stop that hangs
+# is the operator's call (docs/ops/KeeperMachine.md §6), never a timer's.
+KillSignal=SIGTERM
+TimeoutStopSec=infinity
+
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# AF_UNIX: name resolution through systemd-resolved.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute is deliberately NOT set: V8's JIT needs W+X pages.
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,286 @@
+name: Indexer ingest health
+
+# WHY THIS EXISTS (#2469). A stalled indexer ingest is silent: when a build
+# was published ahead of migration 0056, the schema gate declined every
+# scheduled tick by name, in the Worker's logs, and the stall was found by a
+# stale screen. This probe reads the indexer's own `GET /health/ingest` from
+# outside the Worker every 15 minutes and FAILS when a watched chain's ingest
+# has stopped, when the schema gate is waiting on a migration (naming it), or
+# when the route cannot be read.
+#
+# HOW THE OPERATOR HEARS OF IT. Not from the failed run alone: GitHub sends
+# scheduled-workflow notifications only to the account that last edited the
+# cron line, and only if that account has Actions notifications on, so a red
+# run is not an alert anyone is guaranteed to receive (#2482 r1). The probe
+# therefore OPENS AN ISSUE — titled "Indexer ingest stalled", labelled
+# `infra`, assigned to INGEST_ALERT_ASSIGNEE — on the first failing run, adds
+# nothing while the same condition lasts — a CHANGED condition (another chain
+# stalls, the gate goes pending) is commented and notified again — and closes
+# it with a comment on the first healthy run. An issue assignment notifies by the assignee's own settings, and
+# the issue reaches the board through project-board-reconcile.yml's sweep (an
+# issue opened with GITHUB_TOKEN does not trigger add-to-project.yml). That
+# issue is also the alert STATE: the optional Telegram post below goes out
+# only when it is opened or its condition changes.
+#
+# Why a workflow and not a Worker: every Cloudflare cron trigger on the
+# account is spoken for (docs/ops/CloudflareCronSlots.md), and a watcher
+# inside the indexer could not report the indexer's own crash.
+#
+# GitHub runs scheduled workflows on a best-effort schedule, so a check can
+# start late at busy times. The STALENESS itself is measured by the indexer
+# against its own cursor, so a late run judges the same facts.
+#
+# The judging rules and their fixtures live in
+# .github/scripts/check-ingest-health.mjs (`--selftest`).
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *' # every 15 min, off the hour marks
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/scripts/check-ingest-health.mjs'
+      - '.github/workflows/ingest-health.yml'
+
+permissions:
+  contents: read # the alert job adds issues: write for itself
+
+# Probes and PR selftests in SEPARATE groups (#2482 r1): a concurrency group
+# keeps one pending run and replaces it with the next one queued, so a shared
+# group would let PR activity displace a pending production probe.
+concurrency:
+  group: ingest-health-${{ github.event_name == 'pull_request' && 'selftest' || 'probe' }}
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: node .github/scripts/check-ingest-health.mjs --selftest
+
+  probe:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # The job's own limit, well under GitHub's: the checker's fetch is capped
+    # at 20 s, so a probe that runs this long is hung, and the separate
+    # `alert` job below still runs after it is cancelled (#2482 r5).
+    timeout-minutes: 4
+    outputs:
+      verdict: ${{ steps.check.outcome }}
+      problems: ${{ steps.check.outputs.problems }}
+      keys: ${{ steps.check.outputs.keys }}
+    env:
+      INDEXER_ORIGIN: https://indexer.vaipakam.com
+      # Every chain the indexer still SCANS: Base Sepolia and Arbitrum Sepolia
+      # (in active testing, owner 2026-10-14) and BNB testnet, whose RPC is
+      # still configured live (apps/indexer/wrangler.jsonc) — a stall there
+      # is a stall, tested or not (#2482 r2). Sepolia is reported by the
+      # route but no longer scanned; its cursor stands still for good, so
+      # watching it would alert forever.
+      INGEST_CHAINS: '84532,421614,97'
+      # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
+      # old; 15 min of standing still is a stall, not a slow tick.
+      INGEST_STALE_SECONDS: '900'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - id: check
+        run: node .github/scripts/check-ingest-health.mjs
+      # The run summary says "not healthy" only for a VERDICT; a run that
+      # failed before one says the probe failed and ingest is unknown
+      # (#2482 r5).
+      - name: Summary
+        if: failure()
+        env:
+          VERDICT: ${{ steps.check.outcome }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+        run: |
+          if [ "$VERDICT" = "failure" ] && [ -n "$PROBLEMS" ]; then
+            {
+              echo "## Indexer ingest is NOT healthy"
+              echo
+              printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## The ingest probe failed before it could judge ingest"
+              echo
+              echo "Ingest itself is UNKNOWN (checker step: ${VERDICT:-not run}). See the log above."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Notification lives in its OWN job (#2482 r5): it runs after the probe
+  # whatever happened to it — failed, timed out, cancelled — so a hung probe
+  # cannot take the operator's alert down with it, and the two alert
+  # lifecycles below do not gate each other on a shared success().
+  alert:
+    needs: probe
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PROBE_RESULT: ${{ needs.probe.result }}
+      VERDICT: ${{ needs.probe.outputs.verdict }}
+      PROBLEMS: ${{ needs.probe.outputs.problems }}
+      # The stable condition (no ages): what tells a continuing stall from a
+      # changed one (#2482 r3).
+      KEYS: ${{ needs.probe.outputs.keys }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # Who the alert issue is assigned to — the operator who acts on it.
+      INGEST_ALERT_ASSIGNEE: vaipakam
+      STALL_TITLE: Indexer ingest stalled
+      # A run that failed WITHOUT a verdict (checkout, setup, the checker's
+      # own configuration, a timeout) says nothing about ingest; it gets its
+      # own issue so the operator is never told ingest is stalled when its
+      # state is unknown (#2482 r2).
+      BROKEN_TITLE: Indexer ingest probe not running
+    steps:
+      # Which of three states this run is in, decided once.
+      - id: state
+        run: |
+          if [ "$PROBE_RESULT" = "success" ]; then s=healthy
+          elif [ "$VERDICT" = "failure" ] && [ -n "$KEYS" ]; then s=stalled
+          else s=broken
+          fi
+          echo "state=$s" >> "$GITHUB_OUTPUT"
+          echo "probe job: $PROBE_RESULT, checker: ${VERDICT:-not run} → $s"
+      # The probe is running again as soon as it produced ANY verdict —
+      # healthy or not (#2482 r4).
+      #
+      # Every GitHub call below has its own deadline (`timeout`, well under
+      # the job's), and each step has one too, so an API that accepts the
+      # connection and never answers fails the step instead of running the
+      # job into its limit, where it would be cancelled before the Telegram
+      # fallback ran (#2506). The list is captured BEFORE the loop: a failing
+      # command substitution inside `for … in $(…)` expands to nothing and
+      # the loop succeeds, which would leave a recovered alert open on a
+      # green run; as an assignment, its failure fails the step (#2506).
+      - name: Close a recovered probe alert
+        if: steps.state.outputs.state != 'broken'
+        timeout-minutes: 1
+        run: |
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$BROKEN_TITLE\"" --json number,title \
+            -q ".[] | select(.title == \"$BROKEN_TITLE\") | .number")
+          for n in $open; do
+            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The probe is producing verdicts again: $RUN_URL"
+          done
+      # Keyed to the VERDICT alone, never to the step above (#2482 r5).
+      - name: Close a recovered stall alert
+        if: always() && steps.state.outputs.state == 'healthy'
+        timeout-minutes: 1
+        run: |
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$STALL_TITLE\"" --json number,title \
+            -q ".[] | select(.title == \"$STALL_TITLE\") | .number")
+          for n in $open; do
+            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+          done
+      # The operator path: one open issue per condition. Opened on the first
+      # failing run, left alone while the same condition lasts, commented and
+      # re-notified when it changes.
+      - id: alert
+        name: Alert issue
+        if: always() && steps.state.outputs.state != 'healthy'
+        # At most three GitHub calls of 30 s each; the Telegram step after it
+        # still fits in the job's limit when this one fails or times out.
+        timeout-minutes: 2
+        env:
+          STATE: ${{ steps.state.outputs.state }}
+        run: |
+          if [ "$STATE" = "stalled" ]; then
+            title="$STALL_TITLE"
+            {
+              echo "The scheduled ingest probe found the indexer's ingest is not healthy:"
+              echo
+              printf '%s\n' "$PROBLEMS" | sed 's/^/- /'
+            } > "$RUNNER_TEMP/alert.md"
+          else
+            title="$BROKEN_TITLE"
+            KEYS="probe-not-running"
+            {
+              echo "The scheduled ingest probe failed before it could judge ingest (probe job: $PROBE_RESULT, checker: ${VERDICT:-not run})."
+              echo "Ingest itself is UNKNOWN, not known to be stalled — the run log says what broke."
+            } > "$RUNNER_TEMP/alert.md"
+          fi
+          {
+            echo
+            echo "First failing run: $RUN_URL"
+            echo
+            echo "This issue closes itself on recovery. See .github/workflows/ingest-health.yml (#2469)."
+          } >> "$RUNNER_TEMP/alert.md"
+          echo "<!-- ingest-keys: $KEYS -->" >> "$RUNNER_TEMP/alert.md"
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$title\"" --json number,title \
+            -q "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -z "$open" ]; then
+            timeout 30 gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label infra \
+              --assignee "$INGEST_ALERT_ASSIGNEE" --body-file "$RUNNER_TEMP/alert.md"
+            echo "notify=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Already open: the LATEST recorded condition decides whether anything
+          # changed — read ONLY from what this workflow wrote (#2482 r7). The
+          # issue is public, so anyone can comment a marker; a forged one must
+          # not be able to suppress the next notification. The body counts
+          # only when the issue was opened by the workflow's bot, comments only
+          # when the bot wrote them.
+          last=$(timeout 30 gh issue view "$open" --repo "$GITHUB_REPOSITORY" --json author,body,comments \
+            -q '([if .author.login == "github-actions" or .author.login == "app/github-actions" then .body else empty end]
+                 + [.comments[] | select(.author.login == "github-actions" or .author.login == "app/github-actions") | .body])
+                | map(capture("<!-- ingest-keys: (?<k>[^ ]*) -->").k) | last // ""')
+          if [ "$last" = "$KEYS" ]; then
+            echo "#$open already records this condition ($KEYS) — not notifying again."
+            echo "notify=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          { echo "The condition changed (was: ${last:-unrecorded})."; echo; cat "$RUNNER_TEMP/alert.md"; } > "$RUNNER_TEMP/update.md"
+          timeout 30 gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/update.md"
+          echo "notify=true" >> "$GITHUB_OUTPUT"
+      # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
+      # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
+      # also post to the ops chat — when the alert issue is opened or its
+      # condition changes, AND as the fallback when the issue step itself
+      # failed (#2482 r3), so a GitHub API outage cannot leave the operator
+      # with only the unreliable red run.
+      - name: Telegram (optional)
+        if: always() && steps.state.outputs.state != 'healthy' && (steps.alert.outputs.notify == 'true' || steps.alert.outcome == 'failure')
+        env:
+          TG_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_OPS_CHAT_ID }}
+          STATE: ${{ steps.state.outputs.state }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+            echo "Telegram secrets not set — the alert issue is the notification."
+            exit 0
+          fi
+          if [ "$STATE" = "stalled" ]; then
+            text=$(printf 'Indexer ingest is NOT healthy\n\n%s\n\n%s' "$PROBLEMS" "$RUN_URL")
+          else
+            text=$(printf 'The indexer ingest probe failed before it could judge ingest (state unknown)\n\n%s' "$RUN_URL")
+          fi
+          # A non-2xx answer (revoked token, wrong chat, rate limit) fails the
+          # step: an undelivered alert must be visible (#2482 r3).
+          code=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=${text}" \
+            --data-urlencode "disable_web_page_preview=true")
+          echo "Telegram answered HTTP $code"
+          case "$code" in 2??) ;; *) echo "::error title=Ingest alert::Telegram did not accept the alert (HTTP $code)"; exit 1 ;; esac
+      # The alert job reports the probe's verdict as its own result, so the
+      # run stays red while ingest is unhealthy or unknown.
+      - name: Fail while not healthy
+        if: always() && steps.state.outputs.state != 'healthy'
+        run: exit 1

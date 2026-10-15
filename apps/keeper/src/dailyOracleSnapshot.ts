@@ -16,6 +16,7 @@
  * keeper isn't a single-point-of-failure, it's the predictable-
  * cadence default.
  */
+import { queuedWallet } from './submissionQueue';
 import {
   http,
   createPublicClient,
@@ -117,7 +118,8 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
     return;
   }
   const { account } = resolved;
-  const wallet = createWalletClient({ account, transport: http(chain.rpc) });
+  // Queued with the other passes' sends (#2486): same key, same chain.
+  const wallet = queuedWallet(createWalletClient({ account, transport: http(chain.rpc) }), chain.id);
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
 
   try {
