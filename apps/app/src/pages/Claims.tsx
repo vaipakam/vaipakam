@@ -15,7 +15,7 @@ import { useClaimPayoutText } from '../data/useClaimPayout';
 import { useHeldReward, useInteractionRewards } from '../data/rewards';
 import { inFinalNotice, useRewardExpiryCountdown } from '../data/rewardExpiry';
 import { useNowSec } from '../hooks/useNowSec';
-import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
+import { assertRewardRecipientNotBarredLive, useRewardBarCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -42,10 +42,12 @@ function RewardsCard() {
   const nowSec = useNowSec();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
-  // The claims refuse a barred wallet on chain as well (#1566); this gate keeps
-  // a flagged wallet from being handed a button that can only revert.
-  const sanctions = useSanctionsCheck();
-  const sanctionsClear = sanctions.ready && !sanctions.flagged;
+  // The claims refuse a BARRED wallet on chain (#1566): flagged now, or
+  // carrying a committed marker while the oracle is unreachable. This gate
+  // reads that same predicate (Codex #2489 r8), so a marked wallet in an outage
+  // is shown blocked rather than handed a button that can only revert.
+  const sanctions = useRewardBarCheck();
+  const sanctionsClear = sanctions.ready && !sanctions.barred;
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -54,17 +56,17 @@ function RewardsCard() {
   const [heldError, setHeldError] = useState<string | null>(null);
 
   /** The live re-read before a reward payout is signed (the button gate is a
-   *  cached read), FAIL-OPEN like every other preflight (Codex #2489 r4): both
-   *  claim entries screen on chain with the marker-aware rule, so an unmarked
-   *  wallet during an oracle outage is claim-executable there — and its expiry
-   *  clock keeps running — while a fail-closed preflight here would refuse it
-   *  for nothing. The contract is the authority; this only spares a doomed
-   *  transaction when the oracle answers flagged. */
+   *  cached read), FAIL-OPEN like every other preflight (Codex #2489 r4) and
+   *  reading the contract's own bar (r8): both claim entries screen on chain
+   *  with the marker-aware rule, so an unmarked wallet during an oracle outage
+   *  is claim-executable there — and its expiry clock keeps running — while a
+   *  marked one is refused; the preflight answers the same way. The contract is
+   *  the authority; this only spares a doomed transaction. */
   async function preflight() {
     if (!address || !walletChain || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
-    await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
+    await assertRewardRecipientNotBarredLive(publicClient, walletChain.diamondAddress, address);
   }
 
   async function claimHeld() {
@@ -87,12 +89,12 @@ function RewardsCard() {
   // screen has not answered, say "set aside" and nothing more.
   const heldCopy = !sanctions.ready
     ? copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))
-    : sanctions.flagged
+    : sanctions.barred
       ? `${copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldBlockedNote}`
       : `${copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldNote}`;
   const heldBlock =
     heldAmount > 0n ? (
-      <div data-testid="rewards-held" data-held-state={!sanctions.ready ? 'unknown' : sanctions.flagged ? 'blocked' : 'ready'} style={{ marginTop: 12 }}>
+      <div data-testid="rewards-held" data-held-state={!sanctions.ready ? 'unknown' : sanctions.barred ? 'blocked' : 'ready'} style={{ marginTop: 12 }}>
         <p>{heldCopy}</p>
         {heldError ? (
           <div className="banner banner-danger" role="alert">

@@ -7,10 +7,12 @@
  * claimable for the full horizon plus the notice period returns to the
  * rewards programme. The contract exposes, per reward entry, a forward
  * estimate of the EARLIEST removal (`getRewardEntryExpiry`), deliberately
- * optimistic: it assumes the reward stays claimable from now on, so the real
- * removal can only come later (an outage or a sanctions bar pauses the clock;
- * a forfeited entry reads zero and shows no countdown). The card shows the
- * soonest such date, so it only ever urges the owner to claim sooner.
+ * optimistic: it assumes the reward stays claimable from now on, so time the
+ * reward cannot be claimed (an outage, a sanctions bar) moves the real removal
+ * LATER than the estimate; a forfeited entry reads zero and shows no countdown.
+ * The one thing that can move it EARLIER is governance shortening the claim
+ * horizon — the estimate follows the new horizon at once, and the copy says
+ * so (Codex #2489 r8). The card shows the soonest such date.
  *
  * Dark until the horizon knob is set: while `getRewardClaimHorizonDays()` is
  * zero no entry can expire and nothing renders.
@@ -107,15 +109,29 @@ export function useRewardExpiryCountdown() {
     queryFn: async (): Promise<RewardExpiryCountdown> => {
       const client = publicClient!;
       const diamond = readChain.diamondAddress;
+      // ONLY the horizon read may answer "dark" (Codex #2489 r8): a revert /
+      // zero data there means the horizon views are absent on this chain —
+      // the quiet dark state, exactly as the rewards card treats an absent
+      // rewards facet. Once a non-zero horizon has been read, rewards on this
+      // chain CAN be reaped, so every later failure — the paged index missing
+      // on a lens not yet refreshed, a reverting page, a failed expiry read —
+      // is an ERROR the card shows, never a date hidden as if governance had
+      // switched expiry off. A transport failure on the horizon read rethrows.
+      let horizonDays: number;
       try {
-        const horizonDays = Number(
+        horizonDays = Number(
           await client.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getRewardClaimHorizonDays',
           }),
         );
-        if (horizonDays === 0) return { horizonDays: 0, soonest: null };
+      } catch (err) {
+        if (isAbsentViewError(err)) return { horizonDays: 0, soonest: null };
+        throw err;
+      }
+      if (horizonDays === 0) return { horizonDays: 0, soonest: null };
+      {
         // One block for the whole scan — see readAllRewardEntryIds.
         const blockNumber = await client.getBlockNumber();
         const ids = await readAllRewardEntryIds(
@@ -156,17 +172,17 @@ export function useRewardExpiryCountdown() {
           });
         }
         return { horizonDays, soonest: soonestRewardExpiry(entries) };
-      } catch (err) {
-        // A revert / zero data means the horizon views are absent on this
-        // chain: the quiet dark state, exactly as the rewards card treats an
-        // absent rewards facet. A transport failure rethrows.
-        const isRevert =
-          err instanceof BaseError &&
-          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
-            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
-        if (isRevert) return { horizonDays: 0, soonest: null };
-        throw err;
       }
     },
   });
+}
+
+/** A revert or zero data from a view: the selector is not routed on this
+ *  Diamond (or the view reverted), as opposed to a transport failure. */
+export function isAbsentViewError(err: unknown): boolean {
+  return (
+    err instanceof BaseError &&
+    (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+      err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null)
+  );
 }

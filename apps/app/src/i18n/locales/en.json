@@ -2449,7 +2449,7 @@
       "claimHeld": "Claim set-aside rewards",
       "heldSetAside": "{{amount}} VPFI of your rewards is set aside for you.",
       "heldBlockedNote": "It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.",
-      "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.",
+      "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.",
       "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.",
       "expiryUnavailable": "Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds."
     },

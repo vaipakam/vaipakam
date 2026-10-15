@@ -32,7 +32,7 @@ import type { ClaimableLoan } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
 import { useClaimPayoutText } from '../data/useClaimPayout';
 import { useVpfi } from '../data/vpfi';
-import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
+import { assertRewardRecipientNotBarredLive, useRewardBarCheck } from '../data/sanctions';
 import {
   buildClaimAllItems,
   defaultSelectedKeys,
@@ -57,10 +57,12 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
 
   const rewards = useInteractionRewards();
   const vpfi = useVpfi();
-  // Cached screen for the disabled state; the live fail-closed re-read
-  // below is the load-bearing gate at submit time.
-  const sanctions = useSanctionsCheck();
-  const sanctionsClear = sanctions.ready && !sanctions.flagged;
+  // Cached screen for the disabled state — the contract's own BAR (flagged,
+  // or marked while the oracle is unreachable; Codex #2489 r8), since the
+  // batch's reward leg refuses exactly that; the live re-read below answers
+  // the same way at submit time.
+  const sanctions = useRewardBarCheck();
+  const sanctionsClear = sanctions.ready && !sanctions.barred;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,12 +138,13 @@ export function ClaimAllCard({ loans }: { loans: ClaimableLoan[] }) {
         throw new Error(copy.wallet.connectFirst);
       }
       // The batch can include claimInteractionRewards (and fund-out
-      // claim/withdraw paths). Re-read the oracle live, FAIL-OPEN (Codex
-      // #2489 r4): every leg screens on chain — the reward claim with the
+      // claim/withdraw paths). Re-read the BAR live, FAIL-OPEN (Codex #2489
+      // r4, r8): every leg screens on chain — the reward claim with the
       // marker-aware rule since #1566 — so an unreadable oracle does not block
-      // an unmarked wallet here while the contract would pay it. The re-read
-      // only spares a doomed signature when the oracle answers flagged.
-      await assertWalletNotSanctionedLive(publicClient, walletChain.diamondAddress, address);
+      // an unmarked wallet here while the contract would pay it, and a marked
+      // wallet is refused here as it would be there. The re-read only spares a
+      // doomed signature.
+      await assertRewardRecipientNotBarredLive(publicClient, walletChain.diamondAddress, address);
       const chosen = items.filter((i) => isSelected(i.key));
       if (chosen.length === 0) return;
       const calls = encodeClaimAllCalls(chosen);

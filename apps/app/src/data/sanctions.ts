@@ -64,6 +64,62 @@ export function useSanctionsCheck(): SanctionsState {
   return { flagged: data?.flagged ?? false, ready: isFetched, reasons: data?.reasons ?? [] };
 }
 
+/** The REWARD claims' bar (#1566): `ProfileFacet.isRecipientBarred(who)` —
+ *  flagged now, OR carrying a committed flag (the #1123 marker) while the
+ *  oracle is unreachable. Both reward claim entries refuse exactly this
+ *  predicate, so the reward surfaces read it rather than the plain oracle
+ *  answer (Codex #2489 r8): during an outage the plain read falls open for a
+ *  MARKED wallet whose claim reverts deterministically, and the set-aside
+ *  balance was described as ready. Still fail-open for an UNMARKED wallet in
+ *  an outage, exactly as the contract is. */
+export async function readRecipientBarred(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  wallet: `0x${string}`,
+): Promise<boolean> {
+  return (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'isRecipientBarred',
+    args: [wallet],
+  })) as boolean;
+}
+
+/** The cached reward-bar check for the reward surfaces (same cadence and
+ *  error policy as {@link useSanctionsCheck}: a failed refresh keeps its last
+ *  answer, only a never-answered check falls open). */
+export function useRewardBarCheck(): { barred: boolean; ready: boolean } {
+  const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data, isFetched } = useQuery({
+    queryKey: ['rewardBar', readChain.chainId, address?.toLowerCase()],
+    enabled: Boolean(address) && Boolean(publicClient),
+    staleTime: SANCTIONS_REFRESH_MS,
+    refetchInterval: SANCTIONS_REFRESH_MS,
+    retry: false,
+    queryFn: () => readRecipientBarred(publicClient!, readChain.diamondAddress, address!),
+  });
+  if (!address) return { barred: false, ready: true };
+  return { barred: data ?? false, ready: isFetched };
+}
+
+/** LIVE submit-time re-read of the reward bar, fail-open on a read error
+ *  (the contract screens the claim itself); throws the user-facing message
+ *  when barred. */
+export async function assertRewardRecipientNotBarredLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  wallet: `0x${string}`,
+): Promise<void> {
+  let barred = false;
+  try {
+    barred = await readRecipientBarred(publicClient, diamondAddress, wallet);
+  } catch {
+    barred = false; // fail-open: the contract still screens this path
+  }
+  if (barred) throw new Error(copy.errors.sanctionsBlocked);
+}
+
 /** LIVE submit-time re-read. The hook above re-reads every
  *  {@link SANCTIONS_REFRESH_MS} — a wallet flagged inside that window would
  *  still see enabled buttons

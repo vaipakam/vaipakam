@@ -2342,7 +2342,7 @@
       "claimHeld": "Retirer les récompenses mises de côté",
       "heldSetAside": "{{amount}} VPFI de vos récompenses sont mis de côté pour vous.",
       "heldBlockedNote": "Ils ne peuvent pas être réclamés tant que ce portefeuille est signalé ; ils deviendront réclamables une fois le signalement levé.",
-      "expiryCountdown": "Réclamez avant le {{date}} : une récompense laissée non réclamée pendant toute sa période de réclamation retourne au programme de récompenses. La date ne peut que reculer : le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas.",
+      "expiryCountdown": "Réclamez avant le {{date}} : une récompense laissée non réclamée pendant toute sa période de réclamation retourne au programme de récompenses. Le temps pendant lequel votre récompense ne peut pas être réclamée repousse la date ; une modification de la période de réclamation peut l’avancer.",
       "expiryFinalNotice": "Dernier avis : réclamez avant le {{date}}, sinon cette récompense retournera au programme de récompenses. Le temps pendant lequel votre récompense ne peut pas être réclamée ne compte pas pour cette date.",
       "expiryUnavailable": "Impossible de vérifier l’échéance de réclamation pour le moment. Vos récompenses ne sont pas affectées ; la date s’affichera de nouveau dès que la vérification aboutira."
     },

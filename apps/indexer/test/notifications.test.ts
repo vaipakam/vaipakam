@@ -486,18 +486,30 @@ describe('materializeNotifications — RL-3 owner rows (over the migrated schema
     expect(JSON.parse(rows[0].data_json)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
   });
 
-  it('a failed loan-party lookup in the same scan does not cost the owner their notice', async () => {
+  it('a failed loan-party lookup writes the owner row, then FAILS the scan so the watermark holds (Codex #2489 r8)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
-    h.db.exec('DROP TABLE loans'); // the party lookup now throws → null → loan rows skipped
-    await materializeNotifications(
-      h.d1 as never,
-      84532,
-      [log('LoanInitiated', 7), rewardLog('RewardEntryExpiryBegun', 9n)],
-      new Map(),
-      999,
-    );
+    h.db.exec('DROP TABLE loans'); // the party lookup now throws → null → the loan rows cannot be planned
+    // Mutation: resolve anyway → the caller stamps the watermark past a scan
+    // whose one-shot loan rows (a match, a close-out) were never written.
+    await expect(
+      materializeNotifications(
+        h.d1 as never,
+        84532,
+        [log('LoanInitiated', 7), rewardLog('RewardEntryExpiryBegun', 9n)],
+        new Map(),
+        999,
+      ),
+    ).rejects.toThrow(/loan-party lookup failed/);
     const kinds = (h.db.prepare('SELECT kind FROM notifications').all() as Array<{ kind: string }>).map((r) => r.kind);
-    expect(kinds).toEqual(['reward_expired']);
+    expect(kinds, 'the owner row still landed before the failure').toEqual(['reward_expired']);
+  });
+
+  it('a scan with no loan events never fails on the loan path', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    h.db.exec('DROP TABLE loans');
+    await expect(
+      materializeNotifications(h.d1 as never, 84532, [rewardLog('RewardEntryExpiryBegun', 9n)], new Map(), 999),
+    ).resolves.toBe(1);
   });
 });
 

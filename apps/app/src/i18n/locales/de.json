@@ -2342,7 +2342,7 @@
       "claimHeld": "Zurückgelegte Belohnungen beanspruchen",
       "heldSetAside": "{{amount}} VPFI deiner Belohnungen sind für dich zurückgestellt.",
       "heldBlockedNote": "Sie können nicht angefordert werden, solange diese Wallet markiert ist; sobald die Markierung aufgehoben ist, sind sie anforderbar.",
-      "expiryCountdown": "Fordere vor dem {{date}} an: Eine Belohnung, die während ihres gesamten Anforderungszeitraums nicht angefordert wird, geht an das Belohnungsprogramm zurück. Das Datum kann sich nur nach hinten verschieben – Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht.",
+      "expiryCountdown": "Fordere vor dem {{date}} an: Eine Belohnung, die während ihres gesamten Anforderungszeitraums nicht angefordert wird, fließt zurück ins Belohnungsprogramm. Zeit, in der deine Belohnung nicht angefordert werden kann, verschiebt das Datum nach hinten; eine Änderung des Anforderungszeitraums kann es vorziehen.",
       "expiryFinalNotice": "Letzter Hinweis: Fordere vor dem {{date}} an, sonst geht diese Belohnung an das Belohnungsprogramm zurück. Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht zu diesem Datum.",
       "expiryUnavailable": "Die Anforderungsfrist konnte gerade nicht geprüft werden. Deine Belohnungen sind davon nicht betroffen; das Datum erscheint wieder, sobald die Prüfung gelingt."
     },

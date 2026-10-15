@@ -42,6 +42,10 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
  *                                                     from the signer's own VPFI)
  *    recovery  `recovered − redispatched`          — REWARD_CUSTODY_RELOCATE_RECOVERY / REWARD_CUSTODY_FUND_RECOVERY
  *    overage   `strandedReturnOverage`             — REWARD_CUSTODY_RELOCATE_OVERAGE / REWARD_CUSTODY_FUND_OVERAGE
+ *    held      `rewardSanctionsHeldTotal`          — REWARD_CUSTODY_RELOCATE_SANCTIONS_HELD / REWARD_CUSTODY_FUND_SANCTIONS_HELD
+ *                                                     (the reward set apart for flagged wallets before activation;
+ *                                                     it rests in the Diamond's balance like the bucket — #1566,
+ *                                                     Codex #2489 r8)
  *    live      Mirror only: `received − paid`      — REWARD_CUSTODY_FUND_LIVE_FRESH (never a relocation: an imported
  *                                                     gap is history, not money), OR
  *                                                     REWARD_CUSTODY_WRITE_DOWN_MIRROR_GAP=true to write `received`
@@ -92,10 +96,12 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         uint256 bucket;
         uint256 position;
         uint256 overage;
+        uint256 heldTotal;
         uint256 rowLive;
         uint256 rowRecycled;
         uint256 rowRecovery;
         uint256 rowOverage;
+        uint256 rowHeld;
     }
 
     struct Answers {
@@ -108,6 +114,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         uint256 relocRecovery;
         uint256 fundOverage;
         uint256 relocOverage;
+        uint256 fundHeld;
+        uint256 relocHeld;
         string provenance;
     }
 
@@ -135,6 +143,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         f.rowRecycled = c.rewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled);
         f.rowRecovery = c.rewardCustodyRow(LibVaipakam.RewardCustodyRow.Recovery);
         f.rowOverage = c.rewardCustodyRow(LibVaipakam.RewardCustodyRow.Overage);
+        (, f.heldTotal) = InteractionRewardsLensFacet(diamond).getSanctionsHeldReward(address(0));
+        f.rowHeld = c.rewardCustodyRow(LibVaipakam.RewardCustodyRow.SanctionsHeld);
     }
 
     function _answers() internal view returns (Answers memory a) {
@@ -147,6 +157,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         a.relocRecovery = vm.envOr("REWARD_CUSTODY_RELOCATE_RECOVERY", uint256(0));
         a.fundOverage = vm.envOr("REWARD_CUSTODY_FUND_OVERAGE", uint256(0));
         a.relocOverage = vm.envOr("REWARD_CUSTODY_RELOCATE_OVERAGE", uint256(0));
+        a.fundHeld = vm.envOr("REWARD_CUSTODY_FUND_SANCTIONS_HELD", uint256(0));
+        a.relocHeld = vm.envOr("REWARD_CUSTODY_RELOCATE_SANCTIONS_HELD", uint256(0));
         a.provenance = vm.envOr("REWARD_CUSTODY_PROVENANCE", string(""));
     }
 
@@ -242,7 +254,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         _requireRowAnswer("recycled", f.bucket, f.rowRecycled, a.fundRecycled, a.relocRecycled, "REWARD_CUSTODY_FUND_RECYCLED", "REWARD_CUSTODY_RELOCATE_RECYCLED");
         _requireRowAnswer("recovery", f.position, f.rowRecovery, a.fundRecovery, a.relocRecovery, "REWARD_CUSTODY_FUND_RECOVERY", "REWARD_CUSTODY_RELOCATE_RECOVERY");
         _requireRowAnswer("overage", f.overage, f.rowOverage, a.fundOverage, a.relocOverage, "REWARD_CUSTODY_FUND_OVERAGE", "REWARD_CUSTODY_RELOCATE_OVERAGE");
-        if (a.relocRecycled + a.relocRecovery + a.relocOverage != 0) {
+        _requireRowAnswer("sanctions-held", f.heldTotal, f.rowHeld, a.fundHeld, a.relocHeld, "REWARD_CUSTODY_FUND_SANCTIONS_HELD", "REWARD_CUSTODY_RELOCATE_SANCTIONS_HELD");
+        if (a.relocRecycled + a.relocRecovery + a.relocOverage + a.relocHeld != 0) {
             require(
                 bytes(a.provenance).length != 0,
                 "ActivateRewardCustody: a relocation out of the Diamond's balance needs REWARD_CUSTODY_PROVENANCE (the census / ceremony reference proving the inventory is this ledger's) -- slice 0's provenance bar"
@@ -309,7 +322,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
     }
 
     function _totalFunding(Answers memory a) internal pure returns (uint256) {
-        return a.fundLive + a.fundRecycled + a.fundRecovery + a.fundOverage;
+        return a.fundLive + a.fundRecycled + a.fundRecovery + a.fundOverage + a.fundHeld;
     }
 
     // ─── Direct ─────────────────────────────────────────────────────────────
@@ -367,6 +380,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         if (a.relocRecovery != 0) c.relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recovery, a.relocRecovery);
         if (a.fundOverage != 0) c.fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.Overage, a.fundOverage);
         if (a.relocOverage != 0) c.relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.Overage, a.relocOverage);
+        if (a.fundHeld != 0) c.fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.SanctionsHeld, a.fundHeld);
+        if (a.relocHeld != 0) c.relocateRewardCustodyRow(LibVaipakam.RewardCustodyRow.SanctionsHeld, a.relocHeld);
     }
 
     // ─── Check / stage / record ─────────────────────────────────────────────
@@ -414,6 +429,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         _stageRowCall(obj, "step3e_timelock_relocateRewardCustodyRow_recovery", LibVaipakam.RewardCustodyRow.Recovery, a.relocRecovery, true);
         _stageRowCall(obj, "step3f_timelock_fundRewardCustodyRow_overage", LibVaipakam.RewardCustodyRow.Overage, a.fundOverage, false);
         _stageRowCall(obj, "step3g_timelock_relocateRewardCustodyRow_overage", LibVaipakam.RewardCustodyRow.Overage, a.relocOverage, true);
+        _stageRowCall(obj, "step3h_timelock_fundRewardCustodyRow_sanctionsHeld", LibVaipakam.RewardCustodyRow.SanctionsHeld, a.fundHeld, false);
+        _stageRowCall(obj, "step3i_timelock_relocateRewardCustodyRow_sanctionsHeld", LibVaipakam.RewardCustodyRow.SanctionsHeld, a.relocHeld, true);
         bytes memory activateCall = abi.encodeCall(RewardCustodyFacet.activateRewardCustody, (a.pauseEpoch + 1, a.writeDown));
         console.log("  4. Timelock  activateRewardCustody(epoch + 1, writeDown)");
         console.logBytes(activateCall);
@@ -538,11 +555,13 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         vm.serializeUint(obj, "rowRecycled", f.rowRecycled);
         vm.serializeUint(obj, "rowRecovery", f.rowRecovery);
         vm.serializeUint(obj, "rowOverage", f.rowOverage);
+        vm.serializeUint(obj, "rowSanctionsHeld", f.rowHeld);
         vm.serializeUint(obj, "received", f.received);
         vm.serializeUint(obj, "paid", f.paid);
         vm.serializeUint(obj, "bucket", f.bucket);
         vm.serializeUint(obj, "recoveryPosition", f.position);
         vm.serializeUint(obj, "overage", f.overage);
+        vm.serializeUint(obj, "sanctionsHeldTotal", f.heldTotal);
         vm.serializeUint(obj, "pauseEpochStated", a.pauseEpoch);
         vm.serializeBool(obj, "writeDownMirrorGap", a.writeDown);
         vm.serializeUint(obj, "fundLiveFresh", a.fundLive);
@@ -552,6 +571,8 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         vm.serializeUint(obj, "relocateRecovery", a.relocRecovery);
         vm.serializeUint(obj, "fundOverage", a.fundOverage);
         vm.serializeUint(obj, "relocateOverage", a.relocOverage);
+        vm.serializeUint(obj, "fundSanctionsHeld", a.fundHeld);
+        vm.serializeUint(obj, "relocateSanctionsHeld", a.relocHeld);
         json = vm.serializeString(obj, "provenance", a.provenance);
     }
 
@@ -564,5 +585,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         console.log("  fund live / recycled / recovery / overage:", a.fundLive, a.fundRecycled, a.fundRecovery);
         console.log("                                    overage:", a.fundOverage);
         console.log("  relocate recycled / recovery / overage:", a.relocRecycled, a.relocRecovery, a.relocOverage);
+        console.log("sanctions-held total / row / fund / relocate:", f.heldTotal, f.rowHeld, a.fundHeld);
+        console.log("                                     relocate:", a.relocHeld);
     }
 }

@@ -1641,9 +1641,11 @@ contract RewardRemittanceFacet is
     ///         the nonce) up to the record shape this facet keeps (Codex #2489
     ///         r7): a RELEASED reservation gets its stranded record from history
     ///         and, if its consumption is trusted, resolves it; a FINALIZED one
-    ///         books its recycled share for its destination — acknowledged
-    ///         (the declared share: a VPFI delivery is never short, and history
-    ///         keeps no received figure) or force-finalized. Permissionless and
+    ///         — or a RELEASED one acknowledged as consumed, the late delivery
+    ///         the live ack path books — books its recycled share for its
+    ///         destination — acknowledged (the declared share: a VPFI delivery
+    ///         is never short, and history keeps no received figure) or
+    ///         force-finalized. Permissionless and
     ///         idempotent: every write is of a fact the record lacks, derived
     ///         from the record itself, so anyone may run it at any time and a
     ///         second pass writes nothing. Until it has covered `1..nonce`,

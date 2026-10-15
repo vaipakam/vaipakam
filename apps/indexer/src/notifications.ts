@@ -479,9 +479,12 @@ export function planNotifications(
  * notice, a loan's close-out) has no later event to re-derive it from in a
  * scan, so swallowing the failure here lost it for good. The watermark's
  * owner replays the gap from the archive instead
- * ({@link replayNotificationsFromArchive}). A failed loan-PARTY lookup is
- * still fail-open inside: that is a read, and the owner rows never depend on
- * it.
+ * ({@link replayNotificationsFromArchive}). A failed loan-PARTY lookup
+ * propagates the same way (Codex #2489 r8) — AFTER the owner rows are written,
+ * which never depend on it: the loan rows it would have planned (a close-out,
+ * a default, a match) are one-shot too, so a scan that silently omitted them
+ * and let the watermark pass lost them for good. The watermark holds and the
+ * archive replays the scan; INSERT OR IGNORE keeps the owner rows single.
  */
 export async function materializeNotifications(
   db: D1Database,
@@ -499,14 +502,22 @@ export async function materializeNotifications(
   const loanIds = [
     ...new Set(worthy.flatMap((l) => loanIdsOf(l.eventName, l.args))),
   ];
+  let partiesFailed = false;
   if (loanIds.length > 0) {
     const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
     if (partiesByLoan !== null) {
       rows.push(...planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec));
+    } else {
+      partiesFailed = true;
     }
   }
-  if (rows.length === 0) return 0;
-  return insertNotificationRows(db, rows);
+  const inserted = rows.length === 0 ? 0 : await insertNotificationRows(db, rows);
+  if (partiesFailed) {
+    throw new Error(
+      `loan-party lookup failed for ${loanIds.length} loan(s): the loan rows were not planned — the notified watermark holds and the archive replays this scan`,
+    );
+  }
+  return inserted;
 }
 
 // ─── #2489 r3 — the `notified` watermark means what it says ──────────────────

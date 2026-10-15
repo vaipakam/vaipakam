@@ -1682,11 +1682,17 @@ library LibVpfiRecycle {
     }
 
     /// @notice Whether the history rule would still book a reservation's
-    ///         recycled share for its destination: FINALIZED (status 2),
-    ///         not yet booked, and either acknowledged or force-finalized.
-    ///         A finalized row that moved no value books nothing.
+    ///         recycled share for its destination, not yet booked and either:
+    ///         FINALIZED (status 2) and acknowledged or force-finalized; or
+    ///         RELEASED (status 3) and acknowledged as consumed — the mirror
+    ///         credited it after all, and the live late-ack path books exactly
+    ///         that (Codex #2489 r8: leaving these out kept every pre-upgrade
+    ///         late delivery as an unreported cushion). A row that moved no
+    ///         value, or a released row never consumed, books nothing.
     function recycledBookingPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
-        return r.status == 2 && r.recycledBooked == 0 && (r.consumedAcked || r.forcedFinalized);
+        if (r.recycledBooked != 0) return false;
+        if (r.status == 2) return r.consumedAcked || r.forcedFinalized;
+        return r.status == 3 && r.consumedAcked;
     }
 
     /// @notice Write a RELEASED reservation's stranded record from its history if

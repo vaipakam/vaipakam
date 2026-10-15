@@ -2013,9 +2013,11 @@ is the borrower's own money.
 - Once the reward claim window is in force, the interaction-rewards card states
   the soonest date by which an unclaimed reward must be claimed before it
   returns to the rewards programme. The date is the earliest the platform could
-  act — it assumes the reward stays claimable from now on — so it can only move
-  later, and the card says so; inside the final notice period the card switches
-  to a final-notice warning. The card shows no date while the claim window is
+  act under the CURRENT claim window — it assumes the reward stays claimable
+  from now on — so time the reward cannot be claimed moves it later, while a
+  change to the claim window itself can replace it with an earlier date; the
+  card says both. Inside the final notice period the card switches to a
+  final-notice warning. The card shows no date while the claim window is
   off. It reads every one of the wallet's rewards, however many, all as of one
   moment; when it cannot read every reward's date it says the check could not
   be completed, rather than showing a date that might be later than the real
@@ -2025,7 +2027,11 @@ is the borrower's own money.
   such a balance is ready. The balance is described as READY only when the
   wallet is clear to claim: while the wallet is flagged it is described as set
   aside and claimable once the flag is lifted, and while the screen has not
-  answered it is described as set aside and nothing more. When the card cannot preview the wallet's whole claim (for
+  answered it is described as set aside and nothing more. The reward claim
+  gates read the same bar the platform enforces — flagged now, or carrying a
+  committed flag while the sanctions oracle is unreachable — so a wallet the
+  platform would refuse is shown blocked, while an unflagged wallet during an
+  outage stays able to claim. When the card cannot preview the wallet's whole claim (for
   example because the claim cannot complete), it still shows the set-aside
   balance and offers a claim that pays exactly that balance. When the whole
   claim can be previewed, its figure already includes the set-aside balance,

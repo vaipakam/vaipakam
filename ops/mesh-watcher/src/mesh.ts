@@ -170,9 +170,14 @@ export function remittedRecycledUnavailableGap(
 }
 
 /** How many reservation ids one `getRemitHistoryPending` call scans (a view;
- *  bounded by the RPC's call gas, not by a transaction). A history longer than
- *  this is read as pending until the view is paged — see the gap below. */
+ *  bounded by the RPC's call gas, not by a transaction). The whole history is
+ *  PAGED through in these steps ({@link readRemitHistoryPending}), up to
+ *  {@link REMIT_HISTORY_MAX_PAGES} of them per tick. */
 export const REMIT_HISTORY_SCAN = 4_000n;
+/** Pages per tick, so a tick's work stays bounded: 64 × 4,000 = 256,000
+ *  reservations — far beyond any deployment's history; past it the share is
+ *  read as pending and the gap says the history outgrew the scan. */
+export const REMIT_HISTORY_MAX_PAGES = 64;
 
 /**
  * Codex #2489 r7 — whether Base's acknowledged recycled share is NOT yet
@@ -185,8 +190,31 @@ export const REMIT_HISTORY_SCAN = 4_000n;
  * Pending bookings anywhere, or a history the one scan did not reach, hide it.
  * Pure, for the unit test.
  */
-export function remitHistoryHidesAcked(bookingPending: bigint, nonce: bigint, scanned: bigint): boolean {
-  return bookingPending > 0n || nonce > scanned;
+export function remitHistoryHidesAcked(bookingPending: bigint, covered: boolean): boolean {
+  return bookingPending > 0n || !covered;
+}
+
+/** One tick's read of the whole history: pages `1..nonce` in
+ *  {@link REMIT_HISTORY_SCAN} steps (the first page also reports the nonce),
+ *  summing the unbooked count, and says whether the pages reached the end
+ *  (Codex #2489 r8: a single fixed page read a long-lived history as pending
+ *  for ever). `read` is the view call for one page. */
+export async function readRemitHistoryPending(
+  read: (fromId: bigint, count: bigint) => Promise<readonly [bigint, bigint, bigint]>,
+  scan: bigint = REMIT_HISTORY_SCAN,
+  maxPages: number = REMIT_HISTORY_MAX_PAGES,
+): Promise<{ bookingPending: bigint; nonce: bigint; covered: boolean }> {
+  let bookingPending = 0n;
+  let nonce = 0n;
+  let from = 1n;
+  for (let page = 0; page < maxPages; page++) {
+    const [, pending, n] = await read(from, scan);
+    bookingPending += pending;
+    nonce = n;
+    from += scan;
+    if (from > nonce) return { bookingPending, nonce, covered: true };
+  }
+  return { bookingPending, nonce, covered: false };
 }
 
 /** The gap for a share read but not comparable ({@link remitHistoryHidesAcked}). */
@@ -194,7 +222,7 @@ export function remitHistoryPendingGap(
   chainId: number,
   bookingPending: bigint,
   nonce: bigint,
-  scanned: bigint,
+  covered: boolean,
 ): CoverageGap {
   return {
     chainId,
@@ -203,10 +231,10 @@ export function remitHistoryPendingGap(
     detail:
       `Base's acknowledged recycled share for chain ${chainId} is not comparable yet, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain.\n\n` +
       (bookingPending > 0n
-        ? `${bookingPending} finalized reservation(s) in 1..${nonce > scanned ? scanned : nonce} have no booking: run RewardRemittanceFacet.backfillRemitHistory over 1..${nonce} (permissionless, idempotent, chunk as needed) and this gap closes on the next tick.\n\n`
+        ? `${bookingPending} reservation(s) in 1..${nonce} have no booking: run RewardRemittanceFacet.backfillRemitHistory over 1..${nonce} (permissionless, idempotent, chunk as needed) and this gap closes on the next tick.\n\n`
         : '') +
-      (nonce > scanned
-        ? `The reservation history (${nonce}) is longer than one view call scans (${scanned}); the share is read as pending until the scan covers it.\n\n`
+      (!covered
+        ? `The reservation history (${nonce}) outgrew what one tick pages through (${REMIT_HISTORY_MAX_PAGES} × ${REMIT_HISTORY_SCAN}); raise the page budget — the share is read as pending until a tick covers it.\n\n`
         : '') +
       `Until then every pre-upgrade delivery the mirror relocated is a cushion inside which an arrival credited as absorption would go unseen.`,
   };
@@ -310,17 +338,19 @@ async function readBaseBooks(
   // booked; otherwise read as UNKNOWN (see remitHistoryHidesAcked).
   if (recycledAcked !== undefined) {
     try {
-      const pending = await readView<readonly [bigint, bigint, bigint]>(
-        canonical.client,
-        canonical.diamond,
-        'getRemitHistoryPending',
-        [1n, REMIT_HISTORY_SCAN],
-        blockNumber,
-        REWARD_REMITTANCE_LENS_ABI,
+      const h = await readRemitHistoryPending((fromId, count) =>
+        readView<readonly [bigint, bigint, bigint]>(
+          canonical.client,
+          canonical.diamond,
+          'getRemitHistoryPending',
+          [fromId, count],
+          blockNumber,
+          REWARD_REMITTANCE_LENS_ABI,
+        ),
       );
-      if (remitHistoryHidesAcked(pending[1], pending[2], REMIT_HISTORY_SCAN)) {
+      if (remitHistoryHidesAcked(h.bookingPending, h.covered)) {
         recycledAcked = undefined;
-        gaps.push(remitHistoryPendingGap(chainId, pending[1], pending[2], REMIT_HISTORY_SCAN));
+        gaps.push(remitHistoryPendingGap(chainId, h.bookingPending, h.nonce, h.covered));
       }
     } catch (err) {
       recycledAcked = undefined;

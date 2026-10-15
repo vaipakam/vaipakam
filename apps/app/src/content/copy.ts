@@ -5153,10 +5153,12 @@ const copySource = {
     heldSetAside: tmpl('{{amount}} VPFI of your rewards is set aside for you.', ['amount']),
     heldBlockedNote: 'It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.',
     // RL-3 claim horizon (#1956) — the Claim Center countdown. The date is the
-    // contract's EARLIEST estimate (it assumes the reward stays claimable), so
-    // the real date can only move later; the copy says which way it can move.
+    // contract's EARLIEST estimate under the CURRENT claim window (it assumes
+    // the reward stays claimable): time the reward can't be claimed moves it
+    // later, and a change to the claim window itself can replace it with an
+    // earlier date (Codex #2489 r8) — the copy says both.
     expiryCountdown: tmpl(
-      'Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.',
+      'Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.',
       ['date'],
     ),
     expiryFinalNotice: tmpl(

@@ -60,13 +60,18 @@ contract RemitHistoryBackfillTest is SetupTest {
         mutator.setRemitReservationFinalizedRaw(2, ARB, 20e18, 5e18, false, false, true); // forced only
         mutator.setRemitReservationFinalizedRaw(3, OP, 9e18, 4e18, true, true, true); // forced, then acked (contradicted)
         mutator.setRemitReservationFinalizedRaw(4, OP, 0, 0, false, false, false); // moved nothing
+        // A RELEASED row the mirror consumed after all (the live late-ack
+        // path books it; Codex #2489 r8), and one it never did.
+        _releasedRaw(5, 10e18, 3e18);
+        mutator.setReleasedRemitHistoryRaw(5, 0, 0, true, false);
+        _releasedRaw(6, 10e18, 2e18);
         (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(ARB);
         assertEq(acked + forced, 0, "fixture: nothing booked before the walk");
 
         (uint256 sp, uint256 bp, uint256 nonce) = rlens.getRemitHistoryPending(1, 100);
-        assertEq(nonce, 4, "fixture: four reservations");
-        assertEq(sp, 0, "no released rows");
-        assertEq(bp, 3, "three shares to book");
+        assertEq(nonce, 6, "fixture: six reservations");
+        assertEq(sp, 2, "two released rows to stamp");
+        assertEq(bp, 4, "four shares to book: three finalized, one released-and-consumed");
 
         // Chunked: the first two, then the rest; every write announced.
         vm.expectEmit(true, false, false, true);
@@ -77,15 +82,20 @@ contract RemitHistoryBackfillTest is SetupTest {
         assertEq(s1, 0);
         assertEq(b1, 2, "first chunk: two booked");
         (, bp, ) = rlens.getRemitHistoryPending(1, 100);
-        assertEq(bp, 1, "one left");
+        assertEq(bp, 2, "two left");
         vm.expectEmit(true, false, false, true);
         emit RemitRecycledBookedFromHistory(3, 2);
-        (, uint256 b2) = remit.backfillRemitHistory(3, 1_000);
-        assertEq(b2, 1, "second chunk: the last one, the range clipped to the nonce");
+        vm.expectEmit(true, false, false, true);
+        emit RemitRecycledBookedFromHistory(5, 2);
+        (uint256 s2, uint256 b2) = remit.backfillRemitHistory(3, 1_000);
+        assertEq(b2, 2, "second chunk: the last finalized row and the consumed released row, the range clipped to the nonce");
+        assertEq(s2, 2, "both released rows stamped");
 
         (acked, forced) = rlens.getChainRemittedRecycled(ARB);
-        assertEq(acked, 10e18, "ARB acked: the declared share of the acknowledged row");
+        assertEq(acked, 13e18, "ARB acked: the acknowledged finalized row plus the consumed released row");
         assertEq(forced, 5e18, "ARB forced: the forced-only row");
+        assertEq(rlens.getRemitReservation(5).recycledBooked, 2, "released + consumed: booked acked");
+        assertEq(rlens.getRemitReservation(6).recycledBooked, 0, "released, never consumed: nothing to book");
         (acked, forced) = rlens.getChainRemittedRecycled(OP);
         assertEq(acked, 4e18, "OP acked: a forced-then-acknowledged row books straight to acked");
         assertEq(forced, 0, "OP forced: nothing left in the forced bucket");
@@ -99,7 +109,7 @@ contract RemitHistoryBackfillTest is SetupTest {
         (, bp, ) = rlens.getRemitHistoryPending(1, 100);
         assertEq(bp, 0, "nothing pending");
         (acked, forced) = rlens.getChainRemittedRecycled(ARB);
-        assertEq(acked + forced, 15e18, "ARB unchanged");
+        assertEq(acked + forced, 18e18, "ARB unchanged");
         // An empty / past-the-end range is a no-op, not a revert.
         (s3, b3) = remit.backfillRemitHistory(50, 10);
         assertEq(s3 + b3, 0);
@@ -120,7 +130,7 @@ contract RemitHistoryBackfillTest is SetupTest {
 
         (uint256 sp, uint256 bp, ) = rlens.getRemitHistoryPending(1, 100);
         assertEq(sp, 3, "three stranded records to write");
-        assertEq(bp, 0, "no finalized rows");
+        assertEq(bp, 2, "rows 7 and 8 were consumed after release: two shares to book (r8)");
         assertFalse(rlens.getRemitReservation(6).strandedStamped, "fixture: unstamped");
 
         vm.expectEmit(true, false, false, true);
@@ -133,7 +143,10 @@ contract RemitHistoryBackfillTest is SetupTest {
         emit ReleasedRemitStrandedStamped(8, 6e18);
         (uint256 stranded, uint256 booked) = remit.backfillRemitHistory(1, 100);
         assertEq(stranded, 3, "three records written");
-        assertEq(booked, 0);
+        assertEq(booked, 2, "the two consumed released rows booked");
+        assertEq(rlens.getRemitReservation(7).recycledBooked, 2, "row 7 booked acked");
+        assertEq(rlens.getRemitReservation(8).recycledBooked, 2, "row 8: a contradicted consumption books too (the stricter direction)");
+        assertEq(rlens.getRemitReservation(6).recycledBooked, 0, "row 6 was never consumed: nothing to book");
 
         LibVaipakam.RemitReservation memory r6 = rlens.getRemitReservation(6);
         assertTrue(r6.strandedStamped, "row 6 stamped");
