@@ -490,11 +490,14 @@ const holdSend = (params, gatePossible = null, { gasChecked = false } = {}) => {
   // run in this judgement; once it has, an under-gassed request is not the
   // planned one and stays a finding (#2505 r15).
   const withoutGas = (o) => (gasChecked ? (o ?? {}) : Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas')));
-  // The app builds its route from the roster it read at confirm time, so a
-  // held close-out whose roster moved may name an index enabled only at the
-  // gate's block: either set identifies the planned request.
-  // Compared whole against each roster in turn, never against their union: a
-  // route mixing indices from both is valid under neither.
+  // The app builds its route from the roster it read at confirm time, which
+  // the drive never sees: a roster migrated in several transactions while
+  // confirmation was open can pass through a set that is neither the startup
+  // one nor the gate's (#2505 r22). So once the gate has a roster of its own,
+  // a route index counts if it was enabled at startup OR the gate could not
+  // rule it out; only an index known disabled or unlisted at both ends fails.
+  // That is as far as the drive's reads can judge a held request, which is
+  // withheld either way.
   const startupEnabled = enabledAdapters;
   const matchesUnder = (set) => {
     enabledAdapters = set;
@@ -507,7 +510,8 @@ const holdSend = (params, gatePossible = null, { gasChecked = false } = {}) => {
   // At the gate, every index it could not rule out counts: one whose flag got
   // no answer, or any index when the list itself was unreadable (#2505 r18,
   // r21). A known-disabled or unlisted index still fails the match.
-  const planned = matchesUnder(startupEnabled) || (gatePossible !== null && matchesUnder(gatePossible));
+  const either = gatePossible === null ? startupEnabled : { has: (i) => startupEnabled.has(i) || gatePossible.has(i) };
+  const planned = matchesUnder(either);
   if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
