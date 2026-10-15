@@ -304,7 +304,13 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
       [
         // A drive that cannot establish whether its wallet wrote says so, and
         // never that a write happened (#2505 r36).
-        stopped ? (writeUnknown ? `whether the drive's wallet wrote cannot be established: ${stopped}` : `the drive stopped after a write: ${stopped}`) : null,
+        stopped
+          ? writeUnknown
+            ? `whether the drive's wallet wrote cannot be established: ${stopped}`
+            : wrote
+              ? `the drive stopped after a write: ${stopped}`
+              : `the drive stopped before any write: ${stopped}`
+          : null,
         failedOther.length
           ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — ${evidence.failed}`
           : null,
@@ -312,7 +318,10 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
       ]
         .filter(Boolean)
         .join('; ') +
-      `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` +
-      evidence.left,
+      // A run that provably wrote nothing has no transaction to inspect, so
+      // it is never pointed at post-write evidence (#2505 r51).
+      (wrote
+        ? `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` + evidence.left
+        : ". Nothing was written (this wallet's nonce shows no transaction since startup); the manifest above says why each claim was not established"),
   };
 }

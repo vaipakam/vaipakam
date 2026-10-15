@@ -210,6 +210,13 @@ describe('runVerdict', () => {
     expect(v.line).not.toMatch(/before any write/);
   });
 
+  it('a provably write-free UNDETERMINED never points at post-write evidence (#2505 r51)', () => {
+    const v = runVerdict({ ...base, wrote: false, rows: all('undetermined'), outcomeClaims: [] });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/Nothing was written \(this wallet's nonce shows no transaction since startup\)/);
+    expect(v.line).not.toMatch(/No chain read contradicts/);
+  });
+
   it('a failed write discipline without a gate escape is stated as FAILED; "no contradiction" names only the outcome claims (#2434 r1 P2)', () => {
     // A transaction still pending: the borrower's nonce check failed, nothing
     // stopped, every outcome claim verified.

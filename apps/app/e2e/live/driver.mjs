@@ -1493,12 +1493,18 @@ export async function launch({
       return path.join(dir, `${name}.png`);
     },
     done: async () => {
+      // Only the CLOSE may reject: a caller settles a run on whether the
+      // browser closed, and a temp-dir cleanup error is not that (#2505 r51).
       await ctx.close();
       if (freshProfile) {
         // Throwaway profile — remove it so first-visit evidence can
         // never leak state into a later run (and temp space stays
-        // bounded across sweep nights).
-        fs.rmSync(profileDir, { recursive: true, force: true });
+        // bounded across sweep nights). Best effort: logged, not thrown.
+        try {
+          fs.rmSync(profileDir, { recursive: true, force: true });
+        } catch (err) {
+          console.log(`(throwaway profile ${profileDir} not removed: ${err.message})`);
+        }
         if (LIVE_PROFILE === profileDir) LIVE_PROFILE = null;
       }
     },
