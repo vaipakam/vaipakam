@@ -55,7 +55,6 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
-| `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-warm --remote` from `apps/indexer/`). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
 | `GRACE_DEFAULT_ENABLED` | Arms the #2483 time-based default pass (in addition to `KEEPER_ENABLED`): it submits `triggerDefault` for loans past their grace period, which sells or transfers the borrower's collateral. Needs no on-chain role (`triggerDefault` is permissionless). It skips, with a logged reason, any loan whose route would fall into the full-collateral fallback, whose lender position has an accepted sale, or whose collateral changed after quoting. |
@@ -84,6 +83,12 @@ The first three tune the passes the arming flags gate, but are not themselves
 secrets — they sat in the secrets table above until #2223, where the
 `wrangler secret put` instruction would have provisioned them as unreadable
 values for no benefit.
+
+Config-owned var — its value is committed in `wrangler.jsonc`'s `vars`, so every deploy writes it. It is **not** a secret and not dashboard-managed: never set it with `wrangler secret put` or in the dashboard, where the next deploy would overwrite it.
+
+| Var | Purpose |
+|---|---|
+| `KEEPER_RUNNER_ID` | This copy's name for the one-runner lease (#2503). Every tick claims the lease first and declines while another copy holds it; unset declines every tick. The Worker's is `cloudflare-worker` in `wrangler.jsonc`; a machine's defaults to `host:<host name>`. See `docs/ops/KeeperMachine.md` §2. |
 
 `TG_BOT_USERNAME` is a plain var too, and the exception to the preservation
 note above: this config **declares** it, so every deploy uploads the declared
