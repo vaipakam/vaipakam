@@ -254,6 +254,9 @@ const rosterKey = (adapters, disabled) =>
     .map((a, i) => (disabled[i] === false ? `${i}:${String(a).toLowerCase()}` : null))
     .filter((x) => x !== null)
     .join(',');
+const describeErr = (err) => err?.shortMessage ?? err?.message ?? String(err);
+/** An eligibility result that established nothing: some read got no answer. */
+const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null });
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
@@ -284,16 +287,34 @@ if (nowSec <= graceEnd) {
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
 
-/** The facts the card's readiness rests on, at one block: still Active,
- *  past grace, the lender position held by this wallet, and the same
- *  enabled swap-adapter roster the drive started from, which is what the
- *  card's route posture was built on. */
+/**
+ * The facts the card's readiness rests on, at one block: still Active,
+ * past grace, the lender position held by this wallet, and the same
+ * enabled swap-adapter roster the drive started from, which is what the
+ * card's route posture was built on.
+ *
+ * NEVER THROWS (#2505 r13). Every caller gets one shape: `ok`, or a move
+ * (`why`), or `unknown` (with its `err`) when nothing moved but some read got
+ * no answer. A move any read shows always wins over a read that got none, and
+ * because nothing is thrown, a caller combining several results cannot lose
+ * one result's move to another's missing answer.
+ *
+ * `enabled` is the set of adapter indices KNOWN enabled at this block (their
+ * flag answered "not disabled"): the whole enabled roster when every flag
+ * answered, a subset when some did not, null when the address list itself got
+ * no answer.
+ */
 async function eligibleAt(blockNumber) {
   // EVERY read pinned to ONE block (#2481 r4): for "now", the head is taken
   // first and the rest read at it, so a transaction landing between the reads
   // cannot mix an old status with later facts into an eligible verdict that
   // no single block supports.
-  const pinned = blockNumber ?? (await pub.getBlockNumber());
+  let pinned;
+  try {
+    pinned = blockNumber ?? (await pub.getBlockNumber());
+  } catch (err) {
+    return unknownAt(err, null);
+  }
   const at = { blockNumber: pinned };
   // Every read settles on its own and every fact is judged from whichever
   // reads answered (#2505): a move any of them shows wins over a sibling that
@@ -349,31 +370,32 @@ async function eligibleAt(blockNumber) {
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`lender position held by ${holderR.value}`);
   }
+  // The roster, slot by slot against startup, so each answer counts on its
+  // own (#2505 r13). The address list alone settles whether a startup slot's
+  // venue is still there; a flag settles only its own slot.
   let enabled = null;
   if (adaptersR.err) unanswered.push(adaptersR.err);
   else {
-    const flagErr = disabledR.find((r) => r.err);
-    if (!flagErr) {
-      const flags = disabledR.map((r) => r.value);
-      const enabledHere = rosterKey(adaptersR.value, flags);
-      if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
-      enabled = new Set(adaptersR.value.map((_, i) => i).filter((i) => flags[i] === false));
-    } else {
-      // Some flags unanswered: any answered slot that differs from startup
-      // (enabled now and not then, or the reverse) is already a change.
-      const startupSlots = new Set(startupRoster ? startupRoster.split(',') : []);
-      const changed = adaptersR.value.some((a, i) => {
-        if (disabledR[i].err) return false;
-        const slot = `${i}:${String(a).toLowerCase()}`;
-        return (disabledR[i].value === false) !== startupSlots.has(slot);
-      });
-      if (changed) why.push(`the enabled adapters changed (at startup [${startupRoster}]; a slot answered differently here)`);
-      else unanswered.push(flagErr.err);
+    const adapters = adaptersR.value;
+    const slot = (i) => `${i}:${String(adapters[i]).toLowerCase()}`;
+    const startupSlots = new Set(startupRoster ? startupRoster.split(',') : []);
+    enabled = new Set(adapters.map((_, i) => i).filter((i) => !disabledR[i].err && disabledR[i].value === false));
+    const changes = [];
+    for (const s of startupSlots) {
+      const i = Number(s.split(':')[0]);
+      if (i >= adapters.length || slot(i) !== s) changes.push(`${s} no longer listed`);
+      else if (!disabledR[i].err && disabledR[i].value !== false) changes.push(`${s} disabled`);
+    }
+    for (const i of enabled) if (!startupSlots.has(slot(i))) changes.push(`${slot(i)} newly enabled`);
+    if (changes.length > 0) why.push(`the enabled adapters changed (at startup [${startupRoster}]; here ${changes.join(', ')})`);
+    else {
+      const flagErr = disabledR.find((r) => r.err);
+      if (flagErr) unanswered.push(flagErr.err);
     }
   }
-  if (why.length === 0 && unanswered.length > 0) throw unanswered[0];
-  if (unanswered.length > 0) why.push(`another read got no answer (${unanswered[0]?.shortMessage ?? unanswered[0]?.message})`);
-  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled };
+  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), enabled };
+  if (unanswered.length > 0) why.push(`another read got no answer (${describeErr(unanswered[0])})`);
+  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled, unknown: null };
 }
 
 // ── Wallet posture ─────────────────────────────────────────────────────
@@ -496,17 +518,15 @@ async function gate(method, params) {
     // through the same `eligibleAt` the card's snapshot used. Any move since
     // startup withholds the send, and so does a re-read that gets no answer:
     // whether it moved is then unknown.
-    let gateEnabled = null;
-    try {
-      const e = await eligibleAt(null);
-      gateEnabled = e.enabled;
-      // The route bound follows the roster only while it is unmoved, so a
-      // held request is still compared with the set the drive started from.
-      if (e.ok && e.enabled !== null) enabledAdapters = e.enabled;
-      if (!e.ok) movedAtGate = `at block ${e.block}: ${e.why}`;
-    } catch (err) {
-      movedAtGate = `unknown: the eligibility could not be re-read at signing (${err.shortMessage ?? err.message})`;
-    }
+    const e = await eligibleAt(null);
+    // The indices known enabled here, complete or not: a held request naming
+    // only those is still the planned one (#2505 r13).
+    const gateEnabled = e.enabled;
+    // The route bound follows the roster only while it is unmoved, so a
+    // held request is still compared with the set the drive started from.
+    if (e.ok) enabledAdapters = e.enabled;
+    else if (e.unknown) movedAtGate = `unknown: the eligibility could not be re-read at signing (${e.unknown})`;
+    else movedAtGate = `at block ${e.block}: ${e.why}`;
     if (movedAtGate !== null) {
       console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
       const heldRefusal = holdSend(params, gateEnabled);
@@ -620,7 +640,7 @@ const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors
  * something was already recorded, which stands (the drive stops there).
  */
 async function blockIfIneligible(when) {
-  const now = await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }));
+  const now = await eligibleAt(null);
   if (now.ok) return;
   const why = now.unknown
     ? `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility ${when}, so whether it moved is unknown (${now.unknown})`
@@ -742,20 +762,30 @@ try {
   // readiness was resolved at; the chain must show the same facts there AND
   // now. A move in between is a race, BLOCKED — never certified as a PASS.
   const declared = await card.getAttribute('data-forced-close-block');
-  try {
-    const [then, now] = await Promise.all([
-      /^\d+$/.test(declared ?? '') ? readPinned(() => eligibleAt(BigInt(declared))) : Promise.resolve({ ok: false, why: `no declared block (${declared})` }),
-      eligibleAt(),
-    ]);
-    if (!/^\d+$/.test(declared ?? '')) {
-      check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
-    } else if (!then.ok || !now.ok) {
-      await blocked(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${then.ok ? 'eligible' : then.why}; now: ${now.ok ? 'eligible' : now.why}`, null, done);
-    } else {
-      check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
-    }
-  } catch (err) {
-    await blocked('the direct RPC could not re-read the loan at the card\'s declared block', err, done);
+  // Neither snapshot throws, so a move either one shows survives the other
+  // getting no answer (#2505 r13). Only an unanswered declared-block read is
+  // retried: a just-mined block may not have reached every node yet.
+  const hasDeclared = /^\d+$/.test(declared ?? '');
+  const atDeclared = async () => {
+    const r = await eligibleAt(BigInt(declared));
+    if (r.unknown) throw Object.assign(r.err ?? new Error(r.unknown), { eligibility: r });
+    return r;
+  };
+  const [then, now] = await Promise.all([
+    hasDeclared
+      ? readPinned(atDeclared).catch((err) => err?.eligibility ?? unknownAt(err, BigInt(declared)))
+      : Promise.resolve({ ok: false, why: `no declared block (${declared})`, unknown: null }),
+    eligibleAt(null),
+  ]);
+  const said = (r) => (r.ok ? 'eligible' : r.unknown ? `unknown (${r.unknown})` : r.why);
+  if (!hasDeclared) {
+    check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
+  } else if ((!then.ok && !then.unknown) || (!now.ok && !now.unknown)) {
+    await blocked(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`, null, done);
+  } else if (then.unknown || now.unknown) {
+    await blocked(`the direct RPC could not re-read the loan's eligibility while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`, null, done);
+  } else {
+    check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
   }
   const amounts = monetaryAmountsIn(text, { locale: 'en' });
   check('card', 'noAmount', 'the card states no amount', amounts.length === 0, amounts.join(', '));
@@ -938,7 +968,7 @@ if (armedOnce && !wrote()) {
 // request it records meanwhile lands in the checks below rather than after.
 const finalEligibility =
   !wrote() && !escaped && !writeUnknown && stopped === null && held === null
-    ? await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }))
+    ? await eligibleAt(null)
     : null;
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // A held run's unconsumed step, and the gate's marked refusal of the one
