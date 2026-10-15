@@ -44,7 +44,9 @@
 //     node live-lender-close-out.mjs
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED, 3
-// UNDETERMINED (only with CLOSE=1 after the gate allowed the send).
+// UNDETERMINED (with CLOSE=1 after the gate allowed the send, or in any mode
+// when the plan sent nothing but the wallet nonce cannot be established).
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,8 +64,9 @@ import {
   READ_METHODS,
   watchPageRpc,
 } from './driver.mjs';
-import { is, optional } from './expectedPayload.mjs';
+import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -245,12 +248,68 @@ let lenderHolder;
 let enabledAdapters;
 let nowSec;
 let graceEnd;
+/** The enabled roster as `index:address` pairs, so a venue removed and a
+ *  different one added into the same slot (the array compacts on removal)
+ *  reads as the change it is (#2505). */
+const rosterKey = (adapters, disabled) =>
+  adapters
+    .map((a, i) => (disabled[i] === false ? `${i}:${String(a).toLowerCase()}` : null))
+    .filter((x) => x !== null)
+    .join(',');
+const describeErr = (err) => err?.shortMessage ?? err?.message ?? String(err);
+/** An eligibility result that established nothing: some read got no answer. */
+/** Every index: what a roster that could not be read at all may enable. */
+const ANY_INDEX = { has: () => true };
+const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null, possiblyEnabled: ANY_INDEX });
+/** The custom error a viem revert decoded to, or null. */
+const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
+/** Whether the node ANSWERED with a revert, decoded or not (an outage is not one). */
+const isRevert = (err) => Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError'));
+/** LibERC721.LockReason.EarlyWithdrawalSale. */
+const LOCK_SALE = 2;
+/**
+ * What the lender position's lock says about the close-out at `blockNumber`
+ * (#2505 r25, r26): `null` when nothing on it withholds the close-out, else
+ * the reason. The sale lock is stamped for the whole listing lifecycle, and
+ * the app withholds the close-out only once a sale is ACCEPTED, so a sale
+ * lock is classified the way the app classifies it: simulating
+ * `teardownStaleSaleListing` (`NoStaleSaleListing` on a locked position is an
+ * accepted sale; `SaleListingLoanStillLive`, or a teardown that would
+ * succeed, is a listing the close-out does not wait for). Any other lock is
+ * a lifecycle this drive does not judge, and counts as withholding. Throws
+ * when a read gets no answer, or the simulation ends in a revert it cannot
+ * name.
+ */
+async function lockWithholds(lenderTokenId, blockNumber) {
+  const lock = Number(await read('positionLock', [lenderTokenId], blockNumber === undefined ? {} : { blockNumber }));
+  if (lock === 0) return null;
+  if (lock !== LOCK_SALE) return `the lender position is locked (LibERC721.LockReason ${lock}), a lifecycle this drive does not judge`;
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI,
+      functionName: 'teardownStaleSaleListing',
+      args: [LOAN_ID],
+      account: WALLET,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return null;
+  } catch (err) {
+    const name = revertName(err);
+    if (name === 'SaleListingLoanStillLive') return null;
+    if (name === 'NoStaleSaleListing') return 'an accepted sale of the lender position is awaiting completion';
+    throw err;
+  }
+}
+/** The roster the drive started from; the gate re-reads `enabledAdapters`. */
+let startupRoster;
 try {
   loan = await read('getLoanDetails', [LOAN_ID]);
   lenderHolder = await read('ownerOf', [loan.lenderTokenId]);
   const adapters = await read('getSwapAdapters');
   const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
   enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
+  startupRoster = rosterKey(adapters, disabled);
   nowSec = (await pub.getBlock()).timestamp;
   const end = loan.startTime + loan.durationDays * 86_400n;
   // The same lookup DefaultedFacet uses (ConfigFacet.getEffectiveGraceSeconds).
@@ -268,41 +327,191 @@ if (nowSec <= graceEnd) {
   console.log(`chain: loan ${LOAN_ID} Active, past grace by ${((nowSec - graceEnd) / 86_400n).toString()} day(s); ${enabledAdapters.size} enabled adapter(s)`);
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
+// The chain's own answer to an empty-list close-out, at startup (#2505 r35):
+// every later re-read compares with it. A loan whose collateral must be SOLD
+// passes every gate and then reverts `NoEnabledSwapRoute`; any other answer
+// (a pause, the lender's KYC tier, an internal match, an in-kind branch) is
+// not the routed sale this drive judges, so it is BLOCKED here, named.
+{
+  let answer;
+  try {
+    await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET });
+    answer = 'success';
+  } catch (err) {
+    if (!isRevert(err)) await blocked('the direct RPC could not simulate the close-out at startup', err);
+    answer = revertName(err) ?? `an undecoded revert (${describeErr(err)})`;
+  }
+  if (answer !== 'NoEnabledSwapRoute') {
+    await blocked(
+      answer === 'success'
+        ? `loan ${LOAN_ID} would close without a sale at startup (an internal match or an in-kind branch), not the routed sale this drive judges`
+        : `the chain refuses loan ${LOAN_ID}'s close-out at startup before any route is consulted (${answer}); this drive judges the routed sale only`,
+    );
+  }
+}
+// The lender position's lock (#2505 r25): an in-flight lifecycle on it — an
+// accepted or listed sale above all — makes the page withhold the close-out
+// (it unmounts the card for an accepted sale) while every other fact here
+// reads unchanged. A locked position is not the shape this drive judges, and
+// a lock appearing later is a moved precondition.
+// Both facts at ONE block (#2505 r29): a listing cancelled between the lock
+// read and the simulation would otherwise read as an accepted sale.
+let startupHold;
+try {
+  startupHold = await lockWithholds(loan.lenderTokenId, await pub.getBlockNumber());
+} catch (err) {
+  await blocked("the direct RPC could not establish what the lender position's lock means for the close-out", err);
+}
+if (startupHold !== null) await blocked(`loan ${LOAN_ID}: ${startupHold}, so the page rightly withholds the close-out`);
+// This wallet's nonce BEFORE any browser activity (#2505 r25): a page can
+// send through another connector before the plan is ever armed, so the
+// baseline every no-write run is settled against is taken here
+// (`noWriteSettlement.mjs`).
+let nonceBefore;
+try {
+  const base = await nonceBaseline(pub, WALLET);
+  if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
+  nonceBefore = base.nonce;
+} catch (err) {
+  await blocked('the direct RPC could not read the wallet nonce at startup', err);
+}
 
-/** The facts the card's readiness rests on, at one block: still Active,
- *  past grace, and the lender position held by this wallet. */
+/**
+ * The facts the card's readiness rests on, at one block: the loan record
+ * exactly as it was at startup, the lender position held by this wallet and
+ * not withheld by a lock, the same enabled swap-adapter roster the drive
+ * started from (what the card's route posture was built on), and the chain's
+ * own answer to an empty-list `triggerDefault`, which stands in for every
+ * gate the contract applies (#2505 r34).
+ *
+ * NEVER THROWS (#2505 r13). Every caller gets one shape: `ok`, or a move
+ * (`why`), or `unknown` (with its `err`) when nothing moved but some read got
+ * no answer. A move any read shows always wins over a read that got none, and
+ * because nothing is thrown, a caller combining several results cannot lose
+ * one result's move to another's missing answer.
+ *
+ * `enabled` is the set of adapter indices KNOWN enabled at this block (their
+ * flag answered "not disabled"): the whole enabled roster when every flag
+ * answered, a subset when some did not, null when the address list itself got
+ * no answer.
+ */
 async function eligibleAt(blockNumber) {
   // EVERY read pinned to ONE block (#2481 r4): for "now", the head is taken
   // first and the rest read at it, so a transaction landing between the reads
   // cannot mix an old status with later facts into an eligible verdict that
   // no single block supports.
-  const pinned = blockNumber ?? (await pub.getBlockNumber());
+  let pinned;
+  try {
+    pinned = blockNumber ?? (await pub.getBlockNumber());
+  } catch (err) {
+    return unknownAt(err, null);
+  }
   const at = { blockNumber: pinned };
-  const [l, b, paused, sequencerOk] = await Promise.all([
-    read('getLoanDetails', [LOAN_ID], at),
-    pub.getBlock({ blockNumber: pinned }),
-    // triggerDefault is whenNotPaused: an emergency pause is a moved
-    // precondition like any other (#2481 r4).
-    read('paused', [], at),
-    // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
-    // its recovery window) — another operational precondition (#2481 r5).
-    read('sequencerHealthy', [], at),
+  // Every read settles on its own and every fact is judged from whichever
+  // reads answered (#2505): a move any of them shows wins over a sibling that
+  // got no answer, which only makes the result unknown when nothing moved.
+  // Reads that need the loan use the startup snapshot's immutable fields
+  // (token id, start, duration) when the loan read itself is unanswered.
+  const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
+  const [loanR, simR, adaptersR] = await Promise.all([
+    settle(read('getLoanDetails', [LOAN_ID], at)),
+    // The chain's own answer to the call the card makes before it signs
+    // (#2505 r34): `triggerDefault` with an empty try-list, which for a loan
+    // whose collateral must be SOLD gets through every gate the contract
+    // applies (the pause, the status, the lender's KYC tier, the grace
+    // period, the sequencer, an internal match) and then reverts
+    // `NoEnabledSwapRoute`. That revert is the expected answer. Any other
+    // revert is a gate that now refuses the close-out, and a success is a
+    // loan that closes without a sale: either way the card is right to
+    // withhold the sale, and this drive does not have to list the gates.
+    settle(
+      pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET, blockNumber: pinned }),
+    ),
+    // The ROUTE POSTURE at this block too (#2505): the card caches what its
+    // roster could route, so a roster that changed since — the last adapter
+    // disabled, or one venue replaced by another the app cannot ask, even in
+    // the same slot — can leave it declaring a routable sale that no longer
+    // is. Any change to the enabled roster, by index AND address, is a moved
+    // precondition.
+    settle(read('getSwapAdapters', [], at)),
   ]);
-  // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
-  // an admin retune between startup and the inspected block changes what
-  // triggerDefault itself evaluates there (#2481 r3).
-  const [holder, graceSeconds] = await Promise.all([
-    read('ownerOf', [l.lenderTokenId], at),
-    read('getEffectiveGraceSeconds', [l.durationDays], at),
+  const fixed = loanR.value ?? loan;
+  const [holderR, lockR, disabledR] = await Promise.all([
+    settle(read('ownerOf', [fixed.lenderTokenId], at)),
+    settle(lockWithholds(fixed.lenderTokenId, pinned)),
+    // One settled read per adapter, so a flag that answered still counts
+    // when a sibling's does not.
+    adaptersR.err ? Promise.resolve(null) : Promise.all(adaptersR.value.map((a) => settle(read('isSwapAdapterDisabled', [a], at)))),
   ]);
-  const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
-  if (paused) why.push('the protocol is paused');
-  if (!sequencerOk) why.push('the sequencer is not healthy');
-  if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
-  if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
-  if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
-  return { ok: why.length === 0, why: why.join(', '), block: b.number };
+  const unanswered = [];
+  const judge = (r, fn) => (r.err ? unanswered.push(r.err) : fn(r.value));
+  if (simR.err) {
+    const name = revertName(simR.err);
+    if (name === 'NoEnabledSwapRoute') {
+      // Every gate passed; the sale still needs the route the card builds.
+    } else if (isRevert(simR.err)) why.push(`the chain's answer to an empty-list close-out changed since startup (then NoEnabledSwapRoute; now ${name ?? describeErr(simR.err)})`);
+    else unanswered.push(simR.err);
+  } else {
+    why.push("the chain's answer to an empty-list close-out changed since startup (then NoEnabledSwapRoute; now it would close without a sale)");
+  }
+  // The WHOLE loan record against startup (#2505 r33): it changes only by a
+  // transaction, and the card reads more of it than the status (an
+  // added-collateral top-up re-sizes the sale it quoted), so any field that
+  // changed is the loan moving, named with its values.
+  judge(loanR, (v) => {
+    const changed = changedFields(loan, v, LOAN_BOOKKEEPING_FIELDS);
+    if (changed.length > 0) why.push(`the loan record changed since startup (${changed.map((k) => `${k} ${loan[k]} → ${v[k]}`).join(', ')})`);
+  });
+  // The holder: a position claimed after the loan closed is burned, and the
+  // node then answers that the token has no owner. That answer is itself a
+  // fact (the position this drive held is gone), never an unknown.
+  if (holderR.err) {
+    // Only the decoded nonexistent-token error: any other revert, broken
+    // routing included, establishes nothing about the position (#2505 r29).
+    if (revertName(holderR.err) === 'ERC721NonexistentToken') why.push('the lender position no longer exists');
+    else unanswered.push(holderR.err);
+  } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
+    why.push(`lender position held by ${holderR.value}`);
+  }
+  // A hold on the lender position since startup (#2505 r25, r26): an
+  // accepted sale leaves the loan Active and the seller its holder, yet the
+  // page withholds the close-out. A live listing does not.
+  if (lockR.err) unanswered.push(lockR.err);
+  else if (lockR.value !== null) why.push(lockR.value);
+  // The roster, slot by slot against startup, so each answer counts on its
+  // own (#2505 r13). The address list alone settles whether a startup slot's
+  // venue is still there; a flag settles only its own slot.
+  // `enabled`: indices KNOWN enabled. `possiblyEnabled`: indices not known
+  // to be disabled or unlisted — a flag that got no answer may be enabled, and
+  // an unreadable list may enable any index (#2505 r21). One view, so a held
+  // request is matched against exactly what the gate could not rule out.
+  let enabled = null;
+  let possiblyEnabled = ANY_INDEX;
+  if (adaptersR.err) unanswered.push(adaptersR.err);
+  else {
+    const adapters = adaptersR.value;
+    const slot = (i) => `${i}:${String(adapters[i]).toLowerCase()}`;
+    const startupSlots = new Set(startupRoster ? startupRoster.split(',') : []);
+    enabled = new Set(adapters.map((_, i) => i).filter((i) => !disabledR[i].err && disabledR[i].value === false));
+    possiblyEnabled = new Set(adapters.map((_, i) => i).filter((i) => Boolean(disabledR[i].err) || disabledR[i].value === false));
+    const changes = [];
+    for (const s of startupSlots) {
+      const i = Number(s.split(':')[0]);
+      if (i >= adapters.length || slot(i) !== s) changes.push(`${s} no longer listed`);
+      else if (!disabledR[i].err && disabledR[i].value !== false) changes.push(`${s} disabled`);
+    }
+    for (const i of enabled) if (!startupSlots.has(slot(i))) changes.push(`${slot(i)} newly enabled`);
+    if (changes.length > 0) why.push(`the enabled adapters changed (at startup [${startupRoster}]; here ${changes.join(', ')})`);
+    // Every flag that got no answer is named, moved or not (#2505 r21).
+    for (const r of disabledR) if (r.err) unanswered.push(r.err);
+  }
+  // EVERY unanswered read is named, not only the first (#2505 r20): a reason
+  // that lists one gap implies the other facts were established.
+  const gaps = unanswered.map(describeErr).join('; ');
+  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), unknown: `${unanswered.length} read(s) got no answer: ${gaps}`, enabled, possiblyEnabled };
+  if (unanswered.length > 0) why.push(`${unanswered.length} other read(s) got no answer (${gaps})`);
+  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled, possiblyEnabled, unknown: null };
 }
 
 // ── Wallet posture ─────────────────────────────────────────────────────
@@ -343,12 +552,84 @@ const PLAN = SUBMIT
     ])
   : null;
 let gasFloor = 0n;
+/** Whether THIS judgement's fresh estimate succeeded: only then is a held
+ *  request's gas bound judged (#2505 r16). */
+let estimated = false;
 /** The gate's own preview of the request it was asked to sign. */
 let previewVerdict = null;
+/** Set when the gate found the close-out's eligibility moved since startup,
+ *  or could not re-read it (#2505). */
+let movedAtGate = null;
+/** The reason a {@link Held} stop gave, once the drive is stopped
+ *  (`noWriteSettlement.mjs` settles it). */
+let held = null;
+/** A {@link Suspect} the drive stopped on: not established, never a FAIL (#2505 r48). */
+let suspect = null;
+/**
+ * The gate withholding the request it is judging, for a held precondition. Its
+ * refusal of THAT request carries this marker, so a held run can set exactly
+ * that one aside; it is this drive's own doing. Every other refusal, including
+ * any later request the closed plan refuses, is still judged.
+ */
+// A per-run token, matched anywhere in the recorded reason: the gate's verdict
+// reaches the ledger wrapped twice (the wallet gate's "eth_sendTransaction
+// refused by the signing gate: …", then the driver's "signing gate: …"), and
+// a token no page can predict cannot be matched by a request's own content.
+/** Whether the gate has already marked its one withheld request. */
+let heldMarked = false;
+const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
+/**
+ * Only the planned close-out may be withheld this way: the request is first
+ * compared with the plan's step (its gas bound aside only for a hold taken
+ * before the estimate ran; after it, the bound is judged too). Any other request is refused by the closed
+ * plan, unmarked, and judged like every other refusal.
+ */
+const holdSend = (params, gatePossible = null, { gasChecked = false } = {}) => {
+  PLAN.close();
+  const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
+  const expected = step()?.expected;
+  // The gas bound is set aside only while the estimate it rests on has not
+  // run in this judgement; once it has, an under-gassed request is not the
+  // planned one and stays a finding (#2505 r15).
+  const withoutGas = (o) => (gasChecked ? (o ?? {}) : Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas')));
+  // The app builds its route from the roster it read at confirm time, which
+  // the drive never sees: a roster migrated in several transactions while
+  // confirmation was open can pass through a set that is neither the startup
+  // one nor the gate's (#2505 r22). So once the gate has a roster of its own,
+  // a route index counts if it was enabled at startup OR the gate could not
+  // rule it out; only an index known disabled or unlisted at both ends fails.
+  // That is as far as the drive's reads can judge a held request, which is
+  // withheld either way.
+  const startupEnabled = enabledAdapters;
+  const matchesUnder = (set) => {
+    enabledAdapters = set;
+    try {
+      return Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
+    } finally {
+      enabledAdapters = startupEnabled;
+    }
+  };
+  // At the gate, every index it could not rule out counts: one whose flag got
+  // no answer, or any index when the list itself was unreadable (#2505 r18,
+  // r21). A known-disabled or unlisted index still fails the match.
+  const either = gatePossible === null ? startupEnabled : { has: (i) => startupEnabled.has(i) || gatePossible.has(i) };
+  const planned = matchesUnder(either);
+  // One marked refusal per run (#2505 r24): a second request, even an
+  // identical one sent while the first was still being judged, is a duplicate
+  // signing attempt and is refused unmarked, so it is judged like any other.
+  if (!planned || heldMarked) return null;
+  heldMarked = true;
+  return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
+};
 async function previewSale(tx) {
   try {
     const { results } = await pub.simulateCalls({ account: WALLET, calls: [{ to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) }] });
     const r = results?.[0];
+    // A completed simulation that REVERTED is an answer, not a missing one
+    // (#2505 r43): the node established that the requested route fails, so it
+    // is non-sale evidence. Only a preview the node could not perform, or one
+    // without logs, is unknown.
+    if (r?.status === 'failure') return 'reverted';
     if (!r || r.status !== 'success' || r.logs === undefined) return 'unknown';
     const ours = (name) =>
       parseEventLogs({ abi: DIAMOND_ABI, eventName: name, logs: r.logs.filter((l) => l.address.toLowerCase() === DIAMOND.toLowerCase()) })
@@ -363,29 +644,56 @@ async function previewSale(tx) {
 const abiFor = (to) => (typeof to === 'string' && to.toLowerCase() === DIAMOND.toLowerCase() ? DIAMOND_ABI : null);
 const step = () => PLAN?.steps()[0];
 const wrote = () => step()?.status === 'consumed';
+/**
+ * The card's eligibility AT JUDGING TIME (#2481 r4, #2505): status, grace,
+ * holder, pause, sequencer and the enabled roster, at one block, through the
+ * same `eligibleAt` the card's snapshot used. Any move since startup withholds
+ * the send, and so does a re-read that gets no answer: whether it moved is
+ * then unknown. Returns the marked refusal for the planned request, or null.
+ *
+ * The gate asks it TWICE (#2505 r14): before its simulations, so a moved loan
+ * costs none, and again after them, immediately before the plan judges the
+ * request, because the estimate and the preview are awaited and a permissionless
+ * triggerDefault simulates the same whoever holds the position.
+ */
+async function holdIfIneligible(params, gasChecked = false) {
+  if (movedAtGate === null) {
+    const e = await eligibleAt(null);
+    // The route bound follows the roster only while it is unmoved, so a
+    // held request is still compared with the set the drive started from.
+    if (e.ok) enabledAdapters = e.enabled;
+    else if (e.unknown) movedAtGate = `unknown: the eligibility could not be re-read at signing (${e.unknown})`;
+    else movedAtGate = `at block ${e.block}: ${e.why}`;
+    // The indices not ruled out here: a held request naming only those is
+    // still the planned one (#2505 r13, r21).
+    gatePossible = e.possiblyEnabled;
+  }
+  if (movedAtGate === null) return null;
+  console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
+  return holdSend(params, gatePossible, { gasChecked });
+}
+/** The indices the gate's latest eligibility read could not rule out. */
+let gatePossible = null;
 async function gate(method, params) {
   if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
   const kind = method === 'eth_sendTransaction' ? 'tx' : method;
-  if (kind === 'tx' && PLAN.armed() !== null) {
+  // Only a send the armed plan is about to judge is checked for eligibility.
+  const judging = kind === 'tx' && PLAN.armed() !== null;
+  if (judging) {
     const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
-    // The roster AT JUDGING TIME (#2481 r4): the app re-reads it at confirm,
-    // so a venue governance enabled since startup is a valid index now. An
-    // unreadable roster leaves the startup set, which can only refuse more.
+    const heldBefore = await holdIfIneligible(params);
+    if (heldBefore) return heldBefore;
     try {
-      const adapters = await read('getSwapAdapters');
-      const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
-      enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
-    } catch (err) {
-      console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); judging against the startup set`);
-    }
-    try {
+      estimated = false;
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
       console.log(`GATE  fresh estimate for the requested call: ${gasFloor} gas`);
+      estimated = true;
     } catch (err) {
       // The plan then refuses any request carrying a gas limit, and one with
       // none is signed with the wallet's own estimate — which would fail the
       // same way, before anything is broadcast.
       gasFloor = 0n;
+      estimated = false;
       console.log(`GATE  could not estimate the requested call: ${err.shortMessage ?? err.message}`);
     }
   }
@@ -399,7 +707,21 @@ async function gate(method, params) {
     const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
     previewVerdict = await previewSale(tx);
     console.log(`GATE  independent preview of the requested route: ${previewVerdict}`);
+    // An unrunnable preview is a held precondition; any other non-sale is
+    // the app's route, judged at confirm.
+    if (previewVerdict === 'unknown') {
+      const heldRefusal = holdSend(params, null, { gasChecked: estimated });
+      if (heldRefusal) return heldRefusal;
+    }
     if (previewVerdict !== 'sale') PLAN.close();
+  }
+  // The eligibility once more, AFTER the awaited simulations (#2505 r14),
+  // only for a request that previewed as a sale: a route that did not sell is
+  // already the app's failure, judged at confirm, and a later move cannot
+  // excuse it (#2505 r17).
+  if (judging && previewVerdict === 'sale') {
+    const heldAfter = await holdIfIneligible(params, estimated);
+    if (heldAfter) return heldAfter;
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
   // refused request recorded meanwhile must still withhold the one-shot send.
@@ -423,10 +745,15 @@ async function gate(method, params) {
   };
 }
 const sentHash = () => step()?.record?.hash ?? null;
+// A THROWAWAY profile (#2505 r36): a persistent one can carry a paired
+// WalletConnect (or other connector) session, and a signing request the page
+// hands to an external wallet survives closing this browser, so the final
+// nonce read could precede a send the wallet approves later. A fresh profile
+// holds no pairing, and a new one needs a person to scan its code.
 const session = await launch(
   SUBMIT
-    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true, allowQuoteProxy: true }
-    : { role: ROLE, readOnly: true },
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true, allowQuoteProxy: true, freshProfile: true }
+    : { role: ROLE, readOnly: true, freshProfile: true },
 );
 const { ctx, page, done, consoleErrors, blockedRequests } = session;
 const shot = (name) => session.shot(name).catch((e) => console.log(`(screenshot ${name} not saved: ${e.message})`));
@@ -473,11 +800,44 @@ const violationsSoFar = () => [
   ...wsViolations,
 ];
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
-const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+/** The gate's marked refusal of the one request it withheld for a held
+ *  precondition: this drive's own doing, never a finding (#2505 r24). */
+const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
+// Every count of what stands before a send sets that one marked refusal
+// aside, so a stop after a gate hold is still resolved as the hold rather
+// than counted as a failure of its own (#2505 r32).
+const preSendFails = () => failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length;
+/** Why the gate withheld the planned request, when it did; null otherwise. */
+const gateHeldReason = () => {
+  if (!heldMarked || wrote()) return null;
+  if (movedAtGate !== null) {
+    return movedAtGate.startsWith('unknown: ')
+      ? `whether loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed is ${movedAtGate}, so the plan signed nothing`
+      : `loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed (${movedAtGate}), so the plan signed nothing`;
+  }
+  if (previewVerdict === 'unknown') {
+    return 'the node could not run the independent preview of the requested route, so a sale could not be established and the plan signed nothing';
+  }
+  return null;
+};
+/**
+ * BLOCKED for a precondition met before any write, unless a failure was
+ * already recorded, which stands: the drive then stops there and the verdict
+ * is FAIL (#2505 r14). Every pre-write BLOCKED exit goes through here.
+ *
+ * It holds the run rather than exiting (#2505 r25): a held run reaches the
+ * verdict only after this wallet's nonce is reconciled against its startup
+ * baseline, so a send the page made through another connector is a gate
+ * escape, never hidden behind a BLOCKED that says nothing was sent.
+ */
+async function blockPre(why, err = null) {
+  if (preSendFails() > 0) {
+    throw new Error(`${why}; nothing after it is judged, and the ${preSendFails()} failure(s) recorded before it stand`);
+  }
+  throw new Held(err ? `${why} (${describeErr(err)})` : why);
+}
 let stopped = null;
 let armedOnce = false;
-/** This wallet's pending nonce just before the arm. */
-let nonceBefore = null;
 /** The outcome, read from the chain by the hash the wallet returned. */
 async function judgeOutcome(hash) {
   // ROOT RULE (#2481 r6): the app is judged at the point it asks to sign —
@@ -540,16 +900,18 @@ try {
   }
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
-    await blocked(`the page renders in "${lang}", not English — the expected labels come from the en catalogue`, null, done);
+    await blockPre(`the page renders in "${lang}", not English — the expected labels come from the en catalogue`);
   }
   await ensureConnected(page);
   const card = page.getByTestId('forced-close-card');
   const mounted = await card.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
   if (!mounted && (await answered()) === 0) {
-    await blocked('the page RPC answered nothing while the position page loaded, so the card was never observable', null, done);
+    await blockPre('the page RPC answered nothing while the position page loaded, so the card was never observable');
   }
-  check('card', 'mounted', 'the forced-close card renders', mounted);
-  if (!mounted) throw new Error('the forced-close card never rendered');
+  // A card the page rightly withholds (the loan closed by a keeper while the
+  // page loaded) is not established, never a FAIL (#2505 r48).
+  if (!mounted) throw new Suspect('the forced-close card never rendered', { row: 'card', key: 'mounted', label: 'the forced-close card renders' });
+  check('card', 'mounted', 'the forced-close card renders', true);
   // The state settles once the card's reads (and, for a sale, its venue
   // probe) answer; waited for rather than read once.
   let state = null;
@@ -560,9 +922,15 @@ try {
     await page.waitForTimeout(1_000);
   }
   if (OTHER_READY_STATES.has(state ?? '')) {
-    await blocked(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`, null, done);
+    await blockPre(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`);
   }
-  check('card', 'ready', `the card declares ${SALE_STATE}`, state === SALE_STATE, `declared state ${state}`);
+  // Any other state, `unknown` and `blocked-sequencer` included, is the card
+  // not reaching the sale with nothing on it that says why the drive should
+  // expect otherwise: not established, never a failure (#2505 r48).
+  if (state !== SALE_STATE) {
+    throw new Suspect(`the card declared ${state}, not ${SALE_STATE}`, { row: 'card', key: 'ready', label: `the card declares ${SALE_STATE}`, detail: `declared state ${state}` });
+  }
+  check('card', 'ready', `the card declares ${SALE_STATE}`, true, `declared state ${state}`);
   const text = (await card.innerText()).replace(/\s+/g, ' ');
   console.log(`card: ${text.slice(0, 600)}`);
   // A deployment posture the card DISCLOSES — no venue the app can ask, the
@@ -576,7 +944,7 @@ try {
   ];
   for (const [key, what] of postures) {
     if (typeof FC[key] === 'string' && text.includes(FC[key])) {
-      await blocked(`the card discloses that a sale cannot be routed here (${what}) — not the routable sale this drive judges`, null, done);
+      await blockPre(`the card discloses that a sale cannot be routed here (${what}) — not the routable sale this drive judges`);
     }
   }
   check('card', 'saleBody', 'the card says the collateral is sold through a route the app builds', text.includes(FC.readyNeedsRoute));
@@ -584,20 +952,30 @@ try {
   // readiness was resolved at; the chain must show the same facts there AND
   // now. A move in between is a race, BLOCKED — never certified as a PASS.
   const declared = await card.getAttribute('data-forced-close-block');
-  try {
-    const [then, now] = await Promise.all([
-      /^\d+$/.test(declared ?? '') ? readPinned(() => eligibleAt(BigInt(declared))) : Promise.resolve({ ok: false, why: `no declared block (${declared})` }),
-      eligibleAt(),
-    ]);
-    if (!/^\d+$/.test(declared ?? '')) {
-      check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
-    } else if (!then.ok || !now.ok) {
-      await blocked(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${then.ok ? 'eligible' : then.why}; now: ${now.ok ? 'eligible' : now.why}`, null, done);
-    } else {
-      check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
-    }
-  } catch (err) {
-    await blocked('the direct RPC could not re-read the loan at the card\'s declared block', err, done);
+  // Neither snapshot throws, so a move either one shows survives the other
+  // getting no answer (#2505 r13). Only an unanswered declared-block read is
+  // retried: a just-mined block may not have reached every node yet.
+  const hasDeclared = /^\d+$/.test(declared ?? '');
+  const atDeclared = async () => {
+    const r = await eligibleAt(BigInt(declared));
+    if (r.unknown) throw Object.assign(r.err ?? new Error(r.unknown), { eligibility: r });
+    return r;
+  };
+  const [then, now] = await Promise.all([
+    hasDeclared
+      ? readPinned(atDeclared).catch((err) => err?.eligibility ?? unknownAt(err, BigInt(declared)))
+      : Promise.resolve({ ok: false, why: `no declared block (${declared})`, unknown: null }),
+    eligibleAt(null),
+  ]);
+  const said = (r) => (r.ok ? 'eligible' : r.unknown ? `unknown (${r.unknown})` : r.why);
+  if (!hasDeclared) {
+    check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
+  } else if ((!then.ok && !then.unknown) || (!now.ok && !now.unknown)) {
+    await blockPre(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`);
+  } else if (then.unknown || now.unknown) {
+    await blockPre(`the direct RPC could not re-read the loan's eligibility while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`);
+  } else {
+    check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
   }
   const amounts = monetaryAmountsIn(text, { locale: 'en' });
   check('card', 'noAmount', 'the card states no amount', amounts.length === 0, amounts.join(', '));
@@ -607,21 +985,26 @@ try {
     .then(() => submit.isEnabled())
     .catch(() => false);
   const label = enabled ? ((await submit.getAttribute('aria-label')) ?? (await submit.innerText())).replace(/\s+/g, ' ').trim() : '';
-  check('card', 'submit', 'the close-out button is shown, enabled and labelled as the close-out', enabled && label === FC.submit, `label "${label}"`);
+  // A button that did not come up ready may rightly have been withdrawn for
+  // a loan that moved (#2505 r19): not established, never a FAIL (#2505 r48).
+  const submitLabel = 'the close-out button is shown, enabled and labelled as the close-out';
+  if (!enabled || label !== FC.submit) throw new Suspect('the close-out button did not come up ready', { row: 'card', key: 'submit', label: submitLabel, detail: `label "${label}"` });
+  check('card', 'submit', submitLabel, true, `label "${label}"`);
   await shot(`lender-close-out-card-${LOAN_ID}`);
 
   if (SUBMIT && preSendFails() > 0) {
     console.log(`SKIP close-out — ${preSendFails()} check(s) failed or request(s) were refused above`);
   } else if (SUBMIT) {
     // Funding is a precondition: an unfunded wallet fails inside the send.
-    try {
-      const [balance, gasPrice] = await Promise.all([pub.getBalance({ address: WALLET, blockTag: 'pending' }), pub.getGasPrice()]);
-      const need = 3_000_000n * gasPrice * 2n;
-      if (balance < need) {
-        await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; a sale close-out needs about ${formatUnits(need, 18)}`, null, done);
-      }
-    } catch (err) {
-      await blocked('the direct Base Sepolia RPC could not read the balance before the close-out', err, done);
+    // Read, then judged outside the try, so the funding verdict is never
+    // re-caught as a read failure.
+    const funding = await Promise.all([pub.getBalance({ address: WALLET, blockTag: 'pending' }), pub.getGasPrice()]).then(
+      ([balance, gasPrice]) => ({ balance, need: 3_000_000n * gasPrice * 2n }),
+      (err) => ({ err }),
+    );
+    if (funding.err) await blockPre('the direct Base Sepolia RPC could not read the balance before the close-out', funding.err);
+    if (funding.balance < funding.need) {
+      await blockPre(`${ROLE} ${WALLET} holds ${formatUnits(funding.balance, 18)} ETH; a sale close-out needs about ${formatUnits(funding.need, 18)}`);
     }
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
     await submit.click();
@@ -651,13 +1034,8 @@ try {
       receiptText.slice(0, 160),
     );
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
-    // The wallet's nonce before the arm: the only evidence that ties a later
-    // state change to THIS wallet rather than to a keeper (#2481 r1).
-    try {
-      nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
-    } catch (err) {
-      await blocked('the direct RPC could not read the wallet nonce before the close-out', err, done);
-    }
+    // The nonce baseline, taken at startup, is the only evidence that ties a
+    // later state change to THIS wallet rather than to a keeper (#2481 r1).
     PLAN.arm(ROLE);
     armedOnce = true;
     await confirm.click();
@@ -691,19 +1069,27 @@ try {
       }
       await page.waitForTimeout(1_000);
     }
-    if (!wrote() && previewVerdict === 'unknown') {
+    if (gateHeldReason() !== null) {
       PLAN.close();
-      await blocked('the node could not run the independent preview of the requested route, so a sale could not be established before signing', null, done);
+      throw new Held(gateHeldReason());
     }
     if (previewVerdict === 'sale') {
       check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', true, 'independent preview: SwapAdapterSucceeded');
     }
-    if (!wrote() && (previewVerdict === 'fallback' || previewVerdict === 'other')) {
+    if (!wrote() && (previewVerdict === 'fallback' || previewVerdict === 'other' || previewVerdict === 'reverted')) {
       check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', false, `independent preview: ${previewVerdict} — the app should have refused this route`);
     }
     if (refusedWith && !wrote()) {
       PLAN.close();
-      await blocked(`the card refused at confirm time and sent nothing (copy.forcedClose.${refusedWith}) — the sale is not routable right now`, null, done);
+      throw new Held(`the card refused at confirm time and the plan signed nothing (copy.forcedClose.${refusedWith}); the sale is not routable right now`);
+    }
+    // A confirm step that never settled, with nothing signed and no refusal
+    // shown, may be the page rightly withholding a close-out whose
+    // precondition moved while it was being confirmed. Nothing on the page
+    // says why, so it is not established, never a failure (#2505 r48).
+    if (!settled && !wrote()) {
+      PLAN.close();
+      throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', { row: 'pageConfirmed', key: 'settled', label: 'the page left its confirm step' });
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
     PLAN.close();
@@ -716,77 +1102,98 @@ try {
   }
 } catch (err) {
   PLAN?.close();
-  stopped = err.message;
+  // Judged nowhere here: a hold, a suspect or a plain stop is settled once,
+  // after the browser is closed and the nonce reconciled (noWriteSettlement).
+  if (err instanceof Held) held = err.message;
+  else if (err instanceof Suspect) suspect = err;
+  else stopped = err.message;
   await shot(`lender-close-out-error-${LOAN_ID}`);
   if (wrote()) {
     const hash = sentHash();
     if (hash) await judgeOutcome(hash);
     else stopped += '; the wallet returned no hash — the close-out may still land; check loan status by hand';
   }
-  console.log(`STOP  ${stopped}`);
+  console.log(`STOP  ${held ?? suspect?.message ?? stopped}`);
 }
-check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
-const violations = violationsSoFar();
-check(
-  'writeDiscipline',
-  'noRefusals',
-  SUBMIT ? 'the page asked to sign only the planned close-out' : 'the page attempted no write in a read-only session',
-  violations.length === 0,
-  violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
-);
-if (armedOnce) {
-  check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
-}
-// A send that bypassed the plan: armed, nothing sent through it, yet THIS
-// WALLET's nonce moved. The loan's status alone proves nothing — any keeper
-// may close an overdue loan (#2481 r1) — so a status change without a nonce
-// change is a race, stated, not an escape.
-let escaped = false;
-let escapeUnknown = null;
-/** The plan was armed, sent nothing, and the wallet's nonce could not be
- *  read: a send through another connector cannot be ruled out. */
-let writeUnknown = false;
-if (armedOnce && !wrote()) {
-  try {
-    const [nonceAfter, status] = await Promise.all([
-      pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
-      read('getLoanDetails', [LOAN_ID]).then((l) => Number(l.status)),
-    ]);
-    escaped = nonceBefore !== null && nonceAfter > nonceBefore;
-    if (escaped) {
-      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
-    } else if (status !== ACTIVE) {
-      // Nothing was written by this drive; the loan simply moved under it.
-      stopped = [stopped, `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status} — closed by someone else in the meantime (a race)`].filter(Boolean).join('; ');
-    }
-    // Nonce unchanged and the loan still Active: PROVABLY no write, so the
-    // run stays on the pre-write path, where a failed check is a FAIL.
-  } catch (err) {
-    writeUnknown = true;
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message}) — a send through another connector cannot be ruled out`;
+// ── Settlement (noWriteSettlement.mjs) ─────────────────────────────────
+// One order for every run: the browser is closed first, so the page can add
+// no error, refusal or send after its ledgers are judged; this wallet's
+// nonce is read last. A run the plan did not
+// let write is then BLOCKED, FAIL or UNDETERMINED by one
+// rule, whatever path stopped it.
+let teardownDone = false;
+const closeBrowser = async () => {
+  if (teardownDone) return;
+  teardownDone = true;
+  await done();
+};
+const settled = await settleRun({
+  closeBrowser,
+  judgeLedgers: () => {
+    check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    // The gate's marked refusal of the one request it withheld is this
+    // drive's own doing, never a finding (`ownHold`); every other refusal is.
+    const violations = violationsSoFar().filter((b) => !ownHold(b));
+    check(
+      'writeDiscipline',
+      'noRefusals',
+      SUBMIT ? 'the page asked to sign only the planned close-out' : 'the page attempted no write in a read-only session',
+      violations.length === 0,
+      violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
+    );
+  },
+  wrotePlan: wrote,
+  pub,
+  wallet: WALLET,
+  baseline: nonceBefore,
+});
+// The gate's own hold, when it withheld the planned request: the stop that
+// followed it (a UI wait that ran out) is explained by it (#2505 r32), so it
+// is folded into the hold rather than left as a plain stop, which the
+// settlement would judge as a definite failure (#2505 r41).
+if (held === null && !settled.plan) {
+  held = gateHeldReason();
+  if (held !== null && stopped !== null) {
+    held = `${held}; the drive then stopped (${stopped})`;
+    stopped = null;
   }
 }
-// #2481 r3 — ARMING is not a write. Only a send the plan consumed, an escape
-// the nonce proves, or a nonce that could not be read (a write that cannot
-// be ruled out) puts the run on the post-write path.
-const wroteAny = wrote() || escaped || writeUnknown;
-try {
-  await done();
-} catch (err) {
-  console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
+const resolved = resolveSettlement({
+  settled,
+  held,
+  stopped,
+  suspect,
+  findings: failedCount(),
+  subject: `loan ${LOAN_ID}'s close-out`,
+});
+if (resolved.blocked) await blocked(resolved.blocked);
+if (resolved.undetermined) {
+  const u = resolved.undetermined;
+  unsettled(u.row, u.key, `${u.label}: ${u.why}${u.detail ? ` (${u.detail})` : ''}; something outside the page may explain it and this drive cannot rule that out`);
+}
+// Armed, clicked, provably nothing sent, and nothing that explains it: the
+// app did not send the close-out it was asked for.
+// Recorded on BOTH sides of the send (#2505 r40): consumed is the check
+// passing, and a provable no-send is it failing. Only a no-send whose nonce
+// could not be proven leaves it unjudged.
+if (armedOnce && (wrote() || !resolved.wrote) && held === null && suspect === null) {
+  check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
 }
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
-  wrote: wroteAny,
-  stopped: [stopped, escapeUnknown].filter(Boolean).join('; ') || null,
-  preWriteFailure: !wroteAny && failedCount() > 0,
-  gateEscape: escaped,
+  wrote: resolved.wrote,
+  stopped: resolved.stopped,
+  preWriteFailure: !resolved.wrote && failedCount() > 0,
+  gateEscape: resolved.gateEscape,
+  writeUnknown: resolved.writeUnknown === true,
   outcomeClaims: SUBMIT ? OUTCOME : [],
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the close-out's hash and what its receipt showed; check the loan by hand if neither does",
-    escape: "this wallet's nonce moved, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)",
+    // Unreachable: the settlement never reports a gate escape (a nonce the
+    // plan never saw is UNDETERMINED, noWriteSettlement.mjs #2505 r37).
+    escape: 'no gate escape is reported by this drive',
   },
 });
 console.log(VERDICT.line);

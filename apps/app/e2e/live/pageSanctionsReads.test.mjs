@@ -44,6 +44,13 @@ describe('page sanctions read ledger', () => {
     expect(l.judge('flag', 50, false)).toEqual({ state: 'disagrees', value: true });
   });
 
+  it('records the block a read was asked at, `latest` when none is given', () => {
+    const l = ledgerAt([100, 101]);
+    l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onRequest(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'eth_call', params: [{ to: DIAMOND, data: flagRead.calldata }] }));
+    expect(l.entries.map((e) => e.block)).toEqual(['0x10', 'latest']);
+  });
+
   it('ignores the same call for another wallet or on another contract', () => {
     const l = ledgerAt([100]);
     const other = watchedRead('isSanctionedAddress(address)', DIAMOND, STRANGER).calldata;

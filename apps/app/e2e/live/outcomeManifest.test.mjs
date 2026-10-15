@@ -117,7 +117,7 @@ describe('outcomeManifest', () => {
     expect(m.passed()).toBe(true);
     expect(m.undeterminedCount()).toBe(1);
     const text = m.render().join('\n');
-    expect(text).toMatch(/UNDETERMINED \(each check ran after the write[^\n]*\(1\):\n {2}\[settled\]/);
+    expect(text).toMatch(/UNDETERMINED \(the claim could not be substantiated either way[^\n]*\(1\):\n {2}\[settled\]/);
     expect(text).toMatch(/\?\? {3}vault: balanceOf\(old lender vault\)\n {13}UNDETERMINED — another transaction/);
     expect(text).not.toMatch(/^VERIFIED \(\d\):\n {2}\[settled\]/m);
   });
@@ -194,6 +194,27 @@ describe('runVerdict', () => {
     expect(runVerdict({ ...base, rows: all().map((r) => (r.id === 'writeDiscipline' ? row(r.id, 'failed') : r)) }).exit).toBe(3);
     // The UI failed after the accept mined, but the chain proves every claim.
     expect(runVerdict({ ...base, rows: all(), stopped: 'the page never said "Loan opened"' }).exit).toBe(3);
+  });
+
+  it('a write that cannot be ruled out is UNDETERMINED and never stated as a write (#2505 r36)', () => {
+    const v = runVerdict({ ...base, rows: all('not run'), stopped: 'the nonce could not be read', writeUnknown: true });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/^OUTCOME: UNDETERMINED — whether the drive's wallet wrote cannot be established: the nonce could not be read/);
+    expect(v.line).not.toMatch(/after a write/);
+  });
+
+  it('a failure before the plan sent stays FAIL and never claims a write-free run it could not prove (#2505 r39)', () => {
+    const v = runVerdict({ ...base, wrote: false, rows: all('not run'), stopped: 'the page answered 503', preWriteFailure: true, writeUnknown: true });
+    expect(v.exit).toBe(1);
+    expect(v.line).toMatch(/^OUTCOME: FAIL — before the drive's plan sent anything \(whether its wallet sent outside the plan cannot be established\): the page answered 503/);
+    expect(v.line).not.toMatch(/before any write/);
+  });
+
+  it('a provably write-free UNDETERMINED never points at post-write evidence (#2505 r51)', () => {
+    const v = runVerdict({ ...base, wrote: false, rows: all('undetermined'), outcomeClaims: [] });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/Nothing was written \(this wallet's nonce shows no transaction since startup\)/);
+    expect(v.line).not.toMatch(/No chain read contradicts/);
   });
 
   it('a failed write discipline without a gate escape is stated as FAILED; "no contradiction" names only the outcome claims (#2434 r1 P2)', () => {

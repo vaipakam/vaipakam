@@ -177,7 +177,10 @@ export function createManifest({ verifiable, notVerified = [] }) {
       failed: 'FAILED',
       'not run': 'NOT RUN (a declared check never ran — the claim is not substantiated)',
       undetermined:
-        'UNDETERMINED (each check ran after the write, but its premises did not hold — the claim could not be substantiated either way)',
+        // Not every such check ran after a write (#2505 r50): a page that did
+        // not do what was expected, with nothing that says why, is recorded
+        // here too, before any write. Each line carries its own reason.
+        'UNDETERMINED (the claim could not be substantiated either way — each line says why: a check that ran after a write whose premises did not hold, or a page that did not do what was expected and showed nothing that says why)',
       'not verified': 'NOT VERIFIED BY THIS DRIVER',
     };
     for (const status of STATUS_ORDER) {
@@ -251,12 +254,16 @@ export const REFINANCE_EVIDENCE = Object.freeze({
 });
 export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
-export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
+export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, writeUnknown = false, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
   const missing = outcomeClaims.filter((id) => !rows.some((r) => r.id === id));
   if (missing.length) throw new Error(`runVerdict: outcome claim(s) ${missing.join(', ')} are not in the manifest`);
   if (!wrote) {
     if (preWriteFailure || stopped || rows.some((r) => r.status === 'failed')) {
-      return { exit: 1, line: `OUTCOME: FAIL — before any write: ${stopped ?? 'a check failed (see above)'}` };
+      // A failure observed before the plan sent stands even when the wallet's
+      // nonce cannot rule out a send outside it; the line then says so
+      // rather than claiming no write happened (#2505 r39).
+      const when = writeUnknown ? "before the drive's plan sent anything (whether its wallet sent outside the plan cannot be established)" : 'before any write';
+      return { exit: 1, line: `OUTCOME: FAIL — ${when}: ${stopped ?? 'a check failed (see above)'}` };
     }
   }
   const contradicted = rows.filter((r) => outcomeClaims.includes(r.id) && r.status === 'failed').map((r) => `[${r.id}]`);
@@ -295,7 +302,15 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
     line:
       'OUTCOME: UNDETERMINED — ' +
       [
-        stopped ? `the drive stopped after a write: ${stopped}` : null,
+        // A drive that cannot establish whether its wallet wrote says so, and
+        // never that a write happened (#2505 r36).
+        stopped
+          ? writeUnknown
+            ? `whether the drive's wallet wrote cannot be established: ${stopped}`
+            : wrote
+              ? `the drive stopped after a write: ${stopped}`
+              : `the drive stopped before any write: ${stopped}`
+          : null,
         failedOther.length
           ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — ${evidence.failed}`
           : null,
@@ -303,7 +318,10 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
       ]
         .filter(Boolean)
         .join('; ') +
-      `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` +
-      evidence.left,
+      // A run that provably wrote nothing has no transaction to inspect, so
+      // it is never pointed at post-write evidence (#2505 r51).
+      (wrote
+        ? `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` + evidence.left
+        : ". Nothing was written (this wallet's nonce shows no transaction since startup); the manifest above says why each claim was not established"),
   };
 }

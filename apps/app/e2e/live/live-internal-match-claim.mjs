@@ -59,7 +59,8 @@
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED, and —
 // declared in verdictContract.mjs's FOUR_VERDICT_DRIVERS — 3 UNDETERMINED,
-// only with CLAIM=1 after the gate allowed the claim.
+// with CLAIM=1 after the gate allowed the claim, or in any mode when the plan
+// sent nothing but the wallet nonce cannot be established.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +79,7 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
+import { Held, Suspect, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -179,7 +181,7 @@ const CLAIM_ONLY = [
   {
     id: 'claimable',
     claim: 'the exact claim can execute for this wallet before anything is sent',
-    checks: { estimate: 'eth_estimateGas for claimAsLender(loanId) from this wallet on the direct RPC — a revert is an observed FAIL, a transport error BLOCKED' },
+    checks: { estimate: 'eth_estimateGas for claimAsLender(loanId) from this wallet on the direct RPC — a revert is NOT ESTABLISHED (a claim made elsewhere or a moved position also makes it revert, #2505 r48), a transport error BLOCKED' },
   },
   {
     id: 'positionLine',
@@ -338,6 +340,19 @@ if (rec.incomplete || rec.recordedAt === 0n) {
 if (lenderHolder.toLowerCase() !== WALLET.toLowerCase()) {
   await blocked(`loan ${LOAN_ID}'s lender position is held by ${lenderHolder}, not ${ROLE} ${WALLET}`);
 }
+// The chain's own answer to the claim, at startup (#2505 r35). A claim the
+// chain already refuses (a
+// pause, a sanctions flag, a broken claim path) is not a card this drive can
+// judge, so it is BLOCKED here, with the revert named, before the browser
+// starts. Whether that refusal is itself a defect is outside what this drive
+// observes; it says which call was refused and why.
+try {
+  await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET });
+} catch (err) {
+  if (!err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')) await blocked('the direct RPC could not simulate the claim at startup', err);
+  const name = err.walk((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName;
+  await blocked(`the chain already refuses claimAsLender(${LOAN_ID}) for ${ROLE} ${WALLET} at startup (${name ?? err.shortMessage ?? err.message}); no claim card can be judged against it`);
+}
 const fmt = (v) => `${formatTokenAmount(v, Number(decimals))} ${symbol}`;
 console.log(
   `record: principal ${fmt(rec.principal)}, interest ${fmt(rec.interest)}, late fee ${fmt(rec.lateFee)}, ` +
@@ -436,10 +451,25 @@ function claimGate(method, params) {
   });
 }
 const claimHash = () => claimStep()?.record?.hash ?? null;
+// This wallet's nonce BEFORE any browser activity (#2505 r25): every run the
+// plan did not let write is settled against it (`noWriteSettlement.mjs`).
+let nonceAtStart;
+try {
+  const base = await nonceBaseline(pub, WALLET);
+  if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
+  nonceAtStart = base.nonce;
+} catch (err) {
+  await blocked('the direct RPC could not read the wallet nonce at startup', err);
+}
+// A THROWAWAY profile (#2505 r36): a persistent one can carry a paired
+// WalletConnect (or other connector) session, and a signing request the page
+// hands to an external wallet survives closing this browser, so the final
+// nonce read could precede a send the wallet approves later. A fresh profile
+// holds no pairing, and a new one needs a person to scan its code.
 const session = await launch(
   SUBMIT_CLAIM
-    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate, readOnlyEgress: true }
-    : { role: ROLE, readOnly: true },
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate, readOnlyEgress: true, freshProfile: true }
+    : { role: ROLE, readOnly: true, freshProfile: true },
 );
 const { ctx, page, done, consoleErrors, blockedRequests } = session;
 /** Evidence capture is never evidence about the app: a screenshot that fails
@@ -530,6 +560,21 @@ const violationsSoFar = () => [
  *  so it never runs after one. */
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+/**
+ * BLOCKED for a precondition met before any write, unless a failure was
+ * already recorded, which stands: the drive then stops there and the verdict
+ * is FAIL (#2505 r14). Every pre-write BLOCKED exit goes through here.
+ */
+/** The reason a {@link Held} stop gave (`noWriteSettlement.mjs` settles it). */
+let held = null;
+/** A {@link Suspect} the drive stopped on: not established, never a FAIL (#2505 r48). */
+let suspect = null;
+async function blockPre(why, err = null) {
+  if (preClaimFails() > 0) {
+    throw new Error(`${why}; nothing after it is judged, and the ${preClaimFails()} failure(s) recorded before it stand`);
+  }
+  throw new Held(err ? `${why} (${err?.shortMessage ?? err?.message ?? err})` : why);
+}
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
@@ -543,10 +588,15 @@ try {
   await visit(page, '/claims');
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
-    await blocked(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`, null, done);
+    await blockPre(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`);
   }
   await ensureConnected(page);
-  await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+  if (!(await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
+    // Not established, never a FAIL (#2505 r48): a claim made elsewhere or a
+    // transferred position rightly removes it, and the page shows nothing
+    // that says which.
+    throw new Suspect(`the loan's /claims row did not render`, { row: 'claimRow', key: 'oneRow', label: 'exactly one /claims row links to this loan' });
+  }
   // One loan, one card: a duplicate would misstate the wallet's claimable
   // funds, and every check below reads a single row.
   const rowCount = await rowFor().count();
@@ -600,10 +650,20 @@ try {
     // that window: the page never had the facts, so nothing was observed —
     // BLOCKED, never a FAIL on the copy (#2481 r1).
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
-      await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
+      await blockPre('the page RPC answered nothing while the position page loaded, so its Owed line was never observed');
     }
-    check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
-    check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
+    // Anything but the expected line may be the page rightly reporting a loan
+    // that moved during the drive: not established, never a FAIL (#2505 r48).
+    const pendingLabel = 'the Owed line says matching closed it and it settles once claims are collected';
+    const notSettledLabel = "the page does not call the loan 'closed and settled'";
+    if (owedText.includes(POSITIONS.owedClosed)) {
+      throw new Suspect('the position page called the loan closed and settled', { row: 'owedLine', key: 'notSettled', label: notSettledLabel });
+    }
+    if (!owedText.includes(POSITIONS.owedInternalMatched)) {
+      throw new Suspect('the position page showed no internal-match Owed line', { row: 'owedLine', key: 'pending', label: pendingLabel });
+    }
+    check('owedLine', 'pending', pendingLabel, true);
+    check('owedLine', 'notSettled', notSettledLabel, true);
   }
   await shot(`internal-match-owed-${LOAN_ID}`);
   if (SUBMIT_CLAIM) {
@@ -611,7 +671,16 @@ try {
     resetWindow();
     const back = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
-    await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+    const rowBack = await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
+    if (!rowBack) {
+      // The same two outcomes the first load has (#2505): an RPC that
+      // answered nothing in this window means the list was never observed;
+      // otherwise a loan that moved meanwhile may have rightly left it.
+      if ((await answered()) === 0) {
+        await blockPre('the page RPC answered nothing while /claims reloaded, so its row was never observed');
+      }
+      throw new Suspect(`the loan's /claims row did not render on the way back`, { row: 'claimRow', key: 'oneRow', label: 'exactly one /claims row links to this loan, on the way back' });
+    }
   }
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
@@ -623,7 +692,11 @@ try {
     await page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 });
     // The position page states the same line above its claim button.
     const claimButton = page.getByRole('button', { name: /^claim my funds$/i }).first();
-    await claimButton.waitFor({ state: 'visible', timeout: 60_000 });
+    // A row seen on /claims can be stale, or the loan can move after it
+    // rendered (#2505), so a missing button is not established, never a FAIL.
+    if (!(await claimButton.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
+      throw new Suspect('the position page showed no "Claim my funds" button', { row: 'positionLine', key: 'note', label: 'the position page shows its claim button and line' });
+    }
     // The button renders before the payout line loads ("checking the exact
     // amount…"), so the line is waited for: a read taken with the button
     // alone failed loan 25's drive although the page went on to state it.
@@ -654,8 +727,14 @@ try {
         // The node ANSWERED that this exact claim cannot execute (a paused
         // Diamond, a broken claim path): an observation, not an outage.
         if (isExecutionRevert(err)) {
-          check('claimable', 'estimate', 'the claim can execute for this wallet', false, `eth_estimateGas reverted: ${err.shortMessage ?? err.message}`);
-          throw new Error('the claim estimate reverted; not claiming');
+          // A claim made elsewhere, or a transferred position, also makes
+          // this estimate revert: not established, never a FAIL (#2505 r48).
+          throw new Suspect('the claim estimate reverted; not claiming', {
+            row: 'claimable',
+            key: 'estimate',
+            label: 'the claim can execute for this wallet',
+            detail: `eth_estimateGas reverted: ${err.shortMessage ?? err.message}`,
+          });
         }
         throw err;
       }
@@ -663,11 +742,17 @@ try {
       claimGasFloor = gas;
       const need = gas * gasPrice * 2n;
       if (balance < need) {
-        await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
+        await blockPre(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`);
       }
     } catch (err) {
-      if (failedCount() > 0) throw err;
-      await blocked('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err, done);
+      // A held stop raised inside (the wallet underfunded, or the loan moved
+      // under a reverted estimate) is a judgement, not a read that failed:
+      // it passes through unchanged (#2505 r27).
+      if (err instanceof Held || err instanceof Suspect) throw err;
+      // Anything already recorded — a failed check, a refused request, a page
+      // error — stands over this outage (#2505).
+      if (preClaimFails() > 0) throw err;
+      await blockPre('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err);
     }
     // Re-checked after the funding reads: the page kept running while they
     // were awaited, and a refusal recorded meanwhile must stop the claim.
@@ -697,8 +782,21 @@ try {
         () => true,
         () => false,
       );
-    check('pageConfirmed', 'complete', 'the page confirmed the claim ("Claim complete")', confirmed);
     PLAN.close();
+    // Armed and clicked, and nothing reached the wallet: the page may rightly
+    // have withheld the claim (its own pre-wallet checks refuse a paused or
+    // flagged claim), and nothing it showed says whether it did, so this is
+    // not established, never a FAIL (#2505 r48). Nothing after it is judged:
+    // no payout or list change is expected of a claim that was never sent.
+    if (!wrote()) {
+      throw new Suspect('the page sent no claim after its claim was clicked', {
+        row: 'writeDiscipline',
+        key: 'planned',
+        label: 'the claim was sent through the gated wallet, exactly once',
+        detail: `plan step ${claimStep()?.status}; page ${confirmed ? 'said "Claim complete"' : 'never confirmed'}`,
+      });
+    }
+    check('pageConfirmed', 'complete', 'the page confirmed the claim ("Claim complete")', confirmed);
     await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own receipt, by the hash the wallet returned — not a log
     // search, which a claim still pending would make read as "no payout".
@@ -706,10 +804,7 @@ try {
     // unjudged, which is UNDETERMINED, never a product FAIL.
     const hash = claimHash();
     let receipt = null;
-    if (!wrote()) {
-      // Nothing was sent through the plan: `planned` states it, and no payout
-      // is expected of a send that never happened.
-    } else if (!hash) {
+    if (!hash) {
       unsettled('payout', 'paid', 'the wallet returned no hash — the claim may still land; check the lender wallet by hand');
     } else {
       try {
@@ -813,7 +908,9 @@ try {
   // claim request during the screenshot, the reconciliation reads or the
   // browser teardown must not pass the gate after this verdict is chosen.
   PLAN?.close();
-  stopped = err.message;
+  if (err instanceof Held) held = err.message;
+  else if (err instanceof Suspect) suspect = err;
+  else stopped = err.message;
   await shot(`internal-match-claim-error-${LOAN_ID}`);
   if (wrote()) {
     // A claim the gate allowed moved (or failed to move) funds whatever the
@@ -839,82 +936,69 @@ try {
     } else if (receipt) {
       stopped += `; the claim MINED (${hash}, block ${receipt.blockNumber})`;
     }
-  } else if (!armedOnce && failedCount() === 0 && pageErrors().length === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
+  } else if (held === null && !armedOnce && failedCount() === 0 && pageErrors().length === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
     // No answer from the page's own RPC while the assertion waited: nothing
-    // page-backed was observed, so this is not a verdict on the card —
-    // unless a check already failed or a guard already recorded a refused
-    // request, or the page threw (pageHealth is recorded only after this
-    // catch), each of which is a finding on a served surface. Once the
-    // claim was armed it is never BLOCKED: the claim may have gone out, so
-    // the drive falls through to the chain reconciliation below.
-    await blocked('the page RPC answered nothing while the drive waited', err, done);
+    // page-backed was observed, so the stop is a precondition, not a verdict
+    // on the card, unless a check already failed, a guard recorded a refused
+    // request, or the page threw. Every other stop is settled at the end,
+    // after the browser is closed and the nonce reconciled.
+    held = `the page RPC answered nothing while the drive waited (${suspect?.message ?? stopped})`;
+    [suspect, stopped] = [null, null];
   }
-  console.log(`STOP  ${stopped}`);
+  console.log(`STOP  ${held ?? suspect?.message ?? stopped}`);
 }
-check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
-// Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
-// session: the plan's refusals, the chain pin's (recorded at the wallet
-// boundary before the gate is asked), and any page write the egress guard
-// stopped. Read-only session: every refused wallet write or non-read request.
-const violations = violationsSoFar();
-check(
-  'writeDiscipline',
-  'noRefusals',
-  SUBMIT_CLAIM ? 'the page asked to sign only the planned claim' : 'the page attempted no write in a read-only session',
-  violations.length === 0,
-  violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
-);
-if (armedOnce) {
-  // Only once the drive armed its claim: the plan's one step was consumed
-  // exactly once (a duplicate is refused by construction, and a
-  // send through any other connector never reaches the plan at all).
+// ── Settlement (noWriteSettlement.mjs) ─────────────────────────────────
+// One order for every run: the browser is closed first, so the page can add
+// no error, refusal or send after its ledgers are judged; this wallet's nonce
+// is read last. A run the plan did not let write is then BLOCKED, FAIL or
+// UNDETERMINED by one rule, whatever path stopped it.
+const settled = await settleRun({
+  closeBrowser: done,
+  judgeLedgers: () => {
+    check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
+    // session: the plan's refusals, the chain pin's (recorded at the wallet
+    // boundary before the gate is asked), and any page write the egress guard
+    // stopped. Read-only session: every refused wallet write or non-read request.
+    const violations = violationsSoFar();
+    check(
+      'writeDiscipline',
+      'noRefusals',
+      SUBMIT_CLAIM ? 'the page asked to sign only the planned claim' : 'the page attempted no write in a read-only session',
+      violations.length === 0,
+      violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
+    );
+  },
+  wrotePlan: wrote,
+  pub,
+  wallet: WALLET,
+  baseline: nonceAtStart,
+});
+const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}'s claim` });
+if (resolved.blocked) await blocked(resolved.blocked);
+// A suspect is NOT ESTABLISHED, never a failed check (#2505 r48).
+if (resolved.undetermined) {
+  const u = resolved.undetermined;
+  unsettled(u.row, u.key, `${u.label}: ${u.why}${u.detail ? ` (${u.detail})` : ''}; something outside the page may explain it and this drive cannot rule that out`);
+}
+// Armed, clicked, provably nothing sent, and nothing that explains it: the
+// page did not send the claim it was asked for (a duplicate is refused by
+// construction, and a send through any other connector never reaches the
+// plan at all).
+// Recorded on BOTH sides of the send (#2505 r40): consumed is the check
+// passing, and a provable no-send is it failing. Only a no-send whose nonce
+// could not be proven leaves it unjudged.
+if (armedOnce && (wrote() || !resolved.wrote) && held === null && suspect === null) {
   check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
-}
-// A claim that bypassed the plan. The injected wallet's key never leaves the
-// gated handler, but a profile still connected through another connector (a
-// persisted WalletConnect session holding the same account) can send the
-// claim without the plan ever seeing it. So once the driver has clicked its
-// claim and the plan shows no send, the chain is asked whether the lender
-// claim is recorded anyway: if it is, a write landed outside the gate — the
-// shared verdict's gate escape, a FAIL. Unreadable is a write that may have
-// happened: UNDETERMINED, never "before any write". Read at the latest block,
-// so a claim still pending there is not seen.
-let escaped = false;
-let escapeUnknown = null;
-if (armedOnce && !wrote()) {
-  try {
-    const [, , lenderClaimed] = await read('getClaimableAmount', [LOAN_ID, true]);
-    escaped = lenderClaimed === true;
-    if (escaped) {
-      console.log(`ESCAPE the lender claim for loan ${LOAN_ID} is recorded on chain, but the write plan never allowed a send`);
-    }
-  } catch (err) {
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read whether the lender claim landed through another connector (${err.message})`;
-  }
-}
-// From the claim click on, the run is post-write whatever the plan saw: a
-// send through another connector can still be pending when the read above
-// returns false, so only a send the plan never armed for is "before any
-// write". The plan's own record (`planned`) still states what it saw.
-if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
-  escapeUnknown =
-    'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
-}
-const wroteAny = wrote() || armedOnce;
-// Teardown is cleanup, not evidence: a browser that fails to close says
-// nothing about the app or the chain, so it never replaces the verdict.
-try {
-  await done();
-} catch (err) {
-  console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
 }
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
-  wrote: wroteAny,
-  stopped: [stopped, escapeUnknown].filter(Boolean).join('; ') || null,
-  preWriteFailure: !wroteAny && failedCount() > 0,
-  gateEscape: escaped,
+  wrote: resolved.wrote,
+  stopped: resolved.stopped,
+  preWriteFailure: !resolved.wrote && failedCount() > 0,
+  gateEscape: resolved.gateEscape,
+  writeUnknown: resolved.writeUnknown === true,
   outcomeClaims: SUBMIT_CLAIM ? OUTCOME : [],
   // Point the reader at the evidence THIS drive printed: the gate lines, the
   // claim's TX line and the STOP line's receipt reading. It keeps no nonce
@@ -922,7 +1006,9 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the claim's hash and what its receipt showed; check the lender wallet by hand if neither does",
-    escape: 'the chain records the lender claim, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)',
+    // Unreachable: the settlement never reports a gate escape (a nonce the
+    // plan never saw is UNDETERMINED, noWriteSettlement.mjs #2505 r37).
+    escape: 'no gate escape is reported by this drive',
   },
 });
 console.log(VERDICT.line);
