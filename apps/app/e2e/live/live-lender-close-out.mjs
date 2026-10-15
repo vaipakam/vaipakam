@@ -475,6 +475,8 @@ let held = null;
 // reaches the ledger wrapped twice (the wallet gate's "eth_sendTransaction
 // refused by the signing gate: …", then the driver's "signing gate: …"), and
 // a token no page can predict cannot be matched by a request's own content.
+/** Whether the gate has already marked its one withheld request. */
+let heldMarked = false;
 const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
 /**
  * Only the planned close-out may be withheld this way: the request is first
@@ -512,7 +514,11 @@ const holdSend = (params, gatePossible = null, { gasChecked = false } = {}) => {
   // r21). A known-disabled or unlisted index still fails the match.
   const either = gatePossible === null ? startupEnabled : { has: (i) => startupEnabled.has(i) || gatePossible.has(i) };
   const planned = matchesUnder(either);
-  if (!planned) return null;
+  // One marked refusal per run (#2505 r24): a second request, even an
+  // identical one sent while the first was still being judged, is a duplicate
+  // signing attempt and is refused unmarked, so it is judged like any other.
+  if (!planned || heldMarked) return null;
+  heldMarked = true;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
 async function previewSale(tx) {
@@ -965,6 +971,24 @@ try {
     if (refusedWith && !wrote()) {
       PLAN.close();
       throw new Held(`the card refused at confirm time and the plan signed nothing (copy.forcedClose.${refusedWith}); the sale is not routable right now`);
+    }
+    // A confirm step that never settled, with nothing signed, may be the page
+    // rightly withholding a close-out whose precondition moved while it was
+    // being confirmed: the card's own pre-wallet simulation refuses it, so the
+    // gate never sees a request (#2505 r24). It is judged against the chain
+    // before it is recorded, and a move or an unreadable precondition holds
+    // the run (BLOCKED once the nonce is reconciled), with the order of the
+    // two unknown. Only an unmoved loan leaves it a FAIL.
+    if (!settled && !wrote()) {
+      const now = await eligibleAt(null);
+      if (!now.ok) {
+        PLAN.close();
+        throw new Held(
+          now.unknown
+            ? `the page did not leave its confirm step and loan ${LOAN_ID}'s eligibility could not be re-read, so whether it moved is unknown (${now.unknown}); the plan signed nothing`
+            : `the page did not leave its confirm step, and by block ${now.block} loan ${LOAN_ID} had moved (${now.why}); which came first is unknown, and the plan signed nothing`,
+        );
+      }
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
     PLAN.close();
