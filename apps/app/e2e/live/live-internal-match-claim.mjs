@@ -982,9 +982,10 @@ const wroteAny = wrote() || armedOnce;
 // drive started from (#2505). The checks above revalidate only where a line
 // came out unexpected, and a transfer of the lender position changes no line
 // on this page, so the lifecycle is re-read once more before that verdict.
-// A failure already recorded stands whatever moved afterwards, and after a
-// write the loan moved because of this drive, so neither is asked.
-if (!wroteAny && preClaimFails() === 0) await blockIfLifecycleMoved('before the verdict');
+// A failure already recorded, or a stop the drive already hit, stands
+// whatever moved afterwards, and after a write the loan moved because of this
+// drive, so none of them is asked.
+if (!wroteAny && preClaimFails() === 0 && stopped === null) await blockIfLifecycleMoved('before the verdict');
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {

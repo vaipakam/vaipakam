@@ -253,6 +253,9 @@ const rosterKey = (adapters, disabled) =>
     .map((a, i) => (disabled[i] === false ? `${i}:${String(a).toLowerCase()}` : null))
     .filter((x) => x !== null)
     .join(',');
+/** A viem error that carries the node's own execution revert. */
+const isExecutionRevert = (err) =>
+  Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
 /** The roster the drive started from; the gate re-reads `enabledAdapters`. */
 let startupRoster;
 try {
@@ -304,8 +307,7 @@ async function eligibleAt(blockNumber) {
   // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
   // an admin retune between startup and the inspected block changes what
   // triggerDefault itself evaluates there (#2481 r3).
-  const [holder, graceSeconds, adapters] = await Promise.all([
-    read('ownerOf', [l.lenderTokenId], at),
+  const [graceSeconds, adapters] = await Promise.all([
     read('getEffectiveGraceSeconds', [l.durationDays], at),
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
@@ -315,6 +317,17 @@ async function eligibleAt(blockNumber) {
     // the enabled roster, by index AND address, is a moved precondition.
     read('getSwapAdapters', [], at),
   ]);
+  // The holder on its own: a position claimed after the loan closed is
+  // burned, and the node then answers that the token has no owner. That
+  // answer is itself a fact (the position this drive held is gone), so it
+  // never turns what the reads above established into "unknown".
+  let holder;
+  try {
+    holder = await read('ownerOf', [l.lenderTokenId], at);
+  } catch (err) {
+    if (!isExecutionRevert(err)) throw err;
+    holder = null;
+  }
   const disabledHere = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
   const enabledHere = rosterKey(adapters, disabledHere);
   const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
@@ -323,7 +336,8 @@ async function eligibleAt(blockNumber) {
   if (!sequencerOk) why.push('the sequencer is not healthy');
   if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
   if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
-  if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
+  if (holder === null) why.push('the lender position no longer exists');
+  else if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
   if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
   return { ok: why.length === 0, why: why.join(', '), block: b.number };
 }
@@ -380,6 +394,17 @@ let rosterMovedAtGate = null;
 class Held extends Error {}
 /** The reason a {@link Held} stop gave, once the drive is stopped. */
 let held = null;
+/**
+ * How many refused requests were recorded when the gate first withheld a send
+ * for a held precondition. Closing the plan makes it refuse the very request
+ * it was judging, and leaves its step unconsumed; both are this drive's own
+ * doing, so a held run judges write discipline only on what came before.
+ */
+let refusalsBeforeHold = null;
+const holdSend = () => {
+  if (refusalsBeforeHold === null) refusalsBeforeHold = violationsSoFar().length;
+  PLAN.close();
+};
 async function previewSale(tx) {
   try {
     const { results } = await pub.simulateCalls({ account: WALLET, calls: [{ to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) }] });
@@ -420,12 +445,12 @@ async function gate(method, params) {
       if (atGate !== startupRoster) {
         rosterMovedAtGate = `at startup [${startupRoster}], at signing [${atGate}]`;
         console.log(`GATE  the enabled adapters changed during the drive (${rosterMovedAtGate}); not signing`);
-        PLAN.close();
+        holdSend();
       }
     } catch (err) {
       rosterMovedAtGate = `unknown: the roster could not be re-read at signing (${err.shortMessage ?? err.message})`;
       console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); not signing`);
-      PLAN.close();
+      holdSend();
     }
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
@@ -448,7 +473,10 @@ async function gate(method, params) {
     const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
     previewVerdict = await previewSale(tx);
     console.log(`GATE  independent preview of the requested route: ${previewVerdict}`);
-    if (previewVerdict !== 'sale') PLAN.close();
+    // An unrunnable preview is a held precondition; any other non-sale is
+    // the app's route, judged at confirm.
+    if (previewVerdict === 'unknown') holdSend();
+    else if (previewVerdict !== 'sale') PLAN.close();
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
   // refused request recorded meanwhile must still withhold the one-shot send.
@@ -786,18 +814,6 @@ try {
   }
   console.log(`STOP  ${stopped}`);
 }
-check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
-const violations = violationsSoFar();
-check(
-  'writeDiscipline',
-  'noRefusals',
-  SUBMIT ? 'the page asked to sign only the planned close-out' : 'the page attempted no write in a read-only session',
-  violations.length === 0,
-  violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
-);
-if (armedOnce) {
-  check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
-}
 // A send that bypassed the plan: armed, nothing sent through it, yet THIS
 // WALLET's nonce moved. The loan's status alone proves nothing — any keeper
 // may close an overdue loan (#2481 r1) — so a status change without a nonce
@@ -817,8 +833,10 @@ if (armedOnce && !wrote()) {
     if (escaped) {
       console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
     } else if (status !== ACTIVE) {
-      // Nothing was written by this drive; the loan simply moved under it.
-      stopped = [stopped, `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status} — closed by someone else in the meantime (a race)`].filter(Boolean).join('; ');
+      // Nothing was written by this drive; the loan simply moved under it: a
+      // held precondition, resolved with the others below.
+      const race = `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status}, closed by someone else in the meantime (a race)`;
+      held = held === null ? race : `${held}; ${race}`;
     }
     // Nonce unchanged and the loan still Active: PROVABLY no write, so the
     // run stays on the pre-write path, where a failed check is a FAIL.
@@ -827,18 +845,35 @@ if (armedOnce && !wrote()) {
     escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message}) — a send through another connector cannot be ruled out`;
   }
 }
+check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+// A held run's own refusal and unconsumed step are not findings (see
+// `refusalsBeforeHold`); what was refused before the hold still is.
+// Judged after the nonce reconciliation, which can itself hold the run.
+const heldRun = held !== null;
+const violations = heldRun && refusalsBeforeHold !== null ? violationsSoFar().slice(0, refusalsBeforeHold) : violationsSoFar();
+check(
+  'writeDiscipline',
+  'noRefusals',
+  SUBMIT ? 'the page asked to sign only the planned close-out' : 'the page attempted no write in a read-only session',
+  violations.length === 0,
+  violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
+);
+if (armedOnce && !heldRun) {
+  check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
+}
 // #2481 r3 — ARMING is not a write. Only a send the plan consumed, an escape
 // the nonce proves, or a nonce that could not be read (a write that cannot
 // be ruled out) puts the run on the post-write path.
 const wroteAny = wrote() || escaped || writeUnknown;
 // The moved-precondition rule (#2505), applied once, here: after the nonce
 // reconciliation (so "nothing was sent" is established, not assumed) and
-// before any pre-write verdict. A failure already recorded stands whatever
-// moved afterwards. Otherwise a held stop is BLOCKED, and a run that reached
+// before any pre-write verdict. A failure already recorded (the checks above
+// include page health and write discipline), or a stop the drive hit, stands
+// whatever moved afterwards. Otherwise a held stop is BLOCKED, and a run that reached
 // its verdict re-reads its eligibility at the latest block, roster included —
 // a read-only drive never reaches the signing gate, so this is the only
 // re-read a change made after the card's snapshot would meet.
-if (!wroteAny && preSendFails() === 0) {
+if (!wroteAny && failedCount() === 0 && stopped === null) {
   let why = held;
   if (why === null) {
     const now = await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }));
