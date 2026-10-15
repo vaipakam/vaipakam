@@ -39,8 +39,10 @@
  *
  * A FOURTH verdict, by declaration only (#2434 r2):
  *
- *   3  UNDETERMINED — the drive wrote to the chain and then could not
- *                 establish its claims either way. Reported as such ONLY
+ *   3  UNDETERMINED — the drive wrote to the chain, or cannot rule out
+ *                 that its wallet did (its nonce could not be established,
+ *                 #2505 r33), and could not establish its claims either
+ *                 way. Reported as such ONLY
  *                 for a driver in FOUR_VERDICT_DRIVERS; from any other
  *                 driver an exit 3 is a FAIL. It keeps the batch red.
  */
@@ -195,8 +197,9 @@ if (undeclaredFails.length) {
 const undetermined = results.filter((r) => r.verdict === 'UNDETERMINED');
 if (undetermined.length) {
   console.log(
-    `\n${undetermined.length} drive(s) UNDETERMINED — they wrote to the chain and` +
-      ` could not establish their claims either way. Not a pass and not a` +
+    `\n${undetermined.length} drive(s) UNDETERMINED — they wrote to the chain, or` +
+      ` could not rule out that their wallet did, and could not establish their` +
+      ` claims either way. Not a pass and not a` +
       ` confirmed defect: read each drive's report, which prints what it left` +
       ` standing:\n` +
       undetermined.map((r) => `  ${r.script}`).join('\n'),
