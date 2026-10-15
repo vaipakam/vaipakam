@@ -341,9 +341,17 @@ if (startupHold !== null) await blocked(`loan ${LOAN_ID}: ${startupHold}, so the
 // This wallet's nonce BEFORE any browser activity (#2505 r25): a page can
 // send through another connector before the plan is ever armed, so the
 // baseline every no-write verdict is reconciled against is taken here.
+// The count is evidence only while nothing is pending at startup (#2505 r27):
+// a transaction already in the pool could be replaced at the same nonce,
+// which leaves the pending count unchanged, so a wallet with one is BLOCKED.
 let nonceBefore = null;
 try {
-  nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+  const [pendingN, minedN] = await Promise.all([
+    pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: WALLET, blockTag: 'latest' }),
+  ]);
+  if (pendingN !== minedN) await blocked(`${ROLE} ${WALLET} has ${pendingN - minedN} transaction(s) pending at startup; its nonce could not tell a replacement from no send`);
+  nonceBefore = pendingN;
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -1116,15 +1124,20 @@ if (!wrote()) {
   try {
     if (nonceR.status === 'rejected') throw nonceR.reason;
     const nonceAfter = nonceR.value;
-    // An unanswered status read leaves the race unnamed, never the write.
+    // An unanswered status read leaves the race unnamed, never the write;
+    // on a held run, which skips the final eligibility read, it is stated
+    // instead of assumed (#2505 r27).
     const status = statusR.status === 'fulfilled' ? statusR.value : ACTIVE;
+    if (statusR.status === 'rejected' && held !== null) {
+      held = `${held}; loan ${LOAN_ID}'s status could not be re-read at the verdict, so whether it has since closed is unknown (${describeErr(statusR.reason)})`;
+    }
     escaped = nonceBefore !== null && nonceAfter > nonceBefore;
     if (escaped) {
       console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
     } else if (status !== ACTIVE) {
       // Nothing was written by this drive; the loan simply moved under it: a
       // held precondition, resolved with the others below.
-      const race = `the plan allowed no send and this wallet sent nothing, but loan ${LOAN_ID} is now status ${status}, closed by someone else in the meantime (a race)`;
+      const race = `the plan allowed no send and this wallet's nonce is unchanged, but loan ${LOAN_ID} is now status ${status}, closed by someone else in the meantime (a race)`;
       held = held === null ? race : `${held}; ${race}`;
     }
     // Nonce unchanged and the loan still Active: PROVABLY no write, so the
@@ -1177,7 +1190,9 @@ if (!wroteAny && failedCount() === 0 && stopped === null) {
     if (now.unknown) why = `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility before the verdict, so whether it moved is unknown (${now.unknown})`;
     else if (!now.ok) why = `loan ${LOAN_ID} moved before the verdict (block ${now.block}): ${now.why}`;
   }
-  if (why !== null) await blocked(`${why}; this wallet sent nothing`, null, done);
+  // What the nonce shows, not more: a send that left the pool unmined
+  // leaves the count unchanged and wrote nothing (#2505 r27).
+  if (why !== null) await blocked(`${why}; this wallet's nonce shows no transaction pending or mined since startup`, null, done);
 } else if (held !== null) {
   stopped = [stopped, held].filter(Boolean).join('; ');
 }

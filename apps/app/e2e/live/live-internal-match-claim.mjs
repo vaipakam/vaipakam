@@ -438,9 +438,17 @@ function claimGate(method, params) {
 const claimHash = () => claimStep()?.record?.hash ?? null;
 // This wallet's nonce BEFORE any browser activity (#2505 r25): every run
 // that never armed is reconciled against it before its verdict.
+// The count is evidence only while nothing is pending at startup (#2505 r27):
+// a transaction already in the pool could be replaced at the same nonce,
+// which leaves the pending count unchanged, so a wallet with one is BLOCKED.
 let nonceAtStart;
 try {
-  nonceAtStart = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+  const [pendingN, minedN] = await Promise.all([
+    pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: WALLET, blockTag: 'latest' }),
+  ]);
+  if (pendingN !== minedN) await blocked(`${ROLE} ${WALLET} has ${pendingN - minedN} transaction(s) pending at startup; its nonce could not tell a replacement from no send`);
+  nonceAtStart = pendingN;
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -787,6 +795,10 @@ try {
         await blockPre(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`);
       }
     } catch (err) {
+      // A held stop raised inside (the wallet underfunded, or the loan moved
+      // under a reverted estimate) is a judgement, not a read that failed:
+      // it passes through unchanged (#2505 r27).
+      if (err instanceof Held) throw err;
       // Anything already recorded — a failed check, a refused request, a page
       // error — stands over this outage (#2505).
       if (preClaimFails() > 0) throw err;
@@ -1091,7 +1103,9 @@ if (!wroteAny && preClaimFails() === 0 && stopped === null && held === null && f
 // this wallet sent nothing, and only while no failure has been recorded. A
 // failure recorded since stands, and the held reason joins the stop.
 if (held !== null) {
-  if (!wroteAny && preClaimFails() === 0 && stopped === null) await blocked(`${held}; this wallet sent nothing`, null, done);
+  // What the nonce shows, not more: a send that left the pool unmined
+  // leaves the count unchanged and wrote nothing (#2505 r27).
+  if (!wroteAny && preClaimFails() === 0 && stopped === null) await blocked(`${held}; this wallet's nonce shows no transaction pending or mined since startup`, null, done);
   else stopped = [stopped, held].filter(Boolean).join('; ');
 }
 // Teardown is cleanup, not evidence: a browser that fails to close says
