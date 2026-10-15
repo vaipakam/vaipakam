@@ -312,6 +312,31 @@ library FacetSelectors {
         return bytes4(keccak256("previewIntent(address,address,address,address,uint256,uint256)"));
     }
 
+    /// @notice Selectors #2489 RETIRED on facets the curated scripts re-cut
+    ///         (security review of #2489): the ETH·day recycle-tariff setter
+    ///         deleted from `ConfigFacet` (its slot is retained, dead), and the
+    ///         pre-#1949 shapes of `OfferCreateFacet.createSignedOfferVault` /
+    ///         `createSignedOfferWallet`, which gained a trailing `MakerFull`.
+    ///         A `Replace` of the new surface leaves these routed to the OLD
+    ///         bytecode unless they are Removed — the split Diamond by the
+    ///         opposite door (CLAUDE.md "Deleting or renaming a function").
+    ///         `RefreshAllFacetsInPlace` sweeps them from the loupe itself;
+    ///         `ReplaceStaleFacets` carries them explicitly.
+    function retiredSelectors2489() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = bytes4(keccak256("setRecycleTariffKPer1e18EthDay(uint256)"));
+        s[1] = bytes4(
+            keccak256(
+                "createSignedOfferVault(address,(uint8,address,uint256,uint256,address,uint256,uint256,uint8,uint256,uint256,bool,address,uint8,uint256,uint256,bool,uint256,uint256,uint256,uint8,uint64,uint8,bool,bool,uint256,bool))"
+            )
+        );
+        s[2] = bytes4(
+            keccak256(
+                "createSignedOfferWallet(address,(uint8,address,uint256,uint256,address,uint256,uint256,uint8,uint256,uint256,bool,address,uint8,uint256,uint256,bool,uint256,uint256,uint256,uint8,uint64,uint8,bool,bool,uint256,bool),((address,uint256),uint256,uint256),bytes32,bytes)"
+            )
+        );
+    }
+
     /// @notice Full external selector surface of {OfferPreviewFacet} (1).
     ///
     /// @dev    #1649. Paired with {riskPreview} for the same reason, one step

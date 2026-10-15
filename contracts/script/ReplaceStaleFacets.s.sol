@@ -232,6 +232,27 @@ contract ReplaceStaleFacets is DeployDiamond {
                 functionSelectors: gone
             });
         }
+        // Security review of #2489 — the selectors #2489 retired on ConfigFacet
+        // and OfferCreateFacet (a deleted setter; two entries whose shape
+        // changed), each Removed wherever still routed, for the same reason as
+        // `previewIntent` above.
+        {
+            bytes4[] memory retired = FacetSelectors.retiredSelectors2489();
+            bytes4[] memory gone = new bytes4[](retired.length);
+            uint256 g;
+            for (uint256 i; i < retired.length; ++i) {
+                if (IDiamondLoupe(diamond).facetAddress(retired[i]) != address(0)) gone[g++] = retired[i];
+            }
+            if (g != 0) {
+                bytes4[] memory trimmed = new bytes4[](g);
+                for (uint256 i; i < g; ++i) trimmed[i] = gone[i];
+                staging[n++] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: trimmed
+                });
+            }
+        }
         n = _appendPartitioned(
             staging,
             n,

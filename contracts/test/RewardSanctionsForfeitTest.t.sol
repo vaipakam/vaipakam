@@ -1587,6 +1587,44 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertFalse(_entry(ids[2]).processed || _entry(ids[3]).processed, "days L and L + 1 still owed");
     }
 
+    /// @notice L2b - a claim that only RELEASES the held balance (days L and
+    ///         L + 1 not yet finalized, so the window is not walked) names NO
+    ///         day range: the event and the return carry `(0, 0)` with the
+    ///         released amount, and the later claim that does walk the window
+    ///         names it (security review of #2489: the pre-clamp range used to
+    ///         be announced as claimed while its days stayed owed).
+    /// @dev   Mutation: announce `fromDay, toDay` on the held-only early return
+    ///        -> the range reads (L, L + 1) while nothing of it settled.
+    function test_sanc_L2b_aHeldOnlyClaim_namesNoDayRange_theWalkingClaimDoes() public {
+        (, uint256 vPre, ) = _legacyWindowScene();
+        _settleOwner(alice);
+        vm.warp(_dayStart(L + 1) + 1);
+        oracle.setFlagged(alice, false);
+        assertEq(_observe(alice), DELIVER, "revoked");
+
+        // Held-only: nothing finalized past the settlement, so no window walk.
+        vm.recordLogs();
+        uint256 paid = _claimWallet(alice);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(paid, vPre, "only the held balance");
+        _assertReleasedLog(logs, alice, vPre);
+        _assertClaimedLog(logs, alice, vPre);
+        (uint256 from, uint256 to, ) = abi.decode(_nth(logs, T_CLAIMED, 0).data, (uint256, uint256, uint256));
+        assertEq(from, 0, "no window walked: no first day named");
+        assertEq(to, 0, "no window walked: no last day named");
+        assertEq(_held(alice), 0, "the held balance is spent");
+
+        // The claim that walks the window names it.
+        _finalize(L, L + 1);
+        vm.warp(_dayStart(L + 2));
+        vm.recordLogs();
+        _claimWallet(alice);
+        logs = vm.getRecordedLogs();
+        (from, to, ) = abi.decode(_nth(logs, T_CLAIMED, 0).data, (uint256, uint256, uint256));
+        assertEq(from, L, "walked: from day L");
+        assertEq(to, L + 1, "walked: through day L + 1");
+    }
+
     /// @notice L2 - REVOCATION: a Clean read on day L + 1 records the window
     ///         [F, L] (event + lens); the wallet's own claim, once L and L + 1
     ///         finalize, pays the held balance AND day L + 1, and forfeits day

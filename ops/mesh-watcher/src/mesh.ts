@@ -267,26 +267,39 @@ export interface HistoryReceipt {
  * Codex #2489 r10 — what the chain actually relocated for Base's history-booked
  * rows: each row's declared recycled share scaled to what arrived, the
  * receiver's own flooring (`recycled × received / total`; a full or
- * over-delivery, or a zero total, is the declared share). A row whose receipt
- * is missing (never delivered here, or unreadable) is COUNTED, not guessed:
- * with any missing the caller leaves the figure undefined. Pure, for the unit
- * test.
+ * over-delivery, or a zero total, is the declared share).
+ *
+ * Two kinds of "no receipt" (security review of #2489): a receipt the chain
+ * HOLDS with `receivedAt` 0 is the chain's own statement that this remittance
+ * never arrived — on Base that row is a pre-upgrade FORCED finalization, which
+ * the record cannot tell from an acknowledgement (the forced path stamps
+ * `consumedAcked` too; the ack content is computed from the receipt, so an
+ * acknowledged delivery always left one) — and the chain relocated NOTHING
+ * for it: it contributes 0 and is counted in `neverDelivered`. A receipt that
+ * could not be READ (`undefined`) is unknown: COUNTED in `missing`, never
+ * guessed; with any missing the caller leaves the figure undefined. Pure, for
+ * the unit test.
  */
 export function reconstructHistoryActual(
   rows: readonly HistoryBookedRow[],
   receipts: ReadonlyMap<bigint, HistoryReceipt | undefined>,
-): { actual: bigint; missing: number } {
+): { actual: bigint; missing: number; neverDelivered: number } {
   let actual = 0n;
   let missing = 0;
+  let neverDelivered = 0;
   for (const r of rows) {
     const rc = receipts.get(r.id);
-    if (!rc || rc.receivedAt === 0n) {
+    if (!rc) {
       missing++;
+      continue;
+    }
+    if (rc.receivedAt === 0n) {
+      neverDelivered++;
       continue;
     }
     actual += r.total === 0n || rc.amount >= r.total ? r.recycled : (r.recycled * rc.amount) / r.total;
   }
-  return { actual, missing };
+  return { actual, missing, neverDelivered };
 }
 
 /** Page Base's history-booked rows for a destination over `1..nonce` (the
@@ -1117,6 +1130,7 @@ export async function observeMesh(
           const receipts = await readHistoryReceipts(target, canonical.diamond, book.historyBooked);
           const r = reconstructHistoryActual(book.historyBooked, receipts);
           book.historyReceiptsMissing = r.missing;
+          book.historyNeverDelivered = r.neverDelivered;
           book.recycledAckedHistoryActual = r.missing === 0 ? r.actual : undefined;
         } catch (err) {
           gaps.push(remitHistoryReadUnavailableGap(id, err, 'getReceivedRemit'));

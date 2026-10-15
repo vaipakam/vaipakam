@@ -561,6 +561,15 @@ export interface NotifiedPlan {
  * a mid-way failure entirely, and the head pass then stamped straight
  * through it.
  */
+/** The proven-written frontier the replay planner starts from: the HIGHER of
+ *  the keeper-facing stamp and the written cursor (null only when neither
+ *  exists). Pure, for the unit test. */
+export function notifiedFrontier(stamp: bigint | null, written: bigint | null): bigint | null {
+  if (stamp === null) return written;
+  if (written === null) return stamp;
+  return stamp > written ? stamp : written;
+}
+
 export function notifiedFloor(prev: bigint | null, scanFrom: bigint | null, wroteOk: boolean): bigint | null {
   if (wroteOk || scanFrom === null) return null;
   const floor = scanFrom - 1n;
@@ -622,8 +631,10 @@ export async function replayNotificationsFromArchive(
   const blockTimestamps = new Map<bigint, number>();
   // A STATIC statement, filtered by kind in code rather than by an
   // interpolated `IN (...)`: the SQL schema guard checks every static
-  // statement against the real migrated schema, and this path is cold (a
-  // replay happens only after a failed insert), so reading the window's
+  // statement against the real migrated schema, and this path runs only over an
+  // UNPROVEN range (a failed insert, or a pass that could not prove its rows —
+  // never a routine catch-up, whose written frontier the planner starts
+  // from), so reading the window's
   // other kinds costs nothing that matters.
   const rows = await db
     .prepare(

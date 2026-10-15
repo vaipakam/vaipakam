@@ -97,21 +97,21 @@ describe('reconstructHistoryActual', () => {
       [2n, { receivedAt: 100n, amount: 19n }], // 5 × 19 / 20 = 4 (floor)
       [3n, { receivedAt: 100n, amount: 1n }],
     ]));
-    expect(r).toEqual({ actual: 10n + 4n + 7n, missing: 0 });
+    expect(r).toEqual({ actual: 10n + 4n + 7n, missing: 0, neverDelivered: 0 });
   });
   it('an over-delivery is the declared share, never more', () => {
-    expect(reconstructHistoryActual([rows[0]!], new Map([[1n, { receivedAt: 1n, amount: 40n }]]))).toEqual({ actual: 10n, missing: 0 });
+    expect(reconstructHistoryActual([rows[0]!], new Map([[1n, { receivedAt: 1n, amount: 40n }]]))).toEqual({ actual: 10n, missing: 0, neverDelivered: 0 });
   });
-  it('a missing receipt, or one never delivered (receivedAt 0), is COUNTED, not guessed', () => {
+  it('an unreadable receipt is COUNTED missing, not guessed; a receipt with receivedAt 0 is a never-delivered (forced) row that relocated nothing', () => {
     // Mutation: substitute the declared share for a missing receipt → a pre-upgrade
-    // short delivery reads as a critical again.
+    // short delivery reads as a critical again; count receivedAt 0 as missing →
+    // every chain with a pre-upgrade forced finalization loses the hard leg.
     const r = reconstructHistoryActual(rows, new Map([
       [1n, { receivedAt: 100n, amount: 30n }],
       [2n, undefined],
       [3n, { receivedAt: 0n, amount: 0n }],
     ]));
-    expect(r.missing).toBe(2);
-    expect(r.actual).toBe(10n);
+    expect(r).toEqual({ actual: 10n, missing: 1, neverDelivered: 1 });
   });
 });
 

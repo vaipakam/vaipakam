@@ -15,7 +15,7 @@ import {
   type NotifSourceLog,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
-import { notifiedFloor, planNotifiedWatermark, replayNotificationsFromArchive, reviveArchiveArgs } from '../src/notifications';
+import { notifiedFloor, notifiedFrontier, planNotifiedWatermark, replayNotificationsFromArchive, reviveArchiveArgs } from '../src/notifications';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -570,6 +570,16 @@ describe('replayNotificationsFromArchive — the rows re-derived from activity_e
   });
 });
 
+describe('notifiedFrontier — the proven-written frontier the planner starts from (security review of #2489)', () => {
+  it('is the higher of the keeper stamp and the written cursor; null only when neither exists', () => {
+    expect(notifiedFrontier(null, null)).toBeNull();
+    expect(notifiedFrontier(null, 500n), 'a catch-up proved rows before any head stamp').toBe(500n);
+    expect(notifiedFrontier(700n, null)).toBe(700n);
+    expect(notifiedFrontier(700n, 500n)).toBe(700n);
+    expect(notifiedFrontier(500n, 900n), 'written ahead of the stamp: no routine replay of 501..900').toBe(900n);
+  });
+});
+
 describe('notifiedFloor — where a failed insert pins the watermark (one rule for head and catch-up passes)', () => {
   it('a failed insert pins a never-stamped chain just below its scan; a stamped one only when the scan is below the stamp', () => {
     expect(notifiedFloor(null, 400n, false)).toBe(399n);
@@ -593,12 +603,24 @@ describe('the scan tail remembers a failed insert on a catch-up pass short of th
     expect(gate).toBeGreaterThan(-1);
     const tail = src.slice(gate, gate + 400);
     expect(tail).toContain('} else if (!notifiedOk) {\n    await holdNotifiedWatermark(env, chainId, scanFrom);');
+    // A catch-up pass whose insert landed advances the WRITTEN frontier (never
+    // the keeper stamp), so the head pass does not replay it.
+    expect(tail).toContain('} else {\n    await advanceNotifiedWritten(env, chainId, scanTo);');
+  });
+  it('the planner starts from the proven-written frontier, and every hold lowers both cursors', () => {
+    const read = src.slice(src.indexOf('async function readNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function readNotifiedWatermark(')));
+    expect(read).toContain('notifiedFrontier(stamp, written)');
+    const stamp = src.slice(src.indexOf('async function stampNotifiedWatermark('), src.indexOf('async function advanceNotifiedWritten('));
+    expect(stamp).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, plan.holdAt);");
+    expect(stamp).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, stampTo);");
+    const hold = src.slice(src.indexOf('async function holdNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function holdNotifiedWatermark(')));
+    expect(hold).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, hold);");
   });
   it('the hold and the head stamp share one floor rule, and a failed replay writes the hold', () => {
     const hold = src.slice(src.indexOf('async function holdNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function holdNotifiedWatermark(')));
     expect(hold).toContain('notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false)');
     const stamp = src.slice(src.indexOf('async function stampNotifiedWatermark('), src.indexOf('async function holdNotifiedWatermark('));
-    expect(stamp).toContain('if (plan.holdAt !== undefined) await _writeNotifiedWatermark(env, chainId, plan.holdAt);');
+    expect(stamp).toContain('if (plan.holdAt !== undefined) {\n      await _writeNotifiedWatermark(env, chainId, plan.holdAt);');
   });
 });
 

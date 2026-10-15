@@ -86,15 +86,19 @@ function RewardsCard() {
   // A flagged wallet is exactly the case where the combined preview errors and
   // this block renders (Codex #2489 r7): the balance is set aside, not ready
   // — the button below is disabled and the claim would revert. While the
-  // screen has not answered, say "set aside" and nothing more.
-  const heldCopy = !sanctions.ready
-    ? copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))
-    : sanctions.barred
-      ? `${copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldBlockedNote}`
-      : `${copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldNote}`;
+  // screen has not answered — still loading, OR its only read so far failed
+  // (fail-open keeps the button, but "ready" would be a claim the screen never
+  // made; security review of #2489) — say "set aside" and nothing more.
+  const heldState = !sanctions.ready || !sanctions.known ? 'unknown' : sanctions.barred ? 'blocked' : 'ready';
+  const heldCopy =
+    heldState === 'unknown'
+      ? copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))
+      : heldState === 'blocked'
+        ? `${copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldBlockedNote}`
+        : `${copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldNote}`;
   const heldBlock =
     heldAmount > 0n ? (
-      <div data-testid="rewards-held" data-held-state={!sanctions.ready ? 'unknown' : sanctions.barred ? 'blocked' : 'ready'} style={{ marginTop: 12 }}>
+      <div data-testid="rewards-held" data-held-state={heldState} style={{ marginTop: 12 }}>
         <p>{heldCopy}</p>
         {heldError ? (
           <div className="banner banner-danger" role="alert">

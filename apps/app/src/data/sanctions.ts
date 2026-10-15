@@ -87,8 +87,11 @@ export async function readRecipientBarred(
 
 /** The cached reward-bar check for the reward surfaces (same cadence and
  *  error policy as {@link useSanctionsCheck}: a failed refresh keeps its last
- *  answer, only a never-answered check falls open). */
-export function useRewardBarCheck(): { barred: boolean; ready: boolean } {
+ *  answer, only a never-answered check falls open). `known` is false while no
+ *  answer has EVER arrived — a first read that failed settles `ready` (the
+ *  button stays fail-open, the contract decides) but must not be described as
+ *  "ready to claim" (security review of #2489): the copy says only "set aside". */
+export function useRewardBarCheck(): { barred: boolean; ready: boolean; known: boolean } {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data, isFetched } = useQuery({
@@ -99,8 +102,8 @@ export function useRewardBarCheck(): { barred: boolean; ready: boolean } {
     retry: false,
     queryFn: () => readRecipientBarred(publicClient!, readChain.diamondAddress, address!),
   });
-  if (!address) return { barred: false, ready: true };
-  return { barred: data ?? false, ready: isFetched };
+  if (!address) return { barred: false, ready: true, known: true };
+  return { barred: data ?? false, ready: isFetched, known: data !== undefined };
 }
 
 /** LIVE submit-time re-read of the reward bar, fail-open on a read error

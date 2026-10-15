@@ -1826,9 +1826,14 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
 - **Refresh the #1944 facet set in ONE cut, on every chain.**
   `RewardSweepWalkFacet`, `RewardStagingFacet`, `RewardClaimWalkFacet`,
   `RewardEpochViewFacet`, `RewardForfeitWalkFacet`, `RewardClaimFacet`,
-  `InteractionRewardsLensFacet`, `RewardEpochFacet`, `RewardRemittanceLensFacet`
-  and `RewardRemittanceFacet` carry one behaviour across inlined library code and
-  two self-call seams. The expiry sweep reaches its transfer test by staticcall to
+  `InteractionRewardsLensFacet`, `RewardEpochFacet`, `RewardRemittanceLensFacet`,
+  `RewardRemittanceFacet` — and, since the #1566 sanctions rule,
+  `RewardStagingDomainFacet`, `RewardStagingSettleFacet`,
+  `RewardHorizonSweepFacet` and `RewardCustodyFacet` (the set-apart / release
+  seams, the observation and day-forfeit hosts, and the legacy-slice settle whose
+  entry changed shape) — carry one behaviour across inlined library code and
+  several self-call seams. `RefreshAllFacetsInPlace` is the vehicle: it
+  refreshes all of them and removes retired selectors from the loupe. The expiry sweep reaches its transfer test by staticcall to
   `InteractionRewardsLensFacet.claimTransferable` on EVERY chain, gate armed or
   not, so a sweep host refreshed without that selector routed reverts every
   expiry sweep (bubbled `FunctionDoesNotExist`). On an ARMED mirror an unrouted

@@ -1643,13 +1643,16 @@ contract RewardRemittanceFacet is
     ///         and, if its consumption is trusted, resolves it; a FINALIZED one
     ///         — or a RELEASED one acknowledged as consumed, the late delivery
     ///         the live ack path books — books its recycled share for its
-    ///         destination: an acknowledged row's DECLARED share goes to the
-    ///         history figure (`chainRemittedRecycledAckedFromHistory`, booked
-    ///         state 3), kept apart from the exact acknowledged counter because
-    ///         the record keeps no received figure and a pre-upgrade short
-    ///         delivery relocated less than declared (Codex #2489 r9); a
-    ///         force-finalized row books the forced bucket as the live path
-    ///         would. Permissionless and
+    ///         destination: a consumed row's DECLARED share goes to the history
+    ///         figure (`chainRemittedRecycledAckedFromHistory`, booked state 3),
+    ///         kept apart from the exact acknowledged counter because the record
+    ///         keeps no received figure — a pre-upgrade short delivery relocated
+    ///         less than declared (Codex #2489 r9) — and because a pre-upgrade
+    ///         FORCED finalization carries the same consumed mark as an
+    ///         acknowledgement (security review of #2489): the record cannot
+    ///         route it to the forced bucket, so the figure is "acknowledged or
+    ///         forced", and the watcher resolves each row against the
+    ///         destination's receipt. Permissionless and
     ///         idempotent: every write is of a fact the record lacks, derived
     ///         from the record itself, so anyone may run it at any time and a
     ///         second pass writes nothing. Until it has covered `1..nonce`,
@@ -1674,17 +1677,13 @@ contract RewardRemittanceFacet is
                 LibVpfiRecycle.settleReleasedRemitStranded(s, id);
             }
             if (LibVpfiRecycle.recycledBookingPending(r)) {
-                // Acknowledged: the DECLARED share, into the history figure
-                // (never the exact counter — no received figure survives). A
-                // row both forced and later acknowledged goes there too, as the
-                // live path would have moved it to acknowledged. Forced only:
-                // the forced bucket, as the live path books it.
-                if (r.consumedAcked) {
-                    s.chainRemittedRecycledAckedFromHistory[r.dstChainId] += r.recycled;
-                    r.recycledBooked = RECYCLED_BOOKED_HISTORY;
-                } else {
-                    _bookRecycledDelivered(s, r, 0, true);
-                }
+                // The DECLARED share, into the history figure — never the
+                // exact counter (no received figure survives) and never the
+                // forced bucket (a forced finalization and an acknowledgement
+                // leave the same consumed mark; the destination's receipt is
+                // what tells them apart, off chain).
+                s.chainRemittedRecycledAckedFromHistory[r.dstChainId] += r.recycled;
+                r.recycledBooked = RECYCLED_BOOKED_HISTORY;
                 emit RemitRecycledBookedFromHistory(id, r.recycledBooked);
                 unchecked { ++booked; }
             }

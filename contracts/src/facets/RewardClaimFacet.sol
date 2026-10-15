@@ -459,10 +459,16 @@ contract RewardClaimFacet is
             // nothing moved, and the same claim pays once the proof lands.
             // Reads `fromDay` and `res` in place — no new local in this
             // at-viaIR-budget frame.
-            // A claim that only released a held balance is a claim.
+            // A claim that only released a held balance is a claim — but it
+            // names NO day range unless the window was walked: `fromDay`/`toDay`
+            // were sized before the clamp, and an unwalked range is still
+            // unclaimed (security review of #2489; expressions only, this
+            // frame is at the viaIR budget).
             if (paid != 0) {
-                emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
-                return (paid, fromDay, toDay);
+                emit InteractionRewardsClaimed(
+                    user, window.walked ? fromDay : 0, window.walked ? toDay : 0, paid
+                );
+                return (paid, window.walked ? fromDay : 0, window.walked ? toDay : 0);
             }
             if (!window.walked) {
                 if (last >= lastFinalized) revert NoInteractionRewardsToClaim();
@@ -675,8 +681,12 @@ contract RewardClaimFacet is
             0
         );
         // A settlement delivered nothing to the owner (#1566): no claim event.
+        // The range is the WALKED window only — an unwalked window (clamp
+        // refused `fromDay`) is still unclaimed and is not named.
         if (deliverTo != LibVaipakam.RewardDelivery.SanctionsHeld) {
-            emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
+            emit InteractionRewardsClaimed(
+                user, window.walked ? fromDay : 0, window.walked ? toDay : 0, paid
+            );
         }
     }
 

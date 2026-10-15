@@ -1682,17 +1682,22 @@ library LibVpfiRecycle {
     }
 
     /// @notice Whether the history rule would still book a reservation's
-    ///         recycled share for its destination, not yet booked and either:
-    ///         FINALIZED (status 2) and acknowledged or force-finalized; or
-    ///         RELEASED (status 3) and acknowledged as consumed — the mirror
-    ///         credited it after all, and the live late-ack path books exactly
-    ///         that (Codex #2489 r8: leaving these out kept every pre-upgrade
-    ///         late delivery as an unreported cushion). A row that moved no
-    ///         value, or a released row never consumed, books nothing.
+    ///         recycled share for its destination: not yet booked, FINALIZED
+    ///         (status 2) or RELEASED (status 3), and marked consumed. The
+    ///         forced finalization stamps `consumedAcked` exactly as a real
+    ///         acknowledgement does (`_finalizeReservation(…, consumed = true,
+    ///         forced = true)`), so a pre-upgrade forced row is
+    ///         indistinguishable from an acknowledged one in the record
+    ///         (security review of #2489) — both land in the HISTORY figure, and
+    ///         the mesh watcher tells them apart by the destination's own
+    ///         receipt (a forced remittance never arrived, so the destination
+    ///         holds no delivery for it and it relocated nothing). A released
+    ///         row the mirror consumed after all books too, as the live
+    ///         late-ack path does (Codex #2489 r8). A row that moved no value,
+    ///         or a released row never consumed, books nothing.
     function recycledBookingPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
         if (r.recycledBooked != 0) return false;
-        if (r.status == 2) return r.consumedAcked || r.forcedFinalized;
-        return r.status == 3 && r.consumedAcked;
+        return (r.status == 2 || r.status == 3) && r.consumedAcked;
     }
 
     /// @notice Write a RELEASED reservation's stranded record from its history if

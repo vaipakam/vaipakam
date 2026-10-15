@@ -84,6 +84,10 @@ export interface BaseChainBooks {
    */
   recycledAckedHistoryActual?: bigint;
   historyReceiptsMissing?: number;
+  /** History rows the chain holds a receipt for with `receivedAt` 0 — never
+   *  delivered: pre-upgrade FORCED finalizations, which Base's record cannot
+   *  tell from acknowledgements. They relocated nothing and contribute 0. */
+  historyNeverDelivered?: number;
   /** The rows behind `recycledAckedHistory` (`getRemitHistoryBooked`), read on
    *  Base; `observeMesh` joins them with the chain's receipts. */
   historyBooked?: import('./mesh').HistoryBookedRow[];
@@ -840,7 +844,7 @@ export function checkHardInvariants(
             `  history (declared)  = ${fmt(b.recycledAckedHistory)}\n` +
             `  chain relocated     = ${fmt(local.custodyRelocated)}\n` +
             `  excess              = ${fmt(b.recycledAcked + b.recycledAckedHistory - local.custodyRelocated)}\n` +
-            `  Either a pre-upgrade delivery arrived SHORT (the mirror relocated less than declared), or an arrival was credited as absorption. Advisory, not critical: ${b.historyReceiptsMissing ?? 'some'} history receipt(s) could not be read from the chain, so the actual relocated figure was not reconstructed this tick.`,
+            `  Either a pre-upgrade delivery arrived SHORT (the mirror relocated less than declared), a pre-upgrade FORCED finalization never delivered at all (Base's record cannot tell it from an acknowledgement), or an arrival was credited as absorption. Advisory, not critical: ${b.historyReceiptsMissing ?? 'some'} history receipt(s) could not be read from the chain, so the actual relocated figure was not reconstructed this tick.`,
           identity: [b.recycledAcked, b.recycledAckedHistory, local.custodyRelocated],
         }),
       );

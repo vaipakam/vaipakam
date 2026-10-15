@@ -104,6 +104,7 @@ import {
 import {
   materializeNotifications,
   notifiedFloor,
+  notifiedFrontier,
   type NotifiedPlan,
   notificationInsertStatement,
   planNotifiedWatermark,
@@ -205,12 +206,34 @@ const CURSOR_KIND = 'diamond';
  *  materialization. */
 const NOTIFIED_CURSOR_KIND = 'notified';
 
-/** The stored notified watermark, or null when never stamped. */
-async function readNotifiedWatermark(env: Env, chainId: number): Promise<bigint | null> {
+/** Security review of #2489 — the PROVEN-WRITTEN frontier of the inbox rows,
+ *  kept apart from `notified`: `notified` is the keeper's freshness signal and
+ *  advances only at a caught-up scan tail, while this one advances on EVERY
+ *  pass whose insert succeeded (and is held/lowered by the same floor rule on
+ *  a failure). The replay planner starts from the HIGHER of the two, so a
+ *  multi-tick catch-up whose every insert landed no longer re-derives its
+ *  whole window at the head pass — a replay re-plans against the CURRENT loan
+ *  state (status, position owners), so a routine replay could mint a row that
+ *  was not true at the event; it is now reserved for ranges whose rows are
+ *  genuinely unproven. */
+const NOTIFIED_WRITTEN_CURSOR_KIND = 'notified-written';
+
+/** The stored cursor of `kind`, or null when never stamped. */
+async function readNotifiedCursor(env: Env, chainId: number, kind: string): Promise<bigint | null> {
   const row = await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
-    .bind(chainId, NOTIFIED_CURSOR_KIND)
+    .bind(chainId, kind)
     .first<{ last_block: number }>();
   return row ? BigInt(row.last_block) : null;
+}
+
+/** The highest block whose inbox rows are PROVEN written: the keeper-facing
+ *  stamp or the written frontier, whichever is higher ({@link notifiedFrontier}). */
+async function readNotifiedWatermark(env: Env, chainId: number): Promise<bigint | null> {
+  const [stamp, written] = await Promise.all([
+    readNotifiedCursor(env, chainId, NOTIFIED_CURSOR_KIND),
+    readNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND),
+  ]);
+  return notifiedFrontier(stamp, written);
 }
 
 /**
@@ -258,12 +281,34 @@ async function stampNotifiedWatermark(
   } catch (err) {
     // The watermark holds — and when this tick's own insert failed above a
     // stored stamp (or no stamp), "holds" means LOWERED to just below the
-    // failed scan, or the failure leaves no record (Codex #2489 r6).
+    // failed scan, or the failure leaves no record (Codex #2489 r6). Both
+    // cursors, so neither can sit above an unproven range.
     console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', err);
-    if (plan.holdAt !== undefined) await _writeNotifiedWatermark(env, chainId, plan.holdAt);
+    if (plan.holdAt !== undefined) {
+      await _writeNotifiedWatermark(env, chainId, plan.holdAt);
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, plan.holdAt);
+    }
     return;
   }
   await _writeNotifiedWatermark(env, chainId, stampTo);
+  await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, stampTo);
+}
+
+/**
+ * A catch-up pass short of the head whose insert SUCCEEDED advances the
+ * written frontier to the pass's end (security review of #2489) — never the
+ * keeper-facing `notified` stamp, which keeps its "current through the head"
+ * meaning — so the head pass replays only what is still unproven.
+ */
+async function advanceNotifiedWritten(env: Env, chainId: number, through: bigint): Promise<void> {
+  try {
+    const written = await readNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND);
+    if (written === null || written < through) {
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, through);
+    }
+  } catch (err) {
+    console.error('[chainIndexer] notified-written advance failed', err);
+  }
 }
 
 /**
@@ -277,14 +322,23 @@ async function stampNotifiedWatermark(
 async function holdNotifiedWatermark(env: Env, chainId: number, scanFrom: bigint): Promise<void> {
   try {
     const hold = notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false);
-    if (hold !== null) await _writeNotifiedWatermark(env, chainId, hold);
+    if (hold !== null) {
+      await _writeNotifiedWatermark(env, chainId, hold);
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, hold);
+    }
   } catch (err) {
     console.error('[chainIndexer] notified-watermark hold failed', err);
   }
 }
 
-/** The raw upsert behind {@link stampNotifiedWatermark}. */
+/** The raw upsert behind {@link stampNotifiedWatermark} (the keeper-facing kind). */
 async function _writeNotifiedWatermark(env: Env, chainId: number, block: bigint): Promise<void> {
+  await _writeNotifiedCursor(env, chainId, NOTIFIED_CURSOR_KIND, block);
+}
+
+/** The raw upsert for either notified cursor kind. No monotonic guard on
+ *  purpose: the hold/lower paths rely on writing BELOW the stored value. */
+async function _writeNotifiedCursor(env: Env, chainId: number, kind: string, block: bigint): Promise<void> {
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -295,13 +349,13 @@ async function _writeNotifiedWatermark(env: Env, chainId: number, block: bigint)
     )
       .bind(
         chainId,
-        NOTIFIED_CURSOR_KIND,
+        kind,
         blockToNumber(block),
         Math.floor(Date.now() / 1000),
       )
       .run();
   } catch (err) {
-    console.error('[chainIndexer] notified-watermark stamp failed', err);
+    console.error(`[chainIndexer] ${kind} cursor stamp failed`, err);
   }
 }
 
@@ -2537,6 +2591,8 @@ async function runChainPass(
     await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);
   } else if (!notifiedOk) {
     await holdNotifiedWatermark(env, chainId, scanFrom);
+  } else {
+    await advanceNotifiedWritten(env, chainId, scanTo);
   }
 
   // #1245 measurement rail — one structured line per scan that touched
