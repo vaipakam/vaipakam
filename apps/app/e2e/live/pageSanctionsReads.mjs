@@ -321,7 +321,9 @@ export function createCallLedger(target, prefix, now = () => Date.now()) {
       const tx = c.params?.[0] ?? {};
       const data = lower(tx.data ?? tx.input);
       if (lower(tx.to) !== tgt || !data.startsWith(want)) continue;
-      const entry = { startedAt: now(), data, from: tx.from, error: undefined };
+      // The WHOLE request (#2505 r40): a replay that drops `value` or `gas`
+      // can succeed where the page's own call rightly reverted.
+      const entry = { startedAt: now(), data, tx: { ...tx }, error: undefined, reverted: undefined };
       entries.push(entry);
       pending.set(c.id, entry);
     }
@@ -340,11 +342,20 @@ export function createCallLedger(target, prefix, now = () => Date.now()) {
       // No usable answer leaves the entry unanswered: it says nothing about
       // why the page stopped.
       if (!r) continue;
-      if (r.error !== undefined) e.error = `${r.error.message ?? 'error'}${r.error.data ? ` (${typeof r.error.data === 'string' ? r.error.data : JSON.stringify(r.error.data)})` : ''}`;
-      else if (r.result !== undefined) e.error = null;
+      if (r.error !== undefined) {
+        e.error = `${r.error.message ?? 'error'}${r.error.data ? ` (${typeof r.error.data === 'string' ? r.error.data : JSON.stringify(r.error.data)})` : ''}`;
+        // An execution revert, not a provider failure (#2505 r40): EIP-1474's
+        // code 3 with revert data, or the node's own "execution reverted".
+        // A rate limit or a timeout says nothing about what the chain would do.
+        e.reverted = r.error.code === 3 || /execution reverted|\brevert(ed)?\b/i.test(String(r.error.message ?? ''));
+      } else if (r.result !== undefined) {
+        e.error = null;
+        e.reverted = false;
+      }
     }
   }
-  /** The simulations started at or after `since` that the chain refused. */
-  const refusedSince = (since) => entries.filter((e) => e.startedAt >= since && typeof e.error === 'string');
+  /** The simulations started at or after `since` that the chain refused by
+   *  reverting. A provider error is not a refusal and is left out. */
+  const refusedSince = (since) => entries.filter((e) => e.startedAt >= since && e.reverted === true);
   return { entries, onRequest, onResponse, refusedSince };
 }

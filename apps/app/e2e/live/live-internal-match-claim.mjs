@@ -1086,7 +1086,10 @@ if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.
 // page did not send the claim it was asked for (a duplicate is refused by
 // construction, and a send through any other connector never reaches the
 // plan at all).
-if (armedOnce && !resolved.wrote && held === null && suspect === null) {
+// Recorded on BOTH sides of the send (#2505 r40): consumed is the check
+// passing, and a provable no-send is it failing. Only a no-send whose nonce
+// could not be proven leaves it unjudged.
+if (armedOnce && (wrote() || !resolved.wrote) && held === null && suspect === null) {
   check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
 }
 for (const line of MANIFEST.render()) console.log(line);

@@ -1104,7 +1104,13 @@ try {
       const refused = pageCloseOutSims.refusedSince(confirmedAt);
       if (refused.length > 0) {
         const last = refused[refused.length - 1];
-        const again = await pub.call({ to: DIAMOND, data: last.data, account: WALLET }).then(
+        // The page's whole request, as it sent it: `from`, `value` and `gas`
+        // included, so a malformed preflight is not replayed as a valid one.
+        const q = last.tx;
+        const big = (v) => (v === undefined || v === null ? undefined : BigInt(v));
+        const again = await pub
+          .call({ to: DIAMOND, data: last.data, account: q.from ?? WALLET, value: big(q.value), gas: big(q.gas) })
+          .then(
           () => 'accepted',
           // A raw call reverts as an execution error carrying the revert data,
           // not as a decoded contract error.
@@ -1202,7 +1208,10 @@ if (resolved.blocked) await blocked(resolved.blocked);
 if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.check.label, false, suspect.check.detail ?? '');
 // Armed, clicked, provably nothing sent, and nothing that explains it: the
 // app did not send the close-out it was asked for.
-if (armedOnce && !resolved.wrote && held === null && suspect === null) {
+// Recorded on BOTH sides of the send (#2505 r40): consumed is the check
+// passing, and a provable no-send is it failing. Only a no-send whose nonce
+// could not be proven leaves it unjudged.
+if (armedOnce && (wrote() || !resolved.wrote) && held === null && suspect === null) {
   check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
 }
 for (const line of MANIFEST.render()) console.log(line);

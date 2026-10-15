@@ -195,13 +195,18 @@ describe('createCallLedger', () => {
       ]),
     );
     expect(l.entries).toHaveLength(1);
-    l.onResponse(pending, JSON.stringify([{ id: 1, error: { message: 'execution reverted', data: '0x12345678' } }]));
-    expect(l.refusedSince(0)).toEqual([expect.objectContaining({ error: 'execution reverted (0x12345678)' })]);
+    l.onResponse(pending, JSON.stringify([{ id: 1, error: { code: 3, message: 'execution reverted', data: '0x12345678' } }]));
+    expect(l.refusedSince(0)).toEqual([expect.objectContaining({ error: 'execution reverted (0x12345678)', tx: expect.objectContaining({ data: P + 'ff' }) })]);
     expect(l.refusedSince(1)).toEqual([]);
     t = 5;
     const ok = l.onRequest(JSON.stringify({ id: 9, method: 'eth_call', params: [{ to: T, data: P }] }));
     l.onResponse(ok, JSON.stringify({ id: 9, result: '0x' }));
     expect(l.entries[1].error).toBeNull();
+    expect(l.refusedSince(5)).toEqual([]);
+    // A provider failure is not the chain refusing the call.
+    const limited = l.onRequest(JSON.stringify({ id: 10, method: 'eth_call', params: [{ to: T, data: P, value: '0x1' }] }));
+    l.onResponse(limited, JSON.stringify({ id: 10, error: { code: -32005, message: 'rate limited' } }));
+    expect(l.entries[2].tx.value).toBe('0x1');
     expect(l.refusedSince(5)).toEqual([]);
   });
 });
