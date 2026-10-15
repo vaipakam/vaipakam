@@ -117,7 +117,7 @@ describe('outcomeManifest', () => {
     expect(m.passed()).toBe(true);
     expect(m.undeterminedCount()).toBe(1);
     const text = m.render().join('\n');
-    expect(text).toMatch(/UNDETERMINED \(each check ran after the write[^\n]*\(1\):\n {2}\[settled\]/);
+    expect(text).toMatch(/UNDETERMINED \(the claim could not be substantiated either way[^\n]*\(1\):\n {2}\[settled\]/);
     expect(text).toMatch(/\?\? {3}vault: balanceOf\(old lender vault\)\n {13}UNDETERMINED — another transaction/);
     expect(text).not.toMatch(/^VERIFIED \(\d\):\n {2}\[settled\]/m);
   });

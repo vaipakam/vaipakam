@@ -127,7 +127,10 @@ export async function reconcileNonce(pub, wallet, baseline) {
   }
   const { pending, mined } = counts;
   if (pending === baseline && mined === baseline) return { kind: 'unchanged' };
-  if (pending > baseline || mined > baseline) return { kind: 'sent', from: baseline, to: pending > mined ? pending : mined };
+  // Either count below the baseline first (#2505 r50): with one tag moved
+  // backwards, a rise in the other may be pre-start transactions a reorg or a
+  // lagging backend resurrected, not a send in this window.
+  if (pending >= baseline && mined >= baseline) return { kind: 'sent', from: baseline, to: pending > mined ? pending : mined };
   return {
     kind: 'unknown',
     why: `the nonce read ${pending} pending and ${mined} mined against the startup ${baseline}: the node's view is inconsistent or moved backwards, and a send could hide behind it`,

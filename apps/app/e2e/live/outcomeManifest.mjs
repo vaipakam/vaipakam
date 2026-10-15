@@ -177,7 +177,10 @@ export function createManifest({ verifiable, notVerified = [] }) {
       failed: 'FAILED',
       'not run': 'NOT RUN (a declared check never ran — the claim is not substantiated)',
       undetermined:
-        'UNDETERMINED (each check ran after the write, but its premises did not hold — the claim could not be substantiated either way)',
+        // Not every such check ran after a write (#2505 r50): a page that did
+        // not do what was expected, with nothing that says why, is recorded
+        // here too, before any write. Each line carries its own reason.
+        'UNDETERMINED (the claim could not be substantiated either way — each line says why: a check that ran after a write whose premises did not hold, or a page that did not do what was expected and showed nothing that says why)',
       'not verified': 'NOT VERIFIED BY THIS DRIVER',
     };
     for (const status of STATUS_ORDER) {

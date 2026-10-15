@@ -181,7 +181,7 @@ const CLAIM_ONLY = [
   {
     id: 'claimable',
     claim: 'the exact claim can execute for this wallet before anything is sent',
-    checks: { estimate: 'eth_estimateGas for claimAsLender(loanId) from this wallet on the direct RPC — a revert is an observed FAIL, a transport error BLOCKED' },
+    checks: { estimate: 'eth_estimateGas for claimAsLender(loanId) from this wallet on the direct RPC — a revert is NOT ESTABLISHED (a claim made elsewhere or a moved position also makes it revert, #2505 r48), a transport error BLOCKED' },
   },
   {
     id: 'positionLine',

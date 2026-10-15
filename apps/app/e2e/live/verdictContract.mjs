@@ -177,9 +177,11 @@ export const FOUR_VERDICT_DRIVERS = new Map([
     // not an Active, past-grace loan whose lender position the role holds, or
     // the Diamond lists no enabled adapter: a missing precondition, never a
     // card defect. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
-    'with CLOSE=1, after the close-out was sent the shared runVerdict FAILs only ' +
-      'when a chain read contradicts the close-out (a revert, or a status that ' +
-      'disagrees with its event); anything else is UNDETERMINED (exit 3) (#2463). ' +
+    'with CLOSE=1, the app is judged where it asks to sign: the gate previews ' +
+      'the exact request and FAILs unless it sells. After the send nothing ' +
+      'FAILs: a receipt showing the sale (cleared or fallen back) PASSes, and ' +
+      'any other receipt (a revert, an internal match, an in-kind branch) is an ' +
+      'inclusion race and UNDETERMINED (exit 3), as is any later stop (#2463, #2481 r6). ' +
       'In any mode, a run whose plan sent nothing but whose wallet nonce moved ' +
       'or cannot be established, with no failure already observed, is ' +
       'UNDETERMINED too (#2505 r33, r37), as is a page that did not do what ' +

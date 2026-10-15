@@ -56,6 +56,10 @@ const WALLETS_PATH =
   process.env.TESTNET_WALLETS_FILE ??
   path.join(HERE, '../testnet-wallets/wallets.json');
 let LIVE_BROWSER = null;
+// The throwaway profile `launch()` created, if any, so every `blocked()`
+// exit removes it, not only the setup-failure one (#2505 r50): a drive that
+// stops BLOCKED on its first navigation never reaches its `done()`.
+let LIVE_PROFILE = null;
 
 /**
  * Register a browser/context for `blocked()` to close.
@@ -114,6 +118,11 @@ export async function blocked(why, err, cleanup) {
     await cleanup?.();
   } catch {
     /* same — cleanup is best effort on the way out */
+  }
+  try {
+    if (LIVE_PROFILE) fs.rmSync(LIVE_PROFILE, { recursive: true, force: true });
+  } catch {
+    /* same */
   }
   process.exit(2);
 }
@@ -955,6 +964,7 @@ export async function launch({
       ? fs.mkdtempSync(path.join(os.tmpdir(), `app-fresh-${role}-`))
       : path.join(HERE, 'profiles', role);
     fs.mkdirSync(profileDir, { recursive: true });
+    if (freshProfile) LIVE_PROFILE = profileDir;
   });
 
   const ctx = await setup('launching the browser', async () => {
@@ -1489,6 +1499,7 @@ export async function launch({
         // never leak state into a later run (and temp space stays
         // bounded across sweep nights).
         fs.rmSync(profileDir, { recursive: true, force: true });
+        if (LIVE_PROFILE === profileDir) LIVE_PROFILE = null;
       }
     },
   };

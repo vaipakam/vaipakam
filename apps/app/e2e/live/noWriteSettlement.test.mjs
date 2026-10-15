@@ -37,6 +37,11 @@ describe('reconcileNonce', () => {
     expect(await reconcileNonce(pubWith(8, 7), W, 7)).toEqual({ kind: 'sent', from: 7, to: 8 });
   });
 
+  it('reads a rise beside a count below the baseline as unknown, not as a send (#2505 r50)', async () => {
+    expect((await reconcileNonce(pubWith(8, 6), W, 7)).kind).toBe('unknown');
+    expect((await reconcileNonce(pubWith(6, 8), W, 7)).kind).toBe('unknown');
+  });
+
   it('reads a mined count below the baseline as unknown, not as unchanged', async () => {
     const r = await reconcileNonce(pubWith(7, 6), W, 7);
     expect(r.kind).toBe('unknown');
