@@ -50,7 +50,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatUnits, parseEventLogs } from 'viem';
+import { formatUnits, pad, parseEventLogs, toFunctionSelector, toHex } from 'viem';
 import {
   addressOf,
   blocked,
@@ -68,7 +68,7 @@ import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
 import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
-import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
+import { attachLedger, createCallLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
@@ -760,6 +760,17 @@ await ctx.addInitScript(() => {
   }
 });
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
+// The card's own simulations of this loan's close-out, off the wire
+// (#2505 r39). Its last pre-wallet step is a simulation of the exact
+// `triggerDefault(LOAN_ID, route)` it is about to send, and a revert there
+// withholds the close-out with nothing signed. This is what the card was
+// told, which the drive's own reads at startup and at the verdict cannot
+// show: a pause that came and went between them is visible here only.
+const pageCloseOutSims = createCallLedger(
+  DIAMOND,
+  toFunctionSelector(DIAMOND_ABI.find((x) => x.type === 'function' && x.name === 'triggerDefault')) + pad(toHex(LOAN_ID)).slice(2),
+);
+attachLedger(page, pageCloseOutSims, READ_METHODS);
 // The page's own chain answers, HTTP and WebSocket, counted per window — so a
 // card that never appears while the page heard NOTHING from the chain reads
 // as unobserved (BLOCKED), not as a broken card (#2481 r2).
@@ -1030,6 +1041,7 @@ try {
     // later state change to THIS wallet rather than to a keeper (#2481 r1).
     PLAN.arm(ROLE);
     armedOnce = true;
+    const confirmedAt = Date.now();
     await confirm.click();
     // From here on the close-out may have been written: an exception is never
     // a product verdict. The page leaving its confirm step is recorded, and
@@ -1082,6 +1094,32 @@ try {
     // settled at the end.
     if (!settled && !wrote()) {
       PLAN.close();
+      // What the card was told by its own simulation of the close-out it was
+      // about to send. A revert there is the card withholding on the chain's
+      // answer, unless the route itself is what the chain refuses. The drive
+      // asks the same calldata again now: still refused, the route (or a
+      // gate still closed, which the settlement's re-read then shows as a
+      // move) is the reason and the observation stands; accepted now, the
+      // gate closed and reopened during the drive and nothing was tested.
+      const refused = pageCloseOutSims.refusedSince(confirmedAt);
+      if (refused.length > 0) {
+        const last = refused[refused.length - 1];
+        const again = await pub.call({ to: DIAMOND, data: last.data, account: WALLET }).then(
+          () => 'accepted',
+          // A raw call reverts as an execution error carrying the revert data,
+          // not as a decoded contract error.
+          (err) => (err?.walk?.((e) => e?.name === 'RawContractError' || e?.name === 'ExecutionRevertedError') ? `refused (${describeErr(err)})` : null),
+        );
+        if (again === 'accepted') {
+          throw new Held(`the card withheld the close-out because its own simulation of it, started after the confirm click, reverted (${last.error}); the same call is accepted now, so the chain's gate closed and reopened during the drive, and the close-out was not tested`);
+        }
+        throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', {
+          row: 'pageConfirmed',
+          key: 'settled',
+          label: 'the page left its confirm step',
+          detail: `the card's own simulation of the close-out reverted (${last.error}); asked again now, the same call is ${again ?? 'unanswered'}`,
+        });
+      }
       throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', { row: 'pageConfirmed', key: 'settled', label: 'the page left its confirm step' });
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');

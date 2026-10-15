@@ -182,7 +182,8 @@ const join = (...parts) => parts.filter(Boolean).join('; ') || null;
  *     exception (a page that answered 4xx, a navigation that went elsewhere),
  *     is an observed defect. Neither a later move of the loan nor a nonce
  *     that cannot be read retracts it, so the run FAILs, with whatever the
- *     nonce showed stated beside it. Only a {@link Held} or a
+ *     nonce showed stated beside it and `writeUnknown` set when it could
+ *     not prove no send, so the FAIL never claims a write-free run. Only a {@link Held} or a
  *     {@link Suspect} is an observation a move can explain.
  *  2. A WRITE THAT CANNOT BE RULED OUT. The plan sent nothing, but the
  *     nonce moved or could not be read: `wrote: true, writeUnknown: true`,
@@ -210,7 +211,10 @@ export function resolveSettlement({ settled, held, stopped, suspect, findings, s
         ? `the plan sent nothing, but whether this wallet sent anyway cannot be established: ${nonce.why}`
         : null;
   if (findings > 0 || stopped !== null) {
-    return { wrote: false, gateEscape: false, stopped: join(stopText, held, nonceNote), recordSuspect };
+    // FAIL, with the write uncertainty carried beside it rather than dropped:
+    // the verdict must not claim a write-free run it could not establish
+    // (#2505 r39).
+    return { wrote: false, writeUnknown: nonceNote !== null, gateEscape: false, stopped: join(stopText, held, nonceNote), recordSuspect };
   }
   if (nonceNote !== null) {
     return { wrote: true, writeUnknown: true, gateEscape: false, stopped: join(stopText, held, nonceNote), recordSuspect };

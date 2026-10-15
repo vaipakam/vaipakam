@@ -203,6 +203,13 @@ describe('runVerdict', () => {
     expect(v.line).not.toMatch(/after a write/);
   });
 
+  it('a failure before the plan sent stays FAIL and never claims a write-free run it could not prove (#2505 r39)', () => {
+    const v = runVerdict({ ...base, wrote: false, rows: all('not run'), stopped: 'the page answered 503', preWriteFailure: true, writeUnknown: true });
+    expect(v.exit).toBe(1);
+    expect(v.line).toMatch(/^OUTCOME: FAIL — before the drive's plan sent anything \(whether its wallet sent outside the plan cannot be established\): the page answered 503/);
+    expect(v.line).not.toMatch(/before any write/);
+  });
+
   it('a failed write discipline without a gate escape is stated as FAILED; "no contradiction" names only the outcome claims (#2434 r1 P2)', () => {
     // A transaction still pending: the borrower's nonce check failed, nothing
     // stopped, every outcome claim verified.

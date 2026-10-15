@@ -155,7 +155,8 @@ describe('resolveSettlement', () => {
     for (const nonce of [{ kind: 'unknown', why: 'rpc down' }, { kind: 'sent', from: 1, to: 2 }]) {
       const r = resolveSettlement({ ...base, settled: { plan: false, facts: {}, nonce }, findings: 1 });
       expect(r.wrote).toBe(false);
-      expect(r.writeUnknown).toBeUndefined();
+      // Still a FAIL, with the uncertainty carried to the verdict line.
+      expect(r.writeUnknown).toBe(true);
       expect(r.stopped).toMatch(/the plan sent nothing, but/);
     }
   });

@@ -290,3 +290,61 @@ export function attachLedger(page, ledger, readMethods) {
   });
   return { wsViolations };
 }
+
+/**
+ * The page's own simulations of ONE call, off the wire (#2505 r39): every
+ * plain `eth_call` to `target` whose calldata starts with `prefix` (a
+ * selector and its leading arguments). It feeds through {@link attachLedger}
+ * like a read ledger. Where a sanctions read answers a bool, a simulation
+ * answers by succeeding or reverting, so each entry records the page's
+ * calldata, when it started, and the JSON-RPC error it got (null on
+ * success, undefined while in flight).
+ *
+ * A drive uses it where the page withheld a write: a revert the page was
+ * given is the evidence for why, which the drive's own reads at startup
+ * and at the verdict cannot show.
+ */
+export function createCallLedger(target, prefix, now = () => Date.now()) {
+  const entries = [];
+  const want = lower(prefix);
+  const tgt = lower(target);
+  function onRequest(bodyText) {
+    let calls;
+    try {
+      calls = asList(JSON.parse(bodyText ?? 'null'));
+    } catch {
+      return null;
+    }
+    const pending = new Map();
+    for (const c of calls) {
+      if (!c || c.method !== 'eth_call') continue;
+      const tx = c.params?.[0] ?? {};
+      const data = lower(tx.data ?? tx.input);
+      if (lower(tx.to) !== tgt || !data.startsWith(want)) continue;
+      const entry = { startedAt: now(), data, from: tx.from, error: undefined };
+      entries.push(entry);
+      pending.set(c.id, entry);
+    }
+    return pending.size > 0 ? pending : null;
+  }
+  function onResponse(pending, bodyText) {
+    let responses = [];
+    try {
+      responses = bodyText == null ? [] : asList(JSON.parse(bodyText));
+    } catch {
+      responses = [];
+    }
+    const byId = new Map(responses.filter((r) => r && 'id' in r).map((r) => [r.id, r]));
+    for (const [id, e] of pending) {
+      const r = byId.get(id);
+      // No usable answer leaves the entry unanswered: it says nothing about
+      // why the page stopped.
+      if (!r) continue;
+      if (r.error !== undefined) e.error = `${r.error.message ?? 'error'}${r.error.data ? ` (${typeof r.error.data === 'string' ? r.error.data : JSON.stringify(r.error.data)})` : ''}`;
+      else if (r.result !== undefined) e.error = null;
+    }
+  }
+  /** The simulations started at or after `since` that the chain refused. */
+  const refusedSince = (since) => entries.filter((e) => e.startedAt >= since && typeof e.error === 'string');
+  return { entries, onRequest, onResponse, refusedSince };
+}

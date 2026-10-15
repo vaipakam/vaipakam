@@ -256,7 +256,11 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
   if (missing.length) throw new Error(`runVerdict: outcome claim(s) ${missing.join(', ')} are not in the manifest`);
   if (!wrote) {
     if (preWriteFailure || stopped || rows.some((r) => r.status === 'failed')) {
-      return { exit: 1, line: `OUTCOME: FAIL — before any write: ${stopped ?? 'a check failed (see above)'}` };
+      // A failure observed before the plan sent stands even when the wallet's
+      // nonce cannot rule out a send outside it; the line then says so
+      // rather than claiming no write happened (#2505 r39).
+      const when = writeUnknown ? "before the drive's plan sent anything (whether its wallet sent outside the plan cannot be established)" : 'before any write';
+      return { exit: 1, line: `OUTCOME: FAIL — ${when}: ${stopped ?? 'a check failed (see above)'}` };
     }
   }
   const contradicted = rows.filter((r) => outcomeClaims.includes(r.id) && r.status === 'failed').map((r) => `[${r.id}]`);

@@ -885,7 +885,11 @@ try {
       // at that moment, which is the app working. Startup and the verdict
       // both read the wallet clear, so the flag came and went in between, or
       // the page's provider was stale; either way nothing was tested.
-      if (pageSanctions.judge('flag', clickedAt, false).state === 'disagrees') {
+      // ANY flagged answer since the click, not the latest: the read that
+      // stopped the claim can be followed by a refresh that answers clear
+      // once the flag is lifted, and that later answer did not decide
+      // anything (#2505 r39).
+      if (pageSanctions.entries.some((e) => e.kind === 'flag' && e.startedAt >= clickedAt && e.answered === true && e.value === true)) {
         throw new Held(`the page withheld the claim because its own isSanctionedAddress read for ${WALLET}, started after the click, answered flagged; the chain allowed this wallet's claim at startup (its simulation passes only for an unflagged caller), so the flag changed during the drive or the page's provider was stale, and the claim was not tested`);
       }
       throw new Suspect('the page sent no claim after its claim was clicked', {
