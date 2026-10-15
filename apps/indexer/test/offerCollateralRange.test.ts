@@ -237,10 +237,29 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   };
 
   it('runHealLanes runs both lanes inside one try, offers first', () => {
-    const t = at(heal, 'try {');
+    const t = heal.lastIndexOf('try {', at(heal, 'await refreshStubOffers('));
+    expect(t).toBeGreaterThan(-1);
     expect(at(heal, 'await refreshStubOffers(')).toBeGreaterThan(t);
     expect(at(heal, 'await refreshStubLoans(')).toBeGreaterThan(at(heal, 'await refreshStubOffers('));
-    expect(at(heal, '} catch')).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
+    expect(at(heal, '} catch', at(heal, 'await refreshStubLoans('))).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
+  });
+
+  it('settles from the ledger only on a SETTLED head, and both call sites pass it (#2476 r9)', () => {
+    expect(heal.indexOf('if (headSettled)')).toBeGreaterThan(-1);
+    expect(heal.indexOf('if (headSettled)')).toBeLessThan(at(heal, 'await settleFromLedger('));
+    const calls = pass.split('await runHealLanes(').slice(1).map((c) => c.slice(0, c.indexOf(');')));
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c).toContain('settledHead.settled');
+    // #2476 r11 — and the block it reads at may not be above that head.
+    expect(calls[0]).toMatch(/lastBlock <= settledHead\.block/);
+    expect(calls[1]).toMatch(/scanTo <= settledHead\.block/);
+  });
+
+  it('settles from the ledger BEFORE the metadata heals, in its own try (#2476 r4)', () => {
+    const settle = at(heal, 'await settleFromLedger(');
+    expect(settle).toBeLessThan(at(heal, 'await refreshStubOffers('));
+    // Its own try/catch closes before the metadata lanes' try opens.
+    expect(heal.indexOf('} catch', settle)).toBeLessThan(at(heal, 'await refreshStubOffers('));
   });
 
   it('the scanning tail heals after the cursor write and every once-per-scan step, pinned to scanTo', () => {

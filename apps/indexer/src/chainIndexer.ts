@@ -38,6 +38,9 @@
 import {
   decodeEventLog,
   toEventSignature,
+  toEventSelector,
+  pad,
+  toHex,
   type Abi,
   type AbiEvent,
   type Address,
@@ -1888,6 +1891,8 @@ async function runChainPass(
   // transport sends through a counted `fetch`, so each attempt is one request,
   // which is what the platform also thinks.
   const client = createChainClient(chain.rpc, env.fetchFn);
+  // #2476 r15 — the ledger heal's own NON-RETRYING client (see runHealLanes).
+  const healClient = createChainClient(chain.rpc, env.fetchFn, { retryCount: 0 });
 
   // One-time activity_events backfills, run BEFORE every return out of
   // this function — including the identity aborts just below (Codex
@@ -2082,7 +2087,19 @@ async function runChainPass(
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
-    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock);
+    // #2476 r11 — the ledger heal reads the chain AT the cursor, so it needs
+    // that block to be settled, not merely some settled head below it (the
+    // reconciliation pass refuses the same `lastBlock > settledHead.block`).
+    const quietHeal = await runHealLanes(
+      client,
+      diamond,
+      chainId,
+      env,
+      budget,
+      lastBlock,
+      settledHead.settled && lastBlock <= settledHead.block,
+      healClient,
+    );
     // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
@@ -2091,7 +2108,8 @@ async function runChainPass(
       statusUpdates: 0,
       detailRefreshes: quietHeal.detailRefreshes,
       newLoans: 0,
-      loanStatusUpdates: 0,
+      // #2476 r4 — a ledger-settled loan IS a status change, just late.
+      loanStatusUpdates: quietHeal.ledgerSettledLoanIds.length,
       loanDetailRefreshes: quietHeal.loanDetailRefreshes,
       activityEvents: 0,
       // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
@@ -2111,13 +2129,17 @@ async function runChainPass(
       // A repair additionally TRUNCATES the set — see the scanned path's
       // note: a refreshed owner is a holder whose cache cannot contain this
       // old loan, so only a coarse frame reaches them (#2190 r6).
+      // A ledger-settled loan rides them the same way, truncated too: like a
+      // repair it is an OLD loan whose holders the frame cannot enumerate.
       hints:
-        quietCal.inserted > 0 || quietReconciledIds.length > 0
+        quietCal.inserted > 0 ||
+        quietReconciledIds.length > 0 ||
+        quietHeal.ledgerSettledLoanIds.length > 0
           ? mergeHintLoanIds(
-              quietReconciledIds.length > 0
+              quietReconciledIds.length > 0 || quietHeal.ledgerSettledLoanIds.length > 0
                 ? { ...emptyHints(), truncated: true }
                 : emptyHints(),
-              [...quietCal.loanIds, ...quietReconciledIds],
+              [...quietCal.loanIds, ...quietReconciledIds, ...quietHeal.ledgerSettledLoanIds],
             )
           : undefined,
       headBlock: head,
@@ -2241,6 +2263,7 @@ async function runChainPass(
     blockTimestamps,
     client,
     diamond,
+    fallbackTimestampBlocks,
   );
   // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
   // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
@@ -2466,17 +2489,22 @@ async function runChainPass(
   // D1 counts queries separately from subrequests, so any fixed per-row
   // figure is a guess. A failure, including the platform refusing a request
   // past the invocation ceiling, is logged and the remaining rows wait.
-  const { detailRefreshes, loanDetailRefreshes } = await runHealLanes(
+  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } = await runHealLanes(
     client,
     diamond,
     chainId,
     env,
     budget,
     scanTo,
+    settledHead.settled && scanTo <= settledHead.block,
+    healClient,
   );
 
   const hintStats = pushHintStats(allLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
+  // #2476 r16 — a ledger heal truncates the frame too (its loans are old and
+  // their holders cannot be enumerated), so it counts here as it does there.
+  const ledgerHealForcedTruncation = ledgerSettledLoanIds.length > 0;
   // Emit when the scan touched ids OR truncated for ANY reason (Codex
   // #1289 r1): a scan of only unmappable events (Transfer /
   // SignedOffer* lifecycle) or a stub-heal-only truncation carries
@@ -2485,7 +2513,7 @@ async function runChainPass(
   // sample toward size-driven frames.
   const touched =
     hintStats.loanIdCount + hintStats.offerIdCount + hintStats.linkCount > 0;
-  if (touched || hintStats.truncated || stubHealForcedTruncation) {
+  if (touched || hintStats.truncated || stubHealForcedTruncation || ledgerHealForcedTruncation) {
     console.log(
       `[hint-telemetry] ${JSON.stringify({
         chainId,
@@ -2494,8 +2522,8 @@ async function runChainPass(
         offerIdCount: hintStats.offerIdCount,
         linkCount: hintStats.linkCount,
         cap: HINT_CAP,
-        truncated: hintStats.truncated || stubHealForcedTruncation,
-        causes: { ...hintStats.causes, stubHeal: stubHealForcedTruncation },
+        truncated: hintStats.truncated || stubHealForcedTruncation || ledgerHealForcedTruncation,
+        causes: { ...hintStats.causes, stubHeal: stubHealForcedTruncation, ledgerHeal: ledgerHealForcedTruncation },
       })}`,
     );
   }
@@ -2515,7 +2543,9 @@ async function runChainPass(
     statusUpdates: offerStats.statusUpdates,
     detailRefreshes,
     newLoans: loanStats.newLoans,
-    loanStatusUpdates: loanStats.statusUpdates,
+    // #2476 r4 — plus the loans the ledger heal settled: late, but status
+    // changes all the same.
+    loanStatusUpdates: loanStats.statusUpdates + ledgerSettledLoanIds.length,
     loanDetailRefreshes,
     activityEvents,
     signedOfferUpdates,
@@ -2545,11 +2575,16 @@ async function runChainPass(
     // one person who most needs it. Truncation makes the frame coarse,
     // which is the same answer a stub heal already takes for the same
     // reason: the scan cannot enumerate who is affected.
+    // A ledger-settled loan is old for the same reason a repaired one is
+    // (#2476 r4): merged in, and the set truncated.
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 || loanDetailRefreshes > 0 || reconciledLoanIds.length > 0
+      detailRefreshes > 0 ||
+        loanDetailRefreshes > 0 ||
+        reconciledLoanIds.length > 0 ||
+        ledgerSettledLoanIds.length > 0
         ? { ...collectPushHints(allLogs), truncated: true }
         : collectPushHints(allLogs),
-      [...cal.loanIds, ...reconciledLoanIds],
+      [...cal.loanIds, ...reconciledLoanIds, ...ledgerSettledLoanIds],
     ),
   };
 }
@@ -3398,9 +3433,41 @@ async function runHealLanes(
   env: Env,
   budget: TickBudget,
   atBlock: bigint,
-): Promise<{ detailRefreshes: number; loanDetailRefreshes: number }> {
+  /** #2476 r9/r11 — whether `atBlock` is AT OR BELOW a block the chain itself
+   *  called settled (`SettledHead.settled`), rather than the `latest - N`
+   *  guess or a block above a settled head that regressed. */
+  headSettled: boolean,
+  /** #2476 r15 — a NON-RETRYING client for the ledger heal, for the reason
+   *  the reconciliation pass has its own (`reconcileClient`): its per-row
+   *  cost is then a bound, not a figure a retrying read can exceed. */
+  settleClient: PublicClient,
+): Promise<{ detailRefreshes: number; loanDetailRefreshes: number; ledgerSettledLoanIds: number[] }> {
   let detailRefreshes = 0;
   let loanDetailRefreshes = 0;
+  // #2464 / #2476 r3-r4 — FIRST, and in its own try: a loan the ledger proves
+  // settled but the projection does not is a wrong lifecycle state on screen,
+  // which outranks the metadata heals below. Run after them, a deep stub
+  // backlog could spend the budget every tick and leave it unhealed for good.
+  // Every tick, not a one-shot migration: an older Worker can ledger the
+  // event without settling the row at any time it is still serving.
+  // Only on a settled head, for the reason the reconciliation pass gives
+  // (`_runLoanReconcilePass`): a row this lane settles is never re-examined,
+  // so it may not act on a guessed block a reorg could take back.
+  let ledgerSettledLoanIds: number[] = [];
+  try {
+    if (headSettled) {
+      ledgerSettledLoanIds = await settleFromLedger(settleClient, diamond, env, chainId, budget, atBlock);
+    } else {
+      console.warn(`[chainIndexer] ledger settlement heal NOT RUNNING on chain ${chainId}: the head is a guess, not a settled block`);
+    }
+  } catch (err) {
+    console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, err);
+  }
+  // #2476 r18 — a row settled above is never selected again, so this return
+  // is its only report. The lanes below use the RETRYING client, whose cost
+  // no reservation bounds, so after an irreversible heal they wait for the
+  // next tick rather than risk the ceiling before the ids are reported.
+  if (ledgerSettledLoanIds.length > 0) return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
   try {
     detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, atBlock);
     // Bootstrap loan position-NFT token IDs (lender_token_id /
@@ -3412,12 +3479,18 @@ async function runHealLanes(
     // #2461 r4 — provenance of `init_principal` is DERIVED from the
     // LoanInitiated ledger, not trusted from whoever wrote the row: clear
     // the flag wherever the ledger now confirms the value. D1 only, no RPC.
-    await reverifyInitPrincipal(env, chainId);
-    await reverifyInitTerms(env, chainId);
+    // #2476 r13 — one D1 query each, and only while the budget still has
+    // them: the ledger heal above may have committed rows whose report rides
+    // this function's return, and a query past the ceiling could end the
+    // invocation before it. Skipped work just runs next tick.
+    if (budget.subrequests.remaining >= 2 && budget.d1Queries.remaining >= 2) {
+      await reverifyInitPrincipal(env, chainId);
+      await reverifyInitTerms(env, chainId);
+    }
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
-  return { detailRefreshes, loanDetailRefreshes };
+  return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }
 
 /** Subrequests one `refreshOfferDetails` normally spends — the details
@@ -3717,6 +3790,344 @@ const LOAN_TOKEN_ID_BATCH = 50;
  * window — vanishingly rare belt-and-suspenders coverage.
  */
 /**
+ * #2464 — THE write that settles a loan row from a `LoanSettled` event, for
+ * both callers: the event handler during a scan, and the `settleFromLedger`
+ * heal for an event the projection missed. One writer, so the two cannot
+ * disagree about what a settled row records.
+ *
+ * - `block` is the event's block. The ledger heal may pass NULL when no
+ *   ledgered event is confirmed (#2476 r11). Telling these writes apart from
+ *   the reconciliation repair's is NOT left to that shape any more: the
+ *   repair stamps an explicit `terminal_by_repair = 1` and its notice
+ *   requires it (#2476 r12), because a heal can produce the same null shape
+ *   in the same second.
+ * - `at` is that block's chain time, or NULL when it is not known — never
+ *   the time of the write.
+ * - `at`, when given, is the chain's own time for `block` — never a scan
+ *   clock — and the write records that as `terminal_at_verified = 1`
+ *   (migration 0060). That marker, not the row's shape, is what says a
+ *   settlement time is known (#2476 r15).
+ * - A row already settled is left alone, EXCEPT where this write knows more
+ *   (#2476 r3, r12, r15): a supplied block replaces a missing or DIFFERENT
+ *   one (the supplied block is the confirmed canonical event), with its time
+ *   or with the time unknown; and on the same block, a verified time
+ *   replaces an unverified one (NULL, or a previous Worker's scan clock).
+ *   A verified time is never overwritten. Idempotent either way.
+ * - ONLY FROM A TERMINAL STATUS (#2476 r12). A row still `active` or
+ *   `fallback_pending` that meets `LoanSettled` missed its whole terminal
+ *   transition: its amounts and side tables are as stale as its status, and
+ *   a status-only write would publish a settled loan still advertising its
+ *   listings. The reconciliation repair, which re-reads the loan and clears
+ *   the side tables in one batch, owns those rows.
+ * - It clears `terminal_by_repair`: the row's terminal state now comes from
+ *   the chain's event, not from a repair (see notifications.ts).
+ *
+ * Returns whether the row changed.
+ */
+export async function settleLoanRow(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  block: number | null,
+  at: number | null,
+): Promise<boolean> {
+  // SET expressions read the row as it WAS, so `status` in each CASE is the
+  // prior status.
+  // `fresh` = this write supplies a block the row does not already name
+  // (none recorded, or a different one: the supplied block is the confirmed
+  // canonical event, so it replaces an unconfirmed one — #2476 r15).
+  const r = await env.DB.prepare(
+    `UPDATE loans
+        SET terminal_block = CASE WHEN status <> 'settled' OR ?1 IS NOT NULL THEN ?1 ELSE terminal_block END,
+            terminal_at = CASE
+              WHEN status <> 'settled' THEN ?2
+              WHEN ?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1) THEN ?2
+              WHEN terminal_at_verified = 0 AND ?2 IS NOT NULL THEN ?2
+              ELSE terminal_at
+            END,
+            terminal_at_verified = CASE
+              WHEN status <> 'settled' THEN (?2 IS NOT NULL)
+              WHEN ?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1) THEN (?2 IS NOT NULL)
+              WHEN terminal_at_verified = 0 AND ?2 IS NOT NULL THEN 1
+              ELSE terminal_at_verified
+            END,
+            status = 'settled', terminal_by_repair = 0, updated_at = ?3
+      WHERE chain_id = ?4 AND loan_id = ?5
+        AND status NOT IN ('active', 'fallback_pending')
+        AND (
+          status <> 'settled'
+          OR (?1 IS NOT NULL AND (terminal_block IS NULL OR terminal_block <> ?1))
+          OR (?1 IS NOT NULL AND terminal_block = ?1 AND terminal_at_verified = 0 AND ?2 IS NOT NULL)
+        )`,
+  )
+    .bind(block, at, Math.floor(Date.now() / 1000), chainId, loanId)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
+}
+
+/** Rows `settleFromLedger` takes per tick; the rest wait for the next. */
+const SETTLE_HEAL_BATCH = 20;
+/** Per healed row: the canonical status read, the event lookup, its receipt,
+ *  the block read, the write. */
+const SETTLE_HEAL_COST = 5;
+/** D1 queries per healed row (event lookup, settle write), plus one for the
+ *  rotation-pointer write the loop reserves. */
+const SETTLE_HEAL_D1_QUERIES = 3;
+
+/** Whether a heal row may START: its own reads and writes, and still the
+ *  rotation-pointer write after it, in both meters. */
+function settleRowAffordable(budget: TickBudget): boolean {
+  return (
+    budget.subrequests.remaining >= SETTLE_HEAL_COST + 1 &&
+    budget.d1Queries.remaining >= SETTLE_HEAL_D1_QUERIES
+  );
+}
+/** `indexer_cursor.kind` of the heal's rotation pointer (a loan id). */
+export const SETTLE_HEAL_CURSOR_KIND = 'settle_heal_rotation';
+/** The chain's `LoanStatus.Settled` (see loanStatusProjection.ts). */
+const CHAIN_STATUS_SETTLED = 3;
+
+/**
+ * #2464 / #2476 r6 — finish the ONE edge #2464 was about: a row the chain has
+ * moved from a terminal status to Settled, where the projection still shows
+ * the terminal status because the `LoanSettled` handler used to accept only a
+ * hand-listed set of prior statuses (and an older Worker still serving
+ * through a deploy keeps that behaviour).
+ *
+ * SCOPE, deliberately narrow. Only rows already in a terminal, unsettled
+ * status — repaid, defaulted, liquidated, internal_matched — whose
+ * `LoanSettled` the append-only ledger holds. A row ALREADY settled is never
+ * revisited, whatever its provenance (#2476 r18, root fix): re-dating settled
+ * rows was a second job on this lane, and every review round from r13 to r18
+ * found another edge of it (quota starvation, orphaned blocks, rotation). A
+ * settlement whose time could not be verified stays UNKNOWN, which is what
+ * the routes serve, and a replayed `LoanSettled` still fills it through
+ * `settleLoanRow`. For these the terminal
+ * handler has already done everything a close does (amounts, side tables;
+ * calendar reminders only ever read `active` rows), so settling is a status
+ * and date change and nothing more. An ACTIVE row with a ledgered
+ * `LoanSettled` is not this lane's: it missed its whole terminal, and the
+ * reconciliation repair, which re-reads the full loan and clears side
+ * tables, owns that (an earlier revision took those rows too and inherited
+ * every duty the repair already has, one review round at a time).
+ *
+ * CANONICAL, not just ledgered. The ledger is append-only, so an event from
+ * a block later reorganised away stays in it. Two checks, both against the
+ * chain: `getLoanDetails` at the pass's settled block must say Settled, and
+ * the `LoanSettled` whose block becomes `terminal_block` must be one whose
+ * transaction receipt the node returns AT that block (#2476 r7) — so a
+ * discarded event can supply neither the status nor the provenance. The
+ * ledger's candidates are tried newest first; if none is confirmed the row
+ * is left exactly as it is and revisited next lap.
+ *
+ * DATED by a fresh read of that event's block, never by the ledger's
+ * `block_at`, which holds the scan's wall-clock sentinel when the original
+ * read failed. A failed read settles it with the time unknown — the chain
+ * has confirmed the event, and unknown is the honest date.
+ *
+ * BUDGET: the reservations here are normal figures for a SOFT stop, as for
+ * the other heal lanes (`healRowAffordable`) — a read the client retries
+ * costs more than any fixed figure says. What is guaranteed is narrower and
+ * is what matters: the settle write, after which the row is never selected
+ * again, is issued only while the live budget still covers it and the
+ * pointer write, so a settled row is not left unreported by this lane's own
+ * spending (#2476 r8–r10).
+ *
+ * ROTATING, so no set of rows can hold the batch: a pointer in
+ * `indexer_cursor` walks the candidates by loan id and wraps, so a row the
+ * chain does not confirm, or whose read keeps failing, is revisited only
+ * once per lap. Each row is its own try, so ids already settled are
+ * reported even when a later row throws.
+ *
+ * Returns the ids it settled: the caller reports them as status updates and
+ * hints them (#2476 r4), or connected holders would keep the stale status
+ * until a poll.
+ */
+export async function settleFromLedger(
+  client: PublicClient,
+  diamond: Address,
+  env: Env,
+  chainId: number,
+  budget: TickBudget,
+  /** The pass's settled block — the canonical state every read is pinned to. */
+  atBlock: bigint,
+): Promise<number[]> {
+  // #2476 r10 — the setup itself: the pointer read, the page read, and the
+  // pointer reset an empty page can require.
+  if (budget.subrequests.remaining < 3 || budget.d1Queries.remaining < 3) return [];
+  const pointer =
+    (
+      await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
+        .bind(chainId, SETTLE_HEAL_CURSOR_KIND)
+        .first<{ last_block: number }>()
+    )?.last_block ?? 0;
+  // Each branch is driven by its own index, and the ledger probe by the
+  // per-loan one, so a tick costs the CANDIDATES, never a walk over every
+  // loan or every ledgered settlement on the chain (#2476 r13). INDEXED BY
+  // pins the plan: on a database without ANALYZE statistics SQLite would
+  // otherwise range-scan the primary key from the pointer.
+  const res = await env.DB.prepare(
+    `SELECT l.loan_id AS loan_id FROM loans l INDEXED BY idx_loans_chain_status_loan
+      WHERE l.chain_id = ?1
+        AND l.status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
+        AND l.loan_id > ?2
+        AND EXISTS (
+          SELECT 1 FROM activity_events ae INDEXED BY idx_activity_chain_loan
+           WHERE ae.chain_id = ?1 AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
+        )
+      ORDER BY l.loan_id
+      LIMIT ?3`,
+  )
+    .bind(chainId, pointer, SETTLE_HEAL_BATCH)
+    .all<{ loan_id: number }>();
+  const rows = res.results ?? [];
+  const healed: number[] = [];
+  let reached = pointer;
+  for (const row of rows) {
+    // #2476 r8 — the row AND the pointer write after the loop. Running out of
+    // budget at that write could end the invocation before this returns, and
+    // a row settled here is never selected again, so its report would be lost.
+    if (!settleRowAffordable(budget)) break;
+    const before = reached;
+    reached = row.loan_id;
+    try {
+      const detail = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(row.loan_id)],
+        blockNumber: atBlock,
+      })) as { status: number | bigint };
+      if (Number(detail.status) !== CHAIN_STATUS_SETTLED) continue;
+      const provenance = await canonicalSettlementBlock(client, diamond, env, chainId, row.loan_id, budget);
+      if (provenance === null) continue; // a candidate could not be read — next lap
+      // #2476 r11 — every candidate was read and none is confirmed (the node
+      // prunes old receipts, or the ledgered event was reorganised away and
+      // its replacement is not ledgered yet). The STATUS is still what the
+      // chain says at the settled head, so it lands; the block and time stay
+      // unknown rather than taken from an unconfirmed event, and a later
+      // replay of a confirmed LoanSettled fills them (settleLoanRow).
+      const block = provenance === 'unconfirmed' ? null : provenance;
+      let at: number | null = null;
+      if (block !== null) {
+        try {
+          at = Number((await client.getBlock({ blockNumber: BigInt(block) })).timestamp);
+        } catch {
+          at = null;
+        }
+      }
+      // #2476 r10 — re-check the LIVE budget before the one write that takes
+      // the row out of this selection for good. The row's reservation is a
+      // normal figure, not a bound (the client retries a failed read), so if
+      // the reads ran over, stop here: the row stays unsettled, the pointer
+      // stays before it, and the next lap does it with room to report it.
+      if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 2) {
+        reached = before;
+        break;
+      }
+      if (await settleLoanRow(env, chainId, row.loan_id, block, at)) healed.push(row.loan_id);
+    } catch (err) {
+      console.warn(`[chainIndexer] ledger settlement heal: loan ${row.loan_id} on chain ${chainId} retried next lap`, err);
+    }
+  }
+  // A short page means the walk reached the end: wrap. Otherwise resume after
+  // the last row this tick reached.
+  const next = rows.length < SETTLE_HEAL_BATCH && reached === (rows.at(-1)?.loan_id ?? pointer) ? 0 : reached;
+  // #2476 r12 — and only while the LIVE budget still covers it: a read that
+  // failed after retries can have spent the reserve, and a write past the
+  // ceiling could end the invocation before the ids above are returned. A
+  // skipped write only repeats a page next tick.
+  if (next !== pointer && budget.subrequests.remaining >= 1 && budget.d1Queries.remaining >= 1) {
+    // #2476 r7 — a failed pointer write must not lose the ids above: those
+    // rows are settled and will never be selected again, so this return is
+    // the only report they get. The walk merely repeats a page next tick.
+    try {
+      const t = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`,
+      )
+        .bind(chainId, SETTLE_HEAL_CURSOR_KIND, next, t)
+        .run();
+    } catch (err) {
+      console.warn(`[chainIndexer] ledger settlement heal: rotation pointer not saved on chain ${chainId}`, err);
+    }
+  }
+  if (healed.length > 0) {
+    console.log(`[chainIndexer] settled ${healed.length} loan(s) on chain ${chainId} from their ledgered LoanSettled`);
+  }
+  return healed;
+}
+
+/** topic0 of `LoanSettled(uint256 indexed loanId)`, from the compiled ABI. */
+const LOAN_SETTLED_TOPIC = toEventSelector(
+  EVENT_ABI.find((e) => e.name === 'LoanSettled') as AbiEvent,
+);
+
+/**
+ * The block of a ledgered `LoanSettled` for `loanId` that the chain confirms:
+ * its transaction's receipt, as the node returns it now, is successful, in
+ * that same block, and CARRIES the event — a log from this Diamond with the
+ * `LoanSettled` topic and this loan id (#2476 r9). A transaction re-included
+ * at the same height against different state need not emit it any more.
+ * Newest first, because a replacement after a reorg is the later row.
+ *
+ * Three answers (#2476 r11): the confirmed block; `'unconfirmed'` when every
+ * candidate was READ and none is confirmed (receipt not found, or found
+ * without the event) — the caller then settles with the provenance unknown;
+ * and `null` when a candidate could not be read at all (a transport error, or
+ * the budget ran out first) — the caller then writes nothing this lap.
+ *
+ * The first receipt is in the row's reserved cost. Each further candidate
+ * is tried only while the budget still covers it AND the rest of the row
+ * (block read, settle write, the rotation-pointer write) — so a loan with
+ * several ledgered candidates cannot push that pointer write past the
+ * ceiling (#2476 r9).
+ */
+async function canonicalSettlementBlock(
+  client: PublicClient,
+  diamond: Address,
+  env: Env,
+  chainId: number,
+  loanId: number,
+  budget: TickBudget,
+): Promise<number | 'unconfirmed' | null> {
+  const candidates = await env.DB.prepare(
+    `SELECT block_number, tx_hash FROM activity_events
+      WHERE chain_id = ? AND loan_id = ? AND kind = 'LoanSettled'
+      ORDER BY block_number DESC, log_index DESC`,
+  )
+    .bind(chainId, loanId)
+    .all<{ block_number: number; tx_hash: string }>();
+  const loanTopic = pad(toHex(BigInt(loanId)), { size: 32 }).toLowerCase();
+  let first = true;
+  for (const c of candidates.results ?? []) {
+    // receipt + block read + settle write + pointer write
+    if (!first && budget.subrequests.remaining < 4) return null;
+    first = false;
+    let receipt;
+    try {
+      receipt = await client.getTransactionReceipt({ hash: c.tx_hash as `0x${string}` });
+    } catch (err) {
+      // Not found is an ANSWER (reorganised away, or pruned); anything else is
+      // a read that failed, which decides nothing.
+      if ((err as { name?: string })?.name === 'TransactionReceiptNotFoundError') continue;
+      return null;
+    }
+    if (receipt.status !== 'success' || Number(receipt.blockNumber) !== c.block_number) continue;
+    const carries = receipt.logs.some(
+      (log) =>
+        log.address.toLowerCase() === diamond.toLowerCase() &&
+        log.topics[0]?.toLowerCase() === LOAN_SETTLED_TOPIC.toLowerCase() &&
+        log.topics[1]?.toLowerCase() === loanTopic,
+    );
+    if (carries) return c.block_number;
+  }
+  return 'unconfirmed';
+}
+
+/**
  * #2461 r4 — clear `init_principal_unbacked` on every row of `chainId` whose
  * `init_principal` the append-only `LoanInitiated` ledger now confirms.
  *
@@ -3942,6 +4353,10 @@ export async function processLoanLogs(
   blockTimestamps: Map<bigint, number>,
   client: PublicClient,
   diamond: Address,
+  /** Blocks whose `blockTimestamps` entry is the wall-clock SENTINEL (the
+   *  block read failed), not chain time. A value persisted as a fact about
+   *  WHEN something happened must treat these as unknown (#2476 r2). */
+  fallbackTimestampBlocks: ReadonlySet<bigint> = new Set(),
 ): Promise<{
   newLoans: number;
   statusUpdates: number;
@@ -4023,6 +4438,13 @@ export async function processLoanLogs(
     number,
     { terminal: string; blockNumber: bigint }
   >();
+  // #2476 r18 — loans whose `LoanSettled` is in THIS scan. The settlement
+  // handler owns their Settled edge: it settles a terminal row and leaves an
+  // active one to the reconciliation repair, which re-reads the whole loan.
+  // The safety net must not then promote that active row to settled behind
+  // the handler's back, or the repair never selects it and its amounts stay
+  // stale.
+  const loanSettledInScan = new Set<number>();
 
   for (const log of logs) {
     const a = log.args;
@@ -4944,23 +5366,39 @@ export async function processLoanLogs(
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
-      // status was to 'settled' to mark "all claims resolved" — the
-      // status order is logical (active → repaid/defaulted/liquidated
-      // → settled), and querying for "is anything left to claim"
-      // becomes `status != 'settled'` instead of joining activity_events.
-      const r = await env.DB.prepare(
-        `UPDATE loans SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
-         WHERE chain_id = ? AND loan_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')`,
-      )
-        .bind(
-          Number(log.blockNumber),
-          Math.floor(Date.now() / 1000),
-          Math.floor(Date.now() / 1000),
-          chainId,
-          Number(a.loanId as bigint),
-        )
-        .run();
-      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+      // status was to 'settled' to mark "all claims resolved", so
+      // querying for "is anything left to claim" becomes
+      // `status != 'settled'` instead of joining activity_events.
+      //
+      // #2464 — the event is AUTHORITATIVE, so it settles any row that
+      // is not settled already. This used to name the prior statuses by
+      // hand (`repaid`, `defaulted`, `liquidated`) and left out
+      // `internal_matched`: an internally matched loan's claims settle it
+      // on chain, and the `LoanStatusChanged` edge handler deliberately
+      // leaves terminal → Settled to this one ("the claim handlers own
+      // this edge"), so the row stayed `internal_matched` for good. The
+      // contract emits `LoanSettled` only where it moves the loan to
+      // Settled, some of them via `transitionFromAny`, so a hand list of
+      // prior states is a second copy of the contract's rules that can only
+      // drift. Rows the ledger shows settled but the projection does not —
+      // indexed before this, or by an older Worker — are settled by the
+      // `settleFromLedger` heal lane through the same writer.
+      loanSettledInScan.add(Number(a.loanId as bigint));
+      const settled = await settleLoanRow(
+        env,
+        chainId,
+        Number(a.loanId as bigint),
+        Number(log.blockNumber),
+        // #2476 r1 — WHEN it settled is the event's block time, not the
+        // scan's (a catch-up after downtime would otherwise date the
+        // settlement by when the indexer noticed it). Null when the block
+        // time is not in hand — absent, or the scan's wall-clock SENTINEL
+        // for a block whose read failed (#2476 r2): unknown, never a guess.
+        fallbackTimestampBlocks.has(log.blockNumber)
+          ? null
+          : (blockTimestamps.get(log.blockNumber) ?? null),
+      );
+      if (settled) statusUpdates++;
     } else if (
       log.eventName === 'PeriodicInterestSettled' ||
       log.eventName === 'PeriodicInterestAutoLiquidated' ||
@@ -5083,7 +5521,7 @@ export async function processLoanLogs(
             // keeper's claim-time auto-dispatch can FULLY rescue a
             // `fallback_pending` loan straight to `internal_matched` with no
             // later claim event, so that row must be promotable here too.
-            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
               absPrincipal.toString(),
@@ -5470,15 +5908,23 @@ export async function processLoanLogs(
       // A CLOSE, not a listing end — the loan goes Active→Settled in this
       // same call — so the shared close-out cleanup applies.
       await _clearClosedLoanSideTables(env, chainId, loanId);
-      const blockAt = blockTimestamps.get(log.blockNumber) ?? now;
+      // #2476 r16 — the event block's chain time, VERIFIED (0060), or unknown
+      // when that block's read failed — never the scan's clock. This close
+      // emits no LoanSettled, so the ledger heal can never date it later; a
+      // time written here is the only one it will get.
+      const blockAt = fallbackTimestampBlocks.has(log.blockNumber)
+        ? null
+        : (blockTimestamps.get(log.blockNumber) ?? null);
       const r = await env.DB.prepare(
         `UPDATE loans
-           SET status = 'settled', terminal_block = ?, terminal_at = ?, updated_at = ?
+           SET status = 'settled', terminal_block = ?, terminal_at = ?, terminal_at_verified = ?,
+               terminal_by_repair = 0, updated_at = ?
          WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
       )
         .bind(
           Number(log.blockNumber),
           blockAt,
+          blockAt === null ? 0 : 1,
           now,
           chainId,
           loanId,
@@ -5649,8 +6095,9 @@ export async function processLoanLogs(
   // no-op there and only fills a genuine gap. Same predicate as before, moved;
   // see `deferredStatusEdges` for why the move was required.
   for (const [loanId, { terminal, blockNumber }] of deferredStatusEdges) {
+    if (terminal === 'settled' && loanSettledInScan.has(loanId)) continue;
     const r = await env.DB.prepare(
-      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
        WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
     )
       .bind(terminal, blockToNumber(blockNumber), now, now, chainId, loanId)
@@ -5706,7 +6153,7 @@ async function flipLoanStatus(
   const loanId = loanIdOverride ?? Number(args.loanId as bigint);
   const now = Math.floor(Date.now() / 1000);
   const r = await env.DB.prepare(
-    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+    `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, terminal_by_repair = 0, updated_at = ?
      WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
   )
     .bind(status, Number(log.blockNumber), now, now, chainId, loanId)

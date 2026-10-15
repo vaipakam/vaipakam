@@ -774,7 +774,7 @@ export async function reconcileAfterScan(
         .prepare(
           `UPDATE loans
               SET status = ?, ${repair.mutable.assignments.join(', ')},
-                  terminal_block = NULL, terminal_at = NULL, updated_at = ?
+                  terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1, updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
