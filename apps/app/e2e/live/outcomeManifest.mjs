@@ -251,7 +251,7 @@ export const REFINANCE_EVIDENCE = Object.freeze({
 });
 export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
-export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
+export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, writeUnknown = false, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
   const missing = outcomeClaims.filter((id) => !rows.some((r) => r.id === id));
   if (missing.length) throw new Error(`runVerdict: outcome claim(s) ${missing.join(', ')} are not in the manifest`);
   if (!wrote) {
@@ -295,7 +295,9 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
     line:
       'OUTCOME: UNDETERMINED — ' +
       [
-        stopped ? `the drive stopped after a write: ${stopped}` : null,
+        // A drive that cannot establish whether its wallet wrote says so, and
+        // never that a write happened (#2505 r36).
+        stopped ? (writeUnknown ? `whether the drive's wallet wrote cannot be established: ${stopped}` : `the drive stopped after a write: ${stopped}`) : null,
         failedOther.length
           ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — ${evidence.failed}`
           : null,

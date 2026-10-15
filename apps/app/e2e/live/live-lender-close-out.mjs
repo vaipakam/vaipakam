@@ -740,10 +740,15 @@ async function gate(method, params) {
   };
 }
 const sentHash = () => step()?.record?.hash ?? null;
+// A THROWAWAY profile (#2505 r36): a persistent one can carry a paired
+// WalletConnect (or other connector) session, and a signing request the page
+// hands to an external wallet survives closing this browser, so the final
+// nonce read could precede a send the wallet approves later. A fresh profile
+// holds no pairing, and a new one needs a person to scan its code.
 const session = await launch(
   SUBMIT
-    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true, allowQuoteProxy: true }
-    : { role: ROLE, readOnly: true },
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: gate, readOnlyEgress: true, allowQuoteProxy: true, freshProfile: true }
+    : { role: ROLE, readOnly: true, freshProfile: true },
 );
 const { ctx, page, done, consoleErrors, blockedRequests } = session;
 const shot = (name) => session.shot(name).catch((e) => console.log(`(screenshot ${name} not saved: ${e.message})`));
@@ -1170,6 +1175,7 @@ const VERDICT = runVerdict({
   stopped: resolved.stopped,
   preWriteFailure: !resolved.wrote && failedCount() > 0,
   gateEscape: resolved.gateEscape,
+  writeUnknown: resolved.writeUnknown === true,
   outcomeClaims: SUBMIT ? OUTCOME : [],
   evidence: {
     failed: 'see the GATE refusals and the manifest above',

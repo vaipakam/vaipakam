@@ -196,6 +196,13 @@ describe('runVerdict', () => {
     expect(runVerdict({ ...base, rows: all(), stopped: 'the page never said "Loan opened"' }).exit).toBe(3);
   });
 
+  it('a write that cannot be ruled out is UNDETERMINED and never stated as a write (#2505 r36)', () => {
+    const v = runVerdict({ ...base, rows: all('not run'), stopped: 'the nonce could not be read', writeUnknown: true });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/^OUTCOME: UNDETERMINED — whether the drive's wallet wrote cannot be established: the nonce could not be read/);
+    expect(v.line).not.toMatch(/after a write/);
+  });
+
   it('a failed write discipline without a gate escape is stated as FAILED; "no contradiction" names only the outcome claims (#2434 r1 P2)', () => {
     // A transaction still pending: the borrower's nonce check failed, nothing
     // stopped, every outcome claim verified.

@@ -186,6 +186,7 @@ export function resolveSettlement({ settled, held, stopped, suspect, findings, s
   if (nonce.kind === 'unknown') {
     return {
       wrote: true,
+      writeUnknown: true,
       gateEscape: false,
       stopped: join(stopText, held, `the plan sent nothing, but whether this wallet sent anyway cannot be established: ${nonce.why}`),
       recordSuspect: Boolean(suspect?.check),
