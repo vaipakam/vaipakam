@@ -152,7 +152,7 @@ export function keeperDrawUnavailableGap(
 export function remittedRecycledUnavailableGap(
   chainId: number,
   err: unknown,
-  view: 'getChainRemittedRecycled' | 'getRemitHistoryPending' = 'getChainRemittedRecycled',
+  view: 'getChainRemittedRecycled' | 'getRemitHistoryPending' | 'getChainRemittedRecycledHistory' = 'getChainRemittedRecycled',
 ): CoverageGap {
   const failure = classify(err, view);
   const missing = isMissingSelector(err);
@@ -334,6 +334,25 @@ async function readBaseBooks(
     recycledAcked = undefined;
     gaps.push(remittedRecycledUnavailableGap(chainId, err));
   }
+  // Codex #2489 r9 — the history figure (declared shares of pre-upgrade
+  // acknowledgements), compared only at advisory severity. Unreadable → the
+  // advisory skips; the exact leg is unaffected.
+  let recycledAckedHistory: bigint | undefined;
+  if (recycledAcked !== undefined) {
+    try {
+      recycledAckedHistory = await readView<bigint>(
+        canonical.client,
+        canonical.diamond,
+        'getChainRemittedRecycledHistory',
+        [chainId],
+        blockNumber,
+        REWARD_REMITTANCE_LENS_ABI,
+      );
+    } catch (err) {
+      recycledAckedHistory = undefined;
+      gaps.push(remittedRecycledUnavailableGap(chainId, err, 'getChainRemittedRecycledHistory'));
+    }
+  }
   // Codex #2489 r7 — comparable only once Base's reservation history is
   // booked; otherwise read as UNKNOWN (see remitHistoryHidesAcked).
   if (recycledAcked !== undefined) {
@@ -362,6 +381,7 @@ async function readBaseBooks(
     chainId,
     keeperDraw,
     recycledAcked,
+    recycledAckedHistory,
     reported: ledger[0],
     consumed: ledger[1],
     avail: ledger[2],

@@ -74,8 +74,9 @@ contract RemitHistoryBackfillTest is SetupTest {
         assertEq(bp, 4, "four shares to book: three finalized, one released-and-consumed");
 
         // Chunked: the first two, then the rest; every write announced.
+        // Acknowledged history books at state 3 into the HISTORY figure (r9).
         vm.expectEmit(true, false, false, true);
-        emit RemitRecycledBookedFromHistory(1, 2);
+        emit RemitRecycledBookedFromHistory(1, 3);
         vm.expectEmit(true, false, false, true);
         emit RemitRecycledBookedFromHistory(2, 1);
         (uint256 s1, uint256 b1) = remit.backfillRemitHistory(1, 2);
@@ -84,22 +85,24 @@ contract RemitHistoryBackfillTest is SetupTest {
         (, bp, ) = rlens.getRemitHistoryPending(1, 100);
         assertEq(bp, 2, "two left");
         vm.expectEmit(true, false, false, true);
-        emit RemitRecycledBookedFromHistory(3, 2);
+        emit RemitRecycledBookedFromHistory(3, 3);
         vm.expectEmit(true, false, false, true);
-        emit RemitRecycledBookedFromHistory(5, 2);
+        emit RemitRecycledBookedFromHistory(5, 3);
         (uint256 s2, uint256 b2) = remit.backfillRemitHistory(3, 1_000);
         assertEq(b2, 2, "second chunk: the last finalized row and the consumed released row, the range clipped to the nonce");
         assertEq(s2, 2, "both released rows stamped");
 
         (acked, forced) = rlens.getChainRemittedRecycled(ARB);
-        assertEq(acked, 13e18, "ARB acked: the acknowledged finalized row plus the consumed released row");
+        assertEq(acked, 0, "ARB exact acked: UNTOUCHED by history (no received figure survives; Codex #2489 r9)");
         assertEq(forced, 5e18, "ARB forced: the forced-only row");
-        assertEq(rlens.getRemitReservation(5).recycledBooked, 2, "released + consumed: booked acked");
+        assertEq(rlens.getChainRemittedRecycledHistory(ARB), 13e18, "ARB history: the acknowledged finalized row plus the consumed released row, at their declared shares");
+        assertEq(rlens.getRemitReservation(5).recycledBooked, 3, "released + consumed: booked from history");
         assertEq(rlens.getRemitReservation(6).recycledBooked, 0, "released, never consumed: nothing to book");
         (acked, forced) = rlens.getChainRemittedRecycled(OP);
-        assertEq(acked, 4e18, "OP acked: a forced-then-acknowledged row books straight to acked");
-        assertEq(forced, 0, "OP forced: nothing left in the forced bucket");
-        assertEq(rlens.getRemitReservation(1).recycledBooked, 2, "row 1 booked acked");
+        assertEq(acked, 0, "OP exact acked: untouched");
+        assertEq(forced, 0, "OP forced: a forced-then-acknowledged row does not stay in the forced bucket");
+        assertEq(rlens.getChainRemittedRecycledHistory(OP), 4e18, "OP history: the forced-then-acknowledged row's declared share");
+        assertEq(rlens.getRemitReservation(1).recycledBooked, 3, "row 1 booked from history");
         assertEq(rlens.getRemitReservation(2).recycledBooked, 1, "row 2 booked forced");
         assertEq(rlens.getRemitReservation(4).recycledBooked, 0, "a row that moved nothing stays unbooked");
 
@@ -109,7 +112,7 @@ contract RemitHistoryBackfillTest is SetupTest {
         (, bp, ) = rlens.getRemitHistoryPending(1, 100);
         assertEq(bp, 0, "nothing pending");
         (acked, forced) = rlens.getChainRemittedRecycled(ARB);
-        assertEq(acked + forced, 18e18, "ARB unchanged");
+        assertEq(acked + forced + rlens.getChainRemittedRecycledHistory(ARB), 18e18, "ARB unchanged");
         // An empty / past-the-end range is a no-op, not a revert.
         (s3, b3) = remit.backfillRemitHistory(50, 10);
         assertEq(s3 + b3, 0);
@@ -144,8 +147,11 @@ contract RemitHistoryBackfillTest is SetupTest {
         (uint256 stranded, uint256 booked) = remit.backfillRemitHistory(1, 100);
         assertEq(stranded, 3, "three records written");
         assertEq(booked, 2, "the two consumed released rows booked");
-        assertEq(rlens.getRemitReservation(7).recycledBooked, 2, "row 7 booked acked");
-        assertEq(rlens.getRemitReservation(8).recycledBooked, 2, "row 8: a contradicted consumption books too (the stricter direction)");
+        assertEq(rlens.getRemitReservation(7).recycledBooked, 3, "row 7 booked from history");
+        assertEq(rlens.getRemitReservation(8).recycledBooked, 3, "row 8: a contradicted consumption books too (the stricter direction)");
+        assertEq(rlens.getChainRemittedRecycledHistory(ARB), 14e18, "rows 7 + 8 at their declared shares, in the history figure");
+        (uint256 exactAcked, ) = rlens.getChainRemittedRecycled(ARB);
+        assertEq(exactAcked, 0, "the exact acknowledged counter is untouched by history");
         assertEq(rlens.getRemitReservation(6).recycledBooked, 0, "row 6 was never consumed: nothing to book");
 
         LibVaipakam.RemitReservation memory r6 = rlens.getRemitReservation(6);

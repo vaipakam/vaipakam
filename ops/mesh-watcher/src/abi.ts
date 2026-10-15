@@ -179,6 +179,14 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     outputs: ['strandedPending:uint256', 'bookingPending:uint256', 'nonce:uint256'],
     facet: 'remittanceLens',
   },
+  // Codex #2489 r9 — the declared-share history figure, compared on top of the
+  // exact acknowledged share at ADVISORY severity only.
+  {
+    name: 'getChainRemittedRecycledHistory',
+    inputs: ['uint32'],
+    outputs: ['ackedDeclared:uint256'],
+    facet: 'remittanceLens',
+  },
   // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
   // `expectedAvail` and the subject of the `keeper-cap` check. On the
   // aggregator facet (it reads the same per-chain books), so no separate

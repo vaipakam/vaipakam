@@ -2796,7 +2796,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](44);
+        selectors = new bytes4[](45);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2862,6 +2862,7 @@ contract HelperTest {
         selectors[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         selectors[42] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
         selectors[43] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
+        selectors[44] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

@@ -231,6 +231,17 @@ contract RewardRemittanceLensFacet {
         return (s.chainRemittedRecycledAcked[chainId], s.chainRemittedRecycledForceFinalized[chainId]);
     }
 
+    /// @notice Codex #2489 r9 — the DECLARED recycled share of every remittance to
+    ///         `chainId` acknowledged as consumed before the booking existed,
+    ///         booked by the history walk and kept apart from
+    ///         {getChainRemittedRecycled}'s exact `acked`: no received figure
+    ///         survives for history, so a pre-upgrade short delivery relocated
+    ///         less than this. The watcher compares `acked` alone as a hard
+    ///         invariant and `acked + this` only as an advisory.
+    function getChainRemittedRecycledHistory(uint32 chainId) external view returns (uint256 ackedDeclared) {
+        return LibVaipakam.storageSlot().chainRemittedRecycledAckedFromHistory[chainId];
+    }
+
     /// @notice Codex #2489 r7 — how many reservations in `[fromId, fromId +
     ///         count)` (clipped to the nonce) the history rule would still
     ///         write ({RewardRemittanceFacet.backfillRemitHistory}): stranded

@@ -8011,6 +8011,16 @@ library LibVaipakam {
         /// @dev #1452 — the same share for FORCED finalizations: evidenced by an
         ///      operator, not acknowledged by a delivery, so kept apart.
         mapping(uint32 => uint256) chainRemittedRecycledForceFinalized;
+        /// @dev Codex #2489 r9 — per destination, the DECLARED recycled share of
+        ///      every remittance acknowledged as consumed BEFORE the booking
+        ///      existed, booked by the history walk and kept APART from
+        ///      `chainRemittedRecycledAcked`: the record keeps no received
+        ///      figure (only the authenticated `RemitReservationAcked` event
+        ///      carried it), so for a pre-upgrade short delivery the declared
+        ///      share overstates what the mirror relocated. The exact counter
+        ///      stays exact; the watcher compares this figure at advisory
+        ///      severity only.
+        mapping(uint32 => uint256) chainRemittedRecycledAckedFromHistory;
         /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, the
         ///      RECORDED windows of its ended confirmed chains, each packed
         ///      `fromDay(128) | toDay(128)` (the one codec is

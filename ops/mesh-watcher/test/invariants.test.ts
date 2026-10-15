@@ -746,6 +746,24 @@ describe('checkHardInvariants — base ahead of the chain', () => {
     ).toEqual(['base-ahead-of-chain']);
   });
 
+  it('#2489 r9 — history booked at the declared share is compared only as an ADVISORY, on top of the exact figure', () => {
+    const relocated = (o: Overrides) =>
+      checkHardInvariants(observation(o), TOLERANCE)
+        .filter((f) => f.code === 'base-ahead-of-chain' && f.variant.startsWith('relocated'))
+        .map((f) => `${f.variant}:${f.severity}`);
+    // Exact within the relocation, history pushes past it: advisory, never critical.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 1n } })).toEqual(['relocated-history:advisory']);
+    // No history booked: nothing at all.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 0n } })).toEqual([]);
+    // History unreadable: the advisory skips; the exact leg still decides.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: undefined } })).toEqual([]);
+    expect(relocated({ mirror: { recycledAcked: 1n, recycledAckedHistory: undefined } })).toEqual(['relocated:critical']);
+    // The exact leg fired: the advisory does not double up.
+    expect(relocated({ mirror: { recycledAcked: 1n, recycledAckedHistory: 5n } })).toEqual(['relocated:critical']);
+    // Mutation: fold history into the exact comparison → a short pre-upgrade
+    // delivery reads as a critical.
+  });
+
   it('#1452 skips the relocated leg when the acknowledged share is UNKNOWN', () => {
     // Same mismatch as the firing case above, but UNKNOWN: the leg must skip.
     expect(codes({ mirror: { recycledAcked: undefined } })).toEqual([]);
