@@ -428,12 +428,22 @@ const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
  * skipped once the send is held). Any other request is refused by the closed
  * plan, unmarked, and judged like every other refusal.
  */
-const holdSend = (params) => {
+const holdSend = (params, gateEnabled = null) => {
   PLAN.close();
   const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
   const expected = step()?.expected;
   const withoutGas = (o) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas'));
-  const planned = Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
+  // The app builds its route from the roster it read at confirm time, so a
+  // held close-out whose roster moved may name an index enabled only at the
+  // gate's block: either set identifies the planned request.
+  const startupEnabled = enabledAdapters;
+  if (gateEnabled) enabledAdapters = new Set([...startupEnabled, ...gateEnabled]);
+  let planned;
+  try {
+    planned = Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
+  } finally {
+    enabledAdapters = startupEnabled;
+  }
   if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
@@ -465,8 +475,10 @@ async function gate(method, params) {
     // through the same `eligibleAt` the card's snapshot used. Any move since
     // startup withholds the send, and so does a re-read that gets no answer:
     // whether it moved is then unknown.
+    let gateEnabled = null;
     try {
       const e = await eligibleAt(null);
+      gateEnabled = e.enabled;
       // The route bound follows the roster only while it is unmoved, so a
       // held request is still compared with the set the drive started from.
       if (e.ok && e.enabled !== null) enabledAdapters = e.enabled;
@@ -476,7 +488,7 @@ async function gate(method, params) {
     }
     if (movedAtGate !== null) {
       console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-      const heldRefusal = holdSend(params);
+      const heldRefusal = holdSend(params, gateEnabled);
       if (heldRefusal) return heldRefusal;
     }
     try {
@@ -581,6 +593,20 @@ const violationsSoFar = () => [
 ];
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+/**
+ * The moved-precondition rule before a pre-send judgement (#2505): when the
+ * loan's eligibility moved, or cannot be re-read, the run is BLOCKED, unless
+ * something was already recorded, which stands (the drive stops there).
+ */
+async function blockIfIneligible(when) {
+  const now = await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }));
+  if (now.ok) return;
+  const why = now.unknown
+    ? `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility ${when}, so whether it moved is unknown (${now.unknown})`
+    : `loan ${LOAN_ID} moved ${when} (block ${now.block}): ${now.why}`;
+  if (preSendFails() > 0) throw new Error(`${why}; nothing after it is judged, and the ${preSendFails()} failure(s) recorded before it stand`);
+  await blocked(why, null, done);
+}
 let stopped = null;
 let armedOnce = false;
 /** This wallet's pending nonce just before the arm. */
@@ -655,6 +681,9 @@ try {
   if (!mounted && (await answered()) === 0) {
     await blocked('the page RPC answered nothing while the position page loaded, so the card was never observable', null, done);
   }
+  // A card the page rightly withholds (the loan closed by a keeper while the
+  // page loaded) is judged only once the loan is known not to have moved.
+  if (!mounted) await blockIfIneligible('while the position page loaded');
   check('card', 'mounted', 'the forced-close card renders', mounted);
   if (!mounted) throw new Error('the forced-close card never rendered');
   // The state settles once the card's reads (and, for a sale, its venue
@@ -669,6 +698,7 @@ try {
   if (OTHER_READY_STATES.has(state ?? '')) {
     await blocked(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`, null, done);
   }
+  if (state !== SALE_STATE) await blockIfIneligible('while the card settled');
   check('card', 'ready', `the card declares ${SALE_STATE}`, state === SALE_STATE, `declared state ${state}`);
   const text = (await card.innerText()).replace(/\s+/g, ' ');
   console.log(`card: ${text.slice(0, 600)}`);
