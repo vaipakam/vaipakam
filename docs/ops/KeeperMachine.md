@@ -64,9 +64,15 @@ Trust, stated plainly. **Root on this machine is fully trusted**: it can read
 `/etc/vaipakam/keeper.env`, and with it the signing key and the D1 token, and
 it runs the updater. The sandboxing above keeps the build away from the
 secrets; it does nothing to limit root, so anyone with root or `sudo` here
-holds the keeper key. Whoever can merge to `main`, or tamper with a dependency
-the build fetches, controls what the keeper runs. This is the same trust the
-Workers' auto-deploy carries. Node comes from nodejs.org, verified against
+holds the keeper key. **Whoever can merge to the deploy branch (`main`) holds
+root on this machine**: each deploy installs that commit's units and
+`update.sh`, and the updater runs as root, so a merged change to either runs
+as root at the next deploy, with the signing key, the D1 token and anything
+else here in reach. Branch protection on `main` is therefore part of this
+machine's security. Anyone who can tamper with a dependency the build fetches
+controls what the keeper runs (the build itself stays sandboxed). The
+Workers' auto-deploy carries the same trust for the keeper's code; root on
+the machine is the part it adds. Node comes from nodejs.org, verified against
 the release's published SHA-256 over TLS.
 
 Files on the machine, all root's:
@@ -212,8 +218,12 @@ empty.
   /opt/vaipakam-keeper/current`), run `sudo /opt/vaipakam-keeper/update.sh
   --kit-only` so the units are that release's own again (until then the
   keeper refuses to start, §1), and run `sudo systemctl restart
-  vaipakam-keeper`. **To return to `main`**, resume deploys. The next run
-  sees that `current` is not `main`'s release and deploys it.
+  vaipakam-keeper`. **To return to the deploy branch**, resume deploys: the
+  next run sees that `current` is not the branch tip's release and deploys
+  it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
+  unless `KEEPER_DEPLOY_BRANCH` set another at install); check it, and to
+  follow `main` again re-run the install script with
+  `KEEPER_DEPLOY_BRANCH=main`.
 - **Move hosts:** on the old machine run `sudo systemctl disable --now
   vaipakam-keeper vaipakam-keeper-update.timer`. Then enable the new machine
   with the §5 cutover. `disable` matters: a unit

@@ -129,7 +129,7 @@ describe('host deploy kit paths', () => {
   it('deploys each commit with its own build.sh, units and updater, and binds them with kit-commit', () => {
     const update = read('update.sh');
     expect(update).toContain('exec 9>/run/vaipakam-keeper-deploy.lock');
-    expect(update).toContain('git -C "$REPO" archive "$commit" apps/keeper/host/deploy');
+    expect(update).toContain('git -C "$REPO" archive "$1" apps/keeper/host/deploy');
     expect(update).toContain('$build_script:/run/keeper-build.sh');
     expect(update).not.toContain('$ROOT/build.sh');
     for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer']) {
@@ -142,14 +142,20 @@ describe('host deploy kit paths', () => {
     // The kit goes in after the build succeeds; kit-commit is cleared first and
     // written only once `current` names the same commit.
     const built = update.indexOf('built="$tmp/out/keeper-host.mjs"');
-    const clear = update.indexOf('rm -f "$KIT_COMMIT"\ninstall_kit "$target"');
+    const clear = update.indexOf('start.\nrm -f "$KIT_COMMIT"\ninstall_kit "$kit_dir"');
+    expect(update.indexOf('kit_dir="$(extract_kit "$target")"')).toBeLessThan(update.indexOf('systemd-run'));
+    expect(clear).toBeGreaterThan(-1);
+    // A kit whose updater does not parse is refused before anything changes.
+    expect(update).toContain('if ! bash -n "$dir/update.sh"; then');
+    // systemd is reloaded on every kit install, changed or not, before it is recorded.
+    expect(update).toMatch(/  done\n(  #.*\n)*  systemctl daemon-reload\n  place "\$dir\/update\.sh"/);
     const swap = update.indexOf('mv -Tf "$ROOT/current.next" "$ROOT/current"');
     const record = update.indexOf('record_kit "$target"');
     expect(clear).toBeGreaterThan(built);
     expect(swap).toBeGreaterThan(clear);
     expect(record).toBeGreaterThan(swap);
     // Every run first puts back the running release's kit if another is recorded.
-    expect(update.indexOf('install_kit "$running"')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
+    expect(update.indexOf('install_kit "$kit_dir"')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
     // The keeper refuses to start unless the loaded kit is the release's.
     expect(read('vaipakam-keeper.service')).toContain(
       'ExecStartPre=/usr/bin/cmp /opt/vaipakam-keeper/kit-commit /opt/vaipakam-keeper/current/SOURCE_COMMIT',

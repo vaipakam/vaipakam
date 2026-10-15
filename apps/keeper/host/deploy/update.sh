@@ -86,21 +86,34 @@ place() { # place <source> <destination> <mode>
   return 1
 }
 
-# Install <commit>'s units and update.sh, reloading systemd if a unit changed.
+# Extract <commit>'s kit and print where. Fails, changing nothing, if its
+# update.sh does not parse: installed, it would fail every later run before
+# it could fetch a fix, so the working one is kept instead.
+extract_kit() {
+  local dir="$WORK/kit-$1"
+  mkdir -p "$dir"
+  git -C "$REPO" archive "$1" apps/keeper/host/deploy | tar -x --no-same-owner -C "$dir"
+  dir="$dir/apps/keeper/host/deploy"
+  if ! bash -n "$dir/update.sh"; then
+    echo "[keeper-update] $1's update.sh does not parse; not installing it" >&2
+    return 1
+  fi
+  echo "$dir"
+}
+# Install the units and update.sh of an extracted kit, then reload systemd.
 # Sets keeper_unit_changed=yes when the keeper's own unit changed.
 keeper_unit_changed=no
 install_kit() {
-  local commit="$1" dir="$WORK/kit-$1" unit units_changed=no
-  mkdir -p "$dir"
-  git -C "$REPO" archive "$commit" apps/keeper/host/deploy | tar -x --no-same-owner -C "$dir"
-  dir="$dir/apps/keeper/host/deploy"
+  local dir="$1" unit
   for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
-    if place "$dir/$unit" "/etc/systemd/system/$unit" 644; then
-      units_changed=yes
-      if [ "$unit" = vaipakam-keeper.service ]; then keeper_unit_changed=yes; fi
+    if place "$dir/$unit" "/etc/systemd/system/$unit" 644 && [ "$unit" = vaipakam-keeper.service ]; then
+      keeper_unit_changed=yes
     fi
   done
-  if [ "$units_changed" = yes ]; then systemctl daemon-reload; fi
+  # Always: equal files do not prove systemd loaded them (a run interrupted
+  # between placing a unit and reloading leaves exactly that), and the kit is
+  # recorded as installed only after this.
+  systemctl daemon-reload
   place "$dir/update.sh" "$ROOT/update.sh" 755 || true
 }
 # Record that <commit>'s kit is installed and loaded.
@@ -129,8 +142,9 @@ if [ "${1:-}" = --kit-only ]; then
   commit="$(running_commit)"
   commit="${commit:-${2:-}}"
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "--kit-only: no release and no commit given" >&2; exit 1; }
+  kit_dir="$(extract_kit "$commit")"
   rm -f "$KIT_COMMIT"
-  install_kit "$commit"
+  install_kit "$kit_dir"
   record_kit "$commit"
   # A running keeper is on its old unit until it restarts; install.sh's
   # restart check sees the changed unit and restarts it.
@@ -142,7 +156,9 @@ fi
 running="$(running_commit)"
 if [ -n "$running" ] && [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ]; then
   log "installing the units of $running, which is the release in use"
-  install_kit "$running"
+  kit_dir="$(extract_kit "$running")"
+  rm -f "$KIT_COMMIT"
+  install_kit "$kit_dir"
   record_kit "$running"
   if [ "$keeper_unit_changed" = yes ]; then touch "$PENDING"; fi
 fi
@@ -167,9 +183,11 @@ tmp="$WORK/build"
 mkdir -m 700 "$tmp"
 git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
 chmod 644 "$tmp/src.tar"
-# This commit's own build.sh builds it; its units go in with it below.
-git -C "$REPO" archive "$target" apps/keeper/host/deploy/build.sh | tar -x --no-same-owner -C "$tmp"
-build_script="$tmp/apps/keeper/host/deploy/build.sh"
+# This commit's own kit: its build.sh builds it, and its units and updater go
+# in with it below. Checked before the build, so a commit whose updater does
+# not parse costs no build and changes nothing.
+kit_dir="$(extract_kit "$target")"
+build_script="$kit_dir/build.sh"
 # The one directory the sandbox may write. `$tmp` itself stays 0700, so no
 # other account on the machine can reach it; the sandbox sees only the
 # bind-mounted paths below.
@@ -215,10 +233,11 @@ if [ -f "$ROOT/current/keeper-host.mjs" ] && cmp -s "$incoming/keeper-host.mjs" 
   restart=no
 fi
 
-# This commit's kit goes in only now, after the build succeeded. From removing
-# kit-commit until it names this commit again, the keeper refuses to start.
+# This commit's kit goes in only now, after the build succeeded. From
+# removing kit-commit until it names this commit again, the keeper refuses to
+# start.
 rm -f "$KIT_COMMIT"
-install_kit "$target"
+install_kit "$kit_dir"
 # The keeper's own unit changed: it must restart onto it even when its bundle
 # did not.
 if [ "$keeper_unit_changed" = yes ]; then restart=yes; fi
