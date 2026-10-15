@@ -954,18 +954,22 @@ try {
 } catch (err) {
   console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
 }
-// ROOT RULE (#2512 r2): every pre-write FAIL rests on the startup facts, so
-// before one is reported the loan is read ONCE more. A loan that moved while
-// the drive ran (claimed, transferred, settled elsewhere) is BLOCKED whichever
-// step noticed it, rather than a re-check at each step that can stall.
-if (!wroteAny && (failedCount() > 0 || stopped)) {
+// ROOT RULE (#2512 r2, scoped in r3): a pre-write STOP — a step that could
+// not complete, such as a row that never came back or a wait that timed out —
+// rests on the startup facts, so before it is reported the loan is read ONCE
+// more. A loan that moved while the drive ran (claimed, transferred, settled
+// elsewhere) makes the stop BLOCKED whichever step hit it, and so does a chain
+// that cannot be read to tell. RECORDED check failures are never overridden:
+// the Owed-line checks are taken only after `requireUnmoved` confirmed the
+// loan, and page errors and writes do not depend on the loan's state at all.
+if (!wroteAny && stopped && failedCount() === 0) {
   let moved = null;
   try {
     moved = await movedReason();
   } catch (err) {
-    console.log(`(could not re-read the loan before the verdict: ${err.message}; the verdict below stands)`);
+    await blocked(`the drive stopped (${stopped}) and the direct RPC could not re-read the loan to tell whether it moved`, err);
   }
-  if (moved) await blocked(`loan ${LOAN_ID} moved while the drive ran (${moved}); the failures above rest on startup facts that no longer hold`);
+  if (moved) await blocked(`loan ${LOAN_ID} moved while the drive ran (${moved}); the stop above rests on startup facts that no longer hold`);
 }
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
