@@ -566,13 +566,23 @@ async function lifecycleNow() {
     return { unknown: err.shortMessage ?? err.message };
   }
 }
-/** BLOCKED when the loan moved, or when whether it moved cannot be read. */
+/**
+ * The moved-precondition rule (#2505), in one place. When the loan moved, or
+ * whether it moved cannot be read, nothing observed from here on is judged.
+ * A failure ALREADY recorded was observed before that, so it stands: the
+ * drive stops (the shared verdict then reports the failure, with this as its
+ * stop reason). With nothing recorded, the run is BLOCKED.
+ */
 async function blockIfLifecycleMoved(when) {
   const l = await lifecycleNow();
-  if (l.moved) await blocked(`loan ${LOAN_ID} moved ${when} — ${l.moved}`, null, done);
-  if (l.unknown) {
-    await blocked(`the direct RPC could not re-read loan ${LOAN_ID} ${when}, so whether it moved is unknown (${l.unknown})`, null, done);
+  if (!l.moved && !l.unknown) return;
+  const why = l.moved
+    ? `loan ${LOAN_ID} moved ${when} — ${l.moved}`
+    : `the direct RPC could not re-read loan ${LOAN_ID} ${when}, so whether it moved is unknown (${l.unknown})`;
+  if (preClaimFails() > 0) {
+    throw new Error(`${why}; nothing after it is judged, and the ${preClaimFails()} failure(s) recorded before it stand`);
   }
+  await blocked(why, null, done);
 }
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
@@ -968,13 +978,13 @@ if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
     'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
 }
 const wroteAny = wrote() || armedOnce;
-// Every verdict reached before a write — a PASS as much as a FAIL — rests on
-// the loan still being the one the drive started from (#2505). The checks
-// above revalidate only where a line came out unexpected, and a transfer of
-// the lender position changes no line on this page, so the lifecycle is
-// re-read once more here, unconditionally, before any pre-write verdict.
-// After a write the loan moved because of this drive, so it is not asked.
-if (!wroteAny) await blockIfLifecycleMoved('before the verdict');
+// A PASS reached before a write rests on the loan still being the one the
+// drive started from (#2505). The checks above revalidate only where a line
+// came out unexpected, and a transfer of the lender position changes no line
+// on this page, so the lifecycle is re-read once more before that verdict.
+// A failure already recorded stands whatever moved afterwards, and after a
+// write the loan moved because of this drive, so neither is asked.
+if (!wroteAny && preClaimFails() === 0) await blockIfLifecycleMoved('before the verdict');
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {

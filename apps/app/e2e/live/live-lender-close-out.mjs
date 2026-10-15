@@ -371,6 +371,15 @@ let previewVerdict = null;
 /** Set when the gate found the roster changed since startup, or could not
  *  re-read it (#2505). */
 let rosterMovedAtGate = null;
+/**
+ * A precondition that stopped the drive without a finding: the plan signed
+ * nothing, but whether THIS WALLET sent nothing is only known once its nonce
+ * is reconciled, so it is not reported here. It becomes BLOCKED at the
+ * verdict, after that reconciliation (#2505).
+ */
+class Held extends Error {}
+/** The reason a {@link Held} stop gave, once the drive is stopped. */
+let held = null;
 async function previewSale(tx) {
   try {
     const { results } = await pub.simulateCalls({ account: WALLET, calls: [{ to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) }] });
@@ -400,8 +409,12 @@ async function gate(method, params) {
     // withheld and the run is BLOCKED below. An unreadable roster is the same
     // verdict: whether it moved is unknown, so nothing is signed.
     try {
-      const adapters = await read('getSwapAdapters');
-      const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
+      // Both reads at ONE block: the disabled flags are kept by address while
+      // a removal compacts the array, so unpinned reads could pair an old
+      // array with old flags and reproduce the startup roster after a change.
+      const at = { blockNumber: await pub.getBlockNumber() };
+      const adapters = await read('getSwapAdapters', [], at);
+      const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
       enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
       const atGate = rosterKey(adapters, disabled);
       if (atGate !== startupRoster) {
@@ -729,17 +742,15 @@ try {
     }
     if (!wrote() && rosterMovedAtGate) {
       PLAN.close();
-      await blocked(
+      throw new Held(
         rosterMovedAtGate.startsWith('unknown: ')
-          ? `whether the enabled swap adapters changed while the close-out was being confirmed is ${rosterMovedAtGate} — so nothing was signed`
-          : `the enabled swap adapters changed while the close-out was being confirmed (${rosterMovedAtGate}) — a moved precondition, so nothing was signed`,
-        null,
-        done,
+          ? `whether the enabled swap adapters changed while the close-out was being confirmed is ${rosterMovedAtGate}, so the plan signed nothing`
+          : `the enabled swap adapters changed while the close-out was being confirmed (${rosterMovedAtGate}), a moved precondition, so the plan signed nothing`,
       );
     }
     if (!wrote() && previewVerdict === 'unknown') {
       PLAN.close();
-      await blocked('the node could not run the independent preview of the requested route, so a sale could not be established before signing', null, done);
+      throw new Held('the node could not run the independent preview of the requested route, so a sale could not be established and the plan signed nothing');
     }
     if (previewVerdict === 'sale') {
       check('confirmSale', 'preview', 'the route the app asked to sign previews as a sale', true, 'independent preview: SwapAdapterSucceeded');
@@ -749,7 +760,7 @@ try {
     }
     if (refusedWith && !wrote()) {
       PLAN.close();
-      await blocked(`the card refused at confirm time and sent nothing (copy.forcedClose.${refusedWith}) — the sale is not routable right now`, null, done);
+      throw new Held(`the card refused at confirm time and the plan signed nothing (copy.forcedClose.${refusedWith}); the sale is not routable right now`);
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
     PLAN.close();
@@ -762,7 +773,11 @@ try {
   }
 } catch (err) {
   PLAN?.close();
-  stopped = err.message;
+  if (err instanceof Held) {
+    held = err.message;
+  } else {
+    stopped = err.message;
+  }
   await shot(`lender-close-out-error-${LOAN_ID}`);
   if (wrote()) {
     const hash = sentHash();
@@ -816,6 +831,24 @@ if (armedOnce && !wrote()) {
 // the nonce proves, or a nonce that could not be read (a write that cannot
 // be ruled out) puts the run on the post-write path.
 const wroteAny = wrote() || escaped || writeUnknown;
+// The moved-precondition rule (#2505), applied once, here: after the nonce
+// reconciliation (so "nothing was sent" is established, not assumed) and
+// before any pre-write verdict. A failure already recorded stands whatever
+// moved afterwards. Otherwise a held stop is BLOCKED, and a run that reached
+// its verdict re-reads its eligibility at the latest block, roster included —
+// a read-only drive never reaches the signing gate, so this is the only
+// re-read a change made after the card's snapshot would meet.
+if (!wroteAny && preSendFails() === 0) {
+  let why = held;
+  if (why === null) {
+    const now = await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }));
+    if (now.unknown) why = `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility before the verdict, so whether it moved is unknown (${now.unknown})`;
+    else if (!now.ok) why = `loan ${LOAN_ID} moved before the verdict (block ${now.block}): ${now.why}`;
+  }
+  if (why !== null) await blocked(`${why}; this wallet sent nothing`, null, done);
+} else if (held !== null) {
+  stopped = [stopped, held].filter(Boolean).join('; ');
+}
 try {
   await done();
 } catch (err) {
