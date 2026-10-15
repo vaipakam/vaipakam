@@ -940,11 +940,18 @@ try {
   if (OTHER_READY_STATES.has(state ?? '')) {
     await blockPre(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`);
   }
-  // `unknown` is the card saying it could not read the loan's state (one of
-  // its reads failed): an honest unavailable observation, never a wrong sale
-  // state, so nothing was tested (#2505 r45).
-  if (state === 'unknown') {
-    await blockPre(`the card declared its state unknown (one of its reads of loan ${LOAN_ID} failed), so the sale route was not observable`);
+  // A state that names a precondition this drive cannot re-establish from
+  // the Diamond is the card's own observation, not a wrong sale state, so
+  // nothing was tested: `unknown` (one of the card's reads failed, #2505 r45)
+  // and `blocked-sequencer` (the L2 sequencer feed, which lives off the
+  // Diamond, so no Diamond event records it recovering, #2505 r47). A pause
+  // is a Diamond event, and the settlement's window sees it.
+  const offDiamondHolds = {
+    unknown: `one of its reads of loan ${LOAN_ID} failed`,
+    'blocked-sequencer': "its own read of the L2 sequencer feed found it down or inside its recovery window, a feed this drive cannot replay",
+  };
+  if (state in offDiamondHolds) {
+    await blockPre(`the card declared ${state} (${offDiamondHolds[state]}), so the sale route was not observable`);
   }
   if (state !== SALE_STATE) {
     throw new Suspect(`the card declared ${state}, not ${SALE_STATE}`, { row: 'card', key: 'ready', label: `the card declares ${SALE_STATE}`, detail: `declared state ${state}` });
@@ -1239,7 +1246,9 @@ const settled = await settleRun({
       loanId: LOAN_ID,
       gates: GATE_EVENTS,
       tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
-      wallets: [WALLET],
+      // The stored lender as well as the holder: `triggerDefault` checks KYC
+      // for `loan.lender`, who need not hold the position (#2505 r47).
+      wallets: [WALLET, loan.lender].filter(Boolean),
       assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
     }),
 });

@@ -192,8 +192,11 @@ export async function blockMark(pub, blockTag = 'latest') {
 /**
  * Every transaction that touched what the drive rests on, in the window
  * strictly after `start` (a block marked at startup, before the browser) up
- * to and including `cutoff` (marked when the browser closed, so nothing the
- * page could not have seen counts, #2505 r46). Endpoint comparison cannot
+ * to and including `cutoff` (marked just after the browser closed, so
+ * nothing later counts, #2505 r46). `cutoff.edge`, when given, is the block
+ * marked just BEFORE the close: an event after it was mined while the page
+ * was closing and may or may not have been seen, so it makes the window
+ * unknown rather than explaining anything (#2505 r47). Endpoint comparison cannot
  * see a change that came and went (a status that moved and was cured, a
  * position transferred away and back, a pause lifted again); the chain's own
  * logs can. Counted, from the Diamond: {@link LOAN_MOVEMENT_EVENTS} for this
@@ -240,8 +243,9 @@ export async function loanActivity({ pub, diamond, abi, start, cutoff, loanId, g
     if (cutoff.number < start.number) {
       return { unknown: `the block marked at the browser's close (${cutoff.number}) is behind the startup block ${start.number}, so the Diamond's events across the drive could not be read` };
     }
+    const edge = cutoff.edge ?? null;
     const reorganised = async () => {
-      for (const m of [start, cutoff]) {
+      for (const m of [start, edge, cutoff].filter(Boolean)) {
         const now = await pub.getBlock({ blockNumber: m.number });
         if (lower(now.hash) !== lower(m.hash)) return m.number;
       }
@@ -257,6 +261,7 @@ export async function loanActivity({ pub, diamond, abi, start, cutoff, loanId, g
     const after = await reorganised();
     if (after !== null) return { unknown: `block ${after} changed while the Diamond's events in ${span} were read (the chain was reorganised), so they do not describe what the page saw` };
     const hits = [];
+    const straddling = [];
     for (const log of logs) {
       let ev;
       try {
@@ -267,7 +272,14 @@ export async function loanActivity({ pub, diamond, abi, start, cutoff, loanId, g
         continue;
       }
       if (!((gates.includes(ev.eventName) && gateApplies(ev)) || movesLoan(ev))) continue;
-      hits.push(`${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`);
+      const named = `${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`;
+      // Mined while the browser was closing: the page may or may not have
+      // seen it, so it can explain nothing either way (#2505 r47).
+      if (edge && BigInt(log.blockNumber) > edge.number) straddling.push(named);
+      else hits.push(named);
+    }
+    if (straddling.length > 0) {
+      return { unknown: `${straddling.length} event(s) that touched it were mined while the browser was closing (after block ${edge.number}), so whether the page saw them is unknown: ${straddling.slice(0, 5).join(', ')}` };
     }
     if (hits.length === 0) return {};
     return { moved: `${hits.length} event(s) in ${span} touched it: ${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', …' : ''}` };
@@ -295,15 +307,22 @@ export function changedFields(before, after, ignore = []) {
 }
 
 /**
- * Steps 1 to 5 above, in that order. `factsNow(cutoff)` reads the facts AT
- * the cutoff block (`{ number, hash }`, or null when there is none, when it
- * reads the head) and returns `{ moved }`, `{ unknown }` or `{}`, never
+ * Steps 1 to 5 above, in that order. `factsNow(edge)` reads the facts AT
+ * the block marked just before the browser closed (`{ number, hash }`, or
+ * null when there is none, when it reads the head) and returns `{ moved }`, `{ unknown }` or `{}`, never
  * throwing; `activity(cutoff)` reads the event window up to it; `judgeLedgers` records the page
  * checks. Returns `{ plan: true }` when the plan sent, else the facts and
  * the nonce.
  */
 export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNow, activity, pub, wallet, baseline }) {
   let closeFailed = null;
+  let edge = null;
+  let edgeErr = null;
+  try {
+    edge = await blockMark(pub);
+  } catch (err) {
+    edgeErr = err;
+  }
   try {
     await closeBrowser();
   } catch (err) {
@@ -314,22 +333,29 @@ export async function settleRun({ closeBrowser, judgeLedgers, wrotePlan, factsNo
   // After a send, a browser that did not close may have recorded more after
   // the ledgers were judged, so the run cannot PASS on them (#2505 r35).
   if (wrotePlan()) return { plan: true, closeFailed };
-  // The cutoff: the head once the browser is closed. Nothing after it can
-  // explain what the page did, so the re-read and the event window both stop
-  // there (#2505 r46). A browser that did not close leaves no such boundary.
-  let cutoff = null;
+  // The browser's close, marked on both sides (#2505 r46–r47). `edge` is the
+  // head just before it: the page was still open, so anything up to it is
+  // something the page could have seen, and the re-read is taken there.
+  // `cutoff` is the head just after it: the event window runs to it, and an
+  // event in between is one the page may or may not have seen, so it makes
+  // the window unknown rather than explaining anything. A browser that did
+  // not close leaves no such boundary.
   let noCutoff = closeFailed ? `the browser could not be closed (${closeFailed}), so the drive has no block the page stopped observing at` : null;
+  let cutoff = null;
   if (!closeFailed) {
-    try {
-      cutoff = await blockMark(pub);
-    } catch (err) {
-      noCutoff = `the direct RPC could not read the head at the browser's close (${describe(err)})`;
+    if (edgeErr) noCutoff = `the direct RPC could not read the head before the browser's close (${describe(edgeErr)})`;
+    else {
+      try {
+        cutoff = { ...(await blockMark(pub)), edge };
+      } catch (err) {
+        noCutoff = `the direct RPC could not read the head at the browser's close (${describe(err)})`;
+      }
     }
   }
   // The endpoint comparison and the window's transactions, one reading: a
   // change either shows counts (#2505 r42).
   const facts = mergeFacts(
-    await factsNow(cutoff),
+    await factsNow(cutoff ? cutoff.edge : null),
     activity ? (cutoff ? await activity(cutoff) : { unknown: noCutoff }) : {},
   );
   // A browser that did not close may still be running, and could send after

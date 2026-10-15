@@ -75,11 +75,12 @@ describe('settleRun', () => {
 
   it('marks a cutoff after the close and pins the re-read and the window to it', async () => {
     const order = [];
+    const edge = { number: 8n, hash: `0x${'08'.repeat(32)}` };
     const mark = { number: 9n, hash: `0x${'09'.repeat(32)}` };
     const pub = {
       getBlock: async () => {
-        order.push('cutoff');
-        return mark;
+        order.push(order.includes('close') ? 'cutoff' : 'edge');
+        return order.includes('close') ? mark : edge;
       },
       getTransactionCount: async () => 3,
     };
@@ -94,13 +95,15 @@ describe('settleRun', () => {
       wallet: W,
       baseline: 3,
     });
-    expect(order).toEqual(['close', 'cutoff']);
-    expect(seen).toEqual([['facts', mark], ['activity', mark]]);
+    // Marked on both sides of the close: the re-read at the edge, the
+    // window to the cutoff, carrying the edge (#2505 r47).
+    expect(order).toEqual(['edge', 'close', 'cutoff']);
+    expect(seen).toEqual([['facts', edge], ['activity', { ...mark, edge }]]);
     expect(out.facts).toEqual({});
     // No cutoff, no window: the activity is unknown, never clean (#2505 r46).
     const failing = { getBlock: async () => { throw new Error('timeout'); }, getTransactionCount: async () => 3 };
     const out2 = await settleRun({ closeBrowser: async () => {}, judgeLedgers: () => {}, wrotePlan: () => false, factsNow: async () => ({}), activity: async () => ({}), pub: failing, wallet: W, baseline: 3 });
-    expect(out2.facts.unknown).toMatch(/could not read the head at the browser's close/);
+    expect(out2.facts.unknown).toMatch(/could not read the head before the browser's close/);
   });
 
   it('stops after the ledgers when the plan sent', async () => {
@@ -273,6 +276,16 @@ describe('loanActivity', () => {
     expect(await run(unrelated, { gates: CLAIM_GATE_EVENTS })).toEqual({});
     expect(CLAIM_GATE_EVENTS).toEqual(['Paused', 'Unpaused', 'AutoPaused', 'SanctionsOracleSet', 'SanctionsFlagRefreshed']);
     await expect(loanActivity({ ...opts(chainOf([])), gates: undefined })).rejects.toThrow(/gates/);
+  });
+
+  it('an event mined while the browser was closing explains nothing either way', async () => {
+    const edge = { number: 10n, hash: h(10n) };
+    const before = log('LoanStatusChanged', { loanId: 21n }, status, 9n);
+    const during = log('LoanStatusChanged', { loanId: 21n }, status, 11n);
+    expect((await run([before], { cutoff: { ...cutoff, edge } })).moved).toMatch(/LoanStatusChanged/);
+    expect((await run([before, during], { cutoff: { ...cutoff, edge } })).unknown).toMatch(/mined while the browser was closing \(after block 10\)/);
+    // The edge's own block is checked for a reorganisation too.
+    expect((await loanActivity(opts(chainOf([], { 10: h(97n) }), { cutoff: { ...cutoff, edge } }))).unknown).toMatch(/block 10 is no longer/);
   });
 
   it('is unknown, never clean, when the window cannot be read as one chain', async () => {
