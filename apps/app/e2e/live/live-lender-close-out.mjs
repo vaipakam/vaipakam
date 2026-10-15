@@ -508,30 +508,45 @@ async function previewSale(tx) {
 const abiFor = (to) => (typeof to === 'string' && to.toLowerCase() === DIAMOND.toLowerCase() ? DIAMOND_ABI : null);
 const step = () => PLAN?.steps()[0];
 const wrote = () => step()?.status === 'consumed';
-async function gate(method, params) {
-  if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
-  const kind = method === 'eth_sendTransaction' ? 'tx' : method;
-  if (kind === 'tx' && PLAN.armed() !== null) {
-    const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
-    // The card's eligibility AT JUDGING TIME (#2481 r4, #2505): status,
-    // grace, holder, pause, sequencer and the enabled roster, at one block,
-    // through the same `eligibleAt` the card's snapshot used. Any move since
-    // startup withholds the send, and so does a re-read that gets no answer:
-    // whether it moved is then unknown.
+/**
+ * The card's eligibility AT JUDGING TIME (#2481 r4, #2505): status, grace,
+ * holder, pause, sequencer and the enabled roster, at one block, through the
+ * same `eligibleAt` the card's snapshot used. Any move since startup withholds
+ * the send, and so does a re-read that gets no answer: whether it moved is
+ * then unknown. Returns the marked refusal for the planned request, or null.
+ *
+ * The gate asks it TWICE (#2505 r14): before its simulations, so a moved loan
+ * costs none, and again after them, immediately before the plan judges the
+ * request, because the estimate and the preview are awaited and a permissionless
+ * triggerDefault simulates the same whoever holds the position.
+ */
+async function holdIfIneligible(params) {
+  if (movedAtGate === null) {
     const e = await eligibleAt(null);
-    // The indices known enabled here, complete or not: a held request naming
-    // only those is still the planned one (#2505 r13).
-    const gateEnabled = e.enabled;
     // The route bound follows the roster only while it is unmoved, so a
     // held request is still compared with the set the drive started from.
     if (e.ok) enabledAdapters = e.enabled;
     else if (e.unknown) movedAtGate = `unknown: the eligibility could not be re-read at signing (${e.unknown})`;
     else movedAtGate = `at block ${e.block}: ${e.why}`;
-    if (movedAtGate !== null) {
-      console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-      const heldRefusal = holdSend(params, gateEnabled);
-      if (heldRefusal) return heldRefusal;
-    }
+    // The indices known enabled here, complete or not: a held request naming
+    // only those is still the planned one (#2505 r13).
+    gateEnabled = e.enabled;
+  }
+  if (movedAtGate === null) return null;
+  console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
+  return holdSend(params, gateEnabled);
+}
+/** The roster known enabled at the gate's latest eligibility read. */
+let gateEnabled = null;
+async function gate(method, params) {
+  if (PLAN.armed() !== null && preSendFails() > 0) PLAN.close();
+  const kind = method === 'eth_sendTransaction' ? 'tx' : method;
+  // Only a send the armed plan is about to judge is checked for eligibility.
+  const judging = kind === 'tx' && PLAN.armed() !== null;
+  if (judging) {
+    const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
+    const heldBefore = await holdIfIneligible(params);
+    if (heldBefore) return heldBefore;
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
       console.log(`GATE  fresh estimate for the requested call: ${gasFloor} gas`);
@@ -560,6 +575,11 @@ async function gate(method, params) {
       if (heldRefusal) return heldRefusal;
     }
     if (previewVerdict !== 'sale') PLAN.close();
+  }
+  // The eligibility once more, AFTER the awaited simulations (#2505 r14).
+  if (judging) {
+    const heldAfter = await holdIfIneligible(params);
+    if (heldAfter) return heldAfter;
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
   // refused request recorded meanwhile must still withhold the one-shot send.
@@ -635,6 +655,17 @@ const violationsSoFar = () => [
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
 /**
+ * BLOCKED for a precondition met before any write, unless a failure was
+ * already recorded, which stands: the drive then stops there and the verdict
+ * is FAIL (#2505 r14). Every pre-write BLOCKED exit goes through here.
+ */
+async function blockPre(why, err = null) {
+  if (preSendFails() > 0) {
+    throw new Error(`${why}; nothing after it is judged, and the ${preSendFails()} failure(s) recorded before it stand`);
+  }
+  await blocked(why, err, done);
+}
+/**
  * The moved-precondition rule before a pre-send judgement (#2505): when the
  * loan's eligibility moved, or cannot be re-read, the run is BLOCKED, unless
  * something was already recorded, which stands (the drive stops there).
@@ -645,8 +676,7 @@ async function blockIfIneligible(when) {
   const why = now.unknown
     ? `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility ${when}, so whether it moved is unknown (${now.unknown})`
     : `loan ${LOAN_ID} moved ${when} (block ${now.block}): ${now.why}`;
-  if (preSendFails() > 0) throw new Error(`${why}; nothing after it is judged, and the ${preSendFails()} failure(s) recorded before it stand`);
-  await blocked(why, null, done);
+  await blockPre(why);
 }
 let stopped = null;
 let armedOnce = false;
@@ -714,13 +744,13 @@ try {
   }
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
-    await blocked(`the page renders in "${lang}", not English — the expected labels come from the en catalogue`, null, done);
+    await blockPre(`the page renders in "${lang}", not English — the expected labels come from the en catalogue`);
   }
   await ensureConnected(page);
   const card = page.getByTestId('forced-close-card');
   const mounted = await card.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
   if (!mounted && (await answered()) === 0) {
-    await blocked('the page RPC answered nothing while the position page loaded, so the card was never observable', null, done);
+    await blockPre('the page RPC answered nothing while the position page loaded, so the card was never observable');
   }
   // A card the page rightly withholds (the loan closed by a keeper while the
   // page loaded) is judged only once the loan is known not to have moved.
@@ -737,7 +767,7 @@ try {
     await page.waitForTimeout(1_000);
   }
   if (OTHER_READY_STATES.has(state ?? '')) {
-    await blocked(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`, null, done);
+    await blockPre(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`);
   }
   if (state !== SALE_STATE) await blockIfIneligible('while the card settled');
   check('card', 'ready', `the card declares ${SALE_STATE}`, state === SALE_STATE, `declared state ${state}`);
@@ -754,7 +784,7 @@ try {
   ];
   for (const [key, what] of postures) {
     if (typeof FC[key] === 'string' && text.includes(FC[key])) {
-      await blocked(`the card discloses that a sale cannot be routed here (${what}) — not the routable sale this drive judges`, null, done);
+      await blockPre(`the card discloses that a sale cannot be routed here (${what}) — not the routable sale this drive judges`);
     }
   }
   check('card', 'saleBody', 'the card says the collateral is sold through a route the app builds', text.includes(FC.readyNeedsRoute));
@@ -781,9 +811,9 @@ try {
   if (!hasDeclared) {
     check('card', 'fresh', 'the card declares the block its readiness rests on', false, then.why);
   } else if ((!then.ok && !then.unknown) || (!now.ok && !now.unknown)) {
-    await blocked(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`, null, done);
+    await blockPre(`loan ${LOAN_ID} moved while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`);
   } else if (then.unknown || now.unknown) {
-    await blocked(`the direct RPC could not re-read the loan's eligibility while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`, null, done);
+    await blockPre(`the direct RPC could not re-read the loan's eligibility while the card was read — at the declared block ${declared}: ${said(then)}; now: ${said(now)}`);
   } else {
     check('card', 'fresh', 'the chain at the declared block and now still shows the loan eligible', true, `declared block ${declared}, latest ${now.block}`);
   }
@@ -802,14 +832,15 @@ try {
     console.log(`SKIP close-out — ${preSendFails()} check(s) failed or request(s) were refused above`);
   } else if (SUBMIT) {
     // Funding is a precondition: an unfunded wallet fails inside the send.
-    try {
-      const [balance, gasPrice] = await Promise.all([pub.getBalance({ address: WALLET, blockTag: 'pending' }), pub.getGasPrice()]);
-      const need = 3_000_000n * gasPrice * 2n;
-      if (balance < need) {
-        await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; a sale close-out needs about ${formatUnits(need, 18)}`, null, done);
-      }
-    } catch (err) {
-      await blocked('the direct Base Sepolia RPC could not read the balance before the close-out', err, done);
+    // Read, then judged outside the try, so the funding verdict is never
+    // re-caught as a read failure.
+    const funding = await Promise.all([pub.getBalance({ address: WALLET, blockTag: 'pending' }), pub.getGasPrice()]).then(
+      ([balance, gasPrice]) => ({ balance, need: 3_000_000n * gasPrice * 2n }),
+      (err) => ({ err }),
+    );
+    if (funding.err) await blockPre('the direct Base Sepolia RPC could not read the balance before the close-out', funding.err);
+    if (funding.balance < funding.need) {
+      await blockPre(`${ROLE} ${WALLET} holds ${formatUnits(funding.balance, 18)} ETH; a sale close-out needs about ${formatUnits(funding.need, 18)}`);
     }
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
     await submit.click();
@@ -844,7 +875,7 @@ try {
     try {
       nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
     } catch (err) {
-      await blocked('the direct RPC could not read the wallet nonce before the close-out', err, done);
+      await blockPre('the direct RPC could not read the wallet nonce before the close-out', err);
     }
     PLAN.arm(ROLE);
     armedOnce = true;

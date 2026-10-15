@@ -530,6 +530,17 @@ const violationsSoFar = () => [
  *  so it never runs after one. */
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+/**
+ * BLOCKED for a precondition met before any write, unless a failure was
+ * already recorded, which stands: the drive then stops there and the verdict
+ * is FAIL (#2505 r14). Every pre-write BLOCKED exit goes through here.
+ */
+async function blockPre(why, err = null) {
+  if (preClaimFails() > 0) {
+    throw new Error(`${why}; nothing after it is judged, and the ${preClaimFails()} failure(s) recorded before it stand`);
+  }
+  await blocked(why, err, done);
+}
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 /**
  * Whether the loan is still the one this drive judges (#2505). A lender
@@ -548,7 +559,9 @@ async function lifecycleNow() {
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
   const [loanR, claimR] = await Promise.all([
     settle(read('getLoanDetails', [LOAN_ID])),
-    settle(read('getClaimableAmount', [LOAN_ID, true])),
+    // The FULL claim, not getClaimableAmount: a payout held entirely in
+    // heldForLender reads amount 0 there and is still claimable (#2505 r14).
+    settle(read('getClaimable', [LOAN_ID, true])),
   ]);
   const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
   const why = [];
@@ -557,8 +570,11 @@ async function lifecycleNow() {
   else if (Number(loanR.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanR.value.status}, no longer InternalMatched`);
   if (claimR.err) unanswered.push(claimR.err);
   else {
-    const [, lAmount, lClaimed] = claimR.value;
-    if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
+    // ClaimFacet.getClaimable's own actionable predicate:
+    // !claimed && (amount > 0 || assetType != ERC20 || heldForLender > 0 || hasRentalNftReturn).
+    const [, lAmount, lClaimed, assetType, , , heldForLender, hasRentalNftReturn] = claimR.value;
+    const actionable = lAmount > 0n || Number(assetType) !== 0 || heldForLender > 0n || hasRentalNftReturn === true;
+    if (lClaimed || !actionable) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
   }
   if (holderR.err) {
     // The node ANSWERED that the token has no owner: the position is gone (a
@@ -585,10 +601,7 @@ async function blockIfLifecycleMoved(when, reading = null) {
   const why = l.moved
     ? `loan ${LOAN_ID} moved ${when} — ${l.moved}`
     : `the direct RPC could not re-read loan ${LOAN_ID} ${when}, so whether it moved is unknown (${l.unknown})`;
-  if (preClaimFails() > 0) {
-    throw new Error(`${why}; nothing after it is judged, and the ${preClaimFails()} failure(s) recorded before it stand`);
-  }
-  await blocked(why, null, done);
+  await blockPre(why);
 }
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
@@ -602,7 +615,7 @@ try {
   await visit(page, '/claims');
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
-    await blocked(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`, null, done);
+    await blockPre(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`);
   }
   await ensureConnected(page);
   if (!(await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
@@ -665,7 +678,7 @@ try {
     // that window: the page never had the facts, so nothing was observed —
     // BLOCKED, never a FAIL on the copy (#2481 r1).
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
-      await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
+      await blockPre('the page RPC answered nothing while the position page loaded, so its Owed line was never observed');
     }
     // Anything but the expected line: first rule out the loan having moved
     // during the drive, which the page would be right to report (#2505).
@@ -687,7 +700,7 @@ try {
       // RPC that answered nothing in this window means the list was never
       // observed, and a loan that moved meanwhile has rightly left it.
       if ((await answered()) === 0) {
-        await blocked('the page RPC answered nothing while /claims reloaded, so its row was never observed', null, done);
+        await blockPre('the page RPC answered nothing while /claims reloaded, so its row was never observed');
       }
       await blockIfLifecycleMoved('before the claim');
       throw new Error(`the loan's /claims row did not render on the way back`);
@@ -752,13 +765,13 @@ try {
       claimGasFloor = gas;
       const need = gas * gasPrice * 2n;
       if (balance < need) {
-        await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
+        await blockPre(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`);
       }
     } catch (err) {
       // Anything already recorded — a failed check, a refused request, a page
       // error — stands over this outage (#2505).
       if (preClaimFails() > 0) throw err;
-      await blocked('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err, done);
+      await blockPre('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err);
     }
     // Re-checked after the funding reads: the page kept running while they
     // were awaited, and a refusal recorded meanwhile must stop the claim.
@@ -938,7 +951,7 @@ try {
     // catch), each of which is a finding on a served surface. Once the
     // claim was armed it is never BLOCKED: the claim may have gone out, so
     // the drive falls through to the chain reconciliation below.
-    await blocked('the page RPC answered nothing while the drive waited', err, done);
+    await blockPre('the page RPC answered nothing while the drive waited', err);
   }
   console.log(`STOP  ${stopped}`);
 }
