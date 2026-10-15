@@ -157,22 +157,35 @@ jobs:
           echo "probe job: $PROBE_RESULT, checker: ${VERDICT:-not run} → $s"
       # The probe is running again as soon as it produced ANY verdict —
       # healthy or not (#2482 r4).
+      #
+      # Every GitHub call below has its own deadline (`timeout`, well under
+      # the job's), and each step has one too, so an API that accepts the
+      # connection and never answers fails the step instead of running the
+      # job into its limit, where it would be cancelled before the Telegram
+      # fallback ran (#2506). The list is captured BEFORE the loop: a failing
+      # command substitution inside `for … in $(…)` expands to nothing and
+      # the loop succeeds, which would leave a recovered alert open on a
+      # green run; as an assignment, its failure fails the step (#2506).
       - name: Close a recovered probe alert
         if: steps.state.outputs.state != 'broken'
+        timeout-minutes: 1
         run: |
-          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
-              --search "in:title \"$BROKEN_TITLE\"" --json number,title \
-              -q ".[] | select(.title == \"$BROKEN_TITLE\") | .number"); do
-            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The probe is producing verdicts again: $RUN_URL"
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$BROKEN_TITLE\"" --json number,title \
+            -q ".[] | select(.title == \"$BROKEN_TITLE\") | .number")
+          for n in $open; do
+            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The probe is producing verdicts again: $RUN_URL"
           done
       # Keyed to the VERDICT alone, never to the step above (#2482 r5).
       - name: Close a recovered stall alert
         if: always() && steps.state.outputs.state == 'healthy'
+        timeout-minutes: 1
         run: |
-          for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
-              --search "in:title \"$STALL_TITLE\"" --json number,title \
-              -q ".[] | select(.title == \"$STALL_TITLE\") | .number"); do
-            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+            --search "in:title \"$STALL_TITLE\"" --json number,title \
+            -q ".[] | select(.title == \"$STALL_TITLE\") | .number")
+          for n in $open; do
+            timeout 30 gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Ingest is healthy again: $RUN_URL"
           done
       # The operator path: one open issue per condition. Opened on the first
       # failing run, left alone while the same condition lasts, commented and
@@ -180,6 +193,9 @@ jobs:
       - id: alert
         name: Alert issue
         if: always() && steps.state.outputs.state != 'healthy'
+        # At most three GitHub calls of 30 s each; the Telegram step after it
+        # still fits in the job's limit when this one fails or times out.
+        timeout-minutes: 2
         env:
           STATE: ${{ steps.state.outputs.state }}
         run: |
@@ -205,11 +221,11 @@ jobs:
             echo "This issue closes itself on recovery. See .github/workflows/ingest-health.yml (#2469)."
           } >> "$RUNNER_TEMP/alert.md"
           echo "<!-- ingest-keys: $KEYS -->" >> "$RUNNER_TEMP/alert.md"
-          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
+          open=$(timeout 30 gh issue list --repo "$GITHUB_REPOSITORY" --state open --label infra \
             --search "in:title \"$title\"" --json number,title \
             -q "[.[] | select(.title == \"$title\")][0].number // empty")
           if [ -z "$open" ]; then
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label infra \
+            timeout 30 gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label infra \
               --assignee "$INGEST_ALERT_ASSIGNEE" --body-file "$RUNNER_TEMP/alert.md"
             echo "notify=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -220,7 +236,7 @@ jobs:
           # not be able to suppress the next notification. The body counts
           # only when the issue was opened by the workflow's bot, comments only
           # when the bot wrote them.
-          last=$(gh issue view "$open" --repo "$GITHUB_REPOSITORY" --json author,body,comments \
+          last=$(timeout 30 gh issue view "$open" --repo "$GITHUB_REPOSITORY" --json author,body,comments \
             -q '([if .author.login == "github-actions" or .author.login == "app/github-actions" then .body else empty end]
                  + [.comments[] | select(.author.login == "github-actions" or .author.login == "app/github-actions") | .body])
                 | map(capture("<!-- ingest-keys: (?<k>[^ ]*) -->").k) | last // ""')
@@ -230,7 +246,7 @@ jobs:
             exit 0
           fi
           { echo "The condition changed (was: ${last:-unrecorded})."; echo; cat "$RUNNER_TEMP/alert.md"; } > "$RUNNER_TEMP/update.md"
-          gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/update.md"
+          timeout 30 gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/update.md"
           echo "notify=true" >> "$GITHUB_OUTPUT"
       # Optional: set the repository secrets TG_OPS_BOT_TOKEN and
       # TG_OPS_CHAT_ID (the ops bot — never the user-facing TG_BOT_TOKEN) to
