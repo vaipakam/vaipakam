@@ -204,6 +204,13 @@ export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, token
   };
   try {
     const toBlock = await pub.getBlockNumber();
+    // The head exactly one block before `fromBlock` is an empty window
+    // (nothing mined since startup); a head further back is a lagging
+    // backend or a reorg below startup, and a window never observed proves
+    // nothing (#2505 r44).
+    if (toBlock < fromBlock - 1n) {
+      return { unknown: `the direct RPC's head (block ${toBlock}) is behind the startup block ${fromBlock - 1n}, so the Diamond's events since startup could not be read` };
+    }
     const logs = [];
     for (let from = fromBlock; from <= toBlock; from += 2000n) {
       const to = from + 1999n < toBlock ? from + 1999n : toBlock;

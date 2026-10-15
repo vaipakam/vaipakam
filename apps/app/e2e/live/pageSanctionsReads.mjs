@@ -120,7 +120,7 @@ const asList = (v) => (Array.isArray(v) ? v : [v]);
 
 /**
  * The ledger. `reads` maps a kind to a `watchedRead`. Entries are
- * `{ kind, startedAt, answeredAt, answered, value }`; `answered` stays undefined while
+ * `{ kind, startedAt, answeredAt, answered, value, block }`; `answered` stays undefined while
  * the read is in flight.
  */
 export function createReadLedger(reads, now = () => Date.now()) {
@@ -138,7 +138,11 @@ export function createReadLedger(reads, now = () => Date.now()) {
     const pending = new Map();
     for (const c of calls) {
       for (const m of matchCall(c, reads)) {
-        const entry = { kind: m.kind, startedAt: now(), answeredAt: undefined, answered: undefined, value: undefined, match: m };
+        // The block the read was asked at: a hex number for a pinned read
+        // (the app's periodic snapshot), a tag (`latest` when none is given)
+        // for an unpinned one (its submit-time screen).
+        const block = lower(c.params?.[1] ?? 'latest');
+        const entry = { kind: m.kind, startedAt: now(), answeredAt: undefined, answered: undefined, value: undefined, block, match: m };
         entries.push(entry);
         if (!pending.has(c.id)) pending.set(c.id, []);
         pending.get(c.id).push(entry);

@@ -892,9 +892,13 @@ try {
       // ANY flagged answer since the click, not the latest: the read that
       // stopped the claim can be followed by a refresh that answers clear
       // once the flag is lifted, and that later answer did not decide
-      // anything (#2505 r39).
-      if (pageSanctions.entries.some((e) => e.kind === 'flag' && e.startedAt >= clickedAt && e.answered === true && e.value === true)) {
-        throw new Held(`the page withheld the claim because its own isSanctionedAddress read for ${WALLET}, started after the click, answered flagged; the chain allowed this wallet's claim at startup (its simulation passes only for an unflagged caller), so the flag changed during the drive or the page's provider was stale, and the claim was not tested`);
+      // anything (#2505 r39). And only the SUBMIT-TIME screen
+      // (`assertWalletNotSanctionedLive`, an unpinned read at `latest`), never
+      // the banner's periodic snapshot (pinned to a block number): a
+      // background refresh flagged after an unrelated failure to submit did
+      // not take part in the attempt (#2505 r44).
+      if (pageSanctions.entries.some((e) => e.kind === 'flag' && e.block === 'latest' && e.startedAt >= clickedAt && e.answered === true && e.value === true)) {
+        throw new Held(`the page withheld the claim because its submit-time isSanctionedAddress read for ${WALLET}, started after the click, answered flagged; the chain allowed this wallet's claim at startup (its simulation passes only for an unflagged caller), so the flag changed during the drive or the page's provider was stale, and the claim was not tested`);
       }
       throw new Suspect('the page sent no claim after its claim was clicked', {
         row: 'writeDiscipline',

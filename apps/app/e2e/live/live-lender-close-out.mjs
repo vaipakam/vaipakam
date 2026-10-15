@@ -1125,6 +1125,12 @@ try {
           // not as a decoded contract error.
           (err) => (err?.walk?.((e) => e?.name === 'RawContractError' || e?.name === 'ExecutionRevertedError') ? `refused (${describeErr(err)})` : null),
         );
+        // The replay itself unanswered (a timeout, a rate limit): whether the
+        // card's revert was transient or persistent is not established, so
+        // nothing was tested (#2505 r44).
+        if (again === null) {
+          throw new Held(`the card withheld the close-out because its own simulation of it, started after the confirm click, reverted (${last.error}); the drive's replay of the same call went unanswered, so whether the chain still refuses it is unknown, and the close-out was not tested`);
+        }
         if (again === 'accepted') {
           throw new Held(`the card withheld the close-out because its own simulation of it, started after the confirm click, reverted (${last.error}); the same call is accepted now, so the chain's gate closed and reopened during the drive, and the close-out was not tested`);
         }
@@ -1132,7 +1138,7 @@ try {
           row: 'pageConfirmed',
           key: 'settled',
           label: 'the page left its confirm step',
-          detail: `the card's own simulation of the close-out reverted (${last.error}); asked again now, the same call is ${again ?? 'unanswered'}`,
+          detail: `the card's own simulation of the close-out reverted (${last.error}); asked again now, the same call is ${again}`,
         });
       }
       throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', { row: 'pageConfirmed', key: 'settled', label: 'the page left its confirm step' });

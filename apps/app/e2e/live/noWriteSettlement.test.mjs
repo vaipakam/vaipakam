@@ -217,6 +217,12 @@ describe('loanActivity', () => {
     expect((await loanActivity({ pub, diamond: D, abi, fromBlock: 5n, loanId: 21n })).unknown).toMatch(/could not read the Diamond's events/);
   });
 
+  it('an empty window is clean, a head behind startup is unknown', async () => {
+    const at = (head) => ({ getBlockNumber: async () => head, getLogs: async () => [] });
+    expect(await loanActivity({ pub: at(4n), diamond: D, abi, fromBlock: 5n, loanId: 21n })).toEqual({});
+    expect((await loanActivity({ pub: at(3n), diamond: D, abi, fromBlock: 5n, loanId: 21n })).unknown).toMatch(/behind the startup block 4/);
+  });
+
   it('merges with the endpoint reading: a move either shows wins', () => {
     expect(mergeFacts({}, { moved: 'a' })).toEqual({ moved: 'a' });
     expect(mergeFacts({ unknown: 'u' }, { moved: 'a' })).toEqual({ moved: 'a' });
