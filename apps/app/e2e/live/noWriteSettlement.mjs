@@ -165,21 +165,36 @@ export const GATE_EVENTS = Object.freeze([
 ]);
 
 /**
+ * The gates the lender CLAIM sits behind: the protocol and asset pauses, KYC
+ * and the sanctions oracle. `claimAsLender` consults neither the swap-adapter
+ * roster nor the grace schedule, so a roster or schedule change during a
+ * claim run is not movement (#2505 r45). The close-out, which routes a sale
+ * past grace, sits behind all of {@link GATE_EVENTS}.
+ */
+export const CLAIM_GATE_EVENTS = Object.freeze(
+  GATE_EVENTS.filter((e) => !/^(SwapAdapter|AggregatorAdapters|GraceBuckets)/.test(e)),
+);
+
+/**
  * Every transaction that touched what the drive rests on, in the window from
  * `fromBlock` (read at startup, before the browser) to now (#2505 r42).
  * Endpoint comparison cannot see a change that came and went (a position
  * transferred away and back, a pause lifted again); the chain's own logs
  * can. Counted, from the Diamond: any event with an argument it names a
  * loan id equal to this loan's, a Transfer of one of `tokenIds` (the
- * position NFTs live on the Diamond), and any {@link GATE_EVENTS} event
- * that applies (one naming a user or an asset only for `wallets` or
+ * position NFTs live on the Diamond), and any event in `gates` (the
+ * surface's own: {@link CLAIM_GATE_EVENTS} or {@link GATE_EVENTS}) that applies (one naming a user or an asset only for `wallets` or
  * `assets`); less {@link LOAN_BOOKKEEPING_EVENTS}. `fromBlock` is the first
  * block AFTER the startup reads' block: a log in that block cannot be
  * dated against them, and the endpoint comparison covers it anyway.
  *
- * Returns `{ moved }`, `{ unknown }` or `{}`, never throws.
+ * Returns `{ moved }`, `{ unknown }` or `{}`; an RPC failure never throws
+ * (it is `unknown`), and only a caller that names no `gates` does.
  */
-export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, tokenIds = [], wallets = [], assets = [] }) {
+export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, gates, tokenIds = [], wallets = [], assets = [] }) {
+  // Each surface names the gates it sits behind; there is no default, so a
+  // new caller cannot inherit another surface's (#2505 r45).
+  if (!Array.isArray(gates)) throw new TypeError('loanActivity: `gates` (the surface\'s gate events) is required');
   const ids = new Set(tokenIds.filter((t) => t !== undefined && t !== null).map((t) => BigInt(t)));
   const want = BigInt(loanId);
   const lower = (x) => String(x ?? '').toLowerCase();
@@ -227,7 +242,7 @@ export async function loanActivity({ pub, diamond, abi, fromBlock, loanId, token
         continue;
       }
       if (LOAN_BOOKKEEPING_EVENTS.includes(ev.eventName)) continue;
-      if (!((GATE_EVENTS.includes(ev.eventName) && gateApplies(ev)) || scopedTo(ev))) continue;
+      if (!((gates.includes(ev.eventName) && gateApplies(ev)) || scopedTo(ev))) continue;
       hits.push(`${ev.eventName} in ${log.transactionHash} (block ${log.blockNumber})`);
     }
     if (hits.length === 0) return {};

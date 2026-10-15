@@ -215,5 +215,10 @@ describe('createCallLedger', () => {
     l.onResponse(limited, JSON.stringify({ id: 10, error: { code: -32005, message: 'rate limited' } }));
     expect(l.entries[2].tx.value).toBe('0x1');
     expect(l.refusedSince(5)).toEqual([]);
+    // It is kept apart as unanswered, as is one still in flight; an answered
+    // simulation and a revert are not (#2505 r45).
+    l.onRequest(JSON.stringify({ id: 11, method: 'eth_call', params: [{ to: T, data: P }] }));
+    expect(l.unansweredSince(5).map((e) => e.error)).toEqual(['rate limited', undefined]);
+    expect(l.unansweredSince(0)).toHaveLength(2);
   });
 });

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseAbi } from 'viem';
-import { LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, mergeFacts, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { CLAIM_GATE_EVENTS, GATE_EVENTS, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, mergeFacts, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 
 const W = '0x00000000000000000000000000000000000000aa';
 const pubWith = (pending, latest = pending) => ({
@@ -183,6 +183,7 @@ describe('loanActivity', () => {
     'event NotificationFeeBilled(uint256 indexed loanId, bool lenderSide)',
     'event KYCTierUpdated(address indexed user, uint8 tier)',
     'event AssetPauseEnabled(address indexed asset)',
+    'event SwapAdapterAdded(address indexed adapter)',
   ]);
   const D = '0x00000000000000000000000000000000000000d1';
   const log = (eventName, args, data = '0x', block = 10n) => ({
@@ -194,7 +195,7 @@ describe('loanActivity', () => {
   const pubOf = (logs) => ({ getBlockNumber: async () => 12n, getLogs: async () => logs });
   const W = '0x00000000000000000000000000000000000000aa';
   const X = '0x00000000000000000000000000000000000000bb';
-  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, tokenIds: [41n, 42n], wallets: [W], assets: [D] });
+  const run = (logs) => loanActivity({ pub: pubOf(logs), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS, tokenIds: [41n, 42n], wallets: [W], assets: [D] });
 
   it('counts what touched this loan, its positions or a gate, and nothing else', async () => {
     expect(await run([log('OfferCreated', { offerId: 21n }), log('Transfer', { from: D, to: D, tokenId: 7n })])).toEqual({});
@@ -214,13 +215,21 @@ describe('loanActivity', () => {
 
   it('is unknown, never clean, when the events cannot be read', async () => {
     const pub = { getBlockNumber: async () => 12n, getLogs: async () => { throw new Error('range too large'); } };
-    expect((await loanActivity({ pub, diamond: D, abi, fromBlock: 5n, loanId: 21n })).unknown).toMatch(/could not read the Diamond's events/);
+    expect((await loanActivity({ pub, diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).unknown).toMatch(/could not read the Diamond's events/);
+  });
+
+  it('counts only the gates the surface names, and requires them', async () => {
+    const roster = [log('SwapAdapterAdded', { adapter: X })];
+    expect((await run(roster)).moved).toMatch(/SwapAdapterAdded/);
+    expect(await loanActivity({ pub: pubOf(roster), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: CLAIM_GATE_EVENTS })).toEqual({});
+    expect(CLAIM_GATE_EVENTS).toEqual(expect.arrayContaining(['Paused', 'AssetPauseEnabled', 'SanctionsOracleSet', 'KYCEnforcementSet']));
+    await expect(loanActivity({ pub: pubOf([]), diamond: D, abi, fromBlock: 5n, loanId: 21n })).rejects.toThrow(/gates/);
   });
 
   it('an empty window is clean, a head behind startup is unknown', async () => {
     const at = (head) => ({ getBlockNumber: async () => head, getLogs: async () => [] });
-    expect(await loanActivity({ pub: at(4n), diamond: D, abi, fromBlock: 5n, loanId: 21n })).toEqual({});
-    expect((await loanActivity({ pub: at(3n), diamond: D, abi, fromBlock: 5n, loanId: 21n })).unknown).toMatch(/behind the startup block 4/);
+    expect(await loanActivity({ pub: at(4n), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).toEqual({});
+    expect((await loanActivity({ pub: at(3n), diamond: D, abi, fromBlock: 5n, loanId: 21n, gates: GATE_EVENTS })).unknown).toMatch(/behind the startup block 4/);
   });
 
   it('merges with the endpoint reading: a move either shows wins', () => {

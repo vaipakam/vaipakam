@@ -66,7 +66,7 @@ import {
 } from './driver.mjs';
 import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, GATE_EVENTS } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createCallLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -939,6 +939,12 @@ try {
   if (OTHER_READY_STATES.has(state ?? '')) {
     await blockPre(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`);
   }
+  // `unknown` is the card saying it could not read the loan's state (one of
+  // its reads failed): an honest unavailable observation, never a wrong sale
+  // state, so nothing was tested (#2505 r45).
+  if (state === 'unknown') {
+    await blockPre(`the card declared its state unknown (one of its reads of loan ${LOAN_ID} failed), so the sale route was not observable`);
+  }
   if (state !== SALE_STATE) {
     throw new Suspect(`the card declared ${state}, not ${SALE_STATE}`, { row: 'card', key: 'ready', label: `the card declares ${SALE_STATE}`, detail: `declared state ${state}` });
   }
@@ -1141,6 +1147,14 @@ try {
           detail: `the card's own simulation of the close-out reverted (${last.error}); asked again now, the same call is ${again}`,
         });
       }
+      // The card's simulation went unanswered (a provider error, or no
+      // answer): it withheld on an RPC failure, not on the chain's answer, so
+      // nothing was tested (#2505 r45).
+      const unanswered = pageCloseOutSims.unansweredSince(confirmedAt);
+      if (unanswered.length > 0) {
+        const last = unanswered[unanswered.length - 1];
+        throw new Held(`the card withheld the close-out after its own simulation of it, started after the confirm click, got no answer from the chain (${last.error ?? 'no response'}), so the close-out was not tested`);
+      }
       throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', { row: 'pageConfirmed', key: 'settled', label: 'the page left its confirm step' });
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
@@ -1218,6 +1232,7 @@ const settled = await settleRun({
       // be dated against them, and the endpoint comparison covers it (#2505 r43).
       fromBlock: windowStart + 1n,
       loanId: LOAN_ID,
+      gates: GATE_EVENTS,
       tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
       wallets: [WALLET],
       assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),

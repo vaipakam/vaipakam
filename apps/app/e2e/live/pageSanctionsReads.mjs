@@ -361,5 +361,10 @@ export function createCallLedger(target, prefix, now = () => Date.now()) {
   /** The simulations started at or after `since` that the chain refused by
    *  reverting. A provider error is not a refusal and is left out. */
   const refusedSince = (since) => entries.filter((e) => e.startedAt >= since && e.reverted === true);
-  return { entries, onRequest, onResponse, refusedSince };
+  /** The simulations started at or after `since` that got NO answer the
+   *  chain gave: a provider error (a timeout, a rate limit), or none at all.
+   *  Kept apart from a refusal so a caller can report the attempt as unknown
+   *  rather than as the page withholding for no reason (#2505 r45). */
+  const unansweredSince = (since) => entries.filter((e) => e.startedAt >= since && e.reverted !== true && e.error !== null);
+  return { entries, onRequest, onResponse, refusedSince, unansweredSince };
 }

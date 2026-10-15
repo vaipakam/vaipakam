@@ -79,7 +79,7 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, CLAIM_GATE_EVENTS } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -1097,6 +1097,7 @@ const settled = await settleRun({
       // be dated against them, and the endpoint comparison covers it (#2505 r43).
       fromBlock: windowStart + 1n,
       loanId: LOAN_ID,
+      gates: CLAIM_GATE_EVENTS,
       tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
       wallets: [WALLET],
       assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
