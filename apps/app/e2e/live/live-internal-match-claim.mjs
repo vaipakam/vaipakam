@@ -968,6 +968,13 @@ if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
     'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
 }
 const wroteAny = wrote() || armedOnce;
+// Every verdict reached before a write — a PASS as much as a FAIL — rests on
+// the loan still being the one the drive started from (#2505). The checks
+// above revalidate only where a line came out unexpected, and a transfer of
+// the lender position changes no line on this page, so the lifecycle is
+// re-read once more here, unconditionally, before any pre-write verdict.
+// After a write the loan moved because of this drive, so it is not asked.
+if (!wroteAny) await blockIfLifecycleMoved('before the verdict');
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {

@@ -368,7 +368,8 @@ const PLAN = SUBMIT
 let gasFloor = 0n;
 /** The gate's own preview of the request it was asked to sign. */
 let previewVerdict = null;
-/** Set when the gate found the roster changed since startup (#2505). */
+/** Set when the gate found the roster changed since startup, or could not
+ *  re-read it (#2505). */
 let rosterMovedAtGate = null;
 async function previewSale(tx) {
   try {
@@ -396,8 +397,8 @@ async function gate(method, params) {
     // The roster AT JUDGING TIME (#2481 r4). Any change to it since startup
     // is a moved precondition (#2505), whether it happened before the card
     // was certified or while the confirm step built its route: the send is
-    // withheld and the run is BLOCKED below. An unreadable roster leaves the
-    // startup set, which can only refuse more.
+    // withheld and the run is BLOCKED below. An unreadable roster is the same
+    // verdict: whether it moved is unknown, so nothing is signed.
     try {
       const adapters = await read('getSwapAdapters');
       const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
@@ -409,7 +410,9 @@ async function gate(method, params) {
         PLAN.close();
       }
     } catch (err) {
-      console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); judging against the startup set`);
+      rosterMovedAtGate = `unknown: the roster could not be re-read at signing (${err.shortMessage ?? err.message})`;
+      console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); not signing`);
+      PLAN.close();
     }
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
@@ -726,7 +729,13 @@ try {
     }
     if (!wrote() && rosterMovedAtGate) {
       PLAN.close();
-      await blocked(`the enabled swap adapters changed while the close-out was being confirmed (${rosterMovedAtGate}) — a moved precondition, so nothing was signed`, null, done);
+      await blocked(
+        rosterMovedAtGate.startsWith('unknown: ')
+          ? `whether the enabled swap adapters changed while the close-out was being confirmed is ${rosterMovedAtGate} — so nothing was signed`
+          : `the enabled swap adapters changed while the close-out was being confirmed (${rosterMovedAtGate}) — a moved precondition, so nothing was signed`,
+        null,
+        done,
+      );
     }
     if (!wrote() && previewVerdict === 'unknown') {
       PLAN.close();
