@@ -1194,8 +1194,16 @@ const settled = await settleRun({
   baseline: nonceBefore,
 });
 // The gate's own hold, when it withheld the planned request: the stop that
-// followed it (a UI wait that ran out) is explained by it (#2505 r32).
-if (held === null && !settled.plan) held = gateHeldReason();
+// followed it (a UI wait that ran out) is explained by it (#2505 r32), so it
+// is folded into the hold rather than left as a plain stop, which the
+// settlement would judge as a definite failure (#2505 r41).
+if (held === null && !settled.plan) {
+  held = gateHeldReason();
+  if (held !== null && stopped !== null) {
+    held = `${held}; the drive then stopped (${stopped})`;
+    stopped = null;
+  }
+}
 const resolved = resolveSettlement({
   settled,
   held,
