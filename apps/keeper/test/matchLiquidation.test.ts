@@ -36,7 +36,9 @@ interface Scene {
   /** The match was emitted by a contract other than the Diamond. */
   foreignEmitter?: boolean;
   unmined?: number;
-  broadcast?: 'lost';
+  /** `lost`: no answer came back; `refused`: the node answered with a
+   *  coded refusal, so nothing was relayed. */
+  broadcast?: 'lost' | 'refused';
 }
 
 function harness(scene: Scene) {
@@ -79,6 +81,9 @@ function harness(scene: Scene) {
     signTransaction: async () => SIGNED,
     sendRawTransaction: async () => {
       if (scene.broadcast === 'lost') throw new Error('request timed out');
+      if (scene.broadcast === 'refused') {
+        throw Object.assign(new Error('insufficient funds for gas * price + value'), { code: -32000 });
+      }
       return keccak256(SIGNED);
     },
   } as unknown as WalletClient;
@@ -144,6 +149,17 @@ describe('attemptMatchLiquidation', () => {
     const out = await attemptMatchLiquidation(h.deps, LOAN_ID);
     expect(out.kind).toBe('unconfirmed');
     expect(out.kind !== 'skipped' && out.tx).toBe(keccak256(SIGNED));
+  });
+});
+
+describe('a broadcast the node refused', () => {
+  it('is not reported as possibly sent', async () => {
+    const h = harness({ broadcast: 'refused' });
+    await expect(attemptMatchLiquidation(h.deps, LOAN_ID)).rejects.toThrow(/insufficient funds/);
+    const CHAIN = { id: 84532, name: 'base-sepolia' };
+    const ctx = { client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 } as never;
+    // False, so the liquidator goes on to its in-kind check this tick.
+    expect(await tryMatchLiquidation(CHAIN, ctx, h.deps.client, LOAN_ID)).toBe(false);
   });
 });
 

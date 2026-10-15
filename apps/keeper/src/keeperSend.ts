@@ -21,8 +21,7 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { SubrequestBudgetExhausted } from './subrequestBudget';
-import { withSubmissionSlot } from './submissionQueue';
+import { isDefinitiveRejection, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
  *  to hold this send. */
@@ -48,10 +47,12 @@ export type SendOutcome =
 
 /**
  * Send `data` to `to` from the wallet's account, in that account's
- * submission slot on `chainId`. Throws when nothing was sent — a failure
- * before the signature, or the subrequest budget's refusal, which comes
- * BEFORE any network call. Once signed, the nonce stays reserved even if
- * the broadcast fails, since it may have been relayed.
+ * submission slot on `chainId`. Throws when nothing was sent: a failure
+ * before the signature, the subrequest budget's refusal (which comes before
+ * any network call), or a node's coded refusal of the broadcast such as
+ * insufficient funds, judged by the slot's own `isDefinitiveRejection`.
+ * Any other broadcast failure may have been relayed, so its nonce stays
+ * reserved and the outcome is `unconfirmed`.
  */
 export async function sendInSubmissionSlot(
   wallet: WalletClient,
@@ -79,19 +80,12 @@ export async function sendInSubmissionSlot(
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
   } catch (err) {
-    if (refusedByBudget(err)) throw err;
-    // Failed before signing: nothing was sent.
-    if (tx === undefined) throw err;
+    // Failed before signing, or the node answered with a refusal (or the
+    // subrequest budget refused before any network call): nothing was
+    // relayed, and the slot has already released the nonce. Only a
+    // broadcast nobody saw the answer to is unconfirmed.
+    if (tx === undefined || isDefinitiveRejection(err)) throw err;
     return { kind: 'unconfirmed', tx, reason: describeFailure(err) };
   }
   return { kind: 'submitted', tx: tx! };
-}
-
-/** Whether `err`, or anything in its cause chain, is the budget's refusal. */
-function refusedByBudget(err: unknown): boolean {
-  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 8; depth += 1) {
-    if (e instanceof SubrequestBudgetExhausted) return true;
-    e = (e as { cause?: unknown }).cause;
-  }
-  return false;
 }

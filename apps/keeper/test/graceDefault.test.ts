@@ -74,8 +74,9 @@ interface Scene {
   /** Health factor; a function to compute it per read, or to throw (e.g.
    *  illiquid collateral). */
   hf?: bigint | (() => bigint);
-  /** `lost`: the broadcast call fails after the signed bytes went out. */
-  broadcast?: 'lost';
+  /** `lost`: the broadcast call fails after the signed bytes went out;
+   *  `refused`: the node answers with a coded refusal. */
+  broadcast?: 'lost' | 'refused';
   /** The preview also emits `LoanDefaulted` for this loan. */
   defaulted?: boolean;
   /** The preview also emits an internal match from the Diamond. */
@@ -153,6 +154,9 @@ function harness(scene: Scene) {
     signTransaction: async () => SIGNED,
     sendRawTransaction: async () => {
       if (scene.broadcast === 'lost') throw new Error('request timed out');
+      if (scene.broadcast === 'refused') {
+        throw Object.assign(new Error('insufficient funds for gas * price + value'), { code: -32000 });
+      }
       return keccak256(SIGNED);
     },
   } as unknown as WalletClient;
@@ -184,6 +188,11 @@ describe('attemptGraceDefault', () => {
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect(out).toMatchObject({ kind: 'unconfirmed', tx: keccak256(SIGNED), preview: 'sale', calls: 1 });
     expect(h.writes).toHaveLength(1);
+  });
+
+  it('does not report a broadcast the node refused as possibly sent', async () => {
+    const h = harness({ ending: 'sale', calls: 1, broadcast: 'refused' });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).rejects.toThrow(/insufficient funds/);
   });
 
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
