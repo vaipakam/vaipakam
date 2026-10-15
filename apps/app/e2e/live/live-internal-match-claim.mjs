@@ -681,7 +681,13 @@ try {
     await page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 });
     // The position page states the same line above its claim button.
     const claimButton = page.getByRole('button', { name: /^claim my funds$/i }).first();
-    await claimButton.waitFor({ state: 'visible', timeout: 60_000 });
+    // A row seen on /claims can be stale, or the loan can move after it
+    // rendered (#2505): a missing button is judged only once the loan is
+    // known not to have moved.
+    if (!(await claimButton.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
+      await blockIfLifecycleMoved('before the claim');
+      throw new Error('the position page showed no "Claim my funds" button');
+    }
     // The button renders before the payout line loads ("checking the exact
     // amount…"), so the line is waited for: a read taken with the button
     // alone failed loan 25's drive although the page went on to state it.
@@ -712,6 +718,9 @@ try {
         // The node ANSWERED that this exact claim cannot execute (a paused
         // Diamond, a broken claim path): an observation, not an outage.
         if (isExecutionRevert(err)) {
+          // A claim made elsewhere, or a transferred position, also makes
+          // this estimate revert: rule that out first (#2505).
+          await blockIfLifecycleMoved('before the claim');
           check('claimable', 'estimate', 'the claim can execute for this wallet', false, `eth_estimateGas reverted: ${err.shortMessage ?? err.message}`);
           throw new Error('the claim estimate reverted; not claiming');
         }
