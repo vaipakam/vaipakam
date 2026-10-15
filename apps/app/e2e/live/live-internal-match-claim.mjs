@@ -587,7 +587,7 @@ async function lifecycleNow() {
   // got no answer. The holder is asked by the startup token id when the loan
   // read is unanswered — a loan's position NFTs never change id.
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
-  const [loanR, claimR, pausedR] = await Promise.all([
+  const [loanR, claimR, pausedR, sanctionedR] = await Promise.all([
     settle(read('getLoanDetails', [LOAN_ID])),
     // The FULL claim, not getClaimableAmount: a payout held entirely in
     // heldForLender reads amount 0 there and is still claimable (#2505 r14).
@@ -595,12 +595,17 @@ async function lifecycleNow() {
     // claimAsLender is whenNotPaused: a pause withholds the claim while every
     // other fact here reads unchanged (#2505 r29).
     settle(read('paused')),
+    // claimAsLender is a Tier-1 entry point, so a wallet the sanctions oracle
+    // flags is refused it, and the page withholds the claim (#2505 r30).
+    settle(read('isSanctionedAddress', [WALLET])),
   ]);
   const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
   const why = [];
   const unanswered = [];
   if (pausedR.err) unanswered.push(pausedR.err);
   else if (pausedR.value) why.push('the protocol is paused');
+  if (sanctionedR.err) unanswered.push(sanctionedR.err);
+  else if (sanctionedR.value) why.push(`${ROLE} ${WALLET} is flagged by the sanctions oracle`);
   if (loanR.err) unanswered.push(loanR.err);
   else if (Number(loanR.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanR.value.status}, no longer InternalMatched`);
   if (claimR.err) unanswered.push(claimR.err);
