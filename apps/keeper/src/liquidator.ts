@@ -36,6 +36,7 @@
  */
 
 import { createPublicClient, http, type Abi, type Address } from 'viem';
+import { classifyHfReadFailure } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { MULTICALL3_ADDRESS } from './multicall3';
@@ -350,7 +351,7 @@ async function liquidatePassForChain(
  * the r18 finding, in a new place. Only unrecognised failures count.
  */
 function isIlliquidRevert(err: unknown): boolean {
-  return err !== undefined && err !== null && /IlliquidLoanNoRiskMath/.test(String(err));
+  return classifyHfReadFailure(err) === 'illiquid';
 }
 
 /**
