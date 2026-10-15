@@ -45,6 +45,7 @@
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED, 3
 // UNDETERMINED (only with CLOSE=1 after the gate allowed the send).
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -294,65 +295,67 @@ async function eligibleAt(blockNumber) {
   // no single block supports.
   const pinned = blockNumber ?? (await pub.getBlockNumber());
   const at = { blockNumber: pinned };
-  // Each fact is judged as soon as it is read (#2505): a later read that gets
-  // no answer must not turn a move already established into "unknown", so
-  // such a failure returns the move with what is known; with nothing known it
-  // throws, and the caller reports the eligibility as unknown.
-  const why = [];
-  let enabled = null;
-  try {
-    // Settled one by one, so a sibling that gets no answer cannot hide a fact
-    // another read established; the first unanswered read then stops the
-    // walk below, with what is known.
-    const [lr, br, pausedR, seqR] = await Promise.allSettled([
-      read('getLoanDetails', [LOAN_ID], at),
-      pub.getBlock({ blockNumber: pinned }),
-      // triggerDefault is whenNotPaused: an emergency pause is a moved
-      // precondition like any other (#2481 r4).
-      read('paused', [], at),
-      // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
-      // its recovery window) — another operational precondition (#2481 r5).
-      read('sequencerHealthy', [], at),
-    ]);
-    if (pausedR.status === 'fulfilled' && pausedR.value) why.push('the protocol is paused');
-    if (seqR.status === 'fulfilled' && !seqR.value) why.push('the sequencer is not healthy');
-    if (lr.status === 'fulfilled' && Number(lr.value.status) !== ACTIVE) why.push(`status ${lr.value.status}`);
-    const firstUnanswered = [lr, br, pausedR, seqR].find((r) => r.status === 'rejected');
-    if (firstUnanswered) throw firstUnanswered.reason;
-    const l = lr.value;
-    const b = br.value;
-    // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
-    // an admin retune between startup and the inspected block changes what
-    // triggerDefault itself evaluates there (#2481 r3).
-    const graceEndHere = l.startTime + l.durationDays * 86_400n + (await read('getEffectiveGraceSeconds', [l.durationDays], at));
-    if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
-    // The holder: a position claimed after the loan closed is burned, and the
-    // node then answers that the token has no owner. That answer is itself a
-    // fact (the position this drive held is gone), never an unknown.
-    let holder;
-    try {
-      holder = await read('ownerOf', [l.lenderTokenId], at);
-    } catch (err) {
-      if (!isExecutionRevert(err)) throw err;
-      holder = null;
-    }
-    if (holder === null) why.push('the lender position no longer exists');
-    else if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
+  // Every read settles on its own and every fact is judged from whichever
+  // reads answered (#2505): a move any of them shows wins over a sibling that
+  // got no answer, which only makes the result unknown when nothing moved.
+  // Reads that need the loan use the startup snapshot's immutable fields
+  // (token id, start, duration) when the loan read itself is unanswered.
+  const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
+  const [loanR, blockR, pausedR, seqR, adaptersR] = await Promise.all([
+    settle(read('getLoanDetails', [LOAN_ID], at)),
+    settle(pub.getBlock({ blockNumber: pinned })),
+    // triggerDefault is whenNotPaused: an emergency pause is a moved
+    // precondition like any other (#2481 r4).
+    settle(read('paused', [], at)),
+    // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
+    // its recovery window) — another operational precondition (#2481 r5).
+    settle(read('sequencerHealthy', [], at)),
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
     // disabled, or one venue replaced by another the app cannot ask, even in
     // the same slot — can leave it declaring a routable sale that no longer
     // is. Any change to the enabled roster, by index AND address, is a moved
     // precondition.
-    const adapters = await read('getSwapAdapters', [], at);
-    const disabledHere = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
-    const enabledHere = rosterKey(adapters, disabledHere);
-    if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
-    enabled = new Set(adapters.map((_, i) => i).filter((i) => disabledHere[i] === false));
-  } catch (err) {
-    if (why.length === 0) throw err;
-    why.push(`a later read got no answer (${err.shortMessage ?? err.message})`);
+    settle(read('getSwapAdapters', [], at)),
+  ]);
+  const fixed = loanR.value ?? loan;
+  const [graceR, holderR, disabledR] = await Promise.all([
+    // The grace end AT THIS BLOCK, from this block's grace schedule: an admin
+    // retune between startup and the inspected block changes what
+    // triggerDefault itself evaluates there (#2481 r3).
+    settle(read('getEffectiveGraceSeconds', [fixed.durationDays], at)),
+    settle(read('ownerOf', [fixed.lenderTokenId], at)),
+    adaptersR.err ? Promise.resolve({ err: adaptersR.err }) : settle(Promise.all(adaptersR.value.map((a) => read('isSwapAdapterDisabled', [a], at)))),
+  ]);
+  const why = [];
+  const unanswered = [];
+  const judge = (r, fn) => (r.err ? unanswered.push(r.err) : fn(r.value));
+  judge(pausedR, (v) => v && why.push('the protocol is paused'));
+  judge(seqR, (v) => !v && why.push('the sequencer is not healthy'));
+  judge(loanR, (v) => Number(v.status) !== ACTIVE && why.push(`status ${v.status}`));
+  if (blockR.err || graceR.err) unanswered.push(blockR.err ?? graceR.err);
+  else {
+    const graceEndHere = fixed.startTime + fixed.durationDays * 86_400n + graceR.value;
+    if (blockR.value.timestamp <= graceEndHere) why.push(`not past grace (chain time ${blockR.value.timestamp}, grace ends ${graceEndHere})`);
   }
+  // The holder: a position claimed after the loan closed is burned, and the
+  // node then answers that the token has no owner. That answer is itself a
+  // fact (the position this drive held is gone), never an unknown.
+  if (holderR.err) {
+    if (isExecutionRevert(holderR.err)) why.push('the lender position no longer exists');
+    else unanswered.push(holderR.err);
+  } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
+    why.push(`lender position held by ${holderR.value}`);
+  }
+  let enabled = null;
+  if (disabledR.err) unanswered.push(disabledR.err);
+  else {
+    const enabledHere = rosterKey(adaptersR.value, disabledR.value);
+    if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
+    enabled = new Set(adaptersR.value.map((_, i) => i).filter((i) => disabledR.value[i] === false));
+  }
+  if (why.length === 0 && unanswered.length > 0) throw unanswered[0];
+  if (unanswered.length > 0) why.push(`another read got no answer (${unanswered[0]?.shortMessage ?? unanswered[0]?.message})`);
   return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled };
 }
 
@@ -414,7 +417,11 @@ let held = null;
  * that one aside; it is this drive's own doing. Every other refusal, including
  * any later request the closed plan refuses, is still judged.
  */
-const HELD_REFUSAL = 'held precondition:';
+// A per-run token, matched anywhere in the recorded reason: the gate's verdict
+// reaches the ledger wrapped twice (the wallet gate's "eth_sendTransaction
+// refused by the signing gate: …", then the driver's "signing gate: …"), and
+// a token no page can predict cannot be matched by a request's own content.
+const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
 /**
  * Only the planned close-out may be withheld this way: the request is first
  * compared with the plan's step (its gas bound aside, since the estimate is
@@ -847,11 +854,18 @@ let escapeUnknown = null;
  *  read: a send through another connector cannot be ruled out. */
 let writeUnknown = false;
 if (armedOnce && !wrote()) {
+  // The nonce decides whether this wallet wrote; the status only names a race.
+  // Settled apart, so an unanswered status read cannot erase a nonce that
+  // moved (#2505).
+  const [nonceR, statusR] = await Promise.allSettled([
+    pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
+    read('getLoanDetails', [LOAN_ID]).then((l) => Number(l.status)),
+  ]);
   try {
-    const [nonceAfter, status] = await Promise.all([
-      pub.getTransactionCount({ address: WALLET, blockTag: 'pending' }),
-      read('getLoanDetails', [LOAN_ID]).then((l) => Number(l.status)),
-    ]);
+    if (nonceR.status === 'rejected') throw nonceR.reason;
+    const nonceAfter = nonceR.value;
+    // An unanswered status read leaves the race unnamed, never the write.
+    const status = statusR.status === 'fulfilled' ? statusR.value : ACTIVE;
     escaped = nonceBefore !== null && nonceAfter > nonceBefore;
     if (escaped) {
       console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceBefore} → ${nonceAfter}, but the write plan never allowed a send`);
@@ -865,7 +879,7 @@ if (armedOnce && !wrote()) {
     // run stays on the pre-write path, where a failed check is a FAIL.
   } catch (err) {
     writeUnknown = true;
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message}) — a send through another connector cannot be ruled out`;
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce (${err.message}) — a send through another connector cannot be ruled out`;
   }
 }
 // The final eligibility read is taken BEFORE the page's ledgers are judged:
@@ -880,7 +894,7 @@ check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0,
 // request it withheld, are not findings (`HELD_REFUSAL`); every other refusal
 // is. Judged after the nonce reconciliation, which can itself hold the run.
 const heldRun = held !== null;
-const ownHold = (b) => String(b.reason).startsWith(`signing gate: ${HELD_REFUSAL}`);
+const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
 const violations = heldRun ? violationsSoFar().filter((b) => !ownHold(b)) : violationsSoFar();
 check(
   'writeDiscipline',

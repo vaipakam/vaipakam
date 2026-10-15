@@ -541,36 +541,35 @@ const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
  * nothing about the loan), or `{}` when nothing moved.
  */
 async function lifecycleNow() {
-  // Each read settles on its own (#2505): one that gets no answer must not
-  // hide a move another read already established. A fact the chain answered
-  // decides; only when nothing moved and something went unanswered is the
-  // lifecycle unknown.
-  const [loanRead, claimRead] = await Promise.allSettled([
-    read('getLoanDetails', [LOAN_ID]),
-    read('getClaimableAmount', [LOAN_ID, true]),
+  // Every read settles on its own and every fact is judged from whichever
+  // reads answered (#2505): a move any of them shows wins over a sibling that
+  // got no answer. The holder is asked by the startup token id when the loan
+  // read is unanswered — a loan's position NFTs never change id.
+  const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
+  const [loanR, claimR] = await Promise.all([
+    settle(read('getLoanDetails', [LOAN_ID])),
+    settle(read('getClaimableAmount', [LOAN_ID, true])),
   ]);
+  const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
   const why = [];
   const unanswered = [];
-  if (loanRead.status === 'fulfilled') {
-    if (Number(loanRead.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanRead.value.status}, no longer InternalMatched`);
-  } else unanswered.push(loanRead.reason);
-  if (claimRead.status === 'fulfilled') {
-    const [, lAmount, lClaimed] = claimRead.value;
+  if (loanR.err) unanswered.push(loanR.err);
+  else if (Number(loanR.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanR.value.status}, no longer InternalMatched`);
+  if (claimR.err) unanswered.push(claimR.err);
+  else {
+    const [, lAmount, lClaimed] = claimR.value;
     if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
-  } else unanswered.push(claimRead.reason);
-  // Judged from what was read so far: a claim made elsewhere burns the
-  // lender NFT, so the holder lookup below would revert on exactly the race
-  // this helper exists for.
+  }
+  if (holderR.err) {
+    // The node ANSWERED that the token has no owner: the position is gone (a
+    // claim made elsewhere burns it), which is a fact, not an outage.
+    if (isExecutionRevert(holderR.err)) why.push('the lender position no longer exists');
+    else unanswered.push(holderR.err);
+  } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
+    why.push(`the lender position is now held by ${holderR.value}`);
+  }
   if (why.length > 0) return { moved: why.join(', ') };
   if (unanswered.length > 0) return { unknown: unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e)).join('; ') };
-  try {
-    const holder = await read('ownerOf', [loanRead.value.lenderTokenId]);
-    if (holder.toLowerCase() !== WALLET.toLowerCase()) return { moved: `the lender position is now held by ${holder}` };
-  } catch (err) {
-    // The node ANSWERED that the token has no owner: the position is gone.
-    if (isExecutionRevert(err)) return { moved: 'the lender position no longer exists' };
-    return { unknown: err.shortMessage ?? err.message };
-  }
   return {};
 }
 /**
@@ -756,7 +755,9 @@ try {
         await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
       }
     } catch (err) {
-      if (failedCount() > 0) throw err;
+      // Anything already recorded — a failed check, a refused request, a page
+      // error — stands over this outage (#2505).
+      if (preClaimFails() > 0) throw err;
       await blocked('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err, done);
     }
     // Re-checked after the funding reads: the page kept running while they
