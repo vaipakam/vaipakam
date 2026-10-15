@@ -463,15 +463,18 @@ let held = null;
 const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
 /**
  * Only the planned close-out may be withheld this way: the request is first
- * compared with the plan's step (its gas bound aside, since the estimate is
- * skipped once the send is held). Any other request is refused by the closed
+ * compared with the plan's step (its gas bound aside only for a hold taken
+ * before the estimate ran; after it, the bound is judged too). Any other request is refused by the closed
  * plan, unmarked, and judged like every other refusal.
  */
-const holdSend = (params, gateEnabled = null) => {
+const holdSend = (params, gateEnabled = null, { gasChecked = false } = {}) => {
   PLAN.close();
   const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
   const expected = step()?.expected;
-  const withoutGas = (o) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas'));
+  // The gas bound is set aside only while the estimate it rests on has not
+  // run in this judgement; once it has, an under-gassed request is not the
+  // planned one and stays a finding (#2505 r15).
+  const withoutGas = (o) => (gasChecked ? (o ?? {}) : Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas')));
   // The app builds its route from the roster it read at confirm time, so a
   // held close-out whose roster moved may name an index enabled only at the
   // gate's block: either set identifies the planned request.
@@ -520,7 +523,7 @@ const wrote = () => step()?.status === 'consumed';
  * request, because the estimate and the preview are awaited and a permissionless
  * triggerDefault simulates the same whoever holds the position.
  */
-async function holdIfIneligible(params) {
+async function holdIfIneligible(params, gasChecked = false) {
   if (movedAtGate === null) {
     const e = await eligibleAt(null);
     // The route bound follows the roster only while it is unmoved, so a
@@ -534,7 +537,7 @@ async function holdIfIneligible(params) {
   }
   if (movedAtGate === null) return null;
   console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-  return holdSend(params, gateEnabled);
+  return holdSend(params, gateEnabled, { gasChecked });
 }
 /** The roster known enabled at the gate's latest eligibility read. */
 let gateEnabled = null;
@@ -571,14 +574,14 @@ async function gate(method, params) {
     // An unrunnable preview is a held precondition; any other non-sale is
     // the app's route, judged at confirm.
     if (previewVerdict === 'unknown') {
-      const heldRefusal = holdSend(params);
+      const heldRefusal = holdSend(params, null, { gasChecked: true });
       if (heldRefusal) return heldRefusal;
     }
     if (previewVerdict !== 'sale') PLAN.close();
   }
   // The eligibility once more, AFTER the awaited simulations (#2505 r14).
   if (judging) {
-    const heldAfter = await holdIfIneligible(params);
+    const heldAfter = await holdIfIneligible(params, true);
     if (heldAfter) return heldAfter;
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
