@@ -36,9 +36,9 @@ starting the machine, confirm the Worker's `crons` is `[]`. It is `[]` on
 
 ## Configuration
 
-Everything is an environment variable. Keep them in one file readable only
-by the service user (`chmod 600`), and load it with systemd's
-`EnvironmentFile=` or Node's `--env-file`.
+Everything is an environment variable. The template is
+[`deploy/keeper.env.example`](deploy/keeper.env.example), and a test keeps it
+in step with what the keeper reads. An empty value means unset.
 
 **Database (machine only):**
 
@@ -74,27 +74,13 @@ A chain with no RPC set is skipped, and the line
 `[keeper] chains resolved: …` printed every tick names the chains that did
 resolve.
 
-## Example systemd unit
+## Installing it on a machine
 
-```ini
-[Unit]
-Description=Vaipakam keeper
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=vaipakam-keeper
-WorkingDirectory=/opt/vaipakam
-EnvironmentFile=/etc/vaipakam-keeper.env
-ExecStart=/usr/bin/env pnpm --filter @vaipakam/keeper start:host
-Restart=always
-RestartSec=10
-# Lets the in-flight tick finish before the process is killed.
-TimeoutStopSec=120
-
-[Install]
-WantedBy=multi-user.target
-```
+[`deploy/`](deploy/) is the install kit for an Ubuntu machine: an
+`install.sh`, the systemd units, an updater that deploys every merge to
+`main`, and the env template. The procedure, including the
+one-copy-per-key rule and the disarmed-then-armed checks, is the runbook
+[`docs/ops/KeeperMachine.md`](../../../docs/ops/KeeperMachine.md).
 
 Logs go to stdout and stderr, so `journalctl -u vaipakam-keeper -f` takes
 the place of `wrangler tail`.

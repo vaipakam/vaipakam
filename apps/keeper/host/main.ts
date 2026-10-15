@@ -17,6 +17,12 @@
  *
  * Each tick first confirms the shared database's schema (`hostTick.ts`),
  * because on a machine there is no deploy step to do it.
+ *
+ * `--check` loads everything, reports the configuration it would run with,
+ * and exits 0 without starting the clock or touching the database. The
+ * machine's updater (`host/deploy/update.sh`) runs a new build this way
+ * before switching to it, so a build that cannot even load never replaces
+ * the one that is running.
  */
 
 import { buildHostEnv } from './hostEnv';
@@ -30,6 +36,12 @@ function log(line: string): void {
 
 function main(): void {
   const { missingD1 } = buildHostEnv(process.env);
+  if (process.argv.includes('--check')) {
+    log(
+      `[keeper-host] check: build loads; database ${missingD1.length > 0 ? `not configured (${missingD1.join(', ')} unset)` : 'configured'}`,
+    );
+    return;
+  }
   if (missingD1.length > 0) {
     // Not fatal, and the tick says so too: with no database every tick
     // declines as a maintenance build. Said here once, at start-up, naming

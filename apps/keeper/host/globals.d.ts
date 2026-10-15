@@ -8,6 +8,7 @@
 declare const process: {
   readonly env: Record<string, string | undefined>;
   readonly pid: number;
+  readonly argv: readonly string[];
   exitCode: number | undefined;
   exit(code?: number): never;
   on(event: 'SIGTERM' | 'SIGINT', listener: () => void): void;
