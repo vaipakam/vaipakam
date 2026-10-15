@@ -470,7 +470,7 @@ const HELD_REFUSAL = `held precondition [${randomUUID()}]:`;
  * before the estimate ran; after it, the bound is judged too). Any other request is refused by the closed
  * plan, unmarked, and judged like every other refusal.
  */
-const holdSend = (params, gateEnabled = null, { gasChecked = false } = {}) => {
+const holdSend = (params, gateEnabled = null, { gasChecked = false, rosterUnknown = false } = {}) => {
   PLAN.close();
   const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
   const expected = step()?.expected;
@@ -492,7 +492,15 @@ const holdSend = (params, gateEnabled = null, { gasChecked = false } = {}) => {
       enabledAdapters = startupEnabled;
     }
   };
-  const planned = matchesUnder(startupEnabled) || (gateEnabled !== null && matchesUnder(gateEnabled));
+  // When the gate could not read the roster at all, which indices are enabled
+  // is unknown there, so the route is held to its shape only (a non-empty
+  // try-list of well-formed calls): any index may be one the roster now
+  // enables, and the hold says only that eligibility is unknown (#2505 r18).
+  const ANY_INDEX = { has: () => true };
+  const planned =
+    matchesUnder(startupEnabled) ||
+    (gateEnabled !== null && matchesUnder(gateEnabled)) ||
+    (rosterUnknown && matchesUnder(ANY_INDEX));
   if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
@@ -540,7 +548,7 @@ async function holdIfIneligible(params, gasChecked = false) {
   }
   if (movedAtGate === null) return null;
   console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-  return holdSend(params, gateEnabled, { gasChecked });
+  return holdSend(params, gateEnabled, { gasChecked, rosterUnknown: gateEnabled === null });
 }
 /** The roster known enabled at the gate's latest eligibility read. */
 let gateEnabled = null;
