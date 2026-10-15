@@ -563,7 +563,7 @@ let movedAtGate = null;
 /** The reason a {@link Held} stop gave, once the drive is stopped
  *  (`noWriteSettlement.mjs` settles it). */
 let held = null;
-/** A {@link Suspect} the drive stopped on: a FAIL only if nothing moved. */
+/** A {@link Suspect} the drive stopped on: not established, never a FAIL (#2505 r48). */
 let suspect = null;
 /**
  * The gate withholding the request it is judging, for a held precondition. Its
@@ -909,7 +909,7 @@ try {
     await blockPre('the page RPC answered nothing while the position page loaded, so the card was never observable');
   }
   // A card the page rightly withholds (the loan closed by a keeper while the
-  // page loaded) is a FAIL only if the loan did not move: settled at the end.
+  // page loaded) is not established, never a FAIL (#2505 r48).
   if (!mounted) throw new Suspect('the forced-close card never rendered', { row: 'card', key: 'mounted', label: 'the forced-close card renders' });
   check('card', 'mounted', 'the forced-close card renders', true);
   // The state settles once the card's reads (and, for a sale, its venue
@@ -986,7 +986,7 @@ try {
     .catch(() => false);
   const label = enabled ? ((await submit.getAttribute('aria-label')) ?? (await submit.innerText())).replace(/\s+/g, ' ').trim() : '';
   // A button that did not come up ready may rightly have been withdrawn for
-  // a loan that moved (#2505 r19): settled at the end.
+  // a loan that moved (#2505 r19): not established, never a FAIL (#2505 r48).
   const submitLabel = 'the close-out button is shown, enabled and labelled as the close-out';
   if (!enabled || label !== FC.submit) throw new Suspect('the close-out button did not come up ready', { row: 'card', key: 'submit', label: submitLabel, detail: `label "${label}"` });
   check('card', 'submit', submitLabel, true, `label "${label}"`);
@@ -1117,8 +1117,8 @@ try {
 }
 // ── Settlement (noWriteSettlement.mjs) ─────────────────────────────────
 // One order for every run: the browser is closed first, so the page can add
-// no error, refusal or send after its ledgers are judged; the loan is
-// re-read once; this wallet's nonce is read last. A run the plan did not
+// no error, refusal or send after its ledgers are judged; this wallet's
+// nonce is read last. A run the plan did not
 // let write is then BLOCKED, FAIL or UNDETERMINED by one
 // rule, whatever path stopped it.
 let teardownDone = false;

@@ -129,8 +129,13 @@ export const THREE_VERDICT_DRIVERS = new Set([
  * below its startup baseline: a send by that wallet cannot be ruled out (or,
  * for a moved count, is certain but unattributed — likely another user of
  * the same dev wallet), so it can claim neither "nothing was written" nor a
- * result (noWriteSettlement.mjs, #2505 r33, r37). A failure the page already
- * showed stays a FAIL whatever the nonce reads. It is NOT
+ * result (noWriteSettlement.mjs, #2505 r33, r37). A third case writes
+ * nothing, provably: the page did not do what the drive expected and showed
+ * nothing that says why (a missing row, a button that never came up, a page
+ * that sent nothing after its button was clicked). Something outside the
+ * page may explain it, so the claim is not established rather than failed
+ * (#2505 r48). A failure the page already showed stays a FAIL whatever the
+ * nonce reads. It is NOT
  * a pass and keeps the batch red, but it is reported as what it is rather
  * than as a product FAIL. Exit 0, 1 and 2 mean what they mean for
  * `THREE_VERDICT_DRIVERS`.
@@ -162,7 +167,9 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'is UNDETERMINED (exit 3) (#2427). In any mode, read-only included, a run ' +
       'whose plan sent nothing but whose wallet nonce moved or cannot be ' +
       'established, with no failure already observed, is UNDETERMINED too: a ' +
-      'send by that wallet cannot be ruled out or attributed (#2505 r33, r37)',
+      'send by that wallet cannot be ruled out or attributed (#2505 r33, r37); ' +
+      'so is a page that did not do what was expected and showed nothing that ' +
+      'says why, even when the nonce proves nothing was sent (#2505 r48)',
   ],
   [
     'live-lender-close-out.mjs',
@@ -175,7 +182,9 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'disagrees with its event); anything else is UNDETERMINED (exit 3) (#2463). ' +
       'In any mode, a run whose plan sent nothing but whose wallet nonce moved ' +
       'or cannot be established, with no failure already observed, is ' +
-      'UNDETERMINED too (#2505 r33, r37)',
+      'UNDETERMINED too (#2505 r33, r37), as is a page that did not do what ' +
+      'was expected and showed nothing that says why, even when the nonce ' +
+      'proves nothing was sent (#2505 r48)',
   ],
 ]);
 

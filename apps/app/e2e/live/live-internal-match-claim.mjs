@@ -567,7 +567,7 @@ const preClaimFails = () => failedCount() + violationsSoFar().length + pageError
  */
 /** The reason a {@link Held} stop gave (`noWriteSettlement.mjs` settles it). */
 let held = null;
-/** A {@link Suspect} the drive stopped on: a FAIL only if nothing moved. */
+/** A {@link Suspect} the drive stopped on: not established, never a FAIL (#2505 r48). */
 let suspect = null;
 async function blockPre(why, err = null) {
   if (preClaimFails() > 0) {
@@ -652,8 +652,8 @@ try {
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
       await blockPre('the page RPC answered nothing while the position page loaded, so its Owed line was never observed');
     }
-    // Anything but the expected line is a FAIL only if the loan did not move
-    // during the drive, which the page would be right to report (#2505).
+    // Anything but the expected line may be the page rightly reporting a loan
+    // that moved during the drive: not established, never a FAIL (#2505 r48).
     const pendingLabel = 'the Owed line says matching closed it and it settles once claims are collected';
     const notSettledLabel = "the page does not call the loan 'closed and settled'";
     if (owedText.includes(POSITIONS.owedClosed)) {
@@ -728,7 +728,7 @@ try {
         // Diamond, a broken claim path): an observation, not an outage.
         if (isExecutionRevert(err)) {
           // A claim made elsewhere, or a transferred position, also makes
-          // this estimate revert: a FAIL only if nothing moved (#2505).
+          // this estimate revert: not established, never a FAIL (#2505 r48).
           throw new Suspect('the claim estimate reverted; not claiming', {
             row: 'claimable',
             key: 'estimate',
