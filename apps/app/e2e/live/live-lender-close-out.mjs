@@ -1150,8 +1150,11 @@ if (!wrote()) {
 // The final eligibility read is taken BEFORE the page's ledgers are judged:
 // the page keeps running while it is awaited, so an error or a refused
 // request it records meanwhile lands in the checks below rather than after.
+// Held runs included (#2505 r28): a move after the hold (an accepted sale, a
+// transfer, a pause, a retune, a roster change) joins the held reason rather
+// than going unreported.
 const finalEligibility =
-  !wrote() && !escaped && !writeUnknown && stopped === null && held === null
+  !wrote() && !escaped && !writeUnknown && stopped === null
     ? await eligibleAt(null)
     : null;
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
@@ -1185,10 +1188,12 @@ const wroteAny = wrote() || escaped || writeUnknown;
 // re-read a change made after the card's snapshot would meet.
 if (!wroteAny && failedCount() === 0 && stopped === null) {
   let why = held;
-  if (why === null && finalEligibility !== null) {
+  if (finalEligibility !== null) {
     const now = finalEligibility;
-    if (now.unknown) why = `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility before the verdict, so whether it moved is unknown (${now.unknown})`;
-    else if (!now.ok) why = `loan ${LOAN_ID} moved before the verdict (block ${now.block}): ${now.why}`;
+    let fact = null;
+    if (now.unknown) fact = `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility before the verdict, so whether it moved is unknown (${now.unknown})`;
+    else if (!now.ok) fact = `loan ${LOAN_ID} moved before the verdict (block ${now.block}): ${now.why}`;
+    if (fact !== null) why = why === null ? fact : `${why}; ${fact}`;
   }
   // What the nonce shows, not more: a send that left the pool unmined
   // leaves the count unchanged and wrote nothing (#2505 r27).

@@ -983,8 +983,8 @@ try {
     // unless a check already failed or a guard already recorded a refused
     // request, or the page threw (pageHealth is recorded only after this
     // catch), each of which is a finding on a served surface. Once the
-    // claim was armed it is never BLOCKED: the claim may have gone out, so
-    // the drive falls through to the chain reconciliation below.
+    // claim was armed the drive falls through to the nonce reconciliation
+    // below, which decides whether the run is still before any write.
     // Inside this catch, a failure recorded during the drain makes blockPre
     // throw; it joins the stop and the run finalizes normally (#2505 r22).
     // A held result replaces the stop, which it explains.
@@ -1014,7 +1014,9 @@ try {
 // The final lifecycle read is taken BEFORE the page's ledgers are judged: the
 // page keeps running while it is awaited, so an error or a refused request
 // it records meanwhile lands in the checks below rather than after them.
-const finalLifecycle = !wrote() && !armedOnce && stopped === null && held === null ? await lifecycleNow() : null;
+// Read for every run the plan wrote nothing for, armed or held included
+// (#2505 r28): whether it is used is decided once the nonce is reconciled.
+const finalLifecycle = !wrote() ? await lifecycleNow() : null;
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
 // session: the plan's refusals, the chain pin's (recorded at the wallet
@@ -1028,76 +1030,52 @@ check(
   violations.length === 0,
   violations.map((b) => `${b.reason} ${b.url ?? ''}`.trim()).join(' | '),
 );
-if (armedOnce) {
-  // Only once the drive armed its claim: the plan's one step was consumed
-  // exactly once (a duplicate is refused by construction, and a
-  // send through any other connector never reaches the plan at all).
-  check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
-}
-// A claim that bypassed the plan. The injected wallet's key never leaves the
-// gated handler, but a profile still connected through another connector (a
-// persisted WalletConnect session holding the same account) can send the
-// claim without the plan ever seeing it. So once the driver has clicked its
-// claim and the plan shows no send, the chain is asked whether the lender
-// claim is recorded anyway: if it is, a write landed outside the gate — the
-// shared verdict's gate escape, a FAIL. Unreadable is a write that may have
-// happened: UNDETERMINED, never "before any write". Read at the latest block,
-// so a claim still pending there is not seen.
+// Every run the plan wrote nothing for, armed or not, is reconciled against
+// the startup nonce (#2505 r25, r28). Nothing was pending at startup, so an
+// unchanged count means this wallet has nothing pending or mined since: the
+// run is provably before any write, even after the claim was clicked (the
+// page's own pre-wallet simulation may rightly have withheld it). A moved
+// count is a gate escape whatever was sent, so its evidence names the nonce,
+// never a claim nobody read (#2505 r26); an unreadable one is UNDETERMINED.
 let escaped = false;
 let escapeUnknown = null;
-if (armedOnce && !wrote()) {
-  try {
-    const [, , lenderClaimed] = await read('getClaimableAmount', [LOAN_ID, true]);
-    escaped = lenderClaimed === true;
-    if (escaped) {
-      console.log(`ESCAPE the lender claim for loan ${LOAN_ID} is recorded on chain, but the write plan never allowed a send`);
-    }
-  } catch (err) {
-    escapeUnknown = `the plan allowed no send, and the direct RPC could not read whether the lender claim landed through another connector (${err.message})`;
-  }
-}
-// From the claim click on, the run is post-write whatever the plan saw: a
-// send through another connector can still be pending when the read above
-// returns false, so only a send the plan never armed for is "before any
-// write". The plan's own record (`planned`) still states what it saw.
-if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
-  escapeUnknown =
-    'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
-}
-// Before the claim was armed, the chain cannot say which transaction a
-// connector sent, but this wallet's nonce can say whether it sent any
-// (#2505 r25). It is reconciled against the startup baseline for every run
-// that never armed, held or not, so a send through another connector is a
-// gate escape rather than a race. The evidence then names the nonce, never
-// a claim nobody read (#2505 r26).
 let nonceEscape = null;
-if (!armedOnce && !wrote()) {
+if (!wrote()) {
   try {
     const nonceNow = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
     if (nonceNow > nonceAtStart) {
-      nonceEscape = `${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan was never armed — some transaction went through another connector (see the ESCAPE line above)`;
-      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow} before the claim was armed`);
+      nonceEscape = `${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send — some transaction went through another connector (see the ESCAPE line above)`;
+      console.log(`ESCAPE ${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send`);
       escaped = true;
     }
   } catch (err) {
-    escapeUnknown = `the direct RPC could not read the wallet nonce, so a send through another connector cannot be ruled out (${err?.shortMessage ?? err?.message})`;
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce, so a send through another connector cannot be ruled out (${err?.shortMessage ?? err?.message})`;
   }
 }
-const wroteAny = wrote() || armedOnce || escaped || escapeUnknown !== null;
-// A PASS reached before a write rests on the loan still being the one the
-// drive started from (#2505). The checks above revalidate only where a line
-// came out unexpected, and a transfer of the lender position changes no line
-// on this page, so the lifecycle is re-read once more before that verdict.
-// A failure already recorded, or a stop the drive already hit, stands
-// whatever moved afterwards, and after a write the loan moved because of this
-// drive, so none of them is asked.
-if (!wroteAny && preClaimFails() === 0 && stopped === null && held === null && finalLifecycle !== null) {
-  try {
-    await blockIfLifecycleMoved('before the verdict', finalLifecycle);
-  } catch (err) {
-    if (err instanceof Held) held = err.message;
-    else stopped = err.message;
+const wroteAny = wrote() || escaped || escapeUnknown !== null;
+// On a provably write-free run the loan is re-read once more before any
+// verdict (#2505). A move, or a re-read that gets no answer, holds the run;
+// it explains a stop the drive hit (with the order of the two unknown,
+// #2505 r23) and joins a hold already taken (#2505 r28). A failure already
+// recorded stands whatever moved afterwards.
+if (!wroteAny && preClaimFails() === 0 && finalLifecycle !== null && (finalLifecycle.moved || finalLifecycle.unknown)) {
+  const l = finalLifecycle;
+  const fact = l.moved
+    ? `loan ${LOAN_ID} had moved by the verdict — ${l.moved}`
+    : `the direct RPC could not re-read loan ${LOAN_ID} at the verdict, so whether it moved is unknown (${l.unknown})`;
+  if (stopped !== null) {
+    held = [held, `the drive stopped (${stopped}), and ${fact}; which came first is unknown`].filter(Boolean).join('; ');
+    stopped = null;
+  } else {
+    held = held === null ? fact : `${held}; ${fact}`;
   }
+}
+if (armedOnce && held === null) {
+  // Only once the drive armed its claim, and only on a run not held: the
+  // plan's one step was consumed exactly once (a duplicate is refused by
+  // construction, and a send through any other connector never reaches the
+  // plan at all).
+  check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
 }
 // A held stop is BLOCKED only now: after the reconciliation established that
 // this wallet sent nothing, and only while no failure has been recorded. A
@@ -1129,9 +1107,7 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the claim's hash and what its receipt showed; check the lender wallet by hand if neither does",
-    escape:
-      nonceEscape ??
-      'the chain records the lender claim, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)',
+    escape: nonceEscape ?? 'see the ESCAPE line above',
   },
 });
 console.log(VERDICT.line);
