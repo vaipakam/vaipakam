@@ -532,25 +532,36 @@ const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
 const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 /**
- * Why the loan is no longer the one this drive judges (#2505), or null. A
- * lender claim made elsewhere during the drive can legitimately settle the
- * loan or clear the lender's claim, and the page then states the new truth;
- * judged against the startup snapshot that reads as a copy FAIL. A move is
- * a precondition that changed under the drive — BLOCKED. A read that gets
- * no answer cannot say, and is reported as such.
+ * Whether the loan is still the one this drive judges (#2505). A lender
+ * claim made elsewhere during the drive can legitimately settle the loan or
+ * clear the lender's claim, and a transfer of the lender position moves the
+ * claim to another wallet; the page then states the new truth, which judged
+ * against the startup snapshot reads as a FAIL. Returns `{ moved }` naming
+ * what changed, `{ unknown }` when the re-read got no answer (an outage says
+ * nothing about the loan), or `{}` when nothing moved.
  */
-async function lifecycleMoved() {
+async function lifecycleNow() {
   try {
     const [now, [, lAmount, lClaimed]] = await Promise.all([
       read('getLoanDetails', [LOAN_ID]),
       read('getClaimableAmount', [LOAN_ID, true]),
     ]);
+    const holder = await read('ownerOf', [now.lenderTokenId]);
     const why = [];
     if (Number(now.status) !== INTERNAL_MATCHED) why.push(`status ${now.status}, no longer InternalMatched`);
     if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
-    return why.length > 0 ? why.join(', ') : null;
+    if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`the lender position is now held by ${holder}`);
+    return why.length > 0 ? { moved: why.join(', ') } : {};
   } catch (err) {
-    return `the direct RPC could not re-read the loan (${err.shortMessage ?? err.message})`;
+    return { unknown: err.shortMessage ?? err.message };
+  }
+}
+/** BLOCKED when the loan moved, or when whether it moved cannot be read. */
+async function blockIfLifecycleMoved(when) {
+  const l = await lifecycleNow();
+  if (l.moved) await blocked(`loan ${LOAN_ID} moved ${when} — ${l.moved}`, null, done);
+  if (l.unknown) {
+    await blocked(`the direct RPC could not re-read loan ${LOAN_ID} ${when}, so whether it moved is unknown (${l.unknown})`, null, done);
   }
 }
 /** Why the drive stopped, when an exception ended it. */
@@ -627,10 +638,7 @@ try {
     // Anything but the expected line: first rule out the loan having moved
     // during the drive, which the page would be right to report (#2505).
     if (!owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) {
-      const moved = await lifecycleMoved();
-      if (moved !== null) {
-        await blocked(`loan ${LOAN_ID} moved while the position page was read — ${moved}`, null, done);
-      }
+      await blockIfLifecycleMoved('while the position page was read');
     }
     check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
     check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
@@ -649,8 +657,7 @@ try {
       if ((await answered()) === 0) {
         await blocked('the page RPC answered nothing while /claims reloaded, so its row was never observed', null, done);
       }
-      const moved = await lifecycleMoved();
-      if (moved !== null) await blocked(`loan ${LOAN_ID} moved before the claim — ${moved}`, null, done);
+      await blockIfLifecycleMoved('before the claim');
       throw new Error(`the loan's /claims row did not render on the way back`);
     }
   }
