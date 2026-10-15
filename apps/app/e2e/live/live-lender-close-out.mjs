@@ -50,7 +50,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatUnits, pad, parseEventLogs, toFunctionSelector, toHex } from 'viem';
+import { formatUnits, parseEventLogs } from 'viem';
 import {
   addressOf,
   blocked,
@@ -66,9 +66,9 @@ import {
 } from './driver.mjs';
 import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, GATE_EVENTS, blockMark } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
-import { attachLedger, createCallLedger, createReadLedger } from './pageSanctionsReads.mjs';
+import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
@@ -368,15 +368,10 @@ if (startupHold !== null) await blocked(`loan ${LOAN_ID}: ${startupHold}, so the
 // baseline every no-write run is settled against is taken here
 // (`noWriteSettlement.mjs`).
 let nonceBefore;
-let windowStart;
 try {
   const base = await nonceBaseline(pub, WALLET);
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceBefore = base.nonce;
-  // The first block of the window the settlement reads the chain's own
-  // events over (#2505 r42), by number and hash so a reorganisation across
-  // it is detected rather than read as a quiet chain (#2505 r46).
-  windowStart = await blockMark(pub);
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -770,17 +765,6 @@ await ctx.addInitScript(() => {
   }
 });
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
-// The card's own simulations of this loan's close-out, off the wire
-// (#2505 r39). Its last pre-wallet step is a simulation of the exact
-// `triggerDefault(LOAN_ID, route)` it is about to send, and a revert there
-// withholds the close-out with nothing signed. This is what the card was
-// told, which the drive's own reads at startup and at the verdict cannot
-// show: a pause that came and went between them is visible here only.
-const pageCloseOutSims = createCallLedger(
-  DIAMOND,
-  toFunctionSelector(DIAMOND_ABI.find((x) => x.type === 'function' && x.name === 'triggerDefault')) + pad(toHex(LOAN_ID)).slice(2),
-);
-attachLedger(page, pageCloseOutSims, READ_METHODS);
 // The page's own chain answers, HTTP and WebSocket, counted per window — so a
 // card that never appears while the page heard NOTHING from the chain reads
 // as unobserved (BLOCKED), not as a broken card (#2481 r2).
@@ -940,19 +924,9 @@ try {
   if (OTHER_READY_STATES.has(state ?? '')) {
     await blockPre(`loan ${LOAN_ID} resolves to ${state}, a valid card state for a loan that does not need a routed sale — this drive judges the sale route only`);
   }
-  // A state that names a precondition this drive cannot re-establish from
-  // the Diamond is the card's own observation, not a wrong sale state, so
-  // nothing was tested: `unknown` (one of the card's reads failed, #2505 r45)
-  // and `blocked-sequencer` (the L2 sequencer feed, which lives off the
-  // Diamond, so no Diamond event records it recovering, #2505 r47). A pause
-  // is a Diamond event, and the settlement's window sees it.
-  const offDiamondHolds = {
-    unknown: `one of its reads of loan ${LOAN_ID} failed`,
-    'blocked-sequencer': "its own read of the L2 sequencer feed found it down or inside its recovery window, a feed this drive cannot replay",
-  };
-  if (state in offDiamondHolds) {
-    await blockPre(`the card declared ${state} (${offDiamondHolds[state]}), so the sale route was not observable`);
-  }
+  // Any other state, `unknown` and `blocked-sequencer` included, is the card
+  // not reaching the sale with nothing on it that says why the drive should
+  // expect otherwise: not established, never a failure (#2505 r48).
   if (state !== SALE_STATE) {
     throw new Suspect(`the card declared ${state}, not ${SALE_STATE}`, { row: 'card', key: 'ready', label: `the card declares ${SALE_STATE}`, detail: `declared state ${state}` });
   }
@@ -1064,7 +1038,6 @@ try {
     // later state change to THIS wallet rather than to a keeper (#2481 r1).
     PLAN.arm(ROLE);
     armedOnce = true;
-    const confirmedAt = Date.now();
     await confirm.click();
     // From here on the close-out may have been written: an exception is never
     // a product verdict. The page leaving its confirm step is recorded, and
@@ -1110,59 +1083,12 @@ try {
       PLAN.close();
       throw new Held(`the card refused at confirm time and the plan signed nothing (copy.forcedClose.${refusedWith}); the sale is not routable right now`);
     }
-    // A confirm step that never settled, with nothing signed, may be the page
-    // rightly withholding a close-out whose precondition moved while it was
-    // being confirmed: the card's own pre-wallet simulation refuses it, so the
-    // gate never sees a request (#2505 r24). A FAIL only if nothing moved,
-    // settled at the end.
+    // A confirm step that never settled, with nothing signed and no refusal
+    // shown, may be the page rightly withholding a close-out whose
+    // precondition moved while it was being confirmed. Nothing on the page
+    // says why, so it is not established, never a failure (#2505 r48).
     if (!settled && !wrote()) {
       PLAN.close();
-      // What the card was told by its own simulation of the close-out it was
-      // about to send. A revert there is the card withholding on the chain's
-      // answer, unless the route itself is what the chain refuses. The drive
-      // asks the same calldata again now: still refused, the route (or a
-      // gate still closed, which the settlement's re-read then shows as a
-      // move) is the reason and the observation stands; accepted now, the
-      // gate closed and reopened during the drive and nothing was tested.
-      const refused = pageCloseOutSims.refusedSince(confirmedAt);
-      if (refused.length > 0) {
-        const last = refused[refused.length - 1];
-        // The page's whole request, as it sent it: `from`, `value` and `gas`
-        // included, so a malformed preflight is not replayed as a valid one.
-        const q = last.tx;
-        const big = (v) => (v === undefined || v === null ? undefined : BigInt(v));
-        const again = await pub
-          .call({ to: DIAMOND, data: last.data, account: q.from ?? WALLET, value: big(q.value), gas: big(q.gas) })
-          .then(
-          () => 'accepted',
-          // A raw call reverts as an execution error carrying the revert data,
-          // not as a decoded contract error.
-          (err) => (err?.walk?.((e) => e?.name === 'RawContractError' || e?.name === 'ExecutionRevertedError') ? `refused (${describeErr(err)})` : null),
-        );
-        // The replay itself unanswered (a timeout, a rate limit): whether the
-        // card's revert was transient or persistent is not established, so
-        // nothing was tested (#2505 r44).
-        if (again === null) {
-          throw new Held(`the card withheld the close-out because its own simulation of it, started after the confirm click, reverted (${last.error}); the drive's replay of the same call went unanswered, so whether the chain still refuses it is unknown, and the close-out was not tested`);
-        }
-        if (again === 'accepted') {
-          throw new Held(`the card withheld the close-out because its own simulation of it, started after the confirm click, reverted (${last.error}); the same call is accepted now, so the chain's gate closed and reopened during the drive, and the close-out was not tested`);
-        }
-        throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', {
-          row: 'pageConfirmed',
-          key: 'settled',
-          label: 'the page left its confirm step',
-          detail: `the card's own simulation of the close-out reverted (${last.error}); asked again now, the same call is ${again}`,
-        });
-      }
-      // The card's simulation went unanswered (a provider error, or no
-      // answer): it withheld on an RPC failure, not on the chain's answer, so
-      // nothing was tested (#2505 r45).
-      const unanswered = pageCloseOutSims.unansweredSince(confirmedAt);
-      if (unanswered.length > 0) {
-        const last = unanswered[unanswered.length - 1];
-        throw new Held(`the card withheld the close-out after its own simulation of it, started after the confirm click, got no answer from the chain (${last.error ?? 'no response'}), so the close-out was not tested`);
-      }
       throw new Suspect('the page did not leave its confirm step, and the plan signed nothing', { row: 'pageConfirmed', key: 'settled', label: 'the page left its confirm step' });
     }
     check('pageConfirmed', 'settled', 'the page left its confirm step', settled, refusedWith ? `refusal shown: ${refusedWith}` : '');
@@ -1217,40 +1143,9 @@ const settled = await settleRun({
     );
   },
   wrotePlan: wrote,
-  // Read for every run the plan did not write for, held or stopped included:
-  // a move after a hold (an accepted sale, a transfer, a pause, a retune, a
-  // roster change) is named rather than going unreported (#2505 r28).
-  factsNow: async (cutoff) => {
-    // At the browser's close, not the head: a move after it cannot explain
-    // what the page did (#2505 r46).
-    const now = await eligibleAt(cutoff?.number ?? null);
-    if (now.unknown) return { unknown: now.unknown };
-    if (!now.ok) return { moved: `block ${now.block}: ${now.why}` };
-    return {};
-  },
   pub,
   wallet: WALLET,
   baseline: nonceBefore,
-  // A change that came and went between the endpoint reads (a transfer away
-  // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: (cutoff) =>
-    loanActivity({
-      pub,
-      diamond: DIAMOND,
-      abi: DIAMOND_ABI,
-      // Strictly after the startup mark (a log in that block cannot be dated
-      // against the startup reads, and the endpoint comparison covers it,
-      // #2505 r43), up to the browser's close (#2505 r46).
-      start: windowStart,
-      cutoff,
-      loanId: LOAN_ID,
-      gates: GATE_EVENTS,
-      tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
-      // The stored lender as well as the holder: `triggerDefault` checks KYC
-      // for `loan.lender`, who need not hold the position (#2505 r47).
-      wallets: [WALLET, loan.lender].filter(Boolean),
-      assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
-    }),
 });
 // The gate's own hold, when it withheld the planned request: the stop that
 // followed it (a UI wait that ran out) is explained by it (#2505 r32), so it
@@ -1272,7 +1167,10 @@ const resolved = resolveSettlement({
   subject: `loan ${LOAN_ID}'s close-out`,
 });
 if (resolved.blocked) await blocked(resolved.blocked);
-if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.check.label, false, suspect.check.detail ?? '');
+if (resolved.undetermined) {
+  const u = resolved.undetermined;
+  unsettled(u.row, u.key, `${u.label}: ${u.why}${u.detail ? ` (${u.detail})` : ''}; something outside the page may explain it and this drive cannot rule that out`);
+}
 // Armed, clicked, provably nothing sent, and nothing that explains it: the
 // app did not send the close-out it was asked for.
 // Recorded on BOTH sides of the send (#2505 r40): consumed is the check

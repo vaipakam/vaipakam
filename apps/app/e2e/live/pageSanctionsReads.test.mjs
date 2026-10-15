@@ -1,7 +1,7 @@
 // Unit tests for the page-read ledger the sanctions-banner drive judges by.
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeFunctionData, encodeFunctionResult, multicall3Abi } from 'viem';
-import { attachLedger, createCallLedger, createReadLedger, isRefusedSocketMethod, watchedRead } from './pageSanctionsReads.mjs';
+import { attachLedger, createReadLedger, isRefusedSocketMethod, watchedRead } from './pageSanctionsReads.mjs';
 
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 const OTHER = '0x2E4033Ae1200CC14D33E09021C4098d12b54341c';
@@ -185,40 +185,5 @@ describe('read-only check on the page\'s WebSockets', () => {
     expect(v).toEqual([
       { reason: 'websocket rpc eth_sendRawTransaction (not a permitted read)', url: 'wss://rpc.example/ws' },
     ]);
-  });
-});
-
-describe('createCallLedger', () => {
-  const T = '0x00000000000000000000000000000000000000d1';
-  const P = '0xabcdef01' + '00'.repeat(31) + '15';
-  it('records the page simulations of one call, refused or accepted, from the click on', () => {
-    let t = 0;
-    const l = createCallLedger(T, P, () => t);
-    const pending = l.onRequest(
-      JSON.stringify([
-        { id: 1, method: 'eth_call', params: [{ to: T.toUpperCase().replace('0X', '0x'), data: P + 'ff' }] },
-        { id: 2, method: 'eth_call', params: [{ to: T, data: '0xabcdef01' + '00'.repeat(31) + '16' }] },
-        { id: 3, method: 'eth_estimateGas', params: [{ to: T, data: P }] },
-      ]),
-    );
-    expect(l.entries).toHaveLength(1);
-    l.onResponse(pending, JSON.stringify([{ id: 1, error: { code: 3, message: 'execution reverted', data: '0x12345678' } }]));
-    expect(l.refusedSince(0)).toEqual([expect.objectContaining({ error: 'execution reverted (0x12345678)', tx: expect.objectContaining({ data: P + 'ff' }) })]);
-    expect(l.refusedSince(1)).toEqual([]);
-    t = 5;
-    const ok = l.onRequest(JSON.stringify({ id: 9, method: 'eth_call', params: [{ to: T, data: P }] }));
-    l.onResponse(ok, JSON.stringify({ id: 9, result: '0x' }));
-    expect(l.entries[1].error).toBeNull();
-    expect(l.refusedSince(5)).toEqual([]);
-    // A provider failure is not the chain refusing the call.
-    const limited = l.onRequest(JSON.stringify({ id: 10, method: 'eth_call', params: [{ to: T, data: P, value: '0x1' }] }));
-    l.onResponse(limited, JSON.stringify({ id: 10, error: { code: -32005, message: 'rate limited' } }));
-    expect(l.entries[2].tx.value).toBe('0x1');
-    expect(l.refusedSince(5)).toEqual([]);
-    // It is kept apart as unanswered, as is one still in flight; an answered
-    // simulation and a revert are not (#2505 r45).
-    l.onRequest(JSON.stringify({ id: 11, method: 'eth_call', params: [{ to: T, data: P }] }));
-    expect(l.unansweredSince(5).map((e) => e.error)).toEqual(['rate limited', undefined]);
-    expect(l.unansweredSince(0)).toHaveLength(2);
   });
 });

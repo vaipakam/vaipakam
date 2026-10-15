@@ -79,9 +79,9 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
-import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, loanActivity, nonceBaseline, resolveSettlement, settleRun, CLAIM_GATE_EVENTS, blockMark } from './noWriteSettlement.mjs';
+import { Held, Suspect, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
-import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
+import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
@@ -313,7 +313,7 @@ console.log(`build: ${siteBundle} on both hosts`);
 
 // ── 2. Chain state ─────────────────────────────────────────────────────
 const { pub } = clientsFor(CHAIN_ID);
-const read = (functionName, args = [], blockNumber) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, blockNumber });
+const read = (functionName, args = []) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args });
 const ERC20 = parseAbi(['function symbol() view returns (string)', 'function decimals() view returns (uint8)']);
 const ERC20_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
 let loan;
@@ -321,11 +321,8 @@ let rec;
 let symbol;
 let decimals;
 let lenderHolder;
-/** The lender's claim at startup, compared whole by every re-read (#2505 r33). */
-let claimAtStart;
 try {
   loan = await read('getLoanDetails', [LOAN_ID]);
-  claimAtStart = await read('getClaimable', [LOAN_ID, true]);
   const [principal, interest, lateFee, lenderProceeds, recordedAt, incomplete] = await read('getOwedAtInternalMatch', [LOAN_ID]);
   rec = { principal, interest, lateFee, lenderProceeds, recordedAt, incomplete };
   [symbol, decimals] = await Promise.all([
@@ -343,9 +340,8 @@ if (rec.incomplete || rec.recordedAt === 0n) {
 if (lenderHolder.toLowerCase() !== WALLET.toLowerCase()) {
   await blocked(`loan ${LOAN_ID}'s lender position is held by ${lenderHolder}, not ${ROLE} ${WALLET}`);
 }
-// The chain's own answer to the claim, at startup (#2505 r35): every later
-// re-read compares with it, so a refusal at the verdict is a change the drive
-// measured, never one it cannot date. A claim the chain already refuses (a
+// The chain's own answer to the claim, at startup (#2505 r35). A claim the
+// chain already refuses (a
 // pause, a sanctions flag, a broken claim path) is not a card this drive can
 // judge, so it is BLOCKED here, with the revert named, before the browser
 // starts. Whether that refusal is itself a defect is outside what this drive
@@ -396,15 +392,6 @@ const asBig = (v) => {
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
-/** The custom error a viem revert decoded to, or null. */
-const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
-/** Whether the node ANSWERED with a revert, decoded or not (an outage is not one). */
-const isRevert = (err) => Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError'));
-/** `ownerOf` answering that the token does not exist (a burned position).
- *  Only that decoded error counts: any other revert, broken routing included,
- *  establishes nothing about the position (#2505 r29). */
-const isNonexistentToken = (err) =>
-  err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName === 'ERC721NonexistentToken';
 const PLAN = SUBMIT_CLAIM
   ? createWritePlan([
       {
@@ -467,15 +454,10 @@ const claimHash = () => claimStep()?.record?.hash ?? null;
 // This wallet's nonce BEFORE any browser activity (#2505 r25): every run the
 // plan did not let write is settled against it (`noWriteSettlement.mjs`).
 let nonceAtStart;
-let windowStart;
 try {
   const base = await nonceBaseline(pub, WALLET);
   if (base.blocked) await blocked(`${ROLE} ${base.blocked}`);
   nonceAtStart = base.nonce;
-  // The first block of the window the settlement reads the chain's own
-  // events over (#2505 r42), by number and hash so a reorganisation across
-  // it is detected rather than read as a quiet chain (#2505 r46).
-  windowStart = await blockMark(pub);
 } catch (err) {
   await blocked('the direct RPC could not read the wallet nonce at startup', err);
 }
@@ -508,15 +490,6 @@ const rpc = watchPageRpc(page);
 // non-read method sent on it is OBSERVED here, not prevented, and counts
 // as a violation exactly like a refused request.
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
-// The page's own sanctions read for this wallet, off the wire (#2505 r37).
-// It is the lender claim's one chain gate before the wallet: the app re-screens
-// the wallet live and then hands the transaction straight to it (viem sends a
-// JSON-RPC account's transaction without estimating), so a paused protocol
-// still reaches the gate. When the page withholds the claim, this is what it
-// was told, which the endpoint reads alone cannot show: a flag set and cleared
-// between them is visible here and nowhere else.
-const pageSanctions = createReadLedger({ flag: watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET) });
-attachLedger(page, pageSanctions, READ_METHODS);
 // JSON-RPC answers that arrive on the page's WebSockets (wagmi prefers a
 // configured WSS transport), counted in the same window as `rpc`'s HTTP
 // answers so a socket-served page is never read as "answered nothing".
@@ -603,76 +576,6 @@ async function blockPre(why, err = null) {
   throw new Held(err ? `${why} (${err?.shortMessage ?? err?.message ?? err})` : why);
 }
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
-/**
- * Whether the loan is still the one this drive judges (#2505). A lender
- * claim made elsewhere during the drive can legitimately settle the loan or
- * clear the lender's claim, and a transfer of the lender position moves the
- * claim to another wallet; the page then states the new truth, which judged
- * against the startup snapshot reads as a FAIL. Returns `{ moved }` naming
- * what changed, `{ unknown }` when the re-read got no answer (an outage says
- * nothing about the loan), or `{}` when nothing moved.
- */
-async function lifecycleNow(cutoff = null) {
-  // At the browser's close when the settlement gives one, not the head: a
-  // move after it cannot explain what the page did (#2505 r46).
-  const at = cutoff?.number;
-  // Every read settles on its own and every fact is judged from whichever
-  // reads answered (#2505): a move any of them shows wins over a sibling that
-  // got no answer. The holder is asked by the startup token id when the loan
-  // read is unanswered — a loan's position NFTs never change id.
-  const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
-  const [loanR, claimR, simR] = await Promise.all([
-    settle(read('getLoanDetails', [LOAN_ID], at)),
-    // The FULL claim, not getClaimableAmount: a payout held entirely in
-    // heldForLender reads amount 0 there and is still claimable (#2505 r14).
-    settle(read('getClaimable', [LOAN_ID, true], at)),
-    // The chain's own answer to the claim itself (#2505 r34): a simulation of
-    // `claimAsLender` from this wallet. Every gate the contract applies (a
-    // pause, a sanctions flag, the holder check, a claim already collected)
-    // then shows as the revert it is, without this drive listing the gates.
-    settle(pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET, blockNumber: at })),
-  ]);
-  const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId], at));
-  const why = [];
-  const unanswered = [];
-  if (simR.err) {
-    // At startup the chain accepted this exact call, so a refusal now is a
-    // change the drive measured.
-    if (isRevert(simR.err)) why.push(`the chain accepted claimAsLender at startup and now refuses it (${revertName(simR.err) ?? simR.err?.shortMessage ?? simR.err?.message})`);
-    else unanswered.push(simR.err);
-  }
-  // The WHOLE loan record and the WHOLE lender claim against startup
-  // (#2505 r33): both change only by a transaction, so any field that
-  // changed is the loan moving, whichever of them the page reads.
-  if (loanR.err) unanswered.push(loanR.err);
-  else {
-    const changed = changedFields(loan, loanR.value, LOAN_BOOKKEEPING_FIELDS);
-    if (changed.length > 0) why.push(`the loan record changed since startup (${changed.map((k) => `${k} ${loan[k]} → ${loanR.value[k]}`).join(', ')})`);
-  }
-  if (claimR.err) unanswered.push(claimR.err);
-  else {
-    const changed = changedFields(claimAtStart, claimR.value);
-    if (changed.length > 0) why.push(`the lender claim changed since startup (field(s) ${changed.join(', ')})`);
-    // ClaimFacet.getClaimable's own actionable predicate:
-    // !claimed && (amount > 0 || assetType != ERC20 || heldForLender > 0 || hasRentalNftReturn).
-    const [, lAmount, lClaimed, assetType, , , heldForLender, hasRentalNftReturn] = claimR.value;
-    const actionable = lAmount > 0n || Number(assetType) !== 0 || heldForLender > 0n || hasRentalNftReturn === true;
-    if (lClaimed || !actionable) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
-  }
-  if (holderR.err) {
-    // The node ANSWERED that the token has no owner: the position is gone (a
-    // claim made elsewhere burns it), which is a fact, not an outage.
-    if (isNonexistentToken(holderR.err)) why.push('the lender position no longer exists');
-    else unanswered.push(holderR.err);
-  } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
-    why.push(`the lender position is now held by ${holderR.value}`);
-  }
-  // Every unanswered read is named alongside a move too (#2505 r20).
-  const gaps = unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e));
-  if (why.length > 0) return { moved: [...why, ...(gaps.length ? [`${gaps.length} other read(s) got no answer (${gaps.join('; ')})`] : [])].join(', ') };
-  if (unanswered.length > 0) return { unknown: unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e)).join('; ') };
-  return {};
-}
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
 /** Set when the driver armed the plan for its own claim click. */
@@ -689,9 +592,10 @@ try {
   }
   await ensureConnected(page);
   if (!(await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
-    // A FAIL only if the loan did not move while the list loaded (#2505): a
-    // claim made elsewhere or a transferred position rightly removes it.
-    throw new Suspect(`the loan's /claims row did not render`);
+    // Not established, never a FAIL (#2505 r48): a claim made elsewhere or a
+    // transferred position rightly removes it, and the page shows nothing
+    // that says which.
+    throw new Suspect(`the loan's /claims row did not render`, { row: 'claimRow', key: 'oneRow', label: 'exactly one /claims row links to this loan' });
   }
   // One loan, one card: a duplicate would misstate the wallet's claimable
   // funds, and every check below reads a single row.
@@ -769,13 +673,13 @@ try {
     if ((back?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${back.status()} on the way back`);
     const rowBack = await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false);
     if (!rowBack) {
-      // The same two preconditions the first load is held to (#2505): an
-      // RPC that answered nothing in this window means the list was never
-      // observed, and a loan that moved meanwhile has rightly left it.
+      // The same two outcomes the first load has (#2505): an RPC that
+      // answered nothing in this window means the list was never observed;
+      // otherwise a loan that moved meanwhile may have rightly left it.
       if ((await answered()) === 0) {
         await blockPre('the page RPC answered nothing while /claims reloaded, so its row was never observed');
       }
-      throw new Suspect(`the loan's /claims row did not render on the way back`);
+      throw new Suspect(`the loan's /claims row did not render on the way back`, { row: 'claimRow', key: 'oneRow', label: 'exactly one /claims row links to this loan, on the way back' });
     }
   }
 
@@ -789,10 +693,9 @@ try {
     // The position page states the same line above its claim button.
     const claimButton = page.getByRole('button', { name: /^claim my funds$/i }).first();
     // A row seen on /claims can be stale, or the loan can move after it
-    // rendered (#2505): a missing button is judged only once the loan is
-    // known not to have moved.
+    // rendered (#2505), so a missing button is not established, never a FAIL.
     if (!(await claimButton.waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
-      throw new Suspect('the position page showed no "Claim my funds" button');
+      throw new Suspect('the position page showed no "Claim my funds" button', { row: 'positionLine', key: 'note', label: 'the position page shows its claim button and line' });
     }
     // The button renders before the payout line loads ("checking the exact
     // amount…"), so the line is waited for: a read taken with the button
@@ -858,7 +761,6 @@ try {
     // starts the app's transaction and receipt reads, and a request already
     // in flight at a reset is not counted in the new window.
     resetWindow();
-    const clickedAt = Date.now();
     PLAN.arm(ROLE);
     armedOnce = true;
     await claimButton.click();
@@ -883,27 +785,10 @@ try {
     PLAN.close();
     // Armed and clicked, and nothing reached the wallet: the page may rightly
     // have withheld the claim (its own pre-wallet checks refuse a paused or
-    // flagged claim), so this is a FAIL only if the settlement's re-read,
-    // which asks the chain the same question, finds the claim still
-    // executable (#2505 r34). Nothing after it is judged: no payout or list
-    // change is expected of a claim that was never sent.
+    // flagged claim), and nothing it showed says whether it did, so this is
+    // not established, never a FAIL (#2505 r48). Nothing after it is judged:
+    // no payout or list change is expected of a claim that was never sent.
     if (!wrote()) {
-      // What the page itself was told, by a read it started after the click:
-      // flagged means the page withheld the claim on the chain's own answer
-      // at that moment, which is the app working. Startup and the verdict
-      // both read the wallet clear, so the flag came and went in between, or
-      // the page's provider was stale; either way nothing was tested.
-      // ANY flagged answer since the click, not the latest: the read that
-      // stopped the claim can be followed by a refresh that answers clear
-      // once the flag is lifted, and that later answer did not decide
-      // anything (#2505 r39). And only the SUBMIT-TIME screen
-      // (`assertWalletNotSanctionedLive`, an unpinned read at `latest`), never
-      // the banner's periodic snapshot (pinned to a block number): a
-      // background refresh flagged after an unrelated failure to submit did
-      // not take part in the attempt (#2505 r44).
-      if (pageSanctions.entries.some((e) => e.kind === 'flag' && e.block === 'latest' && e.startedAt >= clickedAt && e.answered === true && e.value === true)) {
-        throw new Held(`the page withheld the claim because its submit-time isSanctionedAddress read for ${WALLET}, started after the click, answered flagged; the chain allowed this wallet's claim at startup (its simulation passes only for an unflagged caller), so the flag changed during the drive or the page's provider was stale, and the claim was not tested`);
-      }
       throw new Suspect('the page sent no claim after its claim was clicked', {
         row: 'writeDiscipline',
         key: 'planned',
@@ -1064,10 +949,9 @@ try {
 }
 // ── Settlement (noWriteSettlement.mjs) ─────────────────────────────────
 // One order for every run: the browser is closed first, so the page can add
-// no error, refusal or send after its ledgers are judged; the lifecycle is
-// re-read once; this wallet's nonce is read last. A run the plan did not
-// let write is then BLOCKED, FAIL or UNDETERMINED by one
-// rule, whatever path stopped it.
+// no error, refusal or send after its ledgers are judged; this wallet's nonce
+// is read last. A run the plan did not let write is then BLOCKED, FAIL or
+// UNDETERMINED by one rule, whatever path stopped it.
 const settled = await settleRun({
   closeBrowser: done,
   judgeLedgers: () => {
@@ -1086,32 +970,17 @@ const settled = await settleRun({
     );
   },
   wrotePlan: wrote,
-  factsNow: lifecycleNow,
   pub,
   wallet: WALLET,
   baseline: nonceAtStart,
-  // A change that came and went between the endpoint reads (a transfer away
-  // and back, a pause lifted again) shows only here (#2505 r42).
-  activity: (cutoff) =>
-    loanActivity({
-      pub,
-      diamond: DIAMOND,
-      abi: DIAMOND_ABI,
-      // Strictly after the startup mark (a log in that block cannot be dated
-      // against the startup reads, and the endpoint comparison covers it,
-      // #2505 r43), up to the browser's close (#2505 r46).
-      start: windowStart,
-      cutoff,
-      loanId: LOAN_ID,
-      gates: CLAIM_GATE_EVENTS,
-      tokenIds: [loan.lenderTokenId, loan.borrowerTokenId],
-      wallets: [WALLET],
-      assets: [loan.principalAsset, loan.collateralAsset, loan.prepayAsset].filter(Boolean),
-    }),
 });
 const resolved = resolveSettlement({ settled, held, stopped, suspect, findings: failedCount(), subject: `loan ${LOAN_ID}'s claim` });
 if (resolved.blocked) await blocked(resolved.blocked);
-if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.check.label, false, suspect.check.detail ?? '');
+// A suspect is NOT ESTABLISHED, never a failed check (#2505 r48).
+if (resolved.undetermined) {
+  const u = resolved.undetermined;
+  unsettled(u.row, u.key, `${u.label}: ${u.why}${u.detail ? ` (${u.detail})` : ''}; something outside the page may explain it and this drive cannot rule that out`);
+}
 // Armed, clicked, provably nothing sent, and nothing that explains it: the
 // page did not send the claim it was asked for (a duplicate is refused by
 // construction, and a send through any other connector never reaches the
