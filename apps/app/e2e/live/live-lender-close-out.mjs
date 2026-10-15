@@ -845,6 +845,9 @@ try {
     .then(() => submit.isEnabled())
     .catch(() => false);
   const label = enabled ? ((await submit.getAttribute('aria-label')) ?? (await submit.innerText())).replace(/\s+/g, ' ').trim() : '';
+  // A button that did not come up ready is first checked against the chain:
+  // the card may rightly have withdrawn it for a loan that moved (#2505 r19).
+  if (!enabled || label !== FC.submit) await blockIfIneligible('while the close-out button was awaited');
   check('card', 'submit', 'the close-out button is shown, enabled and labelled as the close-out', enabled && label === FC.submit, `label "${label}"`);
   await shot(`lender-close-out-card-${LOAN_ID}`);
 
@@ -965,6 +968,19 @@ try {
   PLAN?.close();
   if (err instanceof Held) {
     held = err.message;
+  } else if (!wrote() && preSendFails() === 0) {
+    // An unexpected stop before any write with nothing recorded — typically a
+    // UI wait that ran out — is judged against the chain first (#2505 r19):
+    // the page may rightly have withdrawn a close-out whose precondition
+    // moved, so a move or an unreadable precondition holds the run (BLOCKED
+    // once the nonce is reconciled). Only an unmoved loan leaves it a stop.
+    const now = await eligibleAt(null);
+    if (now.ok) stopped = err.message;
+    else {
+      held = now.unknown
+        ? `the drive stopped (${err.message}) and loan ${LOAN_ID}'s eligibility could not be re-read, so whether it moved is unknown (${now.unknown})`
+        : `the drive stopped (${err.message}) after loan ${LOAN_ID} moved (block ${now.block}): ${now.why}`;
+    }
   } else {
     stopped = err.message;
   }

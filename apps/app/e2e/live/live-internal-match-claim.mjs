@@ -952,6 +952,12 @@ try {
     // claim was armed it is never BLOCKED: the claim may have gone out, so
     // the drive falls through to the chain reconciliation below.
     await blockPre('the page RPC answered nothing while the drive waited', err);
+  } else if (!armedOnce && preClaimFails() === 0) {
+    // An unexpected stop before the claim with nothing recorded — typically
+    // a UI wait that ran out — is judged against the chain first (#2505
+    // r19): a loan that moved meanwhile, or one whose state cannot be
+    // re-read, is BLOCKED; only an unmoved loan leaves it a stop.
+    await blockIfLifecycleMoved(`when the drive stopped (${err.message})`);
   }
   console.log(`STOP  ${stopped}`);
 }
