@@ -585,8 +585,11 @@ async function gate(method, params) {
     }
     if (previewVerdict !== 'sale') PLAN.close();
   }
-  // The eligibility once more, AFTER the awaited simulations (#2505 r14).
-  if (judging) {
+  // The eligibility once more, AFTER the awaited simulations (#2505 r14),
+  // only for a request that previewed as a sale: a route that did not sell is
+  // already the app's failure, judged at confirm, and a later move cannot
+  // excuse it (#2505 r17).
+  if (judging && previewVerdict === 'sale') {
     const heldAfter = await holdIfIneligible(params, estimated);
     if (heldAfter) return heldAfter;
   }
