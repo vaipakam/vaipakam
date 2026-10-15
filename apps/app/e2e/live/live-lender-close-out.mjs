@@ -245,12 +245,23 @@ let lenderHolder;
 let enabledAdapters;
 let nowSec;
 let graceEnd;
+/** The enabled roster as `index:address` pairs, so a venue removed and a
+ *  different one added into the same slot (the array compacts on removal)
+ *  reads as the change it is (#2505). */
+const rosterKey = (adapters, disabled) =>
+  adapters
+    .map((a, i) => (disabled[i] === false ? `${i}:${String(a).toLowerCase()}` : null))
+    .filter((x) => x !== null)
+    .join(',');
+/** The roster the drive started from; the gate re-reads `enabledAdapters`. */
+let startupRoster;
 try {
   loan = await read('getLoanDetails', [LOAN_ID]);
   lenderHolder = await read('ownerOf', [loan.lenderTokenId]);
   const adapters = await read('getSwapAdapters');
   const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
   enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
+  startupRoster = rosterKey(adapters, disabled);
   nowSec = (await pub.getBlock()).timestamp;
   const end = loan.startTime + loan.durationDays * 86_400n;
   // The same lookup DefaultedFacet uses (ConfigFacet.getEffectiveGraceSeconds).
@@ -268,8 +279,6 @@ if (nowSec <= graceEnd) {
   console.log(`chain: loan ${LOAN_ID} Active, past grace by ${((nowSec - graceEnd) / 86_400n).toString()} day(s); ${enabledAdapters.size} enabled adapter(s)`);
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
-/** The roster the drive started from; the gate re-reads `enabledAdapters`. */
-const startupEnabled = new Set(enabledAdapters);
 
 /** The facts the card's readiness rests on, at one block: still Active,
  *  past grace, the lender position held by this wallet, and the same
@@ -300,15 +309,14 @@ async function eligibleAt(blockNumber) {
     read('getEffectiveGraceSeconds', [l.durationDays], at),
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
-    // disabled, or one venue swapped for another the app cannot ask — can
+    // disabled, or one venue replaced by another the app cannot ask, even in
+    // the same slot — can
     // leave it declaring a routable sale that no longer is. Any change to
-    // the enabled set is a moved precondition; a count would miss a swap.
+    // the enabled roster, by index AND address, is a moved precondition.
     read('getSwapAdapters', [], at),
   ]);
   const disabledHere = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
-  const rosterKey = (set) => [...set].sort((x, y) => x - y).join(',');
-  const enabledHere = rosterKey(new Set(adapters.map((_, i) => i).filter((i) => disabledHere[i] === false)));
-  const enabledAtStart = rosterKey(startupEnabled);
+  const enabledHere = rosterKey(adapters, disabledHere);
   const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
   if (paused) why.push('the protocol is paused');
@@ -316,7 +324,7 @@ async function eligibleAt(blockNumber) {
   if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
   if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
   if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
-  if (enabledHere !== enabledAtStart) why.push(`the enabled adapters changed (at startup [${enabledAtStart}], here [${enabledHere}])`);
+  if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
   return { ok: why.length === 0, why: why.join(', '), block: b.number };
 }
 

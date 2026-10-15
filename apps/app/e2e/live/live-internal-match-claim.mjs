@@ -546,12 +546,22 @@ async function lifecycleNow() {
       read('getLoanDetails', [LOAN_ID]),
       read('getClaimableAmount', [LOAN_ID, true]),
     ]);
-    const holder = await read('ownerOf', [now.lenderTokenId]);
     const why = [];
     if (Number(now.status) !== INTERNAL_MATCHED) why.push(`status ${now.status}, no longer InternalMatched`);
     if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
-    if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`the lender position is now held by ${holder}`);
-    return why.length > 0 ? { moved: why.join(', ') } : {};
+    // Judged from what was read so far: a claim made elsewhere burns the
+    // lender NFT, so the holder lookup below would revert on exactly the
+    // race this helper exists for.
+    if (why.length > 0) return { moved: why.join(', ') };
+    try {
+      const holder = await read('ownerOf', [now.lenderTokenId]);
+      if (holder.toLowerCase() !== WALLET.toLowerCase()) return { moved: `the lender position is now held by ${holder}` };
+    } catch (err) {
+      // The node ANSWERED that the token has no owner: the position is gone.
+      if (isExecutionRevert(err)) return { moved: 'the lender position no longer exists' };
+      throw err;
+    }
+    return {};
   } catch (err) {
     return { unknown: err.shortMessage ?? err.message };
   }
