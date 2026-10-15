@@ -325,7 +325,9 @@ async function eligibleAt(blockNumber) {
     // triggerDefault itself evaluates there (#2481 r3).
     settle(read('getEffectiveGraceSeconds', [fixed.durationDays], at)),
     settle(read('ownerOf', [fixed.lenderTokenId], at)),
-    adaptersR.err ? Promise.resolve({ err: adaptersR.err }) : settle(Promise.all(adaptersR.value.map((a) => read('isSwapAdapterDisabled', [a], at)))),
+    // One settled read per adapter, so a flag that answered still counts
+    // when a sibling's does not.
+    adaptersR.err ? Promise.resolve(null) : Promise.all(adaptersR.value.map((a) => settle(read('isSwapAdapterDisabled', [a], at)))),
   ]);
   const why = [];
   const unanswered = [];
@@ -348,11 +350,26 @@ async function eligibleAt(blockNumber) {
     why.push(`lender position held by ${holderR.value}`);
   }
   let enabled = null;
-  if (disabledR.err) unanswered.push(disabledR.err);
+  if (adaptersR.err) unanswered.push(adaptersR.err);
   else {
-    const enabledHere = rosterKey(adaptersR.value, disabledR.value);
-    if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
-    enabled = new Set(adaptersR.value.map((_, i) => i).filter((i) => disabledR.value[i] === false));
+    const flagErr = disabledR.find((r) => r.err);
+    if (!flagErr) {
+      const flags = disabledR.map((r) => r.value);
+      const enabledHere = rosterKey(adaptersR.value, flags);
+      if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
+      enabled = new Set(adaptersR.value.map((_, i) => i).filter((i) => flags[i] === false));
+    } else {
+      // Some flags unanswered: any answered slot that differs from startup
+      // (enabled now and not then, or the reverse) is already a change.
+      const startupSlots = new Set(startupRoster ? startupRoster.split(',') : []);
+      const changed = adaptersR.value.some((a, i) => {
+        if (disabledR[i].err) return false;
+        const slot = `${i}:${String(a).toLowerCase()}`;
+        return (disabledR[i].value === false) !== startupSlots.has(slot);
+      });
+      if (changed) why.push(`the enabled adapters changed (at startup [${startupRoster}]; a slot answered differently here)`);
+      else unanswered.push(flagErr.err);
+    }
   }
   if (why.length === 0 && unanswered.length > 0) throw unanswered[0];
   if (unanswered.length > 0) why.push(`another read got no answer (${unanswered[0]?.shortMessage ?? unanswered[0]?.message})`);
@@ -436,14 +453,18 @@ const holdSend = (params, gateEnabled = null) => {
   // The app builds its route from the roster it read at confirm time, so a
   // held close-out whose roster moved may name an index enabled only at the
   // gate's block: either set identifies the planned request.
+  // Compared whole against each roster in turn, never against their union: a
+  // route mixing indices from both is valid under neither.
   const startupEnabled = enabledAdapters;
-  if (gateEnabled) enabledAdapters = new Set([...startupEnabled, ...gateEnabled]);
-  let planned;
-  try {
-    planned = Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
-  } finally {
-    enabledAdapters = startupEnabled;
-  }
+  const matchesUnder = (set) => {
+    enabledAdapters = set;
+    try {
+      return Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
+    } finally {
+      enabledAdapters = startupEnabled;
+    }
+  };
+  const planned = matchesUnder(startupEnabled) || (gateEnabled !== null && matchesUnder(gateEnabled));
   if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
