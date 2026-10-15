@@ -5,7 +5,7 @@
  * selector, loan 23 with a decoded `IlliquidLoanNoRiskMath`.
  */
 import { describe, expect, it } from 'vitest';
-import { classifyHfReadFailure } from '../src/hfRevert';
+import { classifyHfReadFailure, hasNoHealthFactorByDesign } from '../src/hfRevert';
 
 describe('classifyHfReadFailure', () => {
   it('an illiquid loan is expected, by decoded name or by message', () => {
@@ -26,6 +26,18 @@ describe('classifyHfReadFailure', () => {
       ),
     ).toBe('noPriceFeed');
     expect(classifyHfReadFailure({ data: { errorName: 'NoPriceFeed' } })).toBe('noPriceFeed');
+  });
+
+  it('a zero-collateral rental (InvalidLoan on an active id) has no health factor by design (Base Sepolia and BNB Testnet loan 4)', () => {
+    expect(
+      classifyHfReadFailure(
+        new Error('ContractFunctionExecutionError: The contract function "calculateHealthFactor" reverted.\nError: InvalidLoan()'),
+      ),
+    ).toBe('zeroCollateral');
+    expect(classifyHfReadFailure({ data: { errorName: 'InvalidLoan' } })).toBe('zeroCollateral');
+    expect(hasNoHealthFactorByDesign('zeroCollateral')).toBe(true);
+    expect(hasNoHealthFactorByDesign('illiquid')).toBe(true);
+    expect(hasNoHealthFactorByDesign('noPriceFeed')).toBe(false);
   });
 
   it('anything else is a gap, never silently skipped', () => {

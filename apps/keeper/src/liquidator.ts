@@ -36,7 +36,7 @@
  */
 
 import { createPublicClient, http, type Abi, type Address } from 'viem';
-import { classifyHfReadFailure } from './hfRevert';
+import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { MULTICALL3_ADDRESS } from './multicall3';
@@ -341,7 +341,9 @@ async function liquidatePassForChain(
 }
 
 /**
- * Is this HF-read failure the EXPECTED illiquid revert rather than a gap?
+ * Is this HF-read failure an EXPECTED no-health-factor revert rather than a
+ * gap? Illiquid loans, and zero-collateral NFT rentals (`InvalidLoan` on an
+ * active id), have none by design (src/hfRevert.ts).
  *
  * Illiquid loans have no oracle and deliberately revert
  * `IlliquidLoanNoRiskMath`; they are covered by calendar rows, not by HF
@@ -351,7 +353,8 @@ async function liquidatePassForChain(
  * the r18 finding, in a new place. Only unrecognised failures count.
  */
 function isIlliquidRevert(err: unknown): boolean {
-  return classifyHfReadFailure(err) === 'illiquid';
+  // Illiquid, or a zero-collateral rental: no health factor by design.
+  return hasNoHealthFactorByDesign(classifyHfReadFailure(err));
 }
 
 /**
