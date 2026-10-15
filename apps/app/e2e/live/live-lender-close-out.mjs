@@ -62,7 +62,7 @@ import {
   READ_METHODS,
   watchPageRpc,
 } from './driver.mjs';
-import { is, optional } from './expectedPayload.mjs';
+import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
@@ -301,7 +301,10 @@ async function eligibleAt(blockNumber) {
   const why = [];
   let enabled = null;
   try {
-    const [l, b, paused, sequencerOk] = await Promise.all([
+    // Settled one by one, so a sibling that gets no answer cannot hide a fact
+    // another read established; the first unanswered read then stops the
+    // walk below, with what is known.
+    const [lr, br, pausedR, seqR] = await Promise.allSettled([
       read('getLoanDetails', [LOAN_ID], at),
       pub.getBlock({ blockNumber: pinned }),
       // triggerDefault is whenNotPaused: an emergency pause is a moved
@@ -311,9 +314,13 @@ async function eligibleAt(blockNumber) {
       // its recovery window) — another operational precondition (#2481 r5).
       read('sequencerHealthy', [], at),
     ]);
-    if (paused) why.push('the protocol is paused');
-    if (!sequencerOk) why.push('the sequencer is not healthy');
-    if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
+    if (pausedR.status === 'fulfilled' && pausedR.value) why.push('the protocol is paused');
+    if (seqR.status === 'fulfilled' && !seqR.value) why.push('the sequencer is not healthy');
+    if (lr.status === 'fulfilled' && Number(lr.value.status) !== ACTIVE) why.push(`status ${lr.value.status}`);
+    const firstUnanswered = [lr, br, pausedR, seqR].find((r) => r.status === 'rejected');
+    if (firstUnanswered) throw firstUnanswered.reason;
+    const l = lr.value;
+    const b = br.value;
     // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
     // an admin retune between startup and the inspected block changes what
     // triggerDefault itself evaluates there (#2481 r3).
@@ -408,8 +415,19 @@ let held = null;
  * any later request the closed plan refuses, is still judged.
  */
 const HELD_REFUSAL = 'held precondition:';
-const holdSend = () => {
+/**
+ * Only the planned close-out may be withheld this way: the request is first
+ * compared with the plan's step (its gas bound aside, since the estimate is
+ * skipped once the send is held). Any other request is refused by the closed
+ * plan, unmarked, and judged like every other refusal.
+ */
+const holdSend = (params) => {
   PLAN.close();
+  const actual = decodeTxForComparison(Array.isArray(params) ? (params[0] ?? {}) : {}, abiFor);
+  const expected = step()?.expected;
+  const withoutGas = (o) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => k !== 'gas'));
+  const planned = Boolean(expected) && structMismatches(withoutGas(expected), withoutGas(actual)).length === 0;
+  if (!planned) return null;
   return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
 async function previewSale(tx) {
@@ -442,14 +460,17 @@ async function gate(method, params) {
     // whether it moved is then unknown.
     try {
       const e = await eligibleAt(null);
-      if (e.enabled !== null) enabledAdapters = e.enabled;
+      // The route bound follows the roster only while it is unmoved, so a
+      // held request is still compared with the set the drive started from.
+      if (e.ok && e.enabled !== null) enabledAdapters = e.enabled;
       if (!e.ok) movedAtGate = `at block ${e.block}: ${e.why}`;
     } catch (err) {
       movedAtGate = `unknown: the eligibility could not be re-read at signing (${err.shortMessage ?? err.message})`;
     }
     if (movedAtGate !== null) {
       console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
-      return holdSend();
+      const heldRefusal = holdSend(params);
+      if (heldRefusal) return heldRefusal;
     }
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
@@ -474,7 +495,10 @@ async function gate(method, params) {
     console.log(`GATE  independent preview of the requested route: ${previewVerdict}`);
     // An unrunnable preview is a held precondition; any other non-sale is
     // the app's route, judged at confirm.
-    if (previewVerdict === 'unknown') return holdSend();
+    if (previewVerdict === 'unknown') {
+      const heldRefusal = holdSend(params);
+      if (heldRefusal) return heldRefusal;
+    }
     if (previewVerdict !== 'sale') PLAN.close();
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
@@ -844,6 +868,13 @@ if (armedOnce && !wrote()) {
     escapeUnknown = `the plan allowed no send, and the direct RPC could not read the wallet nonce or the loan (${err.message}) — a send through another connector cannot be ruled out`;
   }
 }
+// The final eligibility read is taken BEFORE the page's ledgers are judged:
+// the page keeps running while it is awaited, so an error or a refused
+// request it records meanwhile lands in the checks below rather than after.
+const finalEligibility =
+  !wrote() && !escaped && !writeUnknown && stopped === null && held === null
+    ? await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }))
+    : null;
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // A held run's unconsumed step, and the gate's marked refusal of the one
 // request it withheld, are not findings (`HELD_REFUSAL`); every other refusal
@@ -875,8 +906,8 @@ const wroteAny = wrote() || escaped || writeUnknown;
 // re-read a change made after the card's snapshot would meet.
 if (!wroteAny && failedCount() === 0 && stopped === null) {
   let why = held;
-  if (why === null) {
-    const now = await eligibleAt(null).catch((err) => ({ ok: false, unknown: err.shortMessage ?? err.message }));
+  if (why === null && finalEligibility !== null) {
+    const now = finalEligibility;
     if (now.unknown) why = `the direct RPC could not re-read loan ${LOAN_ID}'s eligibility before the verdict, so whether it moved is unknown (${now.unknown})`;
     else if (!now.ok) why = `loan ${LOAN_ID} moved before the verdict (block ${now.block}): ${now.why}`;
   }

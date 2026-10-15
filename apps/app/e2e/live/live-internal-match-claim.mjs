@@ -541,30 +541,37 @@ const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
  * nothing about the loan), or `{}` when nothing moved.
  */
 async function lifecycleNow() {
-  try {
-    const [now, [, lAmount, lClaimed]] = await Promise.all([
-      read('getLoanDetails', [LOAN_ID]),
-      read('getClaimableAmount', [LOAN_ID, true]),
-    ]);
-    const why = [];
-    if (Number(now.status) !== INTERNAL_MATCHED) why.push(`status ${now.status}, no longer InternalMatched`);
+  // Each read settles on its own (#2505): one that gets no answer must not
+  // hide a move another read already established. A fact the chain answered
+  // decides; only when nothing moved and something went unanswered is the
+  // lifecycle unknown.
+  const [loanRead, claimRead] = await Promise.allSettled([
+    read('getLoanDetails', [LOAN_ID]),
+    read('getClaimableAmount', [LOAN_ID, true]),
+  ]);
+  const why = [];
+  const unanswered = [];
+  if (loanRead.status === 'fulfilled') {
+    if (Number(loanRead.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanRead.value.status}, no longer InternalMatched`);
+  } else unanswered.push(loanRead.reason);
+  if (claimRead.status === 'fulfilled') {
+    const [, lAmount, lClaimed] = claimRead.value;
     if (lClaimed || lAmount === 0n) why.push(`the lender claim is ${lClaimed ? 'already collected' : 'empty'}`);
-    // Judged from what was read so far: a claim made elsewhere burns the
-    // lender NFT, so the holder lookup below would revert on exactly the
-    // race this helper exists for.
-    if (why.length > 0) return { moved: why.join(', ') };
-    try {
-      const holder = await read('ownerOf', [now.lenderTokenId]);
-      if (holder.toLowerCase() !== WALLET.toLowerCase()) return { moved: `the lender position is now held by ${holder}` };
-    } catch (err) {
-      // The node ANSWERED that the token has no owner: the position is gone.
-      if (isExecutionRevert(err)) return { moved: 'the lender position no longer exists' };
-      throw err;
-    }
-    return {};
+  } else unanswered.push(claimRead.reason);
+  // Judged from what was read so far: a claim made elsewhere burns the
+  // lender NFT, so the holder lookup below would revert on exactly the race
+  // this helper exists for.
+  if (why.length > 0) return { moved: why.join(', ') };
+  if (unanswered.length > 0) return { unknown: unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e)).join('; ') };
+  try {
+    const holder = await read('ownerOf', [loanRead.value.lenderTokenId]);
+    if (holder.toLowerCase() !== WALLET.toLowerCase()) return { moved: `the lender position is now held by ${holder}` };
   } catch (err) {
+    // The node ANSWERED that the token has no owner: the position is gone.
+    if (isExecutionRevert(err)) return { moved: 'the lender position no longer exists' };
     return { unknown: err.shortMessage ?? err.message };
   }
+  return {};
 }
 /**
  * The moved-precondition rule (#2505), in one place. When the loan moved, or
@@ -573,8 +580,8 @@ async function lifecycleNow() {
  * drive stops (the shared verdict then reports the failure, with this as its
  * stop reason). With nothing recorded, the run is BLOCKED.
  */
-async function blockIfLifecycleMoved(when) {
-  const l = await lifecycleNow();
+async function blockIfLifecycleMoved(when, reading = null) {
+  const l = reading ?? (await lifecycleNow());
   if (!l.moved && !l.unknown) return;
   const why = l.moved
     ? `loan ${LOAN_ID} moved ${when} — ${l.moved}`
@@ -599,7 +606,13 @@ try {
     await blocked(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`, null, done);
   }
   await ensureConnected(page);
-  await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+  if (!(await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 }).then(() => true, () => false))) {
+    // The row's absence is judged only once the loan is known not to have
+    // moved while the list loaded (#2505): a claim made elsewhere or a
+    // transferred position rightly removes it.
+    await blockIfLifecycleMoved('while /claims loaded');
+    throw new Error(`the loan's /claims row did not render`);
+  }
   // One loan, one card: a duplicate would misstate the wallet's claimable
   // funds, and every check below reads a single row.
   const rowCount = await rowFor().count();
@@ -928,6 +941,10 @@ try {
   }
   console.log(`STOP  ${stopped}`);
 }
+// The final lifecycle read is taken BEFORE the page's ledgers are judged: the
+// page keeps running while it is awaited, so an error or a refused request
+// it records meanwhile lands in the checks below rather than after them.
+const finalLifecycle = !wrote() && !armedOnce && stopped === null ? await lifecycleNow() : null;
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
 // session: the plan's refusals, the chain pin's (recorded at the wallet
@@ -985,7 +1002,9 @@ const wroteAny = wrote() || armedOnce;
 // A failure already recorded, or a stop the drive already hit, stands
 // whatever moved afterwards, and after a write the loan moved because of this
 // drive, so none of them is asked.
-if (!wroteAny && preClaimFails() === 0 && stopped === null) await blockIfLifecycleMoved('before the verdict');
+if (!wroteAny && preClaimFails() === 0 && stopped === null && finalLifecycle !== null) {
+  await blockIfLifecycleMoved('before the verdict', finalLifecycle);
+}
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {
