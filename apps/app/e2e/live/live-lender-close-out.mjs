@@ -288,6 +288,27 @@ if (nowSec <= graceEnd) {
   console.log(`chain: loan ${LOAN_ID} Active, past grace by ${((nowSec - graceEnd) / 86_400n).toString()} day(s); ${enabledAdapters.size} enabled adapter(s)`);
 }
 if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap adapter — a sale close-out cannot be routed');
+// The lender position's lock (#2505 r25): an in-flight lifecycle on it — an
+// accepted or listed sale above all — makes the page withhold the close-out
+// (it unmounts the card for an accepted sale) while every other fact here
+// reads unchanged. A locked position is not the shape this drive judges, and
+// a lock appearing later is a moved precondition.
+let startupLock;
+try {
+  startupLock = Number(await read('positionLock', [loan.lenderTokenId]));
+} catch (err) {
+  await blocked("the direct RPC could not read the lender position's lock", err);
+}
+if (startupLock !== 0) await blocked(`loan ${LOAN_ID}'s lender position is locked (LibERC721.LockReason ${startupLock}): a lifecycle on it is in flight, so the page may rightly withhold the close-out`);
+// This wallet's nonce BEFORE any browser activity (#2505 r25): a page can
+// send through another connector before the plan is ever armed, so the
+// baseline every no-write verdict is reconciled against is taken here.
+let nonceBefore = null;
+try {
+  nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+} catch (err) {
+  await blocked('the direct RPC could not read the wallet nonce at startup', err);
+}
 
 /**
  * The facts the card's readiness rests on, at one block: still Active,
@@ -342,12 +363,13 @@ async function eligibleAt(blockNumber) {
     settle(read('getSwapAdapters', [], at)),
   ]);
   const fixed = loanR.value ?? loan;
-  const [graceR, holderR, disabledR] = await Promise.all([
+  const [graceR, holderR, lockR, disabledR] = await Promise.all([
     // The grace end AT THIS BLOCK, from this block's grace schedule: an admin
     // retune between startup and the inspected block changes what
     // triggerDefault itself evaluates there (#2481 r3).
     settle(read('getEffectiveGraceSeconds', [fixed.durationDays], at)),
     settle(read('ownerOf', [fixed.lenderTokenId], at)),
+    settle(read('positionLock', [fixed.lenderTokenId], at)),
     // One settled read per adapter, so a flag that answered still counts
     // when a sibling's does not.
     adaptersR.err ? Promise.resolve(null) : Promise.all(adaptersR.value.map((a) => settle(read('isSwapAdapterDisabled', [a], at)))),
@@ -374,6 +396,14 @@ async function eligibleAt(blockNumber) {
     else unanswered.push(holderR.err);
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`lender position held by ${holderR.value}`);
+  }
+  // A lock on the lender position since startup (#2505 r25): an accepted
+  // sale leaves the loan Active and the seller its holder, yet the page
+  // withholds the close-out. A burned position is reported by the holder.
+  if (lockR.err) {
+    if (!isExecutionRevert(lockR.err)) unanswered.push(lockR.err);
+  } else if (Number(lockR.value) !== 0) {
+    why.push(`the lender position is locked (LibERC721.LockReason ${lockR.value})`);
   }
   // The roster, slot by slot against startup, so each answer counts on its
   // own (#2505 r13). The address list alone settles whether a startup slot's
@@ -695,12 +725,17 @@ const preSendFails = () => failedCount() + violationsSoFar().length + pageErrors
  * BLOCKED for a precondition met before any write, unless a failure was
  * already recorded, which stands: the drive then stops there and the verdict
  * is FAIL (#2505 r14). Every pre-write BLOCKED exit goes through here.
+ *
+ * It holds the run rather than exiting (#2505 r25): a held run reaches the
+ * verdict only after this wallet's nonce is reconciled against its startup
+ * baseline, so a send the page made through another connector is a gate
+ * escape, never hidden behind a BLOCKED that says nothing was sent.
  */
 async function blockPre(why, err = null) {
   if (preSendFails() > 0) {
     throw new Error(`${why}; nothing after it is judged, and the ${preSendFails()} failure(s) recorded before it stand`);
   }
-  await blocked(why, err, done);
+  throw new Held(err ? `${why} (${describeErr(err)})` : why);
 }
 /**
  * The moved-precondition rule before a pre-send judgement (#2505): when the
@@ -717,8 +752,6 @@ async function blockIfIneligible(when) {
 }
 let stopped = null;
 let armedOnce = false;
-/** This wallet's pending nonce just before the arm. */
-let nonceBefore = null;
 /** The outcome, read from the chain by the hash the wallet returned. */
 async function judgeOutcome(hash) {
   // ROOT RULE (#2481 r6): the app is judged at the point it asks to sign —
@@ -910,13 +943,8 @@ try {
       receiptText.slice(0, 160),
     );
     if (preSendFails() > 0) throw new Error('a check failed or a request was refused before the close-out; not sending');
-    // The wallet's nonce before the arm: the only evidence that ties a later
-    // state change to THIS wallet rather than to a keeper (#2481 r1).
-    try {
-      nonceBefore = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
-    } catch (err) {
-      await blockPre('the direct RPC could not read the wallet nonce before the close-out', err);
-    }
+    // The nonce baseline, taken at startup, is the only evidence that ties a
+    // later state change to THIS wallet rather than to a keeper (#2481 r1).
     PLAN.arm(ROLE);
     armedOnce = true;
     await confirm.click();
@@ -1037,10 +1065,12 @@ try {
 // change is a race, stated, not an escape.
 let escaped = false;
 let escapeUnknown = null;
-/** The plan was armed, sent nothing, and the wallet's nonce could not be
- *  read: a send through another connector cannot be ruled out. */
+/** The plan sent nothing and the wallet's nonce could not be read: a send
+ *  through another connector cannot be ruled out. */
 let writeUnknown = false;
-if (armedOnce && !wrote()) {
+// Every run that wrote nothing through the plan is reconciled against the
+// startup baseline, armed or not (#2505 r25).
+if (!wrote()) {
   // The nonce decides whether this wallet wrote; the status only names a race.
   // Settled apart, so an unanswered status read cannot erase a nonce that
   // moved (#2505).

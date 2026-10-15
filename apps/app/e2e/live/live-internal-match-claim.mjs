@@ -436,6 +436,18 @@ function claimGate(method, params) {
   });
 }
 const claimHash = () => claimStep()?.record?.hash ?? null;
+// This wallet's nonce BEFORE any browser activity (#2505 r25): every BLOCKED
+// exit is reconciled against it.
+let nonceAtStart;
+try {
+  nonceAtStart = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+} catch (err) {
+  await blocked('the direct RPC could not read the wallet nonce at startup', err);
+}
+/** A send through another connector, found by a BLOCKED exit's nonce check. */
+let preArmEscape = null;
+/** A BLOCKED exit's nonce check that got no answer. */
+let preArmUnknown = null;
 const session = await launch(
   SUBMIT_CLAIM
     ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate, readOnlyEgress: true }
@@ -538,6 +550,22 @@ const preClaimFails = () => failedCount() + violationsSoFar().length + pageError
 async function blockPre(why, err = null) {
   if (preClaimFails() > 0) {
     throw new Error(`${why}; nothing after it is judged, and the ${preClaimFails()} failure(s) recorded before it stand`);
+  }
+  // A BLOCKED verdict says this wallet sent nothing, so it is reconciled
+  // against the startup nonce first (#2505 r25): a page can send through
+  // another connector before the plan is ever armed, and a move it causes
+  // must not read as a race.
+  let nonceNow;
+  try {
+    nonceNow = await pub.getTransactionCount({ address: WALLET, blockTag: 'pending' });
+  } catch (nonceErr) {
+    preArmUnknown = `the direct RPC could not read the wallet nonce, so a send through another connector cannot be ruled out (${nonceErr?.shortMessage ?? nonceErr?.message})`;
+    throw new Error(`${why}; ${preArmUnknown}`);
+  }
+  if (nonceNow > nonceAtStart) {
+    preArmEscape = `${ROLE}'s nonce moved ${nonceAtStart} → ${nonceNow}, but the write plan never allowed a send`;
+    console.log(`ESCAPE ${preArmEscape}`);
+    throw new Error(`${why}; ${preArmEscape}`);
   }
   await blocked(why, err, done);
 }
@@ -1029,7 +1057,11 @@ if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
   escapeUnknown =
     'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
 }
-const wroteAny = wrote() || armedOnce;
+// A BLOCKED exit that found the nonce moved, or could not read it, is not a
+// run that provably wrote nothing (#2505 r25).
+if (preArmEscape !== null) escaped = true;
+if (preArmUnknown !== null && escapeUnknown === null) escapeUnknown = preArmUnknown;
+const wroteAny = wrote() || armedOnce || preArmEscape !== null || preArmUnknown !== null;
 // A PASS reached before a write rests on the loan still being the one the
 // drive started from (#2505). The checks above revalidate only where a line
 // came out unexpected, and a transfer of the lender position changes no line
