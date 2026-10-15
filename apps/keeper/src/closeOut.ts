@@ -31,10 +31,8 @@
 
 import {
   encodeFunctionData,
-  keccak256,
   type Abi,
   type Address,
-  type Hex,
   type PublicClient,
   type WalletClient,
   zeroAddress,
@@ -61,8 +59,7 @@ import {
 import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import type { ServerOrchestrationResult } from './serverQuotes';
-import { SubrequestBudgetExhausted } from './subrequestBudget';
-import { withSubmissionSlot } from './submissionQueue';
+import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const LOUPE_ABI: Abi = DiamondLoupeFacetABI as Abi;
@@ -132,15 +129,9 @@ export async function attemptCloseOut(
   // A send from an earlier run may still be pending — on this loan, or on
   // another pass's. The loan then still reads Active and defaultable, and a
   // second `triggerDefault` would queue behind the first only to revert once
-  // it lands. Nothing persists between runs, so the chain is asked: while
-  // the keeper's pending nonce is ahead of its mined one, this run waits.
-  const [pendingNonce, minedNonce] = await Promise.all([
-    client.getTransactionCount({ address: keeper, blockTag: 'pending' }),
-    client.getTransactionCount({ address: keeper, blockTag: 'latest' }),
-  ]);
-  if (pendingNonce > minedNonce) {
-    return { kind: 'skipped', reason: `keeper-tx-pending (${pendingNonce - minedNonce} unmined)` };
-  }
+  // it lands. While one is unmined, this run waits.
+  const pending = await keeperTxPending(client, keeper);
+  if (pending !== null) return { kind: 'skipped', reason: pending };
 
   const loan = await readLoan(client, diamond, loanId);
 
@@ -205,42 +196,18 @@ export async function attemptCloseOut(
   if (refusal !== null) return { kind: 'skipped', reason: refusal };
   const preview = detail.preview;
 
-  // Prepared and signed here, broadcast separately: a failure up to the
-  // signature means nothing was sent, while a failure of the broadcast
-  // itself leaves the outcome unknown — the RPC may have relayed the
-  // transaction and lost the answer. The hash is known from the signed
-  // bytes either way, so the log can name it.
-  const account = wallet.account;
-  if (!account) return { kind: 'skipped', reason: 'no-keeper-account' };
-  // In the account's submission slot (#2486), so no other pass's send on
-  // this chain can take the same nonce. Once signed, the nonce stays
-  // reserved even if the broadcast fails, since it may have been relayed.
-  let tx: Hex | undefined;
-  try {
-    await withSubmissionSlot(wallet, deps.chainId, account.address, async (nonce, signed) => {
-      const request = await wallet.prepareTransactionRequest({
-        account,
-        to: diamond,
-        data: encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
-        nonce,
-        chain: undefined,
-      } as never);
-      // `chain: null`: the client is chainless, and the chain id the request
-      // was prepared with (read from the RPC) is the one signed over.
-      const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
-      tx = keccak256(serialized);
-      signed();
-      await wallet.sendRawTransaction({ serializedTransaction: serialized });
-    });
-  } catch (err) {
-    // The cap refuses BEFORE any network call, so a refused broadcast is
-    // one that definitely did not happen.
-    if (refusedByBudget(err)) throw err;
-    // Failed before signing: nothing was sent.
-    if (tx === undefined) throw err;
-    return { kind: 'unconfirmed', tx, preview, calls: calls.length, reason: describeFailure(err) };
-  }
-  return { kind: 'submitted', tx: tx!, preview, calls: calls.length };
+  // Prepared, signed and broadcast in the account's submission slot (#2486),
+  // so no other pass's send on this chain can take the same nonce. A
+  // broadcast whose answer was lost is reported as such, with its hash.
+  const sent = await sendInSubmissionSlot(
+    wallet,
+    deps.chainId,
+    diamond,
+    encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
+  );
+  return sent.kind === 'submitted'
+    ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length }
+    : { kind: 'unconfirmed', tx: sent.tx, preview, calls: calls.length, reason: sent.reason };
 }
 
 /** Null when the loan is this role's to close; otherwise the reason not to. */
@@ -271,15 +238,6 @@ function previewVerdict(
   if (detail.internalMatch) return 'preview=internal-match (left to triggerLiquidation)';
   if (!detail.defaulted) return 'preview=not-terminal (no LoanDefaulted for this loan)';
   return null;
-}
-
-/** Whether `err`, or anything in its cause chain, is the budget's refusal. */
-function refusedByBudget(err: unknown): boolean {
-  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 8; depth += 1) {
-    if (e instanceof SubrequestBudgetExhausted) return true;
-    e = (e as { cause?: unknown }).cause;
-  }
-  return false;
 }
 
 async function readLoan(

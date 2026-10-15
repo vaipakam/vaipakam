@@ -42,6 +42,7 @@ import {
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut } from './closeOut';
+import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
@@ -537,6 +538,12 @@ export async function maybeAutonomousLiquidate(
       console.log(
         `[keeper] loan=${loanId} chain=${chain.name} no-quotes (failed: ${quotes.failed.join(',')})`,
       );
+      // #2501 — `triggerLiquidation` asks the internal-match auto-dispatch
+      // before it reads the swap list, so an opposing position can still
+      // close this loan at oracle price with an empty list. Sent only when
+      // the preview shows that match; it comes first because the in-kind
+      // close below refuses an ending that is a match and leaves it here.
+      if (await tryMatchLiquidation(chain, ctx, publicClient, loanIdBig)) return true;
       // #2487 — if every venue was asked about every size and every one
       // DECLINED, and the loan is also past grace, it is still this pass's
       // (it is under water) and the grace-default pass will not touch it,
