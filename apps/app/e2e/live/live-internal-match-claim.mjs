@@ -338,6 +338,26 @@ if (rec.incomplete || rec.recordedAt === 0n) {
 if (lenderHolder.toLowerCase() !== WALLET.toLowerCase()) {
   await blocked(`loan ${LOAN_ID}'s lender position is held by ${lenderHolder}, not ${ROLE} ${WALLET}`);
 }
+/** The startup facts this drive's verdicts rest on, re-read NOW: still
+ *  InternalMatched, the lender side not yet claimed, and the lender position
+ *  still held by this wallet. Any change is a lifecycle move made outside the
+ *  drive, so it exits BLOCKED; an unreadable chain is BLOCKED too (#2512 r1). */
+async function requireUnmoved(what) {
+  let moved = null;
+  try {
+    // getClaimableAmount returns (asset, amount, claimed).
+    const [nowLoan, lenderClaim] = await Promise.all([read('getLoanDetails', [LOAN_ID]), read('getClaimableAmount', [LOAN_ID, true])]);
+    if (Number(nowLoan.status) !== INTERNAL_MATCHED) moved = `its status is now ${nowLoan.status}`;
+    else if (lenderClaim[2] === true) moved = 'the lender has already claimed';
+    else {
+      const holder = await read('ownerOf', [loan.lenderTokenId]);
+      if (holder.toLowerCase() !== WALLET.toLowerCase()) moved = `the lender position is now held by ${holder}`;
+    }
+  } catch (err) {
+    await blocked(`the direct RPC could not re-read the loan before ${what}`, err, done);
+  }
+  if (moved) await blocked(`loan ${LOAN_ID} moved while the drive ran (${moved}), so the startup facts no longer hold for ${what.replace(/^judging /, '')}`, null, done);
+}
 const fmt = (v) => `${formatTokenAmount(v, Number(decimals))} ${symbol}`;
 console.log(
   `record: principal ${fmt(rec.principal)}, interest ${fmt(rec.interest)}, late fee ${fmt(rec.lateFee)}, ` +
@@ -602,22 +622,12 @@ try {
     if (!owedText.includes(POSITIONS.owedInternalMatched) && !owedText.includes(POSITIONS.owedClosed) && (await answered()) === 0) {
       await blocked('the page RPC answered nothing while the position page loaded, so its Owed line was never observed', null, done);
     }
-    // A wrong-looking line is judged against the loan AS IT IS NOW, not the
-    // startup snapshot (#2505): a lender claim made elsewhere while this drive
-    // navigated can settle the loan, and then the settled copy is correct. A
-    // lifecycle move is BLOCKED, never a FAIL on the copy.
-    if (!owedText.includes(POSITIONS.owedInternalMatched) || owedText.includes(POSITIONS.owedClosed)) {
-      let moved = null;
-      try {
-        const [nowLoan, lenderClaimable] = await Promise.all([read('getLoanDetails', [LOAN_ID]), read('getClaimableAmount', [LOAN_ID, true])]);
-        if (Number(nowLoan.status) !== INTERNAL_MATCHED) moved = `its status is now ${nowLoan.status}`;
-        // getClaimableAmount returns (asset, amount, claimed).
-        else if (lenderClaimable[2] === true) moved = 'the lender has already claimed';
-      } catch (err) {
-        await blocked('the direct RPC could not re-read the loan to judge its Owed line', err, done);
-      }
-      if (moved) await blocked(`loan ${LOAN_ID} moved while the drive navigated (${moved}), so the startup facts no longer judge its Owed line`, null, done);
-    }
+    // EVERY Owed observation is judged against the loan AS IT IS NOW, not the
+    // startup snapshot (#2505, widened in #2512 r1): a lender claim or a
+    // transfer made elsewhere while this drive navigated can change what the
+    // page correctly shows, or consume the very position under test while the
+    // line still reads right. A lifecycle move is BLOCKED, never a verdict.
+    await requireUnmoved('judging its Owed line');
     check('owedLine', 'pending', 'the Owed line says matching closed it and it settles once claims are collected', owedText.includes(POSITIONS.owedInternalMatched));
     check('owedLine', 'notSettled', "the page does not call the loan 'closed and settled'", !owedText.includes(POSITIONS.owedClosed));
   }
@@ -636,6 +646,8 @@ try {
       .then(() => true, () => false);
     if (!rowBack) {
       if ((await answered()) === 0) await blocked('the page RPC answered nothing after returning to /claims, so the claim row could not reappear', null, done);
+      // A claim or transfer made elsewhere removes the row correctly (#2512 r1).
+      await requireUnmoved('judging the missing claim row');
       throw new Error('the claim row did not reappear on /claims');
     }
   }

@@ -243,6 +243,13 @@ const read = (functionName, args = [], extra = {}) =>
 let loan;
 let lenderHolder;
 let enabledAdapters;
+/** The adapter roster's IDENTITY: every venue, in index order, and whether it
+ *  is enabled (#2512 r1). A count cannot tell one enabled venue from another,
+ *  and the app routes only some of them (`closeOutRoute.ts` excludes venues
+ *  it cannot ask), so ANY roster change since startup is a moved precondition,
+ *  BLOCKED, rather than something this drive re-derives the app's rule for. */
+const rosterKey = (adapters, disabled) => adapters.map((a, i) => `${i}:${String(a).toLowerCase()}:${disabled[i] ? 'off' : 'on'}`).join(',');
+let startupRoster;
 let nowSec;
 let graceEnd;
 try {
@@ -251,6 +258,7 @@ try {
   const adapters = await read('getSwapAdapters');
   const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a])));
   enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
+  startupRoster = rosterKey(adapters, disabled);
   nowSec = (await pub.getBlock()).timestamp;
   const end = loan.startTime + loan.durationDays * 86_400n;
   // The same lookup DefaultedFacet uses (ConfigFacet.getEffectiveGraceSeconds).
@@ -300,6 +308,7 @@ async function eligibleAt(blockNumber) {
   ]);
   const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
   const enabledHere = disabled.filter((d) => d === false).length;
+  const rosterHere = rosterKey(adapters, disabled);
   const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
   const why = [];
   if (paused) why.push('the protocol is paused');
@@ -308,6 +317,7 @@ async function eligibleAt(blockNumber) {
   if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
   if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
   if (enabledHere === 0) why.push('no enabled swap adapter');
+  else if (startupRoster !== undefined && rosterHere !== startupRoster) why.push('the swap-adapter roster changed since startup');
   return { ok: why.length === 0, why: why.join(', '), block: b.number };
 }
 
