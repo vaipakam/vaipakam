@@ -393,8 +393,11 @@ async function eligibleAt(blockNumber) {
       if (flagErr) unanswered.push(flagErr.err);
     }
   }
-  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), enabled };
-  if (unanswered.length > 0) why.push(`another read got no answer (${describeErr(unanswered[0])})`);
+  // EVERY unanswered read is named, not only the first (#2505 r20): a reason
+  // that lists one gap implies the other facts were established.
+  const gaps = unanswered.map(describeErr).join('; ');
+  if (why.length === 0 && unanswered.length > 0) return { ...unknownAt(unanswered[0], pinned), unknown: `${unanswered.length} read(s) got no answer: ${gaps}`, enabled };
+  if (unanswered.length > 0) why.push(`${unanswered.length} other read(s) got no answer (${gaps})`);
   return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled, unknown: null };
 }
 

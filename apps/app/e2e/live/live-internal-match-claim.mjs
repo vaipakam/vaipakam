@@ -584,7 +584,9 @@ async function lifecycleNow() {
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`the lender position is now held by ${holderR.value}`);
   }
-  if (why.length > 0) return { moved: why.join(', ') };
+  // Every unanswered read is named alongside a move too (#2505 r20).
+  const gaps = unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e));
+  if (why.length > 0) return { moved: [...why, ...(gaps.length ? [`${gaps.length} other read(s) got no answer (${gaps.join('; ')})`] : [])].join(', ') };
   if (unanswered.length > 0) return { unknown: unanswered.map((e) => e?.shortMessage ?? e?.message ?? String(e)).join('; ') };
   return {};
 }
@@ -957,7 +959,13 @@ try {
     // a UI wait that ran out — is judged against the chain first (#2505
     // r19): a loan that moved meanwhile, or one whose state cannot be
     // re-read, is BLOCKED; only an unmoved loan leaves it a stop.
-    await blockIfLifecycleMoved(`when the drive stopped (${err.message})`);
+    // A failure the page records during this re-read makes blockPre throw;
+    // it is kept as part of the stop and the run finalizes normally (#2505 r20).
+    try {
+      await blockIfLifecycleMoved(`when the drive stopped (${err.message})`);
+    } catch (recheckErr) {
+      stopped += `; ${recheckErr.message}`;
+    }
   }
   console.log(`STOP  ${stopped}`);
 }
