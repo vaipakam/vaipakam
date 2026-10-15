@@ -358,8 +358,11 @@ async function eligibleAt(blockNumber) {
   judge(pausedR, (v) => v && why.push('the protocol is paused'));
   judge(seqR, (v) => !v && why.push('the sequencer is not healthy'));
   judge(loanR, (v) => Number(v.status) !== ACTIVE && why.push(`status ${v.status}`));
-  if (blockR.err || graceR.err) unanswered.push(blockR.err ?? graceR.err);
-  else {
+  // Each failed read is recorded on its own (#2505 r22).
+  if (blockR.err) unanswered.push(blockR.err);
+  if (graceR.err) unanswered.push(graceR.err);
+  // The grace comparison needs both.
+  if (!blockR.err && !graceR.err) {
     const graceEndHere = fixed.startTime + fixed.durationDays * 86_400n + graceR.value;
     if (blockR.value.timestamp <= graceEndHere) why.push(`not past grace (chain time ${blockR.value.timestamp}, grace ends ${graceEndHere})`);
   }
