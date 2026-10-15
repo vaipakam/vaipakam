@@ -294,52 +294,59 @@ async function eligibleAt(blockNumber) {
   // no single block supports.
   const pinned = blockNumber ?? (await pub.getBlockNumber());
   const at = { blockNumber: pinned };
-  const [l, b, paused, sequencerOk] = await Promise.all([
-    read('getLoanDetails', [LOAN_ID], at),
-    pub.getBlock({ blockNumber: pinned }),
-    // triggerDefault is whenNotPaused: an emergency pause is a moved
-    // precondition like any other (#2481 r4).
-    read('paused', [], at),
-    // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
-    // its recovery window) — another operational precondition (#2481 r5).
-    read('sequencerHealthy', [], at),
-  ]);
-  // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
-  // an admin retune between startup and the inspected block changes what
-  // triggerDefault itself evaluates there (#2481 r3).
-  const [graceSeconds, adapters] = await Promise.all([
-    read('getEffectiveGraceSeconds', [l.durationDays], at),
+  // Each fact is judged as soon as it is read (#2505): a later read that gets
+  // no answer must not turn a move already established into "unknown", so
+  // such a failure returns the move with what is known; with nothing known it
+  // throws, and the caller reports the eligibility as unknown.
+  const why = [];
+  let enabled = null;
+  try {
+    const [l, b, paused, sequencerOk] = await Promise.all([
+      read('getLoanDetails', [LOAN_ID], at),
+      pub.getBlock({ blockNumber: pinned }),
+      // triggerDefault is whenNotPaused: an emergency pause is a moved
+      // precondition like any other (#2481 r4).
+      read('paused', [], at),
+      // triggerDefault also reverts while the L2 sequencer is unhealthy (or in
+      // its recovery window) — another operational precondition (#2481 r5).
+      read('sequencerHealthy', [], at),
+    ]);
+    if (paused) why.push('the protocol is paused');
+    if (!sequencerOk) why.push('the sequencer is not healthy');
+    if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
+    // The grace end AT THIS BLOCK, from this block's loan and grace schedule:
+    // an admin retune between startup and the inspected block changes what
+    // triggerDefault itself evaluates there (#2481 r3).
+    const graceEndHere = l.startTime + l.durationDays * 86_400n + (await read('getEffectiveGraceSeconds', [l.durationDays], at));
+    if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
+    // The holder: a position claimed after the loan closed is burned, and the
+    // node then answers that the token has no owner. That answer is itself a
+    // fact (the position this drive held is gone), never an unknown.
+    let holder;
+    try {
+      holder = await read('ownerOf', [l.lenderTokenId], at);
+    } catch (err) {
+      if (!isExecutionRevert(err)) throw err;
+      holder = null;
+    }
+    if (holder === null) why.push('the lender position no longer exists');
+    else if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
     // disabled, or one venue replaced by another the app cannot ask, even in
-    // the same slot — can
-    // leave it declaring a routable sale that no longer is. Any change to
-    // the enabled roster, by index AND address, is a moved precondition.
-    read('getSwapAdapters', [], at),
-  ]);
-  // The holder on its own: a position claimed after the loan closed is
-  // burned, and the node then answers that the token has no owner. That
-  // answer is itself a fact (the position this drive held is gone), so it
-  // never turns what the reads above established into "unknown".
-  let holder;
-  try {
-    holder = await read('ownerOf', [l.lenderTokenId], at);
+    // the same slot — can leave it declaring a routable sale that no longer
+    // is. Any change to the enabled roster, by index AND address, is a moved
+    // precondition.
+    const adapters = await read('getSwapAdapters', [], at);
+    const disabledHere = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
+    const enabledHere = rosterKey(adapters, disabledHere);
+    if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
+    enabled = new Set(adapters.map((_, i) => i).filter((i) => disabledHere[i] === false));
   } catch (err) {
-    if (!isExecutionRevert(err)) throw err;
-    holder = null;
+    if (why.length === 0) throw err;
+    why.push(`a later read got no answer (${err.shortMessage ?? err.message})`);
   }
-  const disabledHere = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
-  const enabledHere = rosterKey(adapters, disabledHere);
-  const graceEndHere = l.startTime + l.durationDays * 86_400n + graceSeconds;
-  const why = [];
-  if (paused) why.push('the protocol is paused');
-  if (!sequencerOk) why.push('the sequencer is not healthy');
-  if (Number(l.status) !== ACTIVE) why.push(`status ${l.status}`);
-  if (b.timestamp <= graceEndHere) why.push(`not past grace (chain time ${b.timestamp}, grace ends ${graceEndHere})`);
-  if (holder === null) why.push('the lender position no longer exists');
-  else if (holder.toLowerCase() !== WALLET.toLowerCase()) why.push(`lender position held by ${holder}`);
-  if (enabledHere !== startupRoster) why.push(`the enabled adapters changed (at startup [${startupRoster}], here [${enabledHere}])`);
-  return { ok: why.length === 0, why: why.join(', '), block: b.number };
+  return { ok: why.length === 0, why: why.join(', '), block: pinned, enabled };
 }
 
 // ── Wallet posture ─────────────────────────────────────────────────────
@@ -382,9 +389,9 @@ const PLAN = SUBMIT
 let gasFloor = 0n;
 /** The gate's own preview of the request it was asked to sign. */
 let previewVerdict = null;
-/** Set when the gate found the roster changed since startup, or could not
- *  re-read it (#2505). */
-let rosterMovedAtGate = null;
+/** Set when the gate found the close-out's eligibility moved since startup,
+ *  or could not re-read it (#2505). */
+let movedAtGate = null;
 /**
  * A precondition that stopped the drive without a finding: the plan signed
  * nothing, but whether THIS WALLET sent nothing is only known once its nonce
@@ -395,15 +402,15 @@ class Held extends Error {}
 /** The reason a {@link Held} stop gave, once the drive is stopped. */
 let held = null;
 /**
- * How many refused requests were recorded when the gate first withheld a send
- * for a held precondition. Closing the plan makes it refuse the very request
- * it was judging, and leaves its step unconsumed; both are this drive's own
- * doing, so a held run judges write discipline only on what came before.
+ * The gate withholding the request it is judging, for a held precondition. Its
+ * refusal of THAT request carries this marker, so a held run can set exactly
+ * that one aside; it is this drive's own doing. Every other refusal, including
+ * any later request the closed plan refuses, is still judged.
  */
-let refusalsBeforeHold = null;
+const HELD_REFUSAL = 'held precondition:';
 const holdSend = () => {
-  if (refusalsBeforeHold === null) refusalsBeforeHold = violationsSoFar().length;
   PLAN.close();
+  return { ok: false, why: `${HELD_REFUSAL} the send is withheld` };
 };
 async function previewSale(tx) {
   try {
@@ -428,29 +435,21 @@ async function gate(method, params) {
   const kind = method === 'eth_sendTransaction' ? 'tx' : method;
   if (kind === 'tx' && PLAN.armed() !== null) {
     const tx = Array.isArray(params) ? (params[0] ?? {}) : {};
-    // The roster AT JUDGING TIME (#2481 r4). Any change to it since startup
-    // is a moved precondition (#2505), whether it happened before the card
-    // was certified or while the confirm step built its route: the send is
-    // withheld and the run is BLOCKED below. An unreadable roster is the same
-    // verdict: whether it moved is unknown, so nothing is signed.
+    // The card's eligibility AT JUDGING TIME (#2481 r4, #2505): status,
+    // grace, holder, pause, sequencer and the enabled roster, at one block,
+    // through the same `eligibleAt` the card's snapshot used. Any move since
+    // startup withholds the send, and so does a re-read that gets no answer:
+    // whether it moved is then unknown.
     try {
-      // Both reads at ONE block: the disabled flags are kept by address while
-      // a removal compacts the array, so unpinned reads could pair an old
-      // array with old flags and reproduce the startup roster after a change.
-      const at = { blockNumber: await pub.getBlockNumber() };
-      const adapters = await read('getSwapAdapters', [], at);
-      const disabled = await Promise.all(adapters.map((a) => read('isSwapAdapterDisabled', [a], at)));
-      enabledAdapters = new Set(adapters.map((_, i) => i).filter((i) => disabled[i] === false));
-      const atGate = rosterKey(adapters, disabled);
-      if (atGate !== startupRoster) {
-        rosterMovedAtGate = `at startup [${startupRoster}], at signing [${atGate}]`;
-        console.log(`GATE  the enabled adapters changed during the drive (${rosterMovedAtGate}); not signing`);
-        holdSend();
-      }
+      const e = await eligibleAt(null);
+      if (e.enabled !== null) enabledAdapters = e.enabled;
+      if (!e.ok) movedAtGate = `at block ${e.block}: ${e.why}`;
     } catch (err) {
-      rosterMovedAtGate = `unknown: the roster could not be re-read at signing (${err.shortMessage ?? err.message})`;
-      console.log(`GATE  could not re-read the adapter roster (${err.shortMessage ?? err.message}); not signing`);
-      holdSend();
+      movedAtGate = `unknown: the eligibility could not be re-read at signing (${err.shortMessage ?? err.message})`;
+    }
+    if (movedAtGate !== null) {
+      console.log(`GATE  the close-out's preconditions moved or could not be re-read (${movedAtGate}); not signing`);
+      return holdSend();
     }
     try {
       gasFloor = await pub.estimateGas({ account: WALLET, to: tx.to, data: tx.data, value: asBig(tx.value ?? 0) });
@@ -475,8 +474,8 @@ async function gate(method, params) {
     console.log(`GATE  independent preview of the requested route: ${previewVerdict}`);
     // An unrunnable preview is a held precondition; any other non-sale is
     // the app's route, judged at confirm.
-    if (previewVerdict === 'unknown') holdSend();
-    else if (previewVerdict !== 'sale') PLAN.close();
+    if (previewVerdict === 'unknown') return holdSend();
+    if (previewVerdict !== 'sale') PLAN.close();
   }
   // #2481 r3 — again, AFTER the estimate was awaited: a page error or a
   // refused request recorded meanwhile must still withhold the one-shot send.
@@ -768,12 +767,12 @@ try {
       }
       await page.waitForTimeout(1_000);
     }
-    if (!wrote() && rosterMovedAtGate) {
+    if (!wrote() && movedAtGate) {
       PLAN.close();
       throw new Held(
-        rosterMovedAtGate.startsWith('unknown: ')
-          ? `whether the enabled swap adapters changed while the close-out was being confirmed is ${rosterMovedAtGate}, so the plan signed nothing`
-          : `the enabled swap adapters changed while the close-out was being confirmed (${rosterMovedAtGate}), a moved precondition, so the plan signed nothing`,
+        movedAtGate.startsWith('unknown: ')
+          ? `whether loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed is ${movedAtGate}, so the plan signed nothing`
+          : `loan ${LOAN_ID}'s close-out preconditions moved while it was being confirmed (${movedAtGate}), so the plan signed nothing`,
       );
     }
     if (!wrote() && previewVerdict === 'unknown') {
@@ -846,11 +845,12 @@ if (armedOnce && !wrote()) {
   }
 }
 check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
-// A held run's own refusal and unconsumed step are not findings (see
-// `refusalsBeforeHold`); what was refused before the hold still is.
-// Judged after the nonce reconciliation, which can itself hold the run.
+// A held run's unconsumed step, and the gate's marked refusal of the one
+// request it withheld, are not findings (`HELD_REFUSAL`); every other refusal
+// is. Judged after the nonce reconciliation, which can itself hold the run.
 const heldRun = held !== null;
-const violations = heldRun && refusalsBeforeHold !== null ? violationsSoFar().slice(0, refusalsBeforeHold) : violationsSoFar();
+const ownHold = (b) => String(b.reason).startsWith(`signing gate: ${HELD_REFUSAL}`);
+const violations = heldRun ? violationsSoFar().filter((b) => !ownHold(b)) : violationsSoFar();
 check(
   'writeDiscipline',
   'noRefusals',
