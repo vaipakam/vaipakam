@@ -377,6 +377,11 @@ const asBig = (v) => {
 /** A viem error that carries the node's own execution revert. */
 const isExecutionRevert = (err) =>
   Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
+/** `ownerOf` answering that the token does not exist (a burned position).
+ *  Only that decoded error counts: any other revert, broken routing included,
+ *  establishes nothing about the position (#2505 r29). */
+const isNonexistentToken = (err) =>
+  err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName === 'ERC721NonexistentToken';
 const PLAN = SUBMIT_CLAIM
   ? createWritePlan([
       {
@@ -582,15 +587,20 @@ async function lifecycleNow() {
   // got no answer. The holder is asked by the startup token id when the loan
   // read is unanswered — a loan's position NFTs never change id.
   const settle = (p) => p.then((value) => ({ value }), (err) => ({ err }));
-  const [loanR, claimR] = await Promise.all([
+  const [loanR, claimR, pausedR] = await Promise.all([
     settle(read('getLoanDetails', [LOAN_ID])),
     // The FULL claim, not getClaimableAmount: a payout held entirely in
     // heldForLender reads amount 0 there and is still claimable (#2505 r14).
     settle(read('getClaimable', [LOAN_ID, true])),
+    // claimAsLender is whenNotPaused: a pause withholds the claim while every
+    // other fact here reads unchanged (#2505 r29).
+    settle(read('paused')),
   ]);
   const holderR = await settle(read('ownerOf', [loanR.value?.lenderTokenId ?? loan.lenderTokenId]));
   const why = [];
   const unanswered = [];
+  if (pausedR.err) unanswered.push(pausedR.err);
+  else if (pausedR.value) why.push('the protocol is paused');
   if (loanR.err) unanswered.push(loanR.err);
   else if (Number(loanR.value.status) !== INTERNAL_MATCHED) why.push(`status ${loanR.value.status}, no longer InternalMatched`);
   if (claimR.err) unanswered.push(claimR.err);
@@ -604,7 +614,7 @@ async function lifecycleNow() {
   if (holderR.err) {
     // The node ANSWERED that the token has no owner: the position is gone (a
     // claim made elsewhere burns it), which is a fact, not an outage.
-    if (isExecutionRevert(holderR.err)) why.push('the lender position no longer exists');
+    if (isNonexistentToken(holderR.err)) why.push('the lender position no longer exists');
     else unanswered.push(holderR.err);
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`the lender position is now held by ${holderR.value}`);

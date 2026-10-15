@@ -259,9 +259,6 @@ const describeErr = (err) => err?.shortMessage ?? err?.message ?? String(err);
 /** Every index: what a roster that could not be read at all may enable. */
 const ANY_INDEX = { has: () => true };
 const unknownAt = (err, block) => ({ ok: false, why: '', unknown: describeErr(err), err, block, enabled: null, possiblyEnabled: ANY_INDEX });
-/** A viem error that carries the node's own execution revert. */
-const isExecutionRevert = (err) =>
-  Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
 /** The custom error a viem revert decoded to, or null. */
 const revertName = (err) => err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError')?.data?.errorName ?? null;
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
@@ -331,9 +328,11 @@ if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap
 // (it unmounts the card for an accepted sale) while every other fact here
 // reads unchanged. A locked position is not the shape this drive judges, and
 // a lock appearing later is a moved precondition.
+// Both facts at ONE block (#2505 r29): a listing cancelled between the lock
+// read and the simulation would otherwise read as an accepted sale.
 let startupHold;
 try {
-  startupHold = await lockWithholds(loan.lenderTokenId);
+  startupHold = await lockWithholds(loan.lenderTokenId, await pub.getBlockNumber());
 } catch (err) {
   await blocked("the direct RPC could not establish what the lender position's lock means for the close-out", err);
 }
@@ -438,7 +437,9 @@ async function eligibleAt(blockNumber) {
   // node then answers that the token has no owner. That answer is itself a
   // fact (the position this drive held is gone), never an unknown.
   if (holderR.err) {
-    if (isExecutionRevert(holderR.err)) why.push('the lender position no longer exists');
+    // Only the decoded nonexistent-token error: any other revert, broken
+    // routing included, establishes nothing about the position (#2505 r29).
+    if (revertName(holderR.err) === 'ERC721NonexistentToken') why.push('the lender position no longer exists');
     else unanswered.push(holderR.err);
   } else if (holderR.value.toLowerCase() !== WALLET.toLowerCase()) {
     why.push(`lender position held by ${holderR.value}`);
