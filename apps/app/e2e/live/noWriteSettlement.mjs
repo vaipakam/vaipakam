@@ -93,7 +93,8 @@ export async function nonceBaseline(pub, wallet) {
 
 /**
  * The nonce against the baseline. Only an unchanged count proves no send.
- * A higher one is a send the plan never allowed. A lower one means the
+ * A higher one is a send by this wallet that the plan never saw (whose, the
+ * count cannot say). A lower one means the
  * node's view moved backwards (a reorg, another backend), and a send could
  * have brought it back to the baseline unseen, so it proves nothing.
  */
@@ -105,20 +106,33 @@ export async function reconcileNonce(pub, wallet, baseline) {
     return { kind: 'unknown', why: `the direct RPC could not read the wallet nonce (${describe(err)})` };
   }
   if (now === baseline) return { kind: 'unchanged' };
-  if (now > baseline) return { kind: 'escaped', from: baseline, to: now };
+  if (now > baseline) return { kind: 'sent', from: baseline, to: now };
   return {
     kind: 'unknown',
     why: `the nonce read ${now}, below the startup ${baseline}: the node's view moved backwards, and a send could have restored the count unseen`,
   };
 }
 
+/**
+ * Loan-record fields a transaction can change without touching anything a
+ * close-out or claim surface reads: `LoanFacet.markNotifBilled` latches one
+ * of these when the notification watcher bills a side, and changes nothing
+ * else on the loan (#2505 r37). A change to one is reported by
+ * {@link changedFields} as bookkeeping, never as the loan moving. The list is
+ * deliberately a DENY list: a field added to the record later counts as
+ * movement until someone shows it is bookkeeping, so the comparison can only
+ * err towards BLOCKED, never towards a FAIL a move explains.
+ */
+export const LOAN_BOOKKEEPING_FIELDS = Object.freeze(['lenderNotifBilled', 'borrowerNotifBilled']);
+
 /** Fields of two decoded records that differ, by name (positional arrays by
- *  index). Every field counts: a record changes only by a transaction, so
- *  any change is the loan moving, whichever field the page reads. */
-export function changedFields(before, after) {
+ *  index), less any in `ignore`. Every other field counts: a record changes
+ *  only by a transaction, so any change is the loan moving, whichever field
+ *  the page reads. */
+export function changedFields(before, after, ignore = []) {
   const enc = (v) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? `${x}n` : typeof x === 'string' ? x.toLowerCase() : x));
   const keys = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
-  return [...keys].filter((k) => enc(before?.[k]) !== enc(after?.[k]));
+  return [...keys].filter((k) => !ignore.includes(k) && enc(before?.[k]) !== enc(after?.[k]));
 }
 
 /**
@@ -152,48 +166,55 @@ const join = (...parts) => parts.filter(Boolean).join('; ') || null;
 
 /**
  * The one rule, for a settled run. Inputs: what {@link settleRun} returned,
- * the held reason (or null), the stop reason (or null), a thrown
- * {@link Suspect} (or null), the count of failures recorded so far, and how
- * to name the facts. Returns one of:
+ * the held reason (or null), the stop reason of a PLAIN exception (or null),
+ * a thrown {@link Suspect} (or null), the count of failures recorded so far,
+ * and how to name the facts. Returns one of:
  *
- *  - `{ blocked }`: provably no write, nothing recorded, and a hold or a move
- *    explains the run;
- *  - `{ recordSuspect }` plus the verdict inputs, when a suspect stands as a
- *    failed check (the caller records it before the verdict);
- *  - the verdict inputs alone: `wrote`, `stopped`, `gateEscape`, `escape`.
+ *  - `{ blocked }`: provably no write, nothing recorded, no definite stop,
+ *    and a hold or a move explains the run;
+ *  - the verdict inputs, `wrote`, `stopped`, `gateEscape` (always false
+ *    here), `writeUnknown`, plus `recordSuspect` when a suspect stands as a
+ *    failed check (the caller records it before the verdict).
  *
- * A write that cannot be ruled out is `wrote: true` with its reason in
- * `stopped`, which the shared verdict reports as UNDETERMINED: the drive
- * cannot say whether it wrote, so it cannot say either way what it did
- * (verdictContract.mjs, FOUR_VERDICT_DRIVERS).
+ * Precedence, in order (#2505 r37):
+ *
+ *  1. WHAT THE PAGE DID STANDS. A failure already recorded, or a plain
+ *     exception (a page that answered 4xx, a navigation that went elsewhere),
+ *     is an observed defect. Neither a later move of the loan nor a nonce
+ *     that cannot be read retracts it, so the run FAILs, with whatever the
+ *     nonce showed stated beside it. Only a {@link Held} or a
+ *     {@link Suspect} is an observation a move can explain.
+ *  2. A WRITE THAT CANNOT BE RULED OUT. The plan sent nothing, but the
+ *     nonce moved or could not be read: `wrote: true, writeUnknown: true`,
+ *     which the shared verdict reports as UNDETERMINED. A moved nonce is NOT
+ *     reported as the page escaping the gate: the drive runs on a throwaway
+ *     profile with no connector pairing, so the page has no way to sign but
+ *     the gated wallet, and a send the plan never saw is far likelier
+ *     another user of the same dev wallet (an operator, a script, a parallel
+ *     run). That attribution is inferred, and stated as such.
+ *  3. Provably no write: a hold or a move is BLOCKED; otherwise the suspect
+ *     (if any) is recorded as the failed check it describes.
  */
 export function resolveSettlement({ settled, held, stopped, suspect, findings, subject }) {
   const stopText = join(stopped, suspect?.message);
+  const recordSuspect = Boolean(suspect?.check);
   if (settled.plan) {
     const unclosed = settled.closeFailed ? `the browser could not be closed (${settled.closeFailed}), so the page's ledgers may be incomplete` : null;
     return { wrote: true, stopped: join(stopText, held, unclosed), gateEscape: false };
   }
   const { facts, nonce } = settled;
-  if (nonce.kind === 'escaped') {
-    return {
-      wrote: true,
-      gateEscape: true,
-      escape: `this wallet's nonce moved ${nonce.from} → ${nonce.to}, but the write plan never allowed a send — a transaction went through another connector`,
-      stopped: join(stopText, held),
-      recordSuspect: Boolean(suspect?.check),
-    };
+  const nonceNote =
+    nonce.kind === 'sent'
+      ? `the plan sent nothing, but this wallet's nonce moved ${nonce.from} → ${nonce.to} during the drive; the throwaway profile carries no connector pairing, so this is inferred to be another user of the wallet (an operator, a script, a parallel run), and whether it touched ${subject} is not established`
+      : nonce.kind === 'unknown'
+        ? `the plan sent nothing, but whether this wallet sent anyway cannot be established: ${nonce.why}`
+        : null;
+  if (findings > 0 || stopped !== null) {
+    return { wrote: false, gateEscape: false, stopped: join(stopText, held, nonceNote), recordSuspect };
   }
-  if (nonce.kind === 'unknown') {
-    return {
-      wrote: true,
-      writeUnknown: true,
-      gateEscape: false,
-      stopped: join(stopText, held, `the plan sent nothing, but whether this wallet sent anyway cannot be established: ${nonce.why}`),
-      recordSuspect: Boolean(suspect?.check),
-    };
+  if (nonceNote !== null) {
+    return { wrote: true, writeUnknown: true, gateEscape: false, stopped: join(stopText, held, nonceNote), recordSuspect };
   }
-  // Provably no write from here on.
-  if (findings > 0) return { wrote: false, gateEscape: false, stopped: join(stopText, held), recordSuspect: Boolean(suspect?.check) };
   const moved = facts.moved
     ? `what ${subject} rests on changed by the verdict (${facts.moved})`
     : facts.unknown
@@ -203,5 +224,5 @@ export function resolveSettlement({ settled, held, stopped, suspect, findings, s
   const tail = "; this wallet's nonce shows no transaction pending or mined since startup";
   if (held !== null) return { blocked: join(held, stopText && `the drive then stopped (${stopText})`, moved) + tail };
   if (moved !== null) return { blocked: (stopText ? `the drive stopped (${stopText}), and ${moved}${order}` : moved) + tail };
-  return { wrote: false, gateEscape: false, stopped: stopText, recordSuspect: Boolean(suspect?.check) };
+  return { wrote: false, gateEscape: false, stopped: stopText, recordSuspect };
 }

@@ -66,7 +66,7 @@ import {
 } from './driver.mjs';
 import { is, optional, structMismatches } from './expectedPayload.mjs';
 import { monetaryAmountsIn } from './forcedCloseCard.mjs';
-import { Held, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
@@ -460,7 +460,7 @@ async function eligibleAt(blockNumber) {
   // added-collateral top-up re-sizes the sale it quoted), so any field that
   // changed is the loan moving, named with its values.
   judge(loanR, (v) => {
-    const changed = changedFields(loan, v);
+    const changed = changedFields(loan, v, LOAN_BOOKKEEPING_FIELDS);
     if (changed.length > 0) why.push(`the loan record changed since startup (${changed.map((k) => `${k} ${loan[k]} → ${v[k]}`).join(', ')})`);
   });
   // The holder: a position claimed after the loan closed is burned, and the
@@ -1112,7 +1112,7 @@ try {
 // One order for every run: the browser is closed first, so the page can add
 // no error, refusal or send after its ledgers are judged; the loan is
 // re-read once; this wallet's nonce is read last. A run the plan did not
-// let write is then BLOCKED, FAIL, a gate escape or UNDETERMINED by one
+// let write is then BLOCKED, FAIL or UNDETERMINED by one
 // rule, whatever path stopped it.
 let teardownDone = false;
 const closeBrowser = async () => {
@@ -1167,7 +1167,6 @@ if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.
 if (armedOnce && !resolved.wrote && held === null && suspect === null) {
   check('writeDiscipline', 'planned', 'the close-out was sent through the gated wallet, exactly once', wrote(), `plan step ${step()?.status}`);
 }
-if (resolved.gateEscape) console.log(`ESCAPE ${ROLE}: ${resolved.escape}`);
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
@@ -1180,7 +1179,9 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the close-out's hash and what its receipt showed; check the loan by hand if neither does",
-    escape: resolved.escape ?? 'see the ESCAPE line above',
+    // Unreachable: the settlement never reports a gate escape (a nonce the
+    // plan never saw is UNDETERMINED, noWriteSettlement.mjs #2505 r37).
+    escape: 'no gate escape is reported by this drive',
   },
 });
 console.log(VERDICT.line);

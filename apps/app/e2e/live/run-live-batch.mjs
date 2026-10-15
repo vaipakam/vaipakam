@@ -40,8 +40,8 @@
  * A FOURTH verdict, by declaration only (#2434 r2):
  *
  *   3  UNDETERMINED — the drive wrote to the chain, or cannot rule out
- *                 that its wallet did (its nonce could not be established,
- *                 #2505 r33), and could not establish its claims either
+ *                 that its wallet did (its nonce moved or could not be
+ *                 established, #2505 r33, r37), and could not establish its claims either
  *                 way. Reported as such ONLY
  *                 for a driver in FOUR_VERDICT_DRIVERS; from any other
  *                 driver an exit 3 is a FAIL. It keeps the batch red.

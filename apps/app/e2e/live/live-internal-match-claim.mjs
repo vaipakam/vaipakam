@@ -79,9 +79,9 @@ import {
   READ_METHODS,
 } from './driver.mjs';
 import { is, optional } from './expectedPayload.mjs';
-import { Held, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { Held, LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
-import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
+import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
 import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
@@ -503,6 +503,15 @@ const rpc = watchPageRpc(page);
 // non-read method sent on it is OBSERVED here, not prevented, and counts
 // as a violation exactly like a refused request.
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
+// The page's own sanctions read for this wallet, off the wire (#2505 r37).
+// It is the lender claim's one chain gate before the wallet: the app re-screens
+// the wallet live and then hands the transaction straight to it (viem sends a
+// JSON-RPC account's transaction without estimating), so a paused protocol
+// still reaches the gate. When the page withholds the claim, this is what it
+// was told, which the endpoint reads alone cannot show: a flag set and cleared
+// between them is visible here and nowhere else.
+const pageSanctions = createReadLedger({ flag: watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET) });
+attachLedger(page, pageSanctions, READ_METHODS);
 // JSON-RPC answers that arrive on the page's WebSockets (wagmi prefers a
 // configured WSS transport), counted in the same window as `rpc`'s HTTP
 // answers so a socket-served page is never read as "answered nothing".
@@ -629,7 +638,7 @@ async function lifecycleNow() {
   // changed is the loan moving, whichever of them the page reads.
   if (loanR.err) unanswered.push(loanR.err);
   else {
-    const changed = changedFields(loan, loanR.value);
+    const changed = changedFields(loan, loanR.value, LOAN_BOOKKEEPING_FIELDS);
     if (changed.length > 0) why.push(`the loan record changed since startup (${changed.map((k) => `${k} ${loan[k]} → ${loanR.value[k]}`).join(', ')})`);
   }
   if (claimR.err) unanswered.push(claimR.err);
@@ -841,6 +850,7 @@ try {
     // starts the app's transaction and receipt reads, and a request already
     // in flight at a reset is not counted in the new window.
     resetWindow();
+    const clickedAt = Date.now();
     PLAN.arm(ROLE);
     armedOnce = true;
     await claimButton.click();
@@ -870,6 +880,14 @@ try {
     // executable (#2505 r34). Nothing after it is judged: no payout or list
     // change is expected of a claim that was never sent.
     if (!wrote()) {
+      // What the page itself was told, by a read it started after the click:
+      // flagged means the page withheld the claim on the chain's own answer
+      // at that moment, which is the app working. Startup and the verdict
+      // both read the wallet clear, so the flag came and went in between, or
+      // the page's provider was stale; either way nothing was tested.
+      if (pageSanctions.judge('flag', clickedAt, false).state === 'disagrees') {
+        throw new Held(`the page withheld the claim because its own isSanctionedAddress read for ${WALLET}, started after the click, answered flagged; the chain allowed this wallet's claim at startup (its simulation passes only for an unflagged caller), so the flag changed during the drive or the page's provider was stale, and the claim was not tested`);
+      }
       throw new Suspect('the page sent no claim after its claim was clicked', {
         row: 'writeDiscipline',
         key: 'planned',
@@ -1032,7 +1050,7 @@ try {
 // One order for every run: the browser is closed first, so the page can add
 // no error, refusal or send after its ledgers are judged; the lifecycle is
 // re-read once; this wallet's nonce is read last. A run the plan did not
-// let write is then BLOCKED, FAIL, a gate escape or UNDETERMINED by one
+// let write is then BLOCKED, FAIL or UNDETERMINED by one
 // rule, whatever path stopped it.
 const settled = await settleRun({
   closeBrowser: done,
@@ -1067,7 +1085,6 @@ if (resolved.recordSuspect) check(suspect.check.row, suspect.check.key, suspect.
 if (armedOnce && !resolved.wrote && held === null && suspect === null) {
   check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
 }
-if (resolved.gateEscape) console.log(`ESCAPE ${ROLE}: ${resolved.escape}`);
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
@@ -1083,7 +1100,9 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the claim's hash and what its receipt showed; check the lender wallet by hand if neither does",
-    escape: resolved.escape ?? 'see the ESCAPE line above',
+    // Unreachable: the settlement never reports a gate escape (a nonce the
+    // plan never saw is UNDETERMINED, noWriteSettlement.mjs #2505 r37).
+    escape: 'no gate escape is reported by this drive',
   },
 });
 console.log(VERDICT.line);

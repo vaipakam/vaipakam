@@ -5,7 +5,7 @@
  * one rule that turns a settled run into a verdict input.
  */
 import { describe, expect, it } from 'vitest';
-import { Suspect, changedFields, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
+import { LOAN_BOOKKEEPING_FIELDS, Suspect, changedFields, nonceBaseline, reconcileNonce, resolveSettlement, settleRun } from './noWriteSettlement.mjs';
 
 const W = '0x00000000000000000000000000000000000000aa';
 const pubWith = (pending, latest = pending) => ({
@@ -26,7 +26,7 @@ describe('nonceBaseline', () => {
 describe('reconcileNonce', () => {
   it('proves no send only on an unchanged count', async () => {
     expect(await reconcileNonce(pubWith(7), W, 7)).toEqual({ kind: 'unchanged' });
-    expect(await reconcileNonce(pubWith(8), W, 7)).toEqual({ kind: 'escaped', from: 7, to: 8 });
+    expect(await reconcileNonce(pubWith(8), W, 7)).toEqual({ kind: 'sent', from: 7, to: 8 });
     expect((await reconcileNonce(pubWith(6), W, 7)).kind).toBe('unknown');
     expect((await reconcileNonce(pubWith(new Error('down')), W, 7)).kind).toBe('unknown');
   });
@@ -38,6 +38,12 @@ describe('changedFields', () => {
     expect(changedFields(before, { status: 0, collateralAmount: 10n, lender: '0xabc' })).toEqual([]);
     expect(changedFields(before, { status: 0, collateralAmount: 12n, lender: '0xabc' })).toEqual(['collateralAmount']);
     expect(changedFields([1n, false], [1n, true])).toEqual(['1']);
+  });
+
+  it('leaves notification bookkeeping out, and nothing else', () => {
+    const before = { status: 0, lenderNotifBilled: false, borrowerNotifBilled: false, collateralAmount: 10n };
+    expect(changedFields(before, { ...before, lenderNotifBilled: true }, LOAN_BOOKKEEPING_FIELDS)).toEqual([]);
+    expect(changedFields(before, { ...before, lenderNotifBilled: true, collateralAmount: 11n }, LOAN_BOOKKEEPING_FIELDS)).toEqual(['collateralAmount']);
   });
 });
 
@@ -107,11 +113,21 @@ describe('resolveSettlement', () => {
     expect(resolveSettlement({ ...base, settled: unchanged(), held: 'underfunded' }).blocked).toMatch(/^underfunded; this wallet's nonce shows no transaction/);
   });
 
-  it('is BLOCKED for a stop or a suspect the facts may explain, with the order unknown', () => {
-    const r = resolveSettlement({ ...base, settled: unchanged({ moved: 'status 2' }), stopped: 'wait ran out' });
-    expect(r.blocked).toMatch(/the drive stopped \(wait ran out\), and what loan 1's claim rests on changed by the verdict \(status 2\); which came first is unknown/);
+  it('is BLOCKED for a suspect the facts may explain, with the order unknown', () => {
     const s = new Suspect('row missing', { row: 'r', key: 'k', label: 'l' });
+    const r = resolveSettlement({ ...base, settled: unchanged({ moved: 'status 2' }), suspect: s });
+    expect(r.blocked).toMatch(/the drive stopped \(row missing\), and what loan 1's claim rests on changed by the verdict \(status 2\); which came first is unknown/);
     expect(resolveSettlement({ ...base, settled: unchanged({ unknown: 'rpc down' }), suspect: s }).blocked).toMatch(/could not be re-read/);
+    expect(resolveSettlement({ ...base, settled: unchanged({ moved: 'status 2' }) }).blocked).toMatch(/^what loan 1's claim rests on changed/);
+  });
+
+  it('keeps a plain stop a failure whatever moved or the nonce shows', () => {
+    for (const settled of [unchanged({ moved: 'status 2' }), unchanged({ unknown: 'rpc down' }), { plan: false, facts: {}, nonce: { kind: 'unknown', why: 'rpc down' } }]) {
+      const r = resolveSettlement({ ...base, settled, stopped: '/claims answered 503' });
+      expect(r.blocked).toBeUndefined();
+      expect(r.wrote).toBe(false);
+      expect(r.stopped).toMatch(/^\/claims answered 503/);
+    }
   });
 
   it('records a suspect as a failure when nothing moved', () => {
@@ -126,13 +142,22 @@ describe('resolveSettlement', () => {
     expect(r.stopped).toBe('h');
   });
 
-  it('is a gate escape on a moved nonce and UNDETERMINED on an unprovable one', () => {
-    const esc = resolveSettlement({ ...base, settled: { plan: false, facts: {}, nonce: { kind: 'escaped', from: 1, to: 2 } }, held: 'h' });
-    expect(esc).toMatchObject({ wrote: true, gateEscape: true });
+  it('is UNDETERMINED, never a gate escape, on a moved or unprovable nonce', () => {
+    const sent = resolveSettlement({ ...base, settled: { plan: false, facts: {}, nonce: { kind: 'sent', from: 1, to: 2 } }, held: 'h' });
+    expect(sent).toMatchObject({ wrote: true, writeUnknown: true, gateEscape: false });
+    expect(sent.stopped).toMatch(/nonce moved 1 → 2 during the drive; .*inferred to be another user of the wallet/);
     const unk = resolveSettlement({ ...base, settled: { plan: false, facts: {}, nonce: { kind: 'unknown', why: 'rpc down' } } });
-    expect(unk.wrote).toBe(true);
-    expect(unk.gateEscape).toBe(false);
+    expect(unk).toMatchObject({ wrote: true, writeUnknown: true, gateEscape: false });
     expect(unk.stopped).toMatch(/whether this wallet sent anyway cannot be established: rpc down/);
+  });
+
+  it('keeps a recorded failure a failure when the nonce cannot be read or moved', () => {
+    for (const nonce of [{ kind: 'unknown', why: 'rpc down' }, { kind: 'sent', from: 1, to: 2 }]) {
+      const r = resolveSettlement({ ...base, settled: { plan: false, facts: {}, nonce }, findings: 1 });
+      expect(r.wrote).toBe(false);
+      expect(r.writeUnknown).toBeUndefined();
+      expect(r.stopped).toMatch(/the plan sent nothing, but/);
+    }
   });
 
   it('never lets a sent run pass on ledgers a still-open browser could add to', () => {

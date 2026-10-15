@@ -125,10 +125,12 @@ export const THREE_VERDICT_DRIVERS = new Set([
  * its wallet did, and could not establish its claims either way: nothing was
  * observed wrong (that would be 1), and the drive cannot show it stopped
  * before writing (that would be 2). The second case is a drive whose write
- * plan sent nothing but whose wallet nonce could not be read, or read below
- * its startup baseline: a send through another connector cannot be ruled
- * out, so it can claim neither "nothing was written" nor a result
- * (noWriteSettlement.mjs, #2505 r33). It is NOT
+ * plan sent nothing but whose wallet nonce moved, could not be read, or read
+ * below its startup baseline: a send by that wallet cannot be ruled out (or,
+ * for a moved count, is certain but unattributed — likely another user of
+ * the same dev wallet), so it can claim neither "nothing was written" nor a
+ * result (noWriteSettlement.mjs, #2505 r33, r37). A failure the page already
+ * showed stays a FAIL whatever the nonce reads. It is NOT
  * a pass and keeps the batch red, but it is reported as what it is rather
  * than as a product FAIL. Exit 0, 1 and 2 mean what they mean for
  * `THREE_VERDICT_DRIVERS`.
@@ -158,9 +160,9 @@ export const FOUR_VERDICT_DRIVERS = new Map([
     'with CLAIM=1, after the claim was sent the shared runVerdict FAILs only ' +
       'when a chain read contradicts the payout or the lifecycle; anything else ' +
       'is UNDETERMINED (exit 3) (#2427). In any mode, read-only included, a run ' +
-      'whose plan sent nothing but whose wallet nonce cannot be established is ' +
-      'UNDETERMINED too: a send through another connector cannot be ruled out ' +
-      '(#2505 r33)',
+      'whose plan sent nothing but whose wallet nonce moved or cannot be ' +
+      'established, with no failure already observed, is UNDETERMINED too: a ' +
+      'send by that wallet cannot be ruled out or attributed (#2505 r33, r37)',
   ],
   [
     'live-lender-close-out.mjs',
@@ -171,8 +173,9 @@ export const FOUR_VERDICT_DRIVERS = new Map([
     'with CLOSE=1, after the close-out was sent the shared runVerdict FAILs only ' +
       'when a chain read contradicts the close-out (a revert, or a status that ' +
       'disagrees with its event); anything else is UNDETERMINED (exit 3) (#2463). ' +
-      'In any mode, a run whose plan sent nothing but whose wallet nonce cannot ' +
-      'be established is UNDETERMINED too (#2505 r33)',
+      'In any mode, a run whose plan sent nothing but whose wallet nonce moved ' +
+      'or cannot be established, with no failure already observed, is ' +
+      'UNDETERMINED too (#2505 r33, r37)',
   ],
 ]);
 
