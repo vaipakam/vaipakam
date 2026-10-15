@@ -667,8 +667,10 @@ The chain's locally-funded commit is the CAP rather than the base: the
 earmark is bounded by whatever room that commit leaves in the chain's
 availability, but it is not a percentage of it. An operator estimating the
 figure from claim demand will get it wrong, most visibly on a low-demand
-day. (It does still require the day to have SOME claim demand — a day with
-no global interest stamps nothing at all.) Default **0**, which is **dark** — it
+day. (It does not require claim demand either: since #2047 the earmark
+resolves on EVERY armed day, so a day with attributed inflow and no claim
+demand still earmarks — only a day with no attributed inflow earmarks
+nothing.) Default **0**, which is **dark** — it
 instructs nothing, and it is what every chain ships with, so each
 destination is armed deliberately and individually. Range **[0, 50%]**,
 the same ceiling the local register weight carries, so that neither

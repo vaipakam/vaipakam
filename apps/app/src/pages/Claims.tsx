@@ -81,12 +81,19 @@ function RewardsCard() {
     }
   }
 
+  // A flagged wallet is exactly the case where the combined preview errors and
+  // this block renders (Codex #2489 r7): the balance is set aside, not ready
+  // — the button below is disabled and the claim would revert. While the
+  // screen has not answered, say "set aside" and nothing more.
+  const heldCopy = !sanctions.ready
+    ? copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))
+    : sanctions.flagged
+      ? `${copy.rewards.heldSetAside(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldBlockedNote}`
+      : `${copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} ${copy.rewards.heldNote}`;
   const heldBlock =
     heldAmount > 0n ? (
-      <div data-testid="rewards-held" style={{ marginTop: 12 }}>
-        <p>
-          {copy.rewards.heldReady(formatTokenAmount(heldAmount, 18))} {copy.rewards.heldNote}
-        </p>
+      <div data-testid="rewards-held" data-held-state={!sanctions.ready ? 'unknown' : sanctions.flagged ? 'blocked' : 'ready'} style={{ marginTop: 12 }}>
+        <p>{heldCopy}</p>
         {heldError ? (
           <div className="banner banner-danger" role="alert">
             <span className="banner-body">{heldError}</span>

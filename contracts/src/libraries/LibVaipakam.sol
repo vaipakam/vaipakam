@@ -9249,6 +9249,12 @@ library LibVaipakam {
         ///      root and the delivery could never be indexed or proven. Empty for
         ///      a reservation dispatched before it existed, or with no closed day.
         uint256[] fundedDayBits;
+        /// @dev #1461 (Codex #2489 r7) — whether `strandedRecycled` has been
+        ///      WRITTEN for this reservation: at its release, or by the history
+        ///      rule ({LibVpfiRecycle.ensureReleasedStrandedStamped}) for one
+        ///      released before the field existed. Without it a zero share is
+        ///      ambiguous — "resolved" and "never stamped" both read 0.
+        bool strandedStamped;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -11777,31 +11783,44 @@ library LibVaipakam {
     /// the same behaviour as Circle's USDC blocklist — frozen, not
     /// seized. The frontend communicates this to a sanctioned wallet
     /// when it connects; the public Terms of Service carries one
-    /// generic disclosure line about restricted access. Undelivered
-    /// protocol rewards are the one exception — see the next section.
+    /// generic disclosure line about restricted access. Interaction
+    /// rewards have their own rule — see the next section.
     ///
-    /// ─── Undelivered protocol rewards: forfeited once confirmed ───
+    /// ─── Interaction rewards: held apart; forfeited only while flagged ───
     ///
-    /// Owner decision 2026-10-02. Interaction-reward entries, and staged
-    /// interaction-reward payouts, not yet delivered to a wallet whose
-    /// flag is CONFIRMED are forfeited into the recycle bucket as
-    /// `RecycleSource.ForfeitedReward` — permanently; a later delisting
-    /// restores nothing. CONFIRMED is `LibRewardSanctions`' rule: the
-    /// wallet reads Flagged on a chain of committed, authoritative
-    /// observations against one oracle that spans `CONFIRM_SECS` with no
-    /// gap over `MAX_OBS_GAP_SECS` (anyone may observe, and anyone may run
-    /// the forfeit sweep once the chain confirms). NEVER on an outage, an
-    /// unset oracle, a first flag or a broken chain: until confirmed, a
-    /// barred wallet's reward is only WITHHELD — its claim refused, its
-    /// entries' expiry clock paused, a staged payout waiting. Reward value
-    /// already delivered into the wallet's vault stays frozen with
-    /// everything else there, and loan value — principal, interest,
-    /// collateral, claimables, the borrower-LIF rebate — is untouched.
-    /// WHY rewards differ from loan value: a loan's value rests on a
-    /// contract entered before the listing (the wind-down reasoning
-    /// above), while an undelivered reward is the protocol's own emission
-    /// not yet paid; withholding it without end would keep reward budget
-    /// encumbered for a wallet that may never be delisted.
+    /// Owner decision 2026-10-14, superseding the 2026-10-02 rule that
+    /// forfeited every undelivered entry once a flag CONFIRMED (that rule
+    /// never reached a live chain). Two parts, implemented in
+    /// `LibRewardSanctions` and applied by every reward settlement path:
+    ///  * Reward earned BEFORE the flag is the wallet's. A confirmed wallet's
+    ///    undelivered interaction reward is settled into a SET-ASIDE balance
+    ///    the Diamond holds (`RewardCustodyRow.SanctionsHeld`) — never
+    ///    forfeited — and paid once the flag is revoked, through its own
+    ///    claim entry (`claimHeldInteractionRewards`) or the wallet's next
+    ///    ordinary claim.
+    ///  * Reward earned WHILE a CONFIRMED flag stood is FORFEITED into the
+    ///    recycle bucket as `RecycleSource.ForfeitedReward`, by REWARD DAY: a
+    ///    confirmed chain of observations names the days from its first
+    ///    flagged observation through its last (recorded as a window when
+    ///    the chain ends), and a day inside a window forfeits on whichever
+    ///    path settles it — the claim walk, a staged day, the legacy per-day
+    ///    window or the legacy slice — including the wallet's own claim after
+    ///    the flag was revoked. Days nobody observed are not counted, and a
+    ///    chain that ended before the interaction launch names no day.
+    /// CONFIRMED is `LibRewardSanctions`' rule: the wallet reads Flagged on a
+    /// chain of committed, authoritative observations against one oracle that
+    /// spans `CONFIRM_SECS` with no gap over `MAX_OBS_GAP_SECS` (anyone may
+    /// observe). NEVER on an outage, an unset oracle, a first flag or a broken
+    /// chain: until confirmed, a barred wallet's reward is only WITHHELD — its
+    /// claim refused, its entries' expiry clock paused, a staged payout
+    /// waiting. Reward value already delivered into the wallet's vault stays
+    /// frozen with everything else there, and loan value — principal,
+    /// interest, collateral, claimables, the borrower-LIF rebate — is
+    /// untouched. WHY the split: a loan's value rests on a contract entered
+    /// before the listing (the wind-down reasoning above), and reward earned
+    /// before the flag is likewise already the wallet's; reward emitted to a
+    /// wallet while it stood confirmed-flagged would be the protocol paying a
+    /// listed party, which it must not do.
     ///
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {

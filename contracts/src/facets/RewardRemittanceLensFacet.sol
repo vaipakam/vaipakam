@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
@@ -228,6 +229,34 @@ contract RewardRemittanceLensFacet {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (s.chainRemittedRecycledAcked[chainId], s.chainRemittedRecycledForceFinalized[chainId]);
+    }
+
+    /// @notice Codex #2489 r7 — how many reservations in `[fromId, fromId +
+    ///         count)` (clipped to the nonce) the history rule would still
+    ///         write ({RewardRemittanceFacet.backfillRemitHistory}): stranded
+    ///         records to stamp, recycled shares to book. Both zero over
+    ///         `1..nonce` means the per-destination booked counters cover the
+    ///         whole history; until then the mesh watcher reads them as UNKNOWN.
+    /// @return strandedPending Released reservations without a stranded record.
+    /// @return bookingPending  Finalized reservations whose share is unbooked.
+    /// @return nonce           The highest reservation id, so a reader knows
+    ///                         when its range covered everything.
+    function getRemitHistoryPending(uint256 fromId, uint256 count)
+        external
+        view
+        returns (uint256 strandedPending, uint256 bookingPending, uint256 nonce)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (LibVpfiRecycle.strandedStampPending(r)) { unchecked { ++strandedPending; } }
+            if (LibVpfiRecycle.recycledBookingPending(r)) { unchecked { ++bookingPending; } }
+            unchecked { ++id; }
+        }
     }
 
     /// @notice Σ VPFI in ACKED (delivery-finalized) reservations to `chainId`.

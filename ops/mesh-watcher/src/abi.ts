@@ -169,6 +169,16 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     outputs: ['acked:uint256', 'forceFinalized:uint256'],
     facet: 'remittanceLens',
   },
+  // Codex #2489 r7 — whether the acknowledged share above is comparable yet:
+  // how much reservation history the permissionless backfill has still to
+  // book. Non-zero (or a history longer than one scan) reads the share as
+  // UNKNOWN rather than comparing an undercount.
+  {
+    name: 'getRemitHistoryPending',
+    inputs: ['uint256', 'uint256'],
+    outputs: ['strandedPending:uint256', 'bookingPending:uint256', 'nonce:uint256'],
+    facet: 'remittanceLens',
+  },
   // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
   // `expectedAvail` and the subject of the `keeper-cap` check. On the
   // aggregator facet (it reads the same per-chain books), so no separate

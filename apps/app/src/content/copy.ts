@@ -5145,6 +5145,13 @@ const copySource = {
     heldReady: tmpl('{{amount}} VPFI of your rewards was set aside for you and is ready to claim.', ['amount']),
     heldNote: 'You can claim it on its own, even when your other rewards can’t be claimed right now.',
     claimHeld: 'Claim set-aside rewards',
+    // #2489 r7 — the same balance while the wallet is flagged (the button is
+    // disabled and the claim would revert), or while the screen has not
+    // answered: say it is set aside, never that it is ready. The flagged
+    // wording appears only on a wallet that is already shown the sanctions
+    // banner, so it names no rule the rest of the app keeps quiet about.
+    heldSetAside: tmpl('{{amount}} VPFI of your rewards is set aside for you.', ['amount']),
+    heldBlockedNote: 'It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.',
     // RL-3 claim horizon (#1956) — the Claim Center countdown. The date is the
     // contract's EARLIEST estimate (it assumes the reward stays claimable), so
     // the real date can only move later; the copy says which way it can move.

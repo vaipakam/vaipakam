@@ -2022,7 +2022,10 @@ is the borrower's own money.
   one, or nothing at all (which would read as "no deadline").
 - A wallet with interaction rewards set aside for it can always take them on
   their own, and the page does not describe the wallet's claims as empty while
-  such a balance is ready. When the card cannot preview the wallet's whole claim (for
+  such a balance is ready. The balance is described as READY only when the
+  wallet is clear to claim: while the wallet is flagged it is described as set
+  aside and claimable once the flag is lifted, and while the screen has not
+  answered it is described as set aside and nothing more. When the card cannot preview the wallet's whole claim (for
   example because the claim cannot complete), it still shows the set-aside
   balance and offers a claim that pays exactly that balance. When the whole
   claim can be previewed, its figure already includes the set-aside balance,

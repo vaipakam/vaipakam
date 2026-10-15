@@ -1630,6 +1630,57 @@ contract RewardRemittanceFacet is
         return Math.mulDiv(declared, received, total);
     }
 
+    /// @notice A reservation's recycled share booked for its destination from
+    ///         its HISTORY (finalized before the booking existed), by
+    ///         {backfillRemitHistory}: `booked` is the state written (1 forced,
+    ///         2 acknowledged).
+    /// @custom:event-category informational/reward-transport
+    event RemitRecycledBookedFromHistory(uint256 indexed remitId, uint8 booked);
+
+    /// @notice Bring the reservations `[fromId, fromId + count)` (clipped to
+    ///         the nonce) up to the record shape this facet keeps (Codex #2489
+    ///         r7): a RELEASED reservation gets its stranded record from history
+    ///         and, if its consumption is trusted, resolves it; a FINALIZED one
+    ///         books its recycled share for its destination — acknowledged
+    ///         (the declared share: a VPFI delivery is never short, and history
+    ///         keeps no received figure) or force-finalized. Permissionless and
+    ///         idempotent: every write is of a fact the record lacks, derived
+    ///         from the record itself, so anyone may run it at any time and a
+    ///         second pass writes nothing. Until it has covered `1..nonce`,
+    ///         the per-destination booked counters undercount history and the
+    ///         mesh watcher's relocated leg treats them as UNKNOWN
+    ///         ({RewardRemittanceLensFacet.getRemitHistoryPending}).
+    /// @return stranded How many stranded records this call wrote.
+    /// @return booked   How many recycled shares this call booked.
+    function backfillRemitHistory(uint256 fromId, uint256 count)
+        external
+        returns (uint256 stranded, uint256 booked)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (LibVpfiRecycle.ensureReleasedStrandedStamped(s, id)) {
+                unchecked { ++stranded; }
+                LibVpfiRecycle.settleReleasedRemitStranded(s, id);
+            }
+            if (LibVpfiRecycle.recycledBookingPending(r)) {
+                // Acknowledged books the declared share (received := total);
+                // forced books the forced bucket. A reservation both forced and
+                // later acknowledged books straight to acknowledged, as the live
+                // path would have moved it.
+                if (r.consumedAcked) _bookRecycledDelivered(s, r, r.total, false);
+                else _bookRecycledDelivered(s, r, 0, true);
+                emit RemitRecycledBookedFromHistory(id, r.recycledBooked);
+                unchecked { ++booked; }
+            }
+            unchecked { ++id; }
+        }
+    }
+
     /// @dev {RemitReservation.recycledBooked} states (0 = not booked).
     uint8 private constant RECYCLED_BOOKED_FORCED = 1;
     uint8 private constant RECYCLED_BOOKED_ACKED = 2;

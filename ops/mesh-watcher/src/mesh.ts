@@ -146,20 +146,69 @@ export function keeperDrawUnavailableGap(
  * #1452 — the gap for an unreadable acknowledged recycled share. The
  * `base-ahead-of-chain` relocated leg did NOT run for the chain this tick; a
  * zero substitute would hide exactly the misrouted arrival the leg exists for.
+ * `view` names the selector that failed: the share itself, or (Codex #2489 r7)
+ * the history-pending view that decides whether the share is comparable.
  */
-export function remittedRecycledUnavailableGap(chainId: number, err: unknown): CoverageGap {
-  const failure = classify(err, 'getChainRemittedRecycled');
+export function remittedRecycledUnavailableGap(
+  chainId: number,
+  err: unknown,
+  view: 'getChainRemittedRecycled' | 'getRemitHistoryPending' = 'getChainRemittedRecycled',
+): CoverageGap {
+  const failure = classify(err, view);
   const missing = isMissingSelector(err);
   return {
     chainId,
     reason: 'view-unavailable',
     source: 'base-books-relocation',
     detail:
-      `getChainRemittedRecycled() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `${view}() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
       `The acknowledged recycled share is UNKNOWN this tick, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain: an arrival credited as absorption instead of relocated custody is NOT being watched in this window.\n\n` +
       (missing
         ? `The selector does not exist in this Diamond's CURRENT CUT — a pre-#1452 deployment, or a refresh that dropped the remittance lens. Cut it (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
+/** How many reservation ids one `getRemitHistoryPending` call scans (a view;
+ *  bounded by the RPC's call gas, not by a transaction). A history longer than
+ *  this is read as pending until the view is paged — see the gap below. */
+export const REMIT_HISTORY_SCAN = 4_000n;
+
+/**
+ * Codex #2489 r7 — whether Base's acknowledged recycled share is NOT yet
+ * comparable with the mirror's relocated custody: `recycledBooked` was
+ * appended to the reservation record after remittances had been finalized on
+ * upgraded-in-place Diamonds, so until `backfillRemitHistory` has covered
+ * `1..nonce` the per-destination counter undercounts pre-upgrade deliveries
+ * that the mirror's cumulative does hold — a cushion exactly the size of that
+ * history, inside which a misrouted arrival is invisible to the relocated leg.
+ * Pending bookings anywhere, or a history the one scan did not reach, hide it.
+ * Pure, for the unit test.
+ */
+export function remitHistoryHidesAcked(bookingPending: bigint, nonce: bigint, scanned: bigint): boolean {
+  return bookingPending > 0n || nonce > scanned;
+}
+
+/** The gap for a share read but not comparable ({@link remitHistoryHidesAcked}). */
+export function remitHistoryPendingGap(
+  chainId: number,
+  bookingPending: bigint,
+  nonce: bigint,
+  scanned: bigint,
+): CoverageGap {
+  return {
+    chainId,
+    reason: 'history-pending',
+    source: 'base-books-relocation',
+    detail:
+      `Base's acknowledged recycled share for chain ${chainId} is not comparable yet, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain.\n\n` +
+      (bookingPending > 0n
+        ? `${bookingPending} finalized reservation(s) in 1..${nonce > scanned ? scanned : nonce} have no booking: run RewardRemittanceFacet.backfillRemitHistory over 1..${nonce} (permissionless, idempotent, chunk as needed) and this gap closes on the next tick.\n\n`
+        : '') +
+      (nonce > scanned
+        ? `The reservation history (${nonce}) is longer than one view call scans (${scanned}); the share is read as pending until the scan covers it.\n\n`
+        : '') +
+      `Until then every pre-upgrade delivery the mirror relocated is a cushion inside which an arrival credited as absorption would go unseen.`,
   };
 }
 
@@ -256,6 +305,27 @@ async function readBaseBooks(
   } catch (err) {
     recycledAcked = undefined;
     gaps.push(remittedRecycledUnavailableGap(chainId, err));
+  }
+  // Codex #2489 r7 — comparable only once Base's reservation history is
+  // booked; otherwise read as UNKNOWN (see remitHistoryHidesAcked).
+  if (recycledAcked !== undefined) {
+    try {
+      const pending = await readView<readonly [bigint, bigint, bigint]>(
+        canonical.client,
+        canonical.diamond,
+        'getRemitHistoryPending',
+        [1n, REMIT_HISTORY_SCAN],
+        blockNumber,
+        REWARD_REMITTANCE_LENS_ABI,
+      );
+      if (remitHistoryHidesAcked(pending[1], pending[2], REMIT_HISTORY_SCAN)) {
+        recycledAcked = undefined;
+        gaps.push(remitHistoryPendingGap(chainId, pending[1], pending[2], REMIT_HISTORY_SCAN));
+      }
+    } catch (err) {
+      recycledAcked = undefined;
+      gaps.push(remittedRecycledUnavailableGap(chainId, err, 'getRemitHistoryPending'));
+    }
   }
 
   return {

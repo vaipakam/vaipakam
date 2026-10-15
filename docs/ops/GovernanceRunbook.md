@@ -1835,6 +1835,16 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   `RewardRemittanceLensFacet.dayAwaitsFreshDelivery` does the same to every
   claim, sweep and staging call. `RefreshAllFacetsInPlace` refreshes them
   together; never refresh a subset.
+- **After a refresh that brings in the remittance history rule (#2489 r7), run
+  the history walk.** `RewardRemittanceFacet.backfillRemitHistory(fromId, count)`
+  is permissionless and idempotent; call it over `1..getRemitReservationNonce()`
+  in chunks until `RewardRemittanceLensFacet.getRemitHistoryPending(1, n)` reads
+  zero for both counts. Until it does, the mesh watcher reports a
+  `history-pending` gap for every mirror and reads Base's acknowledged recycled
+  share as unknown — the relocated-custody leg is not watched in that window —
+  so a skipped walk is visible, not silent. Nothing else waits on it: a late
+  acknowledgement or a ceremony on an unwalked reservation writes its own record
+  from history first.
 - **A reward-role change on a gate-armed mirror is safe** since the custody-era
   revision: the change bumps the custody era, Base stamps later remittances with
   the era the mirror reports, and a delivery still in flight for the retired era

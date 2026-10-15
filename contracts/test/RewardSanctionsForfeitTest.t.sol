@@ -30,6 +30,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
+import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {LibRewardSanctions} from "../src/libraries/LibRewardSanctions.sol";
 import {LibKeeperReward} from "../src/libraries/LibKeeperReward.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -173,6 +174,25 @@ contract RewardSanctionsHarness {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (, uint64 f, uint64 l) = LibRewardSanctions.unpackEvidence(s.rewardSanctionsEvidence[who]);
         return LibRewardSanctions.chainWindow(s, f, l);
+    }
+
+    /// @dev Codex #2489 r7 — a legacy entry and the lender MIN curve, so the
+    ///      slice-share host's rule can be priced here against many windows.
+    function setLenderEntry(uint256 id, address user, uint256 perDayNumeraire18) external {
+        LibVaipakam.RewardEntry storage e = LibVaipakam.storageSlot().rewardEntries[id];
+        e.user = user;
+        e.side = LibVaipakam.RewardSide.Lender;
+        e.perDayNumeraire18 = perDayNumeraire18;
+    }
+
+    function setCumMinLender(uint256 day, uint256 v) external {
+        LibVaipakam.storageSlot().cumMinLenderRpn18[day] = v;
+    }
+
+    /// @dev The slice-share host's rule
+    ///      (`RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare`).
+    function legacyWindowShare(uint256 id, uint256 lo, uint256 hi, uint256 slice) external view returns (uint256) {
+        return LibInteractionRewards.legacyWindowShareFull(LibVaipakam.storageSlot(), id, lo, hi, slice);
     }
 
     /// @dev THE predicate, as every settlement path reads it (fast path, then
@@ -543,6 +563,48 @@ contract RewardSanctionsClassifierTest is Test {
         assertTrue(h.rewardSanctionsDayForfeited(TWIN, 13 + 5 * 31), "a middle window's last day");
         assertFalse(h.rewardSanctionsDayForfeited(TWIN, 9), "before every window");
         assertFalse(h.rewardSanctionsDayForfeited(TWIN, 14 + 5 * 63), "after every window");
+    }
+
+    /// @notice T0f - the legacy slice's window share reads only the windows the
+    ///         slice meets (Codex #2489 r7): with 64 recorded windows and a slice
+    ///         over the last six, the share is exactly those windows' days on
+    ///         the curve, the live chain's window is still counted, and the
+    ///         cost is bounded by the windows met, not the 64.
+    /// @dev   Curve: cumMin[d] = d (×1e18), per-day numeraire 1e18, so a day
+    ///        contributes exactly 1e18 and the share counts window days. The
+    ///        measured call runs on COLD storage (`vm.cool`): every slot the
+    ///        fixture wrote is warm otherwise, and warm reads are too cheap
+    ///        for the two scans to differ by more than the bound's margin.
+    ///        Cold, the bounded scan reads ~6 bisection + 6 window + 12 curve
+    ///        slots; the linear scan reads all 64 windows and measured 216k.
+    ///        Mutation: the linear scan from slot 0 → the 100k bound fails.
+    function test_sanc_T0f_legacySliceShare_readsOnlyTheWindowsTheSliceMeets_andIsBounded() public {
+        h.setOracle(address(m));
+        for (uint256 i; i < 64; ++i) _endChain(TWIN, 10 + 5 * i, 13 + 5 * i);
+        assertEq(h.windowCount(TWIN), 64, "fixture: 64 recorded windows");
+        h.setLenderEntry(7, TWIN, 1e18);
+        for (uint256 d; d <= 340; ++d) h.setCumMinLender(d, d * 1e18);
+
+        // Slice [300, 330): windows 58..63 start at 300, 305, ..., 325 - six
+        // windows of four days each inside the slice = 24 days.
+        vm.cool(address(h));
+        uint256 g0 = gasleft();
+        uint256 share = h.legacyWindowShare(7, 300, 330, type(uint256).max);
+        uint256 used = g0 - gasleft();
+        assertEq(share, 24e18, "six windows x four days");
+        assertLt(used, 100_000, "cold: bounded by the windows met, not the 64 recorded");
+        // Boundaries: [303, 306) meets day 303 (window 58's last) and 305 (59's first).
+        assertEq(h.legacyWindowShare(7, 303, 306, type(uint256).max), 2e18, "two boundary days");
+        assertEq(h.legacyWindowShare(7, 14, 15, type(uint256).max), 0, "a gap day: nothing");
+        assertEq(h.legacyWindowShare(7, 300, 330, 5e18), 5e18, "capped at the slice");
+        assertEq(h.legacyWindowShare(7, 0, 12, type(uint256).max), 2e18, "day 0 has no step: days 10, 11 only");
+
+        // The live chain's own window is read after the recorded ones: a
+        // confirmed, still-open chain over days 335..338 counts in a slice
+        // that reaches it.
+        h.setMarker(TWIN, true);
+        h.setEvidence(TWIN, address(m), uint64(LAUNCH + 335 days + 1 hours), uint64(LAUNCH + 338 days + 1 hours));
+        assertEq(h.legacyWindowShare(7, 325, 340, type(uint256).max), 8e18, "window 63 (4 days) + the live chain (4 days)");
     }
 
     /// @dev Ends a confirmed chain for `who` whose window is `[fromDay, toDay]`:

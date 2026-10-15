@@ -5954,10 +5954,15 @@ library LibInteractionRewards {
     ///         capped at `slice`, that its owner earned while a CONFIRMED flag
     ///         stood: the same telescoping MIN curve {legacyDayNeed} steps,
     ///         differenced over each window's intersection with the slice and
-    ///         times the entry's per-day numeraire. Windows are enumerated in
-    ///         recorded order, which is time order, and a running
-    ///         first-uncounted day keeps a day two windows share (one chain
-    ///         ending, the next restarting, on one day) from counting twice. Day
+    ///         times the entry's per-day numeraire. The recorded windows are
+    ///         sorted by first day and non-overlapping
+    ///         ({LibRewardSanctions._recordWindow} merges touching ones), so the
+    ///         scan binary-searches the first window that reaches `lo` and stops
+    ///         at the first that starts past `hi - 1` — bounded by the windows
+    ///         the slice actually meets, not the wallet's whole listing history
+    ///         (Codex #2489 r7) — then reads the live chain's own window, the
+    ///         one slot that may overlap a recorded one; a running
+    ///         first-uncounted day keeps a shared day from counting twice. Day
     ///         0 has no step. Read only after the whole window priced, so the
     ///         curve has reached `hi - 1`. Run on its host only
     ///         (`RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare`),
@@ -5974,24 +5979,49 @@ library LibInteractionRewards {
     ) internal view returns (uint256 share) {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (hi <= lo || slice == 0) return 0;
-        uint256 n = LibRewardSanctions.windowSlots(s, e.user);
         uint256 next = lo == 0 ? 1 : lo;
-        for (uint256 i; i < n; ) {
-            (bool ok, uint256 a, uint256 b) = LibRewardSanctions.windowAt(s, e.user, i);
-            if (ok) {
-                if (a < next) a = next;
-                if (b > hi - 1) b = hi - 1;
-                if (a <= b) {
-                    uint256 step = e.side == LibVaipakam.RewardSide.Lender
-                        ? s.cumMinLenderRpn18[b] - s.cumMinLenderRpn18[a - 1]
-                        : s.cumMinBorrowerRpn18[b] - s.cumMinBorrowerRpn18[a - 1];
-                    share += (e.perDayNumeraire18 * step) / 1e18;
-                    next = b + 1;
-                }
+        uint256[] storage recorded = s.rewardSanctionsWindows[e.user];
+        uint256 n = recorded.length;
+        // First recorded window whose last day reaches `next`.
+        uint256 i;
+        {
+            uint256 top = n;
+            while (i < top) {
+                uint256 mid = (i + top) >> 1;
+                (, uint256 to) = LibRewardSanctions.unpackWindow(recorded[mid]);
+                if (to < next) i = mid + 1;
+                else top = mid;
             }
+        }
+        for (; i < n; ) {
+            (uint256 a, uint256 b) = LibRewardSanctions.unpackWindow(recorded[i]);
+            if (a > hi - 1) break;
+            (share, next) = _windowShareStep(s, e, a, b, next, hi, share);
             unchecked { ++i; }
         }
+        (bool ok, uint256 la, uint256 lb) = LibRewardSanctions.windowAt(s, e.user, n);
+        if (ok) (share, next) = _windowShareStep(s, e, la, lb, next, hi, share);
         if (share > slice) share = slice;
+    }
+
+    /// @dev One window's contribution to {legacyWindowShareFull}: its days in
+    ///      `[next, hi)`, differenced on the entry side's MIN curve.
+    function _windowShareStep(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        uint256 a,
+        uint256 b,
+        uint256 next,
+        uint256 hi,
+        uint256 share
+    ) private view returns (uint256, uint256) {
+        if (a < next) a = next;
+        if (b > hi - 1) b = hi - 1;
+        if (a > b) return (share, next);
+        uint256 step = e.side == LibVaipakam.RewardSide.Lender
+            ? s.cumMinLenderRpn18[b] - s.cumMinLenderRpn18[a - 1]
+            : s.cumMinBorrowerRpn18[b] - s.cumMinBorrowerRpn18[a - 1];
+        return (share + (e.perDayNumeraire18 * step) / 1e18, b + 1);
     }
 
     /// @dev The WHOLE-WINDOW entry settle: flips `processed = true` and

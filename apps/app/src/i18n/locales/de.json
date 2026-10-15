@@ -2340,6 +2340,8 @@
       "heldReady": "{{amount}} VPFI deiner Belohnungen wurden für dich zurückgelegt und können beansprucht werden.",
       "heldNote": "Du kannst sie für sich allein beanspruchen, auch wenn deine anderen Belohnungen gerade nicht beansprucht werden können.",
       "claimHeld": "Zurückgelegte Belohnungen beanspruchen",
+      "heldSetAside": "{{amount}} VPFI deiner Belohnungen sind für dich zurückgestellt.",
+      "heldBlockedNote": "Sie können nicht angefordert werden, solange diese Wallet markiert ist; sobald die Markierung aufgehoben ist, sind sie anforderbar.",
       "expiryCountdown": "Fordere vor dem {{date}} an: Eine Belohnung, die während ihres gesamten Anforderungszeitraums nicht angefordert wird, geht an das Belohnungsprogramm zurück. Das Datum kann sich nur nach hinten verschieben – Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht.",
       "expiryFinalNotice": "Letzter Hinweis: Fordere vor dem {{date}} an, sonst geht diese Belohnung an das Belohnungsprogramm zurück. Zeit, in der deine Belohnung nicht angefordert werden kann, zählt nicht zu diesem Datum.",
       "expiryUnavailable": "Die Anforderungsfrist konnte gerade nicht geprüft werden. Deine Belohnungen sind davon nicht betroffen; das Datum erscheint wieder, sobald die Prüfung gelingt."

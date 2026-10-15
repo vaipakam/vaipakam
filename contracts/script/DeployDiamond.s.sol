@@ -3123,7 +3123,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3137,6 +3137,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[9] = RewardRemittanceFacet.attestRemitSplit.selector;
         // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
         s[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
+        s[11] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
@@ -3515,7 +3516,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](43);
+        s = new bytes4[](44);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3581,6 +3582,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
         // #1452 — the acknowledged recycled share per destination.
         s[42] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
+        s[43] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

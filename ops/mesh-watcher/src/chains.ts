@@ -57,6 +57,11 @@ export interface CoverageGap {
     | 'no-rpc'
     | 'stale-head'
     | 'view-unavailable'
+    // Codex #2489 r7 — the view answered, but the figure it publishes is
+    // not yet comparable: Base's reservation HISTORY is not fully booked, so
+    // the per-destination acknowledged share undercounts pre-upgrade
+    // deliveries that the mirror's relocated cumulative does hold.
+    | 'history-pending'
     | 'chain-mismatch';
   /**
    * Which read produced the gap.

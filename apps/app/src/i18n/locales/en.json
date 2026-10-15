@@ -2447,6 +2447,8 @@
       "heldReady": "{{amount}} VPFI of your rewards was set aside for you and is ready to claim.",
       "heldNote": "You can claim it on its own, even when your other rewards can’t be claimed right now.",
       "claimHeld": "Claim set-aside rewards",
+      "heldSetAside": "{{amount}} VPFI of your rewards is set aside for you.",
+      "heldBlockedNote": "It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.",
       "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.",
       "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.",
       "expiryUnavailable": "Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds."

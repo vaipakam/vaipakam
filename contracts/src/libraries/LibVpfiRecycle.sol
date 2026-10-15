@@ -1624,6 +1624,12 @@ library LibVpfiRecycle {
     /// @custom:event-category state-change/reward-custody
     event ReleasedRemitStrandedResolved(uint256 indexed remitId, uint256 amount);
 
+    /// @notice A released reservation's stranded record WRITTEN by the history
+    ///         rule ({ensureReleasedStrandedStamped}) — never by a release, which
+    ///         announces its own figure in `RemitReservationReleased`.
+    /// @custom:event-category informational/reward-transport
+    event ReleasedRemitStrandedStamped(uint256 indexed remitId, uint256 amount);
+
     /// @notice Whether a released reservation's consumption is TRUSTED: consumed,
     ///         and never attested quarantined. The one rule both sides read — the
     ///         recovery ceremony and the terminal-loss record are refused while it
@@ -1649,11 +1655,59 @@ library LibVpfiRecycle {
     function settleReleasedRemitStranded(LibVaipakam.Storage storage s, uint256 remitId) internal {
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (!releasedConsumptionTrusted(r)) return;
+        ensureReleasedStrandedStamped(s, remitId);
         uint256 amount = r.strandedRecycled;
         if (amount == 0) return;
         r.strandedRecycled = 0;
         s.recycleReleasedRemitResolvedCumulative += amount;
         emit ReleasedRemitStrandedResolved(remitId, amount);
+    }
+
+    // ─── #1461 / Codex #2489 r7 — the reservation HISTORY rule ────────────────
+    //
+    // `strandedRecycled` and `recycledBooked` were appended to the reservation
+    // record after reservations had already been released and finalized on
+    // upgraded-in-place Diamonds. Both facts are DERIVED from what the record
+    // already holds, so neither needs an operator figure: the history rule
+    // below writes a missing fact from the record's own state, once, and is
+    // applied lazily where the fact is read (the stranded settle, the
+    // recovery ceremony) and eagerly by the permissionless bounded walk
+    // `RewardRemittanceFacet.backfillRemitHistory`, so the per-destination
+    // booked counters are whole before the mesh watcher compares them.
+
+    /// @notice Whether the history rule would still write `who`'s stranded
+    ///         record: RELEASED (status 3) and never stamped.
+    function strandedStampPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        return r.status == 3 && !r.strandedStamped;
+    }
+
+    /// @notice Whether the history rule would still book a reservation's
+    ///         recycled share for its destination: FINALIZED (status 2),
+    ///         not yet booked, and either acknowledged or force-finalized.
+    ///         A finalized row that moved no value books nothing.
+    function recycledBookingPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        return r.status == 2 && r.recycledBooked == 0 && (r.consumedAcked || r.forcedFinalized);
+    }
+
+    /// @notice Write a RELEASED reservation's stranded record from its history if
+    ///         it was released before the record existed: the recycled share it
+    ///         sent, less what the recovery ceremony and the loss record have
+    ///         already resolved for it (both kept per reservation since #1662),
+    ///         saturating at zero. Returns whether it wrote. A reservation
+    ///         released since stamps at its release and is never rewritten,
+    ///         so a resolution that zeroed the record cannot be re-derived.
+    /// @dev    Must run BEFORE a ceremony's own per-reservation records grow
+    ///         (the entry points call it first), or the derivation would count
+    ///         the resolution it is about to deduct.
+    function ensureReleasedStrandedStamped(LibVaipakam.Storage storage s, uint256 remitId) internal returns (bool) {
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (!strandedStampPending(r)) return false;
+        uint256 resolved = s.ceremonyRecycledRecovered[remitId] + s.ceremonyRecycledLoss[remitId];
+        uint256 amount = r.recycled > resolved ? r.recycled - resolved : 0;
+        r.strandedRecycled = amount;
+        r.strandedStamped = true;
+        emit ReleasedRemitStrandedStamped(remitId, amount);
+        return true;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

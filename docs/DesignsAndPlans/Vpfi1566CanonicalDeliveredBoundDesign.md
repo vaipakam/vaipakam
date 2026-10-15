@@ -7358,7 +7358,12 @@ on the live era alone.
 >   launch, or while no launch is set, names NO day: every pre-launch instant
 >   maps to day 0, so such a chain read as the window `[0, 0]` and forfeited
 >   the real day 0 of a wallet clean by then; only a chain straddling the
->   launch is clamped to begin at day 0. It is applied at
+>   launch is clamped to begin at day 0. The legacy slice's window share
+>   (`legacyWindowShareFull`) reads the same sorted array the same way
+>   (#2489 r7): it binary-searches the first window that reaches the slice
+>   and stops at the first that starts past it, then the live chain's own
+>   window — so a slice's cost is bounded by the windows it meets, not the
+>   wallet's whole listing history. It is applied at
 >   exactly the two places a claimant's day is SETTLED: the claim walk's
 >   day loop marks the day so the pricing routes every entry's share to the
 >   treasury (forfeit) legs, and a staged day's payout page forfeits the
