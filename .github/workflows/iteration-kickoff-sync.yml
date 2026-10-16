@@ -85,14 +85,18 @@ jobs:
         uses: imjohnbo/issue-bot@3188c6ce06249206709d3b1f274d0d4c5a521601 # v3
         with:
           title: "Iteration kickoff sync — ${{ steps.iter.outputs.label }}"
-          labels: "documentation,chore"
+          # `iteration-kickoff` is this card's own label, and nothing else
+          # carries it (.github/LABELS.md). issue-bot finds the "previous"
+          # issue by matching ALL of these labels, so the dedicated label
+          # is what keeps `close-previous` from closing an unrelated
+          # documentation/chore issue.
+          labels: "documentation,chore,iteration-kickoff"
           assignees: "Raja4Shekar"
-          # `body-includes` ensures we don't create a duplicate while
-          # the previous kickoff card is still open. If a card with
-          # this title-prefix already exists open, the bot is a no-op.
-          # If it's been closed by the maintainer, a fresh card opens.
           pinned: false
-          close-previous: false
+          # Each week's card supersedes the last. Without this, unworked
+          # cards piled up (19 open on 2026-10-16) and had to be closed
+          # by hand.
+          close-previous: true
           # Use ADD_TO_PROJECT_PAT (a maintainer-owned PAT with
           # `repo` + `project` scopes) instead of the default
           # GITHUB_TOKEN. GitHub Actions intentionally does NOT
