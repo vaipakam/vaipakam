@@ -54,6 +54,44 @@ export interface BaseChainBooks {
    */
   keeperDraw?: bigint;
   /**
+   * #1452 — the recycled share of every remittance to this chain that the chain
+   * acknowledged CREDITING (`getChainRemittedRecycled`), once each; held or
+   * provisional acknowledgements and forced finalizations are excluded.
+   * The chain must have relocated at least this as delivered custody.
+   * `undefined` means UNKNOWN — the view could not be read — and the
+   * `base-ahead-of-chain` relocated leg SKIPS, for the reason the draws give.
+   */
+  recycledAcked?: bigint;
+  /**
+   * Codex #2489 r9 — the DECLARED recycled share of every pre-upgrade
+   * acknowledgement the history walk booked (`getChainRemittedRecycledHistory`),
+   * kept apart from `recycledAcked` because no received figure survives for
+   * history: a short delivery relocated less than declared. Compared only at
+   * ADVISORY severity, on top of the exact figure. `undefined` = unreadable,
+   * the advisory skips.
+   */
+  recycledAckedHistory?: bigint;
+  /**
+   * Codex #2489 r10 — what the chain ACTUALLY relocated for the history the
+   * backfill booked, reconstructed by joining Base's history-booked rows
+   * (`getRemitHistoryBooked`: declared recycled / total) with the chain's own
+   * receipt records (`getReceivedRemit`: the amount that arrived) — the
+   * receiver's own `recycled × received / total`. With it the relocated leg
+   * stays a HARD invariant across an in-place upgrade (post-cutover
+   * deliveries are compared against post-cutover relocation). `undefined`
+   * when any receipt is missing (`historyReceiptsMissing` says how many) —
+   * then only the declared-share advisory above applies.
+   */
+  recycledAckedHistoryActual?: bigint;
+  historyReceiptsMissing?: number;
+  /** History rows the chain holds a receipt for with `receivedAt` 0 — never
+   *  delivered: pre-upgrade FORCED finalizations, which Base's record cannot
+   *  tell from acknowledgements. They relocated nothing and contribute 0. */
+  historyNeverDelivered?: number;
+  /** The rows behind `recycledAckedHistory` (`getRemitHistoryBooked`), read on
+   *  Base; `observeMesh` joins them with the chain's receipts. */
+  historyBooked?: import('./mesh').HistoryBookedRow[];
+  /**
    * #1568 C2 — the chain's repatriation draw pair, from
    * `getChainRepatriationDraw`. `netDraw` is the LIVE availability term
    * (outstanding + settled Mode-A charges, already net of releases —
@@ -747,6 +785,68 @@ export function checkHardInvariants(
         'Base holds a higher retirement cumulative than the chain itself',
         `base retired = ${fmt(b.retired)} > chain retired = ${fmt(local.localRetired)}`,
         [b.retired, local.localRetired],
+      );
+    }
+    // #1452 — what Base saw a delivery acknowledge as recycled must have been
+    // RELOCATED on the chain (custody, never absorption). The acknowledgement
+    // follows the delivery's credit, so Base trails here like every figure
+    // above; leading it means an arrival was credited through the ordinary
+    // absorption path — the chain would then report Base's own top-up as its
+    // absorption, the one exclusion variant no on-chain bound catches.
+    // Codex #2489 r10 — the HARD figure is the exact acknowledged share plus
+    // what the chain actually relocated for the booked history (reconstructed
+    // from its own receipt records), so a post-cutover delivery credited as
+    // absorption cannot hide inside historical custody. Without the
+    // reconstruction (a receipt missing) the hard leg falls back to the exact
+    // share alone and the declared-share advisory below covers the rest.
+    const hardAcked =
+      b.recycledAcked === undefined ? undefined : b.recycledAcked + (b.recycledAckedHistoryActual ?? 0n);
+    if (hardAcked !== undefined && hardAcked > local.custodyRelocated) {
+      add(
+        'base-ahead-of-chain',
+        'relocated',
+        b.chainId,
+        'Base acknowledged more recycled delivery than the chain relocated',
+        `Base's acknowledged recycled share exceeds the chain's relocated custody\n` +
+          `  base acked (exact)       = ${fmt(b.recycledAcked!)}\n` +
+          (b.recycledAckedHistoryActual !== undefined
+            ? `  history (reconstructed)  = ${fmt(b.recycledAckedHistoryActual)}\n`
+            : '') +
+          `  chain relocated          = ${fmt(local.custodyRelocated)}\n` +
+          `  excess                   = ${fmt(hardAcked - local.custodyRelocated)}\n` +
+          `  (an arrival credited as absorption instead of relocated custody would look exactly like this)`,
+        [hardAcked, local.custodyRelocated],
+      );
+    } else if (
+      b.recycledAckedHistoryActual === undefined &&
+      // Codex #2489 r9 — the history figure is booked at the DECLARED share
+      // (no received figure survives), so it may overstate a short pre-upgrade
+      // delivery: compared on top of the exact figure at ADVISORY severity, a
+      // reading the operator settles against the history's authenticated
+      // acknowledgement events (RemitReservationAcked carries amountReceived),
+      // never a critical. Skipped while the exact leg already fired above, and
+      // not needed at all when the history was reconstructed (r10).
+      b.recycledAcked !== undefined &&
+      b.recycledAckedHistory !== undefined &&
+      b.recycledAckedHistory > 0n &&
+      b.recycledAcked + b.recycledAckedHistory > local.custodyRelocated
+    ) {
+      out.push(
+        makeFinding({
+          code: 'base-ahead-of-chain',
+          variant: 'relocated-history',
+          severity: 'advisory',
+          chainId: b.chainId,
+          title: 'Base acknowledged more recycled delivery than the chain relocated, counting pre-upgrade history at its declared share',
+          detail:
+            `Base's exact acknowledged share is within the chain's relocated custody, but adding the history the backfill booked at the DECLARED share exceeds it\n` +
+            `  base acked (exact)  = ${fmt(b.recycledAcked)}\n` +
+            `  history (declared)  = ${fmt(b.recycledAckedHistory)}\n` +
+            `  chain relocated     = ${fmt(local.custodyRelocated)}\n` +
+            `  excess              = ${fmt(b.recycledAcked + b.recycledAckedHistory - local.custodyRelocated)}\n` +
+            `  Either a pre-upgrade delivery arrived SHORT (the mirror relocated less than declared), a pre-upgrade FORCED finalization never delivered at all (Base's record cannot tell it from an acknowledgement), or an arrival was credited as absorption. Advisory, not critical: ${b.historyReceiptsMissing ?? 'some'} history receipt(s) could not be read from the chain, so the actual relocated figure was not reconstructed this tick.`,
+          identity: [b.recycledAcked, b.recycledAckedHistory, local.custodyRelocated],
+        }),
       );
     }
     if (b.released > local.localReleased) {

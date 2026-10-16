@@ -224,6 +224,142 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
 
     // ─── tiny array helpers ────────────────────────────────────────────────────
 
+    /// @notice The paged entry index (Codex #2489 r5) returns exactly the slice
+    ///         `[offset, offset + limit)` of the registration order, clipped at
+    ///         its end, with the order's length as `total` on every page — so a
+    ///         reader that must consider EVERY entry (the claim-center
+    ///         countdown) can walk the pages and prove it reached the end.
+    /// @dev   Mutations: an unclipped last page reads past the array (revert);
+    ///        `total` from the page rather than the order → the walk stops early.
+    function test_Page_EntryIdsPage_ClipsToTheOrder_andReportsItsLength() public {
+        address p = makeAddr("P");
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        (uint256[] memory none, uint256 total0) = lens.getUserRewardEntryIdsPage(p, 0, 10);
+        assertEq(none.length, 0, "no entries: an empty page");
+        assertEq(total0, 0, "no entries: total 0");
+
+        uint256[] memory all = new uint256[](5);
+        for (uint256 i; i < 5; ++i) {
+            all[i] = TestMutatorFacet(address(diamond)).pushRewardEntry(
+                p, uint64(100 + i), LibVaipakam.RewardSide.Lender, 1e18, 1
+            );
+        }
+        _assertIds(TestMutatorFacet(address(diamond)).getUserRewardEntryIds(p), all, "fixture: five entries in order");
+
+        (uint256[] memory ids, uint256 total) = lens.getUserRewardEntryIdsPage(p, 0, 2);
+        assertEq(total, 5, "page 1: total is the order's length");
+        _assertIds(ids, _two(all[0], all[1]), "page 1: the first two");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 2, 2);
+        assertEq(total, 5, "page 2: total unchanged");
+        _assertIds(ids, _two(all[2], all[3]), "page 2: the next two");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 4, 2);
+        assertEq(total, 5, "last page: total unchanged");
+        _assertIds(ids, _one(all[4]), "last page: clipped to the one remaining");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 5, 2);
+        assertEq(ids.length, 0, "past the end: empty");
+        assertEq(total, 5, "past the end: total still reported");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 1, 0);
+        assertEq(ids.length, 0, "a zero limit: empty");
+        assertEq(total, 5, "a zero limit: total still reported");
+        (ids, total) = lens.getUserRewardEntryIdsPage(p, 0, 100);
+        _assertIds(ids, all, "a limit past the end: the whole order");
+    }
+
+    /// @notice Codex #2489 r14 — the LIVE page returns only entries not yet
+    ///         settled and not yet expiring, scanning `limit` index positions
+    ///         (not returning `limit` ids), with the index length as `total`.
+    /// @dev   Mutation: drop the `processed` / `expiryBegun` filter → the
+    ///        settled and the expiring entry are returned as live.
+    function test_Page_LiveEntryIds_FiltersSettledAndExpiring() public {
+        address p = makeAddr("Q");
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        uint256[] memory all = new uint256[](5);
+        for (uint256 i; i < 5; ++i) {
+            all[i] = TestMutatorFacet(address(diamond)).pushRewardEntry(
+                p, uint64(200 + i), LibVaipakam.RewardSide.Lender, 1e18, 1
+            );
+        }
+        TestMutatorFacet(address(diamond)).setRewardEntryProcessedRaw(all[1], true);
+        TestMutatorFacet(address(diamond)).setRewardEntryExpiryBegunRaw(all[3], true);
+        (uint256[] memory live, uint256 total) = lens.getUserLiveRewardEntryIdsPage(p, 0, 100);
+        assertEq(total, 5, "total is the index length");
+        uint256[] memory want = new uint256[](3);
+        want[0] = all[0]; want[1] = all[2]; want[2] = all[4];
+        _assertIds(live, want, "settled and expiring entries are not live");
+        (live, total) = lens.getUserLiveRewardEntryIdsPage(p, 1, 2);
+        assertEq(total, 5);
+        _assertIds(live, _one(all[2]), "scans positions 1..2: one live");
+        (live, ) = lens.getUserLiveRewardEntryIdsPage(p, 5, 10);
+        assertEq(live.length, 0, "past the end: empty");
+    }
+
+    // ─── Codex #2489 r17 ROOT: settled entries are RETIRED from the index ───
+
+    /// @notice The permissionless compactor retires SETTLED (`processed`)
+    ///         entries from a wallet's index by swap-pop, bounded by the
+    ///         positions it examines, and keeps every unsettled entry — live or
+    ///         expiring mid-reap. The back-index stays consistent, a retired
+    ///         entry stays readable by id, the soonest-expiry view and the live
+    ///         page then cover only what remains, and the walk converges to
+    ///         O(unsettled).
+    /// @dev   Mutations: drop the `processed` test in the retirement → the
+    ///        expiring and live entries are retired too (remaining 0); skip the
+    ///        back-index rewrite → `getRewardEntryUserIdx` of a moved entry is
+    ///        stale.
+    function test_Retire_CompactorRetiresSettledEntries_KeepsUnsettled_Bounded() public {
+        address p = makeAddr("C");
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        InteractionRewardsFacet facet = InteractionRewardsFacet(address(diamond));
+        TestMutatorFacet mut = TestMutatorFacet(address(diamond));
+        uint256[] memory all = new uint256[](6);
+        for (uint256 i; i < 6; ++i) {
+            all[i] = mut.pushRewardEntry(p, uint64(300 + i), LibVaipakam.RewardSide.Lender, 1e18, 1);
+        }
+        // 0 settled, 1 settled, 2 expiring (unsettled), 3 LIVE, 4 settled, 5 live.
+        mut.setRewardEntryProcessedRaw(all[0], true);
+        mut.setRewardEntryProcessedRaw(all[1], true);
+        mut.setRewardEntryExpiryBegunRaw(all[2], true);
+        mut.setRewardEntryProcessedRaw(all[4], true);
+
+        // Bounded: two positions examined — position 0 retired (the tail e5
+        // lands there), then e5 at position 0 is live and passed.
+        (uint256 retired, uint256 remaining) = facet.compactRewardEntryIndex(p, 2);
+        assertEq(retired, 1, "one retirement in two steps");
+        assertEq(remaining, 5);
+        assertEq(mut.getUserRewardEntryIds(p)[0], all[5], "the tail moved into the vacated slot");
+
+        (retired, remaining) = facet.compactRewardEntryIndex(p, 100);
+        assertEq(retired, 2, "the two remaining settled entries");
+        assertEq(remaining, 3);
+        uint256[] memory ids = mut.getUserRewardEntryIds(p);
+        uint256[] memory want = new uint256[](3);
+        want[0] = all[5]; want[1] = all[3]; want[2] = all[2];
+        _assertIds(ids, want, "live, live, expiring remain (swap-pop order)");
+        assertEq(mut.getRewardEntryUserIdx(all[0]), 0, "retired: back-index cleared");
+        assertEq(mut.getRewardEntryUserIdx(all[1]), 0);
+        assertEq(mut.getRewardEntryUserIdx(all[4]), 0);
+        assertEq(mut.getRewardEntryUserIdx(all[5]), 1, "moved entries re-indexed");
+        assertEq(mut.getRewardEntryUserIdx(all[3]), 2);
+        assertEq(mut.getRewardEntryUserIdx(all[2]), 3);
+        (retired, remaining) = facet.compactRewardEntryIndex(p, 100);
+        assertEq(retired, 0, "idempotent");
+        assertEq(remaining, 3);
+
+        // A retired entry is still the same record, by id.
+        assertTrue(lens.getRewardEntriesRange(all[0], 1)[0].processed, "readable by id, settled");
+        // The readers now cover only what remains.
+        (uint256 soonestId, , uint256 next, uint256 total) = lens.getUserSoonestRewardExpiry(p, 0, 100, 100);
+        assertEq(total, 3, "the view's total is the unsettled count");
+        assertEq(next, 3);
+        assertEq(soonestId, 0, "dark horizon: no estimate");
+        (uint256[] memory live, ) = lens.getUserLiveRewardEntryIdsPage(p, 0, 100);
+        uint256[] memory wantLive = new uint256[](2);
+        wantLive[0] = all[5]; wantLive[1] = all[3];
+        _assertIds(live, wantLive, "the expiring entry is kept in the index but is not live");
+        assertEq(lens.getUserRewardEntries(p).length, 3, "the entries view is the unsettled participation");
+    }
+
+
     function _one(uint256 x) internal pure returns (uint256[] memory r) {
         r = new uint256[](1);
         r[0] = x;

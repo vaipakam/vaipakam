@@ -314,6 +314,35 @@ the **commitment invariant** (§3.6a — one statement, subtraction-first) is
 preserved. A day whose claims exhaust the bucket simply funds no keeper
 allocation that day.
 
+> **#2047 — BUILT (2026-10-04), the ratified shape (plan §M6 D4).** Two
+> amendments to the paragraph above, neither moving the authority:
+>
+> 1. **The earmark has its OWN resolution step** inside the same
+>    finalization — `LibMeshFunding.resolveKeeperEarmarks`, run after the
+>    funding stamps on EVERY armed day, so a quiet day (no coupled target, or
+>    no interest on either side — where the claim-funding resolution returns
+>    before stamping) earmarks its inflow too, into a minimally stamped
+>    record the same broadcast carries. `headroom` is the single availability
+>    read: the ledger nets the day's claim commit, every earlier earmark and
+>    every repatriation draw, so the formula above is unchanged and computed
+>    in one place for demand and quiet days alike.
+> 2. **`reportedInflow[c][D]` is bounded per day by ONE Base-set ceiling**,
+>    `chainDailyAttributionCap[c]`, applied to the WHOLE accepted figure at
+>    the report ingress (`recordChainRecycled`): the ceiling bounds the day's
+>    attribution, and what it trims from the chain's own day figure is carried
+>    as a BASE-tracked backlog (`chainAttributionBacklog[c]`) dripped on later
+>    days at no more than the ceiling — an honest chain's big day loses
+>    nothing (a pure bound would strand its excess, since an honest chain never
+>    re-claims it), accumulated headroom cannot be compressed into one day's
+>    earmark (the allocation MIX and TIMING the finding named are bounded; the
+>    total was already bounded by availability), and a ceiling above the
+>    chain's daily figures is a no-op by construction. Of the two shapes the decision left
+>    open, the Base-set absolute ceiling was chosen over authenticated
+>    per-day absorption buckets: the latter is a new attestation path for a
+>    non-solvency concern, which the decision text rejects. A chain's keeper
+>    bps cannot be armed while its ceiling is zero, and the ceiling cannot
+>    return to zero under a live bps — the earmark is never armed uncapped.
+
 ### 3.6 Surplus handling (the only place tokens still travel)
 
 If a chain's `availRecycled` exceeds a governance knob (e.g. N× its trailing
@@ -992,7 +1021,7 @@ slice even though it lands in M4-era order.
 | --- | --- | --- |
 | Recycle report missed past grace | Day finalizes with that chain's recycled delta = 0 (same rule as interest reports) | Conservative in the safe direction: Base over-remits tokens rather than under-funding claims; the cumulative counter catches up next report |
 | Broadcast (with `recycleConsume`) delayed/lost | Mirror doesn't consume; claims for that day wait exactly as they already do for the denominator; CCIP redelivery / governance replay as today | Consumption and denominator ride the same message — no new partial-state |
-| Remittance (shortfall send) fails | Existing #776 retriable path; claims revert on empty budget until funded — recoverable back-pressure | Unchanged from today |
+| Remittance (shortfall send) fails | Existing #776 retriable path. **Superseded (#1944 consequence 1):** on a mirror whose day delivery gate is armed, claims for that day defer by name until its delivery is proven landed. This row used to read "claims revert on empty budget until funded — recoverable back-pressure", which was not safe: the balance an early claim draws on also holds other owners' value (the governance runbook's containment note) | The day is priced only once a delivery proven to list it has landed; a mirror with the gate dark keeps the runbook's containment procedure |
 | Mirror reorg after report | Cumulative reporting self-heals; `(dayId, chainId)` idempotency unchanged | Same guarantees as §4a interest reports |
 | Bucket accounting bug suspected | The tracked-balance invariant is watcher-monitored per chain; drift alarms before insolvency. **Must gain the stranded-recovery reservation with Mode B (§3.1, §3.6a) — a three-way check would not alarm on a fresh claim spending recovery-reserved tokens** | Extends the existing supply-invariant watch |
 
@@ -1000,7 +1029,9 @@ slice even though it lands in M4-era order.
 
 - `claimInteractionRewards()` — signature, gating, bounded catch-up,
   sanctions Tier-1 status: untouched. Users cannot tell where the funding
-  came from.
+  came from. (Gating gained one later addition, #1944 consequence 1: on a
+  mirror whose day delivery gate is armed, a day owing fresh funding also
+  waits for its own proven delivery.)
 - The CCT token pools, lanes, rate limits, and the canonical-vs-mirror
   supply invariant: untouched (Option C's rejection is exactly about
   preserving this).

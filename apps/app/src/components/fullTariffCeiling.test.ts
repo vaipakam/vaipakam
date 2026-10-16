@@ -70,3 +70,17 @@ describe('shouldBlockOnCeiling', () => {
     ).toBe(false);
   });
 });
+
+describe('shouldBlockOnCeiling — a maker signing a resting order (#1949)', () => {
+  // The maker's fills happen later, priced at fill time; a ceiling below
+  // today's quote is a notice, never a refusal to sign. Paired with the
+  // acceptor arm so the role is what flips the verdict.
+  it('does NOT block a strict maker whose ceiling the quote has passed', () => {
+    expect(
+      shouldBlockOnCeiling({ ceilingOvertaken: true, allowDowngrade: false, role: 'maker' }),
+    ).toBe(false);
+    expect(
+      shouldBlockOnCeiling({ ceilingOvertaken: true, allowDowngrade: false, role: 'acceptor' }),
+    ).toBe(true);
+  });
+});

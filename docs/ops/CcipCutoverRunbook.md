@@ -429,6 +429,17 @@ flight, in this order when **lowering**:
      are the drain/heal ceremony's job, not silent overwrite.
   The first arming (zero → nonzero) is NOT a rotation; a disarm/re-arm
   cycle of the same address is not one either.
+
+  **On a mirror whose day delivery gate is ARMED (#1944 consequence 1)**, add a
+  per-day readback: before step 2 and again after step 3, read
+  `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` for every day from the
+  gate's first day through the latest applied day and confirm none reports
+  `awaitsLender` or `awaitsBorrower`. A day still awaiting delivery is proven
+  first (the GovernanceRunbook's day-delivery-gate steps) or repaired on Base by
+  release and re-remit; otherwise it waits across the rotation. A reward-role
+  change on a gate-armed mirror is safe since the custody-era revision: Base stamps
+  later remittances with the era the mirror reports, and a delivery in flight for
+  the retired era opens its epoch there and lands its days through the epoch route.
 - **Mirror-era registry on Base** (#1434 P2-w3, Codex #1636 r2/r3) —
   the RECIPROCAL registration: Base's compensation-quote (kind-11)
   ingress authenticates every arriving quote's sending-Diamond word

@@ -2476,7 +2476,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170: the ShareOfPool day walk inlines ~5.8 KB
         // and this facet had 481 B of headroom).
-        s = new bytes4[](8);
+        s = new bytes4[](11); // #2489 r16 +compactRewardEntryIndex
         s[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         s[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2488,6 +2488,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = InteractionRewardsFacet.liquidationRewardClose.selector;
         s[6] = InteractionRewardsFacet.terminalRewardClose.selector;
         s[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
+        s[8] = InteractionRewardsFacet.reanchorRewardEntriesInternal.selector; // #2489 r13: closeLoan's re-anchor host (self-call)
+        s[9] = InteractionRewardsFacet.repointRewardEntryInternal.selector; // #2489 r15: the consolidation repoint host (self-call)
+        s[10] = InteractionRewardsFacet.compactRewardEntryIndex.selector; // #2489 r17: the permissionless settled-entry retirement
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
@@ -2509,7 +2512,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](29); // #2489 r16 +getUserSoonestRewardExpiry
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2537,6 +2540,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // 3b-ii-A2 (#2305; Codex #2308 r5) — the reservations the settlements defer on.
         s[20] = InteractionRewardsLensFacet.getRewardReservations.selector;
         s[21] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
+        // #1944 — the expiry sweep's transfer test, self-staticcalled (host split).
+        s[22] = InteractionRewardsLensFacet.claimTransferable.selector;
+        // #1566 sanctions slice — the forfeit rule's status and the stampable-entry page.
+        s[23] = InteractionRewardsLensFacet.getRewardSanctionsStatus.selector;
+        s[24] = InteractionRewardsLensFacet.getRewardSanctionsWindows.selector; // #1566 sanctions rule (owner 2026-10-14)
+        s[25] = InteractionRewardsLensFacet.getSanctionsHeldReward.selector; // #1566 sanctions rule
+        s[26] = InteractionRewardsLensFacet.getUserRewardEntryIdsPage.selector; // #2489 r5: the paged entry index
+        s[27] = InteractionRewardsLensFacet.getUserLiveRewardEntryIdsPage.selector; // #2489 r14: the live entries of a page
+        s[28] = InteractionRewardsLensFacet.getUserSoonestRewardExpiry.selector; // #2489 r16: the on-chain soonest deadline over a page
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -2546,10 +2558,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = RewardClaimFacet.claimInteractionRewards.selector;
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         s[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii: preview by execution
+        s[3] = RewardClaimFacet.settleSanctionedInteractionRewards.selector; // #1566 sanctions rule: the owner settlement
+        s[4] = RewardClaimFacet.claimHeldInteractionRewards.selector; // #1566 (Codex #2489 r1): the held balance alone
     }
 
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
@@ -2582,9 +2596,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](5);
         s[0] = RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
         s[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
+        s[2] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566: the evidence host (the settlement's and _pay's self-call target)
+        s[3] = RewardHorizonSweepFacet.rewardSanctionsDayForfeited.selector; // #1566: the window loop's host (the walks' self-staticcall)
+        s[4] = RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare.selector; // #1566: the legacy split's window loop host
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
@@ -2770,7 +2787,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](90);
+        s = new bytes4[](89);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2936,7 +2953,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[74] = ConfigFacet.getAssetRiskParams.selector;
         // #1222 (Phase A1a) — VPFI recycling governor knobs.
         s[75] = ConfigFacet.setRecycleMarginBps.selector;
-        s[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
+        s[76] = ConfigFacet.getRecycleCreditedCumulative.selector; // #1956: moved here from 89 when the ETH·day setter retired
         s[77] = ConfigFacet.getRecycleConfig.selector;
         // Governor PR-3a (#1217) — recycle-bucket transparency reads.
         s[78] = ConfigFacet.getRecycleBucket.selector;
@@ -2955,7 +2972,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[87] = ConfigFacet.setRewardHaircutBps.selector;
         s[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
-        s[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
         // (ConfigFacet hit the EIP-170 ceiling).
@@ -3019,7 +3035,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](37);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3101,6 +3117,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)"));
         s[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
 
+        // #2047 — the per-day attribution ceiling the earmark is armed behind.
+        s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
+        s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
+        s[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
     }
 
     function _getRewardRemittanceSelectors()
@@ -3108,7 +3128,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](10);
+        s = new bytes4[](12);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3120,6 +3140,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
         // #1566 transport epochs PR 3a — the canonical split attestation send.
         s[9] = RewardRemittanceFacet.attestRemitSplit.selector;
+        // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
+        s[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
+        s[11] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
@@ -3149,7 +3172,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](22);
+        s = new bytes4[](25);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3175,6 +3198,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
         s[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
+        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
+        s[22] = RewardEpochFacet.proveDeliveryDayList.selector;
+        s[23] = RewardEpochFacet.proveDeliveryDayChunk.selector;
+        s[24] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3186,20 +3213,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         // A2-iii retired the dry run, the domain needs and the domain probe
         // (a complete in-place refresh removes them with every other route
-        // outside the deploy's selector set, #2313).
-        s = new bytes4[](10);
-        // 3b-ii-A2 (#2305) — the staging records' reads.
-        s[0] = RewardEpochViewFacet.getStagingRecord.selector;
-        s[1] = RewardEpochViewFacet.getStagingRecordBatches.selector;
-        s[2] = RewardEpochViewFacet.getStagingRecordEntries.selector;
-        s[3] = RewardEpochViewFacet.getStagingRecordPending.selector;
-        s[4] = RewardEpochViewFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (Remove leg in RefreshAllFacetsInPlace)
-        s[9] = RewardEpochViewFacet.isTransportBatchPriorityUsed.selector; // A2-ii
-        s[5] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
+        // outside the deploy's selector set, #2313). #1566 sanctions slice — the staging records' reads moved to
+        // RewardStagingDomainFacet (a host split: this facet sat a few hundred
+        // bytes under EIP-170).
+        s = new bytes4[](3);
         // A2-iii — the static armed-need reads, hosted here (EIP-170; same selectors as on the lens before).
-        s[6] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
-        s[7] = RewardEpochViewFacet.getUserArmedFreshNeedWithLegs.selector;
-        s[8] = RewardEpochViewFacet.getRewardEntryArmedNeed.selector;
+        s[0] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
+        s[1] = RewardEpochViewFacet.getUserArmedFreshNeedWithLegs.selector;
+        s[2] = RewardEpochViewFacet.getRewardEntryArmedNeed.selector;
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted apart from the
@@ -3288,7 +3309,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
     function _getRewardStagingDomainSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](17);
         s[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         s[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         s[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
@@ -3298,6 +3319,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardStagingDomainFacet.getLegacySliceDomain.selector; // A2-ii (c)
         s[7] = RewardStagingDomainFacet.legacySliceEpochsInternal.selector; // A2-ii (c): the hosted gate (Diamond-gated)
         s[8] = RewardStagingDomainFacet.legacySliceSettledInternal.selector; // A2-ii (c): the hosted settle (Diamond-gated)
+        // 3b-ii-A2 (#2305) — the staging records' reads; hosted here since the
+        // #1566 sanctions slice (moved from RewardEpochViewFacet, same selectors).
+        s[9] = RewardStagingDomainFacet.getStagingRecord.selector;
+        s[10] = RewardStagingDomainFacet.getStagingRecordBatches.selector;
+        s[11] = RewardStagingDomainFacet.getStagingRecordEntries.selector;
+        s[12] = RewardStagingDomainFacet.getStagingRecordPending.selector;
+        s[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (#2313: the in-place refresh removes the old route)
+        s[14] = RewardStagingDomainFacet.isTransportBatchPriorityUsed.selector; // A2-ii
+        s[15] = RewardStagingDomainFacet.getStagingEncumberedCount.selector;
+        s[16] = RewardStagingDomainFacet.epochSettleLegacySlices.selector; // #1566 host split: the claim's legacy slices (Diamond-gated)
     }
 
     function _getRewardStagingSettleSelectors()
@@ -3401,7 +3432,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](41);
+        s = new bytes4[](43);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3450,6 +3481,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
+        s[41] = RewardCustodyFacet.custodySetApartReward.selector;
+        s[42] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
@@ -3487,7 +3521,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](39);
+        s = new bytes4[](46);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3546,6 +3580,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
         // #2459 r5 — the provisional compensation value held apart.
         s[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
+        // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
+        // target) and its two operator reads.
+        s[39] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
+        s[40] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
+        s[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        // #1452 — the acknowledged recycled share per destination.
+        s[42] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
+        s[43] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
+        s[44] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
+        s[45] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

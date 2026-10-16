@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "claimHeldInteractionRewards",
+    "inputs": [
+      {
+        "name": "deliverTo",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardDelivery"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimInteractionRewards",
     "inputs": [],
     "outputs": [
@@ -35,6 +54,40 @@
     "outputs": [
       {
         "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleSanctionedInteractionRewards",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "decision",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "heldApart",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -118,6 +171,31 @@
       },
       {
         "name": "claimDayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardEntryIndexCompacted",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "retired",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remaining",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -252,6 +330,22 @@
         "name": "asset",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AttributionCapUnderLiveKeeperBps",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ]
   },
@@ -1170,6 +1264,86 @@
   },
   {
     "type": "error",
+    "name": "DeliveryGateAlreadyArmed",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryGateBelowFold",
+    "inputs": [
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryGateNotMirror",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeliveryPacketDisposed",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "disposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryProofNotBudget",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryProofRouteIsBatch",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -1427,6 +1601,17 @@
   },
   {
     "type": "error",
+    "name": "InteractionDayAwaitingDelivery",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InteractionDayGlobalNotFinalized",
     "inputs": [
       {
@@ -1538,6 +1723,17 @@
     "type": "error",
     "name": "KeeperAccessRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperAllocateNeedsAttributionCap",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3497,6 +3693,17 @@
     "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

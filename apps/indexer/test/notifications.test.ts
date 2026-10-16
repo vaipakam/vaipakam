@@ -8,11 +8,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   planNotifications,
+  planOwnerNotifications,
   materializeNotifications,
   EVENT_NOTIF_MAP,
+  EVENT_OWNER_NOTIF_MAP,
   type NotifSourceLog,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+import { notifiedFloor, notifiedFrontier, planNotifiedWatermark, replayNotificationsFromArchive, reviveArchiveArgs } from '../src/notifications';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -403,5 +406,292 @@ describe('materializeNotifications (over the migrated schema)', () => {
       999,
     );
     expect(countRows(h)).toBe(0);
+  });
+});
+
+// ─── RL-3 (#1956) — the free pre-expiry notice, addressed to the entry owner ───
+
+const OWNER = '0x00000000000000000000000000000000000000Dd';
+const rewardLog = (
+  eventName: string,
+  entryId: bigint,
+  user: string = OWNER,
+  blockNumber = 200n,
+  logIndex = 0,
+  extra: Record<string, unknown> = {},
+): NotifSourceLog => ({ eventName, args: { entryId, user, ...extra }, blockNumber, logIndex });
+
+describe('planOwnerNotifications (RL-3)', () => {
+  it('maps the last-call and the removal point to the OWNER the event names, with the entry in data', () => {
+    const rows = planOwnerNotifications(
+      84532,
+      [
+        rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0, { finalNoticeFrom: 1_800_000_000n }),
+        rewardLog('RewardEntryExpiryBegun', 9n, OWNER, 201n, 3),
+        rewardLog('RewardEntryHorizonStamped', 9n), // the schedule signal: no inbox row
+      ],
+      new Map([[200n, 1_700_000_000]]),
+      42,
+    );
+    expect(rows.map((r) => r.kind)).toEqual(['reward_final_notice', 'reward_expired']);
+    expect(rows.every((r) => r.recipient === OWNER.toLowerCase() && r.loanId === null)).toBe(true);
+    expect(JSON.parse(rows[0].dataJson!)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
+    expect(JSON.parse(rows[1].dataJson!)).toEqual({ entryId: '9' });
+    expect(rows[0].createdAt, 'block time when known').toBe(1_700_000_000);
+    expect(rows[1].createdAt, 'now otherwise').toBe(42);
+  });
+
+  it('a re-armed entry (horizon reconfiguration) notifies AGAIN — the key carries the event, not just the entry', () => {
+    const rows = planOwnerNotifications(
+      84532,
+      [rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0), rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 900n, 1)],
+      new Map(),
+      0,
+    );
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.dedupKey)).size).toBe(2);
+  });
+
+  it('writes nothing for a missing or zero owner, or a malformed entry id', () => {
+    expect(
+      planOwnerNotifications(
+        84532,
+        [
+          rewardLog('RewardEntryExpiryArmed', 9n, ZERO),
+          { eventName: 'RewardEntryExpiryArmed', args: { entryId: 9n }, blockNumber: 1n, logIndex: 0 },
+          { eventName: 'RewardEntryExpiryArmed', args: { entryId: 'x', user: OWNER }, blockNumber: 1n, logIndex: 0 },
+        ],
+        new Map(),
+        0,
+      ),
+    ).toEqual([]);
+  });
+
+  it('owner and loan maps never overlap (a reward event is not a loan event)', () => {
+    for (const k of Object.keys(EVENT_OWNER_NOTIF_MAP)) expect(k in EVENT_NOTIF_MAP).toBe(false);
+  });
+});
+
+describe('materializeNotifications — RL-3 owner rows (over the migrated schema)', () => {
+  it('writes the owner row with its data, idempotently, with no loan anywhere in the scan', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const logs = [rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0, { finalNoticeFrom: 1_800_000_000n })];
+    await materializeNotifications(h.d1 as never, 84532, logs, new Map(), 999);
+    await materializeNotifications(h.d1 as never, 84532, logs, new Map(), 999);
+    const rows = h.db
+      .prepare('SELECT recipient, kind, loan_id, data_json FROM notifications')
+      .all() as Array<{ recipient: string; kind: string; loan_id: number | null; data_json: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ recipient: OWNER.toLowerCase(), kind: 'reward_final_notice', loan_id: null });
+    expect(JSON.parse(rows[0].data_json)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
+  });
+
+  it('a failed loan-party lookup writes the owner row, then FAILS the scan so the watermark holds (Codex #2489 r8)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    h.db.exec('DROP TABLE loans'); // the party lookup now throws → null → the loan rows cannot be planned
+    // Mutation: resolve anyway → the caller stamps the watermark past a scan
+    // whose one-shot loan rows (a match, a close-out) were never written.
+    await expect(
+      materializeNotifications(
+        h.d1 as never,
+        84532,
+        [log('LoanInitiated', 7), rewardLog('RewardEntryExpiryBegun', 9n)],
+        new Map(),
+        999,
+      ),
+    ).rejects.toThrow(/loan-party lookup failed/);
+    const kinds = (h.db.prepare('SELECT kind FROM notifications').all() as Array<{ kind: string }>).map((r) => r.kind);
+    expect(kinds, 'the owner row still landed before the failure').toEqual(['reward_expired']);
+  });
+
+  it('a scan with no loan events never fails on the loan path', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    h.db.exec('DROP TABLE loans');
+    await expect(
+      materializeNotifications(h.d1 as never, 84532, [rewardLog('RewardEntryExpiryBegun', 9n)], new Map(), 999),
+    ).resolves.toBe(1);
+  });
+});
+
+
+// ─── #2489 r3 — the `notified` watermark means what it says ─────────────────
+
+describe('a failed notification insert is never silent (Codex #2489 r3)', () => {
+  it('materializeNotifications lets the insert failure propagate, so the watermark cannot advance over it', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    h.db.exec('DROP TABLE notifications');
+    await expect(
+      materializeNotifications(h.d1 as never, 84532, [rewardLog('RewardEntryExpiryArmed', 9n)], new Map(), 999),
+    ).rejects.toThrow();
+  });
+});
+
+describe('replayNotificationsFromArchive — the rows re-derived from activity_events', () => {
+  const seedEvent = (h: SqliteD1, block: number, logIndex: number, kind: string, args: Record<string, unknown>) =>
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (84532, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(block, logIndex, `0x${block.toString(16).padStart(64, '0')}`, kind, JSON.stringify(args), 1_000 + block);
+  const kinds = (h: SqliteD1) =>
+    (h.db.prepare('SELECT kind, block_number FROM notifications ORDER BY block_number, recipient').all() as Array<{
+      kind: string;
+      block_number: number;
+    }>).map((r) => `${r.kind}@${r.block_number}`);
+
+  it('revives the archive ids (decimal strings) to bigints — or every loan row would be dropped while reporting success', () => {
+    const args = reviveArchiveArgs('{"loanId":"7","user":"0x00000000000000000000000000000000000000Dd","ok":true,"n":3,"s":"abc"}');
+    expect(args).toEqual({ loanId: 7n, user: '0x00000000000000000000000000000000000000Dd', ok: true, n: 3, s: 'abc' });
+  });
+
+  it('re-derives owner AND loan rows in the window, idempotently; a row outside the window waits for its own replay', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 7, LENDER, BORROWER);
+    // The archive as the indexer writes it: bigints as decimal strings.
+    seedEvent(h, 150, 0, 'LoanInitiated', { loanId: '7' });
+    seedEvent(h, 200, 0, 'RewardEntryExpiryArmed', { entryId: '9', user: OWNER, finalNoticeFrom: '1800000000' });
+    seedEvent(h, 300, 0, 'LoanInitiated', { loanId: '7' }); // past the window
+    seedEvent(h, 210, 0, 'OfferCreated', { offerId: '1' }); // not notification-worthy
+    expect(await replayNotificationsFromArchive(h.d1 as never, 84532, 100n, 250n, 999)).toBe(3);
+    expect(kinds(h)).toEqual(['loan_matched@150', 'loan_matched@150', 'reward_final_notice@200']);
+    const data = (h.db.prepare("SELECT data_json FROM notifications WHERE kind = 'reward_final_notice'").get() as { data_json: string }).data_json;
+    expect(JSON.parse(data)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
+    expect(await replayNotificationsFromArchive(h.d1 as never, 84532, 100n, 250n, 999), 'idempotent').toBe(0);
+    expect(await replayNotificationsFromArchive(h.d1 as never, 84532, 250n, 300n, 999), 'the next window').toBe(2);
+    expect(await replayNotificationsFromArchive(h.d1 as never, 1, 0n, 999n, 999), 'another chain').toBe(0);
+  });
+
+  it('throws when its own insert fails, so the caller leaves the watermark where it was', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedEvent(h, 200, 0, 'RewardEntryExpiryArmed', { entryId: '9', user: OWNER });
+    h.db.exec('DROP TABLE notifications');
+    await expect(replayNotificationsFromArchive(h.d1 as never, 84532, 100n, 250n, 999)).rejects.toThrow();
+  });
+});
+
+describe('notifiedFrontier — the proven-written frontier the planner starts from (security review of #2489)', () => {
+  it('is the higher of the keeper stamp and the written cursor; null only when neither exists', () => {
+    expect(notifiedFrontier(null, null)).toBeNull();
+    expect(notifiedFrontier(null, 500n), 'a catch-up proved rows before any head stamp').toBe(500n);
+    expect(notifiedFrontier(700n, null)).toBe(700n);
+    expect(notifiedFrontier(700n, 500n)).toBe(700n);
+    expect(notifiedFrontier(500n, 900n), 'written ahead of the stamp: no routine replay of 501..900').toBe(900n);
+  });
+});
+
+describe('notifiedFloor — where a failed insert pins the watermark (one rule for head and catch-up passes)', () => {
+  it('a failed insert pins a never-stamped chain just below its scan; a stamped one only when the scan is below the stamp', () => {
+    expect(notifiedFloor(null, 400n, false)).toBe(399n);
+    expect(notifiedFloor(1000n, 900n, false), 're-scan below the watermark').toBe(899n);
+    expect(notifiedFloor(300n, 400n, false), 'the watermark already sits below the scan').toBeNull();
+    expect(notifiedFloor(399n, 400n, false), 'exactly at the floor: nothing to write').toBeNull();
+  });
+  it('proves nothing on a successful or quiet tick', () => {
+    expect(notifiedFloor(null, 400n, true)).toBeNull();
+    expect(notifiedFloor(null, null, false)).toBeNull();
+    expect(notifiedFloor(1000n, 900n, true)).toBeNull();
+  });
+});
+
+describe('the scan tail remembers a failed insert on a catch-up pass short of the head (Codex #2489 r6)', () => {
+  // Source-shape pin, as the healer tests pin their order: there is no tick
+  // harness, and this wiring is exactly what the finding showed missing.
+  const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+  it('stamps at the head, and otherwise holds the watermark below a failed scan', () => {
+    const gate = src.indexOf('if (scanTo === head) {\n    await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);');
+    expect(gate).toBeGreaterThan(-1);
+    const tail = src.slice(gate, gate + 400);
+    expect(tail).toContain('} else if (!notifiedOk) {\n    await holdNotifiedWatermark(env, chainId, scanFrom);');
+    // A catch-up pass whose insert landed advances the WRITTEN frontier (never
+    // the keeper stamp), so the head pass does not replay it.
+    expect(tail).toContain('} else {\n    await advanceNotifiedWritten(env, chainId, scanTo);');
+  });
+  it('the planner starts from the proven-written frontier, and every hold lowers both cursors', () => {
+    const read = src.slice(src.indexOf('async function readNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function readNotifiedWatermark(')));
+    expect(read).toContain('notifiedFrontier(stamp, written)');
+    const stamp = src.slice(src.indexOf('async function stampNotifiedWatermark('), src.indexOf('async function advanceNotifiedWritten('));
+    expect(stamp).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, plan.holdAt);");
+    expect(stamp).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, stampTo);");
+    const hold = src.slice(src.indexOf('async function holdNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function holdNotifiedWatermark(')));
+    expect(hold).toContain("await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, hold);");
+  });
+  it('the hold and the head stamp share one floor rule, and a failed replay writes the hold', () => {
+    const hold = src.slice(src.indexOf('async function holdNotifiedWatermark('), src.indexOf('\n}\n', src.indexOf('async function holdNotifiedWatermark(')));
+    expect(hold).toContain('notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false)');
+    const stamp = src.slice(src.indexOf('async function stampNotifiedWatermark('), src.indexOf('async function holdNotifiedWatermark('));
+    expect(stamp).toContain('if (plan.holdAt !== undefined) {\n      await _writeNotifiedWatermark(env, chainId, plan.holdAt);');
+  });
+});
+
+describe('planNotifiedWatermark — what one tick replays and where it stamps (straddles)', () => {
+  it('a never-stamped chain stamps without replaying history — unless its OWN first scan failed (Codex #2489 r4)', () => {
+    expect(planNotifiedWatermark(null, 500n, 400n, true)).toEqual({ stampTo: 500n });
+    expect(planNotifiedWatermark(null, 500n, null, false), 'quiet tick, nothing to write').toEqual({ stampTo: 500n });
+    // The first scan's insert failed: the watermark is held just below the
+    // scan and the scan is replayed from the archive from there; if that
+    // replay fails too, `holdAt` is written — so the next tick replays
+    // exactly the failed scan, nothing older, nothing skipped (r6: the
+    // previous shape stamped 399 and deferred; a lost hold left no record).
+    expect(planNotifiedWatermark(null, 500n, 400n, false)).toEqual({
+      replayAfter: 399n,
+      replayThrough: 500n,
+      stampTo: 500n,
+      holdAt: 399n,
+    });
+    expect(planNotifiedWatermark(399n, 600n, 501n, true), 'the next tick replays the failed scan').toEqual({
+      replayAfter: 399n,
+      replayThrough: 500n,
+      stampTo: 600n,
+    });
+  });
+
+  it('a failed re-scan BELOW the stored watermark lowers it to the scan (Codex #2489 r6)', () => {
+    // Mutation: replay from the stored watermark → blocks 900..1000 of the
+    // failed scan are never replayed, and the stamp certifies them.
+    expect(planNotifiedWatermark(1000n, 1100n, 900n, false)).toEqual({
+      replayAfter: 899n,
+      replayThrough: 1100n,
+      stampTo: 1100n,
+      holdAt: 899n,
+    });
+    // A failed scan above the watermark holds nothing extra: the gap replay
+    // already starts below it.
+    expect(planNotifiedWatermark(399n, 500n, 400n, false)).toEqual({ replayAfter: 399n, replayThrough: 500n, stampTo: 500n });
+  });
+
+  it('a healthy scanning tick (the watermark meets the fresh rows) stamps, no replay', () => {
+    expect(planNotifiedWatermark(399n, 500n, 400n, true)).toEqual({ stampTo: 500n });
+    expect(planNotifiedWatermark(398n, 500n, 400n, true), 'one block short: replay exactly it').toEqual({
+      replayAfter: 398n,
+      replayThrough: 399n,
+      stampTo: 500n,
+    });
+  });
+
+  it('a tick whose insert failed replays through its own end and stamps only after that', () => {
+    expect(planNotifiedWatermark(399n, 500n, 400n, false)).toEqual({ replayAfter: 399n, replayThrough: 500n, stampTo: 500n });
+  });
+
+  it('a quiet tick with nothing missing just refreshes the stamp', () => {
+    expect(planNotifiedWatermark(500n, 500n, null, false)).toEqual({ stampTo: 500n });
+  });
+
+  it('a long gap drains one window at a time, stamping only what was replayed', () => {
+    expect(planNotifiedWatermark(0n, 50_000n, null, false, 20_000n)).toEqual({
+      replayAfter: 0n,
+      replayThrough: 20_000n,
+      stampTo: 20_000n,
+    });
+    expect(planNotifiedWatermark(0n, 20_000n, null, false, 20_000n), 'the window reaches the end: stamp the end').toEqual({
+      replayAfter: 0n,
+      replayThrough: 20_000n,
+      stampTo: 20_000n,
+    });
+    expect(planNotifiedWatermark(0n, 30_000n, 20_001n, true, 20_000n), 'gap ends where fresh rows begin').toEqual({
+      replayAfter: 0n,
+      replayThrough: 20_000n,
+      stampTo: 30_000n,
+    });
   });
 });

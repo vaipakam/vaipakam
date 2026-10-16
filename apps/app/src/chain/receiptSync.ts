@@ -52,6 +52,11 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'standingApprovals',
   'vpfi',
   'interactionRewards',
+  // The reward claim-horizon countdown (#1956 RL-3): a claim, a settlement or
+  // an expiry changes which entry is soonest, and a card showing a deadline
+  // for an entry just claimed is a stale claim (Codex #2489 r4). On the
+  // floor, not in one caller: every money movement may retire an entry.
+  'rewardExpiry',
   'activity',
   // Activity's participation-id leg (#1023): an own accept/initiate
   // seeds loan_participants, and the feed the receipt refreshes

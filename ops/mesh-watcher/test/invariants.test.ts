@@ -121,6 +121,9 @@ function mirrorBooks(): BaseChainBooks {
     // whole suite, which is the silent-disable this comment exists to
     // prevent.
     keeperDraw: 0n,
+    // #1452 — a CURRENT deployment reads the view; the baseline mirror has
+    // relocated nothing, so nothing was acknowledged as recycled either.
+    recycledAcked: 0n,
   };
 }
 
@@ -732,6 +735,54 @@ describe('checkHardInvariants — base ahead of the chain', () => {
     expect(codes({ mirrorLocal: { localReleased: 99n * E } })).toEqual([
       'base-ahead-of-chain',
     ]);
+  });
+
+  it('#1452 fires when Base acknowledged more recycled delivery than the chain relocated (straddle)', () => {
+    // The baseline mirror relocated nothing; equal at zero is green.
+    expect(codes({ mirror: { recycledAcked: 0n } }), 'equal: nothing acknowledged, nothing relocated').toEqual([]);
+    expect(
+      codes({ mirror: { recycledAcked: 1n } }),
+      'one wei acknowledged beyond the relocation',
+    ).toEqual(['base-ahead-of-chain']);
+  });
+
+  it('#2489 r9 — history booked at the declared share is compared only as an ADVISORY, on top of the exact figure', () => {
+    const relocated = (o: Overrides) =>
+      checkHardInvariants(observation(o), TOLERANCE)
+        .filter((f) => f.code === 'base-ahead-of-chain' && f.variant.startsWith('relocated'))
+        .map((f) => `${f.variant}:${f.severity}`);
+    // Exact within the relocation, history pushes past it: advisory, never critical.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 1n } })).toEqual(['relocated-history:advisory']);
+    // No history booked: nothing at all.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 0n } })).toEqual([]);
+    // History unreadable: the advisory skips; the exact leg still decides.
+    expect(relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: undefined } })).toEqual([]);
+    expect(relocated({ mirror: { recycledAcked: 1n, recycledAckedHistory: undefined } })).toEqual(['relocated:critical']);
+    // The exact leg fired: the advisory does not double up.
+    expect(relocated({ mirror: { recycledAcked: 1n, recycledAckedHistory: 5n } })).toEqual(['relocated:critical']);
+    // r10 — with the history RECONSTRUCTED, the hard leg compares exact + actual
+    // (post-cutover acknowledged vs post-cutover relocated) and the advisory is
+    // not needed: 0 exact + 100 actual against 100 relocated is clean, 50 + 100
+    // against 100 is the misrouted post-cutover delivery, a CRITICAL.
+    expect(
+      relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 100n, recycledAckedHistoryActual: 100n }, mirrorLocal: { custodyRelocated: 100n } }),
+    ).toEqual([]);
+    expect(
+      relocated({ mirror: { recycledAcked: 50n, recycledAckedHistory: 100n, recycledAckedHistoryActual: 100n }, mirrorLocal: { custodyRelocated: 100n } }),
+    ).toEqual(['relocated:critical']);
+    // A short pre-upgrade delivery: declared 100, actual 90, relocated 90 — no
+    // alarm of either kind (the mutation folding the DECLARED figure into the
+    // hard leg would read a critical here).
+    expect(
+      relocated({ mirror: { recycledAcked: 0n, recycledAckedHistory: 100n, recycledAckedHistoryActual: 90n }, mirrorLocal: { custodyRelocated: 90n } }),
+    ).toEqual([]);
+    // Mutation: fold history into the exact comparison → a short pre-upgrade
+    // delivery reads as a critical.
+  });
+
+  it('#1452 skips the relocated leg when the acknowledged share is UNKNOWN', () => {
+    // Same mismatch as the firing case above, but UNKNOWN: the leg must skip.
+    expect(codes({ mirror: { recycledAcked: undefined } })).toEqual([]);
   });
 
   it('accepts Base trailing the chain — that is the normal report lag', () => {

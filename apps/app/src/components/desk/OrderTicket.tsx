@@ -36,6 +36,7 @@ import { SimulationPreview } from '../SimulationPreview';
 import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
+import { FullTariffOptIn, FULL_TARIFF_OFF, type FullTariffChoice } from '../FullTariffOptIn';
 import {
   ensureAllowance,
   useTokenBalance,
@@ -193,6 +194,12 @@ export function OrderTicket({
   // #1131 slice D — 'onchain' MUST stay the default: the existing Post
   // order flow (and spec 17's asserts) run it unchanged.
   const [postMode, setPostMode] = useState<PostMode>('onchain');
+  // #1949 — the maker's Full tariff opt-in for a GASLESS order. A signed
+  // artifact cannot be armed after it is posted (the on-chain path arms
+  // through the open-orders panel instead), so the choice is made here and
+  // signed with the order. Ignored on the on-chain path.
+  const [makerFull, setMakerFull] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
+  const makerFullRef = useRef<FullTariffChoice>(FULL_TARIFF_OFF);
   const [consent, setConsent] = useState(false);
   // UX-016 — surface a "terms changed, re-confirm" note whenever an
   // edit auto-clears a consent the user had already given (the ticket
@@ -208,6 +215,25 @@ export function OrderTicket({
     if (consentRef.current) setConsentClearedNote(true);
     setConsent(false);
   }, []);
+  // A change to a SIGNED field of the maker's opt-in (the opt-in itself, the
+  // ceiling, the downgrade permission) changes the artifact the user consented
+  // to, so it clears consent like any other edit. The control's own re-syncs
+  // of `blocked` are not signed and must not wipe consent on a quote refresh.
+  const onMakerFullChange = useCallback(
+    (v: FullTariffChoice) => {
+      const prev = makerFullRef.current;
+      if (
+        prev.full !== v.full ||
+        prev.maxCStar !== v.maxCStar ||
+        prev.allowDowngrade !== v.allowDowngrade
+      ) {
+        clearConsentOnEdit();
+      }
+      makerFullRef.current = v;
+      setMakerFull(v);
+    },
+    [clearConsentOnEdit],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedHash, setPostedHash] = useState<string | null>(null);
@@ -550,6 +576,13 @@ export function OrderTicket({
   // Gasless posting additionally needs the order-book service (there
   // is nowhere else to publish the signed row) and the signing wallet.
   const gaslessReady = indexerConfigured() && signedOffer.canSign;
+  // #1949 (Codex #2489 r1 P1) — a maker's Full opt-in that cannot complete at
+  // a fill (blocked by the quote/liquidity refresh, or no ceiling) is NEVER
+  // signed, and is never quietly signed as "Full off" either: the order would
+  // carry different fee terms from the ones the maker chose. ONE predicate for
+  // the button, the blocker text and the submit, so they cannot disagree.
+  const makerFullInvalid =
+    postMode === 'gasless' && makerFull.full && (makerFull.blocked || makerFull.maxCStar <= 0n);
 
   const canPost =
     fieldsComplete &&
@@ -572,6 +605,7 @@ export function OrderTicket({
     onSupportedChain &&
     !killed &&
     !busy &&
+    !makerFullInvalid &&
     (postMode === 'onchain' || gaslessReady);
 
   // ---- submit — same sequence as OfferFlow.submitPost -----------------
@@ -947,7 +981,22 @@ export function OrderTicket({
           ? payload.expiresAt
           : (await liveChainTimestamp(publicClient)) +
             BigInt(GASLESS_GTC_DEADLINE_SECONDS);
-      const order = wireFromCreatePayload(payload, address, nonce, deadline);
+      // #1949 — the maker's Full opt-in rides the signed artifact; unticked
+      // signs the order with Full off, exactly as before. A ticked choice
+      // that is not valid is refused, never downgraded (Codex #2489 r1 P1).
+      if (makerFullInvalid) {
+        throw new Error(
+          makerFull.blocked ? copy.tariff.fullUnavailableNow : copy.tariff.maxCStarRequired,
+        );
+      }
+      const makerFullIntent = makerFull.full
+        ? {
+            full: true,
+            maxCStar: makerFull.maxCStar,
+            allowDowngrade: makerFull.allowDowngrade,
+          }
+        : undefined;
+      const order = wireFromCreatePayload(payload, address, nonce, deadline, makerFullIntent);
       const signature = await signedOffer.sign(order);
       const res = await postSignedOffer(
         walletChain.chainId,
@@ -964,6 +1013,8 @@ export function OrderTicket({
       setConsent(false);
       setConsentClearedNote(false);
       setAmount('');
+      makerFullRef.current = FULL_TARIFF_OFF;
+      setMakerFull(FULL_TARIFF_OFF);
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
       // A signed post can CREATE a market — /offers/markets unions
       // active signed rows (Codex #1145 r4) — so the pair/tenor chips
@@ -998,6 +1049,12 @@ export function OrderTicket({
     if (!decimalsReady || !fees.ready) return text.blockLoading;
     if (securityBlocked.length > 0) return null; // security banner above
     if (postMode === 'gasless' && !gaslessReady) return text.blockGaslessService;
+    // #1949 — a maker's Full opt-in that cannot complete at a fill is never
+    // signed; the user unticks it or waits. A ceiling below today's quote is
+    // NOT a block for a resting order (the control warns instead).
+    if (makerFullInvalid) {
+      return makerFull.blocked ? copy.tariff.fullUnavailableNow : copy.tariff.maxCStarRequired;
+    }
     if (!consent) return text.blockConsent;
     return null;
   })();
@@ -1007,6 +1064,19 @@ export function OrderTicket({
   // plus the side's protocol fee (lender yield-fee net rate; borrower
   // one-time LIF on principal). Derived from the same payload the write
   // sends, so the numbers can't drift from the order.
+  // #1949 — the principal the maker's tariff is quoted on: the order's FULL
+  // size (the largest fill it permits), so the suggested ceiling covers any
+  // partial fill — the basis the on-chain creator's arming form uses too.
+  const makerFullPrincipal = useMemo((): bigint | undefined => {
+    if (postMode !== 'gasless' || !fieldsComplete || !decimalsReady) return undefined;
+    const payload = buildPayload(false, nowSec);
+    if (!payload) return undefined;
+    return payload.amountMax > payload.amount ? payload.amountMax : payload.amount;
+    // Not keyed on `nowSec`: the size does not move with the clock, and the
+    // quote below would otherwise re-run every second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postMode, fieldsComplete, decimalsReady, side, form, fillMode, expiry, customExpiry, lendingMeta.data, collateralMeta.data]);
+
   const feePreview = useMemo((): { commit: string; fee: string } | null => {
     if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
     const payload = buildPayload(false, nowSec);
@@ -1412,6 +1482,18 @@ export function OrderTicket({
         </div>
       ) : null}
 
+      {/* #1949 — the maker's Full tariff opt-in, signed into a gasless order. */}
+      {postMode === 'gasless' && pair && fieldsComplete ? (
+        <FullTariffOptIn
+          role="maker"
+          lendingAsset={pair.lendingAsset as `0x${string}`}
+          principal={makerFullPrincipal}
+          durationDays={days}
+          value={makerFull}
+          onChange={onMakerFullChange}
+        />
+      ) : null}
+
       <label
         className="cluster"
         style={{ alignItems: 'flex-start', gap: 8, margin: '8px 0' }}
@@ -1497,7 +1579,7 @@ export function OrderTicket({
       )}
       {/* UX-009 — the first unmet gate, so the greyed button says why. */}
       {blockReason ? (
-        <p className="field-hint" style={{ textAlign: 'center', marginTop: 6 }}>
+        <p data-testid="post-blocker" className="field-hint" style={{ textAlign: 'center', marginTop: 6 }}>
           {blockReason}
         </p>
       ) : null}

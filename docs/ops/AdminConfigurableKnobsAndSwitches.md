@@ -618,7 +618,7 @@ carefully, because this group deliberately does **not** share one
 convention.
 
 **Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
-`setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
+`setTariffKPerLifYear` and
 `setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
 `setRewardClaimHorizonDays`, `setRecycleSurplusMultiple` and
 `setChainKeeperAllocateBps` treat `0` as **dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
@@ -667,8 +667,10 @@ The chain's locally-funded commit is the CAP rather than the base: the
 earmark is bounded by whatever room that commit leaves in the chain's
 availability, but it is not a percentage of it. An operator estimating the
 figure from claim demand will get it wrong, most visibly on a low-demand
-day. (It does still require the day to have SOME claim demand — a day with
-no global interest stamps nothing at all.) Default **0**, which is **dark** — it
+day. (It does not require claim demand either: since #2047 the earmark
+resolves on EVERY armed day, so a day with attributed inflow and no claim
+demand still earmarks — only a day with no attributed inflow earmarks
+nothing.) Default **0**, which is **dark** — it
 instructs nothing, and it is what every chain ships with, so each
 destination is armed deliberately and individually. Range **[0, 50%]**,
 the same ceiling the local register weight carries, so that neither
@@ -698,6 +700,39 @@ value can never be instructed twice. The resulting live figure is
 readable per chain, and the mesh watcher re-derives availability from
 it and raises an alert if its answer disagrees with the chain's.
 
+An allocation cannot be armed for a chain until that chain's daily
+attribution ceiling (below) is set.
+
+### Per-chain daily attribution ceiling (`chainDailyAttributionCap`)
+
+The most recycled credit the canonical chain attributes to one mirror
+for one day (#2047). The mirror supplies both figures the attribution is
+built from, so without a ceiling a mirror holding unattributed headroom
+could label all of it as one day's credit and pull its keeper earmark
+forward. The ceiling bounds each day's attribution. What it trims is
+carried by the canonical chain as a backlog and attributed on later days
+at no more than the ceiling, so an honest chain's large day loses
+nothing; only its pace is bounded. Default **0**, which means no ceiling:
+the earlier attribution rule exactly. A ceiling far above a chain's daily
+figures changes nothing.
+
+Settable only on the canonical chain and only by an admin, per mirror.
+It cannot return to 0 while that chain's keeper allocation is armed, so
+the earmark is never armed uncapped from here on.
+
+**On an upgraded Diamond, two ordering steps:**
+
+- **A chain armed before the ceiling existed.** The setter's "no
+  allocation without a ceiling" rule applies to new arming only. A chain
+  whose keeper allocation was already non-zero before the upgrade keeps
+  running with no ceiling until one is set. Set a ceiling for every such
+  chain before the next day finalizes.
+- **Credit attributed before the ceiling.** A day's attribution is fixed
+  when its report arrives, but its earmark is sized when the day
+  finalizes. Set the ceiling, then let one day finalize before arming a
+  chain's allocation, so no day attributed without a ceiling feeds an
+  earmark. The chain's availability still bounds any such earmark.
+
 ### Platform recycling margin (`recycleMarginBps`)
 
 The edge the governor retains from absorption before sizing the
@@ -707,19 +742,22 @@ not `0`. The ceiling exists because the margin is taken off the top of
 what funds user rewards: at 25% a compromised admin degrades the
 programme's payout rate but cannot starve it.
 
-### Absorption tariff coefficients (`recycleTariffKPer1e18EthDay`, `tariffKPerLifYear`)
+### Absorption tariff coefficient (`tariffKPerLifYear`)
 
-Two quantity schedules, never fee-value conversions — the distinction
+A quantity schedule, never a fee-value conversion — the distinction
 matters legally as well as economically (see the rewards copy rules in
 the tokenomics redesign research doc).
 
-- **`recycleTariffKPer1e18EthDay`** — VPFI per ETH of loan volume per
-  day. Default **0.05**, range **[0.001, 1.0]**. **Not wired for
-  Phase-1 absorption**; it is the older ETH·day schedule the LIF·year
-  one superseded. Setting it changes nothing on a Phase-1 deployment.
 - **`tariffKPerLifYear`** — the live coefficient `K` in the Full
   tariff's `C* = base LIF × term-years × K`. Default **5**, range
   **[0.1, 50]**.
+
+The older ETH·day schedule (`recycleTariffKPer1e18EthDay`) was never
+wired into absorption and is removed (#1956): no setter, no event, and
+`getRecycleConfig()` returns the margin alone. Its storage slot stays,
+retired, because the layout is append-only. A refresh removes the old
+setter's route (`RefreshAllFacetsInPlace` sweeps routes the new build no
+longer carries).
 
 ### Full VPFI tariff kill switch (`feeEntitlementEnabled`)
 

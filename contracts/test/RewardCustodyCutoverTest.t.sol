@@ -262,6 +262,17 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// A Detached deployment does not activate in this slice: its receive
     /// ingresses do not yet refuse by role, so activation waits for PR C's
     /// era registry (Codex #2186 r1 P1).
+    /// @dev The custody cutover version is PINNED here so a change to the
+    ///      custody protocol's shape must be a deliberate bump (Codex #2489 r4:
+    ///      the `SanctionsHeld` row and the claim's new release seam took it
+    ///      from 4 to 5). A revert to 4 lets a cut that refreshed the claim
+    ///      consumer without the custody facet certify.
+    function test_cutover_versionIsFive_afterTheHeldApartRow() public view {
+        (, uint32 required, , ) = RewardCustodyFacet(address(diamond)).rewardCustodyCutoverStatus();
+        assertEq(required, 5, "the held-apart custody row advanced the cutover version");
+        assertEq(LibRewardCustody.CUTOVER_VERSION, 5);
+    }
+
     function test_Activation_RefusesADetachedDeployment() public {
         _becomeMirror();
         _admin().pause();

@@ -2018,6 +2018,34 @@ is the borrower's own money.
 
 ## Claims
 
+- Once the reward claim window is in force, the interaction-rewards card states
+  the soonest date by which an unclaimed reward must be claimed before it
+  returns to the rewards programme. The date is the earliest the platform could
+  act under the CURRENT claim window — it assumes the reward stays claimable
+  from now on — so time the reward cannot be claimed moves it later, while a
+  change to the claim window itself can replace it with an earlier date; the
+  card says both. Inside the final notice period the card switches to a
+  final-notice warning. The card shows no date while the claim window is
+  off. It considers every one of the wallet's LIVE rewards — not settled, not
+  already expiring — however many, all as of one moment, and never re-prices
+  the wallet's settled history; when it cannot read every reward's date it says the check could not
+  be completed, rather than showing a date that might be later than the real
+  one, or nothing at all (which would read as "no deadline").
+- A wallet with interaction rewards set aside for it can always take them on
+  their own, and the page does not describe the wallet's claims as empty while
+  such a balance is ready. The balance is described as READY only when the
+  wallet is clear to claim: while the wallet is flagged it is described as set
+  aside and claimable once the flag is lifted, and while the screen has not
+  answered it is described as set aside and nothing more. The reward claim
+  gates read the same bar the platform enforces — flagged now, or carrying a
+  committed flag while the sanctions oracle is unreachable — so a wallet the
+  platform would refuse is shown blocked, while an unflagged wallet during an
+  outage stays able to claim. When the card cannot preview the wallet's whole claim (for
+  example because the claim cannot complete), it still shows the set-aside
+  balance and offers a claim that pays exactly that balance. When the whole
+  claim can be previewed, its figure already includes the set-aside balance,
+  so the card does not show it a second time. The card never says why the
+  balance was set aside.
 - Claims are chain-authoritative.
 - Indexed data may provide candidates, but live ownership and claimability
   decide whether a claim is actionable.
@@ -2197,9 +2225,29 @@ is the borrower's own money.
 - Each party opts their OWN side into the Full tariff at the moment their
   authorization is signed: the acceptor on the accept review (classic accept
   and desk signed-order fill alike), and a standing-offer creator on their own
-  open offer after posting. Nobody can opt a counterparty in, and a
-  signed-order maker has no opt-in surface until the gasless order shape
-  carries one.
+  open offer after posting, and a signed-order maker on the gasless order
+  itself — the order shape carries the opt-in, so it travels with the
+  signature and applies to every fill of that order, a keeper-matched slice
+  taking its share of the maker's ceiling counted cumulatively, so the
+  slices' ceilings together never exceed the ceiling the maker signed and
+  reach it exactly once the order is fully filled. (A slice's share comes out
+  zero only when the signed ceiling is below one unit per slice; such a slice
+  cannot take Full.) A signed Full opt-in without a ceiling is refused
+  before any value moves, on every fill path. Nobody can opt a counterparty
+  in.
+- **A signed-order maker chooses on the order ticket, before signing.** The
+  control appears in the ticket's sign-only (gasless) mode, and only while the
+  feature is enabled. It quotes the tariff on the order's full size, so the
+  suggested ceiling covers any fill, and it says plainly that the choice is
+  signed into the order — changing it means cancelling and posting again — and
+  that each fill is charged its own tariff, never more than that fill's share
+  of the ceiling. A ceiling the live quote already exceeds is called out with
+  both figures but does not stop the maker posting: what counts is the quote
+  when a fill actually happens, and it may fall back. An opt-in that cannot
+  complete at all (the feature off, the loan's tariff unquotable, or its
+  principal illiquid) is never signed. Changing the opt-in, its ceiling or its
+  downgrade choice clears the maker's confirmation, like any other change to
+  the order's terms; the control's own re-checks of availability do not.
 - **A party's Full authorization is honoured whichever venue fills their
   offer.** A standing offer armed with Full is charged the tariff when it is
   filled by a keeper matching it against a counterparty offer, exactly as it
@@ -2386,6 +2434,22 @@ is the borrower's own money.
   produced while that monitoring is running, and they may reach the inbox
   less immediately than the optional external alert channels a user has
   linked.
+- Once the reward claim window is in force, the inbox also carries its free
+  pre-expiry notice. When one of the wallet's interaction rewards enters its
+  final notice period — it has stayed claimable for the whole claim window and
+  will return to the rewards programme if it is still unclaimed when the notice
+  period ends — the wallet is told, and told again if a change to the claim
+  window restarts that notice. When an unclaimed reward does reach that point
+  and returns to the programme, the wallet is told that too. These entries name
+  the reward, not a loan, and open the Claim Center. They reach the reward's
+  owner through this free inbox and never only through a paid channel, because
+  a paid channel would skip exactly the dormant claimants the notice exists
+  for. A notice that could not be written at the moment its event was
+  recorded is not lost: the inbox's completion mark does not move past that
+  event until the notice has been re-derived from the recorded event and
+  written, so a passing storage failure delays the notice rather than
+  dropping it. This holds for every inbox entry the recorded events produce,
+  not only the reward notices.
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

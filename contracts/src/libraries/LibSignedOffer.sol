@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title LibSignedOffer
@@ -62,6 +63,15 @@ library LibSignedOffer {
         uint8 periodicInterestCadence; // LibVaipakam.PeriodicInterestCadence
         uint256 refinanceTargetLoanId;
         bool useFullTermInterest;
+        // #1949 — the MAKER's Full tariff opt-in, carried on the artifact they
+        // sign: a signed offer is materialized and accepted in one transaction,
+        // so the post-create setter (`ProfileFacet.setOfferCreatorFullTariff`)
+        // never has a moment to run. The same three fields the setter writes.
+        // `creatorMaxCStar` bounds the WHOLE order; a slice takes its pro-rata
+        // share ({makerFullFor}).
+        bool creatorFull;
+        uint256 creatorMaxCStar;
+        bool creatorAllowFullDowngrade;
         address signer; // MUST equal the recovered / 1271 signer
         uint256 nonce; // per-signer batch-cancel nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
@@ -98,6 +108,9 @@ library LibSignedOffer {
         "uint8 periodicInterestCadence,"
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
+        "bool creatorFull,"
+        "uint256 creatorMaxCStar,"
+        "bool creatorAllowFullDowngrade,"
         "address signer,"
         "uint256 nonce,"
         "uint256 deadline"
@@ -125,7 +138,8 @@ library LibSignedOffer {
         "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
-        "uint256 refinanceTargetLoanId,bool useFullTermInterest,address signer,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,"
+        "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,address signer,"
         "uint256 nonce,uint256 deadline)"
         "TokenPermissions(address token,uint256 amount)";
 
@@ -133,6 +147,63 @@ library LibSignedOffer {
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
     bytes32 private constant DOMAIN_NAME_HASH = keccak256("Vaipakam SignedOffer");
+
+    /// @notice #1949 — a signed Full opt-in must carry a positive ceiling, exactly as
+    ///         `ProfileFacet.setOfferCreatorFullTariff` requires of a standing offer.
+    error SignedOfferFullNeedsMaxCStar();
+
+    /// @notice #1949 — the maker's Full opt-in as the materialize entries take it.
+    struct MakerFull {
+        bool full;
+        uint256 maxCStar;
+        bool allowDowngrade;
+    }
+
+    /// @notice #1949 — vetting: a Full opt-in without a ceiling can never materialize
+    ///         (the standing-offer setter refuses the same shape), so refuse it before
+    ///         any value moves. Both fill paths call this first.
+    function requireFullWellFormed(SignedOffer calldata o) internal pure {
+        if (o.creatorFull && o.creatorMaxCStar == 0) revert SignedOfferFullNeedsMaxCStar();
+    }
+
+    /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:
+    ///         the principal from `filledBefore` to `filledBefore + fillAmount`. The
+    ///         slice's ceiling is the DIFFERENCE of the cumulative pro-rata ceiling
+    ///         `cum(P) = ceil(creatorMaxCStar * P / ceiling)` at its two ends — the
+    ///         same telescoping form the slice collateral uses (`toCreateOfferParams`).
+    ///         Summed over every slice the inner terms cancel, so the slices' ceilings
+    ///         total `cum(filled)`, which is at most the signed ceiling and equals it
+    ///         once the order is fully filled (Codex #2489 r2). Rounding each slice up
+    ///         on its own instead let the slices sum past the signed ceiling, one wei
+    ///         per slice, so a keeper splitting an order into minimum fills obtained
+    ///         Full authorization the maker never signed. The whole order (from 0 to
+    ///         the ceiling) takes the signed ceiling exactly. A slice can come out zero
+    ///         only when the signed ceiling is below one wei per slice, where any real
+    ///         tariff exceeds the share anyway; such a slice is refused (or downgraded,
+    ///         if the maker allowed it), never charged above the signed total. A
+    ///         non-Full order carries zeros. Each `cum` is a full-width `mulDiv`: the
+    ///         ceiling is signer-chosen, and a plain product would overflow on a large
+    ///         one and refuse every slice fill.
+    function makerFullFor(SignedOffer memory o, uint256 filledBefore, uint256 fillAmount)
+        internal
+        pure
+        returns (MakerFull memory f)
+    {
+        if (!o.creatorFull) return f;
+        uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        f.full = true;
+        f.allowDowngrade = o.creatorAllowFullDowngrade;
+        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, ceiling)
+            - _cumCeiling(o.creatorMaxCStar, filledBefore, ceiling);
+    }
+
+    /// @dev The cumulative pro-rata ceiling at principal `filled` of an order of size
+    ///      `ceiling`: the whole signed ceiling at (or past) the order's size, else its
+    ///      share rounded up. Monotone in `filled`, so the slice difference above can
+    ///      never underflow.
+    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 ceiling) private pure returns (uint256) {
+        return filled >= ceiling ? maxCStar : Math.mulDiv(maxCStar, filled, ceiling, Math.Rounding.Ceil);
+    }
     bytes32 private constant DOMAIN_VERSION_HASH = keccak256("1");
 
     /// @notice The EIP-712 domain separator, bound to this chain + the
@@ -155,8 +226,8 @@ library LibSignedOffer {
 
     /// @notice The EIP-712 struct hash of a `SignedOffer` (the `hashStruct`,
     ///         NOT the full digest — see {digest}).
-    /// @dev    The encode is split into THREE `abi.encode` chunks of ≤10
-    ///         values joined with `bytes.concat`, rather than one 29-argument
+    /// @dev    The encode is split into FOUR `abi.encode` chunks of ≤10
+    ///         values joined with `bytes.concat`, rather than one 32-argument
     ///         `abi.encode`. This library function INLINES into every consumer
     ///         (internal lib funcs always inline), so a wide single `abi.encode`
     ///         pushes the consumer over viaIR's whole-unit stack ceiling
@@ -165,7 +236,7 @@ library LibSignedOffer {
     ///         `SignedOffer` field is a STATIC EIP-712 type (uint/address/bool/
     ///         bytes32), so `abi.encode` is plain 32-byte-word concatenation and
     ///         the three chunks concatenated are byte-identical to the single
-    ///         29-arg encode. Keep chunk widths ≤10 if fields are added.
+    ///         32-arg encode. Keep chunk widths ≤10 if fields are added.
     function hashStruct(SignedOffer memory o) internal pure returns (bytes32) {
         return keccak256(
             bytes.concat(
@@ -200,10 +271,11 @@ library LibSignedOffer {
                     o.periodicInterestCadence,
                     o.refinanceTargetLoanId,
                     o.useFullTermInterest,
-                    o.signer,
-                    o.nonce,
-                    o.deadline
-                )
+                    o.creatorFull,
+                    o.creatorMaxCStar,
+                    o.creatorAllowFullDowngrade
+                ),
+                abi.encode(o.signer, o.nonce, o.deadline)
             )
         );
     }

@@ -1033,8 +1033,11 @@ library LibVpfiRecycle {
         // bucket and the recovery reservation are the precedents); the ban
         // there is on enumerating REMEMBERED balance owners, and neither of
         // these is remembered.
+        // #1566 sanctions rule — and net of the reward SET APART for flagged
+        // wallets, which rests here until custody activates: it is already
+        // paid out of the pool and belongs to those wallets, never backing.
         (, , uint256 unearmarked) = backingPosition(s);
-        uint256 staged = s.liveFreshReserved + s.stagedEpochTotal;
+        uint256 staged = s.liveFreshReserved + s.stagedEpochTotal + s.rewardSanctionsHeldTotal;
         return unearmarked > staged ? unearmarked - staged : 0;
     }
 
@@ -1569,8 +1572,13 @@ library LibVpfiRecycle {
      *         healthy recovery. See the storage docs for the split that a
      *         recovery path needs instead.
      */
-    function restoreReleasedRemit(uint256 recycledFull, uint256 recycledSent, uint256 remitId) internal {
-        if (recycledFull == 0 && recycledSent == 0) return;
+    /// @return The stranded share recorded for THIS release — the caller keeps
+    ///         it on the reservation so a late delivery can resolve it (#1461).
+    function restoreReleasedRemit(uint256 recycledFull, uint256 recycledSent, uint256 remitId)
+        internal
+        returns (uint256)
+    {
+        if (recycledFull == 0 && recycledSent == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.outstandingCommitRecycled += recycledFull;
         // Codex #1426 r5 — on an in-place-upgraded Diamond whose
@@ -1607,6 +1615,110 @@ library LibVpfiRecycle {
         uint256 reversed = paid > recycledSent ? recycledSent : paid;
         s.paidOutRecycled = paid - reversed;
         s.recycleReleasedRemitStrandedCumulative += reversed;
+        return reversed;
+    }
+
+    /// @notice #1461 — a released remittance's stranded share was resolved by a
+    ///         TRUSTED late consumption: the mirror credited the delivery, so the
+    ///         share left the coverage allowance.
+    /// @custom:event-category state-change/reward-custody
+    event ReleasedRemitStrandedResolved(uint256 indexed remitId, uint256 amount);
+
+    /// @notice A released reservation's stranded record WRITTEN by the history
+    ///         rule ({ensureReleasedStrandedStamped}) — never by a release, which
+    ///         announces its own figure in `RemitReservationReleased`.
+    /// @custom:event-category informational/reward-transport
+    event ReleasedRemitStrandedStamped(uint256 indexed remitId, uint256 amount);
+
+    /// @notice Whether a released reservation's consumption is TRUSTED: consumed,
+    ///         and never attested quarantined. The one rule both sides read — the
+    ///         recovery ceremony and the terminal-loss record are refused while it
+    ///         holds, and a late acknowledgement resolves the stranded share only
+    ///         while it holds — so the two can never both resolve one remittance.
+    ///         It never lapses once held: a quarantine stamp is refused after a
+    ///         consumption (`RewardRemittanceFacet._stampQuarantineAck`), so a
+    ///         quarantine-then-consumption is untrusted from the start.
+    function releasedConsumptionTrusted(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        return r.consumedAcked && !r.quarantineAcked;
+    }
+
+    /// @notice #1461 — settle a RELEASED reservation's stranded share after a late
+    ///         acknowledgement's stamps. Only a TRUSTED consumption resolves: the
+    ///         mirror credited the value, so what is left on the record leaves the
+    ///         coverage allowance (`recycleReleasedRemitResolvedCumulative`), once
+    ///         — the record is zeroed. A quarantined, provisional or contradicted
+    ///         delivery resolves nothing: the value is still Base's to recover or
+    ///         write off, and the ceremony / loss record resolves it then.
+    /// @dev    Called only by the destination's authenticated acknowledgement of a
+    ///         RELEASED reservation. What a ceremony or loss record resolved before
+    ///         the consumption was attested came off the record there.
+    function settleReleasedRemitStranded(LibVaipakam.Storage storage s, uint256 remitId) internal {
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (!releasedConsumptionTrusted(r)) return;
+        ensureReleasedStrandedStamped(s, remitId);
+        uint256 amount = r.strandedRecycled;
+        if (amount == 0) return;
+        r.strandedRecycled = 0;
+        s.recycleReleasedRemitResolvedCumulative += amount;
+        emit ReleasedRemitStrandedResolved(remitId, amount);
+    }
+
+    // ─── #1461 / Codex #2489 r7 — the reservation HISTORY rule ────────────────
+    //
+    // `strandedRecycled` and `recycledBooked` were appended to the reservation
+    // record after reservations had already been released and finalized on
+    // upgraded-in-place Diamonds. Both facts are DERIVED from what the record
+    // already holds, so neither needs an operator figure: the history rule
+    // below writes a missing fact from the record's own state, once, and is
+    // applied lazily where the fact is read (the stranded settle, the
+    // recovery ceremony) and eagerly by the permissionless bounded walk
+    // `RewardRemittanceFacet.backfillRemitHistory`, so the per-destination
+    // booked counters are whole before the mesh watcher compares them.
+
+    /// @notice Whether the history rule would still write `who`'s stranded
+    ///         record: RELEASED (status 3) and never stamped.
+    function strandedStampPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        return r.status == 3 && !r.strandedStamped;
+    }
+
+    /// @notice Whether the history rule would still book a reservation's
+    ///         recycled share for its destination: not yet booked, FINALIZED
+    ///         (status 2) or RELEASED (status 3), and marked consumed. The
+    ///         forced finalization stamps `consumedAcked` exactly as a real
+    ///         acknowledgement does (`_finalizeReservation(…, consumed = true,
+    ///         forced = true)`), so a pre-upgrade forced row is
+    ///         indistinguishable from an acknowledged one in the record
+    ///         (security review of #2489) — both land in the HISTORY figure, and
+    ///         the mesh watcher tells them apart by the destination's own
+    ///         receipt (a forced remittance never arrived, so the destination
+    ///         holds no delivery for it and it relocated nothing). A released
+    ///         row the mirror consumed after all books too, as the live
+    ///         late-ack path does (Codex #2489 r8). A row that moved no value,
+    ///         or a released row never consumed, books nothing.
+    function recycledBookingPending(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        if (r.recycledBooked != 0) return false;
+        return (r.status == 2 || r.status == 3) && r.consumedAcked;
+    }
+
+    /// @notice Write a RELEASED reservation's stranded record from its history if
+    ///         it was released before the record existed: the recycled share it
+    ///         sent, less what the recovery ceremony and the loss record have
+    ///         already resolved for it (both kept per reservation since #1662),
+    ///         saturating at zero. Returns whether it wrote. A reservation
+    ///         released since stamps at its release and is never rewritten,
+    ///         so a resolution that zeroed the record cannot be re-derived.
+    /// @dev    Must run BEFORE a ceremony's own per-reservation records grow
+    ///         (the entry points call it first), or the derivation would count
+    ///         the resolution it is about to deduct.
+    function ensureReleasedStrandedStamped(LibVaipakam.Storage storage s, uint256 remitId) internal returns (bool) {
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (!strandedStampPending(r)) return false;
+        uint256 resolved = s.ceremonyRecycledRecovered[remitId] + s.ceremonyRecycledLoss[remitId];
+        uint256 amount = r.recycled > resolved ? r.recycled - resolved : 0;
+        r.strandedRecycled = amount;
+        r.strandedStamped = true;
+        emit ReleasedRemitStrandedStamped(remitId, amount);
+        return true;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────
@@ -1663,7 +1775,10 @@ library LibVpfiRecycle {
      *         quiet-day close would zero the headroom of the days whose
      *         credit that cumulative already includes. Trade-off, accepted:
      *         a buggy/malicious mirror can shift credit BETWEEN its own
-     *         days within the aggregate bound (never exceed it); `Ā` only
+     *         days within the aggregate bound (never exceed it) — and, since
+     *         #2047, by at most the Base-set per-day attribution cap when one
+     *         is set: what the cap trims from a day's figure is carried as a
+     *         Base-tracked backlog and dripped at that pace on later days; `Ā` only
      *         sizes budgets, and B2's `min(target, availRecycled)` funding
      *         re-bounds everything against the availability ledger.
      *
@@ -1689,7 +1804,31 @@ library LibVpfiRecycle {
         uint256 accepted;
         if (reported > attributed) {
             uint256 headroom = reported - attributed;
-            accepted = forDayReported < headroom ? forDayReported : headroom;
+            uint256 claimed = forDayReported < headroom ? forDayReported : headroom;
+            // #2047 — ONE Base-set ceiling on the WHOLE accepted daily figure.
+            // Both terms of `claimed` are mirror-supplied, so a mirror holding
+            // accumulated headroom could label all of it today's credit and
+            // compress it into one day's keeper earmark. The ceiling BOUNDS the
+            // day's attribution; what it trims is carried as a BASE-tracked
+            // backlog and dripped on later days at no more than the ceiling —
+            // so an honest chain's big day loses nothing (the pure bound would
+            // strand its excess forever, since an honest chain never re-claims
+            // it), the allocation MIX and TIMING are bounded from Base's side,
+            // and the mirror supplies neither the backlog's size nor its pace.
+            // An unset ceiling (0, the deploy default) is the pre-#2047 rule
+            // exactly — and drains any backlog left by a ceiling that was later
+            // cleared; a huge ceiling is a no-op by construction. The keeper
+            // bps cannot be armed for a chain until a ceiling exists.
+            // Saturating at `headroom` BEFORE adding: the backlog is bounded by
+            // an earlier headroom, which a mirror-supplied cumulative can set
+            // near 2^256, so `claimed + backlog` would overflow and revert the
+            // chain's every later day report. `claimed <= headroom` by its own
+            // min, so the subtraction cannot underflow.
+            uint256 backlog = s.chainAttributionBacklog[sourceChainId];
+            uint256 want = backlog >= headroom - claimed ? headroom : claimed + backlog;
+            uint256 cap = s.chainDailyAttributionCap[sourceChainId];
+            accepted = (cap != 0 && want > cap) ? cap : want;
+            s.chainAttributionBacklog[sourceChainId] = want - accepted;
         }
 
         s.chainRecycledDayAccepted[dayId][sourceChainId] = true;

@@ -96,6 +96,52 @@ export async function previewClaimByExecution(
   throw new Error('simulateClaimInteractionRewards returned without reverting');
 }
 
+/**
+ * #2489 r2 — the VPFI set aside for this wallet (`getSanctionsHeldReward`),
+ * read on its OWN: the combined claim's preview can be unavailable (an
+ * exhausted pool, a held staging page) exactly when this balance is the part
+ * the wallet can still take, through `claimHeldInteractionRewards`. A revert or
+ * empty answer (the view absent on this chain) reads as zero; a transport
+ * failure throws, so the card never claims there is nothing when it could not
+ * check.
+ */
+export function useHeldReward() {
+  const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  return useQuery({
+    queryKey: ['interactionRewards', 'held', readChain.chainId, address?.toLowerCase()],
+    enabled: Boolean(address) && Boolean(publicClient),
+    refetchInterval: signalAware(60_000),
+    queryFn: () => readHeldReward(publicClient!, readChain.diamondAddress, address!),
+  });
+}
+
+/** The read behind {@link useHeldReward}: the wallet's held balance; zero for
+ *  a revert or empty answer (the view absent on this chain); a transport
+ *  failure throws. Pure over its client, for the tests. */
+export async function readHeldReward(
+  client: Pick<PublicClient, 'readContract'>,
+  diamond: Address,
+  user: Address,
+): Promise<bigint> {
+  try {
+    const [held] = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getSanctionsHeldReward',
+      args: [user],
+    })) as readonly [bigint, bigint];
+    return held;
+  } catch (err) {
+    const isRevert =
+      err instanceof BaseError &&
+      (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+        err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+    if (isRevert) return 0n;
+    throw err;
+  }
+}
+
 export function useInteractionRewards() {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });

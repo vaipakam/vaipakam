@@ -1,6 +1,30 @@
 [
   {
     "type": "function",
+    "name": "dayAwaitsFreshDelivery",
+    "inputs": [
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCeremonyLoss",
     "inputs": [
       {
@@ -60,6 +84,49 @@
     "outputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainRemittedRecycled",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "acked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "forceFinalized",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainRemittedRecycledHistory",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ackedDeclared",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -218,6 +285,70 @@
             "internalType": "bool"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getDayDeliveryState",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gateArmed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "stamped",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "freshStamped",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "landed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "provedBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "epochCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reported",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "reportSent",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "awaitsLender",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "awaitsBorrower",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -479,6 +610,55 @@
   },
   {
     "type": "function",
+    "name": "getPacketDeliveryProof",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "dayListHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayListRoot",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "chunksIndexed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "batched",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "classificationFinal",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "disposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProvisionalFreshHeld",
     "inputs": [],
     "outputs": [
@@ -676,6 +856,79 @@
   },
   {
     "type": "function",
+    "name": "getRemitHistoryBooked",
+    "inputs": [
+      {
+        "name": "dst",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "totals",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRemitHistoryPending",
+    "inputs": [
+      {
+        "name": "fromId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "strandedPending",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bookingPending",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitIdByMessageId",
     "inputs": [
       {
@@ -837,6 +1090,26 @@
             "name": "dayListRoot",
             "type": "bytes32",
             "internalType": "bytes32"
+          },
+          {
+            "name": "strandedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledBooked",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "fundedDayBits",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "strandedStamped",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

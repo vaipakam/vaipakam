@@ -765,27 +765,15 @@ library LibVaipakam {
     ///      (one auditable economic knob beats two interacting ones).
     uint256 constant RECYCLE_FORWARD_RESERVE_DAYS = 7;
 
-    /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
-    ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
-    ///      loan's tariff = `k × ethVolume18 × durationDays / 1e18`. A pure
-    ///      QUANTITY schedule — never a fee-value conversion (that would
-    ///      re-enter the price-peg surface). Stored `0` ⇒ this default (see
-    ///      {cfgRecycleTariffKPer1e18EthDay}). Initial value; governance tunes
-    ///      it in the same family as the interaction-reward ratio so the loop
-    ///      stays net-absorbing after rewards at the governor margin.
-    uint256 constant RECYCLE_TARIFF_K_DEFAULT = 5e16; // 0.05 VPFI / ETH·day
-    uint256 constant RECYCLE_TARIFF_K_MIN = 1e15; // 0.001 VPFI / ETH·day
-    uint256 constant RECYCLE_TARIFF_K_MAX = 1e18; // 1.0 VPFI / ETH·day
-
     /// @dev #1347 (M2 PR-5a/5b) — the Full-tariff schedule coefficient `K`
     ///      in the LIF·year absorption formula
     ///      `C* = baseLif_list × tYears × K` (formula doc §F4, rev 15). Unit:
     ///      "VPFI-1e18 per 1.0 numeraire-unit (1e18) of list LIF per year".
     ///      Default `5e18` ⇒ 5 VPFI per whole numeraire-unit of list LIF per
     ///      year, so a 20-USDC list LIF on a 30-day loan absorbs ≈8.22 VPFI
-    ///      per Full party. This is the SUCCESSOR to the retired ETH·day
-    ///      `RECYCLE_TARIFF_K_*` family — rev 14+ forbids wiring the ETH·day
-    ///      knob for Phase-1 absorption. Read via {cfgTariffKPerLifYear}.
+    ///      per Full party. This is the SUCCESSOR to the ETH·day tariff knob,
+    ///      which rev 14+ forbade wiring and #1956 removed. Read via
+    ///      {cfgTariffKPerLifYear}.
     uint256 constant TARIFF_K_PER_LIF_YEAR_DEFAULT = 5e18; // 5 VPFI / list-LIF-numeraire / year
     uint256 constant TARIFF_K_PER_LIF_YEAR_MIN = 1e17; // 0.1 VPFI / list-LIF-numeraire / year
     uint256 constant TARIFF_K_PER_LIF_YEAR_MAX = 5e19; // 50 VPFI / list-LIF-numeraire / year
@@ -957,7 +945,13 @@ library LibVaipakam {
         ///      uncounted, backing nothing, carried by no era move. Confirmation
         ///      counts it and credits it to the day's era like any arrival;
         ///      demotion moves it, untouched, into `Unclassified`.
-        Provisional
+        Provisional,
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — reward earned BEFORE a
+        ///      confirmed flag, set apart per wallet (`rewardSanctionsHeld`):
+        ///      already paid out of the pool and the delivered ledger, backing
+        ///      nothing, carried by no era move, released only to its wallet
+        ///      once it is no longer barred.
+        SanctionsHeld
     }
 
     /**
@@ -2591,7 +2585,12 @@ library LibVaipakam {
     enum RewardDelivery {
         Default,
         Wallet,
-        Vault
+        Vault,
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — INTERNAL ONLY: the
+        ///      settlement of a confirmed-flagged owner sets the user's share
+        ///      apart into its held balance instead of delivering it. Every
+        ///      public entry that takes a venue refuses it.
+        SanctionsHeld
     }
 
     /**
@@ -3603,11 +3602,15 @@ library LibVaipakam {
         // Which source mainnets use is open (#2443): Chainalysis retired
         // its on-chain oracle (last updated 2026-03-18) and it must not be
         // configured; testnets use the admin's `TestnetSanctionsOverlay`. When the
-        // slot is non-zero, {OfferFacet.createOffer} and
-        // {OfferFacet.acceptOffer} both refuse calls from (or involving)
+        // slot is non-zero, {OfferCreateFacet.createOffer} and
+        // {OfferAcceptFacet.acceptOffer} both refuse calls from (or involving)
         // flagged addresses — the OFAC-aligned "no new business" posture.
-        // Ongoing actions (repay, claim) stay unrestricted so existing
-        // counterparties aren't stranded. `address(0)` disables the
+        // Close-out actions (repay, default, liquidation) stay open so an
+        // unflagged counterparty is never stranded, while a flagged wallet's
+        // own claims and payouts are refused and its UNDELIVERED protocol
+        // rewards are forfeited once the flag is confirmed — the full
+        // Tier-1 / Tier-2 split is the policy block on
+        // {LibVaipakam.isSanctionedAddress}. `address(0)` disables the
         // check entirely (fail-open); a retail deploy must not route real
         // value while it is zero.
         address sanctionsOracle;
@@ -5528,8 +5531,14 @@ library LibVaipakam {
         ///      of scanning, so the centralized {closeLoan} re-anchor cannot be
         ///      griefed by a prolific holder's long entry list (Codex #1147 r3
         ///      G3 / r4 H3). Maintained at EVERY membership mutation: alloc push,
-        ///      remove swap-pop (rewrites the moved tail entry's index), and the
-        ///      {repointRewardEntry} newUser push.
+        ///      remove swap-pop (rewrites the moved tail entry's index), the
+        ///      {repointRewardEntry} newUser push, and — Codex #2489 r17 — the
+        ///      RETIREMENT of settled entries
+        ///      ({LibInteractionRewards.retireSettledUserEntries}: a `processed`
+        ///      entry leaves its user's index by the same swap-pop, so the
+        ///      index holds the wallet's UNSETTLED entries and every per-user
+        ///      walk is O(unsettled); a retired entry reads 0 here and stays
+        ///      addressable by id).
         mapping(uint256 => uint256) rewardEntryUserIdx;
         // ─── VPFI recycling balance governor (#1222) — knobs ──────────────
         /// @dev Platform-retained margin (bps) the recycling governor keeps
@@ -5539,12 +5548,10 @@ library LibVaipakam {
         ///      `[1, RECYCLE_MARGIN_MAX_BPS]`). Appended at struct end — no
         ///      layout shift for an in-place facet refresh.
         uint16 recycleMarginBps;
-        /// @dev Tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per day) for
-        ///      peg-free discount entitlements (design §4.2). `0` ⇒
-        ///      {RECYCLE_TARIFF_K_DEFAULT} (see
-        ///      {cfgRecycleTariffKPer1e18EthDay}). Set via
-        ///      {ConfigFacet.setRecycleTariffKPer1e18EthDay} (ADMIN_ROLE,
-        ///      bounded `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]`).
+        /// @dev RETIRED (#1956) — the ETH·day tariff `k`, never wired into
+        ///      absorption (rev 14+ forbade it; the LIF·year `K` replaced it).
+        ///      Its setter and reader are removed; the slot stays for the
+        ///      append-only layout and nothing reads or writes it.
         uint256 recycleTariffKPer1e18EthDay;
         // ─── VPFI recycling governor PR-3a (#1217/#1222 §5) — bucket ledger ──
         /// @dev Protocol-owned recycle bucket: a LEDGER SLICE of the Diamond's
@@ -7943,6 +7950,107 @@ library LibVaipakam {
         ///         custody it is the `Provisional` row; a hold made before custody
         ///         activation rests at the Diamond and is counted here alone.
         uint256 rewardBudgetFreshProvisional;
+        /// @dev #2047 — ONE Base-set ceiling on the recycled credit Base ATTRIBUTES
+        ///      to a mirror per day (VPFI wei; 0 = uncapped, the deploy default).
+        ///      The mirror supplies both terms of `min(forDayReported, headroom)`,
+        ///      so a mirror holding accumulated headroom could compress it into one
+        ///      day and accelerate its own keeper earmark; this bounds the per-day
+        ///      attribution — the allocation MIX and TIMING — from Base's side.
+        ///      Required to be non-zero before a chain's keeper bps may be armed.
+        mapping(uint32 => uint256) chainDailyAttributionCap;
+        /// @dev #2047 — the credit a chain's own day figures named that the ceiling
+        ///      trimmed, carried by BASE and dripped on later days at no more than the
+        ///      ceiling per day, so an honest chain loses nothing to the cap and a
+        ///      hostile one cannot compress it into one day. Base-tracked: the mirror
+        ///      supplies neither its size (the ceiling trims it) nor its pace.
+        mapping(uint32 => uint256) chainAttributionBacklog;
+        /// @dev #1944 consequence 1 — the first day the mirror-side DELIVERY GATE binds
+        ///      from; 0 = gate dark (byte-for-byte today's pricing order, one SLOAD per
+        ///      priced day-side on every chain). One-shot (0 → non-zero once) and
+        ///      Mirror-only, so a wrong value is a `--fresh` matter, never a re-opening
+        ///      of gated days. WHY a latch and not role alone: (a) the wait ends on a
+        ///      PROVEN delivery, which the keeper's `deliveryProof` pass supplies, so
+        ///      arming before that pass runs on the mirror makes every funded day wait
+        ///      on a human;
+        ///      (b) one SLOAD short-circuits Base/Unconfigured and every pre-upgrade day
+        ///      whose pre-3a packet carries no provable list. A mirror past custody era 0
+        ///      may arm it: Base stamps the destination's own reported era and a
+        ///      retired era's delivery opens its epoch (#1566 PR C revision), so no
+        ///      delivery is held inert.
+        uint256 dayDeliveryGateFromDay;
+        /// @dev #1944 consequence 1 — the ingress stamp of the FIRST undisposed
+        ///      budget packet PROVEN to list `day`, for packets holding NO
+        ///      transport batch (typed d5, pre-activation d6/legacy). Written only by
+        ///      the two proof entries (`RewardEpochFacet.proveDeliveryDayList/Chunk`),
+        ///      never at ingress (the 300k destination budget — `TransportBatch`'s note)
+        ///      and never by the broadcast. Batched packets do NOT write it: their fact
+        ///      is `transportBatchesByDay[day]`, and a flag beside an index is a second
+        ///      statement of one fact. ONE reader ORs the two:
+        ///      `LibRewardCustody.dayDeliveryLanded`.
+        mapping(uint256 => bytes32) dayDeliveryProvedBy;
+        /// @dev #1566 sanctions reward-forfeit — per wallet, the EVIDENCE CHAIN
+        ///      that its sanctions flag is CONFIRMED, packed
+        ///      `oracle(160) | flaggedAt(48) | lastSeenAt(48)` (the one codec is
+        ///      `LibRewardSanctions.packEvidence`): the oracle the observations
+        ///      were made against, when the chain started, and its latest
+        ///      authoritative Flagged observation. Written ONLY by
+        ///      `LibRewardSanctions.observe`, after an authoritative read, so
+        ///      nobody can forge a chain or break one: a Flagged read with no
+        ///      live chain (no #1123 marker, another oracle, or a gap over
+        ///      `MAX_OBS_GAP_SECS`) restarts it at now; a Flagged read on a live
+        ///      chain moves `lastSeenAt`; a Clean read deletes it. Undelivered
+        ///      interaction reward is forfeitable only once a live chain spans
+        ///      `CONFIRM_SECS`. WHY a word of its own beside
+        ///      `sanctionsConfirmedFlagged`: that marker carries no time and is
+        ///      set by several paths on one read, while a forfeit is
+        ///      irreversible and must never follow one read. Appended — the
+        ///      Storage struct is append-only.
+        mapping(address => uint256) rewardSanctionsEvidence;
+        /// @dev #1452 — per destination, the recycled share of every remittance
+        ///      Base saw ACKNOWLEDGED: delivered custody that mirror must have
+        ///      relocated (`recycleCustodyRelocatedCumulative`) at least this much
+        ///      of. An arrival credited through the ordinary absorption path
+        ///      instead would report Base's own top-up as the mirror's absorption
+        ///      and leave this figure ahead of the mirror's — the one exclusion
+        ///      variant no on-chain bound catches, observed by the mesh watcher.
+        mapping(uint32 => uint256) chainRemittedRecycledAcked;
+        /// @dev #1452 — the same share for FORCED finalizations: evidenced by an
+        ///      operator, not acknowledged by a delivery, so kept apart.
+        mapping(uint32 => uint256) chainRemittedRecycledForceFinalized;
+        /// @dev Codex #2489 r9 — per destination, the DECLARED recycled share of
+        ///      every remittance acknowledged as consumed BEFORE the booking
+        ///      existed, booked by the history walk and kept APART from
+        ///      `chainRemittedRecycledAcked`: the record keeps no received
+        ///      figure (only the authenticated `RemitReservationAcked` event
+        ///      carried it), so for a pre-upgrade short delivery the declared
+        ///      share overstates what the mirror relocated. The exact counter
+        ///      stays exact; the watcher compares this figure at advisory
+        ///      severity only.
+        mapping(uint32 => uint256) chainRemittedRecycledAckedFromHistory;
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, the
+        ///      RECORDED windows of its ended confirmed chains, each packed
+        ///      `fromDay(128) | toDay(128)` (the one codec is
+        ///      `LibRewardSanctions.packWindow`): the reward days it earned
+        ///      while a confirmed flag stood, from the day of the chain's first
+        ///      Flagged observation through the day of its last. Append-only,
+        ///      written ONLY by `LibRewardSanctions.observe` when a confirmed
+        ///      chain is cleared or restarted over, so a day settled later —
+        ///      by the wallet's own claim after revocation included — still
+        ///      forfeits. The live chain's window is read from
+        ///      `rewardSanctionsEvidence` itself.
+        mapping(address => uint256[]) rewardSanctionsWindows;
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — per wallet, reward
+        ///      earned BEFORE a confirmed flag, settled and SET APART for it
+        ///      (custody row `SanctionsHeld` once custody is active; the
+        ///      Diamond's balance before). Paid out by the wallet's next claim
+        ///      once it is no longer barred. Already charged to the pool and
+        ///      the delivered ledger when set apart, so its release spends
+        ///      neither again.
+        mapping(address => uint256) rewardSanctionsHeld;
+        /// @dev Σ `rewardSanctionsHeld` — the figure the `SanctionsHeld` row
+        ///      must equal at custody activation, and the earmark the fresh
+        ///      backing room nets out of the Diamond's balance before it.
+        uint256 rewardSanctionsHeldTotal;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -9129,6 +9237,40 @@ library LibVaipakam {
         ///      carries the same commitment the mirror holds. Zero for every
         ///      reservation dispatched before the rooted wire.
         bytes32 dayListRoot;
+        /// @dev #1461, appended — the recycled share THIS reservation's release
+        ///      recorded as stranded in transit (its actual reversal into
+        ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved.
+        ///      Resolved, once, by whichever settles the value's fate: a TRUSTED
+        ///      late consumption (the mirror credited it), or the recovery
+        ///      ceremony / terminal-loss record (each decrements it by what it
+        ///      resolves). The two sides are exclusive — the ceremony and the loss
+        ///      record are refused while consumption is trusted, and trust never
+        ///      lapses once held (a quarantine stamp is refused after one).
+        uint256 strandedRecycled;
+        /// @dev #1452, appended — whether this reservation's recycled share is
+        ///      booked in Base's per-destination delivered figures: 0 not yet,
+        ///      1 under the operator's forced finalization (counted apart), 2
+        ///      under the delivery's own consumed acknowledgement. Booked once,
+        ///      at the first attested consumption; 1 → 2 moves it across.
+        uint8 recycledBooked;
+        /// @dev #2489 (Codex r2), appended — WHICH of `dayIds` this reservation
+        ///      funded: bit `i` (word `i >> 8`, bit `i & 255`) is set when
+        ///      `dayIds[i]` carried a non-zero slice, i.e. was listed on the wire.
+        ///      Written once at dispatch and never cleared, so the funded list —
+        ///      the list the d6 root commits to — stays recoverable from the
+        ///      reservation alone. The live per-day mark (`rewardBudgetRemitted`)
+        ///      is not that record: a release deletes it for the days this
+        ///      reservation closed, and a later remit of the same days rewrites
+        ///      it, so a list rebuilt from it after either no longer matches the
+        ///      root and the delivery could never be indexed or proven. Empty for
+        ///      a reservation dispatched before it existed, or with no closed day.
+        uint256[] fundedDayBits;
+        /// @dev #1461 (Codex #2489 r7) — whether `strandedRecycled` has been
+        ///      WRITTEN for this reservation: at its release, or by the history
+        ///      rule ({LibVpfiRecycle.ensureReleasedStrandedStamped}) for one
+        ///      released before the field existed. Without it a zero share is
+        ///      ambiguous — "resolved" and "never stamped" both read 0.
+        bool strandedStamped;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -9695,18 +9837,11 @@ library LibVaipakam {
         return v == 0 ? uint256(RECYCLE_MARGIN_DEFAULT_BPS) : uint256(v);
     }
 
-    /// @dev Effective tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per
-    ///      day). `0` ⇒ {RECYCLE_TARIFF_K_DEFAULT}.
-    function cfgRecycleTariffKPer1e18EthDay() internal view returns (uint256) {
-        uint256 v = storageSlot().recycleTariffKPer1e18EthDay;
-        return v == 0 ? RECYCLE_TARIFF_K_DEFAULT : v;
-    }
-
     /// @dev #1347 (M2 PR-5a/5b) — effective Full-tariff coefficient `K`
     ///      (VPFI-1e18 per 1.0 numeraire-unit of list LIF per year). `0` ⇒
-    ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT}. This is the LIF·year successor to
-    ///      {cfgRecycleTariffKPer1e18EthDay}, which is NOT wired for Phase-1
-    ///      absorption (formula doc §F4, rev 14+).
+    ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT}. This is the LIF·year successor to the
+    ///      ETH·day knob, which was never wired and is removed (#1956;
+    ///      formula doc §F4, rev 14+).
     function cfgTariffKPerLifYear() internal view returns (uint256) {
         uint256 v = storageSlot().tariffKPerLifYear;
         return v == 0 ? TARIFF_K_PER_LIF_YEAR_DEFAULT : v;
@@ -11536,73 +11671,6 @@ library LibVaipakam {
         emit SanctionsOracleSet(prev, oracle);
     }
 
-    /// @notice Read-through helper: true iff the configured oracle
-    ///         reports `who` as currently sanctioned. Returns false
-    ///         when no oracle is configured (the gate is disabled)
-    ///         OR when the oracle call reverts (fail-open on
-    ///         infrastructure failure — the alternative would brick
-    ///         every interaction on the chain whenever the oracle has
-    ///         an outage, which would over-react to an availability
-    ///         issue).
-    ///
-    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
-    ///
-    /// The retail deploy may have a sanctions oracle configured (which
-    /// source is open, #2443). When set, the gate splits the
-    /// callable surface into two tiers:
-    ///
-    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
-    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
-    /// that creates new state or routes funds TO the caller:
-    ///   - `OfferFacet.createOffer` / `acceptOffer` (creator + acceptor checks)
-    ///   - `VaultFactoryFacet.getOrCreateUserVault` (no vault ever
-    ///     exists for a sanctioned wallet)
-    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
-    ///   - `VPFIDiscountFacet.buyVPFI` (token purchase)
-    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
-    ///   - `EarlyWithdrawalFacet.withdrawEarly` (lender pulls early)
-    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
-    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
-    ///
-    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
-    /// entry point either CLOSES exposure to the sanctioned party or
-    /// is a permissionless safety action that benefits the
-    /// non-sanctioned counterparty:
-    ///   - `RepayFacet.repay` / `repayPartial` — closes the loan,
-    ///     unsanctioned lender gets paid. Refusing this would force
-    ///     default → liquidation, which routes the same value through
-    ///     a worse path; counter-productive for compliance.
-    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
-    ///     skin in to keep loan healthy; pro-protocol.
-    ///   - `DefaultedFacet.markDefaulted` — anyone unflagged calls
-    ///     this; value flows to lender, not msg.sender.
-    ///
-    /// ─── Legal reasoning for Tier-2 carve-outs ───
-    ///
-    /// Liquidation of a sanctioned-borrower's collateral is allowed
-    /// because the lender's claim was established BEFORE the
-    /// sanction (security interest in the collateral, contractually
-    /// pledged at loan-init). Executing on a pre-existing security
-    /// interest is the pattern OFAC General Licenses authorize for
-    /// "wind-down of contracts entered into prior to designation".
-    /// The sanctioned party's residual interest (collateral surplus
-    /// after debt + bonus) stays frozen in their own vault — Tier-1
-    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
-    /// wallet. Lender (unsanctioned) receives principal+interest;
-    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
-    /// receives the 3% bonus. Sanctioned residue is held but not
-    /// transferred to any other address.
-    ///
-    /// ─── What about funds frozen in a sanctioned wallet's vault? ───
-    ///
-    /// The protocol does not seize, redirect, or release these funds.
-    /// They remain in the sanctioned wallet's own vault and become
-    /// claimable again if the oracle delists the address. This is
-    /// the same behaviour as Circle's USDC blocklist — frozen, not
-    /// seized. The frontend communicates this to a sanctioned wallet
-    /// when it connects; the public Terms of Service carries one
-    /// generic disclosure line about restricted access.
-    ///
     /// @notice #1222 M3 B2-b — TRUE when this chain is a reward-mesh
     ///         MIRROR: explicitly non-canonical AND a canonical chain is
     ///         configured (the same pair `RewardReporterFacet.closeDay`
@@ -11657,6 +11725,119 @@ library LibVaipakam {
             : RewardRole.Unconfigured;
     }
 
+    /// @notice Read-through helper: true iff the configured oracle
+    ///         reports `who` as currently sanctioned. Returns false
+    ///         when no oracle is configured (the gate is disabled)
+    ///         OR when the oracle call reverts (fail-open on
+    ///         infrastructure failure — the alternative would brick
+    ///         every interaction on the chain whenever the oracle has
+    ///         an outage, which would over-react to an availability
+    ///         issue).
+    ///
+    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
+    ///
+    /// The retail deploy may have a sanctions oracle configured (which
+    /// source is open, #2443). When set, the gate splits the
+    /// callable surface into two tiers:
+    ///
+    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
+    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
+    /// that creates new state or routes funds TO the caller:
+    ///   - `OfferCreateFacet.createOffer` / `OfferAcceptFacet.acceptOffer`
+    ///     (creator + acceptor checks)
+    ///   - `VaultFactoryFacet.getOrCreateUserVault` (no vault ever
+    ///     exists for a sanctioned wallet)
+    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
+    ///   - `RewardClaimFacet.claimInteractionRewards` /
+    ///     `claimInteractionRewardsTo` (funds OUT) — screened with
+    ///     {assertRecipientNotBarred}, not this helper: a wallet carrying a
+    ///     committed flag is refused during an oracle outage too, so the claim
+    ///     pauses in step with the reward-expiry clock, which reads the same
+    ///     predicate
+    ///   - `VPFIDiscountFacet.depositVPFIToVault` / `withdrawVPFIFromVault`
+    ///     (no VPFI accumulates in, or leaves, a sanctioned wallet's vault)
+    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
+    ///   - `EarlyWithdrawalFacet.createLoanSaleOffer` /
+    ///     `EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer` (lender exits early)
+    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
+    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///
+    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
+    /// entry point either CLOSES exposure to the sanctioned party or
+    /// is a permissionless safety action that benefits the
+    /// non-sanctioned counterparty:
+    ///   - `RepayFacet.repayLoan` / `repayPartial` — closes the loan,
+    ///     unsanctioned lender gets paid. Refusing this would force
+    ///     default → liquidation, which routes the same value through
+    ///     a worse path; counter-productive for compliance.
+    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
+    ///     skin in to keep loan healthy; pro-protocol.
+    ///   - `DefaultedFacet.triggerDefault` — anyone unflagged calls
+    ///     this; value flows to lender, not msg.sender.
+    ///
+    /// ─── Legal reasoning for Tier-2 carve-outs ───
+    ///
+    /// Liquidation of a sanctioned-borrower's collateral is allowed
+    /// because the lender's claim was established BEFORE the
+    /// sanction (security interest in the collateral, contractually
+    /// pledged at loan-init). Executing on a pre-existing security
+    /// interest is the pattern OFAC General Licenses authorize for
+    /// "wind-down of contracts entered into prior to designation".
+    /// The sanctioned party's residual interest (collateral surplus
+    /// after debt + bonus) stays frozen in their own vault — Tier-1
+    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
+    /// wallet. Lender (unsanctioned) receives principal+interest;
+    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
+    /// receives the 3% bonus. Sanctioned residue is held but not
+    /// transferred to any other address.
+    ///
+    /// ─── What about funds frozen in a sanctioned wallet's vault? ───
+    ///
+    /// The protocol does not seize, redirect, or release these funds.
+    /// They remain in the sanctioned wallet's own vault and become
+    /// claimable again if the oracle delists the address. This is
+    /// the same behaviour as Circle's USDC blocklist — frozen, not
+    /// seized. The frontend communicates this to a sanctioned wallet
+    /// when it connects; the public Terms of Service carries one
+    /// generic disclosure line about restricted access. Interaction
+    /// rewards have their own rule — see the next section.
+    ///
+    /// ─── Interaction rewards: held apart; forfeited only while flagged ───
+    ///
+    /// Owner decision 2026-10-14, superseding the 2026-10-02 rule that
+    /// forfeited every undelivered entry once a flag CONFIRMED (that rule
+    /// never reached a live chain). Two parts, implemented in
+    /// `LibRewardSanctions` and applied by every reward settlement path:
+    ///  * Reward earned BEFORE the flag is the wallet's. A confirmed wallet's
+    ///    undelivered interaction reward is settled into a SET-ASIDE balance
+    ///    the Diamond holds (`RewardCustodyRow.SanctionsHeld`) — never
+    ///    forfeited — and paid once the flag is revoked, through its own
+    ///    claim entry (`claimHeldInteractionRewards`) or the wallet's next
+    ///    ordinary claim.
+    ///  * Reward earned WHILE a CONFIRMED flag stood is FORFEITED into the
+    ///    recycle bucket as `RecycleSource.ForfeitedReward`, by REWARD DAY: a
+    ///    confirmed chain of observations names the days from its first
+    ///    flagged observation through its last (recorded as a window when
+    ///    the chain ends), and a day inside a window forfeits on whichever
+    ///    path settles it — the claim walk, a staged day, the legacy per-day
+    ///    window or the legacy slice — including the wallet's own claim after
+    ///    the flag was revoked. Days nobody observed are not counted, and a
+    ///    chain that ended before the interaction launch names no day.
+    /// CONFIRMED is `LibRewardSanctions`' rule: the wallet reads Flagged on a
+    /// chain of committed, authoritative observations against one oracle that
+    /// spans `CONFIRM_SECS` with no gap over `MAX_OBS_GAP_SECS` (anyone may
+    /// observe). NEVER on an outage, an unset oracle, a first flag or a broken
+    /// chain: until confirmed, a barred wallet's reward is only WITHHELD — its
+    /// claim refused, its entries' expiry clock paused, a staged payout
+    /// waiting. Reward value already delivered into the wallet's vault stays
+    /// frozen with everything else there, and loan value — principal,
+    /// interest, collateral, claimables, the borrower-LIF rebate — is
+    /// untouched. WHY the split: a loan's value rests on a contract entered
+    /// before the listing (the wind-down reasoning above), and reward earned
+    /// before the flag is likewise already the wallet's; reward emitted to a
+    /// wallet while it stood confirmed-flagged would be the protocol paying a
+    /// listed party, which it must not do.
+    ///
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;
@@ -11796,13 +11977,29 @@ library LibVaipakam {
     ///         Deliberately NOT `assertNotSanctionedFailClosed`, which hard-reverts
     ///         on ANY outage (bricking an honest holder). `address(0)` (a burned-NFT
     ///         holder resolved via `_ownerOfRaw`) is never barred.
-    function isRecipientBarred(address who) internal view returns (bool) {
-        if (who == address(0)) return false;
-        if (storageSlot().sanctionsOracle == address(0)) return false; // disabled regime
-        SanctionsRead st = sanctionsStatus(who);
-        if (st == SanctionsRead.Flagged) return true; // oracle-up authoritative flag
-        if (st == SanctionsRead.Clean) return false; // oracle-up clean — stale marker ignored
-        return storageSlot().sanctionsConfirmedFlagged[who]; // Unavailable ⇒ outage backstop
+    function isRecipientBarred(address who) internal view returns (bool barred) {
+        (barred, ) = recipientBarredRead(who);
+    }
+
+    /// @notice #1566 — {isRecipientBarred}'s ONE body, returning also the read
+    ///         it decided on. `LibRewardSanctions` splits "barred" into Hold
+    ///         and Forfeit by `st` (Flagged vs. the outage backstop) and must
+    ///         never re-decide "barred" itself, so the predicate lives here
+    ///         once and both readers take it from this function.
+    /// @dev    `st` is `Unavailable` WITHOUT a read when `who == 0` or the
+    ///         regime is disabled (oracle unset); `barred` is false then, and
+    ///         `st` makes no claim about the oracle.
+    /// @param  who The recipient to screen.
+    /// @return barred Whether `who` is barred, exactly as {isRecipientBarred}.
+    /// @return st     The {sanctionsStatus} read `barred` was decided on.
+    function recipientBarredRead(address who) internal view returns (bool barred, SanctionsRead st) {
+        st = SanctionsRead.Unavailable;
+        if (who == address(0)) return (false, st);
+        if (storageSlot().sanctionsOracle == address(0)) return (false, st); // disabled regime
+        st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) return (true, st); // oracle-up authoritative flag
+        if (st == SanctionsRead.Clean) return (false, st); // oracle-up clean — stale marker ignored
+        return (storageSlot().sanctionsConfirmedFlagged[who], st); // Unavailable ⇒ outage backstop
     }
 
     /// @notice Revert `SanctionedAddress(who)` when {isRecipientBarred} holds.

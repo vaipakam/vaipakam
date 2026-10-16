@@ -2333,6 +2333,22 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().rewardEntries[id].expiryBegun;
     }
 
+    /// @notice #1566 sanctions reward-forfeit slice test-only - set or lift an
+    ///         entry's REMOVAL POINT (`expiryBegun`) directly. The production
+    ///         writer is the expiry sweep's first crediting chunk, reachable
+    ///         only after a full horizon-plus-notice of executable time; the
+    ///         sanctions suite needs the flag itself, to show the owner sweep
+    ///         leaves a removed entry to the expiry route (T9), and lifted for
+    ///         one call, to isolate the Expiry-record stamp blocker from the
+    ///         removal-point one (T11b). Bumps the claimant-side lifecycle
+    ///         version as the real transition does, so a staging domain reads
+    ///         the change instead of a silently edited entry.
+    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardEntries[id].expiryBegun = begun;
+        LibInteractionRewards.noteEntryLifecycle(s, s.rewardEntries[id]);
+    }
+
     /// @notice Pre-merge review 2026-08-17 test-only — the aggregate uncapped
     ///         pending the claim-executable gates measure, so a test can
     ///         assert a REMOVED entry no longer inflates it.
@@ -2549,6 +2565,55 @@ contract TestMutatorFacet {
     ///         RELEASED reservation row as the one-time stranded seed scans
     ///         it (status 3, its recycled share), the nonce raised to cover
     ///         it, so the ceremony can run over a raw-driven release.
+    /// @notice Codex #2489 r7 test-only — a FINALIZED reservation row as the
+    ///         history rule meets it on an upgraded-in-place Diamond: status 2,
+    ///         its destination, split and acknowledgement flags, NO booking
+    ///         (`recycledBooked` 0), the nonce raised to cover it.
+    function setRemitReservationFinalizedRaw(
+        uint256 remitId,
+        uint32 dst,
+        uint256 total,
+        uint256 recycled,
+        bool consumedAcked,
+        bool quarantineAcked,
+        bool forcedFinalized
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.status = 2;
+        r.dstChainId = dst;
+        r.total = total;
+        r.recycled = recycled;
+        r.consumedAcked = consumedAcked;
+        r.quarantineAcked = quarantineAcked;
+        r.forcedFinalized = forcedFinalized;
+        if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
+    }
+
+    /// @notice Codex #2489 r7 test-only — a RELEASED reservation's per-reservation
+    ///         ceremony records as #1662 left them before the stranded record
+    ///         existed, and its acknowledgement flags.
+    function setReleasedRemitHistoryRaw(
+        uint256 remitId,
+        uint256 recycledRecovered,
+        uint256 recycledLoss,
+        bool consumedAcked,
+        bool quarantineAcked
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.ceremonyRecycledRecovered[remitId] = recycledRecovered;
+        s.ceremonyRecycledLoss[remitId] = recycledLoss;
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.consumedAcked = consumedAcked;
+        r.quarantineAcked = quarantineAcked;
+    }
+
+    /// @notice Codex #2489 r15 test-only — the per-loan reward entry pointers.
+    function getLoanEntryIdsRaw(uint256 loanId) external view returns (uint256 lenderId, uint256 borrowerId) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.loanActiveLenderEntryId[loanId], s.loanBorrowerEntryId[loanId]);
+    }
+
     function setRemitReservationReleasedRaw(uint256 remitId, uint256 recycled) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
@@ -2785,12 +2850,6 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.isAggregatorAdapter[adapter] = true;
         s.adapterOperator[adapter] = operator;
-    }
-
-    /// @dev #1566 PR 1 re-review (B-N1) — mark an entry's expiry begun, as the
-    ///      expiry sweep does at the removal point.
-    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
-        LibVaipakam.storageSlot().rewardEntries[id].expiryBegun = begun;
     }
 
     /// @dev #1566 PR 1 re-review (C-1) — set the in-holder re-credit tally.

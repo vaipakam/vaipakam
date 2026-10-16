@@ -68,10 +68,16 @@ export const OFFER_AMOUNT_WETH = '0.00537';
  *  disclosures (the live grace-bucket / liquidity / linked-loan reads
  *  landing after the tick) legitimately RESET the checkbox — that's
  *  the app's re-consent rule, not a bug — so keep re-ticking until
- *  every canSign gate clears or the deadline passes. */
-export async function consentAndWaitEnabled(page: Page, button: Locator): Promise<void> {
+ *  every canSign gate clears or the deadline passes.
+ *
+ *  `consent` names the box when the form shows another checkbox ABOVE it:
+ *  the default — the first visible checkbox — is the consent box only on a
+ *  form with none before it. The gasless ticket's Full opt-in is one such
+ *  (#2489: the default kept re-ticking the already-checked opt-in and never
+ *  reached the consent box). */
+export async function consentAndWaitEnabled(page: Page, button: Locator, consentBox?: Locator): Promise<void> {
   await expect(async () => {
-    const consent = page.locator('input[type="checkbox"]:visible').first();
+    const consent = consentBox ?? page.locator('input[type="checkbox"]:visible').first();
     if (!(await consent.isChecked())) await consent.check();
     expect(await button.isEnabled()).toBe(true);
   }).toPass({ timeout: 60_000, intervals: [500, 1_000] });

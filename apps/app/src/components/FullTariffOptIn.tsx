@@ -74,6 +74,7 @@ export function FullTariffOptIn({
   durationDays,
   value,
   onChange,
+  role = 'acceptor',
 }: {
   /** Prospective loan's ERC-20 principal asset. */
   lendingAsset: Address | undefined;
@@ -83,6 +84,12 @@ export function FullTariffOptIn({
   durationDays: number | undefined;
   value: FullTariffChoice;
   onChange: (v: FullTariffChoice) => void;
+  /** #1949 — `maker`: a signed order's creator authorizing the tariff for
+   *  fills that happen LATER, so a ceiling below today's quote warns
+   *  rather than blocks (only the quote at fill counts), and the notices
+   *  speak of fills rather than of opening this loan now. Defaults to the
+   *  accepting party. */
+  role?: 'acceptor' | 'maker';
 }) {
   const config = useFeeEntitlementConfig();
   const { readChain } = useActiveChain();
@@ -217,6 +224,7 @@ export function FullTariffOptIn({
   const ceilingBlocks = shouldBlockOnCeiling({
     ceilingOvertaken,
     allowDowngrade: value.allowDowngrade,
+    role,
   });
   const engagedBlocked = !config.enabled || fullBlocked || ceilingBlocks;
   // LAYOUT effect, not passive (Codex #1700 r1): both callers derive the submit
@@ -323,7 +331,7 @@ export function FullTariffOptIn({
                 display formatter rounds to four digits, so a quote that
                 overtakes the ceiling by less than that renders as "1 VPFI is
                 above 1 VPFI" — hiding the very mismatch being explained. */}
-            {copy.tariff.ceilingOvertaken(
+            {(role === 'maker' ? copy.tariff.makerCeilingBelowQuote : copy.tariff.ceilingOvertaken)(
               exactAmountString(quoted, VPFI_DECIMALS),
               exactAmountString(ceiling, VPFI_DECIMALS),
             )}
@@ -356,6 +364,15 @@ export function FullTariffOptIn({
           <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.85rem' }}>
             {copy.tariff.dualFeeNote} {copy.tariff.nonRefundNote}
           </p>
+          {role === 'maker' ? (
+            <p
+              className="muted"
+              data-testid="full-tariff-maker-note"
+              style={{ margin: '6px 0 0', fontSize: '0.85rem' }}
+            >
+              {copy.tariff.makerSignedNote}
+            </p>
+          ) : null}
           <label
             style={{
               display: 'block',

@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
@@ -217,6 +218,103 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().remitPendingTotal[chainId];
     }
 
+    /// @notice #1452 — the recycled share of every remittance to `chainId` that
+    ///         Base saw ACKNOWLEDGED, and apart from it the share of FORCED
+    ///         finalizations. The destination must have relocated at least
+    ///         `acked` as delivered custody; the mesh watcher checks it.
+    function getChainRemittedRecycled(uint32 chainId)
+        external
+        view
+        returns (uint256 acked, uint256 forceFinalized)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.chainRemittedRecycledAcked[chainId], s.chainRemittedRecycledForceFinalized[chainId]);
+    }
+
+    /// @notice Codex #2489 r9 — the DECLARED recycled share of every remittance to
+    ///         `chainId` acknowledged as consumed before the booking existed,
+    ///         booked by the history walk and kept apart from
+    ///         {getChainRemittedRecycled}'s exact `acked`: no received figure
+    ///         survives for history, so a pre-upgrade short delivery relocated
+    ///         less than this. The watcher compares `acked` alone as a hard
+    ///         invariant and `acked + this` only as an advisory.
+    function getChainRemittedRecycledHistory(uint32 chainId) external view returns (uint256 ackedDeclared) {
+        return LibVaipakam.storageSlot().chainRemittedRecycledAckedFromHistory[chainId];
+    }
+
+    /// @notice Codex #2489 r10 — the reservations to `dst` in `[fromId, fromId +
+    ///         count)` (clipped to the nonce) that the history walk booked at
+    ///         their DECLARED share (booked state 3), with the declared split
+    ///         each was sent with. The mesh watcher joins these with the
+    ///         destination's own receipt records (`getReceivedRemit` there,
+    ///         which hold the amount that actually arrived) to reconstruct what
+    ///         the destination relocated for them — `recycled × received /
+    ///         total`, the receiver's own flooring — so the relocated-custody
+    ///         invariant stays HARD across an in-place upgrade instead of
+    ///         carrying the history as a cushion or a false alarm.
+    /// @return ids      Reservation ids, in id order.
+    /// @return recycled Each one's declared recycled share.
+    /// @return totals   Each one's declared total.
+    function getRemitHistoryBooked(uint32 dst, uint256 fromId, uint256 count)
+        external
+        view
+        returns (uint256[] memory ids, uint256[] memory recycled, uint256[] memory totals)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        uint256 n;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (r.recycledBooked == 3 && r.dstChainId == dst) { unchecked { ++n; } }
+            unchecked { ++id; }
+        }
+        ids = new uint256[](n);
+        recycled = new uint256[](n);
+        totals = new uint256[](n);
+        uint256 k;
+        for (uint256 id = fromId; id < end && k < n; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (r.recycledBooked == 3 && r.dstChainId == dst) {
+                ids[k] = id;
+                recycled[k] = r.recycled;
+                totals[k] = r.total;
+                unchecked { ++k; }
+            }
+            unchecked { ++id; }
+        }
+    }
+
+    /// @notice Codex #2489 r7 — how many reservations in `[fromId, fromId +
+    ///         count)` (clipped to the nonce) the history rule would still
+    ///         write ({RewardRemittanceFacet.backfillRemitHistory}): stranded
+    ///         records to stamp, recycled shares to book. Both zero over
+    ///         `1..nonce` means the per-destination booked counters cover the
+    ///         whole history; until then the mesh watcher reads them as UNKNOWN.
+    /// @return strandedPending Released reservations without a stranded record.
+    /// @return bookingPending  Finalized reservations whose share is unbooked.
+    /// @return nonce           The highest reservation id, so a reader knows
+    ///                         when its range covered everything.
+    function getRemitHistoryPending(uint256 fromId, uint256 count)
+        external
+        view
+        returns (uint256 strandedPending, uint256 bookingPending, uint256 nonce)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (LibVpfiRecycle.strandedStampPending(r)) { unchecked { ++strandedPending; } }
+            if (LibVpfiRecycle.recycledBookingPending(r)) { unchecked { ++bookingPending; } }
+            unchecked { ++id; }
+        }
+    }
+
     /// @notice Σ VPFI in ACKED (delivery-finalized) reservations to `chainId`.
     function getRemitAckedTotal(
         uint32 chainId
@@ -329,6 +427,141 @@ contract RewardRemittanceLensFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         paid = s.rewardBudgetArmedFreshPaid;
         remaining = LibInteractionRewards.deliveredFreshBound(s);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — whether day `dayId` is priced to owe
+     *         FRESH reward value on this chain for `side` (0 lender,
+     *         1 borrower, 2 either) while no delivery proven to list it has
+     *         landed here. True means every pricing path on this mirror
+     *         holds the day — the cursors halt before it and every
+     *         settlement defers by name — until the proof lands.
+     * @dev    THE self-staticcall target of
+     *         {LibRewardCustody.callDayAwaitsFreshDelivery}. The rule is
+     *         inlined HERE, once, instead of into the five walk facets that
+     *         price days: they sit within a few hundred bytes of EIP-170 and
+     *         each carries only the cheap prefix (gate dark, day below the
+     *         gate, day landed) plus this call. The body is the library rule
+     *         verbatim, so the view and the rung cannot disagree.
+     *
+     *         ROUTING IS LOAD-BEARING once the gate is armed: an unrouted
+     *         selector on an armed mirror turns every claim, sweep and staging
+     *         call into a bubbled `FunctionDoesNotExist`. The gate ships dark
+     *         (`dayDeliveryGateFromDay == 0` returns before the call), which
+     *         covers deploy ORDER only — refresh this facet together with the
+     *         walk facets, never after arming. Reads only.
+     */
+    function dayAwaitsFreshDelivery(uint8 side, uint256 dayId) external view returns (bool) {
+        return LibRewardCustody.dayAwaitsFreshDelivery(LibVaipakam.storageSlot(), side, dayId);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — the operator's readback of one day's
+     *         delivery gate on this chain, every input of
+     *         {dayAwaitsFreshDelivery} beside its verdict.
+     * @dev    Read the state off the tuple, in this order: NotApplied
+     *         (`!stamped` — Base's broadcast has not priced the day here);
+     *         Landed (`landed`); AwaitingReport (`reportSent == false` on an
+     *         armed day that awaits — Base itself waits for the mirror's
+     *         commitment report before it plans the fresh leg);
+     *         AwaitingDelivery (any other day that awaits); Open (nothing
+     *         awaits — the day owes no fresh value here, or the gate does not
+     *         bind it). The figures are returned raw rather than as an enum
+     *         so a state added later cannot be mis-decoded by an old reader.
+     * @return gateArmed     The gate binds this day (`fromDay != 0` and
+     *                       `dayId >= fromDay`).
+     * @return stamped       Base's per-chain funding stamp for the day has
+     *                       landed here.
+     * @return freshStamped  That stamp prices a non-zero FRESH half for
+     *                       either side.
+     * @return landed        A delivery listing the day has landed: an
+     *                       indexed transport epoch, or a proven mark.
+     * @return provedBy      The first packet PROVEN to list the day (zero
+     *                       for an epoch-path day, whose fact is the index).
+     * @return epochCount    Transport epochs indexed under the day.
+     * @return reported      This chain's day report has been sent to Base.
+     * @return reportSent    The day's commitment report has been sent.
+     * @return awaitsLender  {dayAwaitsFreshDelivery} for the lender side.
+     * @return awaitsBorrower {dayAwaitsFreshDelivery} for the borrower side.
+     */
+    function getDayDeliveryState(uint256 dayId)
+        external
+        view
+        returns (
+            bool gateArmed,
+            bool stamped,
+            bool freshStamped,
+            bool landed,
+            bytes32 provedBy,
+            uint256 epochCount,
+            bool reported,
+            bool reportSent,
+            bool awaitsLender,
+            bool awaitsBorrower
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        {
+            uint256 from = s.dayDeliveryGateFromDay;
+            gateArmed = from != 0 && dayId >= from;
+        }
+        {
+            LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[dayId][uint32(block.chainid)];
+            stamped = f.stamped;
+            freshStamped = stamped && (f.freshLenderHalf != 0 || f.freshBorrowerHalf != 0);
+        }
+        landed = LibRewardCustody.dayDeliveryLanded(s, dayId);
+        provedBy = s.dayDeliveryProvedBy[dayId];
+        epochCount = s.transportBatchesByDay[dayId].length;
+        reported = s.chainReportSentAt[dayId] != 0;
+        reportSent = s.commitmentReportSent[dayId];
+        awaitsLender = LibRewardCustody.dayAwaitsFreshDelivery(s, 0, dayId);
+        awaitsBorrower = LibRewardCustody.dayAwaitsFreshDelivery(s, 1, dayId);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — which proof route a landed packet takes,
+     *         and whether it is refused: `batched` → the batch materializers;
+     *         else `dayListRoot != 0` → {RewardEpochFacet.proveDeliveryDayChunk};
+     *         else `dayListHash != 0` → {RewardEpochFacet.proveDeliveryDayList};
+     *         neither → a pre-3a packet with no provable list. `disposed != 0`
+     *         is refused. (No packet is quarantined since the custody-era
+     *         revision, so the flag that read it is gone.)
+     * @dev    A narrow read of existing packet fields rather than the whole
+     *         {getIngressPacket} record: the keeper's proof step needs only
+     *         these, and a fixed tuple keeps its decode stable when the
+     *         append-only packet struct's tail widens. Nothing new is stored.
+     * @return dayListHash         The flat day-list commitment (0 = none).
+     * @return dayListRoot         The rooted (d6) commitment (0 = none).
+     * @return chunkCount          The rooted list's chunk count.
+     * @return chunksIndexed       Bit `i` set = chunk `i` proven.
+     * @return batched             The packet holds a transport batch.
+     * @return classificationFinal Its classification is final.
+     * @return disposed            Value disposed of by a non-classification exit.
+     */
+    function getPacketDeliveryProof(bytes32 packetHash)
+        external
+        view
+        returns (
+            bytes32 dayListHash,
+            bytes32 dayListRoot,
+            uint32 chunkCount,
+            uint256 chunksIndexed,
+            bool batched,
+            bool classificationFinal,
+            uint256 disposed
+        )
+    {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        return (
+            p.dayListHash,
+            p.dayListRoot,
+            p.chunkCount,
+            p.chunksIndexed,
+            p.batchId != bytes32(0),
+            p.classificationFinal,
+            p.disposed
+        );
     }
 
     /**

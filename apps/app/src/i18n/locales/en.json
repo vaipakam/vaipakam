@@ -344,9 +344,12 @@
         "hf_warn": "A loan’s health dipped below 1.5 — open it to see where it stands.",
         "hf_alert": "A loan’s health dipped below 1.2 — open it to see where it stands.",
         "hf_critical": "A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.",
+        "reward_final_notice": "One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.",
+        "reward_expired": "An unclaimed interaction reward of yours reached the end of its claim window; its return to the rewards programme has begun and it can no longer be claimed.",
         "generic": "There’s an update on your loan."
       },
       "loanRef": "Loan #{{loanId}} · tap to view",
+      "rewardRef": "Reward #{{entryId}} · tap to open the Claim Center",
       "unreadBadgeTitle_zero": "{{count}} unread notifications",
       "unreadBadgeTitle_one": "1 unread notification",
       "unreadBadgeTitle_two": "{{count}} unread notifications",
@@ -2039,6 +2042,8 @@
       "maxCStarHelp": "The exact tariff is re-priced at the moment the loan opens; it can never exceed this ceiling. Set it a little above the quote so a small move between now and then doesn’t block you.",
       "ceilingOvertaken": "The live tariff quote is now {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you authorized. Opening the loan now would not give you the Full tariff: it would be rejected, or opened without Full if you allowed that below. Raise the ceiling to keep the Full tariff, or untick the option to open without it.",
       "raiseCeiling": "Raise my ceiling to {{ceiling}} VPFI",
+      "makerCeilingBelowQuote": "The live tariff quote for this order’s full size is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to sign. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or filled without Full if you allowed that below. Smaller partial fills may still price under it. You can post this either way: what counts is the quote when a fill actually happens, and it may fall back.",
+      "makerSignedNote": "This choice is signed into your order, so it can’t be changed after you post it — cancel and post again to change it. Each fill is charged its own tariff when it happens, never more than that fill’s share of your ceiling.",
       "armedCeilingBelowQuote": "The live tariff quote for the largest fill still possible on this offer is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.",
       "ceilingOvertakenSubmit": "The live tariff quote has risen above the ceiling you authorized, so this acceptance would not give you the Full tariff. Raise the ceiling on the option above, or untick it to open the loan without the Full tariff.",
       "maxCStarRequired": "Set the highest tariff you authorize (in VPFI) before opting in — a Full opt-in without a ceiling can’t be signed.",
@@ -2424,6 +2429,7 @@
         "VPFIDepositedToVault": "VPFI deposited to vault",
         "VPFIWithdrawnFromVault": "VPFI withdrawn from vault",
         "VaultVpfiDebited": "VPFI spent from vault",
+        "RewardEntryForfeitSettled": "Rewards forfeited",
         "Transfer": "Transfer",
         "Approval": "Approval"
       },
@@ -2437,7 +2443,15 @@
       "empty": "No rewards yet. Rewards appear after lending or borrowing activity.",
       "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.",
       "claim": "Claim rewards",
-      "readyToClaim": "{{amount}} VPFI ready to claim."
+      "readyToClaim": "{{amount}} VPFI ready to claim.",
+      "heldReady": "{{amount}} VPFI of your rewards was set aside for you and is ready to claim.",
+      "heldNote": "You can claim it on its own, even when your other rewards can’t be claimed right now.",
+      "claimHeld": "Claim set-aside rewards",
+      "heldSetAside": "{{amount}} VPFI of your rewards is set aside for you.",
+      "heldBlockedNote": "It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.",
+      "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.",
+      "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.",
+      "expiryUnavailable": "Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds."
     },
     "sanctions": {
       "title": "This wallet is flagged by Vaipakam’s sanctions screen.",

@@ -814,12 +814,8 @@ contract ConfigFacet is DiamondAccessControl {
     /// @notice Emitted when the recycling governor's platform margin changes.
     /// @custom:event-category informational/config
     event RecycleMarginBpsSet(uint16 newMarginBps);
-    /// @notice Emitted when the peg-free discount-entitlement tariff changes.
-    /// @custom:event-category informational/config
-    event RecycleTariffKSet(uint256 newKPer1e18EthDay);
 
     error InvalidRecycleMarginBps(uint256 bps, uint256 maxAllowed);
-    error InvalidRecycleTariffK(uint256 k, uint256 minAllowed, uint256 maxAllowed);
 
     /// @notice #1347 (M2 PR-5a/5b) — emitted when the Full-tariff `K`
     ///         (LIF·year) coefficient changes.
@@ -876,49 +872,13 @@ contract ConfigFacet is DiamondAccessControl {
         emit RecycleMarginBpsSet(newMarginBps);
     }
 
-    /**
-     * @notice Set the tariff `k` for peg-free discount entitlements — VPFI
-     *         (1e18) charged per 1 ETH (1e18) of loan volume per day (design
-     *         §4.2). A pure quantity schedule; never a fee-value conversion.
-     * @dev ADMIN_ROLE-only. Bounded
-     *      `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]` (0.001 – 1.0 VPFI
-     *      per ETH·day). Pass exactly `0` to reset to
-     *      `RECYCLE_TARIFF_K_DEFAULT` (0.05).
-     * @param newKPer1e18EthDay New tariff `k`; `0` resets to default.
-     */
-    function setRecycleTariffKPer1e18EthDay(uint256 newKPer1e18EthDay)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        if (
-            newKPer1e18EthDay != 0 &&
-            (
-                newKPer1e18EthDay < LibVaipakam.RECYCLE_TARIFF_K_MIN ||
-                newKPer1e18EthDay > LibVaipakam.RECYCLE_TARIFF_K_MAX
-            )
-        ) {
-            revert InvalidRecycleTariffK(
-                newKPer1e18EthDay,
-                LibVaipakam.RECYCLE_TARIFF_K_MIN,
-                LibVaipakam.RECYCLE_TARIFF_K_MAX
-            );
-        }
-        LibVaipakam.storageSlot().recycleTariffKPer1e18EthDay = newKPer1e18EthDay;
-        emit RecycleTariffKSet(newKPer1e18EthDay);
-    }
-
-    /// @notice Read the effective recycling governor knobs in one RPC.
+    /// @notice Read the effective recycling governor margin.
+    /// @dev    #1956 — returned the retired ETH·day tariff `k` as a second value
+    ///         until that knob was removed; the absorption coefficient is the
+    ///         LIF·year `K` ({getTariffKPerLifYear}).
     /// @return marginBps Effective platform margin (bps).
-    /// @return tariffK   Effective tariff `k` (VPFI-1e18 per ETH·day).
-    function getRecycleConfig()
-        external
-        view
-        returns (uint256 marginBps, uint256 tariffK)
-    {
-        return (
-            LibVaipakam.cfgRecycleMarginBps(),
-            LibVaipakam.cfgRecycleTariffKPer1e18EthDay()
-        );
+    function getRecycleConfig() external view returns (uint256 marginBps) {
+        return LibVaipakam.cfgRecycleMarginBps();
     }
 
     /**
@@ -927,9 +887,8 @@ contract ConfigFacet is DiamondAccessControl {
      * @dev    ADMIN_ROLE-only (TimelockController post-handover). Bounded
      *         `[TARIFF_K_PER_LIF_YEAR_MIN, TARIFF_K_PER_LIF_YEAR_MAX]`; pass
      *         exactly `0` to reset to `TARIFF_K_PER_LIF_YEAR_DEFAULT` (5e18).
-     *         This is the LIF·year successor to
-     *         {setRecycleTariffKPer1e18EthDay}; the ETH·day knob is NOT wired
-     *         for Phase-1 absorption (formula doc §F4, rev 14+).
+     *         This is the LIF·year successor to the ETH·day knob, which was
+     *         never wired and is removed (#1956; formula doc §F4, rev 14+).
      * @param  newKPerLifYear New `K`; `0` resets to default.
      */
     function setTariffKPerLifYear(uint256 newKPerLifYear)

@@ -65,6 +65,12 @@ export const NOTIF_KINDS = [
   'hf_warn',
   'hf_alert',
   'hf_critical',
+  // RL-3 claim horizon (#1956 — the ratified pre-expiry safeguard) — addressed
+  // to the reward ENTRY'S OWNER, named in the event, not to a loan party: an
+  // interaction reward entered its final-notice window, and the removal point
+  // at which an unclaimed one returned to the programme.
+  'reward_final_notice',
+  'reward_expired',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 
@@ -142,6 +148,22 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // terminal-status gate suppresses the row for those partial legs so a
   // still-open loan can't get a false "closed" row (Codex #1292 r7).
   InternalMatchExecuted: { kind: 'internal_matched', recipients: 'both' },
+};
+
+/**
+ * RL-3 (#1956) — events whose recipient is the reward entry's OWNER, named in
+ * the event's `user` argument. They name no loan, so they bypass the
+ * loan-party lookup entirely. The claim horizon's ratified safeguard is a
+ * FREE pre-expiry notice (this inbox, never only a paid channel, because paid
+ * push skips exactly the dormant claimants the sweep would affect):
+ * `RewardEntryExpiryArmed` is the contract's last-call signal — the entry
+ * accrued its full horizon and now has the notice period left — and
+ * `RewardEntryExpiryBegun` is the removal point, after which the owner can no
+ * longer claim that entry.
+ */
+export const EVENT_OWNER_NOTIF_MAP: Readonly<Record<string, NotifKind>> = {
+  RewardEntryExpiryArmed: 'reward_final_notice',
+  RewardEntryExpiryBegun: 'reward_expired',
 };
 
 /**
@@ -364,6 +386,8 @@ export interface NotifRow {
   logIndex: number;
   createdAt: number;
   dedupKey: string;
+  /** Optional render params (JSON) — the `data_json` column. */
+  dataJson?: string | null;
 }
 
 /**
@@ -444,10 +468,23 @@ export function planNotifications(
 }
 
 /**
- * Materialize inbox rows for a scan's logs. Fail-open: a notification
- * failure must never wedge the ingest scan (the rows are a derived
- * convenience — the authoritative `activity_events` / `loans` writes
- * already succeeded). Returns the number of rows inserted.
+ * Materialize inbox rows for a scan's logs. Returns the number of rows
+ * inserted.
+ *
+ * A failed INSERT propagates (Codex #2489 r3). The scan itself stays
+ * fail-open — its caller catches, because the authoritative
+ * `activity_events` / `loans` writes already succeeded and a derived row
+ * must never wedge the cursor — but the `notified` watermark must not
+ * advance over rows that never landed: a one-shot row (a reward's final
+ * notice, a loan's close-out) has no later event to re-derive it from in a
+ * scan, so swallowing the failure here lost it for good. The watermark's
+ * owner replays the gap from the archive instead
+ * ({@link replayNotificationsFromArchive}). A failed loan-PARTY lookup
+ * propagates the same way (Codex #2489 r8) — AFTER the owner rows are written,
+ * which never depend on it: the loan rows it would have planned (a close-out,
+ * a default, a match) are one-shot too, so a scan that silently omitted them
+ * and let the watermark pass lost them for good. The watermark holds and the
+ * archive replays the scan; INSERT OR IGNORE keeps the owner rows single.
  */
 export async function materializeNotifications(
   db: D1Database,
@@ -456,26 +493,214 @@ export async function materializeNotifications(
   blockTimestamps: Map<bigint, number>,
   nowSec: number,
 ): Promise<number> {
-  const worthy = logs.filter((l) => l.eventName in EVENT_NOTIF_MAP);
-  if (worthy.length === 0) return 0;
+  // Owner-addressed rows (RL-3) need no lookup, so they are planned first and
+  // never depend on the loan path below — a failed party lookup must not cost
+  // a reward owner their pre-expiry notice.
+  const rows = planOwnerNotifications(chainId, logs, blockTimestamps, nowSec);
 
+  const worthy = logs.filter((l) => l.eventName in EVENT_NOTIF_MAP);
   const loanIds = [
     ...new Set(worthy.flatMap((l) => loanIdsOf(l.eventName, l.args))),
   ];
-  if (loanIds.length === 0) return 0;
-
-  const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
-  if (partiesByLoan === null) return 0;
-
-  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
-  if (rows.length === 0) return 0;
-
-  try {
-    return await insertNotificationRows(db, rows);
-  } catch (err) {
-    console.error('[notifications] insert failed', err);
-    return 0;
+  let partiesFailed = false;
+  if (loanIds.length > 0) {
+    const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
+    if (partiesByLoan !== null) {
+      rows.push(...planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec));
+    } else {
+      partiesFailed = true;
+    }
   }
+  const inserted = rows.length === 0 ? 0 : await insertNotificationRows(db, rows);
+  if (partiesFailed) {
+    throw new Error(
+      `loan-party lookup failed for ${loanIds.length} loan(s): the loan rows were not planned — the notified watermark holds and the archive replays this scan`,
+    );
+  }
+  return inserted;
+}
+
+// ─── #2489 r3 — the `notified` watermark means what it says ──────────────────
+
+/** Blocks one archive replay covers at most, so a long gap is drained over
+ *  several ticks rather than in one unbounded read. */
+export const NOTIFIED_REPLAY_MAX_BLOCKS = 20_000n;
+
+/** What the watermark's owner does on one tick — pure, pinned by the tests.
+ *  `prev` is the stored watermark (null: never stamped); `through` the block
+ *  the tick is complete to (`scanTo`, or the cursor on a quiet tick);
+ *  `scanFrom` the first block THIS tick scanned (null on a quiet tick);
+ *  `wroteOk` whether this tick's own insert succeeded. Any block in
+ *  `(prev, scanFrom)` — or `(prev, through]` when the insert failed — has
+ *  archived events whose rows may be missing, so it is replayed before the
+ *  stamp. A never-stamped chain replays no HISTORY (on a restored
+ *  environment the archive is whole and the inbox is deliberately empty, and
+ *  replaying would re-mint every old row), but it does not get to skip its
+ *  own failure either (Codex #2489 r4, r6): a failed insert HOLDS the
+ *  watermark below the scan ({@link notifiedFloor}) — the replay starts
+ *  there, and when the replay fails too, `holdAt` is what the caller writes
+ *  instead, so the failure is on record whether or not a stamp existed. */
+export interface NotifiedPlan {
+  replayAfter?: bigint;
+  replayThrough?: bigint;
+  stampTo: bigint;
+  /** Write THIS if the replay fails: the stored watermark (or none) sits above
+   *  a scan whose rows failed, and must be lowered to just below it. */
+  holdAt?: bigint;
+}
+
+/**
+ * Where a FAILED insert pins the watermark: just below the scan, because
+ * nothing from `scanFrom` on is proven — whatever the stored watermark says
+ * (a re-scan below it included) and whether or not one exists. Null when the
+ * tick proves nothing about the floor (insert ok, or a quiet tick) or the
+ * stored watermark already sits at or below it. ONE rule for the head pass
+ * ({@link planNotifiedWatermark}) and for a catch-up pass short of the head,
+ * which stamps nothing forward but must still remember its failure
+ * (Codex #2489 r6): a never-stamped chain's multi-tick catch-up used to lose
+ * a mid-way failure entirely, and the head pass then stamped straight
+ * through it.
+ */
+/** The proven-written frontier the replay planner starts from: the HIGHER of
+ *  the keeper-facing stamp and the written cursor (null only when neither
+ *  exists). Pure, for the unit test. */
+export function notifiedFrontier(stamp: bigint | null, written: bigint | null): bigint | null {
+  if (stamp === null) return written;
+  if (written === null) return stamp;
+  return stamp > written ? stamp : written;
+}
+
+export function notifiedFloor(prev: bigint | null, scanFrom: bigint | null, wroteOk: boolean): bigint | null {
+  if (wroteOk || scanFrom === null) return null;
+  const floor = scanFrom - 1n;
+  return prev === null || floor < prev ? floor : null;
+}
+
+export function planNotifiedWatermark(
+  prev: bigint | null,
+  through: bigint,
+  scanFrom: bigint | null,
+  wroteOk: boolean,
+  maxBlocks: bigint = NOTIFIED_REPLAY_MAX_BLOCKS,
+): NotifiedPlan {
+  const hold = notifiedFloor(prev, scanFrom, wroteOk);
+  const base = hold ?? prev;
+  // Never stamped and nothing failed: no history.
+  if (base === null) return { stampTo: through };
+  const tail = hold === null ? {} : { holdAt: hold };
+  const gapEnd = wroteOk && scanFrom !== null ? scanFrom - 1n : through;
+  if (base >= gapEnd) return { stampTo: through, ...tail };
+  const replayThrough = base + maxBlocks < gapEnd ? base + maxBlocks : gapEnd;
+  return { replayAfter: base, replayThrough, stampTo: replayThrough === gapEnd ? through : replayThrough, ...tail };
+}
+
+/** The kinds the planners act on — the only archive rows a replay re-plans. */
+const REPLAYED_KINDS: ReadonlySet<string> = new Set([...Object.keys(EVENT_NOTIF_MAP), ...Object.keys(EVENT_OWNER_NOTIF_MAP)]);
+
+/**
+ * `activity_events.args_json` back to the shape the planners read. The
+ * archive's one writer (`serializeArgs` in chainIndexer.ts) maps every bigint
+ * to its decimal string and nothing else to one — addresses are hex, the rest
+ * stay JSON numbers, booleans and strings — so a decimal string is a bigint,
+ * exactly. Without this `toLoanId` reads a string id as null and a replay
+ * would drop every loan row while reporting success.
+ */
+export function reviveArchiveArgs(argsJson: string): Record<string, unknown> {
+  return JSON.parse(argsJson, (_k, v) => (typeof v === 'string' && /^-?\d+$/.test(v) ? BigInt(v) : v)) as Record<
+    string,
+    unknown
+  >;
+}
+
+/**
+ * Re-derive the inbox rows for every notification-worthy event the archive
+ * holds in `(afterBlock, throughBlock]` and insert them (INSERT OR IGNORE: a
+ * row that did land is untouched). The archive is the authoritative record
+ * the rows derive from, so this makes the `notified` watermark a promise the
+ * indexer keeps rather than a stamp it writes. Throws when the insert fails,
+ * so the caller leaves the watermark where it was.
+ */
+export async function replayNotificationsFromArchive(
+  db: D1Database,
+  chainId: number,
+  afterBlock: bigint,
+  throughBlock: bigint,
+  nowSec: number,
+): Promise<number> {
+  const logs: NotifSourceLog[] = [];
+  const blockTimestamps = new Map<bigint, number>();
+  // A STATIC statement, filtered by kind in code rather than by an
+  // interpolated `IN (...)`: the SQL schema guard checks every static
+  // statement against the real migrated schema, and this path runs only over an
+  // UNPROVEN range (a failed insert, or a pass that could not prove its rows —
+  // never a routine catch-up, whose written frontier the planner starts
+  // from), so reading the window's
+  // other kinds costs nothing that matters.
+  const rows = await db
+    .prepare(
+      `SELECT kind, args_json, block_number, log_index, block_at FROM activity_events
+        WHERE chain_id = ? AND block_number > ? AND block_number <= ?
+        ORDER BY block_number, log_index`,
+    )
+    .bind(chainId, Number(afterBlock), Number(throughBlock))
+    .all<{ kind: string; args_json: string; block_number: number; log_index: number; block_at: number }>();
+  for (const r of rows.results ?? []) {
+    if (!REPLAYED_KINDS.has(r.kind)) continue;
+    const blockNumber = BigInt(r.block_number);
+    logs.push({ eventName: r.kind, args: reviveArchiveArgs(r.args_json), blockNumber, logIndex: r.log_index });
+    blockTimestamps.set(blockNumber, r.block_at);
+  }
+  if (logs.length === 0) return 0;
+  return materializeNotifications(db, chainId, logs, blockTimestamps, nowSec);
+}
+
+/**
+ * Pure planner for the OWNER-addressed rows (RL-3, exported for the unit
+ * test): one row per source event, to the lowercased `user` the event names.
+ * The dedup key carries the event position, not just the entry, because a
+ * horizon reconfiguration re-earns a fresh notice and re-arms the entry — that
+ * second last-call must notify again rather than be swallowed as a duplicate.
+ * `data_json` carries the entry id (and, for the last call, when its notice
+ * period began) so the client can say which reward it means.
+ */
+export function planOwnerNotifications(
+  chainId: number,
+  logs: NotifSourceLog[],
+  blockTimestamps: Map<bigint, number>,
+  nowSec: number,
+): NotifRow[] {
+  const rows: NotifRow[] = [];
+  const seen = new Set<string>();
+  for (const log of logs) {
+    const kind = EVENT_OWNER_NOTIF_MAP[log.eventName];
+    if (!kind) continue;
+    const user = log.args.user;
+    if (typeof user !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(user) || user.toLowerCase() === ZERO_ADDR) {
+      continue;
+    }
+    const recipient = user.toLowerCase();
+    const entryId = String(log.args.entryId ?? '');
+    if (!/^[0-9]+$/.test(entryId)) continue;
+    const blockNumber = Number(log.blockNumber);
+    const dedupKey = `${chainId}:${recipient}:${kind}:entry:${entryId}:${blockNumber}:${log.logIndex}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    const data: Record<string, string | number> = { entryId };
+    if (log.args.finalNoticeFrom !== undefined) data.finalNoticeFrom = Number(log.args.finalNoticeFrom);
+    rows.push({
+      chainId,
+      recipient,
+      kind,
+      loanId: null,
+      eventKind: log.eventName,
+      blockNumber,
+      logIndex: log.logIndex,
+      createdAt: blockTimestamps.get(log.blockNumber) ?? nowSec,
+      dedupKey,
+      dataJson: JSON.stringify(data),
+    });
+  }
+  return rows;
 }
 
 /**
@@ -844,16 +1069,18 @@ export async function insertNotificationRows(
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO notifications
        (chain_id, recipient, kind, loan_id, event_kind,
-        block_number, log_index, created_at, dedup_key)
+        block_number, log_index, created_at, dedup_key, data_json)
      SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'),
             json_extract(value, '$[2]'), json_extract(value, '$[3]'),
             json_extract(value, '$[4]'), json_extract(value, '$[5]'),
             json_extract(value, '$[6]'), json_extract(value, '$[7]'),
-            json_extract(value, '$[8]')
+            json_extract(value, '$[8]'), json_extract(value, '$[9]')
        FROM json_each(?)`,
   );
-  // ~200 bytes a row, so 500 rows keep each bound JSON parameter near
-  // 100 KB — far inside D1's 2 MB value ceiling. 4,000 rows is 8 queries.
+  // ~200 bytes a row (more with RL-3's `data_json`, the tenth element — a
+  // JSON string or null, which `json_extract` returns as TEXT or NULL), so
+  // 500 rows keep each bound JSON parameter well inside D1's 2 MB value
+  // ceiling. 4,000 rows is 8 queries.
   const INSERT_CHUNK = 500;
   const batch = [];
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
@@ -867,6 +1094,7 @@ export async function insertNotificationRows(
       r.logIndex,
       r.createdAt,
       r.dedupKey,
+      r.dataJson ?? null,
     ]);
     batch.push(stmt.bind(JSON.stringify(tuples)));
   }

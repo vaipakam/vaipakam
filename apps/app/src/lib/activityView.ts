@@ -137,6 +137,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   VPFIDepositedToVault: { label: 'VPFI deposited to vault', category: 'other', priority: 60 },
   VPFIWithdrawnFromVault: { label: 'VPFI withdrawn from vault', category: 'other', priority: 60 },
   VaultVpfiDebited: { label: 'VPFI spent from vault', category: 'other', priority: 50 },
+  // #1566 — a forfeited reward entry settled (shown on its owner's feed and
+  // its loan's timeline).
+  RewardEntryForfeitSettled: { label: 'Rewards forfeited', category: 'other', priority: 50 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },

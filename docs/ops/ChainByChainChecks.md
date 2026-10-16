@@ -154,7 +154,8 @@ dormant, and finding one armed that nobody armed is the finding.
 ### Every chain
 | Check | Call | Expected |
 |---|---|---|
-| Governor knobs at intended values | `ConfigFacet.getRecycleConfig()` | `marginBps` = 500 (5%) and `tariffK` = 5e16 unless a recorded decision says otherwise |
+| Governor margin at intended value | `ConfigFacet.getRecycleConfig()` | `marginBps` = 500 (5%) unless a recorded decision says otherwise. It returns ONE value since #1956 removed the ETH·day tariff knob; a two-value decode means the chain still runs pre-#1956 ConfigFacet code |
+| ETH·day tariff setter gone | `DiamondLoupeFacet.facetAddress(bytes4(keccak256("setRecycleTariffKPer1e18EthDay(uint256)")))` | `address(0)` — a non-zero address means a refresh left the retired route live |
 | Full VPFI tariff still dark | `ConfigFacet.getFeeEntitlementConfig()` | `enabled == false` on any deployment where nobody has decided to arm it. **`true` on a mirror is impossible via the setter** — if you see it, investigate storage, not config |
 | Reward claim horizon still dark | `ConfigFacet.getRewardClaimHorizonDays()` | `0`, unless a horizon was deliberately set (then in [180, 1095]) |
 | Allocation register still dormant | `ConfigFacet.getRecycleRegisterState()` | `keeperBps == 0` |

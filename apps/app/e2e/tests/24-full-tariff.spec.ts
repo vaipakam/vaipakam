@@ -20,52 +20,16 @@
  */
 import type { Page } from '@playwright/test';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
-import { encodeFunctionData, formatUnits, parseUnits } from 'viem';
+import { formatUnits, parseUnits } from 'viem';
 import {
   postLenderOffer,
   newestOfferIdFor,
   newestLoanIdFor,
 } from '../lib/flows';
-import { anvilRpc, setBalance } from '../lib/anvil';
-import { pub, ADMIN, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
+import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
+import { setFeeEntitlementEnabled } from '../lib/feeEntitlement';
 
 const FEE_MODE_FULL = 2;
-
-/** Flip the fee-entitlement kill-switch as the testnet admin. */
-async function setFeeEntitlementEnabled(enabled: boolean): Promise<void> {
-  await anvilRpc('anvil_impersonateAccount', [ADMIN]);
-  await setBalance(ADMIN, 10n ** 18n);
-  const send = async (fn: string, args: readonly unknown[]) => {
-    const data = encodeFunctionData({
-      abi: DIAMOND_ABI_VIEM,
-      functionName: fn,
-      args: args as unknown[],
-    });
-    const hash = await anvilRpc<`0x${string}`>('eth_sendTransaction', [
-      { from: ADMIN, to: DIAMOND, data, gas: '0x2dc6c0' },
-    ]);
-    const receipt = await pub.waitForTransactionReceipt({ hash });
-    if (receipt.status !== 'success') {
-      throw new Error(`${fn} reverted`);
-    }
-  };
-  try {
-    if (enabled) {
-      // Enabling requires the canonical-VPFI stamp; the deploy sets it
-      // on Base Sepolia, but assert-don't-assume on a fork.
-      try {
-        await send('setFeeEntitlementEnabled', [true]);
-      } catch {
-        await send('setCanonicalVPFIChain', [true]);
-        await send('setFeeEntitlementEnabled', [true]);
-      }
-    } else {
-      await send('setFeeEntitlementEnabled', [false]);
-    }
-  } finally {
-    await anvilRpc('anvil_stopImpersonatingAccount', [ADMIN]);
-  }
-}
 
 /** Open the accept review for `offerId` as the connected borrower.
  *  The deep link resolves the offer through the indexer stub, which

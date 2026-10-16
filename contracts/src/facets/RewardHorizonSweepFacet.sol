@@ -9,6 +9,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 
 /**
  * @title  RewardHorizonSweepFacet
@@ -40,6 +41,25 @@ import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
  *      The 4-byte selector is unchanged throughout, so on-chain callers at the
  *      Diamond address are unaffected; only the per-facet ABI json and the
  *      deploy wiring move.
+ *
+ *      #1566 sanctions rule — the sanctions evidence host
+ *      ({recordRewardSanctionsEvidence}) lives here too: the self-call target
+ *      the owner settlement (`RewardClaimFacet.settleSanctionedInteractionRewards`)
+ *      and `LibRewardStaging._pay`'s claimant screen observe through, so the
+ *      classifier's writes are hosted once, here, instead of inlined into
+ *      those facets. Refresh this facet together with `RewardClaimFacet`,
+ *      `RewardStagingSettleFacet` and `RewardSweepWalkFacet` — a settle or
+ *      claim facet refreshed without the evidence host reverts every
+ *      observation it makes.
+ *      The expiry walk no longer screens sanctions itself: its barred-owner
+ *      test moved into the seam inlined HERE (`_barredObservation`, at the
+ *      head of `LibInteractionRewards.callSweepExpiredEntryWalk`). A new walk
+ *      facet behind an old copy of this one screens on neither side, so a
+ *      barred owner's expiry clock would run while the claim gate refuses
+ *      them and their entries could expire into the bucket. That breaks the
+ *      clock's rule that nothing is reaped while its claimant cannot claim,
+ *      and it hits an unconfirmed (Hold) owner who is later delisted. The
+ *      walk is therefore never refreshed without this facet.
  */
 contract RewardHorizonSweepFacet is
     DiamondAccessControl,
@@ -47,6 +67,27 @@ contract RewardHorizonSweepFacet is
     DiamondPausable,
     IVaipakamErrors
 {
+    /// @notice Declared for the exported ABI: `LibInteractionRewards.forfeitEntryChunkEvented`
+    ///         emits it on `RewardForfeitWalkFacet` (Diamond-internal, outside the
+    ///         exported ABI set) for every settled chunk of the per-loan forfeit
+    ///         sweep. Without this declaration no
+    ///         consumer ABI (DIAMOND_ABI, or the indexer EVENT_ABI derived from it) can
+    ///         decode the per-entry settlement row. Same signature as the library event.
+    /// @dev    UNTRIMMED FORFEIT PRICING: `fresh` / `recycledReleased` are the forfeit
+    ///         route's pricing of the entry's day, which the loan-side reward cap never
+    ///         binds (a forfeit pays no side), so they can exceed what the same day would
+    ///         have paid the owner as a claim. This row is per-entry PROVENANCE, not the
+    ///         ledger: reconcile amounts from `VpfiRecycled` (source `ForfeitedReward`)
+    ///         and the custody-row events, never from this.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryForfeitSettled(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 indexed loanId,
+        uint256 fresh,
+        uint256 recycledReleased
+    );
+
     /**
      * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7) — permissionless
      *         claim-horizon sweep. For each entry it advances an
@@ -181,7 +222,12 @@ contract RewardHorizonSweepFacet is
             ) = LibInteractionRewards.callSweepExpiredEntryWalk(
                 entryIds[i], headroom, allowance, tp
             );
-            headroom -= freshCredited;
+            // #1566 sanctions slice (S3-A3) — FLOORED: a chunk reports its live
+            // credit PLUS the epoch-funded leg riding on top of it, so the figure
+            // can exceed the headroom it was handed, and an unfloored subtraction
+            // panicked (0x11) the whole permissionless batch. The 69M cap itself is
+            // still enforced inside the engine; this is only the running budget.
+            headroom = headroom > freshCredited ? headroom - freshCredited : 0;
             // #1566 closure 2 — the allowance depletes by the FRESH credited,
             // legacy and armed alike: that is exactly what the reward
             // operation charges against the delivered ledger below. (Codex
@@ -350,5 +396,62 @@ contract RewardHorizonSweepFacet is
             uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward), 0, 0, t.recycled, 0, 0, 0
         );
         settledTotal = t.armedFresh + t.recycled;
+    }
+
+    // ─── #1566 sanctions rule — the evidence host ────────────────────────────
+
+    /// @notice #1566 sanctions rule — record ONE committed sanctions observation of
+    ///         `who`. Permissionless. Returns the verdict (0 Deliver, 1 Hold,
+    ///         2 Confirmed) as {LibRewardSanctions.observe} wrote it.
+    /// @dev    WHY it exists: confirmation needs observations no more than
+    ///         `MAX_OBS_GAP_SECS` apart, and the owner settlement's own observation
+    ///         (`RewardClaimFacet.settleSanctionedInteractionRewards`) is lost
+    ///         whenever that settlement reverts — this entry only observes, so a
+    ///         keeper can keep a chain alive without settling anything. An
+    ///         observation that ends a CONFIRMED chain records its window here too,
+    ///         so the days the owner earned while flagged stay forfeitable after
+    ///         the flag is revoked. It is also the ONE host of the classifier's
+    ///         writes for every other caller — the settlement and
+    ///         `LibRewardStaging._pay`'s claimant screen reach it by Diamond
+    ///         self-call ({LibRewardSanctions.callObserve}) instead of inlining it.
+    ///
+    ///         NO reentrancy guard, deliberately: its callers reach it from inside a
+    ///         frame that already holds the Diamond's guard, so `nonReentrant` here
+    ///         would revert every staged claim's last page and every settlement.
+    ///         Safe without one — it moves no value, and its only external calls
+    ///         are the oracle STATICCALLs. Nobody can forge or break a chain
+    ///         through it: every write follows from an authoritative oracle read.
+    ///         `whenNotPaused` freezes the evidence with the sweeps; a pause longer
+    ///         than the gap restarts the window, by design.
+    /// @param  who The wallet to observe.
+    /// @return The verdict, `uint8(LibRewardSanctions.Decision)`.
+    function recordRewardSanctionsEvidence(address who) external whenNotPaused returns (uint8) {
+        return uint8(LibRewardSanctions.observe(LibVaipakam.storageSlot(), who));
+    }
+
+    /// @notice #1566 sanctions rule — whether reward `who` earned on day `d` was
+    ///         earned while a CONFIRMED flag stood, and so is forfeited whenever
+    ///         it settles. The ONE host of the window loop
+    ///         ({LibRewardSanctions.dayForfeitedFull}): the reward walks (at
+    ///         EIP-170) inline only the two-read fast path and reach this by
+    ///         self-staticcall for a wallet with sanctions history. A plain read,
+    ///         also for keepers and apps.
+    function rewardSanctionsDayForfeited(address who, uint256 d) external view returns (bool) {
+        return LibRewardSanctions.dayForfeitedFull(LibVaipakam.storageSlot(), who, d);
+    }
+
+    /// @notice #1566 sanctions rule — the part of entry `id`'s legacy (pre-`D*`)
+    ///         slice over the days `[lo, hi)`, capped at `slice`, that its owner
+    ///         earned while a CONFIRMED flag stood. The ONE host of that loop
+    ///         ({LibInteractionRewards.legacyWindowShareFull}), reached by the
+    ///         legacy slice's settle (`RewardStagingDomainFacet`, at EIP-170) by
+    ///         self-staticcall, only for an owner with sanctions history. A plain
+    ///         read.
+    function rewardSanctionsLegacyWindowShare(uint256 id, uint256 lo, uint256 hi, uint256 slice)
+        external
+        view
+        returns (uint256)
+    {
+        return LibInteractionRewards.legacyWindowShareFull(LibVaipakam.storageSlot(), id, lo, hi, slice);
     }
 }

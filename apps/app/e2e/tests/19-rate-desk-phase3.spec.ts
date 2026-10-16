@@ -433,6 +433,10 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   expect(row.order.collateralAmountMax).toBe(row.order.collateralAmount);
   expect(row.order.interestRateBps).toBe('777');
   expect(row.order.amountMax).toBe(parseEther('0.002').toString());
+  // #1949 — no maker opt-in ticked (the feature is dark here): the order
+  // signs the Full fields off, the default the ticket must keep.
+  expect(row.order.creatorFull).toBe(false);
+  expect(row.order.creatorMaxCStar).toBe('0');
   // #1145 round-2 — the SIGNED wire order is the collapsed single-value
   // AON shape (`amount == amountMax`, fillMode 1): with the lender's
   // single-value collateral, the matcher's constant-ratio gate

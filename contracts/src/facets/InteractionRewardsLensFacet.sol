@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 
 /**
  * @title InteractionRewardsLensFacet
@@ -25,8 +26,16 @@ import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
  *      selector regardless of which facet owns the code.
  *
  *      Every function here reads only library functions + shared storage;
- *      there are no cross-facet calls, no access control, no reentrancy /
- *      pausable guards, and no token movement.
+ *      there are no cross-facet writes, no access control, no reentrancy /
+ *      pausable guards, and no token movement. The one cross-facet READ is
+ *      #1944's delivery-gate staticcall
+ *      ({RewardRemittanceLensFacet.dayAwaitsFreshDelivery}), reached through
+ *      the window clamp on a gate-armed mirror only. The one EXTERNAL read
+ *      beyond storage is the sanctions oracle (at most two staticcalls per
+ *      read): {getRewardSanctionsStatus} reaches it through the classifier,
+ *      exactly as the writing observation does, and {getRewardEntryExpiry}
+ *      through the countdown's barred-screen mirror
+ *      ({LibVaipakam.isRecipientBarred}).
  */
 contract InteractionRewardsLensFacet {
     // ─── Public views ────────────────────────────────────────────────────────
@@ -394,11 +403,14 @@ contract InteractionRewardsLensFacet {
     /// @dev    Storage is sequential (`userRewardEntryIds[user]` →
     ///         `rewardEntries[id]`); this view materialises both in one
     ///         call. A loan that involved the user on both sides has
-    ///         two entries — one per side. Closed entries (`endDay > 0`)
-    ///         are still surfaced so the breakdown reads as a lifetime
-    ///         participation list, not just an open-now snapshot. The
-    ///         array length is bounded by the user's loan-participation
-    ///         count, so unbounded growth isn't a concern in practice.
+    ///         two entries — one per side. Closed-but-unsettled entries are
+    ///         surfaced (claimable, or expiring mid-reap); SETTLED entries are
+    ///         RETIRED from the index lazily (Codex #2489 r17 — by the wallet's
+    ///         own claim and by {InteractionRewardsFacet.compactRewardEntryIndex}),
+    ///         so this is the wallet's UNSETTLED participation, not a lifetime
+    ///         history: a settled entry stays readable by id through
+    ///         {getRewardEntriesRange} and by its events. The array is bounded
+    ///         by the wallet's unsettled entries.
     /// @param  user Address whose entries to enumerate.
     /// @return entries Full {RewardEntry} struct array in registration order.
     function getUserRewardEntries(address user)
@@ -444,18 +456,144 @@ contract InteractionRewardsLensFacet {
     }
 
     /// @notice RL-3 (#1305) — the storage ids backing {getUserRewardEntries},
-    ///         same length and registration order, so keepers and the Claim
-    ///         Center can address {getRewardEntryExpiry} /
+    ///         same length and order, so keepers and the Claim Center can
+    ///         address {getRewardEntryExpiry} /
     ///         {InteractionRewardsFacet.sweepExpiredInteractionRewards} (both
     ///         id-keyed) without reconstructing internal storage off-chain.
+    ///         UNSETTLED entries only (r17; see {getUserRewardEntries}); the
+    ///         order is registration order disturbed by swap-pops (a retirement
+    ///         or repoint moves the tail into the vacated slot).
     /// @param  user Address whose entry ids to enumerate.
-    /// @return ids Entry ids in registration order.
+    /// @return ids Entry ids.
     function getUserRewardEntryIds(address user)
         external
         view
         returns (uint256[] memory ids)
     {
         return LibVaipakam.storageSlot().userRewardEntryIds[user];
+    }
+
+    /// @notice Codex #2489 r14 — the LIVE entries among `[offset, offset + limit)`
+    ///         of `user`'s index: not yet settled (`processed`) and not already
+    ///         expiring (`expiryBegun`) — the only entries a claim-deadline
+    ///         countdown can concern. The index holds the wallet's UNSETTLED
+    ///         entries (a settled one is retired lazily, Codex #2489 r17 — see
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}; an expiring one
+    ///         stays until its reap completes), so this page's filter removes
+    ///         the expiring entries and any settled entry not yet retired, in a
+    ///         few storage reads per id, and the reader prices only what it
+    ///         returns.
+    /// @param  user   Address whose index to scan.
+    /// @param  offset Position in registration order to start at.
+    /// @param  limit  How many index positions to scan (not how many to return).
+    /// @return ids    The live entries among the scanned positions, in order.
+    /// @return total  The index's length, so a reader knows when it scanned all.
+    function getUserLiveRewardEntryIdsPage(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ids, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage all = s.userRewardEntryIds[user];
+        total = all.length;
+        uint256 end = offset + limit;
+        if (end > total) end = total;
+        uint256 n;
+        for (uint256 i = offset; i < end; ) {
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[all[i]])) { unchecked { ++n; } }
+            unchecked { ++i; }
+        }
+        ids = new uint256[](n);
+        uint256 k;
+        for (uint256 i = offset; i < end && k < n; ) {
+            uint256 id = all[i];
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[id])) {
+                ids[k] = id;
+                unchecked { ++k; }
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice Codex #2489 r16/r17 — the SOONEST removal estimate among `user`'s
+    ///         LIVE reward entries over ONE bounded page of its index, computed
+    ///         on chain, so the Claim Center countdown costs a number of calls
+    ///         that follows the wallet's live rewards rather than its lifetime
+    ///         history: the index holds the wallet's UNSETTLED entries (settled
+    ///         ones are retired from it lazily — see
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}), so the pages
+    ///         are over live-or-expiring entries only. A page scans at most
+    ///         `limit` positions (a few storage reads each) and prices at most
+    ///         `maxLive` live entries ({getRewardEntryExpiry} each — the costly
+    ///         part); it ends at whichever bound is reached first and says where
+    ///         to continue. It always makes progress: at least one live entry is
+    ///         priced per non-empty page whatever `maxLive` says.
+    /// @param  user    Address whose index to scan.
+    /// @param  offset  Position to start at.
+    /// @param  limit   Index positions to scan at most.
+    /// @param  maxLive Live entries to price at most.
+    /// @return soonestId        The live entry with the earliest NON-ZERO
+    ///                          estimate on this page (0 = none on this page: a
+    ///                          dark horizon, unstarted or forfeited entries).
+    /// @return soonestExpiresAt Its estimate, unix seconds (0 = none).
+    /// @return nextOffset       The first position this page did NOT cover; the
+    ///                          walk is complete once `nextOffset >= total`.
+    /// @return total            The index's length.
+    function getUserSoonestRewardExpiry(address user, uint256 offset, uint256 limit, uint256 maxLive)
+        external
+        view
+        returns (uint256 soonestId, uint64 soonestExpiresAt, uint256 nextOffset, uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage all = s.userRewardEntryIds[user];
+        total = all.length;
+        uint256 i = offset;
+        // Saturating: an offset past the end scans nothing and reports itself,
+        // which is already `>= total`; a huge `limit` is the whole remainder.
+        uint256 end = total;
+        if (i < total && total - i > limit) end = i + limit;
+        uint256 priced;
+        while (i < end) {
+            uint256 id = all[i];
+            if (LibInteractionRewards.isEntryLive(s.rewardEntries[id])) {
+                // The page ends BEFORE an entry it will not price, so the next
+                // page prices it; the first live entry is always priced.
+                if (priced != 0 && priced >= maxLive) break;
+                unchecked { ++priced; }
+                (, uint64 exp) = LibInteractionRewards.rewardEntryExpiry(id);
+                if (exp != 0 && (soonestExpiresAt == 0 || exp < soonestExpiresAt)) {
+                    soonestExpiresAt = exp;
+                    soonestId = id;
+                }
+            }
+            unchecked { ++i; }
+        }
+        nextOffset = i;
+    }
+
+    /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): a
+    ///         prolific account's list can outgrow one response (settled entries
+    ///         are retired from it only lazily — r17), and a reader that must
+    ///         consider EVERY entry pages through it with `total` as its proof
+    ///         of completeness.
+    /// @param  user   Address whose entry ids to enumerate.
+    /// @param  offset Position in registration order to start at.
+    /// @param  limit  At most this many ids.
+    /// @return ids    `[offset, offset + limit)` of the order, clipped to its end.
+    /// @return total  The order's length, so a reader knows when it has them all.
+    function getUserRewardEntryIdsPage(address user, uint256 offset, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ids, uint256 total)
+    {
+        uint256[] storage all = LibVaipakam.storageSlot().userRewardEntryIds[user];
+        total = all.length;
+        uint256 n = offset >= total ? 0 : (total - offset < limit ? total - offset : limit);
+        ids = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            ids[i] = all[offset + i];
+            unchecked { ++i; }
+        }
     }
 
     /// @notice RL-3 — claim-center countdown view: the horizon state of a
@@ -465,13 +603,135 @@ contract InteractionRewardsLensFacet {
     /// @return expiresAt        Earliest terminal-removal instant ASSUMING
     ///         the entry stays continuously claim-executable and observed
     ///         from now (0 = dark or unstarted). A forward estimate, not a
-    ///         fixed deadline: a funding outage or sanction pauses accrual.
+    ///         fixed deadline: a funding outage or a sanctions bar (the owner
+    ///         flagged, or carrying a committed flag (the #1123 marker) while
+    ///         the oracle is unreachable) pauses accrual. A FORFEITED entry reads
+    ///         0: it never expires — the forfeit sweeps settle it into the
+    ///         recycle bucket.
     function getRewardEntryExpiry(uint256 entryId)
         external
         view
         returns (uint64 firstClaimableAt, uint64 expiresAt)
     {
         return LibInteractionRewards.rewardEntryExpiry(entryId);
+    }
+
+    /// @notice #1944 (host split) — the expiry clock's TRANSFER TEST for
+    ///         `user`'s claim of `need`: whether custody could pay it now.
+    /// @dev    The expiry sweep on {RewardSweepWalkFacet} reaches this by a
+    ///         self-staticcall ({LibInteractionRewards.callClaimTransferable})
+    ///         instead of inlining the test. WHY: the test pulls in the
+    ///         capped fresh total, the window reserve and the window clamp —
+    ///         which #1944 extends with the delivery-gate rung — and
+    ///         SweepWalk has no EIP-170 room for that growth. This facet
+    ///         already inlines the same body for {getRewardEntryExpiry}, so
+    ///         hosting the test here makes "one transfer test for the clock
+    ///         and its view mirror" literally one body. Reads only; moves no
+    ///         value, and any caller gets the same verdict the sweep reads.
+    /// @param  user The claimant whose claim is tested.
+    /// @param  need The grouped armed need the sweep priced for the entry.
+    function claimTransferable(address user, LibInteractionRewards.ArmedNeed calldata need)
+        external
+        view
+        returns (bool)
+    {
+        return LibInteractionRewards._claimTransferable(LibVaipakam.storageSlot(), user, need);
+    }
+
+    // ─── #1566 sanctions rule — the reads ─────────────────────────────────────
+
+    /// @notice #1566 sanctions rule — where `who` stands: what the owner settlement
+    ///         ({RewardClaimFacet.settleSanctionedInteractionRewards}) would decide if
+    ///         it observed now, and the chain a keeper must keep alive.
+    /// @dev    Reads the ONE classifier ({LibRewardSanctions.decide}: the writing
+    ///         observation's predicates, no writes), so this view and the settlement
+    ///         cannot disagree. A view records nothing: a Hold one observation short
+    ///         of Confirmed stays Hold here until someone observes
+    ///         ({RewardHorizonSweepFacet.recordRewardSanctionsEvidence}, or the
+    ///         settlement). The deadlines are derived from the classifier's two
+    ///         constants, never restated.
+    /// @param  who The wallet to classify.
+    /// @return decision       0 Deliver, 1 Hold, 2 Confirmed.
+    /// @return flaggedAt      Start of the observation chain, as `decide` reports it
+    ///                        (0 = none).
+    /// @return lastSeenAt     Latest Flagged observation of the chain (0 = none).
+    /// @return forfeitableAt  `flaggedAt + CONFIRM_SECS`: the earliest instant the
+    ///                        chain can confirm — from then, reward earned while
+    ///                        flagged is forfeitable (0 = no chain).
+    /// @return observeBy      `lastSeenAt + MAX_OBS_GAP_SECS`: the chain breaks, and
+    ///                        the window restarts, unless it is observed again by then
+    ///                        — a keeper's deadline (0 = no chain).
+    /// @return evidenceOracle The oracle the stored evidence was recorded under; a
+    ///                        different live oracle restarts the window.
+    /// @return marker         The committed flag (the #1123 marker,
+    ///                        `sanctionsConfirmedFlagged`): the outage backstop, one read,
+    ///                        no time — not the confirmed observation chain.
+    function getRewardSanctionsStatus(address who)
+        external
+        view
+        returns (
+            uint8 decision,
+            uint64 flaggedAt,
+            uint64 lastSeenAt,
+            uint64 forfeitableAt,
+            uint64 observeBy,
+            address evidenceOracle,
+            bool marker
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardSanctions.Decision d;
+        (d, flaggedAt, lastSeenAt) = LibRewardSanctions.decide(s, who);
+        decision = uint8(d);
+        if (flaggedAt != 0) forfeitableAt = uint64(uint256(flaggedAt) + LibRewardSanctions.CONFIRM_SECS);
+        if (lastSeenAt != 0) observeBy = uint64(uint256(lastSeenAt) + LibRewardSanctions.MAX_OBS_GAP_SECS);
+        (evidenceOracle, , ) = LibRewardSanctions.unpackEvidence(s.rewardSanctionsEvidence[who]);
+        marker = s.sanctionsConfirmedFlagged[who];
+    }
+
+    /// @notice #1566 sanctions rule — the reward days `who` earned while a
+    ///         CONFIRMED flag stood: every recorded window, then the stored chain's
+    ///         window when that chain is confirmed. Reward on these days
+    ///         (inclusive) is forfeited whenever it settles.
+    /// @dev    Enumerates through {LibRewardSanctions.windowAt}, the one
+    ///         enumeration the settlement paths read, so the list cannot drift
+    ///         from what they forfeit. Two windows may share a boundary day (one
+    ///         chain ending and the next restarting on one day).
+    /// @param  who The wallet.
+    /// @return fromDays First day of each window.
+    /// @return toDays   Last day of each window.
+    function getRewardSanctionsWindows(address who)
+        external
+        view
+        returns (uint256[] memory fromDays, uint256[] memory toDays)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = LibRewardSanctions.windowSlots(s, who);
+        fromDays = new uint256[](n);
+        toDays = new uint256[](n);
+        uint256 k;
+        for (uint256 i; i < n; ++i) {
+            (bool ok, uint256 a, uint256 b) = LibRewardSanctions.windowAt(s, who, i);
+            if (!ok) continue;
+            fromDays[k] = a;
+            toDays[k] = b;
+            ++k;
+        }
+        assembly ("memory-safe") {
+            mstore(fromDays, k)
+            mstore(toDays, k)
+        }
+    }
+
+    /// @notice #1566 sanctions rule — reward set apart for `who` (earned before a
+    ///         confirmed flag), which its first claim pays once it is no longer
+    ///         barred, and the total set apart for every wallet.
+    /// @return held      `who`'s held balance.
+    /// @return heldTotal Σ every wallet's held balance — what the `SanctionsHeld`
+    ///                   custody row holds once custody is active.
+    function getSanctionsHeldReward(address who) external view returns (uint256 held, uint256 heldTotal) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.rewardSanctionsHeld[who], s.rewardSanctionsHeldTotal);
     }
 
     // ─── #1218 M5 — recycling transparency series ────────────────────────────

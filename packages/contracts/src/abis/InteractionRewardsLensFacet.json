@@ -1,6 +1,72 @@
 [
   {
     "type": "function",
+    "name": "claimTransferable",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "need",
+        "type": "tuple",
+        "internalType": "struct LibInteractionRewards.ArmedNeed",
+        "components": [
+          {
+            "name": "armed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "userLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "treasuryLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "legacyFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bucketRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capHit",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "liveArmed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "userPaid",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getInteractionAnnualRateBps",
     "inputs": [
       {
@@ -534,6 +600,137 @@
   },
   {
     "type": "function",
+    "name": "getRewardSanctionsStatus",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "decision",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "flaggedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lastSeenAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "forfeitableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "observeBy",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "evidenceOracle",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "marker",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRewardSanctionsWindows",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fromDays",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "toDays",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSanctionsHeldReward",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "heldTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserLiveRewardEntryIdsPage",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserRewardEntries",
     "inputs": [
       {
@@ -624,6 +821,89 @@
   },
   {
     "type": "function",
+    "name": "getUserRewardEntryIdsPage",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserSoonestRewardExpiry",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxLive",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "soonestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "soonestExpiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "nextOffset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewInteractionRewards",
     "inputs": [
       {
@@ -659,6 +939,11 @@
   {
     "type": "error",
     "name": "RecycleDayMetricsCanonicalChainOnly",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyCallFailed",
     "inputs": []
   }
 ]

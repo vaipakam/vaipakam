@@ -45,10 +45,18 @@ export function isCeilingOvertaken(args: {
  *  reverting, and `downgradeHelpAllow` promises precisely that — so refusing
  *  would break a promise the user relied on and reject an acceptance the
  *  contract completes happily. The NOTICE still fires either way; only the
- *  block is conditional. */
+ *  block is conditional.
+ *
+ *  Never for a MAKER signing a resting order (#1949): what the contract
+ *  judges is the quote at each FILL, which may fall back under the ceiling
+ *  before anyone fills — the same reason the on-chain creator's arming form
+ *  lets a below-quote ceiling be saved. The maker gets the notice, not a
+ *  block. */
 export function shouldBlockOnCeiling(args: {
   ceilingOvertaken: boolean;
   allowDowngrade: boolean;
+  role?: 'acceptor' | 'maker';
 }): boolean {
+  if (args.role === 'maker') return false;
   return args.ceilingOvertaken && !args.allowDowngrade;
 }

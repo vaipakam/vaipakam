@@ -9,6 +9,7 @@ import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LenderIntentFacet} from "../facets/LenderIntentFacet.sol";
+import {InteractionRewardsFacet} from "../facets/InteractionRewardsFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
@@ -157,8 +158,16 @@ library LibConsolidation {
 
         // 8. Reassign the off-anchor accounting. The reward entry is RE-POINTED
         //    to the holder (consolidation is not a sale — the entry transfers
-        //    intact and stays sweep-discoverable; Codex #655 Msn).
-        LibInteractionRewards.repointRewardEntry(loanId, current, isLenderSide);
+        //    intact and stays sweep-discoverable; Codex #655 Msn) — unless its
+        //    earner or the holder carries sanctions history, in which case it
+        //    is SPLIT at today (Codex #2489 r15). The repoint runs on its host
+        //    behind a Diamond self-call: this consolidation is inlined into
+        //    eleven facets, several at the EIP-170 limit. Fails closed on an
+        //    unrouted host.
+        LibFacet.crossFacetCall(
+            abi.encodeCall(InteractionRewardsFacet.repointRewardEntryInternal, (loanId, current, isLenderSide)),
+            InteractionRewardsFacet.repointRewardEntryInternal.selector
+        );
         if (isLenderSide) {
             // Release the LenderIntentVault exposure off the departed lender —
             // a passive transfer + consolidation is economically a lender exit.

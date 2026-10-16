@@ -377,6 +377,22 @@
   },
   {
     "type": "error",
+    "name": "AttributionCapUnderLiveKeeperBps",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
   },
@@ -1290,6 +1306,86 @@
   },
   {
     "type": "error",
+    "name": "DeliveryGateAlreadyArmed",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryGateBelowFold",
+    "inputs": [
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryGateNotMirror",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeliveryPacketDisposed",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "disposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryProofNotBudget",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliveryProofRouteIsBatch",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -1590,6 +1686,17 @@
   },
   {
     "type": "error",
+    "name": "InteractionDayAwaitingDelivery",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InteractionDayGlobalNotFinalized",
     "inputs": [
       {
@@ -1701,6 +1808,17 @@
     "type": "error",
     "name": "KeeperAccessRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperAllocateNeedsAttributionCap",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -3650,6 +3768,17 @@
     "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDeliveryNotSelectable",
+    "inputs": [
+      {
+        "name": "venue",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

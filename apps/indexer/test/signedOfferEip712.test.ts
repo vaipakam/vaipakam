@@ -8,7 +8,7 @@
  *      known-good vector here is constructed INDEPENDENTLY of the helper:
  *      the typehash is keccak256 of a byte-for-byte copy of the contract's
  *      canonical type string (LibSignedOffer.sol:74-105), the struct hash is
- *      a manual `keccak256(abi.encode(typehash, ...29 static words))`, and
+ *      a manual `keccak256(abi.encode(typehash, ...32 static words))`, and
  *      the digest is a manual `keccak256(0x1901 ‖ domainSeparator ‖
  *      structHash)` with the domain separator assembled from the contract's
  *      domain constants (LibSignedOffer.sol:132-154). If the helper's
@@ -69,6 +69,9 @@ const CONTRACT_TYPE_STRING =
   'uint8 periodicInterestCadence,' +
   'uint256 refinanceTargetLoanId,' +
   'bool useFullTermInterest,' +
+  'bool creatorFull,' +
+  'uint256 creatorMaxCStar,' +
+  'bool creatorAllowFullDowngrade,' +
   'address signer,' +
   'uint256 nonce,' +
   'uint256 deadline' +
@@ -122,6 +125,9 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    creatorFull: false,
+    creatorMaxCStar: '0',
+    creatorAllowFullDowngrade: false,
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: DEADLINE_7D,
@@ -139,7 +145,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(28);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(31);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {

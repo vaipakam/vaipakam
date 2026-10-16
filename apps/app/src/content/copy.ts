@@ -784,11 +784,25 @@ const copySource = {
       hf_alert: 'A loan’s health dipped below 1.2 — open it to see where it stands.',
       hf_critical:
         'A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.',
+      // RL-3 claim horizon (#1956) — the free pre-expiry notice, addressed to
+      // the reward's owner. A usage reward that stays unclaimed for the full
+      // claim window returns to the rewards programme; the last call names the
+      // place to act, and the outcome line says plainly what happened.
+      reward_final_notice:
+        'One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.',
+      // Filed from `RewardEntryExpiryBegun` — the FIRST value-bearing chunk, not
+      // the terminal `RewardEntryExpired`: the right to claim is gone, but a
+      // long entry's later chunks can still be deferred, so the line says the
+      // return has BEGUN, never that it completed (Codex #2489 r14).
+      reward_expired:
+        'An unclaimed interaction reward of yours reached the end of its claim window; its return to the rewards programme has begun and it can no longer be claimed.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
     // Secondary line — shown only for a loan-linked (tappable) row.
     loanRef: tmpl(`Loan #{{loanId}} · tap to view`, ['loanId']),
+    // Secondary line for a reward-entry row (RL-3) — it opens the Claim Center.
+    rewardRef: tmpl(`Reward #{{entryId}} · tap to open the Claim Center`, ['entryId']),
     unreadBadgeTitle: tmpl('{{count}} unread notifications', ['count'], {
       one: '1 unread notification',
     }),
@@ -4420,6 +4434,14 @@ const copySource = {
       ['quote', 'ceiling'],
     ),
     raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
+    // #1949 — the MAKER of a signed order authorizes the tariff for fills
+    // that happen later, priced at each fill.
+    makerCeilingBelowQuote: tmpl(
+      'The live tariff quote for this order’s full size is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to sign. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or filled without Full if you allowed that below. Smaller partial fills may still price under it. You can post this either way: what counts is the quote when a fill actually happens, and it may fall back.',
+      ['quote', 'ceiling'],
+    ),
+    makerSignedNote:
+      'This choice is signed into your order, so it can’t be changed after you post it — cancel and post again to change it. Each fill is charged its own tariff when it happens, never more than that fill’s share of your ceiling.',
     armedCeilingBelowQuote: tmpl(
       'The live tariff quote for the largest fill still possible on this offer is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.',
       ['quote', 'ceiling'],
@@ -5110,6 +5132,7 @@ const copySource = {
       VPFIDepositedToVault: 'VPFI deposited to vault',
       VPFIWithdrawnFromVault: 'VPFI withdrawn from vault',
       VaultVpfiDebited: 'VPFI spent from vault',
+      RewardEntryForfeitSettled: 'Rewards forfeited',
       Transfer: 'Transfer',
       Approval: 'Approval',
     } as Record<string, string>,
@@ -5130,6 +5153,39 @@ const copySource = {
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
     readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
+    // #2489 r2 — a held balance set aside for this wallet, claimable on its own
+    // (never through the combined claim alone, which can fail for unrelated
+    // reasons). Says nothing about why it was set aside.
+    heldReady: tmpl('{{amount}} VPFI of your rewards was set aside for you and is ready to claim.', ['amount']),
+    heldNote: 'You can claim it on its own, even when your other rewards can’t be claimed right now.',
+    claimHeld: 'Claim set-aside rewards',
+    // #2489 r7 — the same balance while the wallet is flagged (the button is
+    // disabled and the claim would revert), or while the screen has not
+    // answered: say it is set aside, never that it is ready. The flagged
+    // wording appears only on a wallet that is already shown the sanctions
+    // banner, so it names no rule the rest of the app keeps quiet about.
+    heldSetAside: tmpl('{{amount}} VPFI of your rewards is set aside for you.', ['amount']),
+    heldBlockedNote: 'It can’t be claimed while this wallet is flagged; it becomes claimable once the flag is lifted.',
+    // RL-3 claim horizon (#1956) — the Claim Center countdown. The date is the
+    // contract's EARLIEST estimate under the CURRENT claim window (it assumes
+    // the reward stays claimable): time the reward can't be claimed moves it
+    // later, and a change to the claim window itself can replace it with an
+    // earlier date (Codex #2489 r8) — the copy says both.
+    expiryCountdown: tmpl(
+      'Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.',
+      ['date'],
+    ),
+    // The final-notice date carries the same two directions (Codex #2489 r13):
+    // a shortened claim window re-baselines the entry and can bring it earlier.
+    expiryFinalNotice: tmpl(
+      'Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed moves the date later; a change to the claim window can bring it earlier.',
+      ['date'],
+    ),
+    // #2489 r5 — the countdown scan failed (a transport fault, or an entry it
+    // could not read). Shown instead of nothing, which would read as "no
+    // deadline". States only that the check failed, not that any date moved.
+    expiryUnavailable:
+      'Couldn’t check the claim deadline right now. Your rewards are unaffected; the date shows again once the check succeeds.',
   },
 
   sanctions: {

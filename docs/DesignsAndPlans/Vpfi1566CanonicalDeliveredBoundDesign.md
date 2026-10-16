@@ -4832,6 +4832,7 @@ What the first PR ships, mapped to the rules above:
   > confirm counts what was held; demote unwinds nothing because nothing
   > was counted. The funding identity gains a third term: delivered =
   > counted + uncounted + held.
+  > **Ratified by the owner 2026-10-14** — keep the held-apart rule.
 - **The two administrative writers are retained unchanged** — the
   role-transition retirement and `seedArmedFreshPaid`. Their natspec now
   describes the vintage-blind noun.
@@ -7279,8 +7280,8 @@ on the live era alone.
 >   side pay out). Until then every batch listing its days waits with it;
 > - **the entry's owner sanctioned** — the claim refuses them and the
 >   expiry clock does not advance while they are flagged, so the entry
->   can stand for as long as the flag does, and nothing the platform
->   controls clears it.
+>   can stand until the flag is confirmed; a confirmed flag's entry is
+>   then forfeited by the permissionless owner sweep (resolution below).
 >
 > While any of these holds, every batch listing that day is unparkable,
 > and therefore unclassifiable and unrepatriable: the value stays
@@ -7296,6 +7297,144 @@ on the live era alone.
 > day closed over entries blocked ONLY by a sanctions flag, with the
 > write-off recorded — which is the kind of machine-bypass B otherwise
 > exists to remove. B proceeds on the first absent a different answer.
+>
+> **Resolved (owner 2026-10-02, #1566 sanctions reward forfeit):**
+> neither answer is taken. Interaction reward not yet delivered to a
+> wallet whose flag is CONFIRMED — authoritative oracle reads across a
+> three-day window with no gap over one day, under the same oracle —
+> is forfeited into the recycle bucket as forfeited reward by a
+> permissionless owner sweep. Its stamp records the entry where the
+> permissionless per-loan forfeit sweep reads it, so after a stamp the
+> loan sweep, run by any caller, is the guaranteed settle path whatever
+> the owner's later status or the oracle setting; the entry terminates
+> and stops holding the day: there is no indefinite hold and no operator
+> write-off. Until the flag is confirmed (and, for an entry whose loan
+> is still open or awaiting its fallback resolution, until the loan
+> resolves) the entry still holds the day, as above. Reward already in
+> the vault stays frozen; loan value is untouched.
+>
+> **Revised (owner 2026-10-14) — earned-while-flagged is forfeited,
+> earned-before is held apart.** The 2026-10-02 rule forfeited ALL
+> undelivered reward once the flag confirmed, pre-flag earnings included.
+> The owner narrowed it: after a wallet is flagged nothing is paid to it
+> until the flag is revoked; reward earned WHILE it was flagged is
+> forfeited; reward earned BEFORE is the wallet's and is paid once the
+> flag is revoked. Three refinements were ratified with it:
+>
+> 1. *Confirmation still gates the forfeit.* Nothing is forfeited on one
+>    read. A chain of authoritative Flagged observations (three-day span,
+>    no gap over one day, one oracle) is still what makes a flag count; a
+>    flag revoked before its chain confirms forfeits nothing, and what it
+>    held meanwhile pays.
+> 2. *"Earned while flagged" is by reward day, from evidence.* A confirmed
+>    chain defines a WINDOW: from the day of its first Flagged observation
+>    through the day of its last. A stored chain is confirmed exactly when
+>    `lastSeenAt ≥ flaggedAt + CONFIRM_SECS` — only the confirming
+>    observation can write such a word — so the window is a property of
+>    the evidence alone. When a confirmed chain ends (a Clean read clears
+>    it, or a new chain restarts over it) its window is RECORDED, append
+>    only, so a day settled later — even after revocation, by the wallet's
+>    own claim — still forfeits. Days after the last Flagged observation
+>    and before the clean read are not in the window (benefit of the doubt
+>    on unobserved time; the keeper observes a held wallet every six hours).
+> 3. *Held value is set apart, not left in the reward machinery.* A
+>    confirmed-flagged owner's pre-flag reward is SETTLED — priced and
+>    retired exactly as a claim would — and delivered into a per-wallet
+>    held balance in its own custody row (`SanctionsHeld`), every move a
+>    row move plus an event. The obligation then terminates like any paid
+>    claim, so an indefinite listing pins no day, no delivery release, no
+>    staging encumbrance and no era: the very problems the 2026-10-02 rule
+>    was chosen to end. No deadline is needed; the balance blocks nothing.
+>
+> **Mechanism.**
+> - *One predicate, applied where a claimant's day settles.* "Day `d` was
+>   earned while a confirmed flag stood" is ONE function (it reads the
+>   recorded windows and the stored chain's own window). The recorded
+>   windows are sorted by first day — chains end in order — and a window
+>   that touches or overlaps the last recorded one is MERGED into it, so
+>   the predicate binary-searches them and a day costs log(windows) reads
+>   however long the listing history (#2489 r5; the linear scan grew as
+>   windows × settled days). A chain that ended before the interaction
+>   launch, or while no launch is set, names NO day: every pre-launch instant
+>   maps to day 0, so such a chain read as the window `[0, 0]` and forfeited
+>   the real day 0 of a wallet clean by then; only a chain straddling the
+>   launch is clamped to begin at day 0. The predicate prices against
+>   `RewardEntry.user`, so a loan-close REPOINT to the position's holder
+>   would re-price every earned day against the holder; when either wallet
+>   carries sanctions history the entry is never re-priced against the
+>   holder (Codex #2489 r13/r15): at loan close it is kept whole with its
+>   earner (`repointKeepsEarner`, announced); at a consolidation of an OPEN
+>   entry (`LibConsolidation`, an active loan) it is SPLIT at today
+>   (`_splitAtTransfer`: the earner's `[start, today+1)` closes as a
+>   claimable entry — the `transferLenderEntry` shrink minus its forfeit —
+>   and a fresh `[today+1, end)` entry opens for the holder with the loan
+>   pointer on it; the per-day series is unchanged). A per-day earner
+>   history was tried and withdrawn: it put bytes into the pricing loop every
+>   staging host inlines, and `RewardStagingFacet` has 207 B of room. Both
+>   repoints run on `InteractionRewardsFacet` behind self-calls
+>   (`reanchorRewardEntriesInternal` from `closeLoan`,
+>   `repointRewardEntryInternal` from the consolidation): `closeLoan` is
+>   inlined into every loan-closing facet and the consolidation into eleven,
+>   several at the limit. The legacy slice's window share
+>   (`legacyWindowShareFull`) reads the same sorted array the same way
+>   (#2489 r7): it binary-searches the first window that reaches the slice
+>   and stops at the first that starts past it, then the live chain's own
+>   window — so a slice's cost is bounded by the windows it meets, not the
+>   wallet's whole listing history. It is applied at
+>   exactly the two places a claimant's day is SETTLED: the claim walk's
+>   day loop marks the day so the pricing routes every entry's share to the
+>   treasury (forfeit) legs, and a staged day's payout page forfeits the
+>   claimant's share itself — whatever the reservation priced, so a staging
+>   record's revalidation keeps comparing the entries' lifecycle routing
+>   only. The forfeit and expiry walks route to the treasury regardless. The
+>   legacy (pre-`D*`) per-day window FORFEITS a window day (#2489 r4): the
+>   day is priced exactly as a paid day, charged to the pool and credited to
+>   the bucket as forfeited reward through the claim's treasury split —
+>   earlier revisions cleared it unpaid, which read as never emitted; the
+>   spec routes it to the bucket; the legacy entry
+>   slice is split by day as it settles — the window's share, read off the
+>   same telescoping curve the per-day legacy need uses, goes to the treasury
+>   legs, the rest to the user — and its epoch-funded part is attributed
+>   user-first up to the user's share. Only a two-read fast path ("this
+>   wallet has no sanctions evidence and no recorded window") is inlined in
+>   the walks, which sit at EIP-170; the window loop and the slice share run
+>   on hosts reached by self-call. The claim body settles the legacy slices
+>   itself and walks only the armed days on the hosted walk, which is what
+>   gave the walk room for the day check.
+> - *Settlement of a confirmed-flagged owner* is the claim itself, run on
+>   the owner's behalf by a permissionless entry that first observes (so
+>   it doubles as the chain's heartbeat) and proceeds only on a confirmed
+>   verdict, with the internal `SanctionsHeld` destination: the user legs
+>   are set apart, the window days forfeit through the primitive. The
+>   public claim entries refuse that destination. A staged day's last page
+>   applies the same split: a window day's user share forfeits at once; an
+>   unconfirmed flag still waits (bounded by confirmation or revocation); a
+>   confirmed flag's pre-flag day is set apart; a record whose destination
+>   is `SanctionsHeld` is set apart.
+> - *Release* is the wallet's next ordinary claim once it is no longer
+>   barred: the held balance leaves its row and is delivered with the
+>   claim, to the venue the claim names. It was charged to the pool and the
+>   delivered ledger when it was set apart, so the release spends neither
+>   again. A release-only claim pays the held balance by itself (#2489
+>   r1), so a claim whose other legs cannot complete — an exhausted pool,
+>   say — never strands it; it refuses a barred caller like every claim.
+> - *The claim gate observes* (#2489 r1). Every public claim entry
+>   refuses through the classifier's committing observation, not the view
+>   check: a Clean reading at a claim commits the clear (marker and chain
+>   end), so a later flag starts a new chain rather than extending one the
+>   clean reading should have ended.
+> - *Custody.* Activated: setting apart is three in-holder moves (live
+>   fresh, recycled, epoch-paid) into `SanctionsHeld` — the live-fresh
+>   move records the payout once, as a delivery would — and a release is
+>   one debit of that row (which records nothing further) delivered through
+>   the Diamond's vault-or-wallet route. Not activated: the tokens stay at
+>   the Diamond, the held total is netted out of the fresh backing room the
+>   payout gates read, and the activation ceremony requires the row to
+>   equal the held total (relocated beforehand by the bootstrap writer, as
+>   the recycled row is).
+> - *Removed:* the entry-level forfeit stamp, its eligibility rule and lens,
+>   and the owner forfeit sweep — the settle entry replaces them.
+
 >
 > Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
 > allocations to 3c (the plan recommends yes, and A is written that way);
@@ -7513,7 +7652,12 @@ on the live era alone.
 > named exception above, an operator stamping a day closed over an entry
 > blocked only by a sanctions flag, with the write-off recorded. That is
 > an owner question; B proceeds WITHOUT the exception, and without it
-> offers no replacement funding at all. Where the exception is taken, the
+> offers no replacement funding at all. **Since resolved (owner
+> 2026-10-02):** the exception is not taken — a confirmed flag forfeits
+> the entry instead (the sanctioned-owner resolution above) — so
+> replacement funding has lost its only named case and B carries none;
+> the rest of this paragraph is kept as the record of the alternative.
+> Where the exception is taken, the
 > write-off record is the consumer: it names the claimant, the day and
 > the two legs written off, and a replacement transfer "clears the
 > disposition by amount" by stepping that record's outstanding figure
@@ -7668,6 +7812,22 @@ unwind of the loser. Lifts 3b's deferral. Must land before PR C unfreezes
 role changes — a late legacy packet after a transition is exactly the
 contended case.
 
+> **HELD — owner decision 2026-10-05 (#2387).** 3c-1 shipped the refusal
+> half: a contested draw is withheld by name and unarrived-day batches serve
+> as the necessity tier. The displacement half — 3c-2 (the dark plan format
+> and its page verification) and 3c-3 (the bonded slot, suspension, switch,
+> unwind, grace) — is HELD, because on this code base no incumbent can exist
+> to displace: a record never stages from a contested batch, arrived days'
+> facts are monotone, and the two things this paragraph's last sentence was
+> written for are handled upstream — PR C-3's day-resolved placement puts a
+> late era-less packet in the live or quarantined era by its listed days, and
+> A2-ii's non-settlement window orders contested waiters (oldest registrant
+> first, one priority at a time). The slot's scope (per chain vs per transport
+> domain) and the bond's asset and sizing are therefore moot; if a later
+> change can create an incumbent, #2387 reopens with exactly those two
+> choices. The sentence above is kept as the design's original reasoning,
+> not as a live requirement.
+
 **Transport epochs PR 3d — the d6 wire.** The new wire version embedding a
 Merkle root over fixed-size chunks together with the authenticated extent,
 the indexed materialization pages verified against it, **and the INTENDED
@@ -7779,7 +7939,9 @@ closure 2's cutover PR.**
 >   binary search, so a deep registry never stalls a claim.
 >   An era release or a surplus drain is tallied as a RE-CREDIT, so the
 >   counted-funding view still reconciles against what Base sent. The
->   cutover version is 4.
+>   cutover version is 4 — and 5 since the held-apart custody row (#2489
+>   r4): the claim reaches a new custody selector, so a cut that refreshed
+>   the claim consumer without the custody facet must not certify.
 
 - An era registry: the current era id; per era, a holder row, an outstanding
   LIABILITY counter and an OPEN-CLASSIFICATION counter (§5c: two counters, two
@@ -8015,9 +8177,13 @@ closure 2's cutover PR.**
 >    and no longer holds a neighbour; their ENTRY still stands, and
 >    whether B may stamp such a day closed over it with a write-off
 >    recorded remains the owner's question for B, unchanged.
+>    **Resolved (owner 2026-10-02):** a confirmed flag forfeits the
+>    entry through the permissionless owner sweep, so the ENTRY half
+>    closes too; no stamp-closed-with-write-off exception is taken.
 > 6. **Replacement funding.** Exists only for that exception's recorded
 >    surviving liability, consumed by the write-off record and never by a
->    draw. A2 changes nothing here; a replacement packet is never staged
+>    draw (resolved with item 5: the exception is not taken, so there is
+>    none). A2 changes nothing here; a replacement packet is never staged
 >    against.
 > 7. **The split's flexible-leg tie (#2296 item 1).** A1's split spends
 >    in plan order with the suffix reservation; its remaining tie sends
@@ -8279,11 +8445,21 @@ closure 2's cutover PR.**
 >   the two does not trap the record (r2 P1: a refused payout after
 >   earlier pages consumed counters and released references would leave
 >   a record that can be neither finished nor unwound). The last page
->   delivers the user figures into the claimant's vault under the
->   freeze-at-source lock the sanctions path already applies to
->   proceeds, the treasury figures as usual, and persists the day — the
->   Tier-2 shape: the close-out completes, the flagged party's value is
->   locked, nothing is refused mid-walk.
+>   pays a claimant whose flag is confirmed nothing: the user figures
+>   join the day's treasury forfeit legs into the recycle bucket as
+>   forfeited reward (`StagingClaimantForfeited`), no loan-side cap, no
+>   venue; while the flag is unconfirmed, or the oracle is down for a
+>   holder of a committed flag (the #1123 marker), a page with a user share waits — bounded by the
+>   confirmation window or the outage (owner 2026-10-02). "Confirmed" is
+>   the chained-observation rule the owner forfeit sweep uses: the flag
+>   observed by authoritative reads across a three-day window with no
+>   gap over one day, under the same oracle, so the window bounds the
+>   wait only while someone observes at least once per gap. A waiting
+>   page records only the observation, pays and retires nothing, and is
+>   retried, so the record is never trapped
+>   and nothing is refused mid-walk; a delisting before the window
+>   completes pays the claimant, and a page with no user share never
+>   waits.
 > - **Deadline, unwind, cooldown, priority.** A record in staging carries
 >   a deadline derived from the WORK the day needs, not a fixed multiple
 >   of the retry cadence (r2 P1: a day spread across more batches than a
@@ -8416,7 +8592,9 @@ closure 2's cutover PR.**
 >
 > *What A2 does not do.* It does not reorder or displace allocations
 > (3c), close out a batch (B), or change the wire (3d). It does not decide
-> the sanctions exception (B). It does not resolve first-caller-wins for
+> the sanctions exception (B); the owner has since resolved it
+> (2026-10-02): a confirmed flag forfeits, and no exception is taken.
+> It does not resolve first-caller-wins for
 > an unprepared obligation, and it resolves the cross-chunk case only by
 > keeping multi-chunk decisions staged and challengeable, not by
 > reallocating them. It does not touch the split's reservation, the
@@ -8433,7 +8611,8 @@ closure 2's cutover PR.**
 > balance, so staging five of ten leaves five available; an untyped
 > batch refuses staging and accepts a one-call draw, and its attestation
 > asserts no staged component; a claimant flagged between pages is
-> paid into the frozen vault and the record completes; the deadline
+> forfeited once confirmed and the record completes (until then the
+> last page waits, retiring nothing); the deadline
 > grows with the day's list and never by the stager's action; a stale
 > queue prefix longer than one budget is cleared across calls; the
 > mutating seam reverts for any caller but the Diamond; a multi-chunk

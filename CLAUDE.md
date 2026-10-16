@@ -1951,6 +1951,16 @@ remedy when one does not start. Apply this loop on every PR:
   that is not just convention: unresolved threads hold the PR at
   `mergeable_state: blocked` with every check green and no indication
   why, which cost real time on #2223.
+- **Own security review before EVERY merge** (user directive
+  2026-10-14): whoever merges runs their own security review of the PR's
+  full diff on its FINAL head, after the last Codex round. The lenses are
+  fund movement and accounting, access control and authorization,
+  reentrancy and external calls, upgrade and storage safety, and off-chain
+  trust and secrets. Post the verdict on the PR before merging. A
+  P1/P2-grade finding blocks the merge until it is fixed (that push gets its
+  usual Codex round). A docs-only PR gets a light pass: no secrets, no false
+  security claims. This is separate from the high-risk PR's adversarial
+  review BEFORE Codex round 1.
 
 ## Release notes — per-PR fragments
 

@@ -312,6 +312,42 @@ library FacetSelectors {
         return bytes4(keccak256("previewIntent(address,address,address,address,uint256,uint256)"));
     }
 
+    /// @notice The ETH·day recycle-tariff setter #2489 DELETED from `ConfigFacet`
+    ///         (its slot is retained, dead; security review of #2489). A
+    ///         `Replace` of the new surface leaves it routed to the OLD
+    ///         bytecode unless it is Removed — the split Diamond by the opposite
+    ///         door (CLAUDE.md "Deleting or renaming a function"). No caller
+    ///         exists, so a curated refresh may retire it on its own.
+    ///         `RefreshAllFacetsInPlace` sweeps it from the loupe itself.
+    function retiredTariffSetterSelector() internal pure returns (bytes4) {
+        return bytes4(keccak256("setRecycleTariffKPer1e18EthDay(uint256)"));
+    }
+
+    /// @notice The pre-#1949 shapes of `OfferCreateFacet.createSignedOfferVault`
+    ///         / `createSignedOfferWallet`, which gained a trailing `MakerFull`
+    ///         in #2489. These are NOT retired by a curated refresh (Codex #2489
+    ///         r12): their callers — `SignedOfferFacet`, `OfferMatchFacet`,
+    ///         `OfferMatchIntentFacet` — self-call them by selector and are not
+    ///         in `ReplaceStaleFacets`' set, so removing the old shapes there
+    ///         would leave every signed accept / match reverting
+    ///         `FunctionDoesNotExist` after a "successful" refresh, while
+    ///         leaving them would split `OfferCreateFacet` across two builds.
+    ///         A Diamond still routing either is pre-#1949 and takes the
+    ///         COMPLETE refresh; `ReplaceStaleFacets` refuses it by name.
+    function pre1949SignedOfferSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = bytes4(
+            keccak256(
+                "createSignedOfferVault(address,(uint8,address,uint256,uint256,address,uint256,uint256,uint8,uint256,uint256,bool,address,uint8,uint256,uint256,bool,uint256,uint256,uint256,uint8,uint64,uint8,bool,bool,uint256,bool))"
+            )
+        );
+        s[1] = bytes4(
+            keccak256(
+                "createSignedOfferWallet(address,(uint8,address,uint256,uint256,address,uint256,uint256,uint8,uint256,uint256,bool,address,uint8,uint256,uint256,bool,uint256,uint256,uint256,uint8,uint64,uint8,bool,bool,uint256,bool),((address,uint256),uint256,uint256),bytes32,bytes)"
+            )
+        );
+    }
+
     /// @notice Full external selector surface of {OfferPreviewFacet} (1).
     ///
     /// @dev    #1649. Paired with {riskPreview} for the same reason, one step

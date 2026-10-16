@@ -346,6 +346,11 @@ interface IVaipakamErrors {
     ///         data; a different revert is what the claim itself would have
     ///         reverted with.
     error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay);
+
+    /// @notice #1566 sanctions rule — the reward-delivery venue `venue` is not
+    ///         one a caller may name: the held-apart venue (`SanctionsHeld`)
+    ///         belongs to the settlement of a confirmed-flagged owner alone.
+    error RewardDeliveryNotSelectable(uint8 venue);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition
@@ -855,6 +860,14 @@ interface IVaipakamErrors {
     ///         Base aggregator to finalize and broadcast the day.
     /// @param dayId First day on the claim cursor that is missing a global.
     error InteractionDayGlobalNotFinalized(uint256 dayId);
+    /// @notice #1944 consequence 1 — the caller's next claimable day is
+    ///         priced, on this gate-armed mirror, to owe FRESH value that
+    ///         Base has not yet been proven to have delivered here. The claim
+    ///         DEFERS, moving no value: it pays once a budget packet proven
+    ///         to list the day has landed (`proveDeliveryDayList` /
+    ///         `proveDeliveryDayChunk`, or an indexed transport epoch).
+    /// @param dayId The first day the walk parked on for want of delivery.
+    error InteractionDayAwaitingDelivery(uint256 dayId);
     /// @notice User attempted to withdraw more VPFI than their vault
     ///         currently holds.
     error VPFIVaultBalanceInsufficient();
@@ -1794,6 +1807,21 @@ interface IVaipakamErrors {
     error TransportChunkLengthMismatch(bytes32 batchId, uint256 chunkIndex, uint256 expected, uint256 supplied);
     /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
     error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
+    /// @notice #1944 c1 — the packet holds a transport batch: its days land through the batch's own index
+    ///         (`materializeTransportBatchPage` / `Chunk`), which is the one fact the delivery gate reads for it.
+    error DeliveryProofRouteIsBatch(bytes32 packetHash);
+    /// @notice #1944 c1 — only a BUDGET packet funds days; any other kind proves no delivery.
+    error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
+    /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
+    error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
+    /// @notice #1944 c1 — the delivery gate exists only on a reward-mesh MIRROR: Base funds itself.
+    error DeliveryGateNotMirror();
+    /// @notice #1944 c1 — the delivery gate is one-shot and already armed from day `current`.
+    error DeliveryGateAlreadyArmed(uint256 current);
+    /// @notice #1944 c1 — arming from `fromDay` would re-hold days a cumulative fold already passed (lender
+    ///         cursor `lenderCursor`, borrower `borrowerCursor`): the hold must stay monotone, so the gate only
+    ///         ever arms ahead of both folds.
+    error DeliveryGateBelowFold(uint256 fromDay, uint256 lenderCursor, uint256 borrowerCursor);
     /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry
@@ -1927,4 +1955,9 @@ interface IVaipakamErrors {
     ///         targets another loan, or has expired. Raised by
     ///         `RefinanceFacet.checkRefinanceRequest`.
     error RefinanceRequestNotLive(uint256 loanId, uint256 offerId);
+    // ── #2047 — keeper allocation: the per-day attribution ceiling ──
+    /// @notice `chainId`'s keeper allocation cannot be armed while its per-day attribution cap is zero: the earmark's numerator is bounded first.
+    error KeeperAllocateNeedsAttributionCap(uint32 chainId);
+    /// @notice `chainId`'s attribution cap cannot return to zero while its keeper allocation (`bps`) is armed.
+    error AttributionCapUnderLiveKeeperBps(uint32 chainId, uint16 bps);
 }

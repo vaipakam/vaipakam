@@ -71,9 +71,14 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _mut().setDayUserSideCapRaw(d, cap);
     }
 
-    /// @dev A pre-cutover day, priced by the legacy O(1) window product.
+    /// @dev A pre-cutover day, priced by the legacy O(1) window product. #1944
+    ///      c1 (S1-R1): a stamped day prices from its stamp whatever its arming,
+    ///      so it is stamped as Base stamps an INCLUDED unarmed day -- at the
+    ///      schedule half -- and stays priced by the schedule.
     function _legacyDay(uint256 d) internal {
-        _mut().setDayPoolStampRaw(d, uint128(2e18), 0);
+        _mut().setDayPoolStampRaw(
+            d, uint128(2 * InteractionRewardsLensFacet(address(diamond)).getInteractionHalfPoolForDay(d)), 0
+        );
         _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
         _mut().setDayCapThreshold18(d, type(uint256).max);
     }

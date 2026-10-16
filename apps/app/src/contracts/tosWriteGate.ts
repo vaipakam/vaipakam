@@ -87,6 +87,9 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'claimAsBorrower',
   'claimAsLender',
   'claimInteractionRewards',
+  // The held-apart balance alone (#2489 r2) — the same settled funds as the
+  // combined claim, taken on their own.
+  'claimHeldInteractionRewards',
   'withdrawVPFIFromVault',
   // An operator's own service capacity deposit (#1219), live or in a retired
   // rotation epoch. It is their principal coming home, exactly like a vault

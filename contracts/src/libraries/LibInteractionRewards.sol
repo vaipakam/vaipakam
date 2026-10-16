@@ -11,6 +11,7 @@ import {LibPausable} from "./LibPausable.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {LibRewardStaging} from "./LibRewardStaging.sol";
+import {LibRewardSanctions} from "./LibRewardSanctions.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -110,6 +111,15 @@ library LibInteractionRewards {
         EntrySplit toTreasury;
         bool advancedAnyDay;
         TransportLegs transport;
+        /// @dev #1944 c1 — the day the ShareOfPool walk PARKED on the mirror
+        ///      delivery gate (its side's fold stopped there and the day owes
+        ///      a fresh delivery that has not landed), 0 when none. Read by
+        ///      the claim facet's empty-claim branch alone, to revert by name
+        ///      (`InteractionDayAwaitingDelivery`) rather than as an empty
+        ///      balance. It crosses the claim-walk self-call inside this
+        ///      result, so `RewardClaimFacet` and `RewardClaimWalkFacet` are
+        ///      refreshed together.
+        uint256 awaitingDay;
     }
 
     /// @notice RL-3 (#1305) — the horizon clock started for `entryId`: the
@@ -170,6 +180,39 @@ library LibInteractionRewards {
     /// @param user    Entry owner.
     /// @custom:event-category state-change/reward-claim
     event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
+
+    /// @notice Codex #2489 r15 — an OPEN reward entry changed hands by
+    ///         consolidation while its earner or holder carries sanctions
+    ///         history: the days through `splitDay - 1` stay with `earner` as
+    ///         the (now closed, claimable) entry `oldId`, and the days from
+    ///         `splitDay` accrue to `holder` as the new open entry `newId`.
+    /// @custom:event-category informational/reward
+    event RewardEntrySplitAtTransfer(
+        uint256 indexed oldId, uint256 indexed newId, address indexed earner, address holder, uint256 splitDay
+    );
+
+    /// @notice #1566 — one settled CHUNK of a forfeited entry, from the loan
+    ///         forfeit sweep ({sweepForfeitedByLoanId}). `fresh` is
+    ///         the fresh this chunk forfeited into the recycle bucket — the
+    ///         live part and the epoch-funded part the host absorbs in place
+    ///         alike — and `recycledReleased` the recycled commitment it
+    ///         released.
+    /// @dev    UNTRIMMED FORFEIT PRICING: the figures are the forfeit route's
+    ///         pricing of the entry's day, which the loan-side reward cap never
+    ///         binds (a forfeit pays no side), so they can exceed what the same
+    ///         day would have paid the owner as a claim. Only the 69M lifetime
+    ///         pool cap trims them, terminally. Per-entry PROVENANCE: the
+    ///         authoritative accounting feeds stay `VpfiRecycled` (source
+    ///         `ForfeitedReward`) and the custody-row events the facade emits
+    ///         for the batch — reconcile amounts from those, never from this.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryForfeitSettled(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 indexed loanId,
+        uint256 fresh,
+        uint256 recycledReleased
+    );
 
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
@@ -333,7 +376,18 @@ library LibInteractionRewards {
                     borrowerFreshHalf = lenderFreshHalf;
                 }
             } else {
-                lenderFreshHalf = halfPoolForDay(dayId);
+                // #1944 c1 — an UNARMED day funds the figure the broadcast
+                // shipped the destination: the day's finalize-stamped floor
+                // half (`RewardBroadcastFacet._perDestFields`), which is what
+                // the mirror prices the day from ({_sideFreshHalf}). The raw
+                // schedule sent more than the mirror pays once the floor fell
+                // below it near the 69M cap, and, sized past the remaining
+                // pool, refused the whole send while a gated mirror waited for
+                // the day. Below the cap the two are equal. A day finalized
+                // before the governor stamp existed keeps the schedule, as the
+                // mirror does for an unstamped record.
+                LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
+                lenderFreshHalf = p.stamped ? uint256(p.scheduleFloor) / 2 : halfPoolForDay(dayId);
                 borrowerFreshHalf = lenderFreshHalf;
             }
         }
@@ -648,11 +702,28 @@ library LibInteractionRewards {
         // through here, so repay / default / HF-liquidation / preclose all
         // inherit it — Codex #1147 r2 F6). Skips already-closed entries so a
         // frozen slice is never moved to a later holder (F8).
-        LibVaipakam.Loan storage l = s.loans[loanId];
-
+        // Codex #2489 r13 — both re-anchors run on THEIR host
+        // (`InteractionRewardsFacet.reanchorRewardEntriesInternal`) behind one
+        // Diamond self-call: `closeLoan` is inlined into every loan-closing
+        // facet (RiskFacet and DefaultedFacet sit at the EIP-170 limit), so the
+        // two `ownerOf` reads, the repoint body and the sanctions-history rule
+        // it now carries live once, on a roomy facet. Fails CLOSED on an
+        // unrouted host (a partial refresh that missed it), like every custody
+        // seam — the refresh set names the facet.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
+        uint256 borrowerId = s.loanBorrowerEntryId[loanId];
+        if (lenderId != 0 || borrowerId != 0) {
+            (bool ok, bytes memory ret) =
+                address(this).call(abi.encodeWithSignature("reanchorRewardEntriesInternal(uint256)", loanId));
+            if (!ok) {
+                if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+                assembly ("memory-safe") {
+                    revert(add(ret, 0x20), mload(ret))
+                }
+            }
+        }
+
         if (lenderId != 0) {
-            _reanchorOpenSide(s, loanId, lenderId, l.lenderTokenId, true);
             _closeEntry(
                 s,
                 lenderId,
@@ -663,9 +734,7 @@ library LibInteractionRewards {
             );
             s.loanActiveLenderEntryId[loanId] = 0;
         }
-        uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0) {
-            _reanchorOpenSide(s, loanId, borrowerId, l.borrowerTokenId, false);
             _closeEntry(
                 s,
                 borrowerId,
@@ -686,6 +755,18 @@ library LibInteractionRewards {
     ///      hand a prior holder's slice to a later one). Tolerates a burned/absent
     ///      token via try/catch. `repointRewardEntry` is O(1) (see
     ///      {rewardEntryUserIdx}), so this is safe on the fund-critical close path.
+    /// @notice Codex #2489 r13 — `closeLoan`'s holder re-anchor for both sides,
+    ///         run on its host (`InteractionRewardsFacet.reanchorRewardEntriesInternal`)
+    ///         behind a Diamond self-call. Re-points each OPEN entry to the live
+    ///         position-NFT holder — unless the sanctions-history rule keeps it
+    ///         with its earner ({repointRewardEntry}).
+    function reanchorEntriesForClose(uint256 loanId) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage l = s.loans[loanId];
+        _reanchorOpenSide(s, loanId, s.loanActiveLenderEntryId[loanId], l.lenderTokenId, true);
+        _reanchorOpenSide(s, loanId, s.loanBorrowerEntryId[loanId], l.borrowerTokenId, false);
+    }
+
     function _reanchorOpenSide(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -697,7 +778,7 @@ library LibInteractionRewards {
         if (s.rewardEntries[entryId].closed) return;
         try IERC721(address(this)).ownerOf(tokenId) returns (address holder) {
             if (holder != address(0)) {
-                repointRewardEntry(loanId, holder, isLenderSide);
+                repointRewardEntryAtClose(loanId, holder, isLenderSide);
             }
         } catch {
             // Token burned / absent — nothing to re-anchor.
@@ -789,6 +870,18 @@ library LibInteractionRewards {
         address newUser,
         bool isLenderSide
     ) internal {
+        _repoint(loanId, newUser, isLenderSide, /* allowSplit */ true);
+    }
+
+    /// @notice {repointRewardEntry} as `closeLoan`'s re-anchor uses it: the loan
+    ///         ends now, so nothing remains to accrue for the holder and an entry
+    ///         under the earner rule is kept whole with its earner — never split
+    ///         (a split here would open a zero-length entry only to close it).
+    function repointRewardEntryAtClose(uint256 loanId, address newUser, bool isLenderSide) internal {
+        _repoint(loanId, newUser, isLenderSide, /* allowSplit */ false);
+    }
+
+    function _repoint(uint256 loanId, address newUser, bool isLenderSide, bool allowSplit) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 id = isLenderSide
             ? s.loanActiveLenderEntryId[loanId]
@@ -798,6 +891,18 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         address oldUser = e.user;
         if (oldUser == newUser) return;
+        // Codex #2489 r13/r15 — the sanctions day rule prices against the
+        // entry's user, so an entry whose earner or holder carries sanctions
+        // history is never re-priced against the holder: at a consolidation
+        // of an OPEN entry it is SPLIT at today — the earned days stay with the
+        // earner as a closed, claimable entry, the remaining window opens for
+        // the holder — and at loan close (nothing left to accrue) it is kept
+        // whole with the earner.
+        if (LibRewardSanctions.repointNeedsEarnerRule(s, oldUser, newUser)) {
+            if (allowSplit) _splitAtTransfer(s, id, e, loanId, oldUser, newUser, isLenderSide);
+            else LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser);
+            return;
+        }
 
         _removeUserEntry(s, oldUser, id);
         s.userRewardEntryIds[newUser].push(id);
@@ -806,6 +911,60 @@ library LibInteractionRewards {
         e.user = newUser;
         // Per-loan pointer already references `id`; sweep + per-user claim now
         // resolve to `newUser`.
+    }
+
+    /// @dev Codex #2489 r15 — split an OPEN entry at today between its earner
+    ///      and the holder consolidating the position: the earner keeps
+    ///      `[startDay, today + 1)` as a CLOSED (claimable) entry — the same
+    ///      shrink `transferLenderEntry` applies, minus its forfeit — and the
+    ///      holder gets a fresh open entry over `[today + 1, originalEnd)` with
+    ///      the per-loan pointer moved onto it; the global per-day series is
+    ///      unchanged (the close un-stamps the original end and stamps the
+    ///      shrunk one, the new entry stamps both ends back). With nothing left
+    ///      to accrue (the window ends by today, the entry is already closed,
+    ///      or the programme is inactive) the entry is kept whole with its
+    ///      earner, announced as kept.
+    function _splitAtTransfer(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e,
+        uint256 loanId,
+        address oldUser,
+        address newUser,
+        bool isLenderSide
+    ) private {
+        (uint256 today, bool active) = currentDayOrZero();
+        uint256 originalEnd = e.endDay;
+        uint256 newStart = today + 1;
+        if (!active || e.closed || newStart >= originalEnd) {
+            LibRewardSanctions.repointKeepsEarner(s, id, oldUser, newUser);
+            return;
+        }
+        uint256 perDay = e.perDayNumeraire18;
+        if (isLenderSide) {
+            _closeEntry(s, id, today, false, s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay);
+        } else {
+            _closeEntry(s, id, today, false, s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay);
+        }
+        uint256 newId = _allocEntry(
+            s,
+            newUser,
+            loanId,
+            newStart,
+            originalEnd,
+            isLenderSide ? LibVaipakam.RewardSide.Lender : LibVaipakam.RewardSide.Borrower,
+            perDay
+        );
+        if (isLenderSide) {
+            s.loanActiveLenderEntryId[loanId] = newId;
+            _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, newStart, SafeCast.toInt256(perDay));
+            _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
+        } else {
+            s.loanBorrowerEntryId[loanId] = newId;
+            _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, newStart, SafeCast.toInt256(perDay));
+            _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
+        }
+        emit RewardEntrySplitAtTransfer(id, newId, oldUser, newUser, newStart);
     }
 
     /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` in O(1) via the
@@ -831,6 +990,72 @@ library LibInteractionRewards {
         }
         ids.pop();
         s.rewardEntryUserIdx[id] = 0;
+    }
+
+    /// @dev Codex #2489 r16 — THE live predicate for a reward entry, shared by
+    ///      the lens's live page and soonest-expiry view, so the two cannot
+    ///      disagree about what "live" means: not yet settled (`processed`)
+    ///      and not already expiring (`expiryBegun`) — the only entries a
+    ///      claim deadline can concern. Both flags are terminal (nothing
+    ///      unsets either).
+    function isEntryLive(LibVaipakam.RewardEntry storage e) internal view returns (bool) {
+        return !e.processed && !e.expiryBegun;
+    }
+
+    /// @notice Codex #2489 r17 — `retired` SETTLED entries left `user`'s reward
+    ///         entry index, which now holds `remaining` entries.
+    /// @custom:event-category state-change/reward-entry
+    event RewardEntryIndexCompacted(address indexed user, uint256 retired, uint256 remaining);
+
+    /// @dev Codex #2489 r17 — index positions a claim examines at its end (the
+    ///      claim has just settled every entry it could, so that is where
+    ///      settled entries appear). Bounded so a long history never makes the
+    ///      claim's gas grow; the permissionless compactor covers the rest.
+    uint256 internal constant CLAIM_INDEX_COMPACT_STEPS = 256;
+
+    /// @notice Codex #2489 r17 ROOT — RETIRE `user`'s SETTLED entries from its
+    ///         reward entry index: examine at most `maxSteps` positions from the
+    ///         head and swap-pop every `processed` entry met (the same O(1)
+    ///         removal a repoint uses; the back-index is cleared). The index
+    ///         therefore converges to the wallet's UNSETTLED entries, so every
+    ///         per-user walk — claim legs, funding need, forfeit fresh, the
+    ///         countdown's pages — costs O(unsettled) rather than O(lifetime):
+    ///         the index used to keep every entry a wallet ever had, which is
+    ///         the one root behind both countdown-scan findings (r16, r17) and
+    ///         the unbounded claim-path walks noted below. A settled entry
+    ///         stays readable by id ({InteractionRewardsLensFacet.getRewardEntriesRange})
+    ///         and by its events. Bookkeeping only: moves no value; an
+    ///         `expiryBegun` entry still mid-reap is NOT retired (the reap's
+    ///         cursor advance reads its end day from this index). Run bounded
+    ///         at the claim's end and by the permissionless
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}.
+    /// @return retired   Entries removed by this call.
+    /// @return remaining The index's length afterwards.
+    function retireSettledUserEntries(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 maxSteps
+    ) internal returns (uint256 retired, uint256 remaining) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 i;
+        uint256 steps;
+        while (i < ids.length && steps < maxSteps) {
+            uint256 id = ids[i];
+            if (s.rewardEntries[id].processed) {
+                uint256 before = ids.length;
+                _removeUserEntry(s, user, id);
+                // The tail now sits at `i` and is examined next. A removal that
+                // did not shrink the index (an unindexed id — the defensive
+                // no-op above) is passed, so the loop always progresses.
+                if (ids.length == before) { unchecked { ++i; } }
+                else { unchecked { ++retired; } }
+            } else {
+                unchecked { ++i; }
+            }
+            unchecked { ++steps; }
+        }
+        remaining = ids.length;
+        if (retired != 0) emit RewardEntryIndexCompacted(user, retired, remaining);
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
@@ -1005,10 +1230,38 @@ library LibInteractionRewards {
     ///      difference is whether the wait can ever END: a budget shortfall
     ///      clears when the funding lands, and for a funded day it always does;
     ///      a wait on a message that is never sent is permanent.
+    ///
+    ///      #1944 consequence 1 — two changes, both HERE so every inliner of
+    ///      the fold carries one copy and no route needs a guard of its own:
+    ///
+    ///        - **An unarmed day prices from the stamp once one has landed**
+    ///          ({_sideFreshHalf}). "Pre-cutover days keep the legacy
+    ///          schedule" above now holds only where no stamp exists: Base,
+    ///          which never stamps its own unarmed records; a mirror before
+    ///          the V2 broadcast; a kind-2-only day. On a mirror the stamp is
+    ///          what Base funds — ZERO for a destination excluded from the
+    ///          day's denominator, the exhausted floor at the 69M cap — and
+    ///          the schedule priced there paid a day the chain was never
+    ///          funded for. Not latched: it is the root fix of a live
+    ///          fund-loss shape, not part of the gate. Canonical prices as
+    ///          before.
+    ///        - **A delivery rung after both branches.** On a mirror whose
+    ///          gate is armed (`dayDeliveryGateFromDay`), a day pricing a
+    ///          non-zero FRESH half for this side halts until a budget packet
+    ///          PROVEN to list it has landed, whichever of the two Base
+    ///          messages arrives first. That is a wait on a message, and it
+    ///          keeps the standing constraint the only way such a wait can:
+    ///          it fires ONLY on a day Base's send rule is proven to list
+    ///          ({LibRewardCustody.dayAwaitsFreshDelivery}: stamped,
+    ///          reported, a fresh half, a local total and, on an armed day, a
+    ///          liability), so every wait it starts is one Base's own remit
+    ///          ends once anyone proves the packet's day list; a day Base
+    ///          never remits reads false and is never held. The Codex #1433
+    ///          r1 marker failed precisely because it waited on EVERY day.
     /// @return freshHalf    This side's fresh pool for day `d`.
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
-    /// @return halt         True ⇒ armed day not priceable here: stop
+    /// @return halt         True ⇒ the day is not priceable here: stop
     ///                      advancing. Since #1434 P1-b this means ONE thing —
     ///                      no funding stamp yet. The blanket mirror arm is
     ///                      gone; a mirror that is merely under-funded now
@@ -1017,7 +1270,11 @@ library LibInteractionRewards {
     ///                      every user on the chain (days settle oldest-first)
     ///                      — the difference from the blanket arm is that it
     ///                      CLEARS when the funding lands, not that it blocks
-    ///                      less.
+    ///                      less. #1944 c1 adds a SECOND meaning, on a
+    ///                      gate-armed mirror only, for an armed or unarmed
+    ///                      day alike: the delivery that funds this side's
+    ///                      fresh half has not landed. It clears the same way
+    ///                      — when that delivery lands and is proven.
     function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
@@ -1027,6 +1284,11 @@ library LibInteractionRewards {
         view
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
+        // #1944 c1 — this chain's ONE funding record for the day, read by
+        // both branches: an armed day prices from it outright, an unarmed one
+        // through {_sideFreshHalf}.
+        LibVaipakam.ChainDayFunding storage f =
+            s.chainDayRecycledFunding[d][uint32(block.chainid)];
         if (_isArmedDay(s, d)) {
             // #1434 P1-b — the blanket mirror halt that stood here is GONE.
             // Both prerequisites are now discharged: prerequisite 2 by w3's
@@ -1041,33 +1303,89 @@ library LibInteractionRewards {
             // A mirror now prices its armed days from its own stamped
             // funding exactly as Base does; what stops it overpaying is no
             // longer a blanket halt but a bound that can actually clear.
-            LibVaipakam.ChainDayFunding storage f =
-                s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);
-            // #1434 P1-b — NOTE FOR ANYONE TEMPTED TO GATE HERE. An earlier
-            // revision of this slice halted an armed MIRROR day whose
-            // `deliveredFreshBound` did not cover this side's stamped fresh
-            // half, reasoning that the fold must be gated so one check covers
-            // the walk AND the bulk entry path. It is WRONG and the suite
-            // proves it: the stamped half is the day's CAPACITY, not its
-            // liability — what actually pays is bounded by the D1 ceiling and
-            // by which claimants exist, typically far less — so requiring
-            // full coverage halts days the chain can comfortably fund.
-            //
-            // The w3 compensated-day gate looks like a precedent and is not:
-            // it compares delivered funding against the side's QUOTED SUM,
-            // and a quote IS that day's liability, so full coverage is the
-            // right test there. Same shape, different quantity.
-            //
-            // PRICING IS NOT PAYMENT. This function advances a counterfactual
-            // entitlement cursor; the delivered bound belongs on every
-            // PAYMENT route (the walk, and the bulk entry pricing), where the
-            // spend is actually known.
-            return side == LibVaipakam.RewardSide.Lender
-                ? (f.freshLenderHalf, f.lenderHalfEquiv, false)
-                : (f.freshBorrowerHalf, f.borrowerHalfEquiv, false);
+            if (side == LibVaipakam.RewardSide.Lender) {
+                freshHalf = f.freshLenderHalf;
+                recycledHalf = f.lenderHalfEquiv;
+            } else {
+                freshHalf = f.freshBorrowerHalf;
+                recycledHalf = f.borrowerHalfEquiv;
+            }
+        } else {
+            freshHalf = _sideFreshHalf(f, side, d);
         }
-        return (halfPoolForDay(d), 0, false);
+        // #1434 P1-b — NOTE FOR ANYONE TEMPTED TO GATE HERE (restated by
+        // #1944 c1, which does gate here: what this note bans is a COVERAGE
+        // gate, and the rung below is a MEMBERSHIP one). An earlier revision
+        // of P1-b halted an armed MIRROR day whose `deliveredFreshBound` did
+        // not cover this side's stamped fresh half, reasoning that the fold
+        // must be gated so one check covers the walk AND the bulk entry path.
+        // It is WRONG and the suite proves it: the stamped half is the day's
+        // CAPACITY, not its liability — what actually pays is bounded by the
+        // D1 ceiling and by which claimants exist, typically far less — so
+        // requiring full coverage halts days the chain can comfortably fund.
+        //
+        // The w3 compensated-day gate looks like a precedent and is not: it
+        // compares delivered funding against the side's QUOTED SUM, and a
+        // quote IS that day's liability, so full coverage is the right test
+        // there. Same shape, different quantity.
+        //
+        // PRICING IS NOT PAYMENT. This function advances a counterfactual
+        // entitlement cursor; the delivered bound belongs on every PAYMENT
+        // route (the walk, and the bulk entry pricing), where the spend is
+        // actually known — and it is still the only test of an AMOUNT.
+        //
+        // #1944 c1 — the rung below is that argument once more: same shape (a
+        // funding wait that halts the fold), different quantity. It sets no
+        // amount against the capacity; it asks whether a budget packet PROVEN
+        // to list this day has landed here — a fact Base wrote, since Base
+        // lists a day exactly when it funds this side's fresh leg of it. That
+        // is what the fungible bound cannot see: ORDERING. A day whose stamp
+        // lands before its delivery would otherwise price against the bound
+        // and pay from an EARLIER day's delivery.
+        //
+        // Recycled is not gated: Base may send nothing for a locally backed
+        // side, and the bucket's deferral is already amount-keyed. Halting
+        // here parks the cursor BEFORE the day, which closes the walk, the
+        // legacy entry slice, both sweeps, staging and domain pricing and the
+        // previews through `_rpnReady` — one rung, no per-site guard. The
+        // commitment twin {dailyDeltaForCommitment} reads the stamp directly
+        // and is deliberately NOT behind it. Dark (`dayDeliveryGateFromDay ==
+        // 0`) the rung costs one SLOAD and halts nothing; it moves no value
+        // either way.
+        if (freshHalf != 0 && LibRewardCustody.callDayAwaitsFreshDelivery(s, uint8(side), d)) {
+            return (0, 0, true);
+        }
+    }
+
+    /// @dev #1944 c1 (S1-R1) — THE derivation of a day's FRESH half for one
+    ///      side on this chain, for every pricing route that does not read an
+    ///      armed stamp outright: the unarmed branch of {_dayPoolHalves} and
+    ///      the legacy window's two legs ({claimForUserWindow},
+    ///      {previewForUserWindow}).
+    ///
+    ///      The stamp once one has landed, the schedule only while none has.
+    ///      A mirror's V2 broadcast stamps EVERY day it applies, armed or
+    ///      not, and for an unarmed day the stamp's fresh half is what Base
+    ///      funds this destination: the schedule floor's half when the
+    ///      destination is in the day's denominator, ZERO when it was
+    ///      excluded, the exhausted floor at the 69M cap. Pricing
+    ///      `halfPoolForDay` there — as every unarmed route did — paid a day
+    ///      the destination was never funded for. Base never stamps its own
+    ///      unarmed records and a kind-2-only broadcast writes no per-chain
+    ///      stamp, so those read the schedule exactly as before.
+    ///
+    ///      NOT dark: with the delivery gate off this still changes mirror
+    ///      pricing on excluded and exhausted unarmed days, deliberately — a
+    ///      root fix, not part of the latched gate. One body for the three
+    ///      routes, so the fold and the window cannot price one day two ways.
+    function _sideFreshHalf(
+        LibVaipakam.ChainDayFunding storage f,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) private view returns (uint256) {
+        if (!f.stamped) return halfPoolForDay(d);
+        return side == LibVaipakam.RewardSide.Lender ? f.freshLenderHalf : f.freshBorrowerHalf;
     }
 
     /// @notice #1434 P2-w3 (§1.4) — Δq for side `s` on day `d`: the
@@ -1385,6 +1703,22 @@ library LibInteractionRewards {
     ///         chain OWES, which is its whole purpose. Keep the two in lockstep:
     ///         any change to {_dayPoolHalves}'s halves or to
     ///         {advanceCumLenderThrough}'s per-day math must land here too.
+    ///         #1944 c1 — and two edges this twin deliberately does NOT
+    ///         share. (1) The delivery rung {_dayPoolHalves} gained is not
+    ///         mirrored here: the commitment report is what releases Base's
+    ///         armed send (Base's `_planDay` waits on a complete commitment),
+    ///         so a report held behind the delivery it releases would
+    ///         deadlock both. It reads the stamp directly and stays priceable
+    ///         while the claim path holds the day. (2) Across chains, the
+    ///         mirror predicate {LibRewardCustody.dayAwaitsFreshDelivery}
+    ///         restates Base's send rule (`RewardRemittanceFacet._planDay` /
+    ///         `_sideLegs`) from stored Base-authored figures — the stamp, the
+    ///         report, the fresh half, the local total, the armed liability.
+    ///         Lockstep by construction, not by shared code: a change to
+    ///         which days Base lists in a budget packet must change that
+    ///         predicate in the same diff, or the gate waits on a day Base
+    ///         never sends (too wide) or pays a day from another day's
+    ///         delivery (too narrow). The mesh lockstep cell pins it.
     ///         `priceable == false` ⇒ the day is unarmed or this chain's stamp
     ///         has not arrived yet (broadcast pending) — the report must wait.
     function dailyDeltaForCommitment(
@@ -1575,12 +1909,66 @@ library LibInteractionRewards {
         tp.treasuryEraFresh = legs.treasuryEraFresh;
     }
 
+    /// @dev #1566 sanctions reward-forfeit — the expiry clock's SANCTIONS test,
+    ///      at the seam in front of the hosted walk instead of inside it. When
+    ///      entry `id` is still before its removal point and its owner is
+    ///      barred, record the observed block ({noteNonExecutableObservation})
+    ///      and report true, so the stub skips the self-call.
+    ///
+    ///      WHY {LibVaipakam.isRecipientBarred} and not the fail-open
+    ///      {LibVaipakam.isSanctionedAddress} the walk used to read: it is the
+    ///      predicate the claim gate refuses on, so the clock pauses exactly
+    ///      when the claim is refused — including a wallet that carries a
+    ///      confirmed flag while the oracle is unreachable, whose claim is now
+    ///      refused and whose clock the fail-open read kept running. The
+    ///      countdown mirror ({_entryExecutableNow}) reads the same predicate.
+    ///
+    ///      WHY at the seam: the barred read inlines the oracle legs, and
+    ///      keeping them off the walk's host (`RewardSweepWalkFacet`) keeps that
+    ///      host's EIP-170 room for the day primitive; here it is inlined once
+    ///      into the facade's host,
+    ///      inside this stub, so it adds no slot to the facade's loop frame
+    ///      (at the viaIR ceiling). {callSweepExpiredEntryWalk} is the ONLY
+    ///      path into `epochSweepExpiredEntry`, so screening here screens the
+    ///      walk; a new caller of {sweepExpiredEntry} must enter through it.
+    ///
+    ///      SCOPE = the walk's own pre-removal gate. A processed entry is a
+    ///      no-op in the walk too, and a REMOVED one (`expiryBegun`) must keep
+    ///      settling whoever its owner is — its claim is already closed and
+    ///      part of its value already in the bucket — so neither is screened.
+    ///      The seam fires ahead of some early returns the walk had (feature
+    ///      dark, forfeited, not claimable, cursor behind); there it can only
+    ///      mark blocked an interval the walk would have left alone, so the
+    ///      clock credits less, never more.
+    ///
+    ///      COUPLING — refresh the two hosts TOGETHER: this seam is inlined into
+    ///      `RewardHorizonSweepFacet` (the only caller of
+    ///      {callSweepExpiredEntryWalk}) and REPLACES the walk's own sanctions
+    ///      term, which `RewardSweepWalkFacet` no longer carries. So
+    ///      `RewardSweepWalkFacet` must never be refreshed without
+    ///      `RewardHorizonSweepFacet`: a new walk behind an old facade screens
+    ///      on neither side (the old facade has no seam, the new walk no term).
+    function _barredObservation(uint256 id) private returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed || e.expiryBegun || !LibVaipakam.isRecipientBarred(e.user)) return false;
+        noteNonExecutableObservation(s, id);
+        return true;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — {sweepExpiredEntry} reached through the Diamond
+    ///      on `RewardSweepWalkFacet`; the legs the walk folds are returned and
+    ///      copied back. #1566 — preceded by the sanctions seam
+    ///      ({_barredObservation}): a barred owner's entry records the observed
+    ///      block and returns zeros without the self-call. The seam lives HERE,
+    ///      inside the stub, so it adds no local to the facade's loop.
     function callSweepExpiredEntryWalk(
         uint256 id,
         uint256 freshHeadroom,
         uint256 deliveredAllowance,
         TransportLegs memory tp
     ) internal returns (EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
+        if (_barredObservation(id)) return (expired, 0, 0);
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
                 "epochSweepExpiredEntry(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
@@ -1652,12 +2040,20 @@ library LibInteractionRewards {
     function callClaimEntriesWalk(
         address user,
         uint256 freshBudget,
+        uint256 legacyFresh,
         uint256 windowFreshReserved,
+        uint256 backingRoom,
         LibVaipakam.RewardDelivery deliverTo
     ) internal returns (ClaimEntriesResult memory res) {
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
-                "epochClaimEntriesWalk(address,uint256,uint256,uint8)", user, freshBudget, windowFreshReserved, deliverTo
+                "epochClaimEntriesWalk(address,uint256,uint256,uint256,uint256,uint8)",
+                user,
+                freshBudget,
+                legacyFresh,
+                windowFreshReserved,
+                backingRoom,
+                deliverTo
             )
         );
         if (!ok) {
@@ -1717,33 +2113,73 @@ library LibInteractionRewards {
     function claimForUserEntries(
         address user,
         uint256 freshBudget,
+        uint256 legacyFresh,
         uint256 windowFreshReserved,
+        uint256 backingRoom,
         LibVaipakam.RewardDelivery deliverTo
     ) internal returns (ClaimEntriesResult memory res) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // The live BACKING room the armed days may draw against (Codex
-        // #2276), read before anything in this claim moves. The walk is
-        // hosted (3b-ii-A2), so the host reads it here rather than the claim
-        // facet threading it across the self-call.
-        uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
+        // #1351 (re-land of 2c on the 2d-0 core) — every entry's pre-`D*` slice
+        // was paid O(1) by {settleLegacySlices} in the claim body; the armed
+        // days are priced per-day against the D1 ceiling here.
+        //
+        // Codex #1404 P2 — the walk's FRESH budget is net of the legacy fresh
+        // the claim has ALREADY committed (`legacyFresh`, {legacyFreshOf}).
+        // Both draw on the same 69M pool, and the facet scales the aggregate
+        // down if it overruns; without this the walk would price days against
+        // a budget the legacy leg has already spoken for, then persist cursors
+        // and D1 charges for value the scaler never actually transfers —
+        // retiring the commitment while dropping the payout. It is net of the
+        // part the slices' epochs funded (A2-ii (c)) — the facet nets the same
+        // legs out of the live charge, so the walk's budget and the charge
+        // agree. `backingRoom` is the live room read BEFORE anything in the
+        // claim moved (Codex #2276), by {settleLegacySlices}.
+        (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
+            _walkShareOfPoolDays(
+                s, user, freshBudget, legacyFresh, windowFreshReserved, res, backingRoom, deliverTo
+            );
+        _foldSplit(res.toUser, wu);
+        _foldSplit(res.toTreasury, wt);
+        res.advancedAnyDay = walked;
+    }
+
+    /// @notice #1566 host split — the claim's LEGACY (pre-`D*`) slices, settled
+    ///         on their own host (`RewardStagingDomainFacet`, reached by
+    ///         {callSettleLegacySlices}) rather than on the hosted walk, which
+    ///         prices the armed days alone ({claimForUserEntries}): the walk's
+    ///         facet sits at EIP-170. The order is unchanged — slices first,
+    ///         then the walk, in one transaction. Fills `toUser`, `toTreasury`, their epoch-funded
+    ///         transport legs and `advancedAnyDay` (a slice that stepped is
+    ///         progress); {foldEntriesResult} merges the walk's result in.
+    /// @return res         The slices' legs.
+    /// @return backingRoom The live BACKING room the armed days may draw
+    ///                     against (Codex #2276), read before anything in this
+    ///                     claim moves and handed to the walk.
+    function settleLegacySlices(address user)
+        internal
+        returns (ClaimEntriesResult memory res, uint256 backingRoom)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        backingRoom = LibVpfiRecycle.freshBackingRoom(s);
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
-        bool anyStepped; // a legacy slice stepped: progress, even when nothing paid
-        uint256 epochLegacy; // the legacy fresh the slices' epochs funded (not the live pool's)
 
         // #1008 (S13) — the §4 cap is baked into `cumMin*Rpn18` at finalization,
         // so the claim no longer reads the ETH feed / cap ratio here.
         for (uint256 i = 0; i < len; ) {
             (EntrySplit memory u, EntrySplit memory t, uint256 epochFresh, bool stepped) =
                 _processEntry(s, ids[i]);
-            if (stepped) anyStepped = true; // a legacy slice moved: the claim made progress
+            if (stepped) res.advancedAnyDay = true; // a legacy slice moved: the claim made progress
             if (epochFresh != 0) {
-                epochLegacy += epochFresh;
                 // The legacy slice's epoch-funded part (A2-ii (c)): a transport
                 // leg of the side the slice went to — delivered from the
-                // epochs' custody, charged to no live source.
-                if (u.total != 0) res.transport.userFresh += epochFresh;
-                else res.transport.treasuryFresh += epochFresh;
+                // epochs' custody, charged to no live source. A slice the
+                // sanctions rule SPLIT (#1566) went to both sides: the user's
+                // share takes the epoch funding first, the treasury's the rest
+                // (`epochFresh` never exceeds the slice, so neither overruns).
+                uint256 toU = epochFresh < u.total ? epochFresh : u.total;
+                res.transport.userFresh += toU;
+                res.transport.treasuryFresh += epochFresh - toU;
             }
             res.toUser.total += u.total;
             res.toUser.recycled += u.recycled;
@@ -1753,31 +2189,53 @@ library LibInteractionRewards {
             res.toTreasury.armedFresh += t.armedFresh;
             unchecked { ++i; }
         }
+    }
 
-        // #1351 (re-land of 2c on the 2d-0 core) — the loop above paid every
-        // entry's pre-`D*` slice O(1); the armed days are priced per-day
-        // against the D1 ceiling here.
-        //
-        // Codex #1404 P2 — the walk's FRESH budget is net of the legacy fresh
-        // this claim has ALREADY committed above. Both draw on the same 69M
-        // pool, and the facet scales the aggregate down if it overruns; without
-        // this the walk would price days against a budget the legacy leg has
-        // already spoken for, then persist cursors and D1 charges for value the
-        // scaler never actually transfers — retiring the commitment while
-        // dropping the payout.
-        // ... net of the part the slices' epochs funded (A2-ii (c)) — the facet
-        // nets the same legs out of the live charge, so the walk's budget and
-        // the charge agree.
-        uint256 legacyFresh =
-            (res.toUser.total - res.toUser.recycled) +
-            (res.toTreasury.total - res.toTreasury.recycled) - epochLegacy;
-        (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
-            _walkShareOfPoolDays(
-                s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport, backingRoom, deliverTo
-            );
-        _foldSplit(res.toUser, wu);
-        _foldSplit(res.toTreasury, wt);
-        res.advancedAnyDay = walked || anyStepped;
+    /// @dev {settleLegacySlices} reached through the Diamond on its host,
+    ///      `RewardStagingDomainFacet.epochSettleLegacySlices` — the facet that
+    ///      already hosts the legacy slice's domain and settle — by the claim
+    ///      body, whose frame has no room to inline the loop (viaIR stack) and
+    ///      whose walk's facet has no room for it (EIP-170). A failure re-raises
+    ///      the host's revert data unchanged, so a claimant sees the same error
+    ///      the inlined loop raised.
+    function callSettleLegacySlices(address user)
+        internal
+        returns (ClaimEntriesResult memory res, uint256 backingRoom)
+    {
+        (bool ok, bytes memory ret) =
+            address(this).call(abi.encodeWithSignature("epochSettleLegacySlices(address)", user));
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        (res, backingRoom) = abi.decode(ret, (ClaimEntriesResult, uint256));
+    }
+
+    /// @notice The legacy fresh the slices committed, net of the part their
+    ///         epochs funded — the walk's budget netting (Codex #1404 P2,
+    ///         A2-ii (c)). `res` is {settleLegacySlices}' result: its transport
+    ///         legs are the slices' epoch-funded fresh alone at that point.
+    function legacyFreshOf(ClaimEntriesResult memory res) internal pure returns (uint256) {
+        return (res.toUser.total - res.toUser.recycled) + (res.toTreasury.total - res.toTreasury.recycled)
+            - res.transport.userFresh - res.transport.treasuryFresh;
+    }
+
+    /// @notice Merge the walk's result `w` into the slices' `res` — every
+    ///         split and transport leg added, progress OR-ed, the walk's
+    ///         awaiting day taken (the slices have none).
+    function foldEntriesResult(ClaimEntriesResult memory res, ClaimEntriesResult memory w) internal pure {
+        _foldSplit(res.toUser, w.toUser);
+        _foldSplit(res.toTreasury, w.toTreasury);
+        res.transport.userFresh += w.transport.userFresh;
+        res.transport.userRecycled += w.transport.userRecycled;
+        res.transport.treasuryFresh += w.transport.treasuryFresh;
+        res.transport.treasuryRecycled += w.transport.treasuryRecycled;
+        res.transport.userEraFresh += w.transport.userEraFresh;
+        res.transport.treasuryEraFresh += w.transport.treasuryEraFresh;
+        res.advancedAnyDay = res.advancedAnyDay || w.advancedAnyDay;
+        res.awaitingDay = w.awaitingDay;
     }
 
     /// @dev #1351 (M2 PR-2) — the ShareOfPool day walk.
@@ -1832,7 +2290,7 @@ library LibInteractionRewards {
         uint256 freshBudget,
         uint256 legacyFreshReserved,
         uint256 windowFreshReserved,
-        TransportLegs memory tp,
+        ClaimEntriesResult memory res,
         uint256 backingRoom,
         LibVaipakam.RewardDelivery deliverTo
     )
@@ -1879,7 +2337,8 @@ library LibInteractionRewards {
             transport: TransportLegs({
                 userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0, userEraFresh: 0, treasuryEraFresh: 0
             }),
-            deliverTo: deliverTo
+            deliverTo: deliverTo,
+            awaitingDay: 0
         });
 
         for (uint8 sideIdx; sideIdx < 2; ) {
@@ -1906,12 +2365,16 @@ library LibInteractionRewards {
         // A pruned cursor is persisted progress too (Codex #2276 r4 P2).
         advancedAnyDay = ctx.advanced || ctx.pruned;
         // 3b-ii-A — hand the drawn legs to the caller.
-        tp.userFresh += ctx.transport.userFresh;
-        tp.userRecycled += ctx.transport.userRecycled;
-        tp.treasuryFresh += ctx.transport.treasuryFresh;
-        tp.treasuryRecycled += ctx.transport.treasuryRecycled;
-        tp.userEraFresh += ctx.transport.userEraFresh;
-        tp.treasuryEraFresh += ctx.transport.treasuryEraFresh;
+        res.transport.userFresh += ctx.transport.userFresh;
+        res.transport.userRecycled += ctx.transport.userRecycled;
+        res.transport.treasuryFresh += ctx.transport.treasuryFresh;
+        res.transport.treasuryRecycled += ctx.transport.treasuryRecycled;
+        res.transport.userEraFresh += ctx.transport.userEraFresh;
+        res.transport.treasuryEraFresh += ctx.transport.treasuryEraFresh;
+        // #1944 c1 — and the day a side parked on the delivery gate, through
+        // the same memory result: the caller passes `res` rather than its
+        // legs, so this costs the walk's frame no slot.
+        res.awaitingDay = ctx.awaitingDay;
     }
 
     /// @dev Entries of `user` on `side` that still owe ShareOfPool days.
@@ -2150,8 +2613,10 @@ library LibInteractionRewards {
             uint256[] memory set = _entriesAtDay(s, work, d);
             if (set.length == 0) break;
 
+            DayContext memory dc = _dayContext();
+            dc.sanctionedDay = LibRewardSanctions.dayForfeited(s, user, d);
             (DayCharge memory charge, DaySlice[] memory slices) =
-                processUserSideDay(user, d, set, ctx.pool, _dayContext());
+                processUserSideDay(user, d, set, ctx.pool, dc);
             // A day with a standing staging record is that record's to settle
             // (3b-ii-A2, #2305): the primitive priced nothing, the walk stops
             // here as it stops on a cap hit, and the claim keeps this as
@@ -2178,6 +2643,25 @@ library LibInteractionRewards {
             // whose funding was merely in flight. A cap-bound trim still
             // settles terminally and still advances.
             if (!charge.advanced) {
+                // #1944 c1 — name the day when THIS walk parked on the
+                // delivery gate, so the empty claim reverts by name rather
+                // than as "nothing to claim". The gate halts the side's FOLD,
+                // so the day it holds is the fold's next day (cursor + 1),
+                // which can sit below this entry day `d` when the claimant has
+                // no entry on it — naming `d` would then miss the wait. The
+                // candidate is parked in the context itself and kept only if
+                // that day really awaits a delivery, so this adds no stack
+                // slot; the first day named is kept. Off the gate it is one
+                // prefix read; on it, one staticcall per parked claim. Moves
+                // nothing.
+                if (ctx.awaitingDay == 0 && !_rpnReady(s, side, d)) {
+                    ctx.awaitingDay = 1 + (side == LibVaipakam.RewardSide.Lender
+                        ? s.cumLenderCursor
+                        : s.cumBorrowerCursor);
+                    if (!LibRewardCustody.callDayAwaitsFreshDelivery(s, uint8(side), ctx.awaitingDay)) {
+                        ctx.awaitingDay = 0;
+                    }
+                }
                 // 3b-ii-A — a cap-hit deferral prunes the day's cursor so the
                 // next attempt finds a fresh window; nothing is drawn. A
                 // cursor that moved is progress the claim keeps even when it
@@ -3282,11 +3766,14 @@ library LibInteractionRewards {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // #1566 — every chunk enters through {forfeitEntryChunkEvented}, whose
+        // own guard refuses an entry that is not forfeited (zeros, nothing
+        // touched), so these sites test only for a pointer.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
-        if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
+        if (lenderId != 0) {
             uint256 tBefore = tp.treasuryFresh;
             (uint256 f, uint256 r, uint256 o, uint256 d) =
-                _forfeitEntryChunk(
+                forfeitEntryChunkEvented(
                     s, lenderId, freshHeadroom, deliveredAllowance,
                     tp
                 );
@@ -3300,10 +3787,10 @@ library LibInteractionRewards {
             deliveredAllowance = deliveredAllowance > f ? deliveredAllowance - f : 0;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
-        if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
+        if (borrowerId != 0) {
             uint256 tBefore = tp.treasuryFresh;
             (uint256 f, uint256 r, uint256 o, uint256 d) =
-                _forfeitEntryChunk(
+                forfeitEntryChunkEvented(
                     s, borrowerId, freshHeadroom, deliveredAllowance,
                     tp
                 );
@@ -3318,13 +3805,14 @@ library LibInteractionRewards {
         }
         // #953 (Codex) — lender entries a position sale orphaned from the
         // active pointer. Forfeited by construction; a processed one adds 0.
+        // The forfeit test is the wrapper's own guard.
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
-            if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
+            {
                 uint256 tBefore = tp.treasuryFresh;
                 (uint256 f, uint256 r, uint256 o, uint256 d) =
-                    _forfeitEntryChunk(
+                    forfeitEntryChunkEvented(
                         s, orphaned[i], freshHeadroom, deliveredAllowance,
                         tp
                     );
@@ -3337,6 +3825,49 @@ library LibInteractionRewards {
                 deliveredAllowance = deliveredAllowance > f ? deliveredAllowance - f : 0;
             }
             unchecked { ++i; }
+        }
+    }
+
+    /// @notice #1566 — ONE forfeited entry's settlement chunk, GUARDED and
+    ///         EVENTED: the only entry into {_forfeitEntryChunk}, for the loan
+    ///         sweep's three sites ({sweepForfeitedByLoanId}). Same parameters
+    ///         and returns as the chunk.
+    /// @dev    The guard is HERE, not at the call sites (it used to sit only at
+    ///         the loan sweep's three): the chunk's armed branch keeps only the
+    ///         TREASURY legs and {_persistDay} advances the cursor, so a chunk
+    ///         run on a live entry would route a payable day to the recycle
+    ///         bucket and move the claimant's cursor past it. An entry that is
+    ///         not forfeited — by its own flag or by its loan's terminal
+    ///         state — returns zeros and touches
+    ///         nothing, whoever calls.
+    ///
+    ///         The event makes each settled chunk a per-entry row (every value
+    ///         move is an explicit row move with an event): it fires when the
+    ///         chunk moved anything — fresh credited, recycled released or
+    ///         armed commitment retired — and carries the chunk's own figures,
+    ///         at the forfeit route's untrimmed pricing
+    ///         ({RewardEntryForfeitSettled}).
+    function forfeitEntryChunkEvented(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    )
+        internal
+        returns (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        )
+    {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (!_isForfeited(s, e)) return (0, 0, 0, 0);
+        (freshCredited, recycledReleased, armedOwed, armedDelivered) =
+            _forfeitEntryChunk(s, id, freshHeadroom, deliveredAllowance, tp);
+        if ((freshCredited | recycledReleased | armedOwed) != 0) {
+            emit RewardEntryForfeitSettled(id, e.user, e.loanId, freshCredited, recycledReleased);
         }
     }
 
@@ -3467,7 +3998,7 @@ library LibInteractionRewards {
             // fresh outflow; a shortfall defers (no cursor stamp, no credit).
             if (legacyFresh > deliveredAllowance) return (0, 0, 0, 0);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
-            LibRewardCustody.callLegacySliceSettled(id);
+            LibRewardCustody.callLegacySliceSettled(id, 0, 0);
             tp.treasuryFresh += ef;
             return (legacyFresh + ef, 0, 0, 0);
         }
@@ -3644,6 +4175,23 @@ library LibInteractionRewards {
         unchecked { ++s.rewardLifecycleVersion[e.user][uint8(e.side)]; }
     }
 
+    /// @notice RL-3 — record an OBSERVED non-executable state of entry `id`'s
+    ///         expiry clock. ONE body for the walk's own executability gate
+    ///         ({sweepExpiredEntry}) and the sanctions seam in front of it
+    ///         ({_barredObservation}), so the two block the clock identically.
+    /// @dev    Before the first executable observation there is no clock to
+    ///         break, so an unstarted entry (`rewardEntryExecObsAt == 0`) stays
+    ///         unstarted and nothing is written. Afterwards the block is
+    ///         recorded and the stamp advances, so the interval spanning this
+    ///         OBSERVED outage — however short — is never credited on recovery
+    ///         (Codex #1317 r8). It reads the stamp itself rather than taking
+    ///         the caller's copy, so the seam needs no local of its own.
+    function noteNonExecutableObservation(LibVaipakam.Storage storage s, uint256 id) internal {
+        if (s.rewardEntryExecObsAt[id] == 0) return;
+        s.rewardEntryObsBlocked[id] = true;
+        s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+    }
+
     function _beginExpiry(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -3666,7 +4214,7 @@ library LibInteractionRewards {
      *         threshold ONLY if the entry was claim-executable at both ends
      *         AND the gap is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS` (short
      *         enough to trust as continuous). A longer gap — or any observed
-     *         non-executable state (unfunded / zero-payable / sanctioned) —
+     *         non-executable state (unfunded / zero-payable / sanctions-barred) —
      *         is never counted, so an unobserved outage can never let the
      *         clock run past a window the claimant could not actually claim.
      *
@@ -3674,7 +4222,8 @@ library LibInteractionRewards {
      *           - feature dark (`rewardClaimHorizonDays == 0`)        → no-op
      *           - processed / not claimable (finalization) / forfeited → no-op
      *           - not claim-EXECUTABLE now (zero post-cap payable, local
-     *             VPFI can't cover it, or owner sanctioned) → no-op, and do
+     *             VPFI can't cover it, or owner sanctions-barred — screened at the
+     *             seam, {_barredObservation}) → no-op, and do
      *             NOT advance the observation stamp (the outage interval
      *             will exceed the gap bound and stay uncredited)
      *           - executable, first observation → STAMP + start accumulator
@@ -3686,9 +4235,9 @@ library LibInteractionRewards {
      *             the entry and return its {EntrySplit} for source-split
      *             routing.
      *
-     *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
-     *         owns those; this sweep only ever expires PAYABLE value whose
-     *         owner never came back.
+     *         Forfeited entries are excluded — {sweepForfeitedByLoanId} owns
+     *         those; this sweep only ever expires PAYABLE value whose owner
+     *         never came back.
      * @param  freshHeadroom Remaining fresh-pool capacity the CALLER's
      *                       batch may still consume — the fresh share is
      *                       capped to it per entry, so a batch can never
@@ -3811,7 +4360,9 @@ library LibInteractionRewards {
         // could not have claimed. Blocked when:
         //   1. this entry's pool-capped payable is zero (a reap of it would
         //      recycle nothing — nothing a claim could pay for it),
-        //   2. the owner is sanctioned (the claim path rejects them),
+        //   2. the owner is barred by the sanctions screen (the claim path
+        //      rejects them) — tested at the seam in front of this walk
+        //      ({_barredObservation}) with the claim gate's own predicate,
         //   3. the protocol is paused (every claim reverts under the pause),
         //   4. the balance can't cover the user's whole aggregate claim.
         // Codex #1410 r7 P1 — advance ALL the user's cursors BEFORE the
@@ -3840,9 +4391,12 @@ library LibInteractionRewards {
             // aggregate ONCE and share it with every gate below.
             // `userClaimFundingNeed` stays for its own callers; inlining its
             // two steps here is what makes a swept entry pay for each walk a
-            // single time instead of twice. `userRewardEntryIds` never shrinks
-            // — processed ids stay in it — so the duplicate pass grew without
-            // bound for a long-lived account.
+            // single time instead of twice. `userRewardEntryIds` used to shrink
+            // only when a position transfer re-pointed an entry away (the
+            // swap-pop in {_removeUserEntry}) — processed ids stayed in it — so
+            // the duplicate pass grew without bound for a long-lived account;
+            // since Codex #2489 r17 settled ids are RETIRED from it lazily
+            // ({retireSettledUserEntries}), so the walks are O(unsettled).
             _advanceUserCursors(s, e.user);
             ArmedNeed memory need = _entryArmedNeed(id);
             // The transfer test is {_claimTransferable} — the ONE
@@ -3850,7 +4404,12 @@ library LibInteractionRewards {
             // on an activated deployment it is the holder's rows, and a
             // Diamond-balance test here would have held every entry's clock
             // unstarted while the holder fully covered the claim.
-            bool transferable = _claimTransferable(s, e.user, need);
+            // #1944 c1 — reached by Diamond STATICCALL on the lens, which
+            // already hosts the same body for the view mirror
+            // ({callClaimTransferable}): literally one body for the clock and
+            // its mirror, and this walk's host no longer inlines the window
+            // machinery the test pulls in.
+            bool transferable = callClaimTransferable(e.user, need);
             // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
             // predicate, not only at the terminal.
             //
@@ -3899,24 +4458,24 @@ library LibInteractionRewards {
             // that day, and the pause ends with the permissionless prune.
             // 3b-ii-A2 — nor one it would defer on a staging reservation of
             // a loan side; that pause ends with the record (Codex #2308 r4).
+            // #1566 sanctions reward-forfeit — the owner's sanctions bar is NOT
+            // tested here any more: {_barredObservation}, at the seam in front
+            // of the only path into this walk ({callSweepExpiredEntryWalk}),
+            // screens it before the self-call with the claim gate's own
+            // predicate ({LibVaipakam.isRecipientBarred}), which also bars a
+            // confirmed holder during an oracle outage — the fail-open read
+            // that stood here did not.
             bool executable = !_recycledDroughtWith(s, need.bucketRecycled) &&
                 !need.capHit &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
-                !LibVaipakam.isSanctionedAddress(e.user) &&
                 !LibPausable.paused() &&
                 transferable;
 
             if (!executable) {
-                // Observed non-executable. Before the first executable
-                // observation there is no clock to break (stay unstarted).
-                // Afterwards, record the block and advance the stamp so the
-                // interval spanning this OBSERVED outage — however short — is
-                // never credited on recovery (Codex #1317 r8).
-                if (lastObs != 0) {
-                    s.rewardEntryObsBlocked[id] = true;
-                    s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
-                }
+                // Observed non-executable: the one body the sanctions seam
+                // shares ({noteNonExecutableObservation}).
+                noteNonExecutableObservation(s, id);
                 return (expired, 0, 0);
             }
         }
@@ -4074,7 +4633,7 @@ library LibInteractionRewards {
                 return (expired, 0, 0);
             }
             _beginExpiry(s, id, e);
-            LibRewardCustody.callLegacySliceSettled(id);
+            LibRewardCustody.callLegacySliceSettled(id, 0, 0);
             tp.treasuryFresh += efW; // the epoch-funded part, absorbed in place by the host
             expired = whole;
             freshCredited = wholeFresh;
@@ -4136,7 +4695,7 @@ library LibInteractionRewards {
             // chunk moves value.
             if (legacyFresh != 0) _beginExpiry(s, id, e);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
-            LibRewardCustody.callLegacySliceSettled(id);
+            LibRewardCustody.callLegacySliceSettled(id, 0, 0);
             tp.treasuryFresh += efS; // the epoch-funded part, absorbed in place by the host
             s.rewardEntryExpiredAccum[id] += legacyFresh;
             expired.total = legacyFresh;
@@ -4487,10 +5046,10 @@ library LibInteractionRewards {
     ///                          earliest instant the entry could be reaped,
     ///                          assuming it stays continuously claim-executable
     ///                          from now (0 = dark, unstarted, OR already
-    ///                          processed). The on-chain sweep is
+    ///                          processed, removed or forfeited). The on-chain sweep is
     ///                          authoritative; this view only estimates.
     ///                          Removal is gated on claim-EXECUTABLE-elapsed
-    ///                          time, so a funding outage or sanction pauses
+    ///                          time, so a funding outage or a sanctions bar pauses
     ///                          the countdown (the pending heartbeat interval
     ///                          is folded in only while the entry is
     ///                          claim-executable now). The estimate errs
@@ -4522,7 +5081,11 @@ library LibInteractionRewards {
         // What remains after removal is settlement PROGRESS, not a claimant
         // deadline — and the removal signal (`RewardEntryExpiryBegun`) is the
         // event surface for that.
-        if (e.processed || e.expiryBegun) return (firstClaimableAt, 0);
+        // A FORFEITED entry (its own flag or its loan's terminal state) is
+        // never expired by the horizon sweep ({sweepExpiredEntry} returns at
+        // its forfeit gate): the loan forfeit sweep owns it, so it has no
+        // claimant deadline either.
+        if (e.processed || e.expiryBegun || _isForfeited(s, e)) return (firstClaimableAt, 0);
 
         uint256 hSec = uint256(horizonDays) * 1 days;
         uint256 elapsed = s.rewardEntryExecElapsed[id];
@@ -4538,7 +5101,7 @@ library LibInteractionRewards {
         ) {
             // Fold in the pending interval a sweep-now would credit — but
             // ONLY while the entry is claim-executable at this block (owner
-            // unsanctioned, pool-capped payable non-zero, balance covers it),
+            // not sanctions-barred, pool-capped payable non-zero, balance covers it),
             // mirroring the sweep's accrual gate. A blocked claimant's
             // countdown pauses here instead of ticking down through the block.
             // An interval that straddled a pause boundary is dropped, matching
@@ -4568,7 +5131,9 @@ library LibInteractionRewards {
     ///      {sweepExpiredEntry}'s accrual gate exactly: the accumulator
     ///      advances only while the CLAIMANT could claim the entry now —
     ///      mirroring the sweep gate exactly: the entry's own pool-capped share
-    ///      is payable, the owner is unsanctioned, the protocol is unpaused,
+    ///      is payable, the owner is not sanctions-barred (the claim gate's
+    ///      {LibVaipakam.isRecipientBarred}, which the sweep's seam reads too),
+    ///      the protocol is unpaused,
     ///      and the local balance covers the user's FULL aggregate claim (the
     ///      claim is atomic across all their entries + the legacy window).
     ///      #1499 — BACKING IS NOW PART OF THIS TEST, and the previous
@@ -4584,7 +5149,11 @@ library LibInteractionRewards {
         uint256 id,
         LibVaipakam.RewardEntry storage e
     ) internal view returns (bool) {
-        if (LibVaipakam.isSanctionedAddress(e.user)) return false;
+        // #1566 sanctions reward-forfeit — the claim gate's own predicate,
+        // which the sweep's seam ({_barredObservation}) reads too: a wallet
+        // carrying a confirmed flag while the oracle is unreachable is barred,
+        // so the countdown pauses with the claim it mirrors.
+        if (LibVaipakam.isRecipientBarred(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
         // Codex #1499 r5 P2 — ONE walk for the bound, shared with the funding
         // need below. Ordered so the cheap refusals still short-circuit ahead
@@ -4638,11 +5207,17 @@ library LibInteractionRewards {
     ///      not where reward funds rest — so every observation read
     ///      non-executable while the holder fully covered the claim, and no
     ///      entry could ever expire.
+    /// @dev #1944 c1 — `internal`, not `private`, because the body now has ONE
+    ///      host for both readers: `InteractionRewardsLensFacet` inlines it
+    ///      for {rewardEntryExpiry}'s view mirror ({_entryExecutableNow}) and
+    ///      exposes it as `claimTransferable`, which the authoritative clock in
+    ///      {sweepExpiredEntry} reaches by staticcall
+    ///      ({callClaimTransferable}). Nothing else should call it directly.
     function _claimTransferable(
         LibVaipakam.Storage storage s,
         address user,
         ArmedNeed memory need
-    ) private view returns (bool) {
+    ) internal view returns (bool) {
         // A staging reservation binds the claim as a deferral (3b-ii-A2,
         // #2305; Codex #2308 r3): fresh the claim would spend past what is
         // available now is not transferable, so no clock counts the interval.
@@ -4660,6 +5235,48 @@ library LibInteractionRewards {
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
             _userClaimFundingNeedViewWith(s, user, need);
+    }
+
+    /// @dev #1944 c1 (host split) — {_claimTransferable} through the Diamond,
+    ///      as a STATICCALL to `InteractionRewardsLensFacet.claimTransferable`,
+    ///      for the expiry sweep's walk ({sweepExpiredEntry}). WHY a seam and
+    ///      not the inlined test: the transfer test reaches the legacy window
+    ///      reserve ({_userFreshTotalCapped} -> {_userWindowFreshReserved} ->
+    ///      {clampToFinalized} and {previewForUserWindow}, the ETH feed read
+    ///      and the §4 cap among them) and the funding-need formula, and
+    ///      inlined they sat in `RewardSweepWalkFacet`, the walk host with the
+    ///      least EIP-170 room — room the delivery rung in the clamp would
+    ///      have overrun. The lens already inlines the same function for the
+    ///      clock's view mirror, so routing the clock through it makes "ONE
+    ///      transfer test for the expiry clock and its view mirror" literally
+    ///      one body (a clean host split, no byte-shaving). The callee reads
+    ///      this transaction's storage, the sweep's cursor advances included,
+    ///      so it answers exactly what the inlined call did; a view
+    ///      staticcall cannot trip the sweep's `nonReentrant` guard.
+    ///
+    ///      FAIL-CLOSED: an unrouted selector (a partially refreshed Diamond)
+    ///      or any revert in the lens bubbles, so the sweep reverts rather
+    ///      than reading "transferable" for a test it never ran — a clock
+    ///      never runs on an unperformed test. The tuple is {ArmedNeed}'s
+    ///      eight static members in declaration order (the same 256 bytes
+    ///      {_userArmedFreshNeedWithLegs} decodes); a member added to the
+    ///      struct must be added to this signature in the same diff, or the
+    ///      selector stops matching the lens and every sweep reverts.
+    function callClaimTransferable(address user, ArmedNeed memory need) internal view returns (bool) {
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSignature(
+                "claimTransferable(address,(uint256,uint256,uint256,uint256,uint256,bool,uint256,uint256))",
+                user,
+                need
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        return abi.decode(ret, (bool));
     }
 
     /// @dev The claim's capped FRESH total, assembled from the same exact
@@ -4708,9 +5325,10 @@ library LibInteractionRewards {
     ///      — so this fires exactly when that walk would defer a day on the
     ///      bucket, and no longer on a pre-cap bound that could over-pause
     ///      without end (Codex #2276 r1). Codex #1499 r5 P2 — computed ONCE
-    ///      per swept entry and threaded in: each walk is O(the user's whole
-    ///      entry list), which does not shrink, since processed ids stay in
-    ///      `userRewardEntryIds`.
+    ///      per swept entry and threaded in: each walk is O(the user's entry
+    ///      list) — the UNSETTLED entries since Codex #2489 r17, when settled
+    ///      ids began to be retired from `userRewardEntryIds` lazily
+    ///      ({retireSettledUserEntries}); before that the list never shrank.
     function _recycledDroughtWith(
         LibVaipakam.Storage storage s,
         uint256 recycledTotal
@@ -4922,6 +5540,13 @@ library LibInteractionRewards {
     ///         would route (Codex #2308 r23). An expiry's record passes its
     ///         operation here, so a healthy expiry day never reads stale for
     ///         the chargeability its own pricing stamped (A2-ii).
+    ///
+    ///         An ENTRY's routing, by its lifecycle. The #1566 sanctions rule
+    ///         routes a DAY on top of it (`DayContext.sanctionedDay`, set by the
+    ///         claim walk; a staged day's payout applies it itself), which is
+    ///         why a staging record's revalidation reads this and not that: a
+    ///         day that becomes forfeit after its reservation is forfeited at
+    ///         its payout, whatever the reservation priced.
     function entryRoutesToTreasury(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
@@ -5006,18 +5631,40 @@ library LibInteractionRewards {
 
     // ─── Legacy window claim (used by test mutators) ────────────────────────
 
+    /// @notice [LEGACY] What one walk of the per-day window produced: the
+    ///         reward PAID to the user, and the reward FORFEITED under the
+    ///         sanctions rule (Codex #2489 r4). One memory value so the claim
+    ///         frame, at the viaIR budget, carries both in one slot.
+    struct LegacyWindowResult {
+        uint256 paid;
+        uint256 forfeited;
+        /// @dev Set by the claim once the window ran (the clamp admitted a day):
+        ///      a memory field, not a frame local, because the claim frame is
+        ///      at the viaIR budget and a bool there costs a whole slot.
+        bool walked;
+    }
+
     /**
      * @notice [LEGACY] Walk finalized days in `[fromDay .. toDayInclusive]`
      *         and accumulate `user`'s VPFI reward from the per-day
      *         counter API. Deletes per-user per-day counters as it goes
      *         so the claim is idempotent. Coexists with the new entry
      *         claim path — the facet sums both.
+     *
+     *         A day the claimant earned while a CONFIRMED flag stood is
+     *         priced exactly as a paid day and returned as FORFEITED (Codex
+     *         #2489 r4): the spec routes every reward earned in a confirmed
+     *         window into the recycle bucket, so the facet charges it to the
+     *         pool and credits the bucket as forfeited reward, the way the
+     *         entry path's forfeits go. Clearing the counters unpaid — the
+     *         earlier reading, "never committed, so it stays in the pool" —
+     *         treated it as never emitted instead.
      */
     function claimForUserWindow(
         address user,
         uint256 fromDay,
         uint256 toDayInclusive
-    ) internal returns (uint256 total) {
+    ) internal returns (LegacyWindowResult memory w) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 capRatio = LibVaipakam.getInteractionCapVpfiPerEth();
         (uint256 ethPriceRaw, uint8 ethPriceDec) = _ethUsdPriceRawAndDec();
@@ -5033,35 +5680,50 @@ library LibInteractionRewards {
                 unchecked { ++d; }
                 continue;
             }
-            uint256 half = halfPoolForDay(d);
-            if (half > 0) {
-                (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
-                uint256 myL = s.userLenderInterestNumeraire18[d][user];
-                if (myL > 0 && totalL > 0) {
-                    uint256 raw = (half * myL) / totalL;
-                    uint256 cap = _capVpfiForInterestUsd(
-                        myL,
-                        ethPriceRaw,
-                        ethPriceDec,
-                        capRatio
-                    );
-                    total += raw < cap ? raw : cap;
-                    delete s.userLenderInterestNumeraire18[d][user];
-                }
-                uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
-                if (myB > 0 && totalB > 0) {
-                    uint256 raw = (half * myB) / totalB;
-                    uint256 cap = _capVpfiForInterestUsd(
-                        myB,
-                        ethPriceRaw,
-                        ethPriceDec,
-                        capRatio
-                    );
-                    total += raw < cap ? raw : cap;
-                    delete s.userBorrowerInterestNumeraire18[d][user];
-                }
-            }
+            uint256 amount = _legacyDayLegs(s, user, d, capRatio, ethPriceRaw, ethPriceDec);
+            if (LibRewardSanctions.dayForfeited(s, user, d)) w.forfeited += amount;
+            else w.paid += amount;
             unchecked { ++d; }
+        }
+    }
+
+    /// @dev ONE pricing of a legacy day's two legs — the paid and the
+    ///      forfeited branch of {claimForUserWindow} must price identically,
+    ///      so they share it. Each side's fresh half comes through THE one
+    ///      derivation, {_sideFreshHalf} (#1944 c1: the Base stamp once it has
+    ///      landed, zero for an excluded destination, the schedule before);
+    ///      `half` is assigned for the lender leg and REASSIGNED for the
+    ///      borrower leg, so the frame gains no local. On the claim route a day
+    ///      still awaiting its delivery never reaches here: {clampToFinalized}
+    ///      stops before it. Deletes each leg's counter it priced.
+    function _legacyDayLegs(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 d,
+        uint256 capRatio,
+        uint256 ethPriceRaw,
+        uint8 ethPriceDec
+    ) private returns (uint256 amount) {
+        uint256 half = _sideFreshHalf(
+            s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Lender, d
+        );
+        (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
+        uint256 myL = s.userLenderInterestNumeraire18[d][user];
+        if (half > 0 && myL > 0 && totalL > 0) {
+            uint256 raw = (half * myL) / totalL;
+            uint256 cap = _capVpfiForInterestUsd(myL, ethPriceRaw, ethPriceDec, capRatio);
+            amount += raw < cap ? raw : cap;
+            delete s.userLenderInterestNumeraire18[d][user];
+        }
+        half = _sideFreshHalf(
+            s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Borrower, d
+        );
+        uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
+        if (half > 0 && myB > 0 && totalB > 0) {
+            uint256 raw = (half * myB) / totalB;
+            uint256 cap = _capVpfiForInterestUsd(myB, ethPriceRaw, ethPriceDec, capRatio);
+            amount += raw < cap ? raw : cap;
+            delete s.userBorrowerInterestNumeraire18[d][user];
         }
     }
 
@@ -5077,33 +5739,39 @@ library LibInteractionRewards {
         for (uint256 d = fromDay; d <= toDayInclusive; ) {
             // #1353 (M2 PR-5c) — mirror {claimForUserWindow}: an armed (post-`D*`)
             // day never pays via the legacy window (ShareOfPool entry path only),
-            // so the preview must not credit it either (Codex #1371 r4).
-            if (_isArmedDay(s, d)) { unchecked { ++d; } continue; }
-            uint256 half = halfPoolForDay(d);
-            if (half > 0) {
-                (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
-                uint256 myL = s.userLenderInterestNumeraire18[d][user];
-                if (myL > 0 && totalL > 0) {
-                    uint256 raw = (half * myL) / totalL;
-                    uint256 cap = _capVpfiForInterestUsd(
-                        myL,
-                        ethPriceRaw,
-                        ethPriceDec,
-                        capRatio
-                    );
-                    total += raw < cap ? raw : cap;
-                }
-                uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
-                if (myB > 0 && totalB > 0) {
-                    uint256 raw = (half * myB) / totalB;
-                    uint256 cap = _capVpfiForInterestUsd(
-                        myB,
-                        ethPriceRaw,
-                        ethPriceDec,
-                        capRatio
-                    );
-                    total += raw < cap ? raw : cap;
-                }
+            // so the preview must not credit it either (Codex #1371 r4); nor a
+            // day the claim forfeits under the sanctions rule.
+            if (_isArmedDay(s, d) || LibRewardSanctions.dayForfeited(s, user, d)) { unchecked { ++d; } continue; }
+            // #1944 c1 (S1-R1) — mirror {claimForUserWindow}: each side's
+            // fresh half through {_sideFreshHalf}, `half` reassigned per leg.
+            uint256 half = _sideFreshHalf(
+                s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Lender, d
+            );
+            (uint256 totalL, uint256 totalB) = _denominatorsForDay(s, d);
+            uint256 myL = s.userLenderInterestNumeraire18[d][user];
+            if (half > 0 && myL > 0 && totalL > 0) {
+                uint256 raw = (half * myL) / totalL;
+                uint256 cap = _capVpfiForInterestUsd(
+                    myL,
+                    ethPriceRaw,
+                    ethPriceDec,
+                    capRatio
+                );
+                total += raw < cap ? raw : cap;
+            }
+            half = _sideFreshHalf(
+                s.chainDayRecycledFunding[d][uint32(block.chainid)], LibVaipakam.RewardSide.Borrower, d
+            );
+            uint256 myB = s.userBorrowerInterestNumeraire18[d][user];
+            if (half > 0 && myB > 0 && totalB > 0) {
+                uint256 raw = (half * myB) / totalB;
+                uint256 cap = _capVpfiForInterestUsd(
+                    myB,
+                    ethPriceRaw,
+                    ethPriceDec,
+                    capRatio
+                );
+                total += raw < cap ? raw : cap;
             }
             unchecked { ++d; }
         }
@@ -5122,17 +5790,33 @@ library LibInteractionRewards {
     /// @notice Truncate `[fromDay .. toDayInclusive]` to the longest
     ///         CONTIGUOUS prefix starting at `fromDay` for which the
     ///         cross-chain global denominator has landed here.
+    /// @dev    #1944 c1 — rung B, the window's half of the delivery gate: the
+    ///         prefix also stops at the first day that still AWAITS a fresh
+    ///         delivery for either side
+    ///         ({LibRewardCustody.callDayAwaitsFreshDelivery}, side 2). This
+    ///         clamp is the one reader of the finalization gate outside the
+    ///         cursor folds (rung A, {_dayPoolHalves}), so one test here covers
+    ///         the window claim, its preview, the claim oracle and the window
+    ///         reserve every executability gate nets
+    ///         ({_userWindowFreshReserved}): the expiry clock, its view mirror,
+    ///         the static armed-need read and the entry preview all stop where
+    ///         the claim does. An armed day inside the range halts the prefix
+    ///         too (the window pays nothing on one anyway), so the claimant's
+    ///         window cursor stops at the day before it and the claim facet
+    ///         names the wait. Nothing is paid or moved on the hold.
     function clampToFinalized(
         uint256 fromDay,
         uint256 toDayInclusive
     ) internal view returns (uint256 effectiveTo, bool any) {
         if (fromDay > toDayInclusive) return (0, false);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.knownGlobalSet[fromDay]) return (0, false);
+        if (!s.knownGlobalSet[fromDay] || LibRewardCustody.callDayAwaitsFreshDelivery(s, 2, fromDay)) {
+            return (0, false);
+        }
         effectiveTo = fromDay;
         any = true;
         for (uint256 d = fromDay + 1; d <= toDayInclusive; ) {
-            if (!s.knownGlobalSet[d]) break;
+            if (!s.knownGlobalSet[d] || LibRewardCustody.callDayAwaitsFreshDelivery(s, 2, d)) break;
             effectiveTo = d;
             unchecked { ++d; }
         }
@@ -5423,7 +6107,7 @@ library LibInteractionRewards {
             if (st.emptyWindow) {
                 e.processed = true;
                 noteEntryLifecycle(s, e);
-                LibRewardCustody.callLegacySliceSettled(id); // a domain it opened holds nothing: dropped
+                LibRewardCustody.callLegacySliceSettled(id, 0, 0); // a domain it opened holds nothing: dropped
             }
             return (toUser, toTreasury, 0, stepped);
         }
@@ -5441,7 +6125,87 @@ library LibInteractionRewards {
         // armed tail is still owed. The slice's domain hands its held
         // aggregate back to the payout's row and is gone (A2-ii (c)).
         s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
-        LibRewardCustody.callLegacySliceSettled(id);
+        // #1566 sanctions rule (owner 2026-10-14) — the slice settles on its
+        // host, which also returns the part of the owner's slice earned while
+        // a CONFIRMED flag stood ({legacyWindowShareFull}): forfeited, routed to
+        // the treasury legs. Zero for a forfeited entry (nothing to split).
+        uint256 w = LibRewardCustody.callLegacySliceSettled(id, armedFrom, toUser.total);
+        toUser.total -= w;
+        toTreasury.total += w;
+    }
+
+    /// @notice The part of entry `id`'s legacy slice over the days `[lo, hi)`,
+    ///         capped at `slice`, that its owner earned while a CONFIRMED flag
+    ///         stood: the same telescoping MIN curve {legacyDayNeed} steps,
+    ///         differenced over each window's intersection with the slice and
+    ///         times the entry's per-day numeraire. The recorded windows are
+    ///         sorted by first day and non-overlapping
+    ///         ({LibRewardSanctions._recordWindow} merges touching ones), so the
+    ///         scan binary-searches the first window that reaches `lo` and stops
+    ///         at the first that starts past `hi - 1` — bounded by the windows
+    ///         the slice actually meets, not the wallet's whole listing history
+    ///         (Codex #2489 r7) — then reads the live chain's own window, the
+    ///         one slot that may overlap a recorded one; a running
+    ///         first-uncounted day keeps a shared day from counting twice. Day
+    ///         0 has no step. Read only after the whole window priced, so the
+    ///         curve has reached `hi - 1`. Run on its host only
+    ///         (`RewardHorizonSweepFacet.rewardSanctionsLegacyWindowShare`),
+    ///         which the legacy slice's settle
+    ///         (`RewardStagingDomainFacet.legacySliceSettledInternal`, reached by
+    ///         {_processEntry} and {_processEntryWhole} as the slice settles)
+    ///         asks for an owner with sanctions history.
+    function legacyWindowShareFull(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        uint256 lo,
+        uint256 hi,
+        uint256 slice
+    ) internal view returns (uint256 share) {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (hi <= lo || slice == 0) return 0;
+        uint256 next = lo == 0 ? 1 : lo;
+        uint256[] storage recorded = s.rewardSanctionsWindows[e.user];
+        uint256 n = recorded.length;
+        // First recorded window whose last day reaches `next`.
+        uint256 i;
+        {
+            uint256 top = n;
+            while (i < top) {
+                uint256 mid = (i + top) >> 1;
+                (, uint256 to) = LibRewardSanctions.unpackWindow(recorded[mid]);
+                if (to < next) i = mid + 1;
+                else top = mid;
+            }
+        }
+        for (; i < n; ) {
+            (uint256 a, uint256 b) = LibRewardSanctions.unpackWindow(recorded[i]);
+            if (a > hi - 1) break;
+            (share, next) = _windowShareStep(s, e, a, b, next, hi, share);
+            unchecked { ++i; }
+        }
+        (bool ok, uint256 la, uint256 lb) = LibRewardSanctions.windowAt(s, e.user, n);
+        if (ok) (share, next) = _windowShareStep(s, e, la, lb, next, hi, share);
+        if (share > slice) share = slice;
+    }
+
+    /// @dev One window's contribution to {legacyWindowShareFull}: its days in
+    ///      `[next, hi)`, differenced on the entry side's MIN curve.
+    function _windowShareStep(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        uint256 a,
+        uint256 b,
+        uint256 next,
+        uint256 hi,
+        uint256 share
+    ) private view returns (uint256, uint256) {
+        if (a < next) a = next;
+        if (b > hi - 1) b = hi - 1;
+        if (a > b) return (share, next);
+        uint256 step = e.side == LibVaipakam.RewardSide.Lender
+            ? s.cumMinLenderRpn18[b] - s.cumMinLenderRpn18[a - 1]
+            : s.cumMinBorrowerRpn18[b] - s.cumMinBorrowerRpn18[a - 1];
+        return (share + (e.perDayNumeraire18 * step) / 1e18, b + 1);
     }
 
     /// @dev The WHOLE-WINDOW entry settle: flips `processed = true` and
@@ -5516,7 +6280,7 @@ library LibInteractionRewards {
             if (st.emptyWindow) {
                 e.processed = true;
                 noteEntryLifecycle(s, e);
-                LibRewardCustody.callLegacySliceSettled(id); // a domain it opened holds nothing: dropped
+                LibRewardCustody.callLegacySliceSettled(id, 0, 0); // a domain it opened holds nothing: dropped
             }
             return (toUser, toTreasury, 0, stepped);
         }
@@ -5525,14 +6289,18 @@ library LibInteractionRewards {
         noteEntryLifecycle(s, e);
         // Settled: the slice's domain hands its held aggregate back to the
         // payout's row and is gone; the caller routes `epochFresh` as the
-        // transport leg of whichever side the slice went to.
-        LibRewardCustody.callLegacySliceSettled(id);
+        // transport leg of whichever side the slice went to. #1566 sanctions
+        // rule — the host also returns the part of the owner's slice (no armed
+        // tail: the whole window) earned while a CONFIRMED flag stood.
+        uint256 w = LibRewardCustody.callLegacySliceSettled(id, e.endDay, st.forfeit ? 0 : toUser.total);
         uint256 wholeFresh = st.rawSplit.total - st.rawSplit.recycled;
         if (epochFresh > wholeFresh) epochFresh = wholeFresh;
         if (st.forfeit) {
             _accrueForfeitArmedDays(s, id, e, st.rawSplit);
             return (toUser, toTreasury, epochFresh, stepped);
         }
+        toUser.total -= w;
+        toTreasury.total += w;
         if (c.stamped) {
             uint8 sideW = uint8(e.side);
             s.loanSideRewardedDays[e.loanId][sideW] = c.daysIncl;
@@ -6767,6 +7535,11 @@ library LibInteractionRewards {
         ///      bound on a record this walk opens or extends; `Default` binds
         ///      nothing. On the context so the stage call adds no stack slot.
         LibVaipakam.RewardDelivery deliverTo;
+        /// @dev #1944 c1 — the FIRST day a side walk parked on the mirror
+        ///      delivery gate, 0 when none; handed up as
+        ///      {ClaimEntriesResult.awaitingDay}. On the context so naming the
+        ///      day costs the walk's frames no stack slot.
+        uint256 awaitingDay;
     }
 
     /// @dev The day primitive's settlement CONTEXT (A2-iii). It was the dry
@@ -6811,6 +7584,15 @@ library LibInteractionRewards {
         ///      legs rather than allocating anew; a first pricing allocates live.
         bool eraPrepared;
         uint256 preparedEraFresh;
+        /// @dev #1566 sanctions rule (owner 2026-10-14) — the claimant earned
+        ///      this day while a CONFIRMED flag stood
+        ///      ({LibRewardSanctions.dayForfeited}): every entry's share routes
+        ///      to the treasury (forfeit) legs. Set by the claim walk's day loop
+        ///      ({_walkSideDays}), the one path that SETTLES a claimant's day
+        ///      directly; a STAGED day is settled by its record's payout, which
+        ///      applies the same predicate itself (`LibRewardStaging._pay`), and
+        ///      the forfeit and expiry walks route to the treasury regardless.
+        bool sanctionedDay;
     }
 
     /// @dev The settling callers' context: nothing set. Internal so the test
@@ -6945,7 +7727,7 @@ library LibInteractionRewards {
             // re-derived the D1 obligation by hand — three rounds of review,
             // three different wrong quantities. It now asks the one component
             // that owns the concept.
-            bool isForfeit = entryRoutesToTreasury(s, e, dry.recycleSettlement);
+            bool isForfeit = entryRoutesToTreasury(s, e, dry.recycleSettlement) || dry.sanctionedDay;
             slices[i].loanSideChargeable = !isForfeit;
             if (isForfeit) {
                 cEff[i] = v;

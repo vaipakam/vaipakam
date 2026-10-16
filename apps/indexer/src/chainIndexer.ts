@@ -106,8 +106,13 @@ import {
 } from './marketSummary';
 import {
   materializeNotifications,
+  notifiedFloor,
+  notifiedFrontier,
+  type NotifiedPlan,
   notificationInsertStatement,
+  planNotifiedWatermark,
   planReconciledNotifications,
+  replayNotificationsFromArchive,
 } from './notifications';
 import {
   applyRewardLoopLedger,
@@ -204,14 +209,139 @@ export const CURSOR_KIND = 'diamond';
  *  materialization. */
 const NOTIFIED_CURSOR_KIND = 'notified';
 
-/** Upsert the notified watermark. Fail-open: a missed stamp just makes
- *  the keeper's band pass defer a tick (its staleness gate), never
- *  fails a scan whose authoritative writes already landed. */
+/** Security review of #2489 — the PROVEN-WRITTEN frontier of the inbox rows,
+ *  kept apart from `notified`: `notified` is the keeper's freshness signal and
+ *  advances only at a caught-up scan tail, while this one advances on EVERY
+ *  pass whose insert succeeded (and is held/lowered by the same floor rule on
+ *  a failure). The replay planner starts from the HIGHER of the two, so a
+ *  multi-tick catch-up whose every insert landed no longer re-derives its
+ *  whole window at the head pass — a replay re-plans against the CURRENT loan
+ *  state (status, position owners), so a routine replay could mint a row that
+ *  was not true at the event; it is now reserved for ranges whose rows are
+ *  genuinely unproven. */
+const NOTIFIED_WRITTEN_CURSOR_KIND = 'notified-written';
+
+/** The stored cursor of `kind`, or null when never stamped. */
+async function readNotifiedCursor(env: Env, chainId: number, kind: string): Promise<bigint | null> {
+  const row = await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
+    .bind(chainId, kind)
+    .first<{ last_block: number }>();
+  return row ? BigInt(row.last_block) : null;
+}
+
+/** The highest block whose inbox rows are PROVEN written: the keeper-facing
+ *  stamp or the written frontier, whichever is higher ({@link notifiedFrontier}). */
+async function readNotifiedWatermark(env: Env, chainId: number): Promise<bigint | null> {
+  const [stamp, written] = await Promise.all([
+    readNotifiedCursor(env, chainId, NOTIFIED_CURSOR_KIND),
+    readNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND),
+  ]);
+  return notifiedFrontier(stamp, written);
+}
+
+/**
+ * Advance the notified watermark to `through` — and FIRST make it true
+ * (Codex #2489 r3, r4). `scanFrom` is the first block this tick scanned (null
+ * on a quiet tick) and `wroteOk` whether its `materializeNotifications`
+ * insert succeeded. Any archived event between the stored watermark and the
+ * rows this tick wrote may have no inbox row, so its rows are re-derived from
+ * `activity_events` before the stamp ({@link planNotifiedWatermark} for the
+ * exact window); a replay whose own insert fails leaves the watermark where
+ * it was, and the next tick tries again. Fail-open for the scan: a missed
+ * stamp makes the keeper's band pass defer a tick (its staleness gate),
+ * never fails a scan whose authoritative writes already landed.
+ */
 async function stampNotifiedWatermark(
   env: Env,
   chainId: number,
-  block: bigint,
+  through: bigint,
+  scanFrom: bigint | null,
+  wroteOk: boolean,
 ): Promise<void> {
+  let plan: NotifiedPlan;
+  try {
+    plan = planNotifiedWatermark(await readNotifiedWatermark(env, chainId), through, scanFrom, wroteOk);
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark read failed — the watermark holds', err);
+    return;
+  }
+  let stampTo: bigint;
+  try {
+    if (plan.replayAfter !== undefined && plan.replayThrough !== undefined) {
+      const n = await replayNotificationsFromArchive(
+        env.DB,
+        chainId,
+        plan.replayAfter,
+        plan.replayThrough,
+        Math.floor(Date.now() / 1000),
+      );
+      console.warn(
+        `[chainIndexer] notifications replayed from the archive on chain ${chainId}: blocks ` +
+          `${plan.replayAfter + 1n}..${plan.replayThrough}, ${n} row(s) inserted`,
+      );
+    }
+    stampTo = plan.stampTo;
+  } catch (err) {
+    // The watermark holds — and when this tick's own insert failed above a
+    // stored stamp (or no stamp), "holds" means LOWERED to just below the
+    // failed scan, or the failure leaves no record (Codex #2489 r6). Both
+    // cursors, so neither can sit above an unproven range.
+    console.error('[chainIndexer] notified-watermark replay failed — the watermark holds', err);
+    if (plan.holdAt !== undefined) {
+      await _writeNotifiedWatermark(env, chainId, plan.holdAt);
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, plan.holdAt);
+    }
+    return;
+  }
+  await _writeNotifiedWatermark(env, chainId, stampTo);
+  await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, stampTo);
+}
+
+/**
+ * A catch-up pass short of the head whose insert SUCCEEDED advances the
+ * written frontier to the pass's end (security review of #2489) — never the
+ * keeper-facing `notified` stamp, which keeps its "current through the head"
+ * meaning — so the head pass replays only what is still unproven.
+ */
+async function advanceNotifiedWritten(env: Env, chainId: number, through: bigint): Promise<void> {
+  try {
+    const written = await readNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND);
+    if (written === null || written < through) {
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, through);
+    }
+  } catch (err) {
+    console.error('[chainIndexer] notified-written advance failed', err);
+  }
+}
+
+/**
+ * A catch-up pass short of the head stamps nothing forward (the stamp means
+ * "current through the head" to its readers), but a FAILED insert on such a
+ * pass must still be remembered (Codex #2489 r6): the same floor rule as the
+ * head pass pins the watermark just below the failed scan, initializing it on
+ * a never-stamped chain, so the pass that reaches the head replays from there
+ * instead of stamping straight through a multi-tick catch-up's lost rows.
+ */
+async function holdNotifiedWatermark(env: Env, chainId: number, scanFrom: bigint): Promise<void> {
+  try {
+    const hold = notifiedFloor(await readNotifiedWatermark(env, chainId), scanFrom, false);
+    if (hold !== null) {
+      await _writeNotifiedWatermark(env, chainId, hold);
+      await _writeNotifiedCursor(env, chainId, NOTIFIED_WRITTEN_CURSOR_KIND, hold);
+    }
+  } catch (err) {
+    console.error('[chainIndexer] notified-watermark hold failed', err);
+  }
+}
+
+/** The raw upsert behind {@link stampNotifiedWatermark} (the keeper-facing kind). */
+async function _writeNotifiedWatermark(env: Env, chainId: number, block: bigint): Promise<void> {
+  await _writeNotifiedCursor(env, chainId, NOTIFIED_CURSOR_KIND, block);
+}
+
+/** The raw upsert for either notified cursor kind. No monotonic guard on
+ *  purpose: the hold/lower paths rely on writing BELOW the stored value. */
+async function _writeNotifiedCursor(env: Env, chainId: number, kind: string, block: bigint): Promise<void> {
   try {
     await env.DB.prepare(
       `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -222,13 +352,13 @@ async function stampNotifiedWatermark(
     )
       .bind(
         chainId,
-        NOTIFIED_CURSOR_KIND,
+        kind,
         blockToNumber(block),
         Math.floor(Date.now() / 1000),
       )
       .run();
   } catch (err) {
-    console.error('[chainIndexer] notified-watermark stamp failed', err);
+    console.error(`[chainIndexer] ${kind} cursor stamp failed`, err);
   }
 }
 
@@ -2082,8 +2212,9 @@ async function runChainPass(
       Number(settledHead.timestamp),
     );
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
-    // valid "notifications complete through lastBlock" point too.
-    await stampNotifiedWatermark(env, chainId, lastBlock);
+    // valid "notifications complete through lastBlock" point too — once any
+    // gap a failed insert left below it has been replayed (#2489 r3).
+    await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
@@ -2407,7 +2538,17 @@ async function runChainPass(
     ? reconcileOutcome.repairedLoanIds
     : [];
 
-  await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+  // Fail-open for the SCAN (the cursor above already advanced on the
+  // authoritative writes), but remembered: a failed insert holds the
+  // `notified` watermark below this scan, and the archive replays the rows
+  // before it moves (#2489 r3).
+  let notifiedOk = true;
+  try {
+    await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+  } catch (err) {
+    notifiedOk = false;
+    console.error(`[notifications] insert failed on chain ${chainId} — the watermark holds, the archive replays`, err);
+  }
 
   // RPC read-diet PR B — keep the display config snapshot current
   // (event-triggered + slow backstop; fail-open INSIDE, so a refresh
@@ -2466,9 +2607,15 @@ async function runChainPass(
   // them unread. This kind advances only at the scan tail, after the
   // event materializer AND the calendar sweep, and only when the scan
   // reached the safe head — so `updated_at` fresh ⇒ D1's notification
-  // and ownership rows are current through `last_block`.
+  // and ownership rows are current through `last_block`. A pass short of
+  // the head whose insert FAILED still pins the watermark below the scan
+  // (Codex #2489 r6) — the head pass replays from there.
   if (scanTo === head) {
-    await stampNotifiedWatermark(env, chainId, scanTo);
+    await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);
+  } else if (!notifiedOk) {
+    await holdNotifiedWatermark(env, chainId, scanFrom);
+  } else {
+    await advanceNotifiedWritten(env, chainId, scanTo);
   }
 
   // #1245 measurement rail — one structured line per scan that touched
@@ -7015,6 +7162,15 @@ export function pluckActivityRefs(
       return {
         actor: (args.user as string)?.toLowerCase() ?? null,
         loanId: null,
+        offerId: null,
+      };
+    // #1566 — one settled chunk of a forfeited reward entry (the loan sweep or
+    // the flagged-owner sweep). Actor = the entry's owner; loan = the loan it
+    // accrued on, so the forfeit shows on that loan's timeline.
+    case 'RewardEntryForfeitSettled':
+      return {
+        actor: (args.user as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
         offerId: null,
       };
     case 'Transfer':

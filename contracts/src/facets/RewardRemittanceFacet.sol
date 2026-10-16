@@ -16,6 +16,7 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title RewardRemittanceFacet — #776 Base→mirror reward-budget bridge (send).
@@ -290,6 +291,12 @@ contract RewardRemittanceFacet is
     /// @custom:event-category informational/config
     event RewardRemittanceReceiverUpdated(address indexed receiver);
 
+    /// @notice #1944 consequence 1 — the mirror-side day-delivery gate was
+    ///         armed: from `fromDay` on, a day owing fresh value here is held
+    ///         until a delivery proven to list it has landed. One-shot.
+    /// @custom:event-category informational/reward-governor
+    event DayDeliveryGateArmed(uint256 indexed fromDay);
+
     // ─── Errors (facet-local; shared ones come from IVaipakamErrors) ──────
 
     /// @notice Caller is neither ADMIN nor the configured remittance keeper.
@@ -515,6 +522,10 @@ contract RewardRemittanceFacet is
             r.armedFreshFull = st.armedFresh;
             r.recycledFull = st.recycledFull;
             r.dayIds = dl.closedDays;
+            // #2489 (Codex r2) — which closed days were FUNDED, kept immutably:
+            // the d6 root commits to exactly these, and a release clears the
+            // live per-day mark they would otherwise be rebuilt from.
+            r.fundedDayBits = _fundedDayBits(dl.closedDays, dl.fundedDays);
             // #1566 transport epochs PR 3a — every payload this deployment
             // builds is the d5 shape, which carries the split, so the mirror
             // types this packet at ingress and a split attestation for it can
@@ -567,6 +578,28 @@ contract RewardRemittanceFacet is
         emit RewardBudgetRemitted(
             dstChainId, st.totalAll, dl.fundedCount, messageId, remitId
         );
+    }
+
+    /// @dev #2489 (Codex r2) — the funded-day bitmap over `closed`: bit `i` set
+    ///      when `closed[i]` is in `funded`. The planner appends a day to
+    ///      `funded` exactly when it appends it to `closed` with a non-zero
+    ///      slice, so `funded` is an in-order subsequence of `closed` and one
+    ///      forward pass with two cursors marks it.
+    function _fundedDayBits(uint256[] memory closed, uint256[] memory funded)
+        private
+        pure
+        returns (uint256[] memory bits)
+    {
+        bits = new uint256[]((closed.length + 255) >> 8);
+        uint256 j;
+        for (uint256 i; i < closed.length && j < funded.length; ++i) {
+            if (closed[i] == funded[j]) {
+                bits[i >> 8] |= uint256(1) << (i & 255);
+                unchecked {
+                    ++j;
+                }
+            }
+        }
     }
 
     /**
@@ -926,6 +959,53 @@ contract RewardRemittanceFacet is
         emit RewardRemittanceReceiverUpdated(receiver);
     }
 
+    /**
+     * @notice #1944 consequence 1 — ARM the mirror-side day-delivery gate
+     *         from `fromDay`. ONE-SHOT: zero to non-zero once, never changed
+     *         or cleared afterwards.
+     * @dev    ADMIN-only. WHY a latch at all rather than role alone: the
+     *         wait ends on a PROVEN delivery, so arming before the keeper
+     *         proves day lists makes every funded day wait on a human; and
+     *         one zero read short-circuits Base, unconfigured chains and
+     *         every pre-upgrade day. WHY one-shot: a value moved later would
+     *         re-open days already held or priced; a wrong value is a
+     *         `--fresh` matter, not an edit.
+     *
+     *         Refusals, each for a reason the gate cannot survive:
+     *           - `fromDay == 0` (`InvalidAmount`) — zero IS the dark value;
+     *           - not a Mirror (`DeliveryGateNotMirror`) — the canonical chain
+     *             funds itself and an unconfigured or detached chain has no
+     *             delivery to wait for;
+     *           - already armed (`DeliveryGateAlreadyArmed`);
+     *           - `fromDay` at or below either cumulative fold cursor
+     *             (`DeliveryGateBelowFold`). WHY: the hold is sound only while
+     *             it is monotone — a day a fold passed is never later found
+     *             held. Arming behind a cursor would re-hold days already
+     *             folded and paid, and the fold's re-derivation
+     *             (`_dayFreshRecycledDaily`), staging re-pricing and the window
+     *             clamp would halt on them; a day funded by a packet with no
+     *             committed day list can never be proven, so that halt would
+     *             be permanent. Same reason as `setGovernorCommitArmedFromDay`
+     *             refusing a non-future day. The cursors are the exact bound
+     *             of what the fold has passed; days above them that a window
+     *             or entry already paid are why the runbook arms a FRESH
+     *             mirror before its first broadcast.
+     *
+     *         Moves no value: it changes when a day may be priced, never
+     *         what any row holds.
+     */
+    function setDayDeliveryGateFromDay(uint256 fromDay) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (fromDay == 0) revert InvalidAmount();
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) revert DeliveryGateNotMirror();
+        if (s.dayDeliveryGateFromDay != 0) revert DeliveryGateAlreadyArmed(s.dayDeliveryGateFromDay);
+        if (fromDay <= s.cumLenderCursor || fromDay <= s.cumBorrowerCursor) {
+            revert DeliveryGateBelowFold(fromDay, s.cumLenderCursor, s.cumBorrowerCursor);
+        }
+        s.dayDeliveryGateFromDay = fromDay;
+        emit DayDeliveryGateArmed(fromDay);
+    }
+
     // ─── Mirror-side ingress ──────────────────────────────────────────────
 
 
@@ -1131,6 +1211,9 @@ contract RewardRemittanceFacet is
                 bool ackConflict;
                 if (consumed) {
                     ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
+                    // #1452 — a consumption first attested by this
+                    // re-presentation (or confirming a forced one) is booked.
+                    _bookRecycledDelivered(s, r, amountReceived, false);
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
                 if (r.forcedFinalized && consumed && !ackConflict) {
@@ -1174,6 +1257,9 @@ contract RewardRemittanceFacet is
             if (r.dstChainId == sourceChainId) {
                 if (consumed) {
                     bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
+                    // #1452 — the mirror credited it after all: relocated
+                    // custody it must hold, so it is booked as delivered.
+                    _bookRecycledDelivered(s, r, amountReceived, false);
                     // #1662 r2 (self-review) — a CLEAN consumption on a
                     // released reservation CLEARS the gate. The release
                     // held it pending the value's fate; a consumed
@@ -1202,6 +1288,10 @@ contract RewardRemittanceFacet is
                     }
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
+                // #1461 — AFTER the stamps: the stranded share resolves only on
+                // a TRUSTED consumption (the mirror credited it); anything else
+                // is left to the ceremony / loss record.
+                LibVpfiRecycle.settleReleasedRemitStranded(s, remitId);
             }
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
@@ -1482,6 +1572,132 @@ contract RewardRemittanceFacet is
         r.quarantineAcked = true;
     }
 
+    /// @dev #1452 — book a reservation's recycled share in Base's per-destination
+    ///      delivered figures, once, at its first ATTESTED CONSUMPTION: by the
+    ///      delivery's own consumed acknowledgement (`chainRemittedRecycledAcked`,
+    ///      the figure the mesh watcher holds the mirror's relocated custody to),
+    ///      or by the operator's forced finalization (`...ForceFinalized`, apart —
+    ///      evidenced, not delivered). An authentic consumption that later
+    ///      confirms a forced one moves the share across; nothing else books.
+    ///      A CONTRADICTED consumption (quarantine reported first) books too:
+    ///      the mirror reported crediting it, and booking is the stricter
+    ///      direction for this check — the opposite of the stranded settle,
+    ///      which refuses to resolve on it, also the stricter direction there.
+    ///
+    ///      An authentic acknowledgement books what the mirror RELOCATED, not
+    ///      what was declared (Codex #2489 r3): on a short delivery (fee on
+    ///      transfer) the receiver relocates the declared share scaled to what
+    ///      landed, `floor(recycled * received / total)`, and the mesh watcher
+    ///      holds the mirror's relocated custody to this figure — booking the
+    ///      declared share there was a permanent false critical for every short
+    ///      delivery. The forced bucket keeps the declared share: a forced
+    ///      finalization carries no received figure (its `amountReceived` is a
+    ///      zero sentinel), and that bucket is evidence, not delivery. The move
+    ///      from forced to acked takes the declared share OFF the forced figure
+    ///      (what was put there) and puts the delivered share ON the acked one.
+    function _bookRecycledDelivered(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 amountReceived,
+        bool forced
+    ) private {
+        uint8 booked = r.recycledBooked;
+        if (booked >= RECYCLED_BOOKED_ACKED) return; // acknowledged, or booked from history
+        uint32 dst = r.dstChainId;
+        uint256 declared = r.recycled;
+        if (forced) {
+            // Only a PENDING reservation is force-finalized, and nothing books
+            // before finalization, so a forced booking is always the first.
+            s.chainRemittedRecycledForceFinalized[dst] += declared;
+            r.recycledBooked = RECYCLED_BOOKED_FORCED;
+            return;
+        }
+        if (booked == RECYCLED_BOOKED_FORCED) {
+            uint256 f = s.chainRemittedRecycledForceFinalized[dst];
+            s.chainRemittedRecycledForceFinalized[dst] = f > declared ? f - declared : 0;
+        }
+        s.chainRemittedRecycledAcked[dst] += _deliveredShare(declared, amountReceived, r.total);
+        r.recycledBooked = RECYCLED_BOOKED_ACKED;
+    }
+
+    /// @dev The share of `declared` that a delivery of `received` out of `total`
+    ///      relocated on the mirror — the receiver's own flooring
+    ///      (`RewardRemittanceReceiver`: `mulDiv(share, actualReceived,
+    ///      declaredTotal)`), so the two sides compute one figure. A full or
+    ///      over-delivery, or a reservation with no total, is the declared share.
+    function _deliveredShare(uint256 declared, uint256 received, uint256 total) private pure returns (uint256) {
+        if (received >= total || total == 0) return declared;
+        return Math.mulDiv(declared, received, total);
+    }
+
+    /// @notice A reservation's recycled share booked for its destination from
+    ///         its HISTORY (finalized before the booking existed), by
+    ///         {backfillRemitHistory}: `booked` is the state written (1 forced,
+    ///         2 acknowledged).
+    /// @custom:event-category informational/reward-transport
+    event RemitRecycledBookedFromHistory(uint256 indexed remitId, uint8 booked);
+
+    /// @notice Bring the reservations `[fromId, fromId + count)` (clipped to
+    ///         the nonce) up to the record shape this facet keeps (Codex #2489
+    ///         r7): a RELEASED reservation gets its stranded record from history
+    ///         and, if its consumption is trusted, resolves it; a FINALIZED one
+    ///         — or a RELEASED one acknowledged as consumed, the late delivery
+    ///         the live ack path books — books its recycled share for its
+    ///         destination: a consumed row's DECLARED share goes to the history
+    ///         figure (`chainRemittedRecycledAckedFromHistory`, booked state 3),
+    ///         kept apart from the exact acknowledged counter because the record
+    ///         keeps no received figure — a pre-upgrade short delivery relocated
+    ///         less than declared (Codex #2489 r9) — and because a pre-upgrade
+    ///         FORCED finalization carries the same consumed mark as an
+    ///         acknowledgement (security review of #2489): the record cannot
+    ///         route it to the forced bucket, so the figure is "acknowledged or
+    ///         forced", and the watcher resolves each row against the
+    ///         destination's receipt. Permissionless and
+    ///         idempotent: every write is of a fact the record lacks, derived
+    ///         from the record itself, so anyone may run it at any time and a
+    ///         second pass writes nothing. Until it has covered `1..nonce`,
+    ///         the per-destination booked counters undercount history and the
+    ///         mesh watcher's relocated leg treats them as UNKNOWN
+    ///         ({RewardRemittanceLensFacet.getRemitHistoryPending}).
+    /// @return stranded How many stranded records this call wrote.
+    /// @return booked   How many recycled shares this call booked.
+    function backfillRemitHistory(uint256 fromId, uint256 count)
+        external
+        returns (uint256 stranded, uint256 booked)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 nonce = s.remitReservationNonce;
+        if (fromId == 0) fromId = 1;
+        uint256 end = fromId + count;
+        if (end > nonce + 1) end = nonce + 1;
+        for (uint256 id = fromId; id < end; ) {
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (LibVpfiRecycle.ensureReleasedStrandedStamped(s, id)) {
+                unchecked { ++stranded; }
+                LibVpfiRecycle.settleReleasedRemitStranded(s, id);
+            }
+            if (LibVpfiRecycle.recycledBookingPending(r)) {
+                // The DECLARED share, into the history figure — never the
+                // exact counter (no received figure survives) and never the
+                // forced bucket (a forced finalization and an acknowledgement
+                // leave the same consumed mark; the destination's receipt is
+                // what tells them apart, off chain).
+                s.chainRemittedRecycledAckedFromHistory[r.dstChainId] += r.recycled;
+                r.recycledBooked = RECYCLED_BOOKED_HISTORY;
+                emit RemitRecycledBookedFromHistory(id, r.recycledBooked);
+                unchecked { ++booked; }
+            }
+            unchecked { ++id; }
+        }
+    }
+
+    /// @dev {RemitReservation.recycledBooked} states (0 = not booked). HISTORY
+    ///      is an acknowledged row booked by {backfillRemitHistory} at its
+    ///      declared share into the history figure; like ACKED it is final.
+    uint8 private constant RECYCLED_BOOKED_FORCED = 1;
+    uint8 private constant RECYCLED_BOOKED_ACKED = 2;
+    uint8 private constant RECYCLED_BOOKED_HISTORY = 3;
+
     function _finalizeReservation(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
@@ -1504,6 +1720,10 @@ contract RewardRemittanceFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > total ? pending - total : 0;
         s.remitAckedTotal[dst] += total;
+        // #1452 — only an attested CONSUMPTION books the recycled share: the
+        // mirror relocates custody when it credits a delivery, never for a
+        // quarantined or provisional one.
+        if (consumed) _bookRecycledDelivered(s, r, amountReceived, forced);
         // #1434 P2-w4 (§5.1 R6) — a finalized COMPENSATION reservation
         // clears the chain's one-in-flight gate. The consumption ACK is
         // the ratified clearing evidence; the operator-evidenced forced

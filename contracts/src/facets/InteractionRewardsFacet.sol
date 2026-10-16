@@ -167,8 +167,11 @@ contract InteractionRewardsFacet is
         // leg it drew is treasury's — the user legs are folded in so a set
         // that ever carried them would be absorbed rather than dropped. The
         // three operations are hosted on the epoch facet
-        // ({epochSettleLegs}): this facet sits within 100 bytes of
-        // EIP-170 with them inlined.
+        // ({epochSettleLegs}): this facet sat within 100 bytes of EIP-170
+        // with them inlined when they moved. It has since shed its entry
+        // walk to `RewardForfeitWalkFacet` and measures about 9 KB (8,953 B
+        // at the #1566 sanctions slice); the legs stay hosted because every
+        // close-out shares that one implementation, not for room.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
         uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
         LibRewardCustody.callSettleLegs(
@@ -371,5 +374,49 @@ contract InteractionRewardsFacet is
         } catch {
             return fallbackAddr;
         }
+    }
+
+    /// @notice Codex #2489 r13 — the host of `closeLoan`'s holder re-anchor
+    ///         ({LibInteractionRewards.reanchorEntriesForClose}), reached through a
+    ///         Diamond self-call so the two `ownerOf` reads, the repoint body and
+    ///         the sanctions-history rule that keeps an entry with its earner are
+    ///         inlined ONCE here rather than into every loan-closing facet.
+    ///         Diamond-internal only; no reentrancy guard (the outer close may
+    ///         hold one).
+    function reanchorRewardEntriesInternal(uint256 loanId) external {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        LibInteractionRewards.reanchorEntriesForClose(loanId);
+    }
+
+    /// @notice Codex #2489 r15 — the host of the CONSOLIDATION repoint
+    ///         ({LibInteractionRewards.repointRewardEntry}: an open entry under
+    ///         the earner rule is SPLIT at today), reached from
+    ///         `LibConsolidation` through a Diamond self-call so the split body
+    ///         is inlined once here and not into the eleven facets that inline
+    ///         the consolidation. Diamond-internal only; no reentrancy guard.
+    function repointRewardEntryInternal(uint256 loanId, address newUser, bool isLenderSide) external {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        LibInteractionRewards.repointRewardEntry(loanId, newUser, isLenderSide);
+    }
+
+    /// @notice Codex #2489 r17 ROOT — retire `user`'s SETTLED reward entries
+    ///         from its reward entry index, examining up to `maxSteps` positions
+    ///         ({LibInteractionRewards.retireSettledUserEntries}), so the index
+    ///         holds the wallet's unsettled entries and every per-user walk —
+    ///         the claim's legs, its funding need, the Claim Center countdown's
+    ///         pages ({InteractionRewardsLensFacet.getUserSoonestRewardExpiry})
+    ///         — costs O(unsettled) rather than O(lifetime). Permissionless
+    ///         bookkeeping: it moves no value, makes no external call, and only
+    ///         ever removes entries that are settled (`processed`) — the
+    ///         wallet's own claim does the same at its end. A retired entry
+    ///         stays readable by id. Callable while paused: it changes nothing a
+    ///         pause protects.
+    /// @return retired   Entries removed by this call.
+    /// @return remaining The index's length afterwards.
+    function compactRewardEntryIndex(address user, uint256 maxSteps)
+        external
+        returns (uint256 retired, uint256 remaining)
+    {
+        return LibInteractionRewards.retireSettledUserEntries(LibVaipakam.storageSlot(), user, maxSteps);
     }
 }

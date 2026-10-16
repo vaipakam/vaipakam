@@ -1104,7 +1104,8 @@ contract RewardCompensationDispatchFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
         LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
+        r.strandedRecycled = LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled, remitId);
+        r.strandedStamped = true;
         emit RemitReservationReleased(
             remitId, dst, r.total, r.fresh, r.recycled
         );
@@ -1187,7 +1188,10 @@ contract RewardCompensationDispatchFacet is
     function _consumptionTrusted(
         LibVaipakam.RemitReservation storage r
     ) private view returns (bool) {
-        return r.consumedAcked && !r.quarantineAcked;
+        // #1461 — the one trust rule, shared with the late acknowledgement's
+        // stranded-share settle, so the ceremony / loss record and the late
+        // consumption can never both resolve one remittance.
+        return LibVpfiRecycle.releasedConsumptionTrusted(r);
     }
 
     /**
@@ -1224,6 +1228,10 @@ contract RewardCompensationDispatchFacet is
         uint256 amount = freshInflow + recycledInflow;
         if (amount == 0) revert NothingToRemit();
         if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
+        // Codex #2489 r7 — a reservation released before its stranded record
+        // existed is stamped from history FIRST, so the deduction below lands
+        // on the record and the derivation does not count this resolution.
+        LibVpfiRecycle.ensureReleasedStrandedStamped(s, remitId);
         if (_consumptionTrusted(r)) {
             revert StrandedReturnConsumedReceipt(remitId);
         }
@@ -1305,6 +1313,10 @@ contract RewardCompensationDispatchFacet is
         uint256 amount = freshLoss + recycledLoss;
         if (amount == 0) revert NothingToRemit();
         if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
+        // Codex #2489 r7 — a reservation released before its stranded record
+        // existed is stamped from history FIRST, so the deduction below lands
+        // on the record and the derivation does not count this resolution.
+        LibVpfiRecycle.ensureReleasedStrandedStamped(s, remitId);
         // #1662 r1 — a CONSUMED receipt's value backs mirror claims:
         // recording it as "terminal loss" would clear the gate over
         // value that is neither lost nor recoverable. #1662 r2 — only a
@@ -1333,7 +1345,7 @@ contract RewardCompensationDispatchFacet is
         s.ceremonyRecycledLoss[remitId] += recycledLoss;
         s.ceremonyTerminalLoss[remitId] = loss;
         // The lost recycled tokens leave the coverage allowance.
-        _resolveStrandedRecycled(s, recycledLoss);
+        _resolveStrandedRecycled(s, remitId, recycledLoss);
         bool gateCleared = _maybeClearResolvedGate(s, r, remitId, recovered);
         emit RecoveryTerminalLossRecorded(
             remitId, freshLoss, recycledLoss, loss, gateCleared
@@ -1350,9 +1362,15 @@ contract RewardCompensationDispatchFacet is
     ///      recovered half of this counter exists to close.
     function _resolveStrandedRecycled(
         LibVaipakam.Storage storage s,
+        uint256 remitId,
         uint256 amount
     ) private {
         if (amount == 0) return;
+        // #1461 — take this resolution off the remittance's own stranded record,
+        // so a late delivery acknowledged afterwards resolves only what is left.
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256 rec = r.strandedRecycled;
+        r.strandedRecycled = rec > amount ? rec - amount : 0;
         // #1662 r3 — accumulate UNCAPPED and cap where it is published.
         // Saturating here against a stranded floor that the one-time seed
         // ceremony has not finished establishing silently discards the
@@ -1618,7 +1636,7 @@ contract RewardCompensationDispatchFacet is
             // so without this counter an external checker's coverage
             // allowance `bucket + stranded` would count the same VPFI
             // twice — permanently weakening a CRITICAL invariant.
-            if (localStranding) _resolveStrandedRecycled(s, recycledInflow);
+            if (localStranding) _resolveStrandedRecycled(s, refId, recycledInflow);
         }
     }
 
