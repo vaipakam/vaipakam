@@ -1,0 +1,3 @@
+## Thread — Keeper: the daily price snapshot takes only real asset addresses (PR #<n>)
+
+The keeper's daily price snapshot builds its asset list from the indexer's loan and offer rows. The indexer writes a "0x" placeholder into the asset fields of a row whose details it has not read yet, and the old list left that value in, because it excluded only the empty string and the zero address. One such value made the whole transaction impossible to build, so Base Sepolia got no snapshot in its 2026-10-16 window, while Arbitrum Sepolia and BNB Testnet did. The list now keeps only well-formed, non-zero addresses. That one rule covers placeholders, NFT loans and any other malformed value. The keeper logs how many values it skipped, so nothing is dropped silently.
