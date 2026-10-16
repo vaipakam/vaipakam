@@ -9,9 +9,13 @@
 #   memory ("did I do the sync this Monday?"), this workflow files the
 #   ritual card automatically every Monday morning UTC.
 # - The card sits as "Backlog" on @vaipakam-labs until the maintainer
-#   picks it up; if it's still open the following Monday, the next
-#   run still files a fresh card (acceptable redundancy — the previous
-#   one can be closed as duplicate during the sync).
+#   picks it up. If it is still open the following Monday, the next
+#   run files a fresh card and then CLOSES every older open card
+#   (the "Close superseded kickoff cards" step), leaving a comment on
+#   each that links its successor. Nothing is lost: the ritual reads
+#   every memory note modified since the last `.last-iteration-sync`
+#   sentinel, so an unfinished week's notes are picked up by the new
+#   card.
 #
 # Cadence:
 # - Cron: '5 0 * * MON' = Mondays 00:05 UTC, aligned with the GitHub
@@ -28,7 +32,8 @@
 #   off-cadence (e.g. test, or to make up for a missed Monday).
 #
 # Required permissions:
-# - `issues: write` — the issue-bot Action needs this to file the card.
+# - `issues: write` — the issue-bot Action needs this to file the card,
+#   and the superseded-card step uses it to close older cards.
 # - `contents: read` — for the Action checkout step.
 #
 # See Issue #107 + ProjectProcedures.md §5.7 for the discipline this
@@ -49,6 +54,13 @@ on:
 permissions:
   contents: read
   issues: write
+
+# One run at a time, never cancelled: two overlapping runs (the Monday
+# schedule plus a manual dispatch) would otherwise each file a card and
+# each treat the other's card as superseded.
+concurrency:
+  group: iteration-kickoff-sync
+  cancel-in-progress: false
 
 jobs:
   file-kickoff-card:
@@ -85,13 +97,18 @@ jobs:
         uses: imjohnbo/issue-bot@3188c6ce06249206709d3b1f274d0d4c5a521601 # v3
         with:
           title: "Iteration kickoff sync — ${{ steps.iter.outputs.label }}"
-          labels: "documentation,chore"
+          # `iteration-kickoff` is this card's own label, and nothing else
+          # carries it (.github/LABELS.md). The "Close superseded kickoff
+          # cards" step below selects older cards by it alone.
+          labels: "documentation,chore,iteration-kickoff"
           assignees: "Raja4Shekar"
-          # `body-includes` ensures we don't create a duplicate while
-          # the previous kickoff card is still open. If a card with
-          # this title-prefix already exists open, the bot is a no-op.
-          # If it's been closed by the maintainer, a fresh card opens.
           pinned: false
+          # issue-bot's own `close-previous` is deliberately NOT used. It
+          # closes only the single newest match, and it runs after the
+          # `linked-comments` calls, so one failed comment leaves every
+          # older card open with no later run able to reach it. The next
+          # step closes ALL older cards instead, so it also repairs any
+          # backlog a past failure left.
           close-previous: false
           # Use ADD_TO_PROJECT_PAT (a maintainer-owned PAT with
           # `repo` + `project` scopes) instead of the default
@@ -119,7 +136,7 @@ jobs:
               - **Already covered in ProjectProcedures.md** → no action.
             - [ ] Land the sync as a single docs PR with title pattern: `docs(handbook): iteration close-out sync — fold rules from <date> through <date>`.
             - [ ] Touch sentinel `.last-iteration-sync` in the agent-memory dir to record the close timestamp.
-            - [ ] If a card from the PREVIOUS iteration's sync is still open and the work is done, close it referencing the merged PR.
+            - [ ] Nothing to do for earlier cards: this run closed any that were still open, each with a comment linking here. Their unfolded notes are covered above, because the walk starts from the `.last-iteration-sync` sentinel, not from last Monday.
             - [ ] Update the previous iteration's status on the [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1) board: move any remaining "In review" cards to Done or carry to the new iteration.
 
             ## References
@@ -138,6 +155,39 @@ jobs:
           # internal API client; keeping a fallback env for any
           # action step that reads from env-vars.
           GITHUB_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+      - name: Close superseded kickoff cards
+        # Each week's card supersedes every earlier one; unworked cards
+        # used to pile up (19 open on 2026-10-16, closed by hand). This
+        # closes EVERY open card carrying `iteration-kickoff` that is
+        # older (lower-numbered) than the one this run filed, so a missed
+        # or failed run is repaired by the next one and a newer card is
+        # never touched. Each close gets a comment naming its successor.
+        # This step and the Project-field step are independent: both use
+        # `!cancelled()`, so a failure in either never skips the other.
+        # Inputs: the issue number issue-bot reports and the API's own
+        # issue numbers; no user-controlled string reaches the shell.
+        if: ${{ !cancelled() && steps.issuebot.outputs.issue-number != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_ISSUE: ${{ steps.issuebot.outputs.issue-number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          older=$(gh api --paginate "repos/$REPO/issues?state=open&labels=iteration-kickoff&per_page=100" \
+            --jq ".[] | select(.pull_request | not) | select(.number < $NEW_ISSUE) | .number")
+          failed=0
+          for n in $older; do
+            if gh api -X POST "repos/$REPO/issues/$n/comments" \
+                 -f body="Superseded by #$NEW_ISSUE, this week's kickoff card. Nothing is lost: the ritual walks every memory note changed since the \`.last-iteration-sync\` sentinel, so this card's unfolded notes are covered there." >/dev/null \
+               && gh api -X PATCH "repos/$REPO/issues/$n" -f state=closed -f state_reason=not_planned >/dev/null; then
+              echo "Closed #$n (superseded by #$NEW_ISSUE)"
+            else
+              echo "::warning::Could not close superseded kickoff card #$n; the next run retries it."
+              failed=1
+            fi
+          done
+          exit "$failed"
 
       - name: Assign card to current Iteration + Sprint
         # Why this step exists:
@@ -172,7 +222,10 @@ jobs:
         # the `if:` guard below then evaluates to false, and the whole
         # step silently no-ops every run. Verify against the action's
         # tagged release before changing.
-        if: steps.issuebot.outputs.issue-number != ''
+        # `!cancelled()` keeps this step running when the superseded-card
+        # cleanup above fails; that cleanup's failure is retried next run
+        # and must not leave this week's card off the iteration views.
+        if: ${{ !cancelled() && steps.issuebot.outputs.issue-number != '' }}
         env:
           GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
           ISSUE_NUMBER: ${{ steps.issuebot.outputs.issue-number }}

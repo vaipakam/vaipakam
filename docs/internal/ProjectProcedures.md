@@ -658,12 +658,15 @@ fires on cron `5 0 * * MON` (Mondays 00:05 UTC) and:
 1. Files the "Iteration kickoff sync — <date>" card via
    `imjohnbo/issue-bot`. Auto-add-to-project routes it to the
    Backlog with Status = Backlog and no iteration set.
-2. Then in a second step, queries the Project v2 Iteration + Sprint
-   field configurations, picks the iterations whose date ranges
-   cover today (UTC), and assigns BOTH fields on the newly-filed
-   card via the `updateProjectV2ItemFieldValue` GraphQL mutation.
+2. Closes every older open card carrying the `iteration-kickoff`
+   label, each with a comment linking the new card (details below).
+3. Queries the Project v2 Iteration + Sprint field configurations,
+   picks the iterations whose date ranges cover today (UTC), and
+   assigns BOTH fields on the newly-filed card via the
+   `updateProjectV2ItemFieldValue` GraphQL mutation. Steps 2 and 3
+   are independent: a failure in either does not skip the other.
 
-The second step is what makes the ritual actually *land* — the card
+The assignment step is what makes the ritual actually *land* — the card
 surfaces on iteration-filtered board views (the surface the
 maintainer reads on Monday morning) the moment Iteration N+1 begins,
 instead of sitting iteration-unassigned in Backlog until someone
@@ -717,8 +720,12 @@ shape.
 
 The maintainer picks it up first thing Monday, performs the sync,
 lands a docs PR, and closes the card. If a card from the previous
-Monday is still open, the new card co-exists as Backlog (the
-maintainer closes the older one as duplicate when reviewing).
+Monday (or any earlier one) is still open, the workflow closes it
+right after filing the new one, with a comment linking the new card.
+A close that fails is retried by the next run. Nothing is lost
+by that: the ritual walks every memory note modified since the
+`.last-iteration-sync` sentinel, so an unfinished week's notes carry
+into the new card.
 
 **The ritual itself:**
 
