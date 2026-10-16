@@ -55,6 +55,13 @@ permissions:
   contents: read
   issues: write
 
+# One run at a time, never cancelled: two overlapping runs (the Monday
+# schedule plus a manual dispatch) would otherwise each file a card and
+# each treat the other's card as superseded.
+concurrency:
+  group: iteration-kickoff-sync
+  cancel-in-progress: false
+
 jobs:
   file-kickoff-card:
     name: File the iteration kickoff sync card
@@ -152,22 +159,23 @@ jobs:
       - name: Close superseded kickoff cards
         # Each week's card supersedes every earlier one; unworked cards
         # used to pile up (19 open on 2026-10-16, closed by hand). This
-        # closes EVERY open card carrying `iteration-kickoff` other than
-        # the one just filed, so a missed or failed run is repaired by
-        # the next one. Each close gets a comment naming its successor.
-        # Runs before the Project-field step so a failure there cannot
-        # skip it. Inputs: the issue number issue-bot reports and the
-        # API's own issue numbers; no user-controlled string reaches the
-        # shell.
-        if: steps.issuebot.outputs.issue-number != ''
+        # closes EVERY open card carrying `iteration-kickoff` that is
+        # older (lower-numbered) than the one this run filed, so a missed
+        # or failed run is repaired by the next one and a newer card is
+        # never touched. Each close gets a comment naming its successor.
+        # This step and the Project-field step are independent: both use
+        # `!cancelled()`, so a failure in either never skips the other.
+        # Inputs: the issue number issue-bot reports and the API's own
+        # issue numbers; no user-controlled string reaches the shell.
+        if: ${{ !cancelled() && steps.issuebot.outputs.issue-number != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_ISSUE: ${{ steps.issuebot.outputs.issue-number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          older=$(gh api "repos/$REPO/issues?state=open&labels=iteration-kickoff&per_page=100" \
-            --jq ".[] | select(.pull_request | not) | select(.number != $NEW_ISSUE) | .number")
+          older=$(gh api --paginate "repos/$REPO/issues?state=open&labels=iteration-kickoff&per_page=100" \
+            --jq ".[] | select(.pull_request | not) | select(.number < $NEW_ISSUE) | .number")
           failed=0
           for n in $older; do
             if gh api -X POST "repos/$REPO/issues/$n/comments" \
@@ -214,7 +222,10 @@ jobs:
         # the `if:` guard below then evaluates to false, and the whole
         # step silently no-ops every run. Verify against the action's
         # tagged release before changing.
-        if: steps.issuebot.outputs.issue-number != ''
+        # `!cancelled()` keeps this step running when the superseded-card
+        # cleanup above fails; that cleanup's failure is retried next run
+        # and must not leave this week's card off the iteration views.
+        if: ${{ !cancelled() && steps.issuebot.outputs.issue-number != '' }}
         env:
           GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
           ISSUE_NUMBER: ${{ steps.issuebot.outputs.issue-number }}
