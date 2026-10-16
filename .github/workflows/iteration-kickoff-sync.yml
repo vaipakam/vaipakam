@@ -9,9 +9,12 @@
 #   memory ("did I do the sync this Monday?"), this workflow files the
 #   ritual card automatically every Monday morning UTC.
 # - The card sits as "Backlog" on @vaipakam-labs until the maintainer
-#   picks it up; if it's still open the following Monday, the next
-#   run still files a fresh card (acceptable redundancy — the previous
-#   one can be closed as duplicate during the sync).
+#   picks it up. If it is still open the following Monday, the next
+#   run CLOSES it and files a fresh card that supersedes it
+#   (`close-previous`), with a comment on each linking the other
+#   (`linked-comments`). Nothing is lost: the ritual reads every memory
+#   note modified since the last `.last-iteration-sync` sentinel, so an
+#   unfinished week's notes are picked up by the new card.
 #
 # Cadence:
 # - Cron: '5 0 * * MON' = Mondays 00:05 UTC, aligned with the GitHub
@@ -97,6 +100,10 @@ jobs:
           # cards piled up (19 open on 2026-10-16) and had to be closed
           # by hand.
           close-previous: true
+          # Comment on the closed card pointing at its successor, and on
+          # the new card pointing back, so the supersession is visible
+          # on both rather than looking like a silent close.
+          linked-comments: true
           # Use ADD_TO_PROJECT_PAT (a maintainer-owned PAT with
           # `repo` + `project` scopes) instead of the default
           # GITHUB_TOKEN. GitHub Actions intentionally does NOT
@@ -123,7 +130,7 @@ jobs:
               - **Already covered in ProjectProcedures.md** → no action.
             - [ ] Land the sync as a single docs PR with title pattern: `docs(handbook): iteration close-out sync — fold rules from <date> through <date>`.
             - [ ] Touch sentinel `.last-iteration-sync` in the agent-memory dir to record the close timestamp.
-            - [ ] If a card from the PREVIOUS iteration's sync is still open and the work is done, close it referencing the merged PR.
+            - [ ] Nothing to do for last week's card: this run closed it if it was still open, with a comment linking here. Its unfolded notes are covered above, because the walk starts from the `.last-iteration-sync` sentinel, not from last Monday.
             - [ ] Update the previous iteration's status on the [`@vaipakam-labs`](https://github.com/users/vaipakam/projects/1) board: move any remaining "In review" cards to Done or carry to the new iteration.
 
             ## References
