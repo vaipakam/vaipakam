@@ -239,24 +239,29 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertEq(at, lateAt);
     }
 
-    /// @notice Codex #2489 r16 — a wallet's own claim advances its live-from
-    ///         cursor past the entries the claim settled.
-    /// @dev   Mutation: drop the advance at the claim's end → the cursor reads 0.
-    function testClaimAdvancesTheLiveFromCursor() public {
+    /// @notice Codex #2489 r17 ROOT — a wallet's own claim RETIRES the entries
+    ///         it settled from the wallet's index: the index holds the unsettled
+    ///         entries, the settled one stays readable by id, and the countdown
+    ///         view has nothing to scan.
+    /// @dev   Mutation: drop the retirement at the claim's end → the index still
+    ///        lists the settled entry.
+    function testClaimRetiresItsSettledEntryFromTheIndex() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
         _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
-        assertEq(_lens().getUserRewardEntryLiveFrom(alice), 0, "before: nothing settled");
+        assertEq(_lens().getUserRewardEntryIds(alice).length, 1, "before: the open entry is listed");
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
         assertGt(paid, 0, "fixture: the claim settled the entry");
         assertTrue(_mut().getRewardEntryProcessedRaw(id), "fixture: settled");
-        assertEq(_lens().getUserRewardEntryLiveFrom(alice), 1, "the claim passed its settled entry");
+        assertEq(_lens().getUserRewardEntryIds(alice).length, 0, "the claim retired its settled entry");
+        assertEq(_mut().getRewardEntryUserIdx(id), 0, "back-index cleared");
+        assertTrue(_lens().getRewardEntriesRange(id, 1)[0].processed, "still readable by id");
         (, , uint256 next, uint256 total) = _lens().getUserSoonestRewardExpiry(alice, 0, 100, 100);
-        assertEq(total, 1);
-        assertEq(next, 1, "nothing left to scan");
+        assertEq(total, 0, "nothing left to scan");
+        assertEq(next, 0);
     }
 
     function testClaimBeforeExpiryAlwaysWins() public {

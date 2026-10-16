@@ -987,69 +987,75 @@ library LibInteractionRewards {
             uint256 moved = ids[lastIdx];
             ids[i] = moved;
             s.rewardEntryUserIdx[moved] = i + 1; // rewrite the moved entry's index
-            // Codex #2489 r16 — the tail entry now sits at `i`; if that is
-            // below the wallet's live-from cursor the cursor's invariant
-            // (every position below it is terminal) no longer holds for a
-            // live tail, so pull the cursor down to the slot. Unconditional
-            // on the moved entry's state: the cursor re-advances over a
-            // terminal one at the next compaction, and reading the state
-            // here would cost the same as that step.
-            if (i < s.userRewardEntryLiveFrom[user]) s.userRewardEntryLiveFrom[user] = i;
         }
         ids.pop();
         s.rewardEntryUserIdx[id] = 0;
     }
 
     /// @dev Codex #2489 r16 — THE live predicate for a reward entry, shared by
-    ///      the lens's live page and soonest-expiry view and by the live-from
-    ///      cursor's advance, so the three cannot disagree about what "live"
-    ///      means: not yet settled (`processed`) and not already expiring
-    ///      (`expiryBegun`) — the only entries a claim deadline can concern.
-    ///      Both flags are terminal (nothing unsets either), which is what
-    ///      makes a position below the cursor safe to skip forever.
+    ///      the lens's live page and soonest-expiry view, so the two cannot
+    ///      disagree about what "live" means: not yet settled (`processed`)
+    ///      and not already expiring (`expiryBegun`) — the only entries a
+    ///      claim deadline can concern. Both flags are terminal (nothing
+    ///      unsets either).
     function isEntryLive(LibVaipakam.RewardEntry storage e) internal view returns (bool) {
         return !e.processed && !e.expiryBegun;
     }
 
-    /// @notice Codex #2489 r16 — `user`'s live-from cursor moved past the
-    ///         terminal entries at the head of its reward entry index.
+    /// @notice Codex #2489 r17 — `retired` SETTLED entries left `user`'s reward
+    ///         entry index, which now holds `remaining` entries.
     /// @custom:event-category state-change/reward-entry
-    event RewardEntryIndexCompacted(address indexed user, uint256 liveFrom);
+    event RewardEntryIndexCompacted(address indexed user, uint256 retired, uint256 remaining);
 
-    /// @dev Codex #2489 r16 — positions a claim passes at its end (the claim
-    ///      has just settled every entry it could, so the index head is where
-    ///      settled entries pile up). Bounded so a long history never makes
-    ///      the claim's gas grow; the permissionless compactor covers the rest.
+    /// @dev Codex #2489 r17 — index positions a claim examines at its end (the
+    ///      claim has just settled every entry it could, so that is where
+    ///      settled entries appear). Bounded so a long history never makes the
+    ///      claim's gas grow; the permissionless compactor covers the rest.
     uint256 internal constant CLAIM_INDEX_COMPACT_STEPS = 256;
 
-    /// @notice Codex #2489 r16 — advance `user`'s live-from cursor over the
-    ///         TERMINAL entries at the head of its index, at most `maxSteps`
-    ///         positions, stopping at the first live entry or the index end.
-    ///         Bookkeeping only: moves no value, never passes a live entry,
-    ///         idempotent. Never lowers the cursor here — only
-    ///         {_removeUserEntry} does, when a swap-pop lands a tail below it.
-    /// @return liveFrom The cursor after the advance (clamped to the index
-    ///                  length, which a pop may have left it above).
-    function advanceUserEntryLiveFrom(
+    /// @notice Codex #2489 r17 ROOT — RETIRE `user`'s SETTLED entries from its
+    ///         reward entry index: examine at most `maxSteps` positions from the
+    ///         head and swap-pop every `processed` entry met (the same O(1)
+    ///         removal a repoint uses; the back-index is cleared). The index
+    ///         therefore converges to the wallet's UNSETTLED entries, so every
+    ///         per-user walk — claim legs, funding need, forfeit fresh, the
+    ///         countdown's pages — costs O(unsettled) rather than O(lifetime):
+    ///         the index used to keep every entry a wallet ever had, which is
+    ///         the one root behind both countdown-scan findings (r16, r17) and
+    ///         the unbounded claim-path walks noted below. A settled entry
+    ///         stays readable by id ({InteractionRewardsLensFacet.getRewardEntriesRange})
+    ///         and by its events. Bookkeeping only: moves no value; an
+    ///         `expiryBegun` entry still mid-reap is NOT retired (the reap's
+    ///         cursor advance reads its end day from this index). Run bounded
+    ///         at the claim's end and by the permissionless
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}.
+    /// @return retired   Entries removed by this call.
+    /// @return remaining The index's length afterwards.
+    function retireSettledUserEntries(
         LibVaipakam.Storage storage s,
         address user,
         uint256 maxSteps
-    ) internal returns (uint256 liveFrom) {
+    ) internal returns (uint256 retired, uint256 remaining) {
         uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
-        liveFrom = s.userRewardEntryLiveFrom[user];
-        if (liveFrom > len) liveFrom = len;
-        uint256 start = liveFrom;
-        // Saturating: `liveFrom <= len` here, so a huge `maxSteps` is the rest.
-        uint256 stop = len - liveFrom > maxSteps ? liveFrom + maxSteps : len;
-        while (liveFrom < stop) {
-            if (isEntryLive(s.rewardEntries[ids[liveFrom]])) break;
-            unchecked { ++liveFrom; }
+        uint256 i;
+        uint256 steps;
+        while (i < ids.length && steps < maxSteps) {
+            uint256 id = ids[i];
+            if (s.rewardEntries[id].processed) {
+                uint256 before = ids.length;
+                _removeUserEntry(s, user, id);
+                // The tail now sits at `i` and is examined next. A removal that
+                // did not shrink the index (an unindexed id — the defensive
+                // no-op above) is passed, so the loop always progresses.
+                if (ids.length == before) { unchecked { ++i; } }
+                else { unchecked { ++retired; } }
+            } else {
+                unchecked { ++i; }
+            }
+            unchecked { ++steps; }
         }
-        if (liveFrom != start) {
-            s.userRewardEntryLiveFrom[user] = liveFrom;
-            emit RewardEntryIndexCompacted(user, liveFrom);
-        }
+        remaining = ids.length;
+        if (retired != 0) emit RewardEntryIndexCompacted(user, retired, remaining);
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
@@ -4385,10 +4391,12 @@ library LibInteractionRewards {
             // aggregate ONCE and share it with every gate below.
             // `userClaimFundingNeed` stays for its own callers; inlining its
             // two steps here is what makes a swept entry pay for each walk a
-            // single time instead of twice. `userRewardEntryIds` shrinks only
-            // when a position transfer re-points an entry away (the swap-pop in
-            // {_removeUserEntry}) — processed ids stay in it — so the duplicate
-            // pass grew without bound for a long-lived account.
+            // single time instead of twice. `userRewardEntryIds` used to shrink
+            // only when a position transfer re-pointed an entry away (the
+            // swap-pop in {_removeUserEntry}) — processed ids stayed in it — so
+            // the duplicate pass grew without bound for a long-lived account;
+            // since Codex #2489 r17 settled ids are RETIRED from it lazily
+            // ({retireSettledUserEntries}), so the walks are O(unsettled).
             _advanceUserCursors(s, e.user);
             ArmedNeed memory need = _entryArmedNeed(id);
             // The transfer test is {_claimTransferable} — the ONE
@@ -5317,9 +5325,10 @@ library LibInteractionRewards {
     ///      — so this fires exactly when that walk would defer a day on the
     ///      bucket, and no longer on a pre-cap bound that could over-pause
     ///      without end (Codex #2276 r1). Codex #1499 r5 P2 — computed ONCE
-    ///      per swept entry and threaded in: each walk is O(the user's whole
-    ///      entry list), which does not shrink, since processed ids stay in
-    ///      `userRewardEntryIds`.
+    ///      per swept entry and threaded in: each walk is O(the user's entry
+    ///      list) — the UNSETTLED entries since Codex #2489 r17, when settled
+    ///      ids began to be retired from `userRewardEntryIds` lazily
+    ///      ({retireSettledUserEntries}); before that the list never shrank.
     function _recycledDroughtWith(
         LibVaipakam.Storage storage s,
         uint256 recycledTotal

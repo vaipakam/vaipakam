@@ -189,7 +189,13 @@
         "internalType": "address"
       },
       {
-        "name": "liveFrom",
+        "name": "retired",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remaining",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

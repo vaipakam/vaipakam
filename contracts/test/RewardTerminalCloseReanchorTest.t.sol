@@ -293,105 +293,72 @@ contract RewardTerminalCloseReanchorTest is SetupTest {
         assertEq(live.length, 0, "past the end: empty");
     }
 
-    // ─── Codex #2489 r16: the live-from cursor ────────────────────────────────
+    // ─── Codex #2489 r17 ROOT: settled entries are RETIRED from the index ───
 
-    /// @notice The permissionless compactor passes the TERMINAL prefix of a
-    ///         wallet's index — settled and expiring entries — bounded by
-    ///         `maxSteps`, and stops at the first live entry even when terminal
-    ///         entries follow it; the soonest-expiry view starts at the cursor.
-    /// @dev   Mutations: an advance that passes a live entry → the cursor lands
-    ///        on 5 and the view's first page skips entry 3; a view that ignores
-    ///        the cursor → its one-position page covers position 0, not 3.
-    function test_LiveFrom_CompactorPassesTerminalPrefix_StopsAtFirstLive() public {
+    /// @notice The permissionless compactor retires SETTLED (`processed`)
+    ///         entries from a wallet's index by swap-pop, bounded by the
+    ///         positions it examines, and keeps every unsettled entry — live or
+    ///         expiring mid-reap. The back-index stays consistent, a retired
+    ///         entry stays readable by id, the soonest-expiry view and the live
+    ///         page then cover only what remains, and the walk converges to
+    ///         O(unsettled).
+    /// @dev   Mutations: drop the `processed` test in the retirement → the
+    ///        expiring and live entries are retired too (remaining 0); skip the
+    ///        back-index rewrite → `getRewardEntryUserIdx` of a moved entry is
+    ///        stale.
+    function test_Retire_CompactorRetiresSettledEntries_KeepsUnsettled_Bounded() public {
         address p = makeAddr("C");
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
         InteractionRewardsFacet facet = InteractionRewardsFacet(address(diamond));
+        TestMutatorFacet mut = TestMutatorFacet(address(diamond));
         uint256[] memory all = new uint256[](6);
         for (uint256 i; i < 6; ++i) {
-            all[i] = TestMutatorFacet(address(diamond)).pushRewardEntry(
-                p, uint64(300 + i), LibVaipakam.RewardSide.Lender, 1e18, 1
-            );
+            all[i] = mut.pushRewardEntry(p, uint64(300 + i), LibVaipakam.RewardSide.Lender, 1e18, 1);
         }
-        // 0 settled, 1 settled, 2 expiring, 3 LIVE, 4 settled, 5 live.
-        TestMutatorFacet(address(diamond)).setRewardEntryProcessedRaw(all[0], true);
-        TestMutatorFacet(address(diamond)).setRewardEntryProcessedRaw(all[1], true);
-        TestMutatorFacet(address(diamond)).setRewardEntryExpiryBegunRaw(all[2], true);
-        TestMutatorFacet(address(diamond)).setRewardEntryProcessedRaw(all[4], true);
-        assertEq(lens.getUserRewardEntryLiveFrom(p), 0, "fresh index: cursor at 0");
+        // 0 settled, 1 settled, 2 expiring (unsettled), 3 LIVE, 4 settled, 5 live.
+        mut.setRewardEntryProcessedRaw(all[0], true);
+        mut.setRewardEntryProcessedRaw(all[1], true);
+        mut.setRewardEntryExpiryBegunRaw(all[2], true);
+        mut.setRewardEntryProcessedRaw(all[4], true);
 
-        assertEq(facet.compactRewardEntryIndex(p, 2), 2, "bounded: two steps");
-        assertEq(lens.getUserRewardEntryLiveFrom(p), 2);
-        assertEq(facet.compactRewardEntryIndex(p, 100), 3, "stops at the first live entry");
-        assertEq(facet.compactRewardEntryIndex(p, 100), 3, "idempotent");
-        assertEq(lens.getUserRewardEntryLiveFrom(p), 3, "entry 4 is settled but 3 before it is live");
+        // Bounded: two positions examined — position 0 retired (the tail e5
+        // lands there), then e5 at position 0 is live and passed.
+        (uint256 retired, uint256 remaining) = facet.compactRewardEntryIndex(p, 2);
+        assertEq(retired, 1, "one retirement in two steps");
+        assertEq(remaining, 5);
+        assertEq(mut.getUserRewardEntryIds(p)[0], all[5], "the tail moved into the vacated slot");
 
-        // The view starts at the cursor: a one-position page covers position 3.
-        (uint256 soonestId, uint64 soonestAt, uint256 next, uint256 total) =
-            lens.getUserSoonestRewardExpiry(p, 0, 1, 100);
-        assertEq(total, 6, "total is the index length");
-        assertEq(next, 4, "page covered position 3 only (raised from offset 0 to the cursor)");
+        (retired, remaining) = facet.compactRewardEntryIndex(p, 100);
+        assertEq(retired, 2, "the two remaining settled entries");
+        assertEq(remaining, 3);
+        uint256[] memory ids = mut.getUserRewardEntryIds(p);
+        uint256[] memory want = new uint256[](3);
+        want[0] = all[5]; want[1] = all[3]; want[2] = all[2];
+        _assertIds(ids, want, "live, live, expiring remain (swap-pop order)");
+        assertEq(mut.getRewardEntryUserIdx(all[0]), 0, "retired: back-index cleared");
+        assertEq(mut.getRewardEntryUserIdx(all[1]), 0);
+        assertEq(mut.getRewardEntryUserIdx(all[4]), 0);
+        assertEq(mut.getRewardEntryUserIdx(all[5]), 1, "moved entries re-indexed");
+        assertEq(mut.getRewardEntryUserIdx(all[3]), 2);
+        assertEq(mut.getRewardEntryUserIdx(all[2]), 3);
+        (retired, remaining) = facet.compactRewardEntryIndex(p, 100);
+        assertEq(retired, 0, "idempotent");
+        assertEq(remaining, 3);
+
+        // A retired entry is still the same record, by id.
+        assertTrue(lens.getRewardEntriesRange(all[0], 1)[0].processed, "readable by id, settled");
+        // The readers now cover only what remains.
+        (uint256 soonestId, , uint256 next, uint256 total) = lens.getUserSoonestRewardExpiry(p, 0, 100, 100);
+        assertEq(total, 3, "the view's total is the unsettled count");
+        assertEq(next, 3);
         assertEq(soonestId, 0, "dark horizon: no estimate");
-        assertEq(soonestAt, 0);
-        (, , next, ) = lens.getUserSoonestRewardExpiry(p, 4, 100, 100);
-        assertEq(next, 6, "an offset past the cursor is honoured and the walk completes");
-        (, , next, ) = lens.getUserSoonestRewardExpiry(p, 6, 100, 100);
-        assertEq(next, 6, "past the end: nothing scanned");
-        // The live page is unchanged by the cursor (it scans the positions asked).
-        (uint256[] memory live, ) = lens.getUserLiveRewardEntryIdsPage(p, 0, 6);
-        uint256[] memory want = new uint256[](2);
-        want[0] = all[3]; want[1] = all[5];
-        _assertIds(live, want, "the live page still answers for any positions");
+        (uint256[] memory live, ) = lens.getUserLiveRewardEntryIdsPage(p, 0, 100);
+        uint256[] memory wantLive = new uint256[](2);
+        wantLive[0] = all[5]; wantLive[1] = all[3];
+        _assertIds(live, wantLive, "the expiring entry is kept in the index but is not live");
+        assertEq(lens.getUserRewardEntries(p).length, 3, "the entries view is the unsettled participation");
     }
 
-    /// @notice The index's one swap-pop keeps the cursor sound: repointing an
-    ///         entry that sits BELOW the cursor moves the tail (live) entry into
-    ///         its slot, and the cursor is pulled down to that slot so the
-    ///         soonest-expiry view still covers the moved entry.
-    /// @dev   Mutation: drop the cursor correction in `_removeUserEntry` → the
-    ///        cursor stays at 2 over an index of length 2 and the view's walk
-    ///        covers nothing while a live entry sits at position 0.
-    function test_LiveFrom_SwapPopBelowCursor_PullsTheCursorDown() public {
-        address a = makeAddr("A");
-        address b = makeAddr("B");
-        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        InteractionRewardsFacet facet = InteractionRewardsFacet(address(diamond));
-        TestMutatorFacet mut = TestMutatorFacet(address(diamond));
-        uint256 a0 = mut.pushRewardEntry(a, 700, LibVaipakam.RewardSide.Lender, 1e18, 1);
-        uint256 a1 = mut.pushRewardEntry(a, 701, LibVaipakam.RewardSide.Lender, 1e18, 1);
-        uint256 a2 = mut.pushRewardEntry(a, 702, LibVaipakam.RewardSide.Lender, 1e18, 1);
-        mut.setRewardEntryProcessedRaw(a0, true);
-        mut.setRewardEntryProcessedRaw(a1, true);
-        assertEq(facet.compactRewardEntryIndex(a, 100), 2, "cursor past the two settled entries");
-
-        // Repoint a0 (position 0, below the cursor) away: the tail a2 (live)
-        // lands at position 0.
-        mut.setLoanActiveLenderEntryId(700, a0);
-        mut.callRepointRewardEntry(700, b, true);
-        uint256[] memory idsA = mut.getUserRewardEntryIds(a);
-        assertEq(idsA.length, 2);
-        assertEq(idsA[0], a2, "the live tail moved into the vacated slot");
-        assertEq(lens.getUserRewardEntryLiveFrom(a), 0, "cursor pulled down to the slot");
-        (, , uint256 next, uint256 total) = lens.getUserSoonestRewardExpiry(a, 0, 1, 100);
-        assertEq(total, 2);
-        assertEq(next, 1, "the walk covers the moved live entry at position 0");
-        // Re-compaction passes nothing: position 0 is live now.
-        assertEq(facet.compactRewardEntryIndex(a, 100), 0);
-
-        // Popping the TAIL moves nothing, so the cursor is left alone even
-        // when it then exceeds the shortened index: settle a2, compact to the
-        // end (2), then repoint a1 (the tail, position 1) away — the cursor
-        // stays at 2 over an index of length 1, and both readers clamp.
-        mut.setRewardEntryProcessedRaw(a2, true);
-        assertEq(facet.compactRewardEntryIndex(a, 100), 2, "both settled: cursor at the end");
-        mut.setLoanActiveLenderEntryId(701, a1);
-        mut.callRepointRewardEntry(701, b, true);
-        assertEq(mut.getUserRewardEntryIds(a).length, 1);
-        assertEq(lens.getUserRewardEntryLiveFrom(a), 2, "a tail pop moves nothing below the cursor");
-        (, , next, total) = lens.getUserSoonestRewardExpiry(a, 0, 100, 100);
-        assertEq(total, 1);
-        assertEq(next, 2, "the view clamps: nothing to scan, walk complete (next >= total)");
-        assertEq(facet.compactRewardEntryIndex(a, 100), 1, "the advance clamps the cursor to the length");
-    }
 
     function _one(uint256 x) internal pure returns (uint256[] memory r) {
         r = new uint256[](1);

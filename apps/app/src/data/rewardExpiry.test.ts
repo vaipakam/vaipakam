@@ -45,15 +45,14 @@ describe('inFinalNotice', () => {
 
 describe('readSoonestRewardExpiry (Codex #2489 r16)', () => {
   /** A fake of the contract's paged view over an index of `total` positions
-   *  whose live entries (position → estimate) are `live`, with a live-from
-   *  cursor at `liveFrom`: the page starts at max(offset, cursor), scans up to
-   *  `limit` positions, prices at most `maxLive` live entries and ends before
-   *  the first it would not price. */
-  const view = (total: bigint, live: Map<bigint, bigint>, liveFrom = 0n) => {
+   *  whose live entries (position → estimate) are `live`: the page scans up to
+   *  `limit` positions from `offset`, prices at most `maxLive` live entries and
+   *  ends before the first it would not price. */
+  const view = (total: bigint, live: Map<bigint, bigint>) => {
     const calls: [bigint, bigint, bigint][] = [];
     const read = async (offset: bigint, limit: bigint, maxLive: bigint): Promise<SoonestExpiryPage> => {
       calls.push([offset, limit, maxLive]);
-      let i = offset > liveFrom ? offset : liveFrom;
+      let i = offset;
       const end = i + limit < total ? i + limit : total;
       let priced = 0n;
       let soonestId = 0n;
@@ -82,12 +81,6 @@ describe('readSoonestRewardExpiry (Codex #2489 r16)', () => {
       [100n, 100n, 100n],
       [200n, 100n, 100n],
     ]);
-  });
-
-  it('starts past the settled history: the first page is raised to the live-from cursor', async () => {
-    const { read, calls } = view(450n, new Map([[420n, 7_000n]]), 400n);
-    expect(await readSoonestRewardExpiry(read, 100n, 100n)).toEqual({ entryId: 421n, expiresAt: 7_000 });
-    expect(calls).toHaveLength(1);
   });
 
   it('a page bounded by live entries ends before the entry it did not price; the next page prices it', async () => {

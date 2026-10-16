@@ -13,10 +13,10 @@
  * The one thing that can move it EARLIER is governance shortening the claim
  * horizon — the estimate follows the new horizon at once, and the copy says
  * so (Codex #2489 r8). The card shows the soonest such date, which the
- * contract computes over bounded pages of the wallet's LIVE entries
- * (`getUserSoonestRewardExpiry`, Codex #2489 r16) starting past its settled
- * history, so the read costs a number of calls that follows the wallet's live
- * rewards, not its lifetime.
+ * contract computes over bounded pages of the wallet's UNSETTLED entries
+ * (`getUserSoonestRewardExpiry`, Codex #2489 r16/r17 — settled entries are
+ * retired from the wallet's index), so the read costs a number of calls that
+ * follows the wallet's live rewards, not its lifetime.
  *
  * Dark until the horizon knob is set: while `getRewardClaimHorizonDays()` is
  * zero no entry can expire and nothing renders.
@@ -39,10 +39,10 @@ import { signalAware } from '../chain/railHealth';
 export const REWARD_CLAIM_NOTICE_DAYS = 90;
 
 /** Index positions one page of `getUserSoonestRewardExpiry` scans at most
- *  (Codex #2489 r16). A position costs the contract a few storage reads; the
- *  page starts at the wallet's live-from cursor (every position below it is
- *  settled or expiring — the wallet's own claims advance it, and anyone may),
- *  so the lifetime history the index keeps is not re-walked on every refresh. */
+ *  (Codex #2489 r16). A position costs the contract a few storage reads, and
+ *  the index holds only the wallet's UNSETTLED entries (settled ones are
+ *  retired from it by the wallet's own claims, and anyone may retire them —
+ *  r17), so the page count follows live rewards, not lifetime history. */
 const SCAN_POSITIONS = 1_000n;
 
 /** Live entries one page prices at most. Pricing an entry's estimate is the

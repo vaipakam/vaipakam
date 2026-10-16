@@ -403,11 +403,14 @@ contract InteractionRewardsLensFacet {
     /// @dev    Storage is sequential (`userRewardEntryIds[user]` →
     ///         `rewardEntries[id]`); this view materialises both in one
     ///         call. A loan that involved the user on both sides has
-    ///         two entries — one per side. Closed entries (`endDay > 0`)
-    ///         are still surfaced so the breakdown reads as a lifetime
-    ///         participation list, not just an open-now snapshot. The
-    ///         array length is bounded by the user's loan-participation
-    ///         count, so unbounded growth isn't a concern in practice.
+    ///         two entries — one per side. Closed-but-unsettled entries are
+    ///         surfaced (claimable, or expiring mid-reap); SETTLED entries are
+    ///         RETIRED from the index lazily (Codex #2489 r17 — by the wallet's
+    ///         own claim and by {InteractionRewardsFacet.compactRewardEntryIndex}),
+    ///         so this is the wallet's UNSETTLED participation, not a lifetime
+    ///         history: a settled entry stays readable by id through
+    ///         {getRewardEntriesRange} and by its events. The array is bounded
+    ///         by the wallet's unsettled entries.
     /// @param  user Address whose entries to enumerate.
     /// @return entries Full {RewardEntry} struct array in registration order.
     function getUserRewardEntries(address user)
@@ -453,12 +456,15 @@ contract InteractionRewardsLensFacet {
     }
 
     /// @notice RL-3 (#1305) — the storage ids backing {getUserRewardEntries},
-    ///         same length and registration order, so keepers and the Claim
-    ///         Center can address {getRewardEntryExpiry} /
+    ///         same length and order, so keepers and the Claim Center can
+    ///         address {getRewardEntryExpiry} /
     ///         {InteractionRewardsFacet.sweepExpiredInteractionRewards} (both
     ///         id-keyed) without reconstructing internal storage off-chain.
+    ///         UNSETTLED entries only (r17; see {getUserRewardEntries}); the
+    ///         order is registration order disturbed by swap-pops (a retirement
+    ///         or repoint moves the tail into the vacated slot).
     /// @param  user Address whose entry ids to enumerate.
-    /// @return ids Entry ids in registration order.
+    /// @return ids Entry ids.
     function getUserRewardEntryIds(address user)
         external
         view
@@ -470,11 +476,13 @@ contract InteractionRewardsLensFacet {
     /// @notice Codex #2489 r14 — the LIVE entries among `[offset, offset + limit)`
     ///         of `user`'s index: not yet settled (`processed`) and not already
     ///         expiring (`expiryBegun`) — the only entries a claim-deadline
-    ///         countdown can concern. The index keeps every entry a wallet ever
-    ///         had (an id leaves it only on a repoint), so a reader that
-    ///         evaluates each entry's expiry off chain grew with the wallet's
-    ///         lifetime history; this page does the filtering on chain in a few
-    ///         storage reads per id, and the reader prices only what it returns.
+    ///         countdown can concern. The index holds the wallet's UNSETTLED
+    ///         entries (a settled one is retired lazily, Codex #2489 r17 — see
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}; an expiring one
+    ///         stays until its reap completes), so this page's filter removes
+    ///         the expiring entries and any settled entry not yet retired, in a
+    ///         few storage reads per id, and the reader prices only what it
+    ///         returns.
     /// @param  user   Address whose index to scan.
     /// @param  offset Position in registration order to start at.
     /// @param  limit  How many index positions to scan (not how many to return).
@@ -507,20 +515,21 @@ contract InteractionRewardsLensFacet {
         }
     }
 
-    /// @notice Codex #2489 r16 — the SOONEST removal estimate among `user`'s
+    /// @notice Codex #2489 r16/r17 — the SOONEST removal estimate among `user`'s
     ///         LIVE reward entries over ONE bounded page of its index, computed
     ///         on chain, so the Claim Center countdown costs a number of calls
     ///         that follows the wallet's live rewards rather than its lifetime
-    ///         history. The page starts at the LATER of `offset` and the
-    ///         wallet's live-from cursor ({getUserRewardEntryLiveFrom}: every
-    ///         position below it is settled or expiring), scans at most `limit`
-    ///         positions (a few storage reads each) and prices at most `maxLive`
-    ///         live entries ({getRewardEntryExpiry} each — the costly part); it
-    ///         ends at whichever bound is reached first and says where to
-    ///         continue. It always makes progress: at least one live entry is
+    ///         history: the index holds the wallet's UNSETTLED entries (settled
+    ///         ones are retired from it lazily — see
+    ///         {InteractionRewardsFacet.compactRewardEntryIndex}), so the pages
+    ///         are over live-or-expiring entries only. A page scans at most
+    ///         `limit` positions (a few storage reads each) and prices at most
+    ///         `maxLive` live entries ({getRewardEntryExpiry} each — the costly
+    ///         part); it ends at whichever bound is reached first and says where
+    ///         to continue. It always makes progress: at least one live entry is
     ///         priced per non-empty page whatever `maxLive` says.
     /// @param  user    Address whose index to scan.
-    /// @param  offset  Position to start at (raised to the cursor).
+    /// @param  offset  Position to start at.
     /// @param  limit   Index positions to scan at most.
     /// @param  maxLive Live entries to price at most.
     /// @return soonestId        The live entry with the earliest NON-ZERO
@@ -538,11 +547,9 @@ contract InteractionRewardsLensFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage all = s.userRewardEntryIds[user];
         total = all.length;
-        uint256 i = s.userRewardEntryLiveFrom[user];
-        if (offset > i) i = offset;
-        // Saturating: a cursor past the end (a popped tail) scans nothing and
-        // reports itself, which is already `>= total`; a huge `limit` is the
-        // whole remainder.
+        uint256 i = offset;
+        // Saturating: an offset past the end scans nothing and reports itself,
+        // which is already `>= total`; a huge `limit` is the whole remainder.
         uint256 end = total;
         if (i < total && total - i > limit) end = i + limit;
         uint256 priced;
@@ -564,21 +571,11 @@ contract InteractionRewardsLensFacet {
         nextOffset = i;
     }
 
-    /// @notice Codex #2489 r16 — `user`'s live-from cursor: the first position
-    ///         of its reward entry index that may hold a live entry (every
-    ///         position below it is settled or expiring). Advanced by the
-    ///         wallet's own claim and by anyone through
-    ///         {InteractionRewardsFacet.compactRewardEntryIndex}; may exceed the
-    ///         index length after a repoint popped the tail.
-    function getUserRewardEntryLiveFrom(address user) external view returns (uint256) {
-        return LibVaipakam.storageSlot().userRewardEntryLiveFrom[user];
-    }
-
-    /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): the
-    ///         index keeps processed entries, so a long-lived account's whole
-    ///         list can outgrow one response, and a reader that must consider
-    ///         EVERY entry (the claim-center countdown picks the soonest expiry)
-    ///         pages through it with `total` as its proof of completeness.
+    /// @notice {getUserRewardEntryIds}, one PAGE at a time (Codex #2489 r5): a
+    ///         prolific account's list can outgrow one response (settled entries
+    ///         are retired from it only lazily — r17), and a reader that must
+    ///         consider EVERY entry pages through it with `total` as its proof
+    ///         of completeness.
     /// @param  user   Address whose entry ids to enumerate.
     /// @param  offset Position in registration order to start at.
     /// @param  limit  At most this many ids.

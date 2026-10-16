@@ -5531,8 +5531,14 @@ library LibVaipakam {
         ///      of scanning, so the centralized {closeLoan} re-anchor cannot be
         ///      griefed by a prolific holder's long entry list (Codex #1147 r3
         ///      G3 / r4 H3). Maintained at EVERY membership mutation: alloc push,
-        ///      remove swap-pop (rewrites the moved tail entry's index), and the
-        ///      {repointRewardEntry} newUser push.
+        ///      remove swap-pop (rewrites the moved tail entry's index), the
+        ///      {repointRewardEntry} newUser push, and — Codex #2489 r17 — the
+        ///      RETIREMENT of settled entries
+        ///      ({LibInteractionRewards.retireSettledUserEntries}: a `processed`
+        ///      entry leaves its user's index by the same swap-pop, so the
+        ///      index holds the wallet's UNSETTLED entries and every per-user
+        ///      walk is O(unsettled); a retired entry reads 0 here and stays
+        ///      addressable by id).
         mapping(uint256 => uint256) rewardEntryUserIdx;
         // ─── VPFI recycling balance governor (#1222) — knobs ──────────────
         /// @dev Platform-retained margin (bps) the recycling governor keeps
@@ -8045,22 +8051,6 @@ library LibVaipakam {
         ///      must equal at custody activation, and the earmark the fresh
         ///      backing room nets out of the Diamond's balance before it.
         uint256 rewardSanctionsHeldTotal;
-        /// @dev Codex #2489 r16 — per wallet, the first position of its
-        ///      `userRewardEntryIds` that MAY hold a LIVE reward entry: every
-        ///      position below it holds an entry that is settled (`processed`)
-        ///      or already expiring (`expiryBegun`) — both terminal, never live
-        ///      again ({LibInteractionRewards.isEntryLive} is the one
-        ///      predicate). A reader looking for the wallet's live entries (the
-        ///      Claim Center countdown) starts here and skips the settled
-        ///      history the index keeps forever. Advanced ONLY over terminal
-        ///      entries ({LibInteractionRewards.advanceUserEntryLiveFrom}: the
-        ///      wallet's own claim at its end, and the permissionless
-        ///      {InteractionRewardsFacet.compactRewardEntryIndex}); lowered by
-        ///      the index's one swap-pop ({LibInteractionRewards._removeUserEntry})
-        ///      when it lands a tail entry below it, so the invariant holds
-        ///      across repoints. May exceed the index length after pops;
-        ///      readers clamp.
-        mapping(address => uint256) userRewardEntryLiveFrom;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
