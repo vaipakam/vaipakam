@@ -717,8 +717,9 @@ shape.
 
 The maintainer picks it up first thing Monday, performs the sync,
 lands a docs PR, and closes the card. If a card from the previous
-Monday is still open, the workflow closes it when it files the new
-one, and leaves a comment on each linking the other. Nothing is lost
+Monday (or any earlier one) is still open, the workflow closes it
+right after filing the new one, with a comment linking the new card.
+A close that fails is retried by the next run. Nothing is lost
 by that: the ritual walks every memory note modified since the
 `.last-iteration-sync` sentinel, so an unfinished week's notes carry
 into the new card.
