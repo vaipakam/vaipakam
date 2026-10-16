@@ -2807,6 +2807,7 @@
       "custodyDiamond": "プラットフォームのコントラクト内 — カストディは移されていません",
       "custodyHolder": "専用のカストディアドレス",
       "custodyUnknown": "判定できません — この読み取りには記録されていません",
+      "custodyPendingMigration": "まだ判定できません — データサービスがスキーマ更新 {{migration}} を適用していないため、この読み取りではカストディの保管場所を記録できません。更新後の次回の取得で記録されます。",
       "holderBalance": "カストディアドレスが保有する VPFI",
       "holderAttributed": "カストディアドレスに割り当てられた額",
       "holderBalanceUnreadable": "この読み取りでは取得できませんでした",

@@ -120,6 +120,7 @@ interface BackingWire {
   backed?: unknown;
   unavailableReason?: unknown;
   asOf?: unknown;
+  pendingMigration?: unknown;
 }
 
 /* ── Parsed shapes (what the components render) ───────────────────────── */
@@ -161,12 +162,19 @@ export interface PublishableBacking {
   diamond: string;
   /** The timestamp of the block these figures describe (ISO 8601). */
   asOf: string;
+  /**
+   * The schema migration the indexer is still waiting for, by name, when its
+   * rollout has not applied it — `null` otherwise. A fact about the data
+   * service, not about this reading: it is why custody can read as not
+   * recorded indefinitely (Codex #2521 r1 P2), so the page says so.
+   */
+  pendingMigration: string | null;
 }
 
 /** Why the backing block is withheld — always a reason, never a dash. */
 export type BackingWithheld =
   /** The indexer's own refusal, by its fixed code. */
-  | { kind: 'indexer'; code: string }
+  | { kind: 'indexer'; code: string; pendingMigration: string | null }
   /** An indexer that predates the backing block entirely. */
   | { kind: 'not-served' }
   /** A figure in the reading is not a well-formed amount or flag. */
@@ -475,11 +483,22 @@ export function parseBacking(raw: unknown): BackingView {
   if (!isRec(raw)) return { kind: 'withheld', reason: { kind: 'malformed' } };
   const b = raw as BackingWire;
 
+  // The migration the indexer is still waiting for, if any — carried on
+  // every outcome (it is about the database, not one reading); an older
+  // indexer omits it, which reads as none.
+  const pendingMigration = optional(b.pendingMigration);
+  if (pendingMigration !== null && (typeof pendingMigration !== 'string' || pendingMigration === '')) {
+    return { kind: 'withheld', reason: { kind: 'malformed' } };
+  }
+
   // The indexer's own refusal comes first: a withheld reading is all-null
   // by design, and its REASON is the thing to publish.
   if (b.unavailableReason !== null && b.unavailableReason !== undefined) {
     return typeof b.unavailableReason === 'string' && b.unavailableReason !== ''
-      ? { kind: 'withheld', reason: { kind: 'indexer', code: b.unavailableReason } }
+      ? {
+          kind: 'withheld',
+          reason: { kind: 'indexer', code: b.unavailableReason, pendingMigration: pendingMigration as string | null },
+        }
       : { kind: 'withheld', reason: { kind: 'malformed' } };
   }
 
@@ -552,6 +571,7 @@ export function parseBacking(raw: unknown): BackingView {
       blockNumber: b.blockNumber as string,
       diamond: b.diamond,
       asOf: b.asOf,
+      pendingMigration: pendingMigration as string | null,
     },
   };
 }
@@ -670,13 +690,18 @@ export interface LoopClosureData {
    */
   recordedBefore: string | null;
   daily: LoopClosureDay[];
+  /**
+   * Lifetime figures, stated only against a recorded moment: `null` when
+   * `recordedBefore` is `null` (the indexer has not substantiated them), so
+   * the page shows each as not yet recorded rather than as a lifetime zero.
+   */
   cumulative: {
     cumDistributed: string;
     cumAbsorbed: string;
     retainedStock: string;
     /** Stock ratio; `null` while nothing has been distributed. */
     ratio: number | null;
-  };
+  } | null;
 }
 
 /**
@@ -756,6 +781,13 @@ export function parseLoopClosure(raw: unknown): LoopClosureData | null {
   }
   if (daily.filter((d) => d.status === 'partial').length > 1) return null;
   if (recordedBefore === null && daily.some((d) => d.status !== 'unrecorded')) return null;
+  // Lifetime figures exist only against a recorded moment (Codex #2521 r1):
+  // with none they must be absent — a block beside no moment is a lifetime
+  // claim nothing substantiates; with one they must be present and well formed.
+  if (recordedBefore === null) {
+    if (cumulative !== null) return null;
+    return { chainId: raw.chainId, days: raw.days, recordedBefore: null, daily, cumulative: null };
+  }
   if (!isRec(cumulative)) return null;
   if (
     !isWeiString(cumulative.cumDistributed) ||
@@ -768,7 +800,7 @@ export function parseLoopClosure(raw: unknown): LoopClosureData | null {
   return {
     chainId: raw.chainId,
     days: raw.days,
-    recordedBefore: recordedBefore as string | null,
+    recordedBefore: recordedBefore as string,
     daily,
     cumulative: {
       cumDistributed: cumulative.cumDistributed,

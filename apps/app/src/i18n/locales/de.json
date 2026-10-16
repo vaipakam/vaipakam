@@ -2807,6 +2807,7 @@
       "custodyDiamond": "Im Plattformvertrag — die Verwahrung wurde nicht verlegt",
       "custodyHolder": "An der eigenen Verwahrungsadresse",
       "custodyUnknown": "Nicht bestimmbar — diese Ablesung erfasst es nicht",
+      "custodyPendingMigration": "Noch nicht bestimmbar — der Datendienst hat sein Schema-Update {{migration}} noch nicht angewendet, daher kann diese Erfassung nicht festhalten, wo die Verwahrung liegt. Die Erfassung nach diesem Update wird es tun.",
       "holderBalance": "VPFI an der Verwahrungsadresse",
       "holderAttributed": "Der Verwahrungsadresse zugerechnet",
       "holderBalanceUnreadable": "konnte für diese Ablesung nicht gelesen werden",

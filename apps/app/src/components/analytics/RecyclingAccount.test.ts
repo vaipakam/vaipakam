@@ -1017,6 +1017,27 @@ describe('RecyclingAccount — the verdict is the indexer’s (defect 2)', () =>
       expect(r.textOf('recycling-unearmarked-note')).toBe(R.outsideBucketNoteUnknown);
     });
 
+    // Codex #2521 r1 — the indexer's standing signal for a stalled rollout.
+    it('names the schema update the data service is still waiting for, instead of a plain unknown', () => {
+      const r = render(series({ backing: unknown({ pendingMigration: '0062_recycle_backing_custody' }) }));
+      expect(r.textOf('recycling-custody')).toBe(
+        R.custodyPendingMigration('0062_recycle_backing_custody'),
+      );
+      // The migration is NAMED on the page (the template really interpolates it).
+      expect(r.textOf('recycling-custody')).toContain('0062_recycle_backing_custody');
+    });
+
+    it('a withheld reading still names the pending schema update', () => {
+      const r = render(
+        series({
+          backing: { ...noBacking('read-failed'), pendingMigration: '0062_recycle_backing_custody' },
+        }),
+      );
+      expect(r.textOf('recycling-backing-unavailable')).toContain(
+        R.custodyPendingMigration('0062_recycle_backing_custody'),
+      );
+    });
+
     it('KEEPS both custody-address rows, each as not determinable — never removed', () => {
       // An older reading shows a newer field as not determinable. Hiding
       // the rows is reserved for a reading that KNOWS custody never moved.

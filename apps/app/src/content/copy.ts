@@ -5753,6 +5753,12 @@ const copySource = {
     custodyDiamond: 'In the platform contract — custody has not moved',
     custodyHolder: 'At the dedicated custody address',
     custodyUnknown: 'Not determinable — this reading does not record it',
+    // Codex #2521 r1 — the indexer names the schema update it is still waiting
+    // for, so a stalled rollout is not mistaken for an ordinary old reading.
+    custodyPendingMigration: tmpl(
+      'Not determinable yet — the data service has not applied its schema update {{migration}}, so this reading cannot record where custody is held. The capture after that update will.',
+      ['migration'],
+    ),
     holderBalance: 'VPFI held at the custody address',
     holderAttributed: 'Attributed to the custody address',
     holderBalanceUnreadable: 'could not be read for this reading',

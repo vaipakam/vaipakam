@@ -237,12 +237,21 @@ describe('LoopClosure — a day not yet recorded is not a day of nothing (#1349 
     expect(r.has('loop-status-20730')).toBe(false);
   });
 
-  it('with no recorded moment, it says so — and every day is unrecorded', () => {
+  it('with no recorded moment, it says so — every day is unrecorded, and so are the lifetime figures', () => {
     const r = render(
-      loop({ recordedBefore: null, daily: [unrecordedDay({ dayId: 20733, date: '2026-10-07' })] }),
+      loop({
+        recordedBefore: null,
+        daily: [unrecordedDay({ dayId: 20733, date: '2026-10-07' })],
+        cumulative: null,
+      }),
     );
     expect(r.textOf('loop-recorded-before')).toBe(L.recordedBeforeUnknown);
     expect(r.textOf('loop-distributed-20733')).toBe(L.notRecorded);
+    // Codex #2521 r1 — no lifetime zero while nothing substantiates it.
+    for (const id of ['loop-lifetime-ratio', 'loop-retained-stock', 'loop-cum-absorbed', 'loop-cum-distributed']) {
+      expect(r.textOf(id)).toBe(L.notRecorded);
+      expect(r.attr(id, 'class')).toContain('rc-refusal');
+    }
   });
 });
 
@@ -262,6 +271,8 @@ describe('LoopClosure — a malformed payload withholds only this section', () =
     ['a complete day after an unrecorded one', loop({ daily: [unrecordedDay({ dayId: 1 }), day({ dayId: 2 })] })],
     ['two partial days', loop({ daily: [partialDay({ dayId: 1 }), partialDay({ dayId: 2 })] })],
     ['a known day with no recorded moment', loop({ recordedBefore: null })],
+    ['lifetime figures beside no recorded moment', loop({ recordedBefore: null, daily: [unrecordedDay()] })],
+    ['no lifetime figures beside a recorded moment', loop({ cumulative: null })],
   ])('%s → unavailable, no figures', (_why, raw) => {
     const r = render(raw);
     expect(r.textOf('loop-unavailable')).toBe(L.unavailable);

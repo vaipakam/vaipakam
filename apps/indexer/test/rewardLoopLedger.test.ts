@@ -284,7 +284,7 @@ describe('GET /metrics/loop-closure — which days are known (#1349 M5)', () => 
       env,
     );
     expect(res.status).toBe(200);
-    return (await res.json()) as { recordedBefore: string | null; daily: Day[] };
+    return (await res.json()) as { recordedBefore: string | null; daily: Day[]; cumulative: unknown };
   }
   async function claimOn(env: Env, at: number) {
     await applyRewardLoopLedger(
@@ -301,6 +301,8 @@ describe('GET /metrics/loop-closure — which days are known (#1349 M5)', () => 
     await claimOn(env, CLOSED_TS);
     const b = await body(env);
     expect(b.recordedBefore).toBeNull();
+    // No lifetime figures either: a missing totals row is not "zero, lifetime".
+    expect(b.cumulative).toBeNull();
     expect(b.daily).toHaveLength(7);
     for (const d of b.daily) {
       expect(d).toMatchObject({

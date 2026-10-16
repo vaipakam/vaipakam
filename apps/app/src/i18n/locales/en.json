@@ -2753,6 +2753,7 @@
       "custodyDiamond": "In the platform contract — custody has not moved",
       "custodyHolder": "At the dedicated custody address",
       "custodyUnknown": "Not determinable — this reading does not record it",
+      "custodyPendingMigration": "Not determinable yet — the data service has not applied its schema update {{migration}}, so this reading cannot record where custody is held. The capture after that update will.",
       "holderBalance": "VPFI held at the custody address",
       "holderAttributed": "Attributed to the custody address",
       "holderBalanceUnreadable": "could not be read for this reading",

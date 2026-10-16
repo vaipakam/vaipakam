@@ -2807,6 +2807,7 @@
       "custodyDiamond": "En el contrato de la plataforma: la custodia no se ha trasladado",
       "custodyHolder": "En la dirección de custodia dedicada",
       "custodyUnknown": "No determinable: esta lectura no lo registra",
+      "custodyPendingMigration": "Aún no determinable — el servicio de datos no ha aplicado su actualización de esquema {{migration}}, por lo que esta lectura no puede registrar dónde se mantiene la custodia. La captura posterior a esa actualización lo hará.",
       "holderBalance": "VPFI en la dirección de custodia",
       "holderAttributed": "Atribuido a la dirección de custodia",
       "holderBalanceUnreadable": "no se pudo leer en esta lectura",

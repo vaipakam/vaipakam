@@ -2807,6 +2807,7 @@
       "custodyDiamond": "Dans le contrat de la plateforme — la garde n’a pas été déplacée",
       "custodyHolder": "À l’adresse de garde dédiée",
       "custodyUnknown": "Non déterminable — ce relevé ne l’enregistre pas",
+      "custodyPendingMigration": "Pas encore déterminable — le service de données n’a pas appliqué sa mise à jour de schéma {{migration}}, cette lecture ne peut donc pas enregistrer où la garde est détenue. La capture qui suivra cette mise à jour le fera.",
       "holderBalance": "VPFI détenus à l’adresse de garde",
       "holderAttributed": "Attribué à l’adresse de garde",
       "holderBalanceUnreadable": "n’a pas pu être lu pour ce relevé",

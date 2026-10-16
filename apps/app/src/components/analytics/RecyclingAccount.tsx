@@ -293,6 +293,9 @@ function AccountBody({
         <p className="an-note" data-testid="recycling-backing-unavailable">
           {copy.recycling.backingUnavailable}{' '}
           {backingWithheldText(data.backing.reason)}
+          {data.backing.reason.kind === 'indexer' && data.backing.reason.pendingMigration !== null
+            ? ' ' + copy.recycling.custodyPendingMigration(data.backing.reason.pendingMigration)
+            : null}
         </p>
       )}
 
@@ -646,7 +649,9 @@ function BackingFigures({
           <dt>{copy.recycling.custodyLabel}</dt>
           <dd data-testid="recycling-custody">
             {b.custodyActivated === null
-              ? copy.recycling.custodyUnknown
+              ? b.pendingMigration !== null
+                ? copy.recycling.custodyPendingMigration(b.pendingMigration)
+                : copy.recycling.custodyUnknown
               : activated
                 ? copy.recycling.custodyHolder
                 : copy.recycling.custodyDiamond}

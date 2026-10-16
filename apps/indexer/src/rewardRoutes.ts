@@ -230,12 +230,19 @@ export async function handleLoopClosure(
           ? null
           : new Date(recordedBefore * 1000).toISOString(),
       daily,
-      cumulative: {
-        cumDistributed: cumDistributed.toString(),
-        cumAbsorbed: cumAbsorbed.toString(),
-        retainedStock: retainedStock.toString(),
-        ratio: ratio6(retainedStock + cumAbsorbed, cumDistributed),
-      },
+      // Lifetime figures are stated only against a recorded moment: with
+      // none, a missing totals row would read as "zero, lifetime" — the same
+      // false zero the day series refuses above (Codex #2521 r1 P1). `null`
+      // = not yet recorded.
+      cumulative:
+        recordedBefore === null
+          ? null
+          : {
+              cumDistributed: cumDistributed.toString(),
+              cumAbsorbed: cumAbsorbed.toString(),
+              retainedStock: retainedStock.toString(),
+              ratio: ratio6(retainedStock + cumAbsorbed, cumDistributed),
+            },
     });
   } catch (err) {
     return jsonResponse(

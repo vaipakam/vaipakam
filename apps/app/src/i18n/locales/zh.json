@@ -2807,6 +2807,7 @@
       "custodyDiamond": "在平台合约中——托管尚未迁移",
       "custodyHolder": "在专用托管地址",
       "custodyUnknown": "无法确定——此读数未记录这一点",
+      "custodyPendingMigration": "暂无法判定——数据服务尚未应用其架构更新 {{migration}}，因此本次读数无法记录托管所在位置。该更新之后的采集将会记录。",
       "holderBalance": "托管地址持有的 VPFI",
       "holderAttributed": "归属于托管地址的数额",
       "holderBalanceUnreadable": "此读数中无法读取",

@@ -2807,6 +2807,7 @@
       "custodyDiamond": "플랫폼 컨트랙트 안 — 수탁 위치가 옮겨지지 않았습니다",
       "custodyHolder": "전용 수탁 주소",
       "custodyUnknown": "판단할 수 없음 — 이 판독값에는 기록되어 있지 않습니다",
+      "custodyPendingMigration": "아직 판정할 수 없음 — 데이터 서비스가 스키마 업데이트 {{migration}}를 아직 적용하지 않아 이 판독은 커스터디가 어디에 보관되는지 기록할 수 없습니다. 해당 업데이트 이후의 수집에서 기록됩니다.",
       "holderBalance": "수탁 주소가 보유한 VPFI",
       "holderAttributed": "수탁 주소에 귀속된 금액",
       "holderBalanceUnreadable": "이 판독에서는 읽을 수 없었습니다",

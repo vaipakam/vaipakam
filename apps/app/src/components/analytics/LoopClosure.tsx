@@ -122,30 +122,32 @@ function LoopBody({
   const ratio = (r: number | null) =>
     r === null ? copy.loopClosure.notApplicable : formatRoundedDownPercent(r, locale);
   const { cumulative } = data;
+  // Lifetime figures exist only against a recorded moment: with none each
+  // is "not yet recorded" (a refusal), never a lifetime zero (Codex #2521 r1).
+  const lifetime = (wei: string | undefined) =>
+    cumulative === null ? copy.loopClosure.notRecorded : amt(wei as string);
+  const refusal = (isRefusal: boolean) => (cumulative === null || isRefusal ? 'rc-refusal' : undefined);
   return (
     <>
       {/* The lifetime STOCK ratio, with every amount it is built from. */}
       <dl className="rc-figures">
         <div>
           <dt>{copy.loopClosure.lifetimeRatio}</dt>
-          <dd
-            className={cumulative.ratio === null ? 'rc-refusal' : undefined}
-            data-testid="loop-lifetime-ratio"
-          >
-            {ratio(cumulative.ratio)}
+          <dd className={refusal(cumulative?.ratio === null)} data-testid="loop-lifetime-ratio">
+            {cumulative === null ? copy.loopClosure.notRecorded : ratio(cumulative.ratio)}
           </dd>
         </div>
         <div>
           <dt>{copy.loopClosure.retainedStock}</dt>
-          <dd data-testid="loop-retained-stock">{amt(cumulative.retainedStock)}</dd>
+          <dd className={refusal(false)} data-testid="loop-retained-stock">{lifetime(cumulative?.retainedStock)}</dd>
         </div>
         <div>
           <dt>{copy.loopClosure.cumAbsorbed}</dt>
-          <dd data-testid="loop-cum-absorbed">{amt(cumulative.cumAbsorbed)}</dd>
+          <dd className={refusal(false)} data-testid="loop-cum-absorbed">{lifetime(cumulative?.cumAbsorbed)}</dd>
         </div>
         <div>
           <dt>{copy.loopClosure.cumDistributed}</dt>
-          <dd data-testid="loop-cum-distributed">{amt(cumulative.cumDistributed)}</dd>
+          <dd className={refusal(false)} data-testid="loop-cum-distributed">{lifetime(cumulative?.cumDistributed)}</dd>
         </div>
       </dl>
       <p className="an-note" data-testid="loop-measures-note">

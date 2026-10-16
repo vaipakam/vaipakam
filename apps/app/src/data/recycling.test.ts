@@ -195,7 +195,7 @@ describe('parseBacking — a bad backing block withholds only itself', () => {
   it('carries the indexer’s own refusal code through', () => {
     expect(parseBacking({ unavailableReason: 'chain-behind' })).toEqual({
       kind: 'withheld',
-      reason: { kind: 'indexer', code: 'chain-behind' },
+      reason: { kind: 'indexer', code: 'chain-behind', pendingMigration: null },
     });
   });
 
@@ -498,10 +498,10 @@ describe('parseLoopClosure', () => {
     expect(p?.recordedBefore).toBe('2026-10-07T09:30:00.000Z');
   });
 
-  it('accepts no recorded moment when every day is unrecorded', () => {
-    expect(
-      parseLoopClosure(loop({ recordedBefore: null, daily: [loop().daily[3]] }))?.recordedBefore,
-    ).toBeNull();
+  it('accepts no recorded moment when every day is unrecorded and no lifetime figures are stated', () => {
+    const p = parseLoopClosure(loop({ recordedBefore: null, daily: [loop().daily[3]], cumulative: null }));
+    expect(p?.recordedBefore).toBeNull();
+    expect(p?.cumulative).toBeNull();
   });
 
   it('accepts a lifetime ratio of null while nothing has been distributed', () => {
@@ -528,6 +528,10 @@ describe('parseLoopClosure', () => {
     ['a complete day after a partial one', { daily: [loop().daily[2], loop().daily[0]] }],
     ['two partial days', { daily: [loop().daily[2], loop().daily[2]] }],
     ['a known day with no recorded moment', { recordedBefore: null }],
+    // Codex #2521 r1 — lifetime figures beside no recorded moment are a claim
+    // nothing substantiates; a recorded moment with none is a missing block.
+    ['lifetime figures beside no recorded moment', { recordedBefore: null, daily: [loop().daily[3]] }],
+    ['no lifetime figures beside a recorded moment', { cumulative: null }],
     ['a missing recorded moment', { recordedBefore: undefined }],
     ['an unparseable recorded moment', { recordedBefore: 'yesterday' }],
   ])('refuses %s', (_why, over) => {
@@ -587,13 +591,15 @@ describe('fetchers — one GET path, validated', () => {
       days: 30,
       recordedBefore: null,
       daily: [],
-      cumulative: { cumDistributed: '0', cumAbsorbed: '0', retainedStock: '0', ratio: null },
+      // No recorded moment → no lifetime figures (Codex #2521 r1).
+      cumulative: null,
     });
     const p = await fetchLoopClosure(84532, 30);
     expect(f).toHaveBeenCalledWith(
       'https://indexer.test/metrics/loop-closure?chainId=84532&days=30',
       expect.anything(),
     );
-    expect(p?.cumulative.ratio).toBeNull();
+    expect(p).not.toBeNull();
+    expect(p?.cumulative).toBeNull();
   });
 });
