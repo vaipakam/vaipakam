@@ -249,9 +249,21 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         }
         assertGt(handler.fallbackViaLiquidation(), 0, "V0: fallback entered through the RiskFacet producer");
         assertGt(handler.fallbackViaDefault(), 0, "V0: fallback entered through the DefaultedFacet producer");
-        assertGt(handler.retryFailed(), 0, "V0: claim-time retry failed");
-        assertGt(handler.retryRestored(), 0, "V0: a failed retry restored the custody row (S2b)");
-        assertGt(handler.retrySucceeded(), 0, "V0: claim-time retry succeeded");
+        // The retry families are asserted GIVEN AN ATTEMPT. This hook runs after EVERY run, and a
+        // 500-call run holds only a handful of retry-eligible claims (an unretried FallbackPending
+        // loan met by the right mode), so an unconditional "at least one per run" is a lottery that
+        // a hundred-run campaign loses — it did, on the PR 3 cut, with the success path intact.
+        // Reachability of each family is pinned deterministically by test_EveryV0FamilyIsReachable;
+        // here the campaign asserts what a silent breakage would violate: every working-venue retry
+        // the fuzzer ran resolved the loan at least once, and every failing-venue retry failed and
+        // RESTORED the custody row (S2b).
+        if (handler.retryAttemptsFailingVenue() > 0) {
+            assertGt(handler.retryFailed(), 0, "V0: claim-time retry failed");
+            assertGt(handler.retryRestored(), 0, "V0: a failed retry restored the custody row (S2b)");
+        }
+        if (handler.retryAttemptsWorkingVenue() > 0) {
+            assertGt(handler.retrySucceeded(), 0, "V0: claim-time retry succeeded");
+        }
         assertGt(handler.disposed(), 0, "V0: in-kind fallback distribution (dispose)");
         assertGt(handler.absorbed(), 0, "V0: backstop absorb");
         assertGt(handler.cured(), 0, "V0: cure by top-up");
@@ -281,6 +293,8 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         console.log("V0 intentCommits", handler.intentCommits());
         console.log("V0 intentFills", handler.intentFills());
         console.log("V0 intentCancels", handler.intentCancels());
+        console.log("V0 retryAttemptsWorkingVenue", handler.retryAttemptsWorkingVenue());
+        console.log("V0 retryAttemptsFailingVenue", handler.retryAttemptsFailingVenue());
         string[9] memory sites = [
             "openLoan.create", "openLoan.accept", "liquidate", "defaultLoan", "internalMatch",
             "absorb", "cure", "commitIntent", "fillIntent"

@@ -288,7 +288,7 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
  * rollout fallbacks below, their warnings and the `pendingMigration` field
  * cannot disagree about which migration is missing.
  */
-export const CUSTODY_MIGRATION = '0056_recycle_backing_custody';
+export const CUSTODY_MIGRATION = '0062_recycle_backing_custody'; // renumbered from the build stack's 0056 at the PR 3 cut: main took 0056–0061
 
 /** Read-side latch: requests are unbounded, so the read warns once per isolate. */
 let custodyMigrationReadWarned = false;

@@ -173,6 +173,11 @@ contract CustodyHandler is Test {
     ///         a `RetryRestored` row move for the claimed loan in the same call.
     uint256 public retryRestored;
     uint256 public retrySucceeded;
+    /// @dev Lender claims that RAN a claim-time retry on a FallbackPending loan, by venue: the V0
+    ///      coverage check asserts each retry family's OUTCOME given an attempt (see the suite's
+    ///      `_assertV0`), because a 500-call run has only a handful of retry-eligible claims.
+    uint256 public retryAttemptsWorkingVenue;
+    uint256 public retryAttemptsFailingVenue;
     uint256 public disposed;
     uint256 public absorbed;
     uint256 public cured;
@@ -632,6 +637,9 @@ contract CustodyHandler is Test {
         if (!ok) return;
         ++lenderClaims;
         if (!fallbackBefore) return;
+        // An ATTEMPT: a non-reverting retry claim on a FallbackPending subject, by venue.
+        if (mode == 2) ++retryAttemptsWorkingVenue;
+        else if (mode == 1) ++retryAttemptsFailingVenue;
         LibVaipakam.LoanStatus stAfter = _statusOf(loanId);
         if (stAfter == LibVaipakam.LoanStatus.InternalMatched) return;
         // Observed resolution only: the claim left FallbackPending and cleared the snapshot.

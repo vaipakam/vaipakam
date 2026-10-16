@@ -601,7 +601,10 @@ describe('the scan tail remembers a failed insert on a catch-up pass short of th
   it('stamps at the head, and otherwise holds the watermark below a failed scan', () => {
     const gate = src.indexOf('if (scanTo === head) {\n    await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);');
     expect(gate).toBeGreaterThan(-1);
-    const tail = src.slice(gate, gate + 400);
+    const tail = src.slice(gate, gate + 700);
+    // #1349 M5 — the loop-closure time stamp is written in the CAUGHT-UP
+    // branch only (a pass short of the head records no "ingested before").
+    expect(tail).toContain('await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);\n  } else if (!notifiedOk) {');
     expect(tail).toContain('} else if (!notifiedOk) {\n    await holdNotifiedWatermark(env, chainId, scanFrom);');
     // A catch-up pass whose insert landed advances the WRITTEN frontier (never
     // the keeper stamp), so the head pass does not replay it.

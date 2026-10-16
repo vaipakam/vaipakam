@@ -78,7 +78,7 @@ abstract contract DiamondFacetNames {
     ///      `OfferMatchIntentFacet`.
     ///      93 → 94 with `FallbackCustodyFacet` (#1566 slice 2 — the fallback
     ///      entry, retry swap and disposal hosted once).
-    function cutFacetNames() internal pure returns (string[93] memory) {
+    function cutFacetNames() internal pure returns (string[94] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",

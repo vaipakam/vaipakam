@@ -99,6 +99,17 @@
   },
   {
     "type": "error",
+    "name": "FillInProgress",
+    "inputs": [
+      {
+        "name": "heldBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "FunctionDoesNotExist",
     "inputs": []
   },

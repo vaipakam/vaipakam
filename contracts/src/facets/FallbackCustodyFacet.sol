@@ -522,6 +522,12 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             );
         }
         _restampIfVpfi(s, c, borrower);
+        // The lender's vault gained the lender slice: its tier follows the same rule as the
+        // borrower's (every protocol action that moves VPFI through a vault refreshes that
+        // user's tier). A backstop receiver is a protocol vault with no tier to restamp.
+        if (lenderMove == LibFallbackCustody.Move.ToLender && toLenderSlice > 0) {
+            _restampIfVpfi(s, c, lenderSliceOwner);
+        }
     }
 
     // --- Read -------------------------------------------------------------
