@@ -21,6 +21,8 @@ import {
   http,
   createPublicClient,
   createWalletClient,
+  isAddress,
+  zeroAddress,
   type Address,
 } from 'viem';
 
@@ -41,8 +43,17 @@ const CAPTURE_ABI = [
 /**
  * Pull the unique set of `lending_asset` ∪ `collateral_asset`
  * addresses for a given chain from the watcher's D1 indexer.
- * Skips the zero address (NFT loans whose lending_asset isn't a
- * priceable ERC-20).
+ *
+ * ONE shape rule, applied here at the boundary (2026-10-16): only a
+ * well-formed, non-zero address is a snapshot asset. The indexer writes a
+ * `'0x'` placeholder into the asset columns of a stub row until its metadata
+ * is read, and an NFT loan carries the zero address; a single such value in
+ * the batch made viem refuse to encode `captureDailyPriceSnapshot`, which
+ * skipped the WHOLE chain's snapshot (Base Sepolia, every tick of the
+ * 2026-10-16 window). Excluding known bad literals in SQL was the per-value
+ * patch that let `'0x'` through; validating the shape covers every malformed
+ * value, including ones nobody has written yet. Dropped values are counted in
+ * the log, never silent.
  */
 async function fetchTrackedAssets(env: Env, chainId: number): Promise<Address[]> {
   const rows = await env.DB.prepare(
@@ -55,13 +66,26 @@ async function fetchTrackedAssets(env: Env, chainId: number): Promise<Address[]>
        UNION
        SELECT collateral_asset AS asset FROM offers WHERE chain_id = ?1
      )
-     WHERE asset != '0x0000000000000000000000000000000000000000'
-       AND asset != ''`,
+     WHERE asset IS NOT NULL`,
   )
     .bind(chainId)
     .all<{ asset: string }>();
-  if (!rows.results) return [];
-  return rows.results.map((r) => r.asset.toLowerCase() as Address);
+  return snapshotAssets((rows.results ?? []).map((r) => r.asset), chainId);
+}
+
+/** Keep only well-formed, non-zero addresses, deduplicated case-insensitively. */
+export function snapshotAssets(values: readonly string[], chainId: number): Address[] {
+  const kept = new Set<Address>();
+  let dropped = 0;
+  for (const v of values) {
+    const a = typeof v === 'string' ? v.trim().toLowerCase() : '';
+    if (isAddress(a, { strict: false }) && a !== zeroAddress) kept.add(a as Address);
+    else dropped += 1;
+  }
+  if (dropped > 0) {
+    console.log(`[dailyOracle] chain=${chainId} skipped ${dropped} non-address asset value(s) (stub placeholders or NFT loans)`);
+  }
+  return [...kept];
 }
 
 /**
