@@ -95,6 +95,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FacetSelectors} from "../script/lib/FacetSelectors.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -111,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](260); // #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](262); // #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -342,6 +343,11 @@ contract HelperTest {
         // treasury / borrower entitlements + active flag) without
         // running the full at-fallback liquidation flow.
         selectors[n++] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
+        // #1566 S2b -- the fallback custody row beside the snapshot, only for
+        // the two shapes the producer never makes (FallbackCustodyTest F16
+        // and F16b); every other fixture enters through the real producer.
+        selectors[n++] = TestMutatorFacet.setFallbackVaultCustodyRaw.selector;
+        selectors[n++] = TestMutatorFacet.setIntentCustodialCollateralRaw.selector;
         // LibERC721 lock-state + mint direct manipulators — exposed for
         // the focused setApprovalForAll-during-lock unit test. Names
         // intentionally avoid the `test*` prefix so Foundry's test
@@ -942,7 +948,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](33);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -985,6 +991,8 @@ contract HelperTest {
         selectors[30] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[31] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        selectors[32] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         return selectors;
     }
 
@@ -1058,7 +1066,7 @@ contract HelperTest {
     {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to IntentDispatchFacet.
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1076,6 +1084,8 @@ contract HelperTest {
         selectors[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
         // #2322 — read-only preview of the debt-sized auction lot.
         selectors[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
+        // #1566 slice 3 — the census's custody read.
+        selectors[9] = SwapToRepayIntentFacet.getIntentCustody.selector;
     }
 
     /// @notice T-087 Sub 3.B — IntentDispatchFacet selectors.
@@ -1084,10 +1094,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = IntentDispatchFacet.preInteraction.selector;
         selectors[1] = IntentDispatchFacet.postInteraction.selector;
         selectors[2] = IntentDispatchFacet.isValidSignature.selector;
+        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
+        selectors[3] = IntentDispatchFacet.isOrderValid.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — AutoLifecycleFacet selectors.
@@ -2709,6 +2721,13 @@ contract HelperTest {
         selectors[0] = OfferMatchIntentFacet.matchIntent.selector;
     }
 
+    /// #1566 slice 2 - the fallback-custody host. Returns the one list in
+    /// `FacetSelectors.fallbackCustody()` (the same one `DeployDiamond` cuts),
+    /// so every test Diamond routes exactly the production surface.
+    function getFallbackCustodyFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.fallbackCustody();
+    }
+
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
     function getRewardClosureFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](6);
@@ -2989,7 +3008,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -3029,6 +3048,8 @@ contract HelperTest {
         selectors[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        selectors[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         return selectors;
     }
 

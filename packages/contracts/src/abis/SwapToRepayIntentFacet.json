@@ -182,6 +182,25 @@
   },
   {
     "type": "function",
+    "name": "getIntentCustody",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "diamondHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "internalForceCancelIntent",
     "inputs": [
       {
@@ -1854,15 +1873,10 @@
   },
   {
     "type": "error",
-    "name": "IntentCollateralFeeOnTransferUnsupported",
+    "name": "IntentCustodyNotVaultHeld",
     "inputs": [
       {
-        "name": "received",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requested",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2487,6 +2501,17 @@
         "name": "attempted",
         "type": "uint8",
         "internalType": "enum LibERC721.LockReason"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LopDomainUnsupported",
+    "inputs": [
+      {
+        "name": "lop",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -4209,17 +4234,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

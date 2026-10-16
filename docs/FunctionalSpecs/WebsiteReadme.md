@@ -1093,7 +1093,7 @@ Phase 1 scope:
 Required page placement and access:
 
 - the analytics dashboard should exist as a public route and must load without wallet connection
-- the implementation target should be `frontend/src/pages/PublicDashboard.tsx`
+- the implementation target is the connected app's public analytics page (the `/analytics` route of `apps/app`), which also carries the recycling transparency account and the loop-closure metric
 - the public website navigation should expose the dashboard clearly
 - the connected app shell may also link to the same public dashboard when appropriate, but the page itself should remain usable without connecting a wallet
 

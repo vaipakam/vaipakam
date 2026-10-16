@@ -48,6 +48,9 @@ import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
+// #1566 slice 2 — the liquidation-fallback custody host (vault-held custody row,
+// `FallbackCustodyMoved`); the custody census reads `getFallbackCustody`.
+import FallbackCustodyFacetABI from './FallbackCustodyFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -183,6 +186,7 @@ export {
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
+  FallbackCustodyFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

@@ -40,7 +40,18 @@ export function indexerWsOrigin(): string | null {
   return null; // non-http origin — can't derive a ws scheme.
 }
 
-async function getJson<T>(path: string): Promise<T | null> {
+/**
+ * The one GET helper every indexer read goes through: 4s timeout, `null`
+ * on any non-2xx, network error, abort or unset origin.
+ *
+ * Exported (M5, #1349) so a feature module with its own wire types and
+ * validation — `data/recycling.ts` — reads through the SAME failure
+ * contract rather than growing a second fetch wrapper whose timeout or
+ * error mapping could drift from this one. The `T` is a claim about the
+ * body, not a check of it: a caller that renders the result must validate
+ * it, which is exactly what the recycling module does.
+ */
+export async function getJson<T>(path: string): Promise<T | null> {
   const root = baseUrl();
   if (!root) return null;
   const ac = new AbortController();

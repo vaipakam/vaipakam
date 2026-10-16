@@ -19,6 +19,7 @@ import {
   http as viemHttp,
   recoverTypedDataAddress,
 } from 'viem';
+import { loopClosureBody, recyclingBody } from './recycling-fixture.mjs';
 
 const CHAIN_ID = 84532;
 const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
@@ -1271,6 +1272,22 @@ async function handler(req, res) {
             },
           ];
       return json(200, { chainId: CHAIN_ID, address: addr, notifications, nextBefore: null });
+    }
+
+    // GET /metrics/recycling?chainId=&days=[&recyclingFixture=] and
+    // GET /metrics/loop-closure?chainId=&days= — the recycling
+    // transparency reads (#1218 / #1349 M5). FIXTURE-served, not
+    // chain-hydrated: production derives them from a cron-captured D1
+    // history a fresh e2e chain has none of, and the page's job is the
+    // non-empty postures. See recycling-fixture.mjs for the shape rules and
+    // the variant switch. An unknown variant is a loud 400, never the
+    // default — a typo in a spec must not silently assert the wrong state.
+    if (parts[0] === 'metrics' && parts[1] === 'recycling') {
+      const body = recyclingBody(url, CHAIN_ID, DIAMOND, Date.now());
+      return body ? json(200, body) : json(400, { error: 'unknown recyclingFixture variant' });
+    }
+    if (parts[0] === 'metrics' && parts[1] === 'loop-closure') {
+      return json(200, loopClosureBody(url, CHAIN_ID, Date.now()));
     }
 
     // GET /activity — the Home feed degrades honestly on empty.

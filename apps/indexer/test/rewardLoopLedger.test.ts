@@ -16,6 +16,7 @@ import {
   type RewardLoopLog,
 } from '../src/rewardLoopLedger';
 import { handleLoopClosure } from '../src/rewardRoutes';
+import { _stampIngestedBeforeTime } from '../src/chainIndexer';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -34,6 +35,18 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const NOW = Math.floor(Date.now() / 1000);
 const TODAY = Math.floor(NOW / 86400);
 const TODAY_TS = TODAY * 86400 + 3600; // 01:00 UTC today
+// The route publishes a day's figures as FINAL only once the day has ended
+// and the ingest's time watermark has passed it (#1349 M5) — today is always
+// in progress. So the route cases put their events on YESTERDAY and stamp
+// the watermark into today, through the real caught-up stamp.
+const CLOSED = TODAY - 1;
+const CLOSED_TS = CLOSED * 86400 + 3600; // 01:00 UTC yesterday
+
+/** Record "every claim before 00:01 UTC today is ingested", as a caught-up
+ *  pass would, so yesterday reads as complete. */
+async function recordThroughYesterday(env: Env) {
+  await _stampIngestedBeforeTime(env, CHAIN, BigInt(TODAY * 86400 + 60));
+}
 
 function makeHarness() {
   const h: SqliteD1 = createSqliteD1(ALL_MIGRATIONS);
@@ -157,6 +170,7 @@ describe('applyRewardLoopLedger', () => {
 
 describe('GET /metrics/loop-closure', () => {
   async function fetchMetric(env: Env) {
+    await recordThroughYesterday(env);
     const res = await handleLoopClosure(
       new Request(
         `http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`,
@@ -190,19 +204,20 @@ describe('GET /metrics/loop-closure', () => {
       ],
       env,
       CHAIN,
-      ts([[100n, TODAY_TS]]),
+      ts([[100n, CLOSED_TS]]),
     );
     const body = await fetchMetric(env);
     // Dense series: every day in the 7-day window gets a bucket.
     expect(body.daily).toHaveLength(7);
-    const today = body.daily.find((d) => d.dayId === TODAY)!;
+    const day = body.daily.find((d) => d.dayId === CLOSED)!;
     // net = max(0, 100 − 100) = 0; with absorbed still 0 (pre-PR-3a) the
     // day reads 0.0 — the tokens re-entered as a tariff the ledger can't
     // yet see, and the metric may NEVER overstate closure.
-    expect(today.netVaultDelivered).toBe('0');
-    expect(today.ratio).toBe(0);
-    // Quiet days are explicit null buckets, not missing entries.
-    const quiet = body.daily.find((d) => d.dayId === TODAY - 3)!;
+    expect(day.netVaultDelivered).toBe('0');
+    expect(day.ratio).toBe(0);
+    // Quiet RECORDED days are explicit null-ratio buckets, not missing
+    // entries — a zero there is a fact, because the record covers the day.
+    const quiet = body.daily.find((d) => d.dayId === CLOSED - 3)!;
     expect(quiet.distributed).toBe('0');
     expect(quiet.ratio).toBeNull();
   });
@@ -210,29 +225,29 @@ describe('GET /metrics/loop-closure', () => {
   it('nets PER USER: Bob spending old rewards cannot cancel Alice’s same-day delivery', async () => {
     const { env } = makeHarness();
     await applyRewardLoopLedger(
-      // Day −1: Bob earned 50 into his vault.
+      // The day before: Bob earned 50 into his vault.
       [log('RewardDeliveredToVault', BOB, 50n, 90n)],
       env,
       CHAIN,
-      ts([[90n, TODAY_TS - 86400]]),
+      ts([[90n, CLOSED_TS - 86400]]),
     );
     await applyRewardLoopLedger(
       [
-        // Today: Alice claims 100 to vault and keeps it; Bob spends his 50.
+        // The closed day: Alice claims 100 to vault and keeps it; Bob spends his 50.
         log('InteractionRewardsClaimed', ALICE, 100n),
         log('RewardDeliveredToVault', ALICE, 100n),
         log('VaultVpfiDebited', BOB, 50n, 100n, { recipient: BOB }),
       ],
       env,
       CHAIN,
-      ts([[100n, TODAY_TS]]),
+      ts([[100n, CLOSED_TS]]),
     );
     const body = await fetchMetric(env);
-    const today = body.daily.find((d) => d.dayId === TODAY);
+    const day = body.daily.find((d) => d.dayId === CLOSED);
     // Aggregate netting would report 100 − 50 = 50; per-user netting keeps
     // Alice's full 100 (Bob's row nets max(0, 0 − 50) = 0).
-    expect(today?.netVaultDelivered).toBe('100');
-    expect(today?.ratio).toBe(1);
+    expect(day?.netVaultDelivered).toBe('100');
+    expect(day?.ratio).toBe(1);
   });
 
   it('reports null (not 0/NaN/∞) on zero-distribution days and serves the cumulative stock ratio', async () => {
@@ -243,14 +258,120 @@ describe('GET /metrics/loop-closure', () => {
       [log('RewardDeliveredToVault', ALICE, 70n)],
       env,
       CHAIN,
-      ts([[100n, TODAY_TS]]),
+      ts([[100n, CLOSED_TS]]),
     );
     const body = await fetchMetric(env);
-    const today = body.daily.find((d) => d.dayId === TODAY)!;
-    expect(today.ratio).toBeNull();
+    const day = body.daily.find((d) => d.dayId === CLOSED)!;
+    expect(day.ratio).toBeNull();
     expect(body.cumulative.cumDistributed).toBe('0');
     expect(body.cumulative.retainedStock).toBe('70');
     expect(body.cumulative.ratio).toBeNull();
+  });
+});
+
+describe('GET /metrics/loop-closure — which days are known (#1349 M5)', () => {
+  type Day = {
+    dayId: number;
+    status: string;
+    distributed: string | null;
+    netVaultDelivered: string | null;
+    absorbed: string | null;
+    ratio: number | null;
+  };
+  async function body(env: Env) {
+    const res = await handleLoopClosure(
+      new Request(`http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`),
+      env,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as { recordedBefore: string | null; daily: Day[]; cumulative: unknown };
+  }
+  async function claimOn(env: Env, at: number) {
+    await applyRewardLoopLedger(
+      [log('InteractionRewardsClaimed', ALICE, 100n), log('RewardDeliveredToVault', ALICE, 100n)],
+      env,
+      CHAIN,
+      ts([[100n, at]]),
+    );
+  }
+
+  it('with no watermark, NO day is known: every day unrecorded, amounts null — never zero', async () => {
+    const { env } = makeHarness();
+    // A real claim exists, but nothing says how far the record reaches.
+    await claimOn(env, CLOSED_TS);
+    const b = await body(env);
+    expect(b.recordedBefore).toBeNull();
+    // No lifetime figures either: a missing totals row is not "zero, lifetime".
+    expect(b.cumulative).toBeNull();
+    expect(b.daily).toHaveLength(7);
+    for (const d of b.daily) {
+      expect(d).toMatchObject({
+        status: 'unrecorded',
+        distributed: null,
+        netVaultDelivered: null,
+        absorbed: null,
+        ratio: null,
+      });
+    }
+  });
+
+  it('the day in progress is partial — its amounts so far, and NO ratio', async () => {
+    const { env } = makeHarness();
+    await claimOn(env, TODAY_TS);
+    await recordThroughYesterday(env);
+    // Advance the record past the claim: still partial, because the day
+    // has not ended — a part-day ratio is not a lower bound on the final.
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt(TODAY_TS + 60));
+    const b = await body(env);
+    expect(b.recordedBefore).toBe(new Date((TODAY_TS + 60) * 1000).toISOString());
+    expect(b.daily.find((d) => d.dayId === TODAY)).toMatchObject({
+      status: 'partial',
+      distributed: '100',
+      netVaultDelivered: '100',
+      ratio: null,
+    });
+    // Straddle partner: the closed day before it is complete, zero and all.
+    expect(b.daily.find((d) => d.dayId === CLOSED)).toMatchObject({
+      status: 'complete',
+      distributed: '0',
+      ratio: null,
+    });
+  });
+
+  it('a LAGGING record: the day it stops in is partial, the days after it unrecorded', async () => {
+    const { env } = makeHarness();
+    // The record reaches only to 06:00 three days ago.
+    const stoppedAt = (TODAY - 3) * 86400 + 6 * 3600;
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt(stoppedAt));
+    const b = await body(env);
+    const st = (id: number) => b.daily.find((d) => d.dayId === id)!;
+    expect(st(TODAY - 4).status).toBe('complete');
+    expect(st(TODAY - 4).distributed).toBe('0');
+    expect(st(TODAY - 3)).toMatchObject({ status: 'partial', distributed: '0', ratio: null });
+    for (const id of [TODAY - 2, TODAY - 1, TODAY]) {
+      expect(st(id)).toMatchObject({ status: 'unrecorded', distributed: null, ratio: null });
+    }
+  });
+
+  it('the stamp is monotonic: a regressed head never moves the record back', async () => {
+    const { env } = makeHarness();
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt(TODAY * 86400 + 60));
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt((TODAY - 2) * 86400));
+    const b = await body(env);
+    expect(b.recordedBefore).toBe(new Date((TODAY * 86400 + 60) * 1000).toISOString());
+    expect(b.daily.find((d) => d.dayId === CLOSED)!.status).toBe('complete');
+  });
+
+  it('the stamp writes the time row ALONE — the notified watermark has its own stamp', async () => {
+    // The notified watermark carries the replay planning of Codex #2489 and
+    // is stamped separately; this stamp must never touch it.
+    const { h, env } = makeHarness();
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt(TODAY * 86400 + 60));
+    await _stampIngestedBeforeTime(env, CHAIN, BigInt((TODAY - 2) * 86400));
+    const rows = h.db
+      .prepare(`SELECT kind, last_block FROM indexer_cursor WHERE chain_id = ? ORDER BY kind`)
+      .all(CHAIN) as Array<{ kind: string; last_block: number }>;
+    expect(rows).toEqual([{ kind: 'ingested-before-time', last_block: TODAY * 86400 + 60 }]);
   });
 });
 
@@ -384,8 +505,9 @@ describe('robustness (Codex #1310 round 1)', () => {
       ],
       env,
       CHAIN,
-      ts([[100n, TODAY_TS]]),
+      ts([[100n, CLOSED_TS]]),
     );
+    await recordThroughYesterday(env);
     const res = await handleLoopClosure(
       new Request(
         `http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`,
@@ -396,10 +518,10 @@ describe('robustness (Codex #1310 round 1)', () => {
       daily: Array<{ dayId: number; absorbed: string; ratio: number | null }>;
       cumulative: { cumAbsorbed: string; ratio: number | null };
     };
-    const today = body.daily.find((d) => d.dayId === TODAY)!;
-    expect(today.absorbed).toBe('60');
+    const day = body.daily.find((d) => d.dayId === CLOSED)!;
+    expect(day.absorbed).toBe('60');
     // (net 0 + absorbed 60) / distributed 100 = 0.6
-    expect(today.ratio).toBe(0.6);
+    expect(day.ratio).toBe(0.6);
     expect(body.cumulative.cumAbsorbed).toBe('60');
   });
 
@@ -426,8 +548,9 @@ describe('robustness (Codex #1310 round 1)', () => {
       ],
       env,
       CHAIN,
-      ts([[100n, TODAY_TS]]),
+      ts([[100n, CLOSED_TS]]),
     );
+    await recordThroughYesterday(env);
     const res = await handleLoopClosure(
       new Request(
         `http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`,
@@ -438,9 +561,9 @@ describe('robustness (Codex #1310 round 1)', () => {
       daily: Array<{ dayId: number; absorbed: string; ratio: number | null }>;
       cumulative: { cumAbsorbed: string };
     };
-    const today = body.daily.find((d) => d.dayId === TODAY)!;
-    expect(today.absorbed).toBe('40');
-    expect(today.ratio).toBe(0.4);
+    const day = body.daily.find((d) => d.dayId === CLOSED)!;
+    expect(day.absorbed).toBe('40');
+    expect(day.ratio).toBe(0.4);
     expect(body.cumulative.cumAbsorbed).toBe('40');
   });
 

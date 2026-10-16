@@ -45,6 +45,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
@@ -247,7 +248,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -333,6 +334,18 @@ contract EarlyWithdrawalFacetTest is Test {
         // #1219 (S-4) — the keeper routes charge capacity through a self-call into
         // this facet once a curve is set; the route cells below set one.
         cuts[31] = IDiamondCut.FacetCut({facetAddress: address(new ServiceCapacityFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getServiceCapacityFacetSelectors()});
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[32] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 

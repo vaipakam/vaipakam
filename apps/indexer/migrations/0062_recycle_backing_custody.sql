@@ -1,0 +1,47 @@
+-- #1349 M5 / #1566 slice 4 — the backing reading carries its CUSTODY STATE.
+--
+-- WHY. Whether the recycle pool is backed is decided by ONE OF TWO relations,
+-- and which one applies is a fact about the chain, not about the figures
+-- (`RewardCustodyFacet.getRecycleBackingSnapshotV2` natspec):
+--
+--   not activated   vpfiBalance >= bucket + strandedRecoveryReserved
+--                                         + recoveryPositionReserved
+--   activated       holderBalance >= holderAttributed
+--                   AND vpfiBalance >= strandedRecoveryReserved
+--
+-- On an activated deployment the bucket and the recovery position are the
+-- custody HOLDER's, so the first relation reports a shortfall on a healthy
+-- chain. The legacy eight-field lens tuple this table has stored since 0048
+-- carries no activation state, so it cannot choose between them — and it
+-- cannot be assumed to mean "not activated" either, because the flag lives on
+-- the same facet as the versioned view: a Diamond that cannot answer V2 cannot
+-- establish non-activation. These four columns hold what V2 adds.
+--
+-- WHY COLUMNS, NOT MORE PAYLOAD KEYS. The payload's all-or-nothing contract
+-- (0048) is about the eight figures the surface publishes as one block. These
+-- four have a different absence rule: a row captured before this migration,
+-- or by a capture that fell back to the legacy view because V2 is not in the
+-- Diamond's cut, is a COMPLETE record of the eight figures and simply does not
+-- know its custody state. A nullable column says exactly that by default, for
+-- every pre-existing row, with no rewrite and no sentinel.
+--
+-- NULL MEANS UNKNOWN, NEVER "NOT ACTIVATED". Old rows stay NULL, and the read
+-- surface reports the backing verdict as not determinable for them, WITH the
+-- reason, while still serving their eight figures (a reading that predates a
+-- newly published field is not withdrawn for lacking it).
+--
+--   custody_activated     0/1 — reward custody reads and debits the holder.
+--   holder_balance_known  0/1 — the holder's VPFI balance could be read.
+--   holder_balance        decimal wei; NULL whenever holder_balance_known is
+--                         0 — the view returns a placeholder there, and a
+--                         stored zero would publish as a real empty holder.
+--   holder_attributed     decimal wei — the sum of the holder's attributed
+--                         custody rows.
+--
+-- The writer sets all four from one V2 read at the row's pinned block, or
+-- clears all four on a legacy-view fallback, so a newer unknown reading never
+-- inherits an older reading's custody state.
+ALTER TABLE recycle_backing_snapshot ADD COLUMN custody_activated INTEGER;
+ALTER TABLE recycle_backing_snapshot ADD COLUMN holder_balance_known INTEGER;
+ALTER TABLE recycle_backing_snapshot ADD COLUMN holder_balance TEXT;
+ALTER TABLE recycle_backing_snapshot ADD COLUMN holder_attributed TEXT;

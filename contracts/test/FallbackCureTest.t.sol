@@ -14,6 +14,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
@@ -29,11 +30,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 ///           Active ──triggerDefault+swap-fails──▶ FallbackPending
 ///           FallbackPending ──addCollateral (HF↑, LTV↓)──▶ Active
 ///
-///         Before cure, the diamond holds the collateral it withdrew from
-///         the borrower's vault and records a three-way split in
+///         Before cure, the fallback entry has returned the collateral to
+///         the borrower's vault under the loan's lien (#1566 S2b), recorded
+///         it as the loan's custody row, and recorded a three-way split in
 ///         `fallbackSnapshot[loanId]`. A successful cure:
-///           1. transfers `held = lenderCol + treasuryCol + borrowerCol`
-///              from the diamond back to the borrower's vault;
+///           1. moves nothing: the custody row returns to the ordinary
+///              pledge, and the lien stays over it (now the whole pledge);
 ///           2. deletes `fallbackSnapshot`, `lenderClaims`, `borrowerClaims`;
 ///           3. re-labels both position NFTs to `LoanInitiated`;
 ///           4. transitions status back to `Active`;
@@ -102,31 +104,28 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         // Past grace.
         vm.warp(block.timestamp + DURATION_DAYS * 1 days + 3 days + 1);
 
-        // Force the 0x swap to revert; vault pull + NFT label side-effects are
-        // mocked away so we don't have to fully wire the default accounting.
+        // Force the 0x swap to revert, so the REAL producer enters the
+        // fallback (#1566 S2b): the vault withdraw is not mocked and the
+        // Diamond is not funded, because the entry returns the collateral to
+        // the borrower's vault in the same transaction and keeps nothing.
         vm.mockCallRevert(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap failed"
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
-        // `updateNFTStatus` returns (), so a zero-byte mock satisfies abi.decode
-        // requirements only when no return is accessed — which matches
-        // crossFacetCall's usage.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
-            ""
-        );
-        // Diamond needs to "hold" the collateral post-withdraw for the
-        // eventual cure transfer-back.
-        deal(mockCollateralERC20, address(diamond), COLLATERAL * 2);
+        uint256 diamond0 = ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
 
         DefaultedFacet(address(diamond)).triggerDefault(1, defaultAdapterCalls());
+
+        // Fixture-live: the custody is vault-held and the Diamond kept nothing.
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(1);
+        assertEq(row, COLLATERAL, "fixture-live: the collateral is the borrower's vault-held custody row");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        assertEq(
+            ERC20Mock(mockCollateralERC20).balanceOf(address(diamond)),
+            diamond0,
+            "fixture-live: the entry left nothing in the Diamond"
+        );
         return 1;
     }
 
@@ -153,23 +152,23 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         // (`_toFallback` warped DURATION + 3 days before triggering default).
         assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.FallbackPending));
 
-        // Codex #1069 round-3 P1 (REFUTED empirically): the cure-repay must
-        // RESTORE the diamond-held snapshot collateral into the borrower vault
-        // in the SAME tx, before the borrowerClaim (written by the Repaid path)
-        // is ever claimable — otherwise `claimAsBorrower` would later pull from
-        // an empty vault. Assert the round-trip: the borrower vault gains the
-        // full snapshot sum (`held == COLLATERAL`, see
-        // testGetFallbackSnapshotReturnsLiveSplit) as the repay commits.
+        // #1566 S2b: the cure-repay moves NO collateral. The fallback entry
+        // already returned it to the borrower vault under the lien, so the
+        // borrowerClaim written by the Repaid path is backed by the vault from
+        // the start; the repay only returns the custody row to the pledge.
+        // (Before S2b it had to restore the Diamond-held snapshot in the same
+        // tx -- Codex #1069 round 3.)
         address borrowerVault =
             VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
         uint256 vaultColBefore =
             ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault);
         uint256 diamondColBefore =
             ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
+        assertEq(vaultColBefore, COLLATERAL, "fixture-live: the collateral is already in the borrower vault");
 
         vm.startPrank(borrower);
         ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
-        // Must NOT revert RepaymentPastGracePeriod — the cure is exempt.
+        // Must NOT revert RepaymentPastGracePeriod -- the cure is exempt.
         RepayFacet(address(diamond)).repayLoan(loanId);
         vm.stopPrank();
 
@@ -178,17 +177,22 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             uint8(LibVaipakam.LoanStatus.Repaid),
             "full repayment cures the fallback past grace"
         );
-        // Collateral moved diamond → borrower vault (not stranded in custody).
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault),
-            vaultColBefore + COLLATERAL,
-            "restored collateral lands in the borrower vault"
+            vaultColBefore,
+            "the collateral never moved"
         );
         assertEq(
             ERC20Mock(mockCollateralERC20).balanceOf(address(diamond)),
-            diamondColBefore - COLLATERAL,
-            "diamond releases the held snapshot collateral"
+            diamondColBefore,
+            "nothing moved through the Diamond"
         );
+        (uint256 lienAmt, bool released) =
+            TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(loanId);
+        assertEq(lienAmt, COLLATERAL, "the lien is exactly the collateral (no second increment)");
+        assertFalse(released, "held until the borrower claims");
+        (uint256 row, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, 0, "the custody row returned to the pledge");
         // Snapshot wiped so neither side can pull against a stale split.
         (, , , , , bool active, ) =
             ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);

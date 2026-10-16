@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "isOrderValid",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isValidSignature",
     "inputs": [
       {
@@ -95,7 +114,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "",
+        "name": "takingAmount",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -175,12 +194,12 @@
         "internalType": "bytes32"
       },
       {
-        "name": "",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "",
+        "name": "makingAmount",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -345,6 +364,55 @@
       },
       {
         "name": "residualToBorrowerVault",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapToRepayIntentLotPulled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "taker",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "lot",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -524,6 +592,65 @@
   },
   {
     "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FillInProgress",
+    "inputs": [
+      {
+        "name": "heldBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FillLockMismatch",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "heldBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentCollateralFeeOnTransferUnsupported",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentCustodyNotVaultHeld",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentDeliveredBelowLiveFloor",
     "inputs": [
       {
@@ -533,6 +660,38 @@
       },
       {
         "name": "liveFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentDeliveredMismatch",
+    "inputs": [
+      {
+        "name": "actualDelivered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "takingAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentFillAmountMismatch",
+    "inputs": [
+      {
+        "name": "makingAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lot",
         "type": "uint256",
         "internalType": "uint256"
       }

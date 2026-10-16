@@ -161,6 +161,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -368,6 +369,7 @@ contract SetupTest is Test {
     RewardEraFacet rewardEraFacet;
     ServiceCapacityFacet serviceCapacityFacet;
     OfferMatchIntentFacet offerMatchIntentFacet;
+    FallbackCustodyFacet fallbackCustodyFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -504,6 +506,7 @@ contract SetupTest is Test {
         rewardEraFacet = new RewardEraFacet();
         serviceCapacityFacet = new ServiceCapacityFacet();
         offerMatchIntentFacet = new OfferMatchIntentFacet();
+        fallbackCustodyFacet = new FallbackCustodyFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -536,7 +539,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](94);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](95);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -902,6 +905,12 @@ contract SetupTest is Test {
             facetAddress: address(offerMatchIntentFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferMatchIntentFacetSelectors()
+        });
+        // #1566 slice 2 - the fallback-custody host (slot 93).
+        cuts[94] = IDiamondCut.FacetCut({
+            facetAddress: address(fallbackCustodyFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
@@ -1437,6 +1446,200 @@ contract SetupTest is Test {
     // ───────────────────────────────────────────────────────────────────────
 
     /// @notice Sign + accept `offerId` as `acceptor` (consent=true, no link).
+    // --- #1566 S2b: FallbackPending fixtures through the REAL producer ----
+
+    /// @dev SetupTest's par price for both mock feeds ($1, 8 decimals).
+    uint256 internal constant FALLBACK_FIXTURE_PAR_PRICE = 1e8;
+
+    /// @dev Enter FallbackPending through the REAL producer,
+    ///      `FallbackCustodyFacet.enterFallback` -- the one entry both forced
+    ///      closes self-call once every swap route has failed -- so a fixture
+    ///      holds exactly the custody production creates (#1566 S2b; slices 2-3
+    ///      brief (i)): the collateral back in `loan.borrower`'s vault, the lien
+    ///      re-created over it by the real increment, the custody row credited
+    ///      by its `Entered` move, the snapshot and both claim rows computed
+    ///      from the loan's own terms, and the tier sync of the real
+    ///      Active -> FallbackPending terminalize. A hand-built row carries none
+    ///      of that provenance and can describe a state the producer never
+    ///      makes.
+    ///
+    ///      The caller's preconditions are reproduced with the real primitives,
+    ///      as the Diamond: the loan's collateral lien is released (a no-op when
+    ///      the scaffold installed none), then `collateralAmount` is withdrawn
+    ///      from the borrower's vault into the Diamond, where a failed swap
+    ///      leaves it. Only the swap attempt is skipped. Suites of scaffolded
+    ///      loans enter here rather than through a trigger: a trigger first runs
+    ///      the internal-match auto-dispatch against the counter-loans those
+    ///      suites seed, and a reverting-venue mock cannot be lifted again
+    ///      without dropping SetupTest's own mocks (a later retry in the cell
+    ///      needs the venue working). The triggers' own paths into this
+    ///      producer are pinned by FallbackCustodyTest (F1, F2),
+    ///      DefaultedFacetTest, FallbackCureTest and BackstopAbsorbTest.
+    ///
+    ///      Fixture-live: the loan is FallbackPending, the custody row is the
+    ///      whole collateral, nothing reads as Diamond-held, and the Diamond's
+    ///      balance of the collateral is what it was before the entry.
+    function _enterFallbackViaProducer(uint256 loanId) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
+        vm.startPrank(address(diamond));
+        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            l.borrower, l.collateralAsset, address(diamond), l.collateralAmount
+        );
+        FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
+        vm.stopPrank();
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "fixture-live: the producer entered FallbackPending"
+        );
+        (uint256 row, uint256 legacy) =
+            FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, l.collateralAmount, "fixture-live: the custody row is the whole collateral");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        assertEq(
+            ERC20(l.collateralAsset).balanceOf(address(diamond)),
+            diamond0,
+            "fixture-live: the entry left nothing in the Diamond"
+        );
+    }
+
+    /// @dev {_enterFallbackViaProducer} with the producer made to compute a
+    ///      given split: the loan's own snapshotted fallback terms (written as
+    ///      initiation would) and the collateral's ENTRY price come from
+    ///      {_fallbackEntryTerms}, the entry runs, and the collateral goes back
+    ///      to par. Fixture-live: the producer's snapshot carries exactly
+    ///      `lenderCollateral` / `treasuryCollateral`, the borrower the rest.
+    ///      Needs a zero-rate loan (no accrual moves the split), both feeds at
+    ///      par and equal token decimals: SetupTest's mock pair.
+    function _enterFallbackViaProducerAtSplit(
+        uint256 loanId,
+        uint256 lenderCollateral,
+        uint256 treasuryCollateral
+    ) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.interestRateBps, 0, "fixture: a zero-rate loan, so no accrual moves the split");
+        (uint256 colPrice, uint8 colDec) = OracleFacet(address(diamond)).getAssetPrice(l.collateralAsset);
+        (uint256 prinPrice, uint8 prinDec) = OracleFacet(address(diamond)).getAssetPrice(l.principalAsset);
+        assertEq(colPrice, FALLBACK_FIXTURE_PAR_PRICE, "fixture: the collateral feed at par");
+        assertEq(prinPrice, FALLBACK_FIXTURE_PAR_PRICE, "fixture: the principal feed at par");
+        assertEq(colDec, prinDec, "fixture: equal feed decimals");
+        assertEq(
+            ERC20(l.collateralAsset).decimals(),
+            ERC20(l.principalAsset).decimals(),
+            "fixture: equal token decimals"
+        );
+
+        (uint16 bonusBps, uint16 treasuryBps, uint256 entryPrice) =
+            _fallbackEntryTerms(l.principal, lenderCollateral, treasuryCollateral);
+        l.fallbackLenderBonusBpsAtInit = bonusBps;
+        l.fallbackTreasuryBpsAtInit = treasuryBps;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        mockOraclePrice(l.collateralAsset, entryPrice, colDec);
+        _enterFallbackViaProducer(loanId);
+        mockOraclePrice(l.collateralAsset, FALLBACK_FIXTURE_PAR_PRICE, colDec);
+
+        (uint256 lc, uint256 tc, uint256 bc, , , bool active, ) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        assertTrue(active, "fixture-live: an active snapshot");
+        assertEq(lc, lenderCollateral, "fixture-live: the producer computed the lender slice");
+        assertEq(tc, treasuryCollateral, "fixture-live: the producer computed the treasury slice");
+        assertEq(
+            bc,
+            l.collateralAmount - lenderCollateral - treasuryCollateral,
+            "fixture-live: the borrower slice is the rest"
+        );
+    }
+
+    /// @dev The fallback terms (lender bonus and treasury cut, in bps, as a
+    ///      loan snapshots them at initiation) and the collateral's ENTRY price
+    ///      that make `LibFallback.computeFallbackEntitlements` produce exactly
+    ///      `lenderCol` / `treasuryCol` for a zero-rate loan of `principal`,
+    ///      with both feeds at par and equal token decimals. The producer
+    ///      prices each due in collateral at the entry price,
+    ///      `due * PAR / entryPrice`, floored:
+    ///        - lender slice >= principal: par serves; the bonus is the excess
+    ///          over the principal, rounded up so the floored due lands on the
+    ///          slice;
+    ///        - lender slice < principal: no bonus lowers the due below the
+    ///          principal, so the collateral is priced ABOVE par at entry (a 2%
+    ///          bonus, entry price = due * PAR / lenderCol, floored, which
+    ///          floors the slice back onto `lenderCol`) and the caller restores
+    ///          par afterwards -- the collateral fell between the default and
+    ///          the cell, as it does for a real loan.
+    ///      The treasury cut is then the smallest that floors onto
+    ///      `treasuryCol` at that price. A zero bps reads as the protocol
+    ///      default (3% / 2%), so a zero result is written as 1 bps, which adds
+    ///      nothing below 10_000 units of principal. The caller asserts the
+    ///      producer's actual split, so a cell asking for a shape this cannot
+    ///      reach fails loudly instead of passing on a hand-made state.
+    function _fallbackEntryTerms(uint256 principal, uint256 lenderCol, uint256 treasuryCol)
+        internal
+        pure
+        returns (uint16 bonusBps, uint16 treasuryBps, uint256 entryPrice)
+    {
+        uint256 bonus;
+        if (lenderCol >= principal) {
+            entryPrice = FALLBACK_FIXTURE_PAR_PRICE;
+            bonus = _fixtureCeilDiv((lenderCol - principal) * 10_000, principal);
+        } else {
+            bonus = 200;
+            uint256 lenderDue = principal + (principal * bonus) / 10_000;
+            entryPrice = (lenderDue * FALLBACK_FIXTURE_PAR_PRICE) / lenderCol;
+        }
+        uint256 treasuryDue = _fixtureCeilDiv(treasuryCol * entryPrice, FALLBACK_FIXTURE_PAR_PRICE);
+        uint256 treasury = _fixtureCeilDiv(treasuryDue * 10_000, principal);
+        if (bonus == 0) bonus = 1;
+        if (treasury == 0) treasury = 1;
+        require(bonus <= type(uint16).max && treasury <= type(uint16).max, "fixture: fallback terms out of range");
+        bonusBps = uint16(bonus);
+        treasuryBps = uint16(treasury);
+    }
+
+    function _fixtureCeilDiv(uint256 a, uint256 b) private pure returns (uint256) {
+        return a == 0 ? 0 : (a - 1) / b + 1;
+    }
+
+    /// @dev A vault-held top-up of a FallbackPending loan through the REAL
+    ///      `AddCollateralFacet.addCollateral`, paid by the stored borrower
+    ///      (who holds the borrower position in these scaffolds): the deposit,
+    ///      the `collateralAmount` increase and the lien increment are the
+    ///      facet's own. SetupTest mocks every health factor at 2.0, which
+    ///      would cure the loan on the spot; a top-up cell needs it left
+    ///      FallbackPending, so this loan's health factor reads 0.9 (below the
+    ///      1.5 cure floor) for the call, then 2.0 again. Fixture-live: still
+    ///      FallbackPending, the custody row unchanged, one live lien over the
+    ///      row and the top-up.
+    function _topUpFallbackViaAddCollateral(uint256 loanId, uint256 amount) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint8(l.status), uint8(LibVaipakam.LoanStatus.FallbackPending), "fixture: a FallbackPending loan"
+        );
+        (uint256 row0, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        ERC20Mock(l.collateralAsset).mint(l.borrower, amount);
+        vm.prank(l.borrower);
+        ERC20(l.collateralAsset).approve(address(diamond), amount);
+        bytes memory hfCall = abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId);
+        vm.mockCall(address(diamond), hfCall, abi.encode(uint256(0.9e18)));
+        vm.prank(l.borrower);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, amount);
+        vm.mockCall(address(diamond), hfCall, abi.encode(uint256(2e18)));
+
+        LibVaipakam.Loan memory post = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint8(post.status), uint8(LibVaipakam.LoanStatus.FallbackPending), "fixture-live: the top-up did not cure"
+        );
+        assertEq(post.collateralAmount, l.collateralAmount + amount, "fixture-live: the collateral grew by the top-up");
+        (uint256 row1, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row1, row0, "fixture-live: the custody row is unchanged");
+        (uint256 lien, bool released) =
+            TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(loanId);
+        assertEq(lien, post.collateralAmount, "fixture-live: one lien over the custody row and the top-up");
+        assertFalse(released, "fixture-live: the lien is live");
+    }
+
     function _signAndAcceptOffer(address acceptor, uint256 pk, uint256 offerId)
         internal
         returns (uint256)

@@ -9,6 +9,7 @@ import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -59,14 +60,14 @@ library FacetSelectors {
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
     }
 
-    /// @notice Full external selector surface of {VaultFactoryFacet} (32).
+    /// @notice Full external selector surface of {VaultFactoryFacet} (35).
     /// @dev    Sourced from the compiled ABI (`forge inspect VaultFactoryFacet
     ///         methodIdentifiers`), NOT from any prior hand-list — the parallel
     ///         lists in HelperTest / the scripts were both missing
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -105,6 +106,8 @@ library FacetSelectors {
         s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        s[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (31).
@@ -360,5 +363,33 @@ library FacetSelectors {
     function offerPreview() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+    }
+
+    /// @notice Full external selector surface of {FallbackCustodyFacet} (4).
+    ///
+    /// @dev    #1566 slice 2. The fallback flows - entering the fallback, the
+    ///         retried swap and the disposal of the fallback collateral - moved
+    ///         out of `RiskFacet`, `DefaultedFacet` and `ClaimFacet` into this
+    ///         host, which those three reach by self-call. A curated refresh of
+    ///         the three WITHOUT this facet installs code that calls selectors
+    ///         nothing routes: a liquidation or default whose swap fails, and
+    ///         every claim of a fallback-pending loan, would revert
+    ///         `FunctionDoesNotExist` through the Diamond fallback - the
+    ///         half-applied family #658 and #1649 document. `RedeployFacets`
+    ///         therefore cuts it from this list.
+    ///
+    ///         This is also the ONLY copy of the list. `DeployDiamond`
+    ///         (`_getFallbackCustodySelectors`, which `RefreshAllFacetsInPlace`
+    ///         inherits) and `HelperTest` (`getFallbackCustodyFacetSelectors`,
+    ///         which every test Diamond cuts) return it rather than keeping
+    ///         their own, so the deploy, the in-place refresh, the curated
+    ///         refresh and the tests cannot disagree about the surface, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function fallbackCustody() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = FallbackCustodyFacet.enterFallback.selector;
+        s[1] = FallbackCustodyFacet.retryFallbackSwap.selector;
+        s[2] = FallbackCustodyFacet.disposeFallbackCustody.selector;
+        s[3] = FallbackCustodyFacet.getFallbackCustody.selector;
     }
 }

@@ -85,6 +85,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -258,7 +259,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -415,6 +416,18 @@ contract RiskFacetTest is Test {
         });
 
 
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -2940,8 +2953,9 @@ contract RiskFacetTest is Test {
         );
 
         // Lender claim should be on collateral (not principal) under the new
-        // README §7 fallback: claims are recorded in collateral units and
-        // the collateral stays in the Diamond until ClaimFacet resolves it.
+        // README section 7 fallback: claims are recorded in collateral units
+        // and the collateral is back in the borrower's vault under the lien
+        // (#1566 S2b) until ClaimFacet resolves it.
         (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20);
@@ -3275,8 +3289,12 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev README §7 line 148: claim-time retry succeeds → claims rewritten
-    ///      to principal-asset proceeds with the README-defined split.
+    /// @dev README section 7 line 148: claim-time retry succeeds -> claims
+    ///      rewritten to principal-asset proceeds with the README-defined split.
+    ///      #1566 S2b: the REAL producer enters the fallback (no mocked vault
+    ///      withdraw, no collateral dealt to the Diamond), so the custody is in
+    ///      the borrower's vault, and the retry pulls exactly that row out of
+    ///      it before selling.
     function testClaimRetrySucceeds() public {
         uint256 loanId = createAndAcceptOffer();
 
@@ -3287,13 +3305,6 @@ contract RiskFacetTest is Test {
                 loanId
             ),
             abi.encode(HF_SCALE - 1)
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
         );
         vm.mockCall(
             address(diamond),
@@ -3314,9 +3325,10 @@ contract RiskFacetTest is Test {
             abi.encode(uint256(1e8), uint8(8))
         );
         deal(mockERC20, address(diamond), 1800 ether);
-        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
-        // Initial swap reverts → fallback. Collateral stays in Diamond.
+        // Initial swap reverts -> fallback. The collateral returns to the
+        // borrower's vault under the lien.
         vm.mockCallRevert(
             address(mockZeroExProxy),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
@@ -3325,6 +3337,14 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             defaultAdapterCalls()
+        );
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, 1800 ether, "fixture-live: the custody row is the whole collateral");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondCol0,
+            "fixture-live: the entry left nothing in the Diamond"
         );
 
         // Now stub swap for the retry: return 1980 ether proceeds.
@@ -3361,7 +3381,8 @@ contract RiskFacetTest is Test {
             abi.encode(uint256(1980 ether))
         );
         deal(mockERC20, address(diamond), 1980 ether); // simulate swap proceeds in diamond
-        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
+        uint256 vaultCol0 = IERC20(mockCollateralERC20).balanceOf(borrowerVault);
 
         uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
@@ -3378,11 +3399,22 @@ contract RiskFacetTest is Test {
             1030 ether,
             "lender principal-asset proceeds"
         );
+        assertEq(
+            vaultCol0 - IERC20(mockCollateralERC20).balanceOf(borrowerVault),
+            1800 ether,
+            "the retry pulled exactly the custody row out of the borrower's vault"
+        );
+        (row, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, 0, "the custody row is spent");
         vm.clearMockedCalls();
     }
 
-    /// @dev README §7 line 151: if claim-time retry also fails, split the
-    ///      collateral per snapshot (same as fallback-time recording).
+    /// @dev README section 7 line 151: if claim-time retry also fails, split
+    ///      the collateral per snapshot (same as fallback-time recording).
+    ///      #1566 S2b: no collateral is dealt to the Diamond -- the entry
+    ///      returns it to the borrower's vault, and the in-kind split moves the
+    ///      slices out of that vault, so the only collateral the Diamond gains
+    ///      is the treasury slice (this suite's treasury IS the Diamond).
     function testClaimRetryFailsFallsThroughToSplit() public {
         uint256 loanId = createAndAcceptOffer();
 
@@ -3405,28 +3437,43 @@ contract RiskFacetTest is Test {
             abi.encode(true)
         );
         deal(mockERC20, address(diamond), 1800 ether);
-        deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCallRevert(
             address(mockZeroExProxy),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap revert"
         );
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
             defaultAdapterCalls()
         );
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, 1800 ether, "fixture-live: the custody row is the whole collateral");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondCol0,
+            "fixture-live: the entry left nothing in the Diamond"
+        );
+        (, uint256 treasuryCol, , , , , ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        assertGt(treasuryCol, 0, "fixture-live: a treasury slice");
 
         // Retry also reverts.
         uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        // Lender got 1030 ether collateral; treasury got 20 ether.
+        // Lender got 1030 ether collateral; treasury got its slice.
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(lender) - lenderBefore,
             1030 ether,
             "lender collateral on failed retry"
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)) - diamondCol0,
+            treasuryCol,
+            "only the treasury slice reached the Diamond (as the treasury)"
         );
         vm.clearMockedCalls();
     }
@@ -3434,7 +3481,8 @@ contract RiskFacetTest is Test {
     // Removed: testTriggerLiquidationFallbackGetVaultFails.
     // Under the new README §7 fallback semantics (lines 147–151), the
     // fallback no longer moves collateral into the lender's vault — it
-    // records a snapshot and holds the collateral in the Diamond so
+    // records a snapshot and returns the collateral to the borrower's vault
+    // under the lien (#1566 S2b; it used to hold it in the Diamond) so
     // ClaimFacet can retry the swap during the lender claim. The
     // "vault-creation-fails" branch covered by this test no longer exists.
 

@@ -7,8 +7,10 @@
  * The dapp calls this after the borrower's commit transaction
  * lands. Body carries:
  *   - `chainId`           — chain the commit lives on
- *   - `orderHash`         — canonical 1inch LOP v4 hash the diamond
- *                           bound via ERC-1271
+ *   - `orderHash`         — canonical 1inch LOP v4 hash the commit
+ *                           registered for ERC-1271 (on the borrower's
+ *                           vault for a swap-to-repay order, #1566 S3e;
+ *                           on the diamond for a buyback)
  *   - `order`             — full structured Fusion order the
  *                           resolver auction needs to fill (read
  *                           back from `GET /loans/:id` →
@@ -38,8 +40,9 @@
  * Stage-3 split note: no funds move through this handler.
  * Compromise of the `ONEINCH_API_KEY` secret rate-limits
  * resolver visibility but can't pull collateral — that lives
- * behind the diamond's ERC-1271 signature on the orderHash,
- * not the agent's auth.
+ * behind the order maker's ERC-1271 signature on the orderHash
+ * (the borrower's vault, which asks the diamond; the diamond
+ * itself for a buyback), not the agent's auth.
  */
 
 import type { Env } from './env';
@@ -97,8 +100,9 @@ function rpcForChain(env: Env, chainId: number): string | undefined {
 //   - The LOP orderbook accepts arbitrary signed orders.
 //     Resolvers (any party watching the public LOP orderbook)
 //     pick up the order on profitability; ERC-1271 validation
-//     against the diamond's `isValidSignature` still happens
-//     the same way at fill time.
+//     against the order maker's `isValidSignature` (the borrower's
+//     vault for a swap-to-repay order, #1566 S3e; the diamond for
+//     a buyback) still happens the same way at fill time.
 // Codex round-2 PR #430 P2 — host is `api.1inch.com`, NOT
 // `.dev`. The `.dev` host does not serve the same routes on
 // the current API portal.
@@ -147,6 +151,47 @@ interface IntentFusionPostRequest {
     extension: `0x${string}`;
   };
   commitTxHash: `0x${string}`;
+}
+
+/** The two order kinds this endpoint forwards. */
+export type IntentKind = 'swap_to_repay' | 'buyback';
+
+/**
+ * #1566 S3e — the order's parties, as far as they can be checked before
+ * any RPC call. Every order pays the Vaipakam diamond (its receiver), and a
+ * buyback order's maker is the diamond as well. A swap-to-repay order's
+ * maker is the borrower's vault, which only the on-chain preflight can
+ * confirm (it must equal the maker `getIntentCommit` derives on-chain), so a
+ * swap post is forwarded only after that preflight ran and matched — see
+ * {@link makerConfirmedBeforePost}.
+ */
+export function orderPartiesError(
+  kind: IntentKind,
+  order: { maker: string; receiver: string },
+  expectedDiamond: string,
+): 'maker-receiver-not-diamond' | null {
+  const diamond = expectedDiamond.toLowerCase();
+  if (order.receiver.toLowerCase() !== diamond) return 'maker-receiver-not-diamond';
+  if (kind === 'buyback' && order.maker.toLowerCase() !== diamond) {
+    return 'maker-receiver-not-diamond';
+  }
+  return null;
+}
+
+/**
+ * #1566 S3e — whether the order's maker is confirmed before this Worker
+ * spends its 1inch key on the order: always for a buyback (the offline
+ * party check bound it to the diamond), and for a swap-to-repay order only
+ * when the on-chain preflight ran and matched every field, the maker
+ * included. A degraded or skipped preflight therefore fails a swap post
+ * closed — otherwise the body could name any ERC-1271 contract as the maker
+ * and spend the key, which is what the party check exists to stop.
+ */
+export function makerConfirmedBeforePost(
+  kind: IntentKind,
+  preflight: 'ok' | 'degraded' | 'skipped',
+): boolean {
+  return kind === 'buyback' || preflight === 'ok';
 }
 
 export async function handleIntentFusionPost(
@@ -221,35 +266,38 @@ export async function handleIntentFusionPost(
   // attacker faking the request still hits the same on-chain
   // rejection.
 
-  // Codex round-8 PR #430 P2 — bind maker/receiver to the
+  // Codex round-8 PR #430 P2 — bind the order's parties to the
   // Vaipakam diamond on the request's chainId. Without this gate,
   // a non-browser caller that spoofs an allowed Origin can
   // submit orders for an arbitrary ERC-1271 contract using our
   // Fusion API quota; Fusion would validate against that
-  // attacker contract's `isValidSignature` rather than the
-  // Vaipakam diamond's. The on-chain commit check the borrower
-  // ran earlier is loan-scoped; the Fusion request body's maker/
-  // receiver fields are the resolver-side commitment, so they
-  // must equal the diamond.
+  // attacker contract's `isValidSignature` rather than a
+  // Vaipakam maker's. The receiver is always the diamond; since
+  // #1566 S3e a swap-to-repay order's maker is the borrower's
+  // vault, bound by the on-chain preflight below instead of here
+  // (see `orderPartiesError` / `makerConfirmedBeforePost`).
+  const kind: IntentKind = parsed.kind ?? 'swap_to_repay';
   const deployment = getDeployment(parsed.chainId);
   if (!deployment) {
     return jsonErr(corsOrigin, 400, 'no-deployment-for-chain');
   }
   const expectedDiamond = deployment.diamond.toLowerCase();
-  if (
-    parsed.order.maker.toLowerCase() !== expectedDiamond ||
-    parsed.order.receiver.toLowerCase() !== expectedDiamond
-  ) {
-    return jsonErr(corsOrigin, 400, 'maker-receiver-not-diamond');
+  const partiesError = orderPartiesError(kind, parsed.order, expectedDiamond);
+  if (partiesError) {
+    return jsonErr(corsOrigin, 400, partiesError);
   }
 
   // T-090 v1.2 #428 — on-chain commit preflight. The Origin gate
   // above stops the browser-misconfigured noise; the rate limit
-  // bounds spend; the maker/receiver-bound-to-diamond check
-  // prevents foreign ERC-1271 contracts from spending our key.
-  // But a non-browser caller that spoofs Origin + bounds the
-  // body to our diamond can still spam shape-valid-but-fake
-  // commits + burn the Fusion quota at the upstream rejection.
+  // bounds spend; the party check above binds the receiver (and a
+  // buyback's maker) to the diamond. A swap order's maker is the
+  // borrower's vault (#1566 S3e), which only this preflight can
+  // confirm — so for a swap it is also what stops a foreign
+  // ERC-1271 contract from spending our key, and a swap post
+  // without an `ok` preflight is refused below. Beyond that, a
+  // non-browser caller that spoofs Origin + binds the body to our
+  // diamond could still spam shape-valid-but-fake commits + burn
+  // the Fusion quota at the upstream rejection.
   //
   // Defense: fetch the `commitTxHash` receipt + verify it
   // contains a `SwapToRepayIntentCommitted` log whose indexed
@@ -271,6 +319,7 @@ export async function handleIntentFusionPost(
   // Cost when active: two RPC calls per request (one
   // `eth_getTransactionReceipt` + one `eth_call` against the
   // diamond). Bounded above by the rate-limit binding.
+  let preflightOutcome: 'ok' | 'degraded' | 'skipped' = 'skipped';
   if (env.ONEINCH_API_KEY) {
     const rpcUrl = rpcForChain(env, parsed.chainId);
     if (rpcUrl) {
@@ -282,9 +331,11 @@ export async function handleIntentFusionPost(
       if (preflight.kind === 'reject') {
         return jsonErr(corsOrigin, 400, preflight.reason);
       }
-      // 'degraded' falls through to Fusion; the log line lets
-      // ops see when the preflight RPC degraded so they can
-      // investigate without a user-facing failure.
+      // 'degraded' falls through for a buyback (its maker is
+      // bound offline above); the log line lets ops see when the
+      // preflight RPC degraded. A swap post stops short of Fusion
+      // instead (#1566 S3e — see `makerConfirmedBeforePost`).
+      preflightOutcome = preflight.kind;
     }
   }
 
@@ -305,7 +356,7 @@ export async function handleIntentFusionPost(
       ok: true,
       status: 'queued',
       orderHash: parsed.orderHash,
-      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. The auction lot recorded by the on-chain commit is in protocol custody, and any collateral the lot does not include is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.`,
+      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. Your collateral, the auction lot included, stays pledged in your vault; cancel after the auction deadline to withdraw the order — do not wait for a fill that will not arrive.`,
     });
   }
 
@@ -328,19 +379,33 @@ export async function handleIntentFusionPost(
       status: 'queued',
       orderHash: parsed.orderHash,
       note:
-        'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. The auction lot recorded by the on-chain commit is in protocol custody, and any collateral the lot does not include is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.',
+        'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. Your collateral, the auction lot included, stays pledged in your vault; cancel after the auction deadline to withdraw the order — do not wait for a fill that will not arrive.',
     });
+  }
+
+  // #1566 S3e — the key is spent only on an order whose maker is
+  // confirmed (see `makerConfirmedBeforePost`); the queued-ack
+  // paths above spend none, so they stay open.
+  if (!makerConfirmedBeforePost(kind, preflightOutcome)) {
+    console.warn('[intent/fusion/post] swap maker unconfirmed (preflight ' + preflightOutcome + ')', {
+      chainId: parsed.chainId,
+      orderHash: parsed.orderHash,
+    });
+    return jsonErr(corsOrigin, 503, 'preflight-unavailable');
   }
 
   // T-090 v1.2 #431 — LOP orderbook submit body. The orderHash +
   // signature are top-level; the order fields nest under `data`.
   //
-  // ERC-1271 binding: the diamond is the maker. 1inch's
-  // orderbook relayer staticcalls `isValidSignature(orderHash, '')`
-  // against the maker at fill time; the diamond's hook returns
-  // the magic value if the orderHash matches its registered
-  // commit. The dapp doesn't produce an EIP-712 signature for
-  // these orders — `signature: '0x'`.
+  // ERC-1271 binding: a swap-to-repay order's maker is the
+  // borrower's vault (#1566 S3e), a buyback order's the diamond.
+  // 1inch's orderbook relayer staticcalls
+  // `isValidSignature(orderHash, '')` against the maker at fill
+  // time; the vault asks the diamond's `isOrderValid`, the
+  // diamond answers a buyback itself, and either way the magic
+  // value comes back only for a live registered commit. The dapp
+  // doesn't produce an EIP-712 signature for these orders —
+  // `signature: '0x'`.
   const signedOrderInput = {
     orderHash: parsed.orderHash,
     signature: '0x',

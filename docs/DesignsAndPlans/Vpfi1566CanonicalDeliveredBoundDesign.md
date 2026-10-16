@@ -647,6 +647,17 @@ reward claims may have spent part of the very backing the grandfathered
 enough VPFI to back every enumerated row independently of payroll, treasury and
 the other commingled owners.
 
+> **The fallback class leaves this slice (O1 = A, 2026-10-07).** Every chain
+> that runs slice 2 is a fresh deploy, so no Diamond-held fallback row exists to
+> reconcile, write down or migrate. The fallback-specific requirements below (the
+> five-ledger write-down, the two-moment timing rule and its top-up carve-out)
+> describe work that will not be built. Two requirements stated in this slice
+> are prospective rules rather than migration rules, and S2b builds them: a
+> failed retry restores the vault custody it borrowed, ending with one restamp
+> after the inverse moves; and the full-repayment terminal does not re-count the
+> fallback amount into the lien. The intent class and the grandfathered fee
+> classes are outside this docs pass.
+
 **The enumeration covers all FOUR grandfathered classes — including the
 VPFI-denominated live intent commits (`custodialCollateral`) that slice 3
 leaves in Diamond custody until fill or cancellation.** An earlier revision
@@ -1166,7 +1177,11 @@ durable rather than a snapshot of one moment.
   collateral lien that `_cureFallback` has already completed. Get either wrong
   and the consumer either reverts or leaves a phantom counter that strands a
   later withdrawal — the migration's own failure mode, relocated to the exit.
-- **Migration uses CREATE-IF-ABSENT: it adds to a live lien and creates one
+- *(Retired as a migration step, O1 = A (2026-10-07): no chain that runs slice 2
+  carries a pre-slice row to migrate. Its create-if-absent rule survives: the
+  fallback producer re-creates the lien exactly this way. See the S2b LANDED
+  note below.)*
+  **Migration uses CREATE-IF-ABSENT: it adds to a live lien and creates one
   where none exists — never replaces.** An earlier revision said "never creates",
   which inverts into a fund-safety hole on the **common** row: the fallback path
   calls `releaseCollateralLien` (`RiskFacet.sol:2138`), so a `FallbackPending`
@@ -1184,7 +1199,12 @@ durable rather than a snapshot of one moment.
   **discards the top-up reservation and makes that collateral withdrawable**.
   The scan adds only the migrated snapshot amount to the existing lien, and only
   that amount to the tier exclusion.
-- **Install the exclusion BEFORE the vault credit** (VPFI snapshots), exactly as
+- *(Superseded for the producer, and retired as a migration rule under O1 = A:
+  S2b takes this bullet's own second option, "an explicit final restamp after
+  both mutations". The producer deposits with no tier rollup, and the one tier
+  sync at the fallback-entry transition installs the exclusion and restamps
+  once, so the tier never dips.)*
+  **Install the exclusion BEFORE the vault credit** (VPFI snapshots), exactly as
   the `vpfiHeld` migration requires. `vaultCreditFromDiamondERC20` performs its
   tier rollup immediately after the transfer (`VaultFactoryFacet.sol:549-557`),
   so an implementation can reasonably read the helper's built-in rollup as
@@ -1216,13 +1236,21 @@ durable rather than a snapshot of one moment.
   scan therefore goes through the Diamond-funded vault-credit chokepoint, or
   records the deposit for the exact user, token and amount in the same
   transaction as the custody move.
-- **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
+- *(Retired in this form, O1 = A (2026-10-07). The discriminator exists, defined
+  once: an active snapshot whose total differs from the loan's vault-held
+  fallback row. It routes a pre-slice row to a refusal by name
+  (`FallbackCustodyNotVaultHeld`), never to a Diamond branch.)*
+  **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
   switched.** Existing snapshots already hold their collateral in the Diamond
   (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the
   lien-at-fallback rule governs only later fallbacks. Switch consumers first and
   every existing row either pulls vault funds nobody deposited, or keeps the
   Diamond branch this slice exists to delete.
-- **The discriminator routes consumers; it does NOT protect the tokens.** A
+- *(Retired, O1 = A (2026-10-07): every chain that runs slice 2 is a fresh
+  deploy, so no pre-slice row exists to protect, and there is no paused
+  migration and no arming gate waiting on one. Kept as the record of why the
+  in-place route was not taken.)*
+  **The discriminator routes consumers; it does NOT protect the tokens.** A
   pre-upgrade row stays commingled for as long as it waits to be consumed, so a
   reward claim can drain it before any consumer reaches the discriminator at
   all.
@@ -1239,6 +1267,209 @@ durable rather than a snapshot of one moment.
   keyed by `loanId`, and `[1, nextLoanId]` covers them — so the same paused
   paginated scan migrates them, with the same completion proof. **Arming waits
   on that scan.**
+
+> **S2a LANDED (local build, 2026-10-07): host split only, custody unchanged.**
+> Recorded on the build-first local stack, ahead of review. S2a changes no
+> behaviour and moves no custody; the quadruple this slice requires (vault
+> deposit, lien, tracked-balance record, VPFI tier exclusion) lands in S2b.
+>
+> - **What S2a does.** A new Diamond-internal `FallbackCustodyFacet` becomes the
+>   one home of the fallback-custody flows. `enterFallback` replaces the two
+>   copies of `_fullCollateralTransferFallback`: RiskFacet and DefaultedFacet now
+>   self-call it when every swap adapter fails. `retryFallbackSwap` takes
+>   ClaimFacet's retry swap and its soft-fail adapter loop;
+>   `disposeFallbackCustody` takes ClaimFacet's in-kind distribution. The view
+>   `getFallbackCustody` reports `(vaultHeld, legacyDiamondHeld)`, which in S2a is
+>   `(0, the active snapshot's total)` because nothing is vault-held yet. The
+>   retry distribution, the `retryAttempted` stamp and `ClaimRetryExecuted` stay
+>   in ClaimFacet. The mutators are gated to the Diamond's own self-calls and take
+>   no reentrancy guard of their own, since every caller already holds the
+>   Diamond's guard. Storage writes happen in the same order, and the events,
+>   token movements and every revert that carries data are the same (an inner
+>   revert with no data now surfaces as the 4-byte zero selector at the
+>   self-call); the three fallback events are
+>   re-declared byte-identical, so their topic hashes do not change. The
+>   collateral still rests in the Diamond. No storage is
+>   added. The facet is registered like any new facet, and the hand-built test
+>   Diamonds that reach these paths cut it.
+>   A dedicated cell (`FallbackCustodyFacetGateTest`) pins the gate: each
+>   mutator refuses any outside caller (the loan's own parties and the admin
+>   included) with `OnlyDiamondInternal`, and the same entry succeeds with the
+>   Diamond as the caller. It matters because the in-kind split has no state
+>   precondition of its own: it pays the snapshot's slices on every call, and
+>   only its caller checks and clears the snapshot. S2b changes that entry's
+>   signature, so the cell must follow it.
+> - **Why split first.** RiskFacet had about 67 bytes of EIP-170 headroom, and the
+>   producer was written out twice. Slice 2 grows every one of these flows.
+>   Splitting before the behaviour change gives slice 2 one producer to change
+>   instead of two, and keeps the S2b diff to the custody rule alone (owner rule:
+>   a clean host split before byte-shaving).
+> - **Owner decisions, 2026-10-07**, taken on the slices 2–3 implementation
+>   brief:
+>   - **O1 = A: fresh deploy only.** Every chain that runs slices 2–3 gets a fresh
+>     deploy. There are no version-0 branches. Under slices 2–3 a consumer that
+>     meets a pre-slice row fails closed (`FallbackCustodyNotVaultHeld` for this class,
+>     `IntentCustodyNotVaultHeld` for intents) instead of paying it from the
+>     Diamond. So the migration bullets of this slice and of slice 3, and slice
+>     0's reconciliation for these two classes, describe work that will not be
+>     built. They stay as written until the slices 2–3 docs pass retires them.
+>     The census section's second no-op condition ("the prospective custody
+>     changes are already deployed on that chain") holds by construction on a
+>     fresh deploy. The in-place alternative (A') is not taken. It needed a
+>     determinate-zero, all-asset census read after a finalized pause, and it
+>     needed O5 (ii) (the lock in the reentrancy guard), because a Diamond
+>     contract cannot be replaced in place.
+>   - **O5 = (i): the slice-3 fill lock is enforced in `VaipakamDiamond.fallback`.**
+>     While the lock is held, the Diamond admits only its own self-calls and
+>     `postInteraction`. That covers every entry: guarded and unguarded
+>     mutators, views and `multicall`. It also lets the lock open before the pull,
+>     as slice 3 requires ("set before the pull"). It costs one transient load on
+>     every Diamond call, adds no facet bytes, and needs a new Diamond contract,
+>     which O1 = A provides. Lands in S3b.
+>   - **O6: pause stops fills.** The fill pre-hook is pause-gated for both order
+>     kinds (swap-to-repay and buyback). Pull-at-use puts a vault outflow inside a
+>     third-party transaction, and an emergency pause must be able to stop it. The
+>     cost: fills revert while paused, and orders stay live until their deadline.
+>     The text of slices 0 and 3 that relies on the hooks not being pause-gated
+>     describes the code before S3b. Lands in S3b.
+> - **Build order** (local stack; compile checks and targeted suites only; no
+>   deploy until the programme ends):
+>   1. **S0**: #2141's `DiamondCustodyAttribution` invariant suite, on the code as
+>      it stood before S2a. Per asset, the Diamond's balance equals the protocol
+>      ledgers plus the user custody still known to rest there, less at most two
+>      wei of unowned rounding per partial internal-match leg (K5, removed in
+>      S2b). It lands green.
+>      The strict form (user-custody term zero) is recorded failing, as proof
+>      that it can fail.
+>   2. **S2a**: this host split.
+>   3. **S2b**: custody moves into the borrower's vault. This step adds the
+>      storage append, the row primitive and its move event, every consumer, the
+>      tier-exclusion clause, the helper redefinitions, the fixture rewrites and
+>      the slice-2 cells. The strict term turns on for this class.
+>   4. **S2c**: DefaultedFacet's missing VPFI restamp, in its own commit.
+>   5. **S3a**: the fork cell and the slice-3 fill cells (the faithful
+>      limit-order mock and the callback token already land with S0).
+>   6. **S3b**: pull at use, with the fill lock (O5 (i)) and the pause gate (O6).
+>      This step also adds the exact-amount checks and the bit-invalidator teardown
+>      check. The strict term then covers intents.
+>   7. **S4**: the mutation runs. Each must turn its named invariant red.
+>   8. **S5**: the remaining work. This covers the ABI export, the
+>      `RedeployFacets` custody-boundary refusal (its selector getter and parity
+>      case landed in S2a; the refusal must key on a selector or marker that first
+>      exists at S2b, not on `getFallbackCustody`, which S2a already routes), the
+>      census changes, docs and release notes, and the #2141
+>      comment.
+> - **Functional specs: none for S2a.** It is behaviour-identical, and S0 is a
+>   test. The intended-behaviour rule (no user asset rests in protocol custody
+>   across transactions) enters `docs/FunctionalSpecs/` with S2b and S3b, which
+>   change behaviour.
+
+> **S2b LANDED (local build, 2026-10-07): fallback custody is vault-held
+> under a lien.** Recorded on the build-first local stack, ahead of review. The
+> quadruple this slice requires (vault deposit, lien, tracked-balance record,
+> VPFI tier exclusion) now ships with the custody discriminator, and the Diamond
+> keeps none of the fallback collateral between transactions.
+>
+> - **One producer, in the order that keeps the tier from dipping.**
+>   `FallbackCustodyFacet.enterFallback` computes the entitlements and writes the
+>   snapshot and both claim rows as before. Then one private routine (shared
+>   with the retry restore, so custody always goes back into the vault one way)
+>   deposits the collateral the caller withdrew into `loan.borrower`'s vault
+>   through the pinned receive path (`LibSanctionedLock.depositLocked`: transfer
+>   and tracked-balance record, no tier rollup), credits the new per-loan row
+>   `fallbackVaultCustody` (`Entered`), re-creates the collateral lien for it
+>   (`incrementCollateralLien`, create-if-absent), and requires the row to equal
+>   the snapshot total (`FallbackSnapshotMismatch`). Only then does the entry
+>   terminalize Active→FallbackPending, whose single tier sync installs the
+>   exclusion and restamps once (the notifies before it are no-ops, the loan
+>   being still Active). This is the exclusion bullet's second option ("an
+>   explicit final restamp after both mutations"), not exclusion-before-credit.
+> - **One row, one move event, one notify rule.** `LibFallbackCustody` owns the
+>   row: its reads (`held`, `snapshotTotal`, `isLegacy`, `requireVaultHeld`) and
+>   its only writers (`credit`, `debit`, `returnToPledge`, each refusing a move
+>   kind that is not its own). Every writer updates
+>   the row, emits `FallbackCustodyMoved(loanId, move, counterparty, asset,
+>   amount, custodyAfter)` and re-derives the tier exclusion through
+>   `LibEncumbrance.notifyTierExclusion`, the one notify rule every per-loan
+>   encumbrance mutator already uses (promoted from private), so no call site can
+>   forget it. Ten move kinds: `Entered`, `ToTreasury`, `ToLender`, `ToBackstop`,
+>   `RetainedForBorrower`, `RetryPulled`, `RetryRestored`, `MatchToLender`,
+>   `MatchToMatcher`, `ReturnedToPledge`. The event is tagged
+>   `state-change/loan-mutation` and allowlisted in the indexer's event-coverage
+>   check: it is custody provenance, the loan's status still derives from the
+>   status events, and surfacing it is deferred.
+> - **The discriminator, defined once.** A row is legacy when the snapshot is
+>   active and its total differs from the row. A snapshot a partial match scaled
+>   to zero stays active with total and row both zero, so "row zero" is not the
+>   test. Under O1 = A a legacy row fails closed at every consumer with
+>   `FallbackCustodyNotVaultHeld`; no migration code exists. `getFallbackCustody`
+>   reports `(row, legacy ? snapshotTotal : 0)`.
+> - **Every consumer reads the vault row.** Each slice that leaves the vault is
+>   debited from the row and the lien before it moves, through the forced
+>   move-out path, so recovery for the lender never depends on the borrower's
+>   status. In kind (`disposeFallbackCustody(loanId, lenderSliceOwner,
+>   lenderMove)`): the treasury slice goes vault to treasury, the lender slice
+>   vault to the lender's vault (or the backstop's, `ToBackstop`), and the
+>   borrower slice stays in place as the residual claim's lien. The snapshot is
+>   read, never mutated, the amounts are returned, and a zero row
+>   short-circuits. Retry: the pull checks the Diamond's balance delta exactly
+>   (`FallbackRetryShortDelivery`), the soft-fail adapter loop is kept, and a
+>   failed retry restores vault, row and lien in the same transaction. The
+>   backstop absorb warehouses the lender slice that dispose returned; the old
+>   re-lien would double-lien and is deleted. Cure by top-up and the
+>   full-repayment cure move no tokens: the lien already covers the fallback
+>   amount, and `returnToPledge` after the FallbackPending→Active edge zeroes the
+>   row. Internal match: one leg primitive keyed on the PAYING loan debits
+>   `MatchToLender` and `MatchToMatcher` and lowers that loan's lien by exactly
+>   the moved amount, and the Diamond-custody leg branch is deleted. A full
+>   rescue is `returnToPledge`. A partial match rescales the split with the
+>   borrower absorbing the floor remainder, so the snapshot total equals the row
+>   exactly; the invariant suite's two-wei allowance from S0 is now zero.
+> - **Tier and helpers.** One clause in `LibTierExclusion._syncSide`: a
+>   FallbackPending loan with VPFI collateral charges the borrower the row.
+>   `fallbackTopUp` (the lien in excess of the row) is the one home of the
+>   top-up figure, and `hasActiveFallbackTopUp` reads it. That is load-bearing:
+>   with the snapshot liened, the old `lien > 0` test would read every fallback
+>   loan as topped up and switch off backstop absorb.
+>   `internalMatchableCollateral` returns the row.
+> - **Refresh boundary.** `RedeployFacets` refuses a target Diamond that does
+>   not route the S2b `disposeFallbackCustody(uint256,address,uint8)`
+>   (`PredatesVaultHeldFallbackCustody`, checked before any broadcast). Its
+>   curated family carries neither AddCollateralFacet nor RepayFacet, which on
+>   the old rule would pay a cure out of the Diamond's shared balance a
+>   second time and lien it twice. Keying on the routing of
+>   `getFallbackCustody` would not see this boundary: the S2a host split
+>   already routes that view, with the Diamond-held meaning.
+> - **Cells and invariants.** F1 to F17 and F19 to F21 in `FallbackCustodyTest`;
+>   #2141's suite now enforces V2 (no user custody rests in the Diamond) for the
+>   fallback class and V3 (each fallback row agrees with its snapshot and its
+>   lien), with V2's intent class still recorded red until S3b.
+> - **Retired by this landing, in place:** this slice's migration bullets above
+>   and slice 0's fallback-class reconciliation, under O1 = A.
+> - **Residual risks.** An issuer blacklist of the borrower's vault strands the
+>   lender and treasury slices. A mandatory vault upgrade delays the lender's
+>   claim but cannot veto it, since anyone may upgrade any vault. Mirror tiers
+>   lag after the local restamps. The RL-2 retention ledger understates a VPFI
+>   borrower whose collateral makes a fallback round trip: the liquidation's
+>   pull before the failed swap, and a failed retry's pull, each emit
+>   `VaultVpfiDebited`; the return has no credit counterpart, and the ledger
+>   never re-inflates. That is observability only, inside RL-2's
+>   conservative-lower-bound rule, and is documented in
+>   `apps/indexer/src/rewardLoopLedger.ts`.
+> - **Functional specs.** ProjectDetailsREADME now states the owner rule (no user
+>   asset rests in protocol custody across transactions), the vault-held
+>   fallback custody, the FallbackPending tier clause, the residual risks and
+>   the fallback test expectations. The audit records the open intent-class
+>   divergence (slice 3), the forced-close restamp propagation question and the
+>   non-VPFI lender-leg reservation wording.
+
+> **S2c LANDED (local build, 2026-10-07): DefaultedFacet's VPFI restamp.** One
+> broadcast-free restamp of the borrower after the ERC-20 collateral branch
+> covers both the swap and the in-kind withdrawal (cells F18 and F18b,
+> `DefaultedRestampTest`). It is local on purpose: a permissionless time-based
+> default must not inherit the cross-chain push's budget revert. RiskFacet's
+> existing restamp still broadcasts; the inconsistency is recorded in the
+> code-vs-docs audit and not changed here.
 
 **3. The intent class — via the `preInteraction` pull point.**
 
@@ -1379,6 +1610,129 @@ durable rather than a snapshot of one moment.
   exist today (see §5b), and this slice's correctness rests on ordering,
   full-amount pull and transaction-wide rollback — none of which is currently
   asserted anywhere for the swap-to-repay branch.
+
+> **S3 LANDED (local build, 2026-10-07): the intent lot is pulled at use.**
+> Recorded on the build-first local stack, ahead of review.
+>
+> - **S3a** landed the fill test this slice named as its prerequisite:
+>   `SwapToRepayIntentFillTest` drives a commit through a whole LOP fill in one
+>   transaction (`MockLopFill`, from S0), with a fork cell (I0f) checking the
+>   mock's order hash and bit invalidator against the deployed LOP v4.
+> - **The commit moves nothing.** No lien decrement, no withdraw, no restamp:
+>   the order hashes `makingAmount = lot`, the aggregate allowance grows by the
+>   lot, and the record stores `makerAmount = lot` with `custodialCollateral =
+>   0`. That field is now the old-custody stamp: nothing on this source writes
+>   it, `getIntentCustody(loanId)` reports it for the census, and a non-zero one
+>   is refused by name (`IntentCustodyNotVaultHeld`) at the pre-hook and every
+>   teardown (O1 = A).
+> - **The pull is the one atomic step this section asks for.**
+>   `preInteractionImpl(orderHash, makingAmount)` checks the making amount
+>   equals the lot, then decrements the lien by the lot, withdraws it from
+>   `loan.borrower`'s vault through `LibSanctionedLock.vaultWithdrawERC20MoveOut`
+>   (the pinned move-out exemption), requires the Diamond's balance to rise by
+>   exactly the lot, restamps a VPFI holder broadcast-free (D16), and emits
+>   `SwapToRepayIntentLotPulled`.
+> - **The fill lock (O5 = (i), O3).** `LibFillLock` keeps the order hash in a
+>   transient slot. `IntentDispatchFacet.preInteraction` acquires it FIRST, for
+>   both order kinds, before any dispatch and so before the pull;
+>   `postInteraction` releases it first (only its own order's lock), then takes
+>   the reentrancy guard for the settlement. `VaipakamDiamond.fallback` refuses
+>   every entry while it is held except the Diamond's own self-calls and the
+>   post-hook selector. The pre-hook is `whenNotPaused` (O6).
+> - **The settlement is exact.** `postInteractionImpl` requires the making
+>   amount to equal the lot and the principal delivered to equal the taking
+>   amount (`IntentDeliveredMismatch`, S1-10); the residual branch is gone
+>   (always zero for a no-partial order) and the fill event reports 0 there.
+> - **The teardown moves nothing**, and its already-filled check reads
+>   `bitInvalidatorForOrder` at the order's nonce instead of the remaining-amount
+>   slot a bit-invalidator order never writes (K10). That closes #658 for every
+>   commit.
+> - **Tests.** Cells I0–I15 in `SwapToRepayIntentFillTest`; the pranked two-call
+>   fills in `SwapToRepayIntentFacetTest` and two buyback cells became one-call
+>   fills (`LibOneTxSwapFill`, the existing `LibOneTxBuybackFill`), because the
+>   lock, like the principal baseline, lives in transient storage; the custody
+>   invariant enforces V2's intent class.
+
+> **S3e — the borrower's vault is the order's maker (owner decision 2026-10-09).**
+> Found by the whole-stack review before Codex: with the Diamond as the 1inch
+> order's maker and the lot pulled only inside the fill, the maker holds none of
+> the lot at rest, and 1inch's orderbook lists such an order as one whose maker
+> has "insufficient approval or balance for the full remaining amount" (its
+> status 2). Resolvers that take only fillable orders (status 1) would skip every
+> Vaipakam auction. Funds were never at risk; discoverability was. Options put
+> to the owner: the vault as maker (chosen), the protocol keeper filling the
+> orders itself, the lot resting in the Diamond as a ratified exception to #2141,
+> or verifying on the first mainnet deploy. The owner also pointed at
+> VpfiRecyclingCompletionPlan for a solution: its answer to #1566 is custody held
+> in a dedicated, Diamond-gated container rather than in the Diamond's own
+> balance (`RewardCustodyHolder`). The borrower's vault is exactly such a
+> container — per user, owned by the Diamond, released only by it — and it
+> already acts as an order's maker: for a Seaport prepay listing the vault is
+> the offerer, answering ERC-1271 by asking the order's registered validator.
+>
+> - **The maker.** The order's maker is `loan.borrower`'s vault; its receiver
+>   stays the Diamond, and the extension still names the Diamond as the pre- and
+>   post-interaction listener. The lot never enters the Diamond: the LOP moves
+>   it from the vault straight to the taker. The orderbook sees the vault
+>   holding the lot and the LOP approved for it, so the order reads as fillable.
+> - **The signature.** The commit registers the order hash on the vault with
+>   the Diamond as its validator (`registerListingOrderHash`, the same registry
+>   the Seaport listings use). The vault's ERC-1271 asks the Diamond
+>   `isOrderValid(hash)` (a new `IntentDispatchFacet` selector), which answers
+>   from the commit registry and only for the vault that owns the commit. The
+>   Diamond no longer signs swap orders itself; its own `isValidSignature` keeps
+>   serving buyback orders, whose maker is still the Diamond. A nested fill is
+>   still refused: the inner order's vault asks the Diamond mid-fill, and the
+>   fill lock refuses the read.
+> - **The allowance.** The commit raises the vault's exact ERC-20 allowance to
+>   the pinned LOP by the lot (`approveERC20`, a new Diamond-only vault
+>   function); a fill consumes it as the LOP's transfer; a teardown lowers it by
+>   the lot. The vault's allowance is the sum of its live commits' lots. The
+>   Diamond-level aggregate allowance is no longer kept for swap lots (the
+>   buyback's own aggregate is unchanged).
+> - **The fill.** The pre-hook acquires the fill lock first (unchanged), checks
+>   the order and the making amount, then does the bookkeeping the LOP's
+>   transfer needs, as one step: the lien drops by the lot, the vault's tracked
+>   balance records the outflow through the one place that records vault
+>   debits (`VaultFactoryFacet.recordVaultOutflowERC20`, a new Diamond-internal
+>   selector, with the withdrawal's lien guard and its `VaultVpfiDebited`
+>   event), a VPFI holder is restamped broadcast-free, and the vault's balance is
+>   snapshotted. The post-hook releases the lock, requires the vault to have
+>   dropped by exactly the lot and the Diamond to have received exactly the
+>   taking amount, settles as before, and revokes the hash on the vault. The
+>   event `SwapToRepayIntentLotPulled` keeps its name and gains the vault and
+>   the taker.
+> - **Exactness moves to the vault.** The check that used to require the
+>   Diamond to receive exactly the lot now requires the vault to give up exactly
+>   the lot, which is what keeps the vault's tracked balance true. A token that
+>   takes more or less than the lot from the vault fails the fill; a token that
+>   charges its fee to the receiver now costs only the resolver who chose to
+>   fill, since the protocol's books are no longer on that side. The intent
+>   token allowlists are still meant to admit exact-transfer tokens only.
+> - **A mandatory vault upgrade still holds the fill.** The outflow record
+>   resolves the vault through the same read-only resolver the protocol-payout
+>   credits use (an existing vault on a current implementation), so a fill
+>   waits for a mandatory upgrade exactly as the S3 vault withdraw did, until
+>   anyone runs `upgradeUserVault`. The commit and the teardown read the vault
+>   directly, as the Seaport listing wiring does: the commit moves nothing, and
+>   the teardown only withdraws the vault's signature and allowance.
+> - **The teardown** revokes the hash on the vault and lowers the allowance;
+>   no LOP cancel is needed (only the maker could send one), because without
+>   the registration the vault's ERC-1271 refuses the order. The already-filled
+>   check reads the vault's nonce bit.
+> - **No screening on any of this.** Every vault address is resolved without
+>   the sanctions screen and every vault call comes from the Diamond: the full
+>   swap-to-repay is a must-complete close-out (a flagged borrower's commit,
+>   fill and teardown all run, as since S3b).
+> - **What does not change:** the commit moves nothing, the fill lock and its
+>   enforcement in the Diamond's entry point, pause, the exact delivered amount,
+>   the old-custody refusal, the settlement.
+> - **Tests.** `SwapToRepayIntentFillTest` gains I18 (the vault signs for its
+>   own live commit only; the Diamond signs no swap order), I19 (the vault's
+>   allowance is the sum of its live lots: a teardown lowers it by its own lot
+>   and the sibling still fills) and I20 (a mandatory upgrade holds the fill
+>   until anyone runs it); I4b is gone with the pull it covered, and I6 now
+>   measures the vault.
 
 **4. Closure 1's non-user half — the delivered bound. IN THE ARMING GATE.**
 

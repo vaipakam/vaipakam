@@ -290,8 +290,11 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
      *      back to the stored party returns it. Run after the move (and after
      *      a safe transfer's receiver hook, which cannot re-enter this
      *      guarded facet). Also called from {burnNFT}, where the holder
-     *      becomes nobody. A live loan has no exclusion (#2342 scope), and an
-     *      offer NFT has no loan, so both skip the call.
+     *      becomes nobody. An Active loan has no exclusion (#2342 scope); a
+     *      FallbackPending loan's exclusion (#1566 slice 2: its VPFI fallback
+     *      custody row) is charged to the stored `loan.borrower` whoever
+     *      holds either position, so a transfer cannot change it; and an
+     *      offer NFT has no loan. All three skip the call.
      */
     function _syncTierExclusion(uint256 loanId) private {
         if (loanId == 0) return;

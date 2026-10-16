@@ -54,6 +54,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -218,7 +219,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -340,6 +341,18 @@ contract DefaultedFacetTest is Test {
 
         });
 
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -1190,18 +1203,15 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap failed"
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        // #1566 S2b: the REAL producer runs -- no mocked vault withdraw and no
+        // Diamond funding, since the entry returns the collateral to the
+        // borrower's vault in the same transaction and keeps nothing.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
             ""
         );
-        deal(mockERC20, address(diamond), 2000 ether);
-        deal(mockCollateralERC20, address(diamond), 2000 ether);
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
         vm.prank(lender);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1212,6 +1222,7 @@ contract DefaultedFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.FallbackPending),
             "loan entered FallbackPending"
         );
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
         // The entry recorded the flagged lender holder as the frozen claimant.
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
@@ -1227,6 +1238,23 @@ contract DefaultedFacetTest is Test {
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         vm.clearMockedCalls();
+    }
+
+    /// @dev #1566 S2b fixture-live check for a REAL fallback entry: the
+    ///      custody row is the whole collateral, nothing reads as Diamond-held,
+    ///      and the Diamond's collateral balance is what it was before the
+    ///      entry (the producer returned the collateral to the borrower's vault
+    ///      in the same transaction).
+    function _assertVaultHeldFallbackEntry(uint256 loanId, uint256 diamondCol0) internal view {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, l.collateralAmount, "the collateral is the borrower's vault-held custody row");
+        assertEq(legacy, 0, "nothing reads as Diamond-held");
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondCol0,
+            "the entry left nothing in the Diamond"
+        );
     }
 
     function testTriggerDefaultIlliquidCollateral() public {
@@ -1776,11 +1804,11 @@ contract DefaultedFacetTest is Test {
             "swap failed"
         );
 
-        // _fullCollateralTransferFallback needs getOrCreateUserVault to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        // #1566 S2b: the REAL producer runs (no mocked vault withdraw, no
+        // Diamond funding); `enterFallback` returns the collateral to the
+        // borrower's vault in this transaction.
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        deal(mockERC20, address(diamond), 2000 ether);
-        deal(mockCollateralERC20, address(diamond), 2000 ether);
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
         // Pilot — primary-key-only payload + companion state-change event
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
@@ -1797,6 +1825,7 @@ contract DefaultedFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
         vm.clearMockedCalls();
     }
 
@@ -2469,10 +2498,11 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        deal(mockERC20, address(diamond), 2000 ether);
-        deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        // #1566 S2b: the REAL producer runs (no mocked vault withdraw, no
+        // Diamond funding); `enterFallback` returns the collateral to the
+        // borrower's vault in this transaction.
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
         // Make swap revert (mock the 0x proxy to fail)
         vm.mockCallRevert(
@@ -2497,6 +2527,7 @@ contract DefaultedFacetTest is Test {
         // Loan should be defaulted via fallback
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
 
         vm.clearMockedCalls();
     }
@@ -2655,8 +2686,10 @@ contract DefaultedFacetTest is Test {
     /// @dev Tests triggerDefault _fullCollateralTransferFallback get lender vault fails.
     // Removed: testTriggerDefaultFallbackGetLenderVaultFails.
     // Same rationale as RiskFacet's removed twin — the fallback path no
-    // longer calls getOrCreateUserVault (collateral is held in the Diamond
-    // until ClaimFacet resolves it), so this branch is unreachable.
+    // longer resolves the LENDER's vault at entry (#1566 S2b: the entry
+    // returns the collateral to the borrower's vault under the lien; the
+    // lender's vault is reached only at claim time), so this branch is
+    // unreachable.
     function testTriggerDefaultFallbackGetLenderVaultFails_Removed() public {}
 
     /// @dev Tests triggerDefault liquid collateral collapsed path with ERC20 collateral transfer.

@@ -8,6 +8,8 @@ import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
  * @notice Tests for MetricsFacet — the README §13 analytics surface. Uses
@@ -818,11 +820,18 @@ contract MetricsFacetTest is SetupTest {
         _seedOpposingLoan(1, lender, borrower, mockERC20, mockCollateralERC20);
         _seedOpposingLoan(2, lender2, borrower2, mockCollateralERC20, mockERC20);
 
-        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
-            2,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.FallbackPending
+        // #1566 S2b -- loan 2 enters FallbackPending through the REAL producer
+        // (its collateral first funded into the borrower's vault, as
+        // initiation leaves it), so the candidate's matchable figure is the
+        // custody row the producer credited, not a hand-set one. The
+        // row-based definition itself is pinned at its straddle by
+        // FallbackCustodyTest F17.
+        address v2 = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower2);
+        ERC20Mock(mockERC20).mint(v2, 1500 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower2, mockERC20, 1500 ether
         );
+        _enterFallbackViaProducer(2);
 
         (bool found, uint256 cid) = MetricsFacet(address(diamond))
             .hasInternalMatchCandidate(1);

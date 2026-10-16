@@ -96,6 +96,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -247,7 +248,27 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // route split off SwapToRepayFacet, which was 73 bytes under EIP-170.
     // 92 -> 93: the merge of main brings SwapToRepayPartialFacet (#2416) to the
     // #1566 build stack's 92 (87 + the stack's five).
-    uint256 public constant EXPECTED_FACETS = 93;
+    // 93 -> 94: FallbackCustodyFacet (#1566 slice 2) - the fallback entry, retry
+    // swap and disposal hosted once, self-called by Risk / Defaulted / Claim.
+    uint256 public constant EXPECTED_FACETS = 94;
+
+    /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
+    ///         {_requireSlice3Diamond}.
+    error PredatesSlice3FillLock(address diamond);
+
+    /// @dev #1566 slices 2-3 (owner decision O1 = A, 2026-10-07): a chain crosses the custody
+    ///      boundary by FRESH deploy only, and this refresh cannot do it at all -- the fill lock is
+    ///      enforced in `VaipakamDiamond`'s own fallback, which no facet cut replaces, so a refreshed
+    ///      pre-slice-3 Diamond would run the slice-3 pre-hook (which pulls the lot) with no entry-point
+    ///      lock around the LOP's mid-fill calls, and every commit recorded under the old custody would
+    ///      be refused by name at every way out, freezing its loan. The marker is the routing of
+    ///      `getIntentCustody`, which slice 3 (S3b) introduced. Called before any facet is deployed, so
+    ///      a refused run sends nothing.
+    function _requireSlice3Diamond(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector) == address(0)) {
+            revert PredatesSlice3FillLock(diamond);
+        }
+    }
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -273,6 +294,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             signer == currentOwner,
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
+        _requireSlice3Diamond(diamond);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);
@@ -1397,6 +1419,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // #2416 — refreshed WITH swapToRepayFacet (items[43]): one surface
         // across the two, so refreshing either alone splits the routes.
         items[92] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
+        // #1566 slice 2 - the fallback-custody host its three callers self-call.
+        items[93] = Item("fallbackCustodyFacet", address(new FallbackCustodyFacet()), _getFallbackCustodySelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

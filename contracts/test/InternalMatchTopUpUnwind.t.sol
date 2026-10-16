@@ -8,6 +8,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -21,26 +22,27 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  * @notice #591 (#585 Part B) — the internal-match top-up-aware unwind.
  *
  *         A `FallbackPending` loan that received an `AddCollateral`
- *         top-up has its collateral SPLIT:
- *           - `snapshotTotal` (the original collateral) sits in the
- *             Diamond's custody (moved there at fallback), and
- *           - the `topUp` sits in `loan.borrower`'s vault under an
- *             active (non-released) collateral lien.
- *         `loan.collateralAmount == snapshotTotal + topUp`.
+ *         top-up has its collateral SPLIT, both parts in
+ *         `loan.borrower`'s vault under ONE active collateral lien
+ *         (#1566 S2b; before it the first part sat in the Diamond):
+ *           - `snapshotTotal` (the original collateral) is the fallback
+ *             custody row (`fallbackVaultCustody`), and
+ *           - the `topUp` is the lien in excess of that row.
+ *         `loan.collateralAmount == snapshotTotal + topUp == lien`.
  *
  *         Pre-#591 such loans were EXCLUDED from internal match (the
- *         draw would over-run Diamond custody, taking collateral
+ *         draw would over-run the fallback custody, taking collateral
  *         belonging to OTHER fallback loans). #591 replaces the
  *         exclusion with top-up-aware accounting: the match sizes the
- *         leg's contribution against the Diamond portion only
- *         (`_diamondMatchable`) and the vault top-up is returned to the
- *         CURRENT borrower-position holder via `borrowerClaims` +
- *         `claimAsBorrower`.
+ *         leg's contribution against the custody row only (`_matchable`)
+ *         and the top-up stays with the CURRENT borrower-position holder
+ *         via `borrowerClaims` + `claimAsBorrower`.
  *
- *         This suite seeds a faithful topped-up loan (Diamond holds
- *         `snapshotTotal`; vault holds `topUp`, liened) and exercises
- *         the §5 matrix: full match, partial match, zero-residual,
- *         transferred borrower position, and the custody invariant.
+ *         This suite seeds a faithful topped-up loan (the vault holds
+ *         `snapshotTotal + topUp` under one lien; the custody row is
+ *         `snapshotTotal`) and exercises the matrix: full match, partial
+ *         match, zero-residual, transferred borrower position, and the
+ *         custody invariant.
  */
 contract InternalMatchTopUpUnwindTest is SetupTest {
     uint256 internal constant LOAN_A = 6001; // topped-up FallbackPending leg
@@ -117,8 +119,11 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
     }
 
     /// @dev Move an Active loan into FallbackPending with the WHOLE
-    ///      `collateralAmt` in Diamond custody (no top-up). Mirrors
-    ///      InternalMatchExecution's `_moveToFallbackPending`.
+    ///      `collateralAmt` as the fallback custody (no top-up), through the
+    ///      REAL producer with this cell's split (#1566 S2b;
+    ///      `SetupTest._enterFallbackViaProducerAtSplit`, which asserts the
+    ///      producer computed it). Mirrors InternalMatchExecution's
+    ///      `_moveToFallbackPending`.
     function _moveToFallbackPending(
         uint256 loanId,
         address borrower_,
@@ -127,36 +132,28 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         uint256 lenderEntitlement,
         uint256 treasuryEntitlement
     ) internal {
-        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
-        vm.prank(bVault);
-        IERC20(collateral).transfer(address(diamond), collateralAmt);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower_, collateral, 0);
-
-        uint256 borrowerEntitlement = collateralAmt > (lenderEntitlement + treasuryEntitlement)
-            ? collateralAmt - lenderEntitlement - treasuryEntitlement
-            : 0;
-        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: lenderEntitlement,
-            treasuryCollateral: treasuryEntitlement,
-            borrowerCollateral: borrowerEntitlement,
-            lenderPrincipalDue: lenderEntitlement,
-            treasuryPrincipalDue: treasuryEntitlement,
-            active: true,
-            retryAttempted: false
-        });
-        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(loanId, snap);
-        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
-            loanId, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.FallbackPending
-        );
+        LibVaipakam.Loan memory l = _getLoan(loanId);
+        assertEq(l.borrower, borrower_, "fixture: the stored borrower");
+        assertEq(l.collateralAsset, collateral, "fixture: the collateral asset");
+        assertEq(l.collateralAmount, collateralAmt, "fixture: the producer takes the whole collateral");
+        _enterFallbackViaProducerAtSplit(loanId, lenderEntitlement, treasuryEntitlement);
     }
 
-    /// @dev Seed a FAITHFUL topped-up FallbackPending loan:
+    /// @dev Seed a topped-up FallbackPending loan through the REAL flows
+    ///      (#1566 S2b; slices 2-3 brief (i)): an Active loan of
+    ///      `snapshotTotal` collateral enters the fallback through the
+    ///      producer with this cell's lender / treasury split
+    ///      (`SetupTest._enterFallbackViaProducerAtSplit`), then the borrower
+    ///      tops it up by `topUp` through the real `addCollateral`, which does
+    ///      not cure it (`SetupTest._topUpFallbackViaAddCollateral`). The
+    ///      result, all of it written by production code:
     ///        - `loan.collateralAmount == snapshotTotal + topUp`,
-    ///        - the Diamond holds `snapshotTotal` of the collateral,
-    ///        - `loan.borrower`'s vault holds `topUp`, under an active
-    ///          (non-released) collateral lien,
-    ///        - the fallback snapshot describes ONLY `snapshotTotal`
-    ///          (split lender/treasury/borrower entitlement),
+    ///        - `loan.borrower`'s vault holds all of it, protocol-tracked,
+    ///          under ONE collateral lien of `snapshotTotal + topUp`,
+    ///        - the fallback custody row is `snapshotTotal` (credited by its
+    ///          `Entered` move), and the snapshot and both claim rows
+    ///          describe only that row, so the top-up is the lien in excess
+    ///          of the row,
     ///        - status is FallbackPending.
     ///      `principalAmt` is the loan's outstanding principal.
     function _seedToppedUpFallback(
@@ -171,7 +168,34 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         uint256 lenderEntitlement,
         uint256 treasuryEntitlement
     ) internal {
-        // Loan carries the FULL (snapshot + top-up) collateral.
+        _seedLoan(id, lender_, borrower_, principal, principalAmt, collateral, snapshotTotal);
+        _enterFallbackViaProducerAtSplit(id, lenderEntitlement, treasuryEntitlement);
+        if (topUp > 0) _topUpFallbackViaAddCollateral(id, topUp);
+    }
+
+    /// @dev RAW scaffold for the one shape no real flow leaves behind: a
+    ///      FallbackPending loan whose fallback custody row is EMPTY while a
+    ///      vault-held top-up of `topUp` is still live. A match that empties
+    ///      the row of a topped-up loan terminalizes it
+    ///      (`RiskMatchLiquidationFacet._settleFallbackOrTransitionPostMatch`,
+    ///      #591 / Codex #605 round 2), so neither the producer nor any
+    ///      consumer leaves this state; the two cells built on it pin the
+    ///      defence in depth (an empty row is never matched, and the scan
+    ///      never surfaces it). Built in the #1566 S2b shape: the borrower's
+    ///      vault holds the top-up, protocol-tracked, under the loan's only
+    ///      lien (a fresh loan, so the raw lien setter's aggregate is exact);
+    ///      the snapshot is active and empty; the custody row stays zero,
+    ///      which with a zero snapshot total does not read as a legacy
+    ///      Diamond-held row.
+    function _seedExhaustedToppedUpFallbackRaw(
+        uint256 id,
+        address lender_,
+        address borrower_,
+        address principal,
+        uint256 principalAmt,
+        address collateral,
+        uint256 topUp
+    ) internal {
         LibVaipakam.Loan memory l;
         l.id = id;
         l.status = LibVaipakam.LoanStatus.FallbackPending;
@@ -180,38 +204,30 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         l.principalAsset = principal;
         l.principal = principalAmt;
         l.collateralAsset = collateral;
-        l.collateralAmount = snapshotTotal + topUp;
+        l.collateralAmount = topUp;
         l.collateralAssetType = LibVaipakam.AssetType.ERC20;
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
 
-        // Diamond custody holds the snapshot portion.
-        ERC20Mock(collateral).mint(address(diamond), snapshotTotal);
-
-        // Borrower vault holds the top-up, protocol-tracked + liened.
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
         ERC20Mock(collateral).mint(bVault, topUp);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower_, collateral, topUp);
         TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
             id, borrower_, collateral, 0, topUp, LibVaipakam.AssetType.ERC20
         );
-
-        // Snapshot describes the Diamond portion only.
-        uint256 borrowerEntitlement = snapshotTotal > (lenderEntitlement + treasuryEntitlement)
-            ? snapshotTotal - lenderEntitlement - treasuryEntitlement
-            : 0;
-        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: lenderEntitlement,
-            treasuryCollateral: treasuryEntitlement,
-            borrowerCollateral: borrowerEntitlement,
-            lenderPrincipalDue: lenderEntitlement,
-            treasuryPrincipalDue: treasuryEntitlement,
-            active: true,
-            retryAttempted: false
-        });
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(borrower_, collateral, 0),
+            topUp,
+            "fixture: the aggregate is the one lien, nothing counted twice"
+        );
+        LibVaipakam.FallbackSnapshot memory snap;
+        snap.active = true;
         TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(id, snap);
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(id);
+        assertEq(row, 0, "fixture: an empty custody row");
+        assertEq(legacy, 0, "fixture: which does not read as Diamond-held");
     }
 
     function _mockLtv(uint256 loanId, uint256 ltv) internal {
@@ -248,24 +264,26 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
     // ──────────────────── 1. topped-up FULL match ───────────────────
 
     /// @notice §5.1 — a topped-up FallbackPending loan that is FULLY
-    ///         matched: the Diamond portion is consumed by the match, the
+    ///         matched: the custody row is consumed by the match, the
     ///         loan transitions to InternalMatched, and the top-up + the
-    ///         Diamond residual are claimable (via `claimAsBorrower`) by
+    ///         row residual are claimable (via `claimAsBorrower`) by
     ///         the current borrower-position holder. Lender proceeds are
     ///         routed per #585 (lenderClaims).
     function test_toppedUp_fullMatch_residualToBorrowerHolder() public {
         // A: 600 principal X, collateral split = 800 Diamond + 200 vault
         //    (= 1000 total Y). B: 600 Y debt, 600 X collateral.
-        // Match: movedX = min(600, _diamondMatchable(A)=800) = 600 of A's
+        // Match: movedX = min(600, _matchable(A)=800) = 600 of A's
         //        Diamond Y → B... wait, A pays B with A's collateral.
         // Leg Y consumes A's collateral: movedY = min(B.principal=600,
-        //        _diamondMatchable(A)=800) = 600. A.principal cleared by
-        //        Leg X = min(A.principal=600, _diamondMatchable(B)=600)=600.
+        //        _matchable(A)=800) = 600. A.principal cleared by
+        //        Leg X = min(A.principal=600, _matchable(B)=600)=600.
         _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 800, 200, 760, 20);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _mockLtv(LOAN_B, 9_000);
 
+        address aVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         uint256 diamondYBefore = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+        uint256 vaultYBefore = IERC20(mockCollateralERC20).balanceOf(aVault);
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
@@ -275,33 +293,40 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A InternalMatched");
         assertEq(a.principal, 0, "A principal cleared");
         // collateralAmount after = 1000 - movedY(600) = 400 residual
-        // (= diamondAfter 200 + topUp 200).
-        assertEq(a.collateralAmount, 400, "A collateral residual = diamondAfter + topUp");
+        // (= row residual 200 + topUp 200).
+        assertEq(a.collateralAmount, 400, "A collateral residual = row residual + topUp");
 
-        // The entire Diamond-held snapshot (800) exits the Diamond: movedY=600
-        // matched out to B's lender, and the diamondAfter=200 residual pushed
-        // to the borrower's vault. The vault top-up (200) was never in the
-        // Diamond, so custody never over-drew.
+        // #1566 S2b: only movedY = 600 left the borrower's vault (to B's lender
+        // and the matcher), drawn from the custody row; the 400 residual never
+        // moved, and the Diamond was never a waypoint.
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(address(diamond)),
-            diamondYBefore - 800,
-            "Diamond released only its own 800 snapshot (600 matched + 200 residual)"
+            diamondYBefore,
+            "the Diamond is never a waypoint"
         );
+        assertEq(
+            vaultYBefore - IERC20(mockCollateralERC20).balanceOf(aVault),
+            600,
+            "only the matched 600 left the borrower's vault"
+        );
+        (uint256 rowAfter, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_A);
+        assertEq(rowAfter, 0, "the custody row returned to the pledge");
 
         // Borrower residual claim covers the WHOLE residual (400).
         (, uint256 borrowerClaimAmt, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
         assertEq(borrowerClaimAmt, 400, "borrowerClaims = full residual");
 
-        // The lien now covers the whole residual (200 top-up + 200 diamondAfter).
+        // The lien is exactly the whole residual (200 row residual + 200
+        // top-up): the match decremented it by the 600 that left.
         (uint256 lienAmt, bool released) =
             TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
-        assertEq(lienAmt, 400, "lien grew to cover the whole residual");
+        assertEq(lienAmt, 400, "the lien is exactly the whole residual");
         assertFalse(released, "lien not released at match");
 
         // The CURRENT borrower-position holder (transferred away) claims the
         // residual via claimAsBorrower; both the top-up (already in vault)
-        // and the diamondAfter (pushed to vault at match) are paid out.
+        // and the custody-row residual (already in the vault; returned to the pledge at match) are paid out.
         address newHolder = makeAddr("newHolder");
         _mockBorrowerNftHolder(LOAN_A, newHolder);
         uint256 holderYBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
@@ -310,7 +335,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(newHolder) - holderYBefore,
             400,
-            "current holder receives the full residual (top-up + diamondAfter)"
+            "current holder receives the full residual (top-up + row residual)"
         );
     }
 
@@ -328,22 +353,30 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 800, mockERC20, 500);
         _mockLtv(LOAN_B, 9_000);
 
+        address aVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         uint256 diamondYBefore = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+        uint256 vaultYBefore = IERC20(mockCollateralERC20).balanceOf(aVault);
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
-        // Diamond fully consumed (movedY=800) → terminal resolution, not stuck FallbackPending.
+        // Custody row fully consumed (movedY=800) -> terminal resolution, not stuck FallbackPending.
         assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A resolved terminally");
         assertEq(a.principal, 0, "remaining principal written off (lender fallback shortfall)");
         assertEq(a.collateralAmount, 200, "only the top-up remains");
 
-        // Diamond released exactly its own 800 snapshot (all matched out); never over-drew.
+        // #1566 S2b: exactly the 800 custody row left the borrower's vault, all
+        // matched out; the top-up never moved and the Diamond was no waypoint.
         assertEq(
             IERC20(mockCollateralERC20).balanceOf(address(diamond)),
-            diamondYBefore - 800,
-            "Diamond released only its 800 snapshot"
+            diamondYBefore,
+            "the Diamond is never a waypoint"
+        );
+        assertEq(
+            vaultYBefore - IERC20(mockCollateralERC20).balanceOf(aVault),
+            800,
+            "only the 800 custody row left the borrower's vault"
         );
 
         // Top-up is NOT stranded — recorded as a borrower claim.
@@ -365,23 +398,26 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
 
     // ──────────────────── 2. topped-up PARTIAL match ────────────────
 
-    /// @notice §5.2 — a topped-up FallbackPending loan PARTIALLY matched:
-    ///         stays FallbackPending, the snapshot is scaled on the
-    ///         DIAMOND base (not the full collateralAmount), and the
-    ///         top-up lien is left intact.
-    function test_toppedUp_partialMatch_snapshotScaledOnDiamondBase() public {
-        // A: 10_000 principal X, collateral = 8_000 Diamond + 2_000 vault.
+    /// @notice Section 5.2 -- a topped-up FallbackPending loan PARTIALLY
+    ///         matched: stays FallbackPending, the snapshot is scaled on the
+    ///         custody ROW (not the full collateralAmount), and the top-up's
+    ///         share of the lien (the lien in excess of the row) is left intact.
+    function test_toppedUp_partialMatch_snapshotScaledOnTheCustodyRow() public {
+        // A: 10_000 principal X, collateral = an 8_000 custody row + a 2_000
+        //    top-up, all in the borrower's vault under one 10_000 lien.
         //    Snapshot: lender 6_800 / treasury 200 / borrower 1_000 (= 8_000).
         // B: 3_000 Y debt, 3_000 X collateral (Active).
         // Leg Y consumes A's collateral: movedY = min(B.principal 3_000,
-        //   _diamondMatchable(A)=8_000) = 3_000. A's principal cleared by
-        //   Leg X = min(A.principal 10_000, _diamondMatchable(B)=3_000)=3_000.
+        //   row(A)=8_000) = 3_000. A's principal cleared by
+        //   Leg X = min(A.principal 10_000, matchable(B)=3_000)=3_000.
         _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 8_000, 2_000, 6_800, 200);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 3_000, mockERC20, 3_000);
         _mockLtv(LOAN_B, 9_000);
 
         (uint256 lienBefore, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
-        assertEq(lienBefore, 2_000, "precondition: top-up lien = 2_000");
+        (uint256 rowBefore, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_A);
+        assertEq(rowBefore, 8_000, "precondition: the custody row");
+        assertEq(lienBefore - rowBefore, 2_000, "precondition: the top-up is the lien in excess of the row");
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
@@ -389,32 +425,38 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
         assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.FallbackPending), "A stays FallbackPending");
         assertEq(a.principal, 7_000, "A principal reduced by 3_000");
-        // collateralAmount = 10_000 - 3_000 = 7_000 (= diamondAfter 5_000 + topUp 2_000).
+        // collateralAmount = 10_000 - 3_000 = 7_000 (= row 5_000 + topUp 2_000).
         assertEq(a.collateralAmount, 7_000, "A collateral residual");
 
-        // Snapshot scaled on the DIAMOND base: factor = 5_000/8_000.
-        // lenderCollateral 6_800 * 5000/8000 = 4_250.
+        // Snapshot scaled on the custody row: factor = 5_000/8_000, with the
+        // borrower slice taking the floor remainder (#1566 S2b, K5) so the
+        // total equals the row exactly. lenderCollateral 6_800 * 5000/8000 = 4_250.
         (
             uint256 lenderCollat,
-            ,
-            ,
+            uint256 treasuryCollat,
+            uint256 borrowerCollat,
             ,
             ,
             bool active,
         ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN_A);
         assertTrue(active, "snapshot stays active");
-        assertEq(lenderCollat, 4_250, "lenderCollateral scaled on Diamond base 5000/8000");
+        assertEq(lenderCollat, 4_250, "lenderCollateral scaled on the row 5000/8000");
+        (uint256 rowAfter, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_A);
+        assertEq(rowAfter, 5_000, "the row dropped by the 3_000 consumed");
+        assertEq(lenderCollat + treasuryCollat + borrowerCollat, rowAfter, "the snapshot totals the row");
 
-        // Top-up lien UNTOUCHED.
+        // The top-up's share of the lien is UNTOUCHED: the lien dropped by
+        // exactly the 3_000 consumed from the row.
         (uint256 lienAfter, bool released) =
             TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
-        assertEq(lienAfter, 2_000, "top-up lien intact");
-        assertFalse(released, "top-up lien not released");
+        assertEq(lienAfter - rowAfter, 2_000, "top-up share of the lien intact");
+        assertEq(lienBefore - lienAfter, 3_000, "the lien dropped by the consumed row only");
+        assertFalse(released, "lien not released");
     }
 
     // ─────────────────── 3. topped-up ZERO-residual ─────────────────
 
-    /// @notice §5.3 — the Diamond portion is EXACTLY consumed by the
+    /// @notice §5.3 — the custody row is EXACTLY consumed by the
     ///         match: the loan settles (InternalMatched) and only the
     ///         top-up remains, returned to the borrower holder.
     function test_toppedUp_zeroDiamondResidual_topUpAloneReturned() public {
@@ -422,7 +464,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         //    Snapshot: lender 580 / treasury 20 / borrower 0 (= 600).
         // B: 600 Y debt, 600 X collateral.
         // Leg Y consumes A's Diamond collateral fully: movedY =
-        //   min(B.principal 600, _diamondMatchable(A)=600) = 600 → diamondAfter 0.
+        //   min(B.principal 600, _matchable(A)=600) = 600 → row 0.
         _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 600, 200, 580, 20);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _mockLtv(LOAN_B, 9_000);
@@ -433,14 +475,15 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         LibVaipakam.Loan memory a = _getLoan(LOAN_A);
         assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A InternalMatched");
         assertEq(a.principal, 0, "A principal cleared");
-        // Residual = diamondAfter(0) + topUp(200) = 200.
+        // Residual = row(0) + topUp(200) = 200.
         assertEq(a.collateralAmount, 200, "only the top-up remains");
 
         (, uint256 borrowerClaimAmt, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
         assertEq(borrowerClaimAmt, 200, "borrowerClaims = top-up only");
 
-        // Lien unchanged (no diamondAfter to add) — still the 200 top-up.
+        // #1566 S2b: the match decremented the lien by the 600 consumed from
+        // the row, so it is exactly the 200 top-up.
         (uint256 lienAmt, bool released) =
             TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
         assertEq(lienAmt, 200, "lien still the top-up");
@@ -499,34 +542,48 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
 
     // ─────────────────── 5. custody invariant ───────────────────────
 
-    /// @notice §5.5 — the Diamond's same-token balance never under-runs
-    ///         while a topped-up match settles alongside ANOTHER fallback
-    ///         loan holding the same collateral asset. The match must draw
-    ///         only the matched loan's Diamond portion, leaving the
-    ///         unrelated loan's custody untouched.
+    /// @notice Section 5.5 -- a topped-up match settling alongside ANOTHER
+    ///         fallback loan holding the same collateral asset never touches
+    ///         that loan's custody. #1566 S2b: each loan's custody rests in its
+    ///         own borrower's vault (none in the Diamond), so the match draws
+    ///         only the matched loan's custody row, from that loan's vault.
     function test_toppedUp_match_doesNotUnderrunOtherFallbackCustody() public {
-        // Unrelated fallback loan D parks 5_000 Y in Diamond custody.
+        // Unrelated fallback loan D holds a 5_000 Y custody row in its
+        // borrower's vault.
         _seedLoan(LOAN_D, lenderD, borrowerD, mockERC20, 5_000, mockCollateralERC20, 5_000);
         _moveToFallbackPending(LOAN_D, borrowerD, mockCollateralERC20, 5_000, 4_800, 100);
 
-        // Topped-up A: 800 Diamond + 200 vault of the SAME asset (Y).
+        // Topped-up A: an 800 custody row + a 200 top-up of the SAME asset (Y).
         _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 800, 200, 760, 20);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _mockLtv(LOAN_B, 9_000);
 
+        address dVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerD);
+        address aVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
         uint256 diamondYBefore = IERC20(mockCollateralERC20).balanceOf(address(diamond));
-        // Diamond holds D's 5_000 + A's snapshot 800 = 5_800 Y.
-        assertEq(diamondYBefore, 5_800, "Diamond holds D + A snapshot Y");
+        uint256 dVaultBefore = IERC20(mockCollateralERC20).balanceOf(dVault);
+        uint256 aVaultBefore = IERC20(mockCollateralERC20).balanceOf(aVault);
+        (uint256 dRowBefore, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_D);
+        assertEq(dVaultBefore, 5_000, "D's custody is in D's borrower vault");
+        assertEq(dRowBefore, 5_000, "as D's custody row");
 
         vm.prank(matcher);
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
 
-        // A's entire 800 snapshot exits the Diamond (600 matched to B's lender
-        // + 200 residual pushed to A's borrower vault). D's 5_000 is untouched.
-        uint256 diamondYAfter = IERC20(mockCollateralERC20).balanceOf(address(diamond));
-        assertEq(diamondYAfter, 5_800 - 800, "Diamond released only A's own 800 snapshot");
-        // Still covers D's full custody — never under-ran.
-        assertGe(diamondYAfter, 5_000, "Diamond still holds D's full 5_000 custody");
+        // Only A's matched 600 left A's vault; D's custody is untouched.
+        (uint256 dRowAfter, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_D);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(dVault), dVaultBefore, "D's vault untouched");
+        assertEq(dRowAfter, dRowBefore, "D's custody row untouched");
+        assertEq(
+            aVaultBefore - IERC20(mockCollateralERC20).balanceOf(aVault),
+            600,
+            "only A's matched 600 left A's vault"
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondYBefore,
+            "the Diamond is never a waypoint"
+        );
     }
 
     // ──────────── direct-trigger eligibility (former exclusion) ──────
@@ -563,18 +620,20 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         assertEq(cid, LOAN_B, "candidate is B");
     }
 
-    // ───── #591 Codex #605 P1 — exhausted Diamond portion is non-matchable ─────
+    // ───── #591 Codex #605 P1 — exhausted custody row is non-matchable ─────
 
-    /// @notice A topped-up FallbackPending leg whose at-fallback Diamond
-    ///         snapshot is fully exhausted (snapshotTotal == 0; only the vault
-    ///         top-up remains, so `collateralAmount > 0` but the Diamond-
-    ///         matchable portion is 0) must be rejected by the direct trigger
+    /// @notice A topped-up FallbackPending leg whose fallback custody
+    ///         row is fully exhausted (snapshotTotal == 0; only the vault
+    ///         top-up remains, so `collateralAmount > 0` but the matchable
+    ///         custody row is 0) must be rejected by the direct trigger
     ///         BEFORE any funds move — otherwise it would receive a one-sided
     ///         match draining the counterparty.
     function test_toppedUp_exhaustedDiamond_directTrigger_reverts() public {
         // A: principal 600, snapshotTotal 0 + topUp 500 = 500 collateral, all vault.
-        //    _diamondMatchable(A) == 500 − 500 == 0.
-        _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 0, 500, 0, 0);
+        //    _matchable(A) == row == 0.
+        // Raw: no real flow leaves an empty custody row beside a live top-up
+        // (see _seedExhaustedToppedUpFallbackRaw).
+        _seedExhaustedToppedUpFallbackRaw(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 500);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _mockLtv(LOAN_B, 9_000);
 
@@ -600,7 +659,9 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _mockLtv(LOAN_B, 9_000);
         // A is the exhausted-Diamond topped-up FallbackPending candidate.
-        _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 0, 500, 0, 0);
+        // Raw: no real flow leaves an empty custody row beside a live top-up
+        // (see _seedExhaustedToppedUpFallbackRaw).
+        _seedExhaustedToppedUpFallbackRaw(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 500);
 
         (bool found, uint256 cid) =
             MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_B);

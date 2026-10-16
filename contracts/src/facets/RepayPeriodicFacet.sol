@@ -780,8 +780,8 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///      used only by `_autoLiquidatePeriodShortfall`. Moved here
     ///      alongside its sole caller during the Issue #66 facet split;
     ///      the cross-facet call is inlined (rather than re-sharing the
-    ///      `_callEncumb2` helper, which stays in RepayFacet for its
-    ///      own call sites).
+    ///      `_callEncumb2` helper RepayFacet used to carry; #1566 slice 2
+    ///      deleted it with its last caller, the fallback-cure re-lien).
     function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(

@@ -31,6 +31,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -138,7 +139,7 @@ contract AddCollateralFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -181,6 +182,18 @@ contract AddCollateralFacetTest is Test {
             facetAddress: address(new ConsolidationFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
+        });
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -419,13 +432,17 @@ contract AddCollateralFacetTest is Test {
 
     // ─── Additional branch coverage tests ────────────────────────────────────
 
-    /// @dev Covers line 101: `if (!success) revert CrossFacetCallFailed("Get borrower vault failed")`.
+    /// @dev A failed deposit into the borrower's vault aborts the whole top-up and bubbles
+    ///      the vault's own revert data (the name is kept for history; the eager vault lookup
+    ///      it once covered was removed in #1566 S2b with the Diamond-held cure transfer).
     function testAddCollateralGetVaultFails() public {
         uint256 loanId = _createActiveLiquidLoan();
-        // Mock getOrCreateUserVault to revert → CrossFacetCallFailed
+        // #1566 S2b — the top-up's ONLY vault call is the deposit into the borrower's vault
+        // (the eager vault lookup that fed the old Diamond-held cure transfer is gone). A
+        // failure there must still abort the top-up, bubbling the vault's own revert.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
             "vault fail"
         );
         vm.prank(borrower);

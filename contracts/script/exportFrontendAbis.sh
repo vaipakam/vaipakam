@@ -323,6 +323,9 @@ FACETS=(
   "RepatriationFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"
+  # #1566 slice 2 -- the liquidation-fallback custody host; the custody census
+  # reads getFallbackCustody through it.
+  "FallbackCustodyFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

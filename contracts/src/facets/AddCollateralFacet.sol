@@ -7,8 +7,6 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -17,8 +15,8 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 
 /**
  * @title AddCollateralFacet
@@ -32,16 +30,29 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
  *      Transfers additional collateral directly into borrower's vault proxy and updates loan.collateralAmount.
  *      Custom errors, events, ReentrancyGuard, Pausable. Cross-facet calls for vault and risk calculations.
  *      Callable only by the borrower of the loan. Expand for Phase 2 (e.g., multi-collateral types).
+ *
+ *      FallbackPending cure (#1566 slice 2): the fallback custody already rests in
+ *      `loan.borrower`'s vault under the collateral lien (the `fallbackVaultCustody`
+ *      row), so a cure moves no tokens; see {_cureFallback}.
+ *      REFRESH TOGETHER: {FallbackCustodyFacet, RiskFacet, DefaultedFacet, ClaimFacet,
+ *      AddCollateralFacet, RepayFacet, RiskMatchLiquidationFacet} share that one custody
+ *      rule. Pre-slice-2 code here would pay a cured row out of the Diamond's own balance
+ *      although slice-2 producers left it in the vault; this code refuses a Diamond-held
+ *      row by name (`FallbackCustodyNotVaultHeld`).
  */
 contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    using SafeERC20 for IERC20;
-
     // ─── Events ───────────────────────────────────────────────────────────────
 
     /// @notice Emitted when a FallbackPending loan is cured by a collateral
-    ///         top-up that restores HF above MIN_HEALTH_FACTOR. The previously
-    ///         held diamond-side collateral has been moved back to the
-    ///         borrower's vault and the snapshot cleared; the loan is Active.
+    ///         top-up that restores HF above MIN_HEALTH_FACTOR. The fallback
+    ///         custody, which stayed in the borrower's vault under the lien
+    ///         (#1566 slice 2), has returned to the ordinary pledge (the
+    ///         `FallbackCustodyMoved` `ReturnedToPledge` row move) and the
+    ///         snapshot is cleared; the loan is Active.
+    /// @dev    `restoredCollateralAmount` is the loan's whole collateral after
+    ///         the cure (`loan.collateralAmount`, every top-up included), not
+    ///         the custody row alone; the row amount is on the
+    ///         `FallbackCustodyMoved` event.
     /// @custom:event-category state-change/loan-mutation
     event LoanCuredFromFallback(
         uint256 indexed loanId,
@@ -142,32 +153,37 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // clean vault. Idempotent with the end-of-fn hook (AlreadyConsolidated /
         // NoOp for a non-transferred or just-resolved loan).
         //
-        // While FallbackPending the primitive is excluded (lien released,
-        // snapshot in Diamond custody), so this is a no-op and the deposit below
-        // still targets the stored `loan.borrower`; if that anchor is flagged
-        // the deposit correctly REVERTS rather than crediting a sanctioned vault
-        // (a non-curing FallbackPending top-up would otherwise strand funds
-        // there — Codex #657 round-3). The end-of-fn hook then consolidates a
-        // just-cured loan. The narrow FallbackPending + flagged-stale-anchor
-        // top-up is a safe revert; the liveness gap is tracked in #658.
+        // While FallbackPending the primitive is excluded (the episode's custody
+        // row and lien stay keyed to the stored `loan.borrower` until it ends;
+        // #1566 slice 2 keeps that custody in this same vault), so this is a
+        // no-op and the deposit below still targets the stored `loan.borrower`;
+        // if that anchor is flagged the deposit correctly REVERTS rather than
+        // crediting a sanctioned vault (a non-curing FallbackPending top-up
+        // would otherwise strand funds there — Codex #657 round-3). The
+        // end-of-fn hook then consolidates a just-cured loan. The narrow
+        // FallbackPending + flagged-stale-anchor top-up is a safe revert; the
+        // liveness gap is tracked in #658.
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
         );
 
-        // #569 Codex #572 round-2 P2 — resolve the canonical collateral
-        // vault as the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
+        // #569 Codex #572 round-2 P2 — the canonical collateral vault is
+        // the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
         // borrower-position NFT may have transferred, so the current
         // holder (`requireBorrowerNftOwner` authorizes them) can call
         // this — but the collateral lien is keyed to `loan.borrower`,
-        // the original collateral sits in `loan.borrower`'s vault, and
-        // the close / claim paths expect the enlarged `collateralAmount`
-        // there. The deposit, the lien increment, and the cure-path
-        // restore must all target the same vault as the lien.
-        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-
+        // the original collateral (and, while FallbackPending, the
+        // fallback custody row) sits in `loan.borrower`'s vault, and the
+        // close / claim paths expect the enlarged `collateralAmount`
+        // there. The deposit and the lien increment must both target the
+        // same vault as the lien. The cure moves nothing (#1566 slice 2,
+        // see {_cureFallback}), so it needs no vault of its own; the
+        // separate vault pre-resolution it used to need is gone.
+        //
         // Pull the top-up from the CALLER (`msg.sender`, the funding
         // party / current NFT holder) into `loan.borrower`'s vault via
-        // the cross-payer chokepoint, so the protocolTrackedVaultBalance
+        // the cross-payer chokepoint, which resolves (and sanctions-
+        // screens) that vault itself, so the protocolTrackedVaultBalance
         // counter ticks up under `loan.borrower` (where the lien lives).
         // For the common case (`msg.sender == loan.borrower`) this is
         // identical to the prior `vaultDepositERC20` self-deposit.
@@ -191,12 +207,13 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // for BOTH Active and FallbackPending. The top-up lands in the
         // vault immediately, so it must be liened immediately, even on a
         // FallbackPending loan that this call doesn't cure (else the
-        // top-up is drainable before a later cure). `incrementCollateralLien`
-        // is create-if-absent, so it correctly seeds a fresh lien on the
-        // released FallbackPending row sized to the top-up (the vault
-        // portion) — the snapshot collateral still held in the Diamond
-        // is folded in by `_cureFallback`'s own increment when restored.
-        // No-op on NFT rentals (D-1).
+        // top-up is drainable before a later cure). On a FallbackPending
+        // loan the lien already covers the fallback custody row (#1566
+        // slice 2: `FallbackCustodyFacet.enterFallback` installs both), so
+        // the increment grows it to `row + top-ups == collateralAmount`
+        // and the cure adds nothing. `incrementCollateralLien` is
+        // create-if-absent, which seeds the lien when an episode entered
+        // with nothing to hold. No-op on NFT rentals (D-1).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -249,27 +266,30 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
             )
         ) {
-            _cureFallback(loanId, loan, borrowerVault);
+            _cureFallback(loanId, loan);
             emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHf);
         }
 
         // #594 — consolidate a transferred borrower position into the current
-        // holder's vault AFTER the cure (zP8): while FallbackPending the
-        // collateral lien is released + the snapshot sits in Diamond custody, so
-        // consolidation is excluded (returns Skipped); only once the loan is
-        // back to Active (just-cured, or already Active above) is there a vaulted
-        // lien to move. Placing the hook here — not at the top — means a
-        // just-cured loan still consolidates. Skip-not-block.
+        // holder's vault AFTER the cure (zP8): while FallbackPending
+        // consolidation is excluded (returns Skipped) — the episode's custody
+        // row and lien stay keyed to the stored `loan.borrower` until it ends;
+        // only once the loan is back to Active (just-cured, or already Active
+        // above) does the lien move with the position. Placing the hook here —
+        // not at the top — means a just-cured loan still consolidates.
+        // Skip-not-block.
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
         );
 
         // #594 Codex #657 round-5 — the top-of-fn consolidation checkpointed the
         // holder's VPFI tier/staking at the PRE-top-up balance, then the deposit
-        // (and a FallbackPending cure's snapshot restore) INCREASED it; the hook
-        // just above is `AlreadyConsolidated` for an Active transferred loan and
-        // doesn't restamp. Re-stamp explicitly at the final balance so the
-        // holder's tier reflects the larger post-top-up VPFI immediately.
+        // INCREASED it (a FallbackPending cure moves no tokens; dropping its
+        // fallback-custody tier exclusion restamps through `returnToPledge`'s
+        // notify); the hook just above is `AlreadyConsolidated` for an Active
+        // transferred loan and doesn't restamp. Re-stamp explicitly at the
+        // final balance so the holder's tier reflects the larger post-top-up
+        // VPFI immediately.
         // Idempotent with the hook's own restamp on the just-cured path. No-op
         // for non-VPFI collateral.
         if (loan.collateralAsset == s.vpfiToken) {
@@ -277,37 +297,38 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
     }
 
-    /// @dev Restores a FallbackPending loan to Active. The diamond-side
-    ///      collateral (recorded in fallbackSnapshot) is pushed back into the
-    ///      borrower vault, the snapshot is cleared, claim records are wiped
-    ///      so neither side can pull against a stale split, and the NFTs are
-    ///      relabeled to "Loan Initiated".
-    function _cureFallback(
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        address borrowerVault
-    ) internal {
+    /// @dev Restores a FallbackPending loan to Active.
+    ///
+    ///      #1566 slice 2 — nothing moves. `FallbackCustodyFacet.enterFallback`
+    ///      deposited the fallback collateral into `loan.borrower`'s vault,
+    ///      recorded it as the `fallbackVaultCustody` row and liened it, and
+    ///      every top-up since was liened on arrival, so the vault already
+    ///      holds `collateralAmount` under a lien of exactly that size and the
+    ///      tracked balance already counts it. The former Diamond-to-vault
+    ///      transfer, its `recordVaultDeposit` and the re-lien by `held` are
+    ///      gone: here they would pay the custody a second time out of the
+    ///      Diamond's own (other loans') balance and double the lien.
+    ///
+    ///      Order:
+    ///        1. `requireVaultHeld` FIRST, while the snapshot still exists: a
+    ///           legacy Diamond-held row (written by pre-slice-2 code) fails
+    ///           closed by name (`FallbackCustodyNotVaultHeld`). Owner decision
+    ///           O1 = A: every chain running this code is a fresh deploy, so
+    ///           there is no migration branch.
+    ///        2. Clear the snapshot and both claim records, so neither side
+    ///           can pull against a stale split, plus the backstop opt-in and
+    ///           the entry freeze markers.
+    ///        3. Take the FallbackPending -> Active edge.
+    ///        4. Only THEN `returnToPledge`: the row goes to 0 with a
+    ///           `ReturnedToPledge` row move, and its tier notify re-derives the
+    ///           VPFI exclusion against the Active status (none) and restamps
+    ///           once. Returned before the edge, it would re-derive against
+    ///           FallbackPending and leave the record charged (at zero) to the
+    ///           borrower on an Active loan.
+    ///        5. Relabel both NFTs "Loan Initiated".
+    function _cureFallback(uint256 loanId, LibVaipakam.Loan storage loan) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
-
-        uint256 held = snap.lenderCollateral +
-            snap.treasuryCollateral +
-            snap.borrowerCollateral;
-        if (held > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
-            // #569 Codex #572 round-3 P2 — tick the protocol-tracked
-            // counter for the restored snapshot collateral. The cure
-            // recreates the lien for the FULL `collateralAmount` below;
-            // since the withdraw guard now caps free balance by
-            // `protocolTrackedVaultBalance` (round-2 P2), failing to
-            // record this Diamond→vault restore would leave the tracked
-            // counter below the lien, so the restored collateral could
-            // never be returned/liquidated after a later terminal.
-            // Mirrors `RepayFacet`'s FallbackPending-cure record.
-            LibVaipakam.recordVaultDeposit(
-                loan.borrower, loan.collateralAsset, held
-            );
-        }
+        LibFallbackCustody.requireVaultHeld(loanId);
 
         delete s.fallbackSnapshot[loanId];
         delete s.lenderClaims[loanId];
@@ -335,17 +356,11 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibVaipakam.LoanStatus.Active
         );
 
-        // #569 Codex #572 round-4 P1 — grow the lien by the restored
-        // snapshot collateral `held` (Diamond → vault, above). The
-        // top-up(s) that accumulated while the loan was FallbackPending
-        // were ALREADY liened by `addCollateral`'s increment (the lien
-        // now equals the vault's top-up portion), so this must INCREMENT
-        // by `held`, not overwrite — `held + topUps == collateralAmount`.
-        // `incrementCollateralLien` is create-if-absent, so this also
-        // covers the (held>0, no prior top-up) case where the cure is
-        // reached without an `addCollateral` increment. No-op on NFT
-        // rentals (D-1) and when `held == 0`.
-        LibEncumbrance.incrementCollateralLien(loanId, held);
+        // #1566 slice 2 — the lien already equals `collateralAmount` (the
+        // custody row plus every top-up; see the natspec), so the row only
+        // returns to the ordinary pledge. AFTER the edge, so the tier
+        // re-derivation sees the Active status.
+        LibFallbackCustody.returnToPledge(loanId);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(

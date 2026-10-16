@@ -32,6 +32,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -146,7 +147,7 @@ contract ClaimFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -197,6 +198,18 @@ contract ClaimFacetTest is Test {
             facetAddress: address(offerCancelFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferCancelFacetSelectors()
+        });
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

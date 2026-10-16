@@ -483,11 +483,12 @@ contract MetricsFacet {
         ) return (false, 0);
 
         // #591 (Codex #605 round-2 P2) — also filter the SUBJECT. A topped-up
-        // FallbackPending subject whose Diamond portion is exhausted has nothing
+        // FallbackPending subject whose custody row is exhausted has nothing
         // to contribute, so the direct trigger reverts and auto-dispatch
         // declines it. Without this guard the public view would still advertise
-        // a counterparty no entry point accepts. (Active/non-topped-up subjects
-        // have matchable == collateralAmount, unaffected.)
+        // a counterparty no entry point accepts. (Active subjects have
+        // matchable == collateralAmount, unaffected; a FallbackPending
+        // subject's is its custody row, #1566 slice 2.)
         if (LibVaipakam.internalMatchableCollateral(loanId) == 0) return (false, 0);
 
         uint256[] storage candidates = s.assetPairActiveLoanIds[
@@ -507,13 +508,13 @@ contract MetricsFacet {
 
             // #591 — topped-up FallbackPending candidates are no longer
             // filtered out. Internal-match settlement now sizes a topped-up
-            // leg's contribution against its Diamond portion only and returns
-            // the vault top-up to the borrower side, so such candidates are
+            // leg's contribution against its fallback custody row only and leaves
+            // the top-up with the borrower side, so such candidates are
             // eligible.
             //
-            // #591 (Codex #605 P1) — EXCEPT a candidate whose Diamond portion
-            // is exhausted (topped-up FallbackPending whose snapshot a prior
-            // partial match consumed; only the vault top-up remains). It has
+            // #591 (Codex #605 P1) — EXCEPT a candidate whose custody row
+            // is exhausted (a FallbackPending row a prior partial match
+            // consumed; only the top-up remains). It has
             // nothing to contribute — matching it would drain THIS loan's
             // collateral one-sidedly. Filter it WHILE scanning so it can't mask
             // a later eligible candidate. Cheap storage read; do it before the

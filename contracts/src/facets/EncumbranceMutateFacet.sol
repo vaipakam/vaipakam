@@ -224,9 +224,11 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         LibLifecycle.transition(loan, expectedFrom, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
-        // #2342 — the loan just went terminal, so what each side is owed now
-        // counts against the holder, not the stored party. Records written
-        // later in this close-out keep it exact through their ledger notify.
+        // #2342 — re-derive the tier exclusion at this edge: on a terminal
+        // transition what each side is owed now counts against the holder,
+        // not the stored party; on the Active -> FallbackPending entry it
+        // installs the fallback-custody clause (#1566 slice 2). Records
+        // written later in this flow keep it exact through their notify.
         _syncTierExclusion(loanId);
     }
 
@@ -252,10 +254,13 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     // `LibTierExclusion.sync` derives, per side, whether a terminal loan's
     // owed VPFI must stay out of the stored party's fee tier (position held
     // by someone else) and by how much (the VPFI in that side's encumbrance
-    // records). Hosted here so the recompute and the restamp exist once: the
+    // records), plus one non-terminal case (#1566 slice 2): a FallbackPending
+    // VPFI loan's fallback custody row stays out of the stored borrower's
+    // tier. Hosted here so the recompute and the restamp exist once: the
     // terminal transitions above call it inline, `VaipakamNFTFacet` calls it
     // on a position transfer or burn, and every `LibEncumbrance` per-loan
-    // mutator calls it when the side already carries an exclusion.
+    // mutator and `LibFallbackCustody` row mutator calls it when the side
+    // already carries an exclusion.
 
     /// @notice Re-derive `loanId`'s VPFI fee-tier exclusion and restamp every
     ///         vault owner whose excluded amount changed.
@@ -278,7 +283,11 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         ledger), so a caller can only make the record CORRECT, and a
     ///         repeat call is a no-op. `nonReentrant` keeps it from being
     ///         entered mid-close-out, where the ledger is between writes.
-    ///         Ids that are not terminal loans settle to "no exclusion".
+    ///         Ids that are not terminal loans settle to "no exclusion",
+    ///         except a FallbackPending VPFI loan, which keeps its
+    ///         borrower-side fallback-custody exclusion (#1566 slice 2: the
+    ///         custody row in the stored borrower's vault carries no tier
+    ///         credit).
     function refreshTierExclusion(uint256[] calldata loanIds) external nonReentrant {
         for (uint256 i; i < loanIds.length; ++i) {
             _syncTierExclusion(loanIds[i]);

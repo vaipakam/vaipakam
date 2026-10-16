@@ -23,6 +23,8 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -61,6 +63,14 @@ import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
  *     --rpc-url $SEPOLIA_RPC_URL --broadcast -vvv
  */
 contract RedeployFacets is Script {
+    /// @notice #1566 S2b - the target Diamond predates vault-held fallback
+    ///         custody, so this curated refresh refuses it; see
+    ///         {_requireVaultHeldFallbackCustody}.
+    error PredatesVaultHeldFallbackCustody(address diamond);
+    /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
+    ///         {_requireSlice3Diamond}.
+    error PredatesSlice3FillLock(address diamond);
+
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         // Read from deployments/<chain>/addresses.json with chain-prefixed
@@ -89,6 +99,12 @@ contract RedeployFacets is Script {
         // #2407 — the refinance-request record spans facets this curated set
         // does not carry; refuse a Diamond that has not had it rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
+        // #1566 S2b - refuse a Diamond from before vault-held fallback
+        // custody, before anything is broadcast; see
+        // {_requireVaultHeldFallbackCustody}.
+        _requireVaultHeldFallbackCustody(diamond);
+        // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
+        _requireSlice3Diamond(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -178,6 +194,18 @@ contract RedeployFacets is Script {
         // being over-charged.
         RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
         EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        // #1566 slice 2 - RiskFacet and DefaultedFacet now ENTER the fallback, and
+        // ClaimFacet retries its swap and disposes of it, by self-calling this
+        // host. Its selectors are NEW on any Diamond cut before the split, so
+        // refreshing those three without it installs code that calls unrouted
+        // selectors: a liquidation or default whose swap fails, and every claim
+        // of a fallback-pending loan, would revert `FunctionDoesNotExist` through
+        // the Diamond fallback - the half-applied family #658 and #1649 document.
+        // Deploy it alongside and route its FULL surface (partitioned by live
+        // routing below), in the same cut as its callers. Since S2b a Diamond
+        // from before vault-held fallback custody never reaches this point:
+        // `runWith` refuses it first (`_requireVaultHeldFallbackCustody`).
+        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -195,6 +223,7 @@ contract RedeployFacets is Script {
         console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
         console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
         console.log("EncumbranceMutate:    ", address(encumbranceMutateFacet));
+        console.log("FallbackCustodyFacet: ", address(fallbackCustodyFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -315,6 +344,14 @@ contract RedeployFacets is Script {
         retiredResident[0] = FacetSelectors.retiredResidentPayoutSelector();
         (, bytes4[] memory encToRemove) =
             _partitionByRouting(diamond, retiredResident);
+        // #1566 slice 2 - the fallback-custody host. The S2b boundary check at
+        // the top of `runWith` admits only a Diamond that already routes the
+        // S2b surface, so today every selector partitions to Replace; the
+        // partition stays so a selector added to the host later is an Add, as
+        // for every other facet here. Sourced from the one list the deploy
+        // also cuts.
+        (bytes4[] memory fcToAdd, bytes4[] memory fcToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.fallbackCustody());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -332,7 +369,8 @@ contract RedeployFacets is Script {
             (encToAdd.length > 0 ? 1 : 0) + (encToReplace.length > 0 ? 1 : 0) +
             (encToRemove.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0) +
-            (rpToRemove.length > 0 ? 1 : 0);
+            (rpToRemove.length > 0 ? 1 : 0) +
+            (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -481,6 +519,15 @@ contract RedeployFacets is Script {
         if (rpsToAdd.length > 0) {
             cuts[idx++] = _add(address(repayPeriodicFacet), rpsToAdd);
         }
+        // #1566 slice 2 - the fallback-custody host rides the SAME diamondCut as
+        // the Risk / Defaulted / Claim refresh above, so no block ever sees the
+        // new callers without their host.
+        if (fcToReplace.length > 0) {
+            cuts[idx++] = _replace(address(fallbackCustodyFacet), fcToReplace);
+        }
+        if (fcToAdd.length > 0) {
+            cuts[idx++] = _add(address(fallbackCustodyFacet), fcToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -505,6 +552,53 @@ contract RedeployFacets is Script {
         console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
         console.log("  EncumbranceMutate added:      ", encToAdd.length);
         console.log("  Retired resident-payout removed:", encToRemove.length);
+        console.log("  FallbackCustody selectors added: ", fcToAdd.length);
+        console.log("  FallbackCustody selectors repl.: ", fcToReplace.length);
+    }
+
+    /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback
+    ///      collateral stays in the borrower's vault under the loan's lien
+    ///      and every consumer moves it out of that vault; before S2b it
+    ///      rested in the Diamond's own balance and every consumer paid it out
+    ///      of that balance. This curated family refreshes the host, both
+    ///      producers and two of the consumers (FallbackCustody; Risk and
+    ///      Defaulted; Claim and RiskMatchLiquidation) but not
+    ///      AddCollateralFacet or RepayFacet. Run across the boundary it
+    ///      would leave those two on the old rule: a cure by top-up or by
+    ///      full repayment would pay the fallback amount out of the Diamond's
+    ///      shared balance - other owners' funds - while the new entry had
+    ///      already left it in the borrower's vault, and would lien it a
+    ///      second time. Crossing the boundary is a fresh deploy (owner
+    ///      decision O1 = A, 2026-10-07), never this refresh.
+    ///
+    ///      The marker is the routing of the three-argument
+    ///      `disposeFallbackCustody(uint256,address,uint8)`, which S2b
+    ///      introduced. The routing of `getFallbackCustody` cannot serve: the
+    ///      S2a host split already routes that view (with the Diamond-held
+    ///      meaning), so it would admit a Diamond on the old custody rule.
+    ///      The selector is read from the compiled facet, so if the entry is
+    ///      ever re-signed this check refuses every older Diamond until the
+    ///      marker is reconsidered: loud, never a silent pass. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireVaultHeldFallbackCustody(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(
+                FallbackCustodyFacet.disposeFallbackCustody.selector
+            ) == address(0)
+        ) revert PredatesVaultHeldFallbackCustody(diamond);
+    }
+
+    /// @dev #1566 slice 3 - refuse a Diamond from before the fill lock. The lock is enforced in
+    ///      `VaipakamDiamond`'s own fallback, which no facet cut replaces, so slice 3 reaches a chain
+    ///      by fresh deploy only (owner decision O1 = A); and a commit recorded under the old custody
+    ///      would be refused by name at every way out once the new intent code ran. The marker is the
+    ///      routing of `getIntentCustody`, which slice 3 introduced. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireSlice3Diamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector)
+                == address(0)
+        ) revert PredatesSlice3FillLock(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

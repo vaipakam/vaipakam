@@ -10,17 +10,24 @@ import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockEip712Lop} from "./mocks/MockEip712Lop.sol";
+import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
 /// @dev Trivial stub contract.
 contract _Stub {}
 
-/// @dev Mock LOP — exposes DOMAIN_SEPARATOR() static for the
-///      on-chain orderHash recomputation path.
-contract _MockLOPWithDomain {
-    bytes32 public constant DOMAIN_SEPARATOR =
-        keccak256("vaipakam.test.lop.domain.separator");
+/// @dev Mock LOP — declares an EIP-712 domain (ERC-5267, as the Diamond
+///      reads it since #2449) for the on-chain orderHash recomputation path.
+contract _MockLOPWithDomain is MockEip712Lop {
+    function _lopName() internal pure override returns (string memory) { return "vaipakam.test.lop.domain.separator"; }
+    function _lopVersion() internal pure override returns (string memory) { return "1"; }
+    /// @dev Like the deployed v4 LOP: no `DOMAIN_SEPARATOR()`, so a validated commit that went back to
+    ///      that getter fails this suite (#2449). The suite derives the expected domain itself.
+    function DOMAIN_SEPARATOR() public pure override returns (bytes32) {
+        revert("_MockLOPWithDomain: no DOMAIN_SEPARATOR(), as deployed");
+    }
 }
 
 /// @title BuybackValidatedCommitTest
@@ -42,7 +49,7 @@ contract BuybackValidatedCommitTest is SetupTest {
         receiver = address(new _Stub());
         lopContract = new _MockLOPWithDomain();
         lop = address(lopContract);
-        lopDomain = lopContract.DOMAIN_SEPARATOR();
+        lopDomain = LibLopDomain.separator(lop);
 
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(lop);

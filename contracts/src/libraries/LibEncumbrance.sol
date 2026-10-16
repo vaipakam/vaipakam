@@ -149,7 +149,7 @@ library LibEncumbrance {
         // fold a bogus full-collateral claim off a released row). Callers
         // that read `.amount` now always see 0 once released.
         lien.amount = 0;
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     /// @notice Decrement an active collateral lien by `consumed`. Used
@@ -184,7 +184,7 @@ library LibEncumbrance {
         unchecked {
             lien.amount -= consumed;
         }
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     /// @notice Increment an active collateral lien by `added`. Used by
@@ -200,18 +200,20 @@ library LibEncumbrance {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
 
-        // #569 Codex #572 round-4 P1 — create-if-absent. A
-        // FallbackPending top-up (`AddCollateralFacet.addCollateral`)
-        // adds collateral while the loan's lien was RELEASED at
-        // default-entry. The top-up sits in the vault and must be
-        // protected immediately — even if it doesn't cure the loan in
-        // the same call — or it could be drained (e.g. VPFI via
-        // `withdrawVPFIFromVault`) before a later `_cureFallback`
-        // recreates the lien for the inflated `collateralAmount`. So a
-        // released / empty lien is CREATED here, sized to `added` (the
-        // vault portion), keyed to the loan's collateral identity —
-        // NOT to `collateralAmount` (which includes the snapshot
-        // collateral still held in the Diamond during FallbackPending).
+        // #569 Codex #572 round-4 P1 — create-if-absent: a released / empty
+        // lien is CREATED here, sized to `added` and keyed to the loan's
+        // collateral identity, never to `collateralAmount`. Its caller since
+        // #1566 slice 2 is fallback ENTRY (`FallbackCustodyFacet.enterFallback`):
+        // the liquidation or default released the lien when it withdrew the
+        // collateral to swap it, the swap failed, and entry returns exactly
+        // that custody to the borrower's vault and re-liens exactly that
+        // amount. A FallbackPending top-up (`AddCollateralFacet.addCollateral`)
+        // then lands on the live lien and adds to it, so the top-up is
+        // protected immediately — even if it doesn't cure the loan in the
+        // same call — and cannot be drained (e.g. VPFI via
+        // `withdrawVPFIFromVault`). Before slice 2 the custody rested in the
+        // Diamond with the lien released and the top-up created the row; a
+        // top-up on a pre-slice-2 row (Diamond refreshed in place) still does.
         // No-op on NFT rentals (D-1).
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (lien.released || lien.user == address(0)) {
@@ -230,7 +232,7 @@ library LibEncumbrance {
             s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
             lien.amount += added;
         }
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     // ─── Lender-proceeds reservation (VPFI) ─────────────────────────────
@@ -278,7 +280,7 @@ library LibEncumbrance {
         }
         s.encumbered[lender][asset][0] += amount;
         s.lenderProceedsEncumbered[loanId] += amount;
-        _notifyTierExclusion(loanId, true);
+        notifyTierExclusion(loanId, true);
     }
 
     /// @notice #585 — release a loan's VPFI lender-proceeds reservation
@@ -309,7 +311,7 @@ library LibEncumbrance {
         _decrementAggregate(lender, asset, 0, reserved);
         s.lenderProceedsEncumbered[loanId] = 0;
         s.lenderProceedsEncumberedAsset[loanId] = address(0);
-        _notifyTierExclusion(loanId, true);
+        notifyTierExclusion(loanId, true);
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
@@ -341,7 +343,7 @@ library LibEncumbrance {
         }
         s.encumbered[lender][asset][0] += amount;
         s.heldForLenderEncumbered[loanId] += amount;
-        _notifyTierExclusion(loanId, true);
+        notifyTierExclusion(loanId, true);
     }
 
     /// @notice Release the active-held reservation in full, under the RECORDED
@@ -357,7 +359,7 @@ library LibEncumbrance {
         _decrementAggregate(lender, asset, 0, reserved);
         s.heldForLenderEncumbered[loanId] = 0;
         s.heldForLenderEncumberedAsset[loanId] = address(0);
-        _notifyTierExclusion(loanId, true);
+        notifyTierExclusion(loanId, true);
     }
 
     /// @notice Migrate the active-held reservation `oldLender → newUser` when the
@@ -377,7 +379,7 @@ library LibEncumbrance {
         address asset = s.heldForLenderEncumberedAsset[loanId];
         _decrementAggregate(oldLender, asset, 0, reserved);
         s.encumbered[newUser][asset][0] += reserved;
-        _notifyTierExclusion(loanId, true);
+        notifyTierExclusion(loanId, true);
     }
 
     // ─── #661 — borrower default-surplus reservation (mirror of #592) ───────
@@ -414,7 +416,7 @@ library LibEncumbrance {
         }
         s.encumbered[borrower][asset][0] += amount;
         s.borrowerProceedsEncumbered[loanId] += amount;
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     /// @notice #661 — release a loan's VPFI borrower-surplus reservation (see
@@ -434,7 +436,7 @@ library LibEncumbrance {
         _decrementAggregate(borrower, asset, 0, reserved);
         s.borrowerProceedsEncumbered[loanId] = 0;
         s.borrowerProceedsEncumberedAsset[loanId] = address(0);
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     // ─── Intent working-capital lien — #393 v1-d ────────────────────────
@@ -495,12 +497,14 @@ library LibEncumbrance {
 
     /// @notice Re-create a collateral lien from the loan row's
     ///         current `(borrower, collateralAsset, …, collateralAmount)`
-    ///         encoding. Used by the FallbackPending → Active cure
-    ///         path ({AddCollateralFacet._cureFallback}) which lands
-    ///         the snapshot collateral back in the borrower's vault
-    ///         and re-activates the loan; the lien (released early at
-    ///         {DefaultedFacet.triggerDefault} entry) must be reinstated
-    ///         or the cured loan would have unprotected collateral.
+    ///         encoding. Used by the obligation transfer
+    ///         ({PrecloseFacet.transferObligationViaOffer}), which re-locks
+    ///         the continuing loan's collateral under the new borrower.
+    ///         The FallbackPending -> Active cure does NOT use it: since
+    ///         #1566 slice 2 the fallback custody is already in the
+    ///         borrower's vault under the loan's lien (re-created at
+    ///         fallback entry by {incrementCollateralLien}), so a cure
+    ///         re-creates nothing.
     /// @dev    Tombstone-safe — if a `released:true` lien is already at
     ///         the slot it's overwritten with a fresh `released:false`
     ///         row. The aggregate is bumped only by the new amount
@@ -526,7 +530,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     /// @notice Re-key a collateral lien from one loan id to another
@@ -603,7 +607,7 @@ library LibEncumbrance {
             // refinanced-away loan. The `released` flag is the source of truth;
             // zeroing `amount` removes the footgun.
             oldLien.amount = 0;
-            _notifyTierExclusion(oldLoanId, false);
+            notifyTierExclusion(oldLoanId, false);
             return true;
         }
         // !sameKey — the old lien's key no longer matches the new loan (e.g.
@@ -813,7 +817,7 @@ library LibEncumbrance {
             // decrements the right bucket.
             _decrementAggregate(oldLender, asset, 0, reserved);
             s.encumbered[newUser][asset][0] += reserved;
-            _notifyTierExclusion(loanId, true);
+            notifyTierExclusion(loanId, true);
             return;
         }
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
@@ -823,7 +827,7 @@ library LibEncumbrance {
         _decrementAggregate(from, lien.asset, lien.tokenId, lien.amount);
         s.encumbered[newUser][lien.asset][lien.tokenId] += lien.amount;
         lien.user = newUser;
-        _notifyTierExclusion(loanId, false);
+        notifyTierExclusion(loanId, false);
     }
 
     // ─── #2342 — VPFI fee-tier exclusion, anchored to this ledger ───────
@@ -871,23 +875,29 @@ library LibEncumbrance {
 
     /// @dev Re-derive the loan's fee-tier exclusion after a per-loan record
     ///      changed, but only when the side already carries one. A side
-    ///      carries an exclusion only once its loan is terminal and its
-    ///      position is held by someone other than the stored party (set by
-    ///      `LibTierExclusion.sync` at the terminal transition or the position
-    ///      transfer), so on every live loan — the hot path — this is one
-    ///      storage read. When it does fire it cross-calls the host so the
-    ///      recompute and the tier restamp exist once, not in every facet
-    ///      that mutates this ledger.
+    ///      carries an exclusion record in two cases, both set by
+    ///      `LibTierExclusion.sync` at a status edge or a position transfer:
+    ///      its loan is terminal and its position is held by someone other
+    ///      than the stored party; or, borrower side only, its
+    ///      VPFI-collateral loan is FallbackPending and the record charges the
+    ///      fallback custody row to the stored borrower (#1566 slice 2). So on
+    ///      every live loan — the hot path — this is one storage read. When it
+    ///      does fire it cross-calls the host so the recompute and the tier
+    ///      restamp exist once, not in every facet that mutates this ledger.
     ///
     ///      Every per-loan mutator here calls it after writing, except
     ///      {createCollateralLien}: a loan being created has no exclusion.
+    ///      So does every `LibFallbackCustody` row mutator, which is why this
+    ///      is `internal` rather than private (#1566 slice 2): the custody row
+    ///      is an input to the same exclusion, and ONE notify rule for every
+    ///      input is what keeps a call site from forgetting one.
     ///      The records are thereby exact at every step — including the
     ///      claim-time releases, which must drop the exclusion BEFORE the
     ///      VPFI leaves the vault so the post-withdraw restamp never sees the
     ///      balance fall while the exclusion still stands (a transient dip
     ///      that the tier's minimum-over-history clamp would keep for up to
     ///      30 days).
-    function _notifyTierExclusion(uint256 loanId, bool lenderSide) private {
+    function notifyTierExclusion(uint256 loanId, bool lenderSide) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address charged = lenderSide
             ? s.tierExclusionLenderVault[loanId]

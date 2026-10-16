@@ -95,6 +95,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -107,6 +108,7 @@ import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -365,6 +367,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardEraFacet rewardEraFacet = new RewardEraFacet();
         ServiceCapacityFacet serviceCapacityFacet = new ServiceCapacityFacet();
         OfferMatchIntentFacet offerMatchIntentFacet = new OfferMatchIntentFacet();
+        // #1566 slice 2 - the fallback-custody host. RiskFacet and DefaultedFacet
+        // enter the fallback, and ClaimFacet retries its swap and disposes of it,
+        // through this facet's Diamond-internal entries (self-calls).
+        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -399,7 +405,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](93);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](94);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -487,6 +493,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[89] = _buildCut(address(rewardEraFacet), _getRewardEraSelectors());
         cuts[90] = _buildCut(address(serviceCapacityFacet), _getServiceCapacitySelectors());
         cuts[91] = _buildCut(address(offerMatchIntentFacet), _getOfferMatchIntentSelectors());
+        cuts[93] = _buildCut(address(fallbackCustodyFacet), _getFallbackCustodySelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1170,6 +1177,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardEraFacet", address(rewardEraFacet));
         Deployments.writeFacet("serviceCapacityFacet", address(serviceCapacityFacet));
         Deployments.writeFacet("offerMatchIntentFacet", address(offerMatchIntentFacet));
+        Deployments.writeFacet("fallbackCustodyFacet", address(fallbackCustodyFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1558,7 +1566,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1603,6 +1611,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record (the LOP moves the lot).
+        s[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -1799,11 +1809,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///   • 1 ERC-1271 binding check (`isValidSignature`)
     ///   • 1 read-back view for the dapp's commit-then-post pattern.
     ///   • 1 preview of the debt-sized auction lot (#2322).
+    ///   • 1 custody read for the census (#1566 slice 3).
     function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to the new IntentDispatchFacet; this
         // facet now owns 8 selectors instead of 11.
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1816,6 +1827,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
         // #2322 — read-only preview of the debt-sized auction lot.
         s[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
+        // #1566 slice 3 — how much of a live commit rests in the Diamond (0 for
+        // every commit made on this source; the custody census reads it).
+        s[9] = SwapToRepayIntentFacet.getIntentCustody.selector;
     }
 
     /// @notice T-087 Sub 3.B — the three 1inch LOP v4 callbacks
@@ -1824,10 +1838,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         `LibSwapToRepayIntentSettlement` (the T-090 v1.1 path)
     ///         or `LibTreasuryBuyback` (the Sub 3 buyback path).
     function _getIntentDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = IntentDispatchFacet.preInteraction.selector;
         s[1] = IntentDispatchFacet.postInteraction.selector;
         s[2] = IntentDispatchFacet.isValidSignature.selector;
+        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
+        s[3] = IntentDispatchFacet.isOrderValid.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — auto-lifecycle consent surface.
@@ -3294,6 +3310,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     function _getOfferMatchIntentSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = OfferMatchIntentFacet.matchIntent.selector;
+    }
+
+    /// @dev #1566 slice 2 - the fallback-custody host. Returns the ONE list in
+    ///      `FacetSelectors.fallbackCustody()` instead of a copy: the curated
+    ///      `RedeployFacets` cuts this facet from that library and
+    ///      `RedeploySelectorParityTest` pins it to the compiled ABI, so a
+    ///      second hand-list here could only drift from the checked one.
+    function _getFallbackCustodySelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.fallbackCustody();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.
