@@ -74,9 +74,15 @@ export async function runKeeperTick(
   // that can see the whole tick, is what an operator can actually read —
   // and declining before `resolveEnv` also means a maintenance build stops
   // fetching secrets it has no use for.
-  if (env.DB === undefined || !hasD1Binding(env.DB)) {
+  //
+  // #2450 — the keeper binds TWO databases, the shared one (`DB`) and its
+  // private `KEEPER_DB`, and its passes read both. Either one missing is the
+  // same maintenance state, so both are checked here and the line names which
+  // is unbound rather than leaving the operator to guess.
+  if (env.DB === undefined || !hasD1Binding(env.DB) || !hasD1Binding(env.KEEPER_DB)) {
+    const unbound = (['DB', 'KEEPER_DB'] as const).filter((b) => !hasD1Binding(env[b]));
     // eslint-disable-next-line no-console
-    console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+    console.warn(maintenanceSkipNotice(WORKER_NAME, `this tick (unbound: ${unbound.join(', ')})`));
     return;
   }
 

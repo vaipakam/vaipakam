@@ -9,9 +9,33 @@
  * already verifies against), and declines by name while any migration is
  * missing. It resumes by itself once the indexer has applied them. The gate
  * caches only `current`, so the steady-state cost is one read per process.
+ *
+ * PRIVATE DATABASE (#2450, #2497). The keeper's deploy also refuses to publish
+ * until its private `vaipakam-keeper-db` records every keeper migration, and
+ * until the one-time cutover copy of the five keeper tables that began life
+ * in the shared database is recorded and still matches the shared copies
+ * (`scripts/deploy-keeper.mjs`). A keeper that started on empty private
+ * copies would lose its scan cursors and re-send CCIP acknowledgements it has
+ * already paid for. So the machine asks both questions too, with the same
+ * migration list and the same cutover reader and verdict
+ * (`scripts/lib/keeper-cutover.mjs`), and declines by name until both pass.
+ * It applies nothing and copies nothing: the private schema is applied by the
+ * keeper's deploy or `run migrate`, the copy by `run cutover`. A tick that
+ * declines here writes nothing to either database, so the cutover may run
+ * while this process is up. Both checks cache only a pass, like the schema
+ * gate.
  */
 
 import { createSchemaGate, type SchemaCheck } from '../../indexer/src/schemaGate';
+import {
+  PRIVATE_DB,
+  cutoverVerdict,
+  readFingerprintsWith,
+  readMarkerWith,
+  type StatementRunner,
+  type Verdict,
+} from '../scripts/lib/keeper-cutover.mjs';
+import REQUIRED_KEEPER_MIGRATIONS from '../src/requiredKeeperMigrations.json';
 import type { WorkerEnv } from '../src/env';
 import { claimRunnerLease } from '../src/runnerLease';
 import { runKeeperTick } from '../src/tick';
@@ -25,6 +49,10 @@ export interface HostTickDeps {
   log: (line: string) => void;
   /** Injected for tests; defaults to a gate over the indexer's list. */
   gate?: { check(db: D1Database): Promise<SchemaCheck> };
+  /** Injected for tests; defaults to a gate over the keeper's private list. */
+  privateGate?: { check(db: D1Database): Promise<SchemaCheck> };
+  /** Injected for tests; defaults to {@link createCutoverGate}. */
+  cutover?: { check(shared: D1Database, priv: D1Database): Promise<Verdict> };
   /** Injected for tests; defaults to the shared tick. */
   runTick?: (env: WorkerEnv, scheduledTimeMs: number, launch: Launch) => Promise<void>;
   /** Injected for tests; defaults to the global `fetch`. */
@@ -38,17 +66,72 @@ export function schemaDeclineLine(check: Exclude<SchemaCheck, { state: 'current'
   return `[keeper-host] tick declined: D1 migration(s) ${check.missing.join(', ')} not applied; the indexer's deploy applies them, and ticks resume once it has`;
 }
 
+export function privateSchemaDeclineLine(check: Exclude<SchemaCheck, { state: 'current' }>): string {
+  if (check.state === 'unknown') {
+    return `[keeper-host] tick declined: could not read ${PRIVATE_DB}'s d1_migrations to confirm the keeper's private schema; retrying next tick`;
+  }
+  return (
+    `[keeper-host] tick declined: keeper migration(s) ${check.missing.join(', ')} not applied to ${PRIVATE_DB}; ` +
+    'the keeper\'s deploy applies them (or `pnpm --filter @vaipakam/keeper run migrate`), and ticks resume once it has'
+  );
+}
+
+/** A D1 handle as the cutover reader's statement runner: rows, or null on any failure. */
+function runnerFor(db: D1Database): StatementRunner {
+  return async (sql) => {
+    try {
+      const res = await db.prepare(sql).all<Record<string, unknown>>();
+      return res.results ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
+ * The deploy's cutover verdict, asked of the two databases this host reaches.
+ * Caches only a pass: once the private copy is confirmed, nothing this keeper
+ * does writes the shared copies again.
+ */
+export function createCutoverGate() {
+  let passed = false;
+  const check = async (shared: D1Database, priv: D1Database): Promise<Verdict> => {
+    if (passed) return { ok: true };
+    const verdict = cutoverVerdict(
+      await readFingerprintsWith(runnerFor(shared)),
+      await readMarkerWith(runnerFor(priv)),
+    );
+    if (verdict.ok) passed = true;
+    return verdict;
+  };
+  return { check };
+}
+
 export function createHostTick(deps: HostTickDeps) {
   const gate = deps.gate ?? createSchemaGate();
+  const privateGate = deps.privateGate ?? createSchemaGate(REQUIRED_KEEPER_MIGRATIONS);
+  const cutover = deps.cutover ?? createCutoverGate();
   const runTick = deps.runTick ?? runKeeperTick;
   return async (scheduledTimeMs: number, launch: Launch): Promise<void> => {
     // Rebuilt per tick, as a Worker resolves its bindings per invocation.
-    const { env } = buildHostEnv(deps.vars(), deps.fetchFn);
-    // With no database the shared tick declines as a maintenance build.
-    if (env.DB !== undefined) {
+    const { env, refusedD1 } = buildHostEnv(deps.vars(), deps.fetchFn);
+    if (refusedD1 !== null) deps.log(`[keeper-host] ${refusedD1}`);
+    // With a database missing the shared tick declines as a maintenance
+    // build, naming it; the gates below need both.
+    if (env.DB !== undefined && env.KEEPER_DB !== undefined) {
       const schema = await gate.check(env.DB);
       if (schema.state !== 'current') {
         deps.log(schemaDeclineLine(schema));
+        return;
+      }
+      const priv = await privateGate.check(env.KEEPER_DB);
+      if (priv.state !== 'current') {
+        deps.log(privateSchemaDeclineLine(priv));
+        return;
+      }
+      const copied = await cutover.check(env.DB, env.KEEPER_DB);
+      if (!copied.ok) {
+        deps.log(`[keeper-host] tick declined: ${copied.why}`);
         return;
       }
     }

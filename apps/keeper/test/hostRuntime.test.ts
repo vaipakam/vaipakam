@@ -8,6 +8,9 @@ import { D1HttpDatabase, D1HttpError } from '../host/d1Http';
 import { buildHostEnv, HOST_SETTINGS } from '../host/hostEnv';
 import { createHostTick } from '../host/hostTick';
 import { createSchemaGate } from '../../indexer/src/schemaGate';
+import { REQUIRED_D1_MIGRATIONS } from '../../indexer/src/requiredMigrations';
+import { CUTOVER_TABLES } from '../scripts/lib/keeper-cutover.mjs';
+import REQUIRED_KEEPER_MIGRATIONS from '../src/requiredKeeperMigrations.json';
 import {
   createTickRunner,
   minuteFloor,
@@ -132,10 +135,33 @@ describe('host env', () => {
     for (const key of Object.values(HOST_SETTINGS)) expect(env[key]).toBeUndefined();
   });
 
-  it('leaves DB absent and names what is missing when the D1 settings are incomplete', () => {
+  it('leaves both databases absent and names what is missing when the D1 settings are incomplete', () => {
     const { env, missingD1 } = buildHostEnv({ KEEPER_ENABLED: 'false' });
     expect(env.DB).toBeUndefined();
-    expect(missingD1).toEqual(Object.values(HOST_SETTINGS));
+    expect(env.KEEPER_DB).toBeUndefined();
+    // The private id has a pinned default, so it is never reported missing.
+    expect(missingD1).toEqual([HOST_SETTINGS.accountId, HOST_SETTINGS.databaseId, HOST_SETTINGS.apiToken]);
+  });
+
+  it('binds KEEPER_DB to the pinned private database by default, and to an override when set', async () => {
+    const urls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ success: true, result: [{ results: [], success: true, meta: {} }] }));
+    }) as unknown as typeof fetch;
+    const { env, refusedD1 } = buildHostEnv(full, fetchFn);
+    expect(refusedD1).toBeNull();
+    await env.KEEPER_DB!.prepare('SELECT 1').all();
+    expect(urls.at(-1)).toContain('/d1/database/f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095/');
+    const other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    await buildHostEnv({ ...full, [HOST_SETTINGS.keeperDatabaseId]: other }, fetchFn).env.KEEPER_DB!.prepare('SELECT 1').all();
+    expect(urls.at(-1)).toContain(`/d1/database/${other}/`);
+  });
+
+  it('refuses a private id that names the shared database, leaving KEEPER_DB unbound', () => {
+    const { env, refusedD1 } = buildHostEnv({ ...full, [HOST_SETTINGS.keeperDatabaseId]: DATABASE.toUpperCase() });
+    expect(env.KEEPER_DB).toBeUndefined();
+    expect(refusedD1).toMatch(/names the shared database/);
   });
 
   it('wraps every secret resolveEnv reads as a binding, and no other field', async () => {
@@ -147,13 +173,13 @@ describe('host env', () => {
     const raw = new Proxy({} as Record<string, unknown>, {
       get: (_t, key) => {
         if (typeof key !== 'string') return undefined;
-        if (key === 'DB') return { prepare: () => null };
+        if (key === 'DB' || key === 'KEEPER_DB') return { prepare: () => null };
         return listed.has(key) ? { get: async () => `v:${key}` } : `v:${key}`;
       },
     }) as unknown as WorkerEnv;
     const resolved = (await resolveEnv(raw)) as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(resolved)) {
-      if (key === 'DB') continue;
+      if (key === 'DB' || key === 'KEEPER_DB') continue;
       expect(value, key).toBe(`v:${key}`);
     }
   });
@@ -226,6 +252,8 @@ describe('host tick schema check', () => {
       vars: () => vars,
       log: (l) => lines.push(l),
       gate: createSchemaGate(['0001_a.sql', '0002_b.sql']),
+      privateGate: { check: async () => ({ state: 'current' }) },
+      cutover: { check: async () => ({ ok: true }) },
       runTick: async (_env, t) => {
         ran.push(t);
       },
@@ -267,5 +295,84 @@ describe('host tick schema check', () => {
     });
     await tick(0, () => {});
     expect(ran).toEqual([0]);
+  });
+});
+
+describe('host tick private database checks (#2497)', () => {
+  const PRIVATE = 'f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095';
+  const vars = {
+    [HOST_SETTINGS.accountId]: ACCOUNT,
+    [HOST_SETTINGS.databaseId]: DATABASE,
+    [HOST_SETTINGS.apiToken]: TOKEN,
+  };
+  const TABLES = CUTOVER_TABLES.map(({ table }) => table);
+  /** Answers by database and statement: `shared` and `priv` map a query to its rows (or an Error). */
+  function setup(opts: {
+    privateApplied: string[];
+    sharedRows: number;
+    marker: 'none' | 'match' | 'stale';
+  }) {
+    const lines: string[] = [];
+    const ran: number[] = [];
+    const fp = { n: opts.sharedRows, at: 100 };
+    const answer = (db: string, sql: string): unknown[] => {
+      if (db === DATABASE) {
+        if (sql.startsWith('SELECT name FROM d1_migrations')) return REQUIRED_D1_MIGRATIONS.map((name) => ({ name }));
+        if (sql.includes('sqlite_master')) return TABLES.map((name) => ({ name }));
+        return [{ n: fp.n, at: fp.at }];
+      }
+      if (sql.startsWith('SELECT name FROM d1_migrations')) return opts.privateApplied.map((name) => ({ name }));
+      if (sql.includes('keeper_cutover')) {
+        if (opts.marker === 'none') return [];
+        const at = opts.marker === 'match' ? fp.at : fp.at - 1;
+        return [{ completed_at: 1, fingerprint: JSON.stringify(Object.fromEntries(TABLES.map((t) => [t, { n: fp.n, at }]))) }];
+      }
+      throw new Error(`unexpected private statement: ${sql}`);
+    };
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      const db = String(url).includes(PRIVATE) ? PRIVATE : DATABASE;
+      const { sql } = JSON.parse(init.body as string) as { sql: string };
+      return new Response(JSON.stringify({ success: true, errors: [], result: [{ success: true, results: answer(db, sql) }] }));
+    }) as unknown as typeof fetch;
+    const tick = createHostTick({
+      vars: () => vars,
+      log: (l) => lines.push(l),
+      runTick: async (env, t) => {
+        expect(env.KEEPER_DB).toBeDefined();
+        ran.push(t);
+      },
+      fetchFn,
+    });
+    return { tick, lines, ran };
+  }
+
+  it('declines, naming the keeper migration, until the private schema is applied', async () => {
+    const h = setup({ privateApplied: REQUIRED_KEEPER_MIGRATIONS.slice(0, -1), sharedRows: 0, marker: 'none' });
+    await h.tick(60_000, () => {});
+    expect(h.ran).toEqual([]);
+    expect(h.lines.at(-1)).toContain(`${REQUIRED_KEEPER_MIGRATIONS.at(-1)} not applied to vaipakam-keeper-db`);
+  });
+
+  it('declines while the shared copies hold rows and no cutover is recorded', async () => {
+    const h = setup({ privateApplied: REQUIRED_KEEPER_MIGRATIONS, sharedRows: 3, marker: 'none' });
+    await h.tick(60_000, () => {});
+    expect(h.ran).toEqual([]);
+    expect(h.lines.at(-1)).toMatch(/records no cutover: run `pnpm --filter @vaipakam\/keeper run cutover`/);
+  });
+
+  it('declines when the shared copies moved since the cutover', async () => {
+    const h = setup({ privateApplied: REQUIRED_KEEPER_MIGRATIONS, sharedRows: 3, marker: 'stale' });
+    await h.tick(60_000, () => {});
+    expect(h.ran).toEqual([]);
+    expect(h.lines.at(-1)).toMatch(/no longer matches the cutover copy/);
+  });
+
+  it('runs once the cutover is recorded and matches, and on a fresh environment with nothing to move', async () => {
+    const recorded = setup({ privateApplied: REQUIRED_KEEPER_MIGRATIONS, sharedRows: 3, marker: 'match' });
+    await recorded.tick(60_000, () => {});
+    expect(recorded.ran).toEqual([60_000]);
+    const fresh = setup({ privateApplied: REQUIRED_KEEPER_MIGRATIONS, sharedRows: 0, marker: 'none' });
+    await fresh.tick(60_000, () => {});
+    expect(fresh.ran).toEqual([60_000]);
   });
 });

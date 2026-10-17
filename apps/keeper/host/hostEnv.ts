@@ -19,31 +19,47 @@
  *     machine set up before the setting existed still claims the lease
  *     instead of declining every tick;
  *   - `DB` is the D1 HTTP adapter, pointed at the same database the Worker
- *     binds (`D1_DATABASE_ID`), with the account id and an API token.
+ *     binds (`D1_DATABASE_ID`), with the account id and an API token;
+ *   - `KEEPER_DB` is the same adapter pointed at the keeper's PRIVATE
+ *     database (#2450), on the same account and token, as the Worker binds
+ *     it beside `DB`. Its id defaults to the one the registry pins
+ *     (`PRIVATE_DATABASES`), so a machine set up before the private database
+ *     existed reaches it without an env-file change, as `KEEPER_RUNNER_ID`
+ *     defaults for the same reason; `KEEPER_D1_DATABASE_ID` overrides it.
  *
- * Without the three D1 settings `DB` is left absent, which the tick already
- * treats as a maintenance build: it declines the whole tick, by name, rather
- * than running passes against no database.
+ * Without the D1 settings a database is left absent, which the tick already
+ * treats as a maintenance build: it declines the whole tick, naming the
+ * unbound database, rather than running passes against no database. The
+ * private id set to the SHARED id is refused the same way: that would be a
+ * second handle to the shared data under the private name, which the
+ * registry (`PRIVATE_DATABASES`) forbids.
  */
 
 import { hostname as osHostname } from 'node:os';
 import { SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
+import { PRIVATE_DB_ID } from '../scripts/lib/keeper-cutover.mjs';
 import { createD1HttpDatabase } from './d1Http';
 
 /** The settings the machine host reads that a Worker never sees. */
 export const HOST_SETTINGS = {
   accountId: 'CLOUDFLARE_ACCOUNT_ID',
   databaseId: 'D1_DATABASE_ID',
+  keeperDatabaseId: 'KEEPER_D1_DATABASE_ID',
   apiToken: 'CLOUDFLARE_D1_API_TOKEN',
 } as const;
+
+/** The host settings that must be set; the private database id has a default. */
+const REQUIRED_SETTINGS = [HOST_SETTINGS.accountId, HOST_SETTINGS.databaseId, HOST_SETTINGS.apiToken];
 
 /** Names of the host-only settings, so they are not copied into the env. */
 const HOST_ONLY = new Set<string>(Object.values(HOST_SETTINGS));
 
 export interface HostEnvResult {
   env: WorkerEnv;
-  /** The D1 settings that are missing; empty when the database is wired. */
+  /** The D1 settings that are missing; empty when both databases are wired. */
   missingD1: string[];
+  /** Why a set D1 setting was refused, or null. */
+  refusedD1: string | null;
 }
 
 export function buildHostEnv(
@@ -70,10 +86,17 @@ export function buildHostEnv(
 
   const accountId = vars[HOST_SETTINGS.accountId];
   const databaseId = vars[HOST_SETTINGS.databaseId];
+  const keeperDatabaseId = vars[HOST_SETTINGS.keeperDatabaseId] || PRIVATE_DB_ID;
   const apiToken = vars[HOST_SETTINGS.apiToken];
-  const missingD1 = Object.values(HOST_SETTINGS).filter((k) => !vars[k]);
+  const missingD1 = REQUIRED_SETTINGS.filter((k) => !vars[k]);
   if (accountId && databaseId && apiToken) {
     out.DB = createD1HttpDatabase({ accountId, databaseId, apiToken, fetchFn });
   }
-  return { env: out as WorkerEnv, missingD1 };
+  let refusedD1: string | null = null;
+  if (databaseId && keeperDatabaseId.toLowerCase() === databaseId.toLowerCase()) {
+    refusedD1 = `${HOST_SETTINGS.keeperDatabaseId} names the shared database (${HOST_SETTINGS.databaseId}); KEEPER_DB is left unbound`;
+  } else if (accountId && apiToken) {
+    out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: keeperDatabaseId, apiToken, fetchFn });
+  }
+  return { env: out as WorkerEnv, missingD1, refusedD1 };
 }
