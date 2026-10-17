@@ -23,13 +23,33 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *
  *         1. **Updates are attributable to a published OFAC file.** Every
  *            update records the SHA-256 of the exact `sdn_advanced.xml` it
- *            was built from and that file's publication identifier (its
- *            `DateOfIssue`), plus the block time it was applied. An update
- *            with no changes is allowed and still recorded: "checked against
- *            the 2026-10-15 publication, nothing changed" is a freshness fact
- *            worth stating. Note the difference between the two clocks:
- *            `lastUpdatedAt` says when the updater last synced, the
- *            publication id says how new the file it synced against was.
+ *            was built from and that file's publication date (its
+ *            `DateOfIssue`, as a sortable `YYYYMMDD`), plus the block time it
+ *            was applied. An update with no changes is allowed and still
+ *            recorded: "checked against the 2026-10-15 publication, nothing
+ *            changed" is a freshness fact worth stating. Note the difference
+ *            between the two clocks: `lastUpdatedAt` says when the updater
+ *            last synced, the publication date says how new the file it
+ *            synced against was.
+ *
+ *         1a. **Publications only move forward** (Codex #2543 r1). An update
+ *            built from an OLDER publication would re-list addresses OFAC
+ *            has since delisted and drop newer designations, and the version
+ *            guard cannot catch it: the diff is computed against the current
+ *            state, so it applies cleanly. The ordering is therefore enforced
+ *            here, not only in the tool:
+ *            - a publication date later than the recorded one is accepted;
+ *            - the SAME date is accepted only as a refresh — identical source
+ *              hash and no changes — because the date alone cannot order two
+ *              different files issued on one day, and an update that changes
+ *              the list must be orderable;
+ *            - anything else (an earlier date, or a different file on the
+ *              same date) needs a one-shot owner authorization naming that
+ *              exact date and hash ({authorizePublicationRollback}). Both the
+ *              authorization and its use are evented. A legitimate same-day
+ *              OFAC reissue therefore takes the owner's explicit sign-off; it
+ *              is rare, and silently accepting one would also accept a
+ *              same-day rollback.
  *
  *         2. **The list is reconstructible from logs and enumerable from
  *            state.** Every listing and delisting emits its own event, and
@@ -92,9 +112,17 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         from; zero before the first update.
     bytes32 public sourceHash;
 
-    /// @notice The publication identifier of that file (its `DateOfIssue`,
-    ///         `YYYY-MM-DD`); empty before the first update.
-    string public sourcePublicationId;
+    /// @notice That file's publication date (its `DateOfIssue`) as
+    ///         `YYYYMMDD`, e.g. `20261015`; 0 before the first update.
+    uint32 public sourcePublicationDate;
+
+    /// @notice A pending owner authorization for ONE update whose
+    ///         publication is not newer than the recorded one: its date.
+    ///         0 when none is pending.
+    uint32 public rollbackAuthorizedDate;
+
+    /// @notice The source hash that pending authorization names.
+    bytes32 public rollbackAuthorizedHash;
 
     /// @notice An updater was appointed or removed.
     /// @custom:event-category informational/admin
@@ -109,7 +137,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         per-address events.
     /// @param version              The new `listVersion`.
     /// @param sourceHash           SHA-256 of the OFAC file it was built from.
-    /// @param sourcePublicationId  That file's publication identifier.
+    /// @param sourcePublicationDate  That file's publication date, `YYYYMMDD`.
     /// @param added                Addresses listed by this update.
     /// @param removed              Addresses delisted by this update.
     /// @param listedCount          Addresses listed after it.
@@ -118,11 +146,21 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     event ListUpdated(
         uint64 indexed version,
         bytes32 indexed sourceHash,
-        string sourcePublicationId,
+        uint32 sourcePublicationDate,
         uint256 added,
         uint256 removed,
         uint256 listedCount,
         address indexed updater
+    );
+    /// @notice The owner authorized one update from a publication that is
+    ///         not newer than the recorded one (or cleared a pending
+    ///         authorization, with zero values).
+    /// @custom:event-category informational/admin
+    event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    /// @notice An update consumed that authorization.
+    /// @custom:event-category informational/config
+    event PublicationRollbackApplied(
+        uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash
     );
 
     /// @notice The caller is not an updater.
@@ -141,8 +179,12 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     error AddedAndRemovedInOneUpdate(address who);
     /// @notice An update named no source file hash.
     error MissingSourceHash();
-    /// @notice An update named no publication identifier.
-    error MissingPublicationId();
+    /// @notice The publication date is not a valid `YYYYMMDD` calendar
+    ///         shape (year 2000–2999, month 1–12, day 1–31).
+    error InvalidPublicationDate(uint32 publicationDate);
+    /// @notice The publication is not newer than the recorded one, and no
+    ///         owner authorization names it.
+    error PublicationNotNewer(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
     /// @notice Renouncing ownership is disabled: it would leave the updater
     ///         set impossible to rotate.
     error RenounceDisabled();
@@ -172,32 +214,52 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         revert RenounceDisabled();
     }
 
+    /// @notice Authorize ONE update from a publication that is not newer
+    ///         than the recorded one — a deliberate rollback, or a different
+    ///         file issued on the recorded date. The update must name exactly
+    ///         this date and hash; the authorization is consumed by it.
+    ///         Pass `(0, 0)` to clear a pending authorization.
+    /// @dev    The owner authorizes the ORDERING exception only; the content
+    ///         is still applied by an updater through {applyUpdate}, with its
+    ///         usual version, duplicate and provenance checks.
+    function authorizePublicationRollback(uint32 publicationDate, bytes32 sourceHash_) external onlyOwner {
+        if (publicationDate != 0 || sourceHash_ != bytes32(0)) {
+            _checkPublicationDate(publicationDate);
+            if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
+        }
+        rollbackAuthorizedDate = publicationDate;
+        rollbackAuthorizedHash = sourceHash_;
+        emit PublicationRollbackAuthorized(publicationDate, sourceHash_, sourcePublicationDate, sourceHash);
+    }
+
     // ── Updates ───────────────────────────────────────────────────────
 
     /// @notice Apply one update built from one OFAC publication: list
     ///         `toAdd`, delist `toRemove`, and record the source.
     /// @dev    All or nothing. Additions are applied before removals, so an
     ///         address in both lists is caught by its `listedSinceVersion`
-    ///         stamp rather than silently netting to no change.
+    ///         stamp rather than silently netting to no change. Publication
+    ///         ordering is enforced first — see note 1a on the contract.
     /// @param expectedVersion      The `listVersion` the diff was computed
     ///                             against.
     /// @param toAdd                Addresses to list; none may be listed.
     /// @param toRemove             Addresses to delist; each must be listed.
     /// @param sourceHash_          SHA-256 of the OFAC file.
-    /// @param sourcePublicationId_ That file's publication identifier.
+    /// @param publicationDate      That file's publication date, `YYYYMMDD`.
     function applyUpdate(
         uint64 expectedVersion,
         address[] calldata toAdd,
         address[] calldata toRemove,
         bytes32 sourceHash_,
-        string calldata sourcePublicationId_
+        uint32 publicationDate
     ) external onlyUpdater {
         uint64 current = listVersion;
         if (expectedVersion != current) revert StaleListVersion(expectedVersion, current);
         if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
-        if (bytes(sourcePublicationId_).length == 0) revert MissingPublicationId();
+        _checkPublicationDate(publicationDate);
 
         uint64 version = current + 1;
+        _checkPublicationOrder(version, publicationDate, sourceHash_, toAdd.length + toRemove.length == 0);
         uint256 nAdd = toAdd.length;
         for (uint256 i; i < nAdd; ++i) {
             address who = toAdd[i];
@@ -219,8 +281,36 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         listVersion = version;
         lastUpdatedAt = uint64(block.timestamp);
         sourceHash = sourceHash_;
-        sourcePublicationId = sourcePublicationId_;
-        emit ListUpdated(version, sourceHash_, sourcePublicationId_, nAdd, nRemove, _listed.length(), msg.sender);
+        sourcePublicationDate = publicationDate;
+        emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
+    }
+
+    /// @dev Accepts a newer publication, or a same-date refresh (identical
+    ///      hash, no changes); otherwise consumes a matching owner
+    ///      authorization or reverts. Note 1a on the contract says why.
+    function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool noChanges) private {
+        uint32 recordedDate = sourcePublicationDate;
+        bytes32 recordedHash = sourceHash;
+        if (date > recordedDate) return;
+        if (date == recordedDate && hash == recordedHash && noChanges) return;
+        if (date != rollbackAuthorizedDate || hash != rollbackAuthorizedHash) {
+            revert PublicationNotNewer(date, hash, recordedDate, recordedHash);
+        }
+        delete rollbackAuthorizedDate;
+        delete rollbackAuthorizedHash;
+        emit PublicationRollbackApplied(version, recordedDate, recordedHash, date, hash);
+    }
+
+    /// @dev A `YYYYMMDD` shape check. It does not know month lengths; its job
+    ///      is to make the value sortable and to refuse an obvious encoding
+    ///      mistake (a Unix timestamp, `YYMMDD`, a swapped month and day).
+    function _checkPublicationDate(uint32 date) private pure {
+        uint32 year = date / 10_000;
+        uint32 month = (date / 100) % 100;
+        uint32 day = date % 100;
+        if (year < 2000 || year > 2999 || month == 0 || month > 12 || day == 0 || day > 31) {
+            revert InvalidPublicationDate(date);
+        }
     }
 
     // ── Reads ─────────────────────────────────────────────────────────
@@ -291,7 +381,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @return version                 `listVersion`.
     /// @return ownLastUpdatedAt        When the own record was last updated.
     /// @return ownSourceHash           SHA-256 of the OFAC file behind it.
-    /// @return ownSourcePublicationId  That file's publication identifier.
+    /// @return ownSourcePublicationDate That file's publication date, `YYYYMMDD`.
     /// @return hasSecondary            A secondary is configured.
     /// @return secondaryTimestampKnown The secondary reported its freshness.
     /// @return secondaryLastUpdatedAt  That report; 0 when unknown.
@@ -302,7 +392,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             uint64 version,
             uint64 ownLastUpdatedAt,
             bytes32 ownSourceHash,
-            string memory ownSourcePublicationId,
+            uint32 ownSourcePublicationDate,
             bool hasSecondary,
             bool secondaryTimestampKnown,
             uint256 secondaryLastUpdatedAt
@@ -313,7 +403,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             listVersion,
             lastUpdatedAt,
             sourceHash,
-            sourcePublicationId,
+            sourcePublicationDate,
             address(_secondary) != address(0),
             secondaryTimestampKnown,
             secondaryLastUpdatedAt

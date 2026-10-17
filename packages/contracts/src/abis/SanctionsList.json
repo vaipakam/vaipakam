@@ -47,9 +47,27 @@
         "internalType": "bytes32"
       },
       {
-        "name": "sourcePublicationId_",
-        "type": "string",
-        "internalType": "string"
+        "name": "publicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "authorizePublicationRollback",
+    "inputs": [
+      {
+        "name": "publicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "sourceHash_",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -76,9 +94,9 @@
         "internalType": "bytes32"
       },
       {
-        "name": "ownSourcePublicationId",
-        "type": "string",
-        "internalType": "string"
+        "name": "ownSourcePublicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
       },
       {
         "name": "hasSecondary",
@@ -272,6 +290,32 @@
   },
   {
     "type": "function",
+    "name": "rollbackAuthorizedDate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rollbackAuthorizedHash",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "sanctionSource",
     "inputs": [
       {
@@ -358,13 +402,13 @@
   },
   {
     "type": "function",
-    "name": "sourcePublicationId",
+    "name": "sourcePublicationDate",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "string",
-        "internalType": "string"
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -437,10 +481,10 @@
         "internalType": "bytes32"
       },
       {
-        "name": "sourcePublicationId",
-        "type": "string",
+        "name": "sourcePublicationDate",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "string"
+        "internalType": "uint32"
       },
       {
         "name": "added",
@@ -509,6 +553,74 @@
   },
   {
     "type": "event",
+    "name": "PublicationRollbackApplied",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "fromDate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "toDate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "toHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PublicationRollbackAuthorized",
+    "inputs": [
+      {
+        "name": "publicationDate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "sourceHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "recordedDate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "recordedHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "UpdaterSet",
     "inputs": [
       {
@@ -550,8 +662,14 @@
   },
   {
     "type": "error",
-    "name": "MissingPublicationId",
-    "inputs": []
+    "name": "InvalidPublicationDate",
+    "inputs": [
+      {
+        "name": "publicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -599,6 +717,32 @@
         "name": "account",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PublicationNotNewer",
+    "inputs": [
+      {
+        "name": "publicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "sourceHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "recordedDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "recordedHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },

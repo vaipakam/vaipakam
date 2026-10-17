@@ -66,6 +66,16 @@
             <VersionDetail DetailTypeID="1432">0x123</VersionDetail>
           </FeatureVersion>
         </Feature>
+        <Feature ID="90" FeatureTypeID="345">
+          <FeatureVersion ID="91" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">0x123Z</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="95" FeatureTypeID="1007">
+          <FeatureVersion ID="96" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">0X1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB</VersionDetail>
+          </FeatureVersion>
+        </Feature>
       </Profile>
     </DistinctParty>
   </DistinctParties>

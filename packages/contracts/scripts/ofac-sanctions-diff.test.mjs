@@ -17,6 +17,9 @@ import {
   normaliseAddresses,
   sanctionsListAbi,
   CHAINALYSIS_EVENTS,
+  assertCompleteXml,
+  parseUintArg,
+  checkPublicationOrder,
 } from './ofac-sanctions-diff.mjs';
 import { toEventSelector, getAddress } from 'viem';
 
@@ -26,10 +29,14 @@ const A = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
 const B = getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce'); // the fixture lists it lowercase and uppercase
 const C = getAddress('0x00000000000000000000000000000000000000c0');
 const D = getAddress('0x00000000000000000000000000000000000000d0');
+const ZERO_HASH = `0x${'0'.repeat(64)}`;
+// A list that has never been updated: any valid publication is newer.
+const FRESH = { recordedDate: 0, recordedHash: ZERO_HASH };
 
 test('parse: publication id, EVM addresses checksummed and deduped across assets', () => {
   const p = parseSdnAdvanced(FIXTURE.toString('utf8'));
   assert.equal(p.publicationId, '2026-03-07');
+  assert.equal(p.publicationDate, 20260307);
   assert.deepEqual(p.addresses, normaliseAddresses([A, B]));
   const b = p.entries.find((e) => e.address.toLowerCase() === B.toLowerCase());
   assert.deepEqual(b.assets, ['ETH', 'USDT']);
@@ -39,12 +46,18 @@ test('parse: False-reliability, non-EVM and non-currency features are kept out',
   const p = parseSdnAdvanced(FIXTURE.toString('utf8'));
   assert.deepEqual(p.excludedFalse, [{ address: '0x1111111111111111111111111111111111111111', asset: 'ETH' }]);
   assert.deepEqual(p.nonEvmByAsset, { USDT: 1, XBT: 1 });
-  assert.deepEqual(p.malformed, [{ value: '0x123', asset: 'ETH' }]);
+  // Every 0x/0X-prefixed value that is not exactly an address is reported raw.
+  assert.deepEqual(p.malformed, [
+    { value: '0x123', asset: 'ETH' },
+    { value: '0x123Z', asset: 'ETH' },
+    { value: '0X1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', asset: 'ARB' },
+  ]);
   assert.ok(!p.addresses.some((a) => a.toLowerCase().endsWith('0bad')), 'a Place of Birth feature is not a currency address');
 });
 
 test('parse: refuses shapes that would make an empty list look real', () => {
-  assert.throws(() => parseSdnAdvanced('<x/>'), /not an OFAC SDN Advanced XML/);
+  assert.throws(() => parseSdnAdvanced('<x/>'), /unexpected root/);
+  assert.throws(() => parseSdnAdvanced('<Sanctions xmlns="https://example.org"></Sanctions>'), /not an OFAC SDN Advanced XML/);
   const noDate = FIXTURE.toString('utf8').replace(/<DateOfIssue[\s\S]*?<\/DateOfIssue>/, '');
   assert.throws(() => parseSdnAdvanced(noDate), /DateOfIssue/);
   const noTypes = FIXTURE.toString('utf8').replaceAll('Digital Currency Address - ', 'Something - ');
@@ -67,7 +80,7 @@ test('diff: case-insensitive add and remove sets', () => {
 test('buildUpdate: calldata carries version, sets, hash and publication id', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const hash = sourceHash(FIXTURE);
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 4 });
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 4, ...FRESH });
   const abi = sanctionsListAbi();
   const { functionName, args } = decodeFunctionData({ abi, data: u.calldata });
   assert.equal(functionName, 'applyUpdate');
@@ -75,14 +88,17 @@ test('buildUpdate: calldata carries version, sets, hash and publication id', () 
   assert.deepEqual(args[1], parsed.addresses);
   assert.deepEqual(args[2], [C]);
   assert.equal(args[3], hash);
-  assert.equal(args[4], '2026-03-07');
+  assert.equal(args[4], 20260307);
+  assert.equal(u.order, 'newer');
+  assert.equal(u.authorizeCalldata, null);
 });
 
 test('buildUpdate: a large removal set is refused unless the bound is raised', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const current = Array.from({ length: 11 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
-  assert.throws(() => buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1 }), /refusing to delist 11/);
-  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, maxRemove: 11 });
+  assert.throws(() => buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH }), /refusing to delist 11/);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH, maxRemove: NaN }), /maxRemove/);
+  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, maxRemove: 11, ...FRESH });
   assert.equal(u.remove.length, 11);
 });
 
@@ -107,6 +123,75 @@ test('cross-check: three sets, and Chainalysis-only never reaches the update', (
   assert.deepEqual(x.inBoth, normaliseAddresses([B]));
   assert.deepEqual(x.ofacOnly, [A]);
   assert.deepEqual(x.chainalysisOnly, [D]);
-  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current: [], currentVersion: 0 });
+  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current: [], currentVersion: 0, ...FRESH });
   assert.ok(!u.add.includes(D));
+});
+
+// ── Codex #2543 r1 ──────────────────────────────────────────────────
+
+test('completeness: the fixture and a minimal document pass', () => {
+  assertCompleteXml(FIXTURE.toString('utf8'));
+  assertCompleteXml('<?xml version="1.0"?>\n<!-- c --><Sanctions a="x>y"><A/><B>t</B></Sanctions>\n');
+});
+
+test('completeness: truncation at any point is refused', () => {
+  const text = FIXTURE.toString('utf8');
+  const end = text.lastIndexOf('</Sanctions>');
+  // Every cut strictly inside the document — mid-tag, mid-attribute, mid-text,
+  // between elements, inside the closing root tag — must fail.
+  const cuts = new Set([text.indexOf('<Sanctions') + 5, text.indexOf('ReliabilityID') + 3, text.indexOf('0x252a') + 10, text.indexOf('</Feature>') + 10, end - 1, end, end + 5, end + '</Sanctions'.length]);
+  for (let c = 200; c < end; c += 97) cuts.add(c);
+  for (const c of cuts) {
+    assert.throws(() => parseSdnAdvanced(text.slice(0, c)), /incomplete XML|malformed XML|unterminated/, `cut at ${c}`);
+  }
+});
+
+test('completeness: a cut after a whole feature still fails before extraction', () => {
+  const text = FIXTURE.toString('utf8');
+  const cut = text.indexOf('</Feature>', text.indexOf('0x252a')) + '</Feature>'.length;
+  assert.throws(() => parseSdnAdvanced(text.slice(0, cut)), /never closed.*truncated/);
+});
+
+test('completeness: mismatched, doubled-root, trailing-junk and DOCTYPE inputs are refused', () => {
+  assert.throws(() => assertCompleteXml('<Sanctions><A></B></Sanctions>'), /closes <A>/);
+  assert.throws(() => assertCompleteXml('<Sanctions></Sanctions><Sanctions></Sanctions>'), /second root/);
+  assert.throws(() => assertCompleteXml('<Sanctions></Sanctions>junk'), /outside the root/);
+  assert.throws(() => assertCompleteXml('<!DOCTYPE x><Sanctions></Sanctions>'), /DOCTYPE/);
+  assert.throws(() => assertCompleteXml('<Other></Other>'), /unexpected root/);
+  assert.throws(() => assertCompleteXml('<Sanctions><!-- open'), /unterminated/);
+});
+
+test('numeric flags: one parser refuses everything but plain non-negative integers', () => {
+  for (const bad of ['ten', 'NaN', '', '-1', '1e3', '0x10', '1.5', ' 3', 'Infinity']) {
+    assert.throws(() => parseUintArg('--max-remove', bad), /non-negative decimal integer/, bad);
+  }
+  assert.equal(parseUintArg('--max-remove', '0'), 0n);
+  assert.equal(parseUintArg('--max-remove', '12'), 12n);
+  assert.throws(() => parseUintArg('--log-chunk', '0', { min: 1n }), /between 1/);
+  assert.throws(() => parseUintArg('--max-remove', '2000000', { max: 1000000n }), /between/);
+});
+
+test('publication order: newer passes; older and same-day reissues are refused', () => {
+  const H = (c) => `0x${c.repeat(64)}`;
+  const base = { recordedDate: 20261015, recordedHash: H('a') };
+  assert.equal(checkPublicationOrder({ ...base, date: 20261016, hash: H('b'), diffEmpty: false }), 'newer');
+  assert.equal(checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), diffEmpty: true }), 'refresh');
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), diffEmpty: false }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('b'), diffEmpty: true }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), diffEmpty: false }), /already records this exact file/);
+  assert.equal(checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), diffEmpty: false, allowRollback: true }), 'rollback');
+});
+
+test('buildUpdate: an older publication is refused; an allowed rollback carries the owner call', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8')); // 20260307
+  const hash = sourceHash(FIXTURE);
+  const newer = { recordedDate: 20260308, recordedHash: `0x${'b'.repeat(64)}` };
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer }), /not newer/);
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer, allowRollback: true });
+  assert.equal(u.order, 'rollback');
+  const { functionName, args } = decodeFunctionData({ abi: sanctionsListAbi(), data: u.authorizeCalldata });
+  assert.equal(functionName, 'authorizePublicationRollback');
+  assert.equal(args[0], 20260307);
+  assert.equal(args[1], hash);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5 }), /recorded publication/);
 });

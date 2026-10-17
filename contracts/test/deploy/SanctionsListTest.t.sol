@@ -36,7 +36,7 @@ contract SanctionsListTest is Test {
     event ListUpdated(
         uint64 indexed version,
         bytes32 indexed sourceHash,
-        string sourcePublicationId,
+        uint32 sourcePublicationDate,
         uint256 added,
         uint256 removed,
         uint256 listedCount,
@@ -70,7 +70,7 @@ contract SanctionsListTest is Test {
         return new address[](0);
     }
 
-    function _update(address[] memory add, address[] memory remove, bytes32 h, string memory pub) internal {
+    function _update(address[] memory add, address[] memory remove, bytes32 h, uint32 pub) internal {
         uint64 v = list.listVersion();
         vm.prank(updater);
         list.applyUpdate(v, add, remove, h, pub);
@@ -84,7 +84,7 @@ contract SanctionsListTest is Test {
         assertEq(list.listVersion(), 0);
         assertEq(list.lastUpdatedAt(), 0);
         assertEq(list.sourceHash(), bytes32(0));
-        assertEq(bytes(list.sourcePublicationId()).length, 0);
+        assertEq(list.sourcePublicationDate(), 0);
     }
 
     function test_Constructor_RefusesASecondaryWithNoCode() public {
@@ -135,13 +135,13 @@ contract SanctionsListTest is Test {
     function test_ApplyUpdate_RefusesTheOwnerUnlessAppointed() public {
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, admin));
-        list.applyUpdate(0, _arr(a), _none(), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(a), _none(), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesAStranger() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, stranger));
-        list.applyUpdate(0, _arr(a), _none(), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(a), _none(), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesARemovedUpdater() public {
@@ -149,7 +149,7 @@ contract SanctionsListTest is Test {
         list.setUpdater(updater, false);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, updater));
-        list.applyUpdate(0, _arr(a), _none(), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(a), _none(), H1, 20261015);
     }
 
     function test_Ownership_IsTwoStep() public {
@@ -177,13 +177,13 @@ contract SanctionsListTest is Test {
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressListed(b, 1);
         vm.expectEmit(true, true, true, true, address(list));
-        emit ListUpdated(1, H1, "2026-10-15", 2, 0, 2, updater);
-        _update(_arr(a, b), _none(), H1, "2026-10-15");
+        emit ListUpdated(1, H1, 20261015, 2, 0, 2, updater);
+        _update(_arr(a, b), _none(), H1, 20261015);
 
         assertEq(list.listVersion(), 1);
         assertEq(list.lastUpdatedAt(), 1_760_000_000);
         assertEq(list.sourceHash(), H1);
-        assertEq(list.sourcePublicationId(), "2026-10-15");
+        assertEq(list.sourcePublicationDate(), 20261015);
         assertEq(list.listedCount(), 2);
         assertTrue(list.listedByOwnList(a));
         assertTrue(list.isSanctioned(b));
@@ -192,14 +192,14 @@ contract SanctionsListTest is Test {
     }
 
     function test_ApplyUpdate_DelistsAndEmits() public {
-        _update(_arr(a, b), _none(), H1, "2026-10-15");
+        _update(_arr(a, b), _none(), H1, 20261015);
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressListed(c, 2);
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressDelisted(a, 2);
         vm.expectEmit(true, true, true, true, address(list));
-        emit ListUpdated(2, H2, "2026-10-16", 1, 1, 2, updater);
-        _update(_arr(c), _arr(a), H2, "2026-10-16");
+        emit ListUpdated(2, H2, 20261016, 1, 1, 2, updater);
+        _update(_arr(c), _arr(a), H2, 20261016);
 
         assertFalse(list.isSanctioned(a));
         assertTrue(list.isSanctioned(b));
@@ -211,83 +211,199 @@ contract SanctionsListTest is Test {
 
     /// @notice "Checked the newest publication, nothing changed" is recorded.
     function test_ApplyUpdate_AnEmptyUpdateStillRecordsFreshness() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         vm.warp(block.timestamp + 1 days);
-        _update(_none(), _none(), H2, "2026-10-16");
+        _update(_none(), _none(), H2, 20261016);
         assertEq(list.listVersion(), 2);
         assertEq(list.lastUpdatedAt(), block.timestamp);
         assertEq(list.sourceHash(), H2);
-        assertEq(list.sourcePublicationId(), "2026-10-16");
+        assertEq(list.sourcePublicationDate(), 20261016);
         assertEq(list.listedCount(), 1);
     }
 
     function test_ApplyUpdate_RefusesAStaleVersion() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.StaleListVersion.selector, 0, 1));
-        list.applyUpdate(0, _arr(b), _none(), H2, "2026-10-16");
+        list.applyUpdate(0, _arr(b), _none(), H2, 20261016);
     }
 
     function test_ApplyUpdate_RefusesAddingAListedAddress() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AlreadyListed.selector, a));
-        list.applyUpdate(1, _arr(a), _none(), H2, "2026-10-16");
+        list.applyUpdate(1, _arr(a), _none(), H2, 20261016);
     }
 
     function test_ApplyUpdate_RefusesADuplicateAddition() public {
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AlreadyListed.selector, a));
-        list.applyUpdate(0, _arr(a, a), _none(), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(a, a), _none(), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesRemovingAnUnlistedAddress() public {
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotListed.selector, a));
-        list.applyUpdate(0, _none(), _arr(a), H1, "2026-10-15");
+        list.applyUpdate(0, _none(), _arr(a), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesAddAndRemoveOfTheSameAddress() public {
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AddedAndRemovedInOneUpdate.selector, a));
-        list.applyUpdate(0, _arr(a), _arr(a), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(a), _arr(a), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesTheZeroAddress() public {
         vm.startPrank(updater);
         vm.expectRevert(SanctionsList.ZeroAddress.selector);
-        list.applyUpdate(0, _arr(address(0)), _none(), H1, "2026-10-15");
+        list.applyUpdate(0, _arr(address(0)), _none(), H1, 20261015);
         vm.expectRevert(SanctionsList.ZeroAddress.selector);
-        list.applyUpdate(0, _none(), _arr(address(0)), H1, "2026-10-15");
+        list.applyUpdate(0, _none(), _arr(address(0)), H1, 20261015);
         vm.stopPrank();
     }
 
     function test_ApplyUpdate_RequiresProvenance() public {
         vm.startPrank(updater);
         vm.expectRevert(SanctionsList.MissingSourceHash.selector);
-        list.applyUpdate(0, _arr(a), _none(), bytes32(0), "2026-10-15");
-        vm.expectRevert(SanctionsList.MissingPublicationId.selector);
-        list.applyUpdate(0, _arr(a), _none(), H1, "");
+        list.applyUpdate(0, _arr(a), _none(), bytes32(0), 20261015);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, uint32(0)));
+        list.applyUpdate(0, _arr(a), _none(), H1, 0);
         vm.stopPrank();
     }
 
     /// @notice A failing update changes nothing: no partial listing, no
     ///         version bump, no provenance overwrite.
     function test_ApplyUpdate_IsAllOrNothing() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotListed.selector, c));
-        list.applyUpdate(1, _arr(b), _arr(c), H2, "2026-10-16");
+        list.applyUpdate(1, _arr(b), _arr(c), H2, 20261016);
         assertFalse(list.listedByOwnList(b));
         assertEq(list.listVersion(), 1);
         assertEq(list.sourceHash(), H1);
     }
 
+    // ── Publication ordering (Codex #2543 r1) ─────────────────────────
+
+    event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    event PublicationRollbackApplied(uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash);
+
+    bytes32 internal constant H0 = keccak256("sdn_advanced.xml@2026-10-14");
+    bytes32 internal constant H1B = keccak256("sdn_advanced.xml@2026-10-15-reissue");
+
+    /// @notice An older publication cannot roll the list back, even with a
+    ///         diff that applies cleanly to the current state.
+    function test_Order_RefusesAnOlderPublication() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H0, uint32(20261015), H1)
+        );
+        list.applyUpdate(1, _none(), _arr(a), H0, 20261014);
+        assertTrue(list.listedByOwnList(a));
+    }
+
+    /// @notice The same file again, with no changes, is a recorded refresh.
+    function test_Order_SameDateSameHashNoChangesIsARefresh() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.warp(block.timestamp + 1 hours);
+        _update(_none(), _none(), H1, 20261015);
+        assertEq(list.listVersion(), 2);
+        assertEq(list.lastUpdatedAt(), block.timestamp);
+    }
+
+    /// @notice The same file cannot carry changes a second time.
+    function test_Order_SameDateSameHashWithChangesIsRefused() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261015), H1, uint32(20261015), H1)
+        );
+        list.applyUpdate(1, _arr(b), _none(), H1, 20261015);
+    }
+
+    /// @notice A different file on the recorded date cannot be ordered by
+    ///         date alone, so it needs the owner's sign-off.
+    function test_Order_SameDateDifferentHashIsRefused() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261015), H1B, uint32(20261015), H1)
+        );
+        list.applyUpdate(1, _none(), _none(), H1B, 20261015);
+    }
+
+    /// @notice The owner's one-shot authorization lets exactly the named
+    ///         publication through, is evented both ways, and is consumed.
+    function test_Order_OwnerAuthorizedRollback() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.expectEmit(false, false, false, true, address(list));
+        emit PublicationRollbackAuthorized(20261014, H0, 20261015, H1);
+        vm.prank(admin);
+        list.authorizePublicationRollback(20261014, H0);
+        assertEq(list.rollbackAuthorizedDate(), 20261014);
+
+        // A different hash on the authorized date is still refused.
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H1B, uint32(20261015), H1)
+        );
+        list.applyUpdate(1, _none(), _arr(a), H1B, 20261014);
+
+        vm.expectEmit(true, false, false, true, address(list));
+        emit PublicationRollbackApplied(2, 20261015, H1, 20261014, H0);
+        vm.prank(updater);
+        list.applyUpdate(1, _none(), _arr(a), H0, 20261014);
+        assertFalse(list.listedByOwnList(a));
+        assertEq(list.sourcePublicationDate(), 20261014);
+        assertEq(list.rollbackAuthorizedDate(), 0);
+        assertEq(list.rollbackAuthorizedHash(), bytes32(0));
+
+        // Consumed: a further older file is refused again.
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261013), H0, uint32(20261014), H0)
+        );
+        list.applyUpdate(2, _none(), _none(), H0, 20261013);
+    }
+
+    function test_Order_AuthorizationIsOwnerOnlyAndClearable() public {
+        vm.prank(updater);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, updater));
+        list.authorizePublicationRollback(20261014, H0);
+        vm.startPrank(admin);
+        list.authorizePublicationRollback(20261014, H0);
+        list.authorizePublicationRollback(0, bytes32(0));
+        vm.stopPrank();
+        assertEq(list.rollbackAuthorizedDate(), 0);
+        assertEq(list.rollbackAuthorizedHash(), bytes32(0));
+    }
+
+    function test_Order_AuthorizationValidatesItsInput() public {
+        vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, uint32(20261300)));
+        list.authorizePublicationRollback(20261300, H0);
+        vm.expectRevert(SanctionsList.MissingSourceHash.selector);
+        list.authorizePublicationRollback(20261014, bytes32(0));
+        vm.stopPrank();
+    }
+
+    /// @notice Encodings that are not `YYYYMMDD` are refused: `YYMMDD`, a
+    ///         Unix timestamp, month 13, month 0, day 32, day 0.
+    function test_Order_RefusesMalformedDates() public {
+        uint32[6] memory bad = [uint32(261015), 1760000000, 20261301, 20260015, 20261032, 20261000];
+        for (uint256 i; i < bad.length; ++i) {
+            vm.prank(updater);
+            vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, bad[i]));
+            list.applyUpdate(0, _arr(a), _none(), H1, bad[i]);
+        }
+    }
+
     // ── Enumeration ───────────────────────────────────────────────────
 
     function test_ListedPage_EnumeratesTheSet() public {
-        _update(_arr(a, b), _none(), H1, "2026-10-15");
-        _update(_arr(c), _none(), H2, "2026-10-16");
+        _update(_arr(a, b), _none(), H1, 20261015);
+        _update(_arr(c), _none(), H2, 20261016);
         address[] memory all = list.listedPage(0, 10);
         assertEq(all.length, 3);
         address[] memory p1 = list.listedPage(1, 1);
@@ -308,14 +424,14 @@ contract SanctionsListTest is Test {
     }
 
     function test_IsSanctioned_TrueOnAnOwnListingOnly() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         (bool own, bool sec) = list.sanctionSource(a);
         assertTrue(own);
         assertFalse(sec);
     }
 
     function test_SanctionSource_ReportsBoth() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         redstone.setFlagged(a, true);
         (bool own, bool sec) = list.sanctionSource(a);
         assertTrue(own);
@@ -324,9 +440,9 @@ contract SanctionsListTest is Test {
 
     /// @notice Delisting from the own record cannot clear a secondary flag.
     function test_Delisting_DoesNotClearASecondaryFlag() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         redstone.setFlagged(a, true);
-        _update(_none(), _arr(a), H2, "2026-10-16");
+        _update(_none(), _arr(a), H2, 20261016);
         assertTrue(list.isSanctioned(a));
     }
 
@@ -336,7 +452,7 @@ contract SanctionsListTest is Test {
         solo.setUpdater(updater, true);
         assertFalse(solo.isSanctioned(a));
         vm.prank(updater);
-        solo.applyUpdate(0, _arr(a), _none(), H1, "2026-10-15");
+        solo.applyUpdate(0, _arr(a), _none(), H1, 20261015);
         assertTrue(solo.isSanctioned(a));
         (bool own, bool sec) = solo.sanctionSource(a);
         assertTrue(own);
@@ -355,14 +471,14 @@ contract SanctionsListTest is Test {
     }
 
     function test_SecondaryOutage_AnOwnListingStillAnswersTrue() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         redstone.setRevertOnRead(true);
         assertTrue(list.isSanctioned(a));
         assertTrue(list.listedByOwnList(a));
     }
 
     function test_SecondaryOutage_AttributionReverts() public {
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         redstone.setRevertOnRead(true);
         vm.expectRevert(bytes("oracle-outage"));
         list.sanctionSource(a);
@@ -372,13 +488,13 @@ contract SanctionsListTest is Test {
 
     function test_Freshness_ReportsBothSources() public {
         vm.warp(1_760_000_000);
-        _update(_arr(a), _none(), H1, "2026-10-15");
+        _update(_arr(a), _none(), H1, 20261015);
         redstone.setLastUpdate(1_759_900_000);
         (
             uint64 version,
             uint64 ownAt,
             bytes32 h,
-            string memory pub,
+            uint32 pub,
             bool hasSec,
             bool secKnown,
             uint256 secAt
@@ -386,7 +502,7 @@ contract SanctionsListTest is Test {
         assertEq(version, 1);
         assertEq(ownAt, 1_760_000_000);
         assertEq(h, H1);
-        assertEq(pub, "2026-10-15");
+        assertEq(pub, 20261015);
         assertTrue(hasSec);
         assertTrue(secKnown);
         assertEq(secAt, 1_759_900_000);
@@ -443,12 +559,12 @@ contract SanctionsListTest is Test {
         for (uint256 i; i < nAdd; ++i) {
             add[i] = address(uint160(0x1000 + i));
         }
-        _update(add, _none(), H1, "2026-10-15");
+        _update(add, _none(), H1, 20261015);
         address[] memory remove = new address[](nRemove);
         for (uint256 i; i < nRemove; ++i) {
             remove[i] = add[i];
         }
-        _update(_none(), remove, H2, "2026-10-16");
+        _update(_none(), remove, H2, 20261016);
         assertEq(list.listedCount(), uint256(nAdd) - nRemove);
         for (uint256 i; i < nAdd; ++i) {
             assertEq(list.isSanctioned(add[i]), i >= nRemove);
