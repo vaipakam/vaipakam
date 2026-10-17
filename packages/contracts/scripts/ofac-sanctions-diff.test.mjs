@@ -60,6 +60,11 @@ test('parse: False-reliability, non-EVM and non-currency features are kept out',
 test('parse: refuses shapes that would make an empty list look real', () => {
   assert.throws(() => parseSdnAdvanced('<x/>'), /unexpected root/);
   assert.throws(() => parseSdnAdvanced('<Sanctions xmlns="https://example.org"></Sanctions>'), /not an OFAC SDN Advanced XML/);
+  // A namespace that only CONTAINS the OFAC host is not OFAC's document.
+  assert.throws(
+    () => parseSdnAdvanced('<Sanctions xmlns="https://evil.example/ofac.treas.gov/ADVANCED_XML"></Sanctions>'),
+    /not an OFAC SDN Advanced XML/,
+  );
   const noDate = FIXTURE.toString('utf8').replace(/<DateOfIssue[\s\S]*?<\/DateOfIssue>/, '');
   assert.throws(() => parseSdnAdvanced(noDate), /DateOfIssue/);
   const noTypes = FIXTURE.toString('utf8').replaceAll('Digital Currency Address - ', 'Something - ');

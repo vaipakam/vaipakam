@@ -108,6 +108,9 @@ import { createPublicClient, http, getAddress, encodeFunctionData, parseAbi, par
 import { callAtHash } from './census-grandfathered-custody.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** The root namespace OFAC's SDN Advanced export declares. */
+export const OFAC_SDN_ADVANCED_NAMESPACE =
+  'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML';
 export const OFAC_SDN_ADVANCED_URL =
   'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN_ADVANCED.XML';
 export const DEFAULT_MAX_REMOVE = 10;
@@ -388,9 +391,12 @@ export function parseSdnAdvanced(xml) {
     },
   });
 
+  // Exact match, not a substring test: a namespace that merely CONTAINS
+  // the OFAC host (e.g. on another domain) is not OFAC's document. If OFAC
+  // ever changes its namespace the tool refuses loudly instead of guessing.
   const ns = rootAttrs?.get('xmlns') ?? '';
-  if (!/ofac\.treas\.gov/.test(ns)) {
-    throw new Error('not an OFAC SDN Advanced XML document (no <Sanctions> root in the OFAC namespace)');
+  if (ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
+    throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
   }
   if (!/^\d{4}$/.test(date.Year ?? '') || !/^\d{1,2}$/.test(date.Month ?? '') || !/^\d{1,2}$/.test(date.Day ?? '')) {
     throw new Error('no <DateOfIssue> — cannot identify the publication');
