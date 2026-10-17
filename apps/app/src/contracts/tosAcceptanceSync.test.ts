@@ -36,7 +36,9 @@ const ADDRESS = '0xAbCd000000000000000000000000000000000001';
 // than copied: a copy is a second statement of a fact the bundle already
 // states, and it went stale on the 2026-10-17 fresh redeploy (every cell
 // here failed on the address alone).
-const DIAMOND = getDeployment(84532).diamond;
+const BASE_SEPOLIA = getDeployment(84532);
+if (!BASE_SEPOLIA) throw new Error('deployments.json carries no Base Sepolia (84532) entry');
+const DIAMOND = BASE_SEPOLIA.diamond;
 // The default chain position frames carry — mined block and
 // transaction index. Frame-vs-frame pin ordering runs on these
 // (#2004 rounds 14–15).
