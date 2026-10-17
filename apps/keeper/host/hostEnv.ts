@@ -25,6 +25,11 @@
  *     database (#2450, `KEEPER_D1_DATABASE_ID`), with the same account and
  *     token — the Worker binds both, so the machine supplies both.
  *
+ * A private id equal to the shared one is refused: that would be a second
+ * handle onto the shared data under the private name, which the registry
+ * (`PRIVATE_DATABASES`) forbids. `KEEPER_DB` is then left absent, and the tick
+ * declines naming it.
+ *
  * A database whose settings are missing is left absent, which the tick
  * already treats as a maintenance build: it declines the whole tick, naming
  * the unbound database, rather than running passes against half the state.
@@ -49,6 +54,8 @@ export interface HostEnvResult {
   env: WorkerEnv;
   /** The D1 settings that are missing; empty when the database is wired. */
   missingD1: string[];
+  /** Why a set D1 setting was refused, or null. */
+  refusedD1: string | null;
 }
 
 export function buildHostEnv(
@@ -81,8 +88,11 @@ export function buildHostEnv(
   if (accountId && databaseId && apiToken) {
     out.DB = createD1HttpDatabase({ accountId, databaseId, apiToken, fetchFn });
   }
-  if (accountId && keeperDatabaseId && apiToken) {
+  let refusedD1: string | null = null;
+  if (keeperDatabaseId && databaseId && keeperDatabaseId.toLowerCase() === databaseId.toLowerCase()) {
+    refusedD1 = `${HOST_SETTINGS.keeperDatabaseId} names the shared database (${HOST_SETTINGS.databaseId}); KEEPER_DB is left unbound`;
+  } else if (accountId && keeperDatabaseId && apiToken) {
     out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: keeperDatabaseId, apiToken, fetchFn });
   }
-  return { env: out as WorkerEnv, missingD1 };
+  return { env: out as WorkerEnv, missingD1, refusedD1 };
 }
