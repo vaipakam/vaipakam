@@ -16,6 +16,10 @@ Every call is simulated first and moves no value. Each send waits to be mined be
 
 **Operator steps.** Arm the pass on every mirror before reward transport is live there. The delivery gate may then be armed on a mirror once the pass runs there. The restore runbook captures the new flag.
 
-**Limit.** A day crowded with newer deliveries can need a position hint to be indexed. The pass does not compute hints yet: such a call is skipped and logged, and the day can still be indexed with a hint by hand.
+**Crowded days.** A day crowded with newer deliveries can need position hints to be indexed. When the chain refuses a call for that reason, the pass retries it once with hints it derives from the chain's own views, and logs the call if it is still refused.
+
+**Limits, stated.**
+- A reservation sent before the canonical chain recorded which days it funded is skipped, with a log line saying so. Its list can only come from the original cross-chain message, which this pass does not read, so such a day is proven by hand. The pass never falls back to the live per-day record, which a release or a later remittance rewrites.
+- The pass does not yet raise alerts for a day left waiting or for a proof that is refused; both show only in the keeper's logs (#2516).
 
 Refs #1944, #1566, #1349.

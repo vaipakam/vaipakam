@@ -239,7 +239,7 @@ describe('fundedDaysFromBits — the rooted list from the reservation record its
     expect(fundedDaysFromBits([4n, 5n, 6n], [0b101n])).toEqual([4n, 6n]);
   });
 
-  it('a reservation that predates the record reads as null (the caller falls back), never as "nothing funded"', () => {
+  it('a reservation that predates the record reads as null (the caller skips it), never as "nothing funded"', () => {
     expect(fundedDaysFromBits([4n, 5n], [])).toBeNull();
     expect(fundedDaysFromBits([], []), 'no closed day: an empty list').toEqual([]);
   });

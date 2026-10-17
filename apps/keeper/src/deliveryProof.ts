@@ -323,7 +323,8 @@ async function actionsFor(
  * The funded days of a reservation from its own immutable record
  * (`fundedDayBits`, Codex #2489 r2): bit `i` set means `dayIds[i]` was funded
  * — on the wire, in order. Null when the reservation predates the record
- * (an empty bitmap over a non-empty day list), so the caller falls back.
+ * (an empty bitmap over a non-empty day list): the caller then skips it,
+ * never reading it as "nothing funded".
  * Pure; pinned by the tests.
  */
 export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly bigint[]): bigint[] | null {
@@ -340,13 +341,18 @@ export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly big
  * The runbook's reconstruction rule: Base's reservation lists every day the
  * remit CLOSED; the wire lists only the days FUNDED for this chain, in order.
  * The funded ones are read from the reservation's own record, written once at
- * dispatch (Codex #2489 r2): the live per-day mark this used to filter by is
- * deleted by a release and rewritten by a later remit of the same days, so a
- * delivery that executed after its release rebuilt an empty or wrong list
- * forever. Only a reservation dispatched before the record existed falls back
- * to the live mark. Then chunk, root — and refuse unless the rebuilt root
- * equals the reservation's AND the packet's, so a wrong list is never
+ * dispatch (Codex #2489 r2). Then chunk, root — and refuse unless the rebuilt
+ * root equals the reservation's AND the packet's, so a wrong list is never
  * submitted.
+ *
+ * A reservation dispatched before that record existed is NOT rebuilt here
+ * (#2497). The runbook's authenticated source for it is the RemitWire payload
+ * of the dispatch's CCIP message, and never the live per-day mark
+ * (`getRewardBudgetRemitted`): a release deletes that mark and a later remit
+ * of the same days rewrites it, so filtering by it guesses. This pass does not
+ * decode CCIP payloads, so it skips such a delivery and says why, and the day
+ * is proven by hand from the payload (GovernanceRunbook, "Keeper
+ * reconstruction rule").
  */
 async function rebuildRootedList(
   baseClient: PublicClient,
@@ -367,24 +373,15 @@ async function rebuildRootedList(
     return null;
   }
   const recorded = fundedDaysFromBits(r.dayIds, r.fundedDayBits ?? []);
-  if (recorded !== null) return checkedRoot(recorded, r.dayListRoot, packetRoot, remitId);
-  const remitted = await batchedRead(
-    baseClient as never,
-    r.dayIds.map((d) => ({
-      address: baseDiamond,
-      abi: ABI,
-      functionName: 'getRewardBudgetRemitted' as const,
-      args: [chainId, d] as const,
-    })),
-    `deliveryProof remitted remit=${remitId}`,
-  );
-  const funded: bigint[] = [];
-  for (let i = 0; i < r.dayIds.length; i++) {
-    const res = remitted[i];
-    if (!res || res.status !== 'success') return null; // never guess a list
-    if ((res.result as bigint) !== 0n) funded.push(r.dayIds[i]);
+  if (recorded === null) {
+    console.warn(
+      `[keeper] deliveryProof remit=${remitId}: the reservation predates its funded-day record, so its list can only ` +
+        'come from the dispatch\'s CCIP payload, which this pass does not decode — skipped; prove it by hand ' +
+        '(GovernanceRunbook, "Keeper reconstruction rule")',
+    );
+    return null;
   }
-  return checkedRoot(funded, r.dayListRoot, packetRoot, remitId);
+  return checkedRoot(recorded, r.dayListRoot, packetRoot, remitId);
 }
 
 /** `funded`, only when its d6 root equals BOTH the reservation's and the
