@@ -115,5 +115,36 @@
   "rewardRemittanceReceiver": "0x04E2fEFF625BbFd7B510B9c0629ffCde3568EEF8",
   "rewardRemittanceReceiverImpl": "0x4fD72cE8CE6c7A2a5AFEf14aBaE4aF4A538C04c7",
   "vpfiReturnSender": "0x29be05E9016DecC4A783BdbB70C8f5129d2bAE41",
-  "vpfiReturnSenderImpl": "0xE4199aEc1E97f402f0De542CB42fC2FE4d68C426"
+  "vpfiReturnSenderImpl": "0xE4199aEc1E97f402f0De542CB42fC2FE4d68C426",
+  "weth": "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73",
+  "testnetMocks": {
+    "ethUsdFeed": "0x792e9e8d2A6433aD0f97e46207Bd21327AaA4e32",
+    "feedRegistry": "0xBe23Bb838005410baf4D6E3aDF7054e934c5F3e3",
+    "illiquidToken": "0x776d228FBe31cFB1437c8E42Addb8287b02dd524",
+    "illiquidToken2": "0x37B9075b8De58bf6F447e098a23C61ec79f4d77e",
+    "liquidToken": "0xa0bccfDDE2e76d827A00756Ffcd124e4cfc7cB9c",
+    "liquidToken2": "0xafD9a75e2b0bbC4DE6E75B2DF97E5AFcC1Fe3D0a",
+    "liquidToken2UsdFeed": "0xaA00E4b304EA3218384c6A0Fdd77523Edb5e4839",
+    "liquidToken2WethPool": "0x9e2604Ab4422a45BF58D4daa3085C5d549b44900",
+    "liquidTokenUsdFeed": "0xfDE7eF9AA476A56B4843FF4b7d99b29dD1a5Ba8d",
+    "liquidTokenWethPool": "0xa8B27967426AcCc44eEd5C23E3C3774557502623",
+    "mWeth": "0xc1feC246d5e3d6D7f703e7Ed85d458001b72076b",
+    "mWethUsdFeed": "0x792e9e8d2A6433aD0f97e46207Bd21327AaA4e32",
+    "mWethWethPool": "0x3712F7b510d997CBdCde0B518a8033ad15EF53B9",
+    "mockSwapAdapter": "0xD650cd3c5ec5bAA998031C6c8282Edd4774CD80a",
+    "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+    "rentalNft": "0x527B73D27Ba960D95A5325C1aF70f6D531A5799A",
+    "rentalNft2": "0xf0fB51F7837500A7DeFEc5fbA54bc7654BB1a294",
+    "uniswapV3Factory": "0xeCA212F0Db571Dc2875f4C947247a1ACca6de74c",
+    "zeroExProxy": "0xfc1a165E55Fed07DbFBF84F54cc385b56c1c4348"
+  },
+  "rewardBaseChainId": 84532,
+  "rewardGraceSeconds": 14400,
+  "isCanonicalReward": false,
+  "baseRewardDeployment": "0x2535baC87F3df287268fC697F2f31cf418365303",
+  "sanctionsTestnetOverlay": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40",
+  "sanctions": {
+    "oracle": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40",
+    "kind": "testnet-overlay"
+  }
 }

@@ -116,5 +116,35 @@
   "buybackRemittanceReceiver": "0xc307193139e3855019ede616ec1db1c4FfC18B37",
   "buybackRemittanceReceiverImpl": "0x7eC30eEE4EF47fE9e08203e7c75e666A05D390AD",
   "vpfiReturnReceiver": "0xD117B1AcB5474df241b69963cE4Df89AEa322b7a",
-  "vpfiReturnReceiverImpl": "0x3572AD77d6426bA719a3e20b4b5FCd77Ef4c2AA1"
+  "vpfiReturnReceiverImpl": "0x3572AD77d6426bA719a3e20b4b5FCd77Ef4c2AA1",
+  "weth": "0x4200000000000000000000000000000000000006",
+  "testnetMocks": {
+    "ethUsdFeed": "0x61ABAAe4d6C663b2af58adE50f558eAdcD94Be86",
+    "feedRegistry": "0xb9318B968a04A966e57df19e544c2AAA24c875E2",
+    "illiquidToken": "0xa3beBf673f7b16d88295930193d7dbd80C8f8664",
+    "illiquidToken2": "0x3E51540E86e5927c0A9254eBdE63A36d87d81318",
+    "liquidToken": "0xcf667Af9cD3Cc314Fa89B6D931055ec0813dADd0",
+    "liquidToken2": "0xAD1249b1ED3de9aeAcc6916d10590218Add6F42c",
+    "liquidToken2UsdFeed": "0x90eCeC1f4174aE24EC909cbaB2aAE7B5789568Ac",
+    "liquidToken2WethPool": "0x66D16d0a9A88E543a882a247753aFe3c22F88293",
+    "liquidTokenUsdFeed": "0xE6Fcd03790F71aC1A214F57284f39C9Ac5382e87",
+    "liquidTokenWethPool": "0xfEbD9EDda835b19E35bA319F0FefA63483f5936f",
+    "mWeth": "0xDDe8C47e5c74b4940eDF919AdDa4b4F4051acDe0",
+    "mWethUsdFeed": "0x61ABAAe4d6C663b2af58adE50f558eAdcD94Be86",
+    "mWethWethPool": "0xD9dB44875435Aa6bcce91CC8D83660Af95d854c9",
+    "mockSwapAdapter": "0xCA51226d69077d7E818F3EE96C71C53FfF3fF453",
+    "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+    "rentalNft": "0x1650502D6E801C6934D643d014a047691DbE632A",
+    "rentalNft2": "0x4e130CA5C58055C94a7495734B8658c46F016858",
+    "uniswapV3Factory": "0xcE8BB9d9Deee613e38A0346CbD88A6A11a650471",
+    "zeroExProxy": "0xdED24c85cA7dab5482435C053bb769166A3096a4"
+  },
+  "rewardBaseChainId": 84532,
+  "rewardGraceSeconds": 14400,
+  "isCanonicalReward": true,
+  "sanctionsTestnetOverlay": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6",
+  "sanctions": {
+    "oracle": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6",
+    "kind": "testnet-overlay"
+  }
 }
