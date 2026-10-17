@@ -77,6 +77,9 @@ interface RemitReservationView {
   /** #1461 — the acknowledgement stamps; a late ack resolves only while neither is set. */
   consumedAcked?: boolean;
   quarantineAcked?: boolean;
+  /** #2497 r1 — whether the stranded share above has been STAMPED; until it
+   *  is, `strandedRecycled` is a default 0, not a resolved share. */
+  strandedStamped?: boolean;
   sentAt: bigint;
   ccipMessageId: `0x${string}`;
   total: bigint;
@@ -403,21 +406,26 @@ export function lateAckDone(v: {
   strandedRecycled?: bigint;
   consumedAcked?: boolean;
   quarantineAcked?: boolean;
+  strandedStamped?: boolean;
 }): boolean {
-  return Number(v.status) === 3 && !isLateDeliveryCandidate(v);
+  return Number(v.status) === 3 && v.strandedStamped === true && !isLateDeliveryCandidate(v);
 }
 
+/** #2497 r1 — POSITIVE evidence only. A released reservation whose stranded
+ *  share has not been STAMPED yet (the remittance facet's lazy history stamp,
+ *  or `backfillRemitHistory`, has not reached it) reads `strandedRecycled == 0`
+ *  by default, which is not the same as "nothing stranded". It stays a
+ *  candidate, so the acknowledgement can perform that stamp, and it is never
+ *  entered into the permanent done set on a default-decoded field. */
 export function isLateDeliveryCandidate(v: {
   status: number | bigint;
   strandedRecycled?: bigint;
   consumedAcked?: boolean;
   quarantineAcked?: boolean;
+  strandedStamped?: boolean;
 }): boolean {
-  return (
-    Number(v.status) === 3 &&
-    (v.strandedRecycled ?? 0n) > 0n &&
-    v.consumedAcked !== true &&
-    v.quarantineAcked !== true
-  );
+  if (Number(v.status) !== 3) return false;
+  if (v.strandedStamped !== true) return true;
+  return (v.strandedRecycled ?? 0n) > 0n && v.consumedAcked !== true && v.quarantineAcked !== true;
 }
 

@@ -230,6 +230,20 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   const screened = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
+  // An owner with an OPEN alert who is not a candidate this tick (a screen
+  // slice moved on, a chain closed) is classified FRESHLY here, so its alerts
+  // clear only on a positive read that shows the condition gone (#2497 r1).
+  // Absence from this tick's candidates is not evidence: a screened wallet
+  // whose oracle is down leaves the slice while it is still held. A failed
+  // read leaves its alerts as they are.
+  const departed = await departedAlertOwners(env, chain.id, candidates);
+  if (departed.length > 0) {
+    statuses.push(
+      ...(await readStatuses(client as never, diamond, departed)).filter(
+        (st): st is OwnerSanctionsStatus => st !== null,
+      ),
+    );
+  }
 
   const plan = planSanctionsHold(statuses, nowSec);
   const ctx = buildKeeperContext(env, chain, client as never);
@@ -266,7 +280,24 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
-  await raiseAlerts(env, chain.id, statuses, plan, nowSec, candidates);
+  await raiseAlerts(env, chain.id, statuses, plan, nowSec);
+}
+
+/** Owners with an open sanctions alert on this chain who are not candidates
+ *  this tick; [] when the alert table cannot be read (nothing is cleared). */
+async function departedAlertOwners(env: Env, chainId: number, candidates: ReadonlySet<string>): Promise<string[]> {
+  let keys: string[];
+  try {
+    keys = await listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`);
+  } catch {
+    return [];
+  }
+  const owners = new Set<string>();
+  for (const key of keys) {
+    const owner = key.slice(key.lastIndexOf(':') + 1).toLowerCase();
+    if (!candidates.has(owner)) owners.add(owner);
+  }
+  return [...owners];
 }
 
 /** Each owner's classification, `getRewardSanctionsStatus` batched, aligned
@@ -540,7 +571,6 @@ export async function raiseAlerts(
   statuses: readonly OwnerSanctionsStatus[],
   plan: SanctionsHoldPlan,
   nowSec: number,
-  candidates: ReadonlySet<string>,
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -574,17 +604,10 @@ export async function raiseAlerts(
       `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, or it answers Flagged but the chain broke and has not restarted; the hold cannot confirm or clear until an observation lands.`,
     );
   }
-  // An owner who LEFT the candidates (a clean read or a claim closed its chain
-  // and no staging work remains) is never in `statuses` again, so the loop
-  // above can never clear its alerts (Codex #2489 r2): a stale row would
-  // suppress the next incident for that wallet and the table would only grow.
-  // Keyed on the candidate set, not on this tick's reads, so an owner whose
-  // read merely failed keeps its alert.
-  for (const key of open) {
-    const owner = key.slice(key.lastIndexOf(':') + 1).toLowerCase();
-    // eslint-disable-next-line no-await-in-loop
-    if (!candidates.has(owner)) await resolveOpsAlert(env, key);
-  }
+  // An owner who LEFT the candidates is read freshly by the caller and is in
+  // `statuses` here (#2497 r1), so the loop above clears its alerts on a
+  // positive clean read — and only then (Codex #2489 r2's stale-row concern,
+  // without treating absence as departure).
 }
 
 function iso(sec: number): string {

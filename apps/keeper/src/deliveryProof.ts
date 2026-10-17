@@ -168,7 +168,11 @@ export function canonicalChainOf(cfg: readonly [Address, number, number, boolean
 export function packetMayNeedWork(packet: PacketState): boolean {
   if (packet.kind !== 1 || packet.disposed !== 0n) return false;
   if (packet.dayListRoot !== ZERO32) {
-    const all = packet.chunkCount >= 256 ? -1n : (1n << BigInt(packet.chunkCount)) - 1n;
+    // The chunk bitmap is a uint256, so "every chunk" is 2^n − 1 for n ≤ 256 —
+    // never -1n, which no non-negative bitmap can equal: a full 256-chunk
+    // packet would never be seen finished and would be rebuilt every tick
+    // (#2497 r1).
+    const all = (1n << BigInt(Math.min(packet.chunkCount, 256))) - 1n;
     return packet.chunkCount > 0 && (packet.chunksIndexed & all) !== all;
   }
   return packet.dayListHash !== ZERO32;

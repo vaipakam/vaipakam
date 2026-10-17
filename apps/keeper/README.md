@@ -318,8 +318,10 @@ goes, and one `wrangler tail` cycle resolves all of them:
 [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
 ```
 
-The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-`graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
+The gated passes are every pass in `KEEPER_PASSES` (`src/passSchedule.ts`)
+whose run calls `passIsArmed`: today `matcher`, `liquidator`, `autoLifecycle`,
+`graceDefault`, `rewardBudgetRemit`, `remitAck`, `commitmentReport`,
+`rewardSanctionsHold` and `deliveryProof`. The others
 (`watcher`, `dailyOracleSnapshot`, `preGraceWatcher`) have no on/off binding
 of their own and so have nothing to report; `liquidityConfidence` always runs
 and consults the keeper gate only to decide whether to submit. **Absent lines

@@ -156,12 +156,22 @@ describe('deploy-keeper — applies the private schema, verifies the shared one'
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — plain ESM script, no type declarations.
-import { CUTOVER_TABLES, copyVerdict, cutoverVerdict, fingerprintSql, parseFingerprint } from '../scripts/lib/keeper-cutover.mjs';
+import {
+  CUTOVER_TABLES,
+  copyVerdict,
+  cutoverVerdict,
+  fingerprintFromReads,
+  fingerprintSql,
+  parseFingerprint,
+  rowDigest,
+  rowsSql,
+} from '../scripts/lib/keeper-cutover.mjs';
 
 /** The five tables that began in the shared database (the grandfathered set). */
 const MOVED = [...GRANDFATHERED_SHARED.values()].flat().sort();
-type Fp = { n: number; at: number } | 'absent' | null;
-const fps = (over: Record<string, Fp> = {}, base: Fp = { n: 3, at: 100 }): Record<string, Fp> =>
+type Fp = { n: number; at: number; digest: string } | 'absent' | null;
+const D = 'd'.repeat(64);
+const fps = (over: Record<string, Fp> = {}, base: Fp = { n: 3, at: 100, digest: D }): Record<string, Fp> =>
   Object.fromEntries(MOVED.map((t) => [t, t in over ? over[t] : base]));
 const markerOf = (fp: Record<string, Fp>) => ({ completedAt: 1, fingerprint: fp });
 
@@ -182,6 +192,25 @@ describe('the cutover — one definition, every moved table (Codex #2489 r1)', (
     h.db.prepare(`UPDATE keeper_remit_ack SET acked_at = 70`).run();
     expect(parseFingerprint(h.db.prepare(fingerprintSql(ack)).all()), 'an ack moves it').toEqual({ n: 1, at: 70 });
   });
+
+  it('the digest moves on a change the count and time cannot see (same row count, same second) — #2497 r1', () => {
+    const h = createKeeperD1();
+    h.db.prepare(`INSERT INTO keeper_remit_ack (base_chain_id, diamond, remit_id, mirror_chain_id, attempts, last_attempt_at, acked_at) VALUES (1, 'd', 1, 2, 1, 50, NULL)`).run();
+    const ack = (CUTOVER_TABLES as { table: string; at: string }[]).find((c) => c.table === 'keeper_remit_ack')!;
+    const read = () => fingerprintFromReads(h.db.prepare(fingerprintSql(ack)).all(), h.db.prepare(rowsSql(ack)).all());
+    const before = read();
+    h.db.prepare(`UPDATE keeper_remit_ack SET attempts = 2`).run(); // a retry inside the same second
+    const after = read();
+    expect(after?.n).toBe(before?.n);
+    expect(after?.at).toBe(before?.at);
+    expect(after?.digest).not.toBe(before?.digest);
+  });
+
+  it('the digest ignores row and column order, and a short read is not a fingerprint', () => {
+    expect(rowDigest([{ a: 1, b: 'x' }, { a: 2, b: 'y' }])).toBe(rowDigest([{ b: 'y', a: 2 }, { b: 'x', a: 1 }]));
+    expect(fingerprintFromReads([{ n: 2, at: 5 }], [{ a: 1 }]), 'two counted, one read').toBeNull();
+    expect(fingerprintFromReads([{ n: 1, at: 5 }], null), 'rows unread').toBeNull();
+  });
 });
 
 describe('deploy-keeper — refuses to publish unless the cutover is recorded and still matches', () => {
@@ -192,13 +221,14 @@ describe('deploy-keeper — refuses to publish unless the cutover is recorded an
 
   it('ONE table out of step refuses — whichever it is, by count or by time', () => {
     for (const t of MOVED) {
-      expect(cutoverVerdict(fps({ [t]: { n: 4, at: 100 } }), markerOf(fps())).ok, `${t} count`).toBe(false);
-      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 101 } }), markerOf(fps())).ok, `${t} written since`).toBe(false);
+      expect(cutoverVerdict(fps({ [t]: { n: 4, at: 100, digest: D } }), markerOf(fps())).ok, `${t} count`).toBe(false);
+      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 101, digest: D } }), markerOf(fps())).ok, `${t} written since`).toBe(false);
+      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 100, digest: 'e'.repeat(64) } }), markerOf(fps())).ok, `${t} same count and second, different rows`).toBe(false);
     }
   });
 
   it('nothing to move passes with no record: no shared rows, or the shared copies retired', () => {
-    expect(cutoverVerdict(fps({}, { n: 0, at: 0 }), 'none').ok).toBe(true);
+    expect(cutoverVerdict(fps({}, { n: 0, at: 0, digest: D }), 'none').ok).toBe(true);
     expect(cutoverVerdict(fps({}, 'absent'), 'none').ok).toBe(true);
     // One copy retired, the others matching the record: still fine.
     expect(cutoverVerdict(fps({ [MOVED[0]]: 'absent' }), markerOf(fps())).ok).toBe(true);
@@ -214,8 +244,9 @@ describe('keeper-cutover — records nothing unless every table copied whole', (
   it('equal fingerprints on both sides pass; any one table short or newer fails', () => {
     expect(copyVerdict(fps(), fps()).ok).toBe(true);
     for (const t of MOVED) {
-      expect(copyVerdict(fps(), fps({ [t]: { n: 2, at: 100 } })).ok, `${t} partial`).toBe(false);
-      expect(copyVerdict(fps(), fps({ [t]: { n: 3, at: 99 } })).ok, `${t} stale`).toBe(false);
+      expect(copyVerdict(fps(), fps({ [t]: { n: 2, at: 100, digest: D } })).ok, `${t} partial`).toBe(false);
+      expect(copyVerdict(fps(), fps({ [t]: { n: 3, at: 99, digest: D } })).ok, `${t} stale`).toBe(false);
+      expect(copyVerdict(fps(), fps({ [t]: { n: 3, at: 100, digest: 'e'.repeat(64) } })).ok, `${t} same second, different rows`).toBe(false);
       expect(copyVerdict(fps(), fps({ [t]: null })).ok, `${t} unread`).toBe(false);
       expect(copyVerdict(fps(), fps({ [t]: 'absent' })).ok, `${t} missing`).toBe(false);
     }

@@ -22,24 +22,40 @@ const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
 
 describe('isLateDeliveryCandidate', () => {
   it('takes a released reservation that still holds a stranded share, and nothing else (straddle)', () => {
-    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n }), 'released, one wei stranded').toBe(true);
-    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 0n }), 'released, already resolved').toBe(false);
-    expect(isLateDeliveryCandidate({ status: 3 }), 'released, a pre-#1461 view').toBe(false);
-    expect(isLateDeliveryCandidate({ status: 1, strandedRecycled: 5n }), 'still pending: the main scan acks it').toBe(false);
-    expect(isLateDeliveryCandidate({ status: 2, strandedRecycled: 5n }), 'acked').toBe(false);
+    const S = { strandedStamped: true } as const;
+    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, ...S }), 'released, one wei stranded').toBe(true);
+    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 0n, ...S }), 'released, already resolved').toBe(false);
+    expect(isLateDeliveryCandidate({ status: 1, strandedRecycled: 5n, ...S }), 'still pending: the main scan acks it').toBe(false);
+    expect(isLateDeliveryCandidate({ status: 2, strandedRecycled: 5n, ...S }), 'acked').toBe(false);
     // Once the mirror's classification is stamped the ack has done its work.
     expect(
-      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: false, quarantineAcked: false }),
-      'released, stranded, no stamp yet',
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: false, quarantineAcked: false, ...S }),
+      'released, stranded, no ack stamp yet',
     ).toBe(true);
     expect(
-      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, quarantineAcked: true }),
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, quarantineAcked: true, ...S }),
       'quarantined: the ceremony or the loss record resolves it, not an ack',
     ).toBe(false);
     expect(
-      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: true }),
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: true, ...S }),
       'consumption already stamped',
     ).toBe(false);
+  });
+
+  it('keeps an UNSTAMPED release a candidate: a default-zero share is not a resolved one (#2497 r1)', () => {
+    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 0n, strandedStamped: false }), 'unstamped, reads zero').toBe(true);
+    expect(isLateDeliveryCandidate({ status: 3 }), 'a view without the field: not stamped').toBe(true);
+    expect(isLateDeliveryCandidate({ status: 1, strandedStamped: false }), 'not released: the main scan').toBe(false);
+  });
+});
+
+describe('lateAckDone — the permanent done set takes POSITIVE evidence only (#2497 r1)', () => {
+  it('retires a release only once its share is stamped AND resolved', () => {
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n, strandedStamped: true }), 'stamped, nothing stranded').toBe(true);
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n, strandedStamped: false }), 'unstamped: never retired').toBe(false);
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n }), 'no stamp field: never retired').toBe(false);
+    expect(lateAckDone({ status: 3, strandedRecycled: 1n, strandedStamped: true }), 'stamped, still stranded').toBe(false);
+    expect(lateAckDone({ status: 3, strandedRecycled: 1n, strandedStamped: true, consumedAcked: true }), 'stamped and acked').toBe(true);
   });
 });
 
@@ -78,9 +94,9 @@ describe('lateAckUseful', () => {
 
 describe('lateAckDone — the done set takes only what the chain shows finished', () => {
   it('a released reservation with nothing left to ack is done; a candidate or any other status is not (straddle)', () => {
-    expect(lateAckDone({ status: 3, strandedRecycled: 0n }), 'released, resolved').toBe(true);
-    expect(lateAckDone({ status: 3, strandedRecycled: 1n, consumedAcked: true }), 'released, stamped').toBe(true);
-    expect(lateAckDone({ status: 3, strandedRecycled: 1n }), 'released, one wei still stranded').toBe(false);
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n, strandedStamped: true }), 'released, resolved').toBe(true);
+    expect(lateAckDone({ status: 3, strandedRecycled: 1n, consumedAcked: true, strandedStamped: true }), 'released, stamped').toBe(true);
+    expect(lateAckDone({ status: 3, strandedRecycled: 1n, strandedStamped: true }), 'released, one wei still stranded').toBe(false);
     expect(lateAckDone({ status: 1, strandedRecycled: 0n }), 'not released: never taken as finished').toBe(false);
   });
 
