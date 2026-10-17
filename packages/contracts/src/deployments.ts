@@ -244,6 +244,11 @@ export interface Deployment {
   /** Mirror chains only — OFT mirror proxy + UUPS impl behind it. */
   vpfiMirror?: HexAddress;
   vpfiMirrorImpl?: HexAddress;
+  /** The UUPS implementations behind the two messenger proxies, as deployed
+   *  (DeployCrosschain) and as last upgraded (RefreshAllFacetsInPlace) —
+   *  which code the live proxies run, for an audit or an incident. */
+  ccipMessengerImpl?: HexAddress;
+  rewardMessengerImpl?: HexAddress;
 
   // #687: the VPFI buy surface (VpfiBuyReceiver/Adapter + payment token) and its
   // per-chain rate/cap config were removed with the fixed-rate sale — those

@@ -79,6 +79,12 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  indexer_deployment: {
+    class: 'replay-derived',
+    reason:
+      'the Diamond each chain\'s rows were indexed from (#1566, Codex #2545 r1); a block-zero ' +
+      'replay re-adopts the bundle\'s Diamond on its first pass, so nothing is born here',
+  },
   prenotify_scan_cursor: {
     class: 'replay-derived',
     reason:
@@ -181,6 +187,50 @@ const CLASSIFICATION = {
 
 // Tables written by tooling/infra, not domain state.
 const IGNORED = new Set(['d1_migrations']);
+
+// ── Diamond-change keep list (#1566, Codex #2545 r1) ─────────────────
+// `src/deploymentEpoch.ts` resets EVERY table carrying a `chain_id` column
+// when a chain's Diamond changes, minus the user-owned tables
+// `src/diamondEpochKeep.json` names. That default (reset) is the safe one —
+// a stale row never survives into a fresh Diamond's restarted ids — so the
+// only thing to guard is the exception: a keep entry must name a table that
+// exists AND carries `chain_id`, or it is a typo that silently keeps nothing.
+// Read from the migrations' CREATE TABLE blocks; a shape this parse cannot
+// see fails CLOSED (an unknown keep table is an error, never a pass).
+const INDEXER_DIR = join(__dirname, '..');
+const EPOCH_KEEP_PATH = join(INDEXER_DIR, 'src', 'diamondEpochKeep.json');
+const epochKeep = JSON.parse(readFileSync(EPOCH_KEEP_PATH, 'utf8'));
+if (!epochKeep || typeof epochKeep.keep !== 'object' || epochKeep.keep === null) {
+  console.error(`✗ ${relative(REPO_ROOT, EPOCH_KEEP_PATH)}: expected a { keep: { table: reason } } object`);
+  process.exit(1);
+}
+const chainScopedFromDdl = (() => {
+  const dir = join(INDEXER_DIR, 'migrations');
+  const out = new Set();
+  const createTable = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`\[]?([a-z][a-z0-9_]*)["`\]]?\s*\(([\s\S]*?)\n\s*\)\s*;/gi;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) {
+    const sql = readFileSync(join(dir, f), 'utf8');
+    for (const m of sql.matchAll(createTable)) {
+      if (/(^|[\s,(])chain_id\b/i.test(m[2])) out.add(m[1]);
+    }
+  }
+  return out;
+})();
+if (chainScopedFromDdl.size === 0) {
+  console.error('✗ diamond-epoch keep guard scanned no CREATE TABLE with chain_id — the DDL parse is broken, not the schema');
+  process.exit(1);
+}
+const badKeep = Object.entries(epochKeep.keep).filter(
+  ([t, reason]) => !chainScopedFromDdl.has(t) || typeof reason !== 'string' || reason.trim() === '',
+);
+if (badKeep.length > 0) {
+  console.error(
+    `✗ ${relative(REPO_ROOT, EPOCH_KEEP_PATH)}: every keep entry must name an existing table with a ` +
+      `chain_id column and carry a reason:\n` +
+      badKeep.map(([t]) => `  - ${t}`).join('\n'),
+  );
+  process.exit(1);
+}
 
 // ── Extract written tables from Worker sources ────────────────────────
 // SQL lives in STRING/TEMPLATE LITERALS, so extraction runs over

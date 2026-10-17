@@ -1,0 +1,9 @@
+{
+  "_doc": "Chain-scoped tables (those carrying a chain_id column) that a Diamond change on that chain does NOT reset. Everything else with chain_id is reset by src/deploymentEpoch.ts when the bundle's Diamond differs from the adopted one. Keep an entry only for rows that are the USER's, not the chain's: a loan- or offer-keyed row left over from a retired Diamond would be read against the fresh Diamond's restarted ids. The classification guard (scripts/check-table-classification.mjs) refuses an entry that names a table without chain_id or one that does not exist.",
+  "keep": {
+    "diag_errors": "frontend error captures \u2014 the page's own diagnostics, keyed by chain only for filtering; nothing in them is a chain object",
+    "support_tickets": "durable user support requests (#1040); user content, and a ticket about a retired Diamond is still the user's ticket",
+    "telegram_links": "user Telegram chat links, keyed by chain for the user's own subscriptions; a redeploy must not unlink anyone",
+    "user_thresholds": "user-supplied HF alert thresholds, keyed by chain for the user's own alerts; the deploy script's purge excluded it by name for the same reason"
+  }
+}

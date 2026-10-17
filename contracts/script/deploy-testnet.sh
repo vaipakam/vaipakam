@@ -118,9 +118,10 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       the only Worker that applies migrations; the keeper and agent
 #       phases verify the schema and refuse to publish while one is
 #       pending, so run this phase first on a migration-bearing release. With
-#       `--fresh` (i.e. after a fresh contract redeploy that changed the
-#       diamond address) it ALSO purges this chain's stale D1 rows
-#       (offers/loans/activity/cursor/…) so the reindex starts clean from
+#       `--fresh` it reminds you that the indexer itself resets this
+#       chain's stale D1 rows (offers/loans/activity/cursor/…) on its first
+#       pass under the new bundle, once the retired Diamond is recorded
+#       (the contracts phase does that), so the reindex starts clean from
 #       the new deployBlock. Without `--fresh` the D1 is left intact
 #       (mainnet redeploys almost always preserve the diamond + history).
 #
@@ -208,6 +209,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/retired-deployment.sh
+source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -704,73 +707,19 @@ archive_chain_state() {
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
 }
 
-# Helper: purge D1 indexer rows for THIS chain's chainId. Extracted from
-# archive_chain_state so it can fire under --fresh regardless of whether
-# the on-disk addresses.json is present. (The prior coupling let stale
-# D1 rows persist past a --fresh whenever the on-disk artifacts had
-# already been archived in an earlier half-failed run — the chain-state
-# files were gone, the script saw "nothing to archive", and silently
-# skipped the D1 purge too. New Diamond + stale rows = exactly the
-# pollution --fresh is supposed to prevent.)
-#
-# Chain-scoped: every DELETE has WHERE chain_id = $CHAIN_ID. Other
-# chains' rows are never touched.
-#
-# Best-effort: silent skip when apps/indexer/ isn't present (alternate
-# trees) or wrangler isn't authenticated (operator's CI runner may not
-# have CF auth).
-purge_chain_d1() {
-  local indexer_dir="$REPO_ROOT/apps/indexer"
-  if [ ! -d "$indexer_dir" ]; then
-    echo "    (skipping D1 purge — apps/indexer/ not present)"
-    return 0
+# Helper: record the RETIRED Diamond for the indexer (#1566, Codex #2545 r1–r6).
+# The record IS the committed archive manifest (written at [0a] BEFORE the
+# artifact moves); this only triggers the best-effort immediate seed from it.
+# The indexer's own deploy seeds from the manifest regardless, between the
+# migration apply and the publish. See lib/retired-deployment.sh.
+record_retired_diamond_for_indexer() {
+  local prior_diamond="${1:-}" prior_block="${2:-}"
+  if [ -n "$prior_diamond" ] && [ "$prior_diamond" != "null" ]; then
+    echo "  retired Diamond $prior_diamond (deploy block ${prior_block:-0}) is in archive-manifest.json for chainId=$CHAIN_ID"
+  else
+    echo "  (no artifact on disk — whatever archive-manifest.json records for $CHAIN_SLUG is what the indexer seeds)"
   fi
-  local cid="$CHAIN_ID"
-  if [ -z "$cid" ]; then
-    echo "    (skipping D1 purge — CHAIN_ID unset)"
-    return 0
-  fi
-  echo "  purging D1 rows for chainId=$cid in vaipakam-warm..."
-  # Enumerate EVERY chain-scoped table DYNAMICALLY — any table carrying a
-  # `chain_id` column — instead of a hardcoded list. Indexer routes read
-  # loan-scoped tables by (chain_id, loan_id); a new loan reusing a retired
-  # diamond's id would otherwise inherit stale prepay-listing / swap-intent
-  # rows or have pre-grace notifications deduped from the old deploy. A fixed
-  # list silently drifts as the schema grows (prepay_listings,
-  # swap_to_repay_intents, pre_grace_notify_state, liquidity_confidence, …
-  # were all missing). Introspecting the live schema means tables added later
-  # are purged automatically — the list can't go stale (#853 Codex P2).
-  #
-  # EXCLUDE user-subscription tables. `user_thresholds` (per-user per-chain HF
-  # alert config) and `telegram_links` (a user's notification rail) also carry a
-  # `chain_id` column, but they are USER-authored preferences, not stale
-  # Diamond-derived index data — a fresh contract redeploy must NOT wipe a
-  # subscriber's saved thresholds / notification rails (#853 Codex P2). The old
-  # hardcoded purge preserved them (it only cleared `notify_state`); keep that.
-  local introspect="SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) p ON p.name = 'chain_id' WHERE m.type = 'table' AND m.name NOT IN ('user_thresholds', 'telegram_links');"
-  local tables
-  # Best-effort under `set -euo pipefail`: a failed / non-JSON `wrangler`
-  # (operator unauthenticated, D1 unreachable) must yield an EMPTY list and hit
-  # the warn-and-skip path below — NOT abort the whole deploy via the failing
-  # command substitution (#853 Codex P2). The trailing `|| true` neutralises the
-  # pipeline's exit status for the assignment.
-  tables=$( { cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm \
-    --remote --json --command "$introspect" 2>/dev/null \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null ; } || true )
-  if [ -z "$tables" ]; then
-    echo "    ⚠ could not introspect chain-scoped tables (wrangler not authenticated, or D1 unreachable). Skipping purge; re-run via the indexer dir if needed."
-    return 0
-  fi
-  local sql="" n=0
-  while IFS= read -r t; do
-    [ -z "$t" ] && continue
-    sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
-    n=$((n + 1))
-  done <<< "$tables"
-  echo "    purging $n chain-scoped table(s): $(echo "$tables" | tr '\n' ' ')"
-  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm \
-    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -3 ) || \
-    echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
+  seed_retired_deployments_now "$REPO_ROOT"
 }
 
 # Helper: re-seed indexer_cursor at the chain's safe head. Called
@@ -900,8 +849,10 @@ EOF
     #    keep existing, the indexer just stops seeing them once the
     #    cursor row is wiped + reseeded forward.
     PRIOR_DIAMOND=""
+    PRIOR_DEPLOY_BLOCK=""
     if [ -f "$DEPLOY_DIR/addresses.json" ]; then
       PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
+      PRIOR_DEPLOY_BLOCK=$(jq -r '.deployBlock // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
     fi
     if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
       ACTIVE_OFFERS=$(cast call "$PRIOR_DIAMOND" 'getActiveOffersCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo "?")
@@ -943,8 +894,8 @@ EOF
     fi
     echo "[0a] --fresh: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
-    echo "[0b] --fresh: purging D1 rows for chainId=$CHAIN_ID"
-    purge_chain_d1
+    echo "[0b] --fresh: recording the retired Diamond for the indexer (chainId=$CHAIN_ID)"
+    record_retired_diamond_for_indexer "$PRIOR_DIAMOND" "$PRIOR_DEPLOY_BLOCK"
     echo
     echo "  ⚠ The re-deploy will create a NEW reward messenger at a NEW"
     echo "    address (DeployCrosschain.s.sol uses a plain \`new\`, not"
@@ -953,16 +904,13 @@ EOF
     echo "    address this run writes to addresses.json."
     echo
   elif [ "$FRESH" = "1" ]; then
-    # --fresh with no on-disk addresses.json. Could be a clean first
-    # deploy (no D1 rows either — no-op), OR a re-run after an earlier
-    # half-failed --fresh archived the artifacts but didn't manage to
-    # purge D1. Either way, calling purge_chain_d1 is safe (chain-scoped
-    # DELETE on rows that may not exist) and is the only reliable way
-    # to guarantee no stale rows survive into the new deploy. Without
-    # this branch, a stale-rows-with-no-addresses.json scenario would
-    # silently pollute the indexer with prior-Diamond decode shapes.
-    echo "[0] --fresh: no addresses.json present — purging D1 rows for chainId=$CHAIN_ID anyway"
-    purge_chain_d1
+    # --fresh with no on-disk addresses.json: a clean first deploy, or a
+    # re-run after an earlier half-failed --fresh already archived the
+    # artifacts. This run cannot name the retired Diamond, so it prints the
+    # record statement for the operator; the indexer resets the chain on
+    # its next pass once the retired Diamond is recorded (#1566).
+    echo "[0] --fresh: no addresses.json present — the retired Diamond is unknown to this run"
+    record_retired_diamond_for_indexer "" ""
     echo
   fi
 
@@ -996,8 +944,16 @@ EOF
   echo "deploy-testnet.sh — contracts  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
-  echo "[1] forge build"
-  forge build
+  echo "[1] forge build (--skip test — see #636)"
+  # `--skip test` is load-bearing (#636, mirrored from predeploy-check.sh).
+  # A deploy needs `src/` + the deploy/config `script/`s compiled; every
+  # `forge script` below compiles that same sparse closure. A bare
+  # `forge build` instead folds ALL of `test/` into one non-sparse viaIR
+  # unit — the whole-unit form this codebase has outgrown (the 2026-10-17
+  # Base Sepolia deploy sat 57 min in a 19 GB solc that swapped, then
+  # aborted). The test closure a deploy relies on is compiled where it is
+  # exercised: the deploy-sanity suite inside predeploy-check.sh.
+  forge build --skip test
 
   echo
   echo "[1b] Pre-deploy sanity check"
@@ -1925,6 +1881,10 @@ phase_cf_indexer() {
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
+  # The retired Diamonds the committed archive manifest records are SEEDED by
+  # the applier between the migration apply and the publish — before the new
+  # code can run, so its first pass finds the retired Diamond and resets the
+  # chain rather than adopting the new one blind (#1566, Codex #2545 r3/r6).
   ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
@@ -1935,17 +1895,14 @@ phase_cf_indexer() {
   fi
 
   # [d] Fresh-deploy D1 hygiene — automated so operators don't hand-run it.
-  # After a `--fresh` contract redeploy the diamond address changed, but the
-  # D1 rows key by chain_id, so the retired diamond's offers/loans would still
-  # surface. Purge this chain's rows (offers/loans/activity/cursor/etc.) here,
-  # right after the indexer is redeployed with the NEW bundle. Deleting
-  # indexer_cursor makes the cron fall back to `deployBlock - 1` and re-scan
-  # forward from the new diamond's deploy block — a clean fresh index. Runs
-  # ONLY under `--fresh`; a normal redeploy (same diamond) preserves history.
+  # After a `--fresh` contract redeploy the Diamond changed; the indexer
+  # notices on its first pass under the NEW bundle (deploymentEpoch.ts) and
+  # resets this chain's chain-scoped rows itself, cursor included, so the
+  # scan reseeds from the new deployBlock. Nothing to delete here (#1566).
   if [ "$FRESH" = "1" ]; then
     echo
-    echo "[d] --fresh D1 purge for chainId=$CHAIN_ID (stale rows from the retired diamond)"
-    purge_chain_d1
+    echo "[d] --fresh: the indexer resets this chain's rows itself on its first pass under the new bundle"
+    echo "    (deploymentEpoch.ts — confirm with GET /health/ingest: the chain's deployment must name the NEW Diamond)"
   fi
 
   mark_phase_done "cf-indexer"
