@@ -1,6 +1,6 @@
 {
   "purpose": "Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.",
-  "generatedAt": "2026-10-17T14:40:46.913Z",
+  "generatedAt": "2026-10-17T18:03:24.204Z",
   "entries": [
     {
       "slug": "arb-sepolia",
@@ -25,6 +25,14 @@
       "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
       "deployBlock": null,
       "vpfiToken": null
+    },
+    {
+      "slug": "arb-sepolia",
+      "stamp": "2026-10-17T18-03-24Z",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "deployBlock": 282848512,
+      "vpfiToken": "0xDed6a45313E216ad4B74be089D2411f6E222d074"
     },
     {
       "slug": "base-sepolia",
@@ -132,10 +140,10 @@
     }
   ],
   "livePublicationsInProgress": {},
-  "liveGeneration": 2,
+  "liveGeneration": 3,
   "lastLivePublished": {
-    "slug": "base-sepolia",
-    "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303",
-    "at": "2026-10-17T18:01:46.033Z"
+    "slug": "arb-sepolia",
+    "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
+    "at": "2026-10-17T18:26:44.030Z"
   }
 }
