@@ -198,8 +198,9 @@ test('buildUpdate: an older publication is refused; an allowed rollback carries 
   assert.equal(u.order, 'rollback');
   const { functionName, args } = decodeFunctionData({ abi: sanctionsListAbi(), data: u.authorizeCalldata });
   assert.equal(functionName, 'authorizePublicationRollback');
-  assert.equal(args[0], 20260307);
-  assert.equal(args[1], hash);
+  assert.equal(args[0], 5n, 'bound to the list version the diff was computed against');
+  assert.equal(args[1], 20260307);
+  assert.equal(args[2], hash);
   assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5 }), /recorded publication/);
 });
 
@@ -272,4 +273,21 @@ test('references: a record whose FeatureTypeID or ReliabilityID resolves to noth
   assert.throws(() => parseSdnAdvanced(withInProfile(noRel)), /ReliabilityID null/);
   const dupType = FIXTURE.toString('utf8').replace('<FeatureTypeValues>', '<FeatureTypeValues><FeatureType ID="345">Digital Currency Address - XBT</FeatureType>');
   assert.throws(() => parseSdnAdvanced(dupType), /defined twice/);
+});
+
+// ---- Codex #2543 r5: full-path matching, a single publication date ----
+test('paths: a <Feature> off the documented party path is never read', () => {
+  const spliced = FIXTURE.toString('utf8').replace('<DistinctParties>', `<Wrapper>${feature(E)}</Wrapper><DistinctParties>`);
+  assert.ok(!parseSdnAdvanced(spliced).addresses.includes(E), 'a root-level wrapper Feature is ignored');
+  const underParty = FIXTURE.toString('utf8').replace(PROFILE_OPEN, `<Other>${feature(E)}</Other>${PROFILE_OPEN}`);
+  assert.ok(!parseSdnAdvanced(underParty).addresses.includes(E), 'a Feature outside <Profile> is ignored');
+  assert.ok(parseSdnAdvanced(withInProfile(feature(E))).addresses.includes(E), 'the documented path is still read');
+});
+
+test('paths: a repeated <DateOfIssue> or date part is refused, never last-wins', () => {
+  const xml = FIXTURE.toString('utf8');
+  const block = /<DateOfIssue[\s\S]*?<\/DateOfIssue>/.exec(xml)[0];
+  const later = block.replace(/<Year>\d{4}<\/Year>/, '<Year>2099</Year>');
+  assert.throws(() => parseSdnAdvanced(xml.replace('</Sanctions>', `${later}</Sanctions>`)), /more than once/);
+  assert.throws(() => parseSdnAdvanced(xml.replace('</DateOfIssue>', '<Year>2099</Year></DateOfIssue>')), /more than once/);
 });

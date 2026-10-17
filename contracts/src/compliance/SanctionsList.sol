@@ -45,7 +45,8 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *              the list must be orderable;
  *            - anything else (an earlier date, or a different file on the
  *              same date) needs a one-shot owner authorization naming that
- *              exact date and hash ({authorizePublicationRollback}). Both the
+ *              exact date and hash, granted against the list version the
+ *              owner reviewed ({authorizePublicationRollback}). Both the
  *              authorization and its use are evented. An authorization for
  *              a NEWER date is refused, and every successful update clears
  *              a pending one (evented when unused), so no authorization
@@ -157,9 +158,11 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     );
     /// @notice The owner authorized one update from a publication that is
     ///         not newer than the recorded one (or cleared a pending
-    ///         authorization, with zero values).
+    ///         authorization, with zero values), against list `version`.
     /// @custom:event-category informational/admin
-    event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    event PublicationRollbackAuthorized(
+        uint64 indexed version, uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash
+    );
     /// @notice An update that did not need the pending authorization
     ///         cleared it unused (the state it was granted against is gone).
     /// @custom:event-category informational/config
@@ -232,11 +235,27 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         than the recorded one is refused, and ANY successful update
     ///         clears a pending authorization, used or not, so none can
     ///         outlive the state it was granted against.
+    ///
+    ///         The grant is bound to the list state the owner reviewed:
+    ///         `expectedVersion` must equal `listVersion` when it executes
+    ///         (Codex #2543 r5). Without it, an update mined between the
+    ///         owner signing and this transaction landing would leave the
+    ///         grant to be spent against a state nobody reviewed — the
+    ///         clear-on-update rule only covers an update that lands AFTER
+    ///         the grant. A clear `(0, 0)` needs no binding and ignores it.
     /// @dev    The owner authorizes the ORDERING exception only; the content
     ///         is still applied by an updater through {applyUpdate}, with its
     ///         usual version, duplicate and provenance checks.
-    function authorizePublicationRollback(uint32 publicationDate, bytes32 sourceHash_) external onlyOwner {
+    /// @param expectedVersion   The `listVersion` the owner reviewed.
+    /// @param publicationDate   The publication to let through, `YYYYMMDD`.
+    /// @param sourceHash_       That file's SHA-256.
+    function authorizePublicationRollback(uint64 expectedVersion, uint32 publicationDate, bytes32 sourceHash_)
+        external
+        onlyOwner
+    {
+        uint64 current = listVersion;
         if (publicationDate != 0 || sourceHash_ != bytes32(0)) {
+            if (expectedVersion != current) revert StaleListVersion(expectedVersion, current);
             _checkPublicationDate(publicationDate);
             if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
             // A newer publication needs no authorization, and one granted for
@@ -248,7 +267,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         }
         rollbackAuthorizedDate = publicationDate;
         rollbackAuthorizedHash = sourceHash_;
-        emit PublicationRollbackAuthorized(publicationDate, sourceHash_, sourcePublicationDate, sourceHash);
+        emit PublicationRollbackAuthorized(current, publicationDate, sourceHash_, sourcePublicationDate, sourceHash);
     }
 
     // ── Updates ───────────────────────────────────────────────────────

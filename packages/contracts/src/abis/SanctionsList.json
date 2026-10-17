@@ -60,6 +60,11 @@
     "name": "authorizePublicationRollback",
     "inputs": [
       {
+        "name": "expectedVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "publicationDate",
         "type": "uint32",
         "internalType": "uint32"
@@ -592,6 +597,12 @@
     "type": "event",
     "name": "PublicationRollbackAuthorized",
     "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
       {
         "name": "publicationDate",
         "type": "uint32",

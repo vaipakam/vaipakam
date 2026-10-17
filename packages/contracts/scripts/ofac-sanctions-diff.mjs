@@ -361,17 +361,37 @@ export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, 
 }
 
 /**
+ * The ONLY places the parser reads, as full paths from the root (Codex #2543
+ * r5). An element is matched on its whole ancestry, never on its local name,
+ * so a same-named element anywhere else in the document — a schema-invalid
+ * splice, or a future OFAC element that happens to reuse a name — is never
+ * read as sanctions data.
+ */
+const PARTY_FEATURE = 'Sanctions/DistinctParties/DistinctParty/Profile/Feature';
+export const SDN_PATHS = Object.freeze({
+  dateOfIssue: 'Sanctions/DateOfIssue',
+  year: 'Sanctions/DateOfIssue/Year',
+  month: 'Sanctions/DateOfIssue/Month',
+  day: 'Sanctions/DateOfIssue/Day',
+  featureType: 'Sanctions/ReferenceValueSets/FeatureTypeValues/FeatureType',
+  reliability: 'Sanctions/ReferenceValueSets/ReliabilityValues/Reliability',
+  feature: PARTY_FEATURE,
+  featureVersion: `${PARTY_FEATURE}/FeatureVersion`,
+  versionDetail: `${PARTY_FEATURE}/FeatureVersion/VersionDetail`,
+});
+/** Paths that identify the publication: each must appear at most once. */
+const SDN_SINGLETON_PATHS = new Set([SDN_PATHS.dateOfIssue, SDN_PATHS.year, SDN_PATHS.month, SDN_PATHS.day]);
+
+/**
  * Parse SDN Advanced XML text into its EVM addresses and publication date.
  * PURE; throws on any shape that would make an empty or partial answer look
  * like a real one.
  *
  * Extraction walks the token stream of {@link scanXml} — the same single pass
- * that proves the document complete — and reads only elements in their
- * documented places:
- *   Sanctions/DateOfIssue/{Year,Month,Day}
- *   …/FeatureType[@ID]           (reference set; text = type name)
- *   …/Reliability[@ID]           (reference set; text = reliability name)
- *   …/Feature[@FeatureTypeID]/FeatureVersion[@ReliabilityID]/VersionDetail
+ * that proves the document complete — and reads only the full paths in
+ * {@link SDN_PATHS}. The publication date's block and each of its parts must
+ * appear exactly once; a repeated one is refused rather than letting the
+ * last value win (Codex #2543 r5).
  * Records are resolved against the reference sets AFTER the pass, so their
  * order in the file does not matter — and every record must resolve: a
  * `FeatureTypeID` or `ReliabilityID` that names no reference value refuses
@@ -383,7 +403,8 @@ export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, 
  * nothing inside it is consumed (Codex #2543 r4).
  */
 export function parseSdnAdvanced(xml) {
-  const path = [];
+  const path = []; // local names of the open OFAC-namespace elements, root first
+  const seen = new Map(); // singleton path -> count
   const date = {};
   const featureTypes = new Map();
   const reliability = new Map();
@@ -391,72 +412,83 @@ export function parseSdnAdvanced(xml) {
   let feature = null; // { typeId }
   let version = null; // { rel }
   let buf = null; // text accumulator for the element being read
-  let reading = null; // what `buf` belongs to
+  let reading = null; // the full path `buf` belongs to
   let refId = null;
   let foreignDepth = 0; // >0 while inside an element outside OFAC's namespace
 
   scanXml(xml, {
     open(name, attrs, depth, ns) {
-      if (depth === 0) {
+      if (depth === 0 && ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
         // Exact match, not a substring test: a namespace that merely
         // CONTAINS the OFAC host is not OFAC's document. If OFAC ever
         // changes its namespace the tool refuses loudly instead of guessing.
-        if (ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
-          throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
-        }
+        throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
       }
       if (foreignDepth > 0 || ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
         if (reading) throw new Error(`unexpected foreign-namespace <${name}> inside <${reading}>`);
         foreignDepth++;
         return;
       }
-      const parent = path[path.length - 1];
       path.push(name);
-      if (depth === 2 && parent === 'DateOfIssue' && (name === 'Year' || name === 'Month' || name === 'Day')) {
-        reading = name;
-        buf = '';
-      } else if (name === 'FeatureType' && parent === 'FeatureTypeValues') {
-        reading = 'FeatureType';
-        refId = attrs.get('ID');
-        buf = '';
-      } else if (name === 'Reliability' && parent === 'ReliabilityValues') {
-        reading = 'Reliability';
-        refId = attrs.get('ID');
-        buf = '';
-      } else if (name === 'Feature') {
-        if (feature) throw new Error('unexpected nested <Feature>');
-        feature = { typeId: attrs.get('FeatureTypeID') };
-      } else if (name === 'FeatureVersion' && feature && parent === 'Feature') {
-        version = { rel: attrs.get('ReliabilityID') };
-      } else if (name === 'VersionDetail' && version && parent === 'FeatureVersion') {
-        reading = 'VersionDetail';
-        buf = '';
-      } else if (reading) {
-        throw new Error(`unexpected <${name}> inside <${reading}>`);
+      const at = path.join('/');
+      if (reading) throw new Error(`unexpected <${name}> inside <${reading}>`);
+      if (SDN_SINGLETON_PATHS.has(at)) {
+        const count = (seen.get(at) ?? 0) + 1;
+        if (count > 1) throw new Error(`<${at}> appears more than once — refusing an ambiguous publication date`);
+        seen.set(at, count);
+      }
+      switch (at) {
+        case SDN_PATHS.year:
+        case SDN_PATHS.month:
+        case SDN_PATHS.day:
+        case SDN_PATHS.versionDetail:
+          reading = at;
+          buf = '';
+          break;
+        case SDN_PATHS.featureType:
+        case SDN_PATHS.reliability:
+          reading = at;
+          refId = attrs.get('ID');
+          buf = '';
+          break;
+        case SDN_PATHS.feature:
+          feature = { typeId: attrs.get('FeatureTypeID') };
+          break;
+        case SDN_PATHS.featureVersion:
+          version = { rel: attrs.get('ReliabilityID') };
+          break;
+        default:
+        // Any other element — including a same-named <Feature> anywhere off
+        // the documented path — is structure we do not read.
       }
     },
     text(value) {
       if (reading && foreignDepth === 0) buf += value;
     },
-    close(name) {
+    close() {
       if (foreignDepth > 0) {
         foreignDepth--;
         return;
       }
+      const at = path.join('/');
       path.pop();
-      if (reading === name) {
-        if (name === 'Year' || name === 'Month' || name === 'Day') date[name] = buf.trim();
-        else if (name === 'FeatureType' || name === 'Reliability') {
-          const set = name === 'FeatureType' ? featureTypes : reliability;
-          if (refId === undefined) throw new Error(`a <${name}> has no ID`);
-          if (set.has(refId)) throw new Error(`<${name}> ID ${refId} is defined twice`);
-          set.set(refId, buf.trim());
+      if (reading === at) {
+        const value = buf.trim();
+        if (at === SDN_PATHS.year) date.Year = value;
+        else if (at === SDN_PATHS.month) date.Month = value;
+        else if (at === SDN_PATHS.day) date.Day = value;
+        else if (at === SDN_PATHS.versionDetail) records.push({ typeId: feature.typeId, rel: version.rel, value });
+        else {
+          const label = at === SDN_PATHS.featureType ? 'FeatureType' : 'Reliability';
+          const set = at === SDN_PATHS.featureType ? featureTypes : reliability;
+          if (refId === undefined) throw new Error(`a <${label}> has no ID`);
+          if (set.has(refId)) throw new Error(`<${label}> ID ${refId} is defined twice`);
+          set.set(refId, value);
         }
-        else if (name === 'VersionDetail') records.push({ typeId: feature.typeId, rel: version.rel, value: buf.trim() });
         reading = null;
         buf = null;
-      } else if (name === 'FeatureVersion') version = null;
-      else if (name === 'Feature') feature = null;
+      } else if (at === SDN_PATHS.featureVersion) version = null;
+      else if (at === SDN_PATHS.feature) feature = null;
     },
   });
 
@@ -608,7 +640,7 @@ export function buildUpdate({
     order,
     authorizeCalldata:
       order === 'rollback'
-        ? encodeFunctionData({ abi, functionName: 'authorizePublicationRollback', args: [parsed.publicationDate, hash] })
+        ? encodeFunctionData({ abi, functionName: 'authorizePublicationRollback', args: [version, parsed.publicationDate, hash] })
         : null,
     calldata: encodeFunctionData({ abi, functionName: 'applyUpdate', args: [version, add, remove, hash, parsed.publicationDate] }),
   };
@@ -778,7 +810,7 @@ async function main() {
       publicationOrder: update.order,
       calldata: update.calldata,
       ...(update.authorizeCalldata
-        ? { ownerMustFirstCall: { function: 'authorizePublicationRollback', args: [parsed.publicationDate, hash], calldata: update.authorizeCalldata } }
+        ? { ownerMustFirstCall: { function: 'authorizePublicationRollback', args: [current.version.toString(), parsed.publicationDate, hash], calldata: update.authorizeCalldata } }
         : {}),
     },
   };
@@ -800,7 +832,7 @@ async function main() {
   );
   if (current.blockHash) console.error(`Current list read at block ${current.blockNumber} (${current.blockHash}, ${current.blockTag}).`);
   if (update.order === 'rollback') {
-    console.error(`ROLLBACK: the owner must first call authorizePublicationRollback(${parsed.publicationDate}, ${hash}); see ownerMustFirstCall.`);
+    console.error(`ROLLBACK: the owner must first call authorizePublicationRollback(${current.version}, ${parsed.publicationDate}, ${hash}); see ownerMustFirstCall.`);
   }
   if (parsed.malformed.length) console.error(`WARNING: ${parsed.malformed.length} malformed EVM-like value(s) need human review.`);
   if (chainalysis?.source.logCount === 0) {

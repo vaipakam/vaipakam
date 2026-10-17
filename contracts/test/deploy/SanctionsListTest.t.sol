@@ -285,7 +285,9 @@ contract SanctionsListTest is Test {
 
     // ── Publication ordering (Codex #2543 r1) ─────────────────────────
 
-    event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    event PublicationRollbackAuthorized(
+        uint64 indexed version, uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash
+    );
     event PublicationRollbackApplied(uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash);
     event PublicationRollbackCleared(uint64 indexed version, uint32 authorizedDate, bytes32 authorizedHash);
 
@@ -338,10 +340,10 @@ contract SanctionsListTest is Test {
     ///         publication through, is evented both ways, and is consumed.
     function test_Order_OwnerAuthorizedRollback() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.expectEmit(false, false, false, true, address(list));
-        emit PublicationRollbackAuthorized(20261014, H0, 20261015, H1);
+        vm.expectEmit(true, false, false, true, address(list));
+        emit PublicationRollbackAuthorized(1, 20261014, H0, 20261015, H1);
         vm.prank(admin);
-        list.authorizePublicationRollback(20261014, H0);
+        list.authorizePublicationRollback(1, 20261014, H0);
         assertEq(list.rollbackAuthorizedDate(), 20261014);
 
         // A different hash on the authorized date is still refused.
@@ -372,10 +374,10 @@ contract SanctionsListTest is Test {
         _update(_arr(a), _none(), H1, 20261015);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, updater));
-        list.authorizePublicationRollback(20261014, H0);
+        list.authorizePublicationRollback(1, 20261014, H0);
         vm.startPrank(admin);
-        list.authorizePublicationRollback(20261014, H0);
-        list.authorizePublicationRollback(0, bytes32(0));
+        list.authorizePublicationRollback(1, 20261014, H0);
+        list.authorizePublicationRollback(0, 0, bytes32(0));
         vm.stopPrank();
         assertEq(list.rollbackAuthorizedDate(), 0);
         assertEq(list.rollbackAuthorizedHash(), bytes32(0));
@@ -384,9 +386,9 @@ contract SanctionsListTest is Test {
     function test_Order_AuthorizationValidatesItsInput() public {
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, uint32(20261300)));
-        list.authorizePublicationRollback(20261300, H0);
+        list.authorizePublicationRollback(0, 20261300, H0);
         vm.expectRevert(SanctionsList.MissingSourceHash.selector);
-        list.authorizePublicationRollback(20261014, bytes32(0));
+        list.authorizePublicationRollback(0, 20261014, bytes32(0));
         vm.stopPrank();
     }
 
@@ -396,12 +398,12 @@ contract SanctionsListTest is Test {
         _update(_arr(a), _none(), H1, 20261015);
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.RollbackNotNeeded.selector, uint32(20261016), uint32(20261015)));
-        list.authorizePublicationRollback(20261016, H2);
+        list.authorizePublicationRollback(1, 20261016, H2);
         // Before any update, every date is newer than "none".
         SanctionsList fresh = new SanctionsList(admin, address(0));
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.RollbackNotNeeded.selector, uint32(20261014), uint32(0)));
-        fresh.authorizePublicationRollback(20261014, H0);
+        fresh.authorizePublicationRollback(0, 20261014, H0);
     }
 
     /// @notice A newer update that does not use a pending authorization
@@ -410,7 +412,7 @@ contract SanctionsListTest is Test {
     function test_Order_ANewerUpdateClearsAnUnusedAuthorization() public {
         _update(_arr(a), _none(), H1, 20261015);
         vm.prank(admin);
-        list.authorizePublicationRollback(20261014, H0);
+        list.authorizePublicationRollback(1, 20261014, H0);
         vm.expectEmit(true, false, false, true, address(list));
         emit PublicationRollbackCleared(2, 20261014, H0);
         _update(_arr(b), _none(), H2, 20261016);
@@ -423,11 +425,27 @@ contract SanctionsListTest is Test {
         list.applyUpdate(2, _none(), _arr(b), H0, 20261014);
     }
 
+    /// @notice The grant is bound to the list version the owner reviewed: if
+    ///         an update lands between the owner signing and the grant being
+    ///         mined, the grant is refused rather than spent against a state
+    ///         nobody reviewed (Codex #2543 r5).
+    function test_Order_AuthorizationIsBoundToTheReviewedVersion() public {
+        _update(_arr(a), _none(), H1, 20261015); // version 1: the owner reviews this
+        _update(_arr(b), _none(), H2, 20261016); // version 2 lands first
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.StaleListVersion.selector, uint64(1), uint64(2)));
+        list.authorizePublicationRollback(1, 20261014, H0);
+        assertEq(list.rollbackAuthorizedDate(), 0);
+        // A clear needs no binding.
+        vm.prank(admin);
+        list.authorizePublicationRollback(0, 0, bytes32(0));
+    }
+
     /// @notice A same-date refresh clears a pending authorization too.
     function test_Order_ARefreshClearsAnUnusedAuthorization() public {
         _update(_arr(a), _none(), H1, 20261015);
         vm.prank(admin);
-        list.authorizePublicationRollback(20261015, H1B);
+        list.authorizePublicationRollback(1, 20261015, H1B);
         vm.expectEmit(true, false, false, true, address(list));
         emit PublicationRollbackCleared(2, 20261015, H1B);
         _update(_none(), _none(), H1, 20261015);
