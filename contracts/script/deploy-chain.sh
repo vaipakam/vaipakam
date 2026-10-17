@@ -673,8 +673,16 @@ fi
 if step_done "build"; then
   echo "[1] forge build (skipped — marker exists)"
 else
-  echo "[1] forge build"
-  forge build
+  echo "[1] forge build (--skip test — see #636)"
+  # `--skip test` is load-bearing (#636, mirrored from predeploy-check.sh).
+  # A deploy needs `src/` + the deploy/config `script/`s compiled; every
+  # `forge script` below compiles that same sparse closure. A bare
+  # `forge build` instead folds ALL of `test/` into one non-sparse viaIR
+  # unit — the whole-unit form this codebase has outgrown (the 2026-10-17
+  # Base Sepolia deploy sat 57 min in a 19 GB solc that swapped, then
+  # aborted). The test closure a deploy relies on is compiled where it is
+  # exercised: the deploy-sanity suite inside predeploy-check.sh.
+  forge build --skip test
   mark_done "build"
 fi
 
