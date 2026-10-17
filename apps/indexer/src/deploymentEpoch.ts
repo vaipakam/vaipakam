@@ -83,7 +83,9 @@ export type AdoptOutcome =
   | { outcome: 'same' }
   | { outcome: 'reset'; previous: string; tables: string[] }
   | { outcome: 'reset-resumed'; tables: string[] }
-  | { outcome: 'raced' };
+  | { outcome: 'raced' }
+  /** The bundle names a Diamond deployed BEFORE the adopted one: a stale build, never a new epoch. */
+  | { outcome: 'refused-older'; adopted: string; adoptedDeployBlock: number };
 
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -179,6 +181,15 @@ export async function adoptDeployment(
     return { outcome: 'reset-resumed', tables };
   }
 
+  // A new epoch only ever moves FORWARD. A Worker built from a stale branch
+  // carries a bundle naming an OLDER deployment than the one adopted; letting
+  // it "adopt" would wipe a live chain's index for a Diamond that was retired.
+  // The reset is reserved for a Diamond deployed after the adopted one; this
+  // case is refused loudly and the pass scans under the adopted record.
+  if (deployBlock < current.deployBlock) {
+    return { outcome: 'refused-older', adopted: current.diamond, adoptedDeployBlock: current.deployBlock };
+  }
+
   // A different Diamond: claim the epoch with a conditional write so that two
   // concurrent passes cannot both own the reset — only the one whose UPDATE
   // changed a row proceeds; the other sees the new record on its next read.
@@ -211,5 +222,10 @@ export function describeAdoption(chainId: number, diamond: string, deployBlock: 
       return `[deploymentEpoch] chain ${chainId}: finished an interrupted reset for Diamond ${diamond} (${r.tables.length} table(s))`;
     case 'raced':
       return `[deploymentEpoch] chain ${chainId}: another pass adopted Diamond ${diamond} first`;
+    case 'refused-older':
+      return (
+        `[deploymentEpoch] chain ${chainId}: REFUSED to adopt Diamond ${diamond} (deploy block ${deployBlock}) — ` +
+        `the adopted ${r.adopted} was deployed later (block ${r.adoptedDeployBlock}); this build carries a stale bundle`
+      );
   }
 }

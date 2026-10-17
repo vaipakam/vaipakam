@@ -199,6 +199,22 @@ describe('adoptDeployment', () => {
     expect((await readAdoptedDeployment(h.d1 as never, BASE))?.resetPending).toBe(false);
   });
 
+  it('a bundle naming an OLDER deployment than the adopted one is refused — a stale build never wipes a chain', async () => {
+    const h = createSqliteD1(migrations());
+    const reset = (await listChainScopedTables(h.d1 as never)).filter(
+      (t) => t !== 'indexer_deployment' && !Object.hasOwn(KEEP_ON_DIAMOND_CHANGE, t),
+    );
+    seedEveryChainScopedTable(h, reset);
+    await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 3_000 });
+    // A Worker built from a stale branch: its bundle still names the retired
+    // Diamond at the lower deploy block.
+    const r = await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: OLD, deployBlock: 100n, nowSec: 4_000 });
+    expect(r).toEqual({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 });
+    for (const t of reset) expect(countFor(h, t, BASE), t).toBe(1);
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: NEW, deployBlock: 500, resetPending: false });
+    expect(describeAdoption(BASE, OLD, 100n, r)).toMatch(/REFUSED .* stale bundle/);
+  });
+
   it('two passes seeing the same change: only the one whose claim landed resets', async () => {
     const h = createSqliteD1(migrations());
     await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: OLD, deployBlock: 100n, nowSec: 1_000 });
