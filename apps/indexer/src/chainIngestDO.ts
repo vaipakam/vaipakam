@@ -54,6 +54,7 @@ import type { PushHints } from './pushHints';
 import {
   RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
+  isEpochDeclinedSkip,
   isRetryableScanSkip,
   isSchemaDeclinedSkip,
   runChainIndexerForChain,
@@ -600,7 +601,10 @@ export class ChainIngestDO {
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
         retryableFailure = isRetryableScanSkip(result.skipped);
-        schemaDeclined = isSchemaDeclinedSkip(result.skipped);
+        // Declined passes stop the loop rather than rearm: a missing migration
+        // and a bundle that is not the adopted epoch (deploymentEpoch.ts,
+        // Codex #2545 r2) are both facts no retry within this alarm can change.
+        schemaDeclined = isSchemaDeclinedSkip(result.skipped) || isEpochDeclinedSkip(result.skipped);
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
         // slice within seconds instead of waiting for its next poll. If a PRIOR

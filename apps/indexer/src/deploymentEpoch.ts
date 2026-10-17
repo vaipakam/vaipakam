@@ -83,9 +83,21 @@ export type AdoptOutcome =
   | { outcome: 'same' }
   | { outcome: 'reset'; previous: string; tables: string[] }
   | { outcome: 'reset-resumed'; tables: string[] }
-  | { outcome: 'raced' }
+  /** Another pass adopted a DIFFERENT Diamond between this pass's read and its claim. */
+  | { outcome: 'raced'; adopted: string }
   /** The bundle names a Diamond deployed BEFORE the adopted one: a stale build, never a new epoch. */
   | { outcome: 'refused-older'; adopted: string; adoptedDeployBlock: number };
+
+/**
+ * Whether the pass that got this outcome may scan: only when ITS Diamond is
+ * the adopted epoch and no reset is pending. A pass refused as stale, or one
+ * that lost the claim to a different Diamond, must return without scanning —
+ * it would read the retired or losing Diamond, repopulate rows after the
+ * reset and advance the shared cursor (Codex #2545 r2 P1).
+ */
+export function isAdoptedEpoch(r: AdoptOutcome): boolean {
+  return r.outcome === 'first' || r.outcome === 'same' || r.outcome === 'reset' || r.outcome === 'reset-resumed';
+}
 
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -201,7 +213,14 @@ export async function adoptDeployment(
     )
     .bind(diamond, deployBlock, nowSec, chainId, current.diamond)
     .run();
-  if ((claimed.meta?.changes ?? 0) === 0) return { outcome: 'raced' };
+  if ((claimed.meta?.changes ?? 0) === 0) {
+    // The record moved under us. If a sibling pass of THIS bundle won, its
+    // Diamond is ours and the epoch is adopted; otherwise a different
+    // Diamond holds it and this pass must not scan.
+    const now = await readAdoptedDeployment(db, chainId);
+    if (now !== null && same(now.diamond, diamond) && !now.resetPending) return { outcome: 'same' };
+    return { outcome: 'raced', adopted: now?.diamond ?? '(none)' };
+  }
   const tables = await resetChain(db, chainId);
   return { outcome: 'reset', previous: current.diamond, tables };
 }
@@ -221,7 +240,7 @@ export function describeAdoption(chainId: number, diamond: string, deployBlock: 
     case 'reset-resumed':
       return `[deploymentEpoch] chain ${chainId}: finished an interrupted reset for Diamond ${diamond} (${r.tables.length} table(s))`;
     case 'raced':
-      return `[deploymentEpoch] chain ${chainId}: another pass adopted Diamond ${diamond} first`;
+      return `[deploymentEpoch] chain ${chainId}: another pass adopted Diamond ${r.adopted} while this one (${diamond}) was claiming — not scanning`;
     case 'refused-older':
       return (
         `[deploymentEpoch] chain ${chainId}: REFUSED to adopt Diamond ${diamond} (deploy block ${deployBlock}) — ` +

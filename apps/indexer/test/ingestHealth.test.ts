@@ -67,6 +67,25 @@ describe('readIngestHealth', () => {
     });
   });
 
+  it('states a chain that has an adopted deployment but no cursor yet, with null cursor fields — never omits it', async () => {
+    // An epoch reset cleared 421614's cursor and the scan that followed died
+    // before recreating one: the deployment row is the only trace, and it is
+    // exactly what an operator checking the redeploy needs to see.
+    const h = seeded(REQUIRED_D1_MIGRATIONS);
+    h.db
+      .prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (?, ?, ?, ?, ?)')
+      .run(421614, DIAMOND, 320_151_741, 1_050, 0);
+    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    expect(out.chains.map((c) => c.chainId)).toEqual([97, 84532, 421614]);
+    expect(out.chains[2]).toEqual({
+      chainId: 421614,
+      lastBlock: null,
+      scannedAt: null,
+      ageSeconds: null,
+      deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false },
+    });
+  });
+
   it('reports every chain with `deployment: null` while the deployment table does not exist yet', async () => {
     // The deploy-before-migration window for 0063: the schema answer must
     // still be served, never a 503 because the new table is missing.

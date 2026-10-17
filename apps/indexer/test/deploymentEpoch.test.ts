@@ -13,6 +13,7 @@ import {
   KEEP_ON_DIAMOND_CHANGE,
   adoptDeployment,
   describeAdoption,
+  isAdoptedEpoch,
   listChainScopedTables,
   listTablesResetOnDiamondChange,
   readAdoptedDeployment,
@@ -213,6 +214,15 @@ describe('adoptDeployment', () => {
     for (const t of reset) expect(countFor(h, t, BASE), t).toBe(1);
     expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: NEW, deployBlock: 500, resetPending: false });
     expect(describeAdoption(BASE, OLD, 100n, r)).toMatch(/REFUSED .* stale bundle/);
+  });
+
+  it('only the adopted epoch may scan: refused and out-raced passes may not', () => {
+    expect(isAdoptedEpoch({ outcome: 'first' })).toBe(true);
+    expect(isAdoptedEpoch({ outcome: 'same' })).toBe(true);
+    expect(isAdoptedEpoch({ outcome: 'reset', previous: OLD, tables: [] })).toBe(true);
+    expect(isAdoptedEpoch({ outcome: 'reset-resumed', tables: [] })).toBe(true);
+    expect(isAdoptedEpoch({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 })).toBe(false);
+    expect(isAdoptedEpoch({ outcome: 'raced', adopted: NEW })).toBe(false);
   });
 
   it('two passes seeing the same change: only the one whose claim landed resets', async () => {

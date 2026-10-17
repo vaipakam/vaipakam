@@ -57,14 +57,17 @@ export interface ChainIngestState {
   chainId: number;
   /** Null before the first pass under migration 0063 records one. */
   deployment: AdoptedDeployment | null;
-  /** The last block the diamond scan completed through. */
-  lastBlock: number;
-  /** When the cursor last advanced (unix seconds). */
-  scannedAt: number;
+  /** The last block the diamond scan completed through; null when the chain
+   *  has an adopted deployment but no cursor yet (an epoch reset cleared it
+   *  and no scan has recreated it). */
+  lastBlock: number | null;
+  /** When the cursor last advanced (unix seconds); null as above. */
+  scannedAt: number | null;
   /** `checkedAt − scannedAt`. NEGATIVE when the cursor's timestamp is ahead
    *  of this Worker's clock (a restored row, clock skew) — kept as it is
-   *  rather than clamped to 0, which would report an unknown as fresh. */
-  ageSeconds: number;
+   *  rather than clamped to 0, which would report an unknown as fresh. Null
+   *  when there is no cursor. */
+  ageSeconds: number | null;
 }
 
 export interface IngestHealth {
@@ -112,13 +115,28 @@ export async function readIngestHealth(
   } catch {
     // Table not there yet: every chain reports `deployment: null` below.
   }
-  const chains = (res.results ?? []).map((r) => ({
-    chainId: r.chain_id,
-    lastBlock: r.last_block,
-    scannedAt: r.updated_at,
-    ageSeconds: nowSec - r.updated_at,
-    deployment: deployments.get(r.chain_id) ?? null,
-  }));
+  // The UNION of cursor rows and deployment rows (Codex #2545 r2 P2): an
+  // epoch reset deletes the chain's cursor, and if the scan that follows
+  // fails before it recreates one (RPC identity, head read) the chain would
+  // otherwise vanish from this answer exactly while an operator is checking
+  // the redeploy. A chain with a deployment and no cursor is stated as such,
+  // with its cursor fields null — never omitted.
+  const byChain = new Map<number, ChainIngestState>();
+  for (const r of res.results ?? []) {
+    byChain.set(r.chain_id, {
+      chainId: r.chain_id,
+      lastBlock: r.last_block,
+      scannedAt: r.updated_at,
+      ageSeconds: nowSec - r.updated_at,
+      deployment: deployments.get(r.chain_id) ?? null,
+    });
+  }
+  for (const [chainId, deployment] of deployments) {
+    if (!byChain.has(chainId)) {
+      byChain.set(chainId, { chainId, lastBlock: null, scannedAt: null, ageSeconds: null, deployment });
+    }
+  }
+  const chains = [...byChain.values()].sort((a, b) => a.chainId - b.chainId);
   return { checkedAt: nowSec, schema, chains };
 }
 

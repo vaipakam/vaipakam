@@ -139,7 +139,7 @@ import {
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
-import { adoptDeployment, describeAdoption } from './deploymentEpoch';
+import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentEpoch';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -850,6 +850,15 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *  ingest DO stops its loop rather than rearming (#2409 r2). */
 export function isSchemaDeclinedSkip(skipped: string | undefined): boolean {
   return skipped === 'schema-pending' || skipped === 'schema-unknown';
+}
+
+/** The pass's bundle is not the adopted deployment epoch for the chain
+ *  (deploymentEpoch.ts: a stale build refused, or a claim lost to a
+ *  different Diamond). Declined like a schema decline — no retry within an
+ *  alarm's budget can change the bundle a build carries — so the ingest DO
+ *  stops its loop rather than rearming (Codex #2545 r2 P1). */
+export function isEpochDeclinedSkip(skipped: string | undefined): boolean {
+  return skipped === 'epoch-not-adopted';
 }
 
 /**
@@ -2090,6 +2099,15 @@ async function runChainPass(
   // same claim tested one level up, which is where it should have been
   // tested the first time.
   await _reportQuarantineForChain(env, chainId);
+
+  // Only the adopted epoch scans (Codex #2545 r2 P1). A pass refused as a
+  // stale build, or one that lost the claim to a different Diamond, would
+  // otherwise read the retired or losing Diamond, repopulate rows after the
+  // reset and advance the shared cursor. Declined, not retried: no retry can
+  // change the bundle this build carries. Placed AFTER the D1-only backfills
+  // above, which run before every return out of this function (#1527 r1),
+  // and BEFORE the first RPC request below.
+  if (!isAdoptedEpoch(adoption)) return emptyResult('epoch-not-adopted');
 
   // #1415 — identity before any chain read: a wrong-network RPC must
   // fail LOUDLY here, not silently as "caught up" below. A transport
