@@ -147,13 +147,13 @@ describe('host env', () => {
     const raw = new Proxy({} as Record<string, unknown>, {
       get: (_t, key) => {
         if (typeof key !== 'string') return undefined;
-        if (key === 'DB') return { prepare: () => null };
+        if (key === 'DB' || key === 'KEEPER_DB') return { prepare: () => null };
         return listed.has(key) ? { get: async () => `v:${key}` } : `v:${key}`;
       },
     }) as unknown as WorkerEnv;
     const resolved = (await resolveEnv(raw)) as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(resolved)) {
-      if (key === 'DB') continue;
+      if (key === 'DB' || key === 'KEEPER_DB') continue;
       expect(value, key).toBe(`v:${key}`);
     }
   });
