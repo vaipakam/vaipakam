@@ -40,9 +40,7 @@ describe('host env template', () => {
     for (const flag of ['GRACE_DEFAULT_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_COMMIT_ENABLED', 'REWARD_SANCTIONS_KEEPER_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED']) {
       expect(values[flag]).toBe('');
     }
-    // KEEPER_D1_DATABASE_ID ships empty: it is set only after the one-time
-    // cutover, and until then every tick declines naming it (#2450).
-    for (const key of [...SECRET_BINDING_KEYS, HOST_SETTINGS.apiToken, HOST_SETTINGS.accountId, HOST_SETTINGS.keeperDatabaseId, 'TG_OPS_BOT_TOKEN']) {
+    for (const key of [...SECRET_BINDING_KEYS, HOST_SETTINGS.apiToken, HOST_SETTINGS.accountId, 'TG_OPS_BOT_TOKEN']) {
       expect(values[key], key).toBe('');
     }
   });

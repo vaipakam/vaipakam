@@ -38,6 +38,10 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
 import {
+  getWorkFrontier,
+  listReleasedRemits,
+  nextFrontier,
+  putWorkFrontier,
   deploymentFloor,
   getRemitAckScanState,
   putRemitAckScanState,
@@ -230,11 +234,8 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     const mirrorCfg = mirrorFor(mirrorConfigs, r.dstChainId, remitId);
     if (!mirrorCfg) continue;
     try {
-      const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond);
-      if (sent) {
-        await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, remitId, r.dstChainId);
-        ackBudget.remaining--;
-      }
+      const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond, ackBudget);
+      if (sent) await recordAttemptBestEffort(env, baseChainId, diamond, remitId, r.dstChainId);
     } catch (err) {
       console.log(
         `[keeper] remitAck remit=${remitId} dst=${r.dstChainId} skipped: ${(err as Error).message}`,
@@ -253,6 +254,8 @@ async function sendAckFromMirror(
   // r4 — receipts key by (remitter, remitId); the remitter is the Base
   // diamond whose reservation ledger this pass is scanning.
   baseDiamond: Address,
+  /** The tick's ONE send budget (#2497 r2), charged at the broadcast. */
+  ackBudget: { remaining: number },
   // A LATE ack (a released reservation) only resolves a settled receipt: Base's
   // released branch stamps nothing for a provisional one, so sending it would
   // pay the CCIP fee every backoff window for nothing.
@@ -287,6 +290,12 @@ async function sendAckFromMirror(
     args: [BigInt(remitId), baseDiamond],
   })) as bigint;
 
+  // Charged AT THE DISPATCH (#2497 r4): before `writeContract`, so a send that
+  // broadcasts and then throws, or a record that fails after it, still counts
+  // against the cap; a decline above costs nothing, so it cannot starve the
+  // queue behind it.
+  if (ackBudget.remaining <= 0) return false;
+  ackBudget.remaining--;
   const hash = await ctx.wallet.writeContract({
     address: diamond,
     abi: REMIT_ABI,
@@ -322,6 +331,24 @@ const LATE_DONE_KIND = 'late_ack' as const;
  * ({@link lateAckDone}), when it joins the keeper's done set and is never read
  * again (Codex #2489 r1: the newest-50 window let an open one drop out).
  */
+/** Record a sent ack's attempt; a failure is logged, never thrown — the send
+ *  already happened and the budget is already charged. Without the record the
+ *  backoff restarts, which costs at most one early retry (Base finalizes
+ *  idempotently), never an extra send inside this tick. */
+async function recordAttemptBestEffort(
+  env: Env,
+  baseChainId: number,
+  diamond: Address,
+  remitId: number,
+  dstChainId: number,
+): Promise<void> {
+  try {
+    await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, remitId, dstChainId);
+  } catch (err) {
+    console.error(`[keeper] remitAck remit=${remitId} sent but its attempt was not recorded: ${(err as Error).message}`);
+  }
+}
+
 /** The destination's chain config, or undefined after saying so by name —
  *  ONE rule for both the Pending and the late paths (#2497 r2): a remit whose
  *  mirror has no configured RPC is live accounting work this keeper cannot
@@ -351,8 +378,27 @@ async function ackLateDeliveries(
   ackBudget: { remaining: number },
 ): Promise<void> {
   const done = await listWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
-  const ids = (await listReleasedRemitIds(env.DB, baseChainId, deploymentFloor(baseChainId))).filter((id) => !done.has(String(id)));
-  if (ids.length === 0) return;
+  // Read from the DONE frontier (#2497 r4), floored at the active Diamond.
+  const frontier = await getWorkFrontier(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
+  const all = await listReleasedRemits(env.DB, baseChainId, Math.max(deploymentFloor(baseChainId), frontier));
+  const ids = all.map((r) => r.remitId).filter((id) => !done.has(String(id)));
+  const advance = async (finishedNow: readonly number[]) => {
+    const fin = new Set(finishedNow.map(String));
+    const next = nextFrontier(
+      all.map((r) => ({ block: r.block, done: done.has(String(r.remitId)) || fin.has(String(r.remitId)) })),
+      frontier,
+    );
+    if (next === frontier) return;
+    try {
+      await putWorkFrontier(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, next);
+    } catch (err) {
+      console.warn(`[keeper] remitAck late: frontier not saved (${(err as Error).message}); the next tick rereads from ${frontier}`);
+    }
+  };
+  if (ids.length === 0) {
+    await advance([]);
+    return;
+  }
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
@@ -374,6 +420,7 @@ async function ackLateDeliveries(
     return r?.status === 'success' && lateAckDone(r.result as RemitReservationView);
   });
   await markWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, finished.map(String));
+  await advance(finished);
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
   for (let i = 0; i < ids.length && ackBudget.remaining > 0; i++) {
@@ -387,12 +434,9 @@ async function ackLateDeliveries(
     if (!mirrorCfg) continue;
     try {
       // eslint-disable-next-line no-await-in-loop
-      const ok = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond, true);
-      if (ok) {
-        // eslint-disable-next-line no-await-in-loop
-        await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, ids[i], Number(v.dstChainId));
-        ackBudget.remaining--;
-      }
+      const ok = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond, ackBudget, true);
+      // eslint-disable-next-line no-await-in-loop
+      if (ok) await recordAttemptBestEffort(env, baseChainId, diamond, ids[i], Number(v.dstChainId));
     } catch (err) {
       console.log(`[keeper] remitAck late remit=${ids[i]} skipped: ${(err as Error).message}`);
     }

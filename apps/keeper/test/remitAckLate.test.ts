@@ -110,3 +110,13 @@ describe('lateAckDone — the done set takes only what the chain shows finished'
     expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass').toBe(0);
   });
 });
+
+describe('nextFrontier — the done frontier moves only past confirmed-done items (#2497 r4)', () => {
+  it('stops at the first open item, passes the last when all are done, and never moves back', async () => {
+    const { nextFrontier } = await import('../src/db');
+    expect(nextFrontier([{ block: 10, done: true }, { block: 12, done: false }, { block: 15, done: true }], 0), 'first open').toBe(12);
+    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0), 'all done: past the last').toBe(16);
+    expect(nextFrontier([], 40), 'nothing read: unchanged').toBe(40);
+    expect(nextFrontier([{ block: 30, done: false }], 40), 'never backwards').toBe(40);
+  });
+});

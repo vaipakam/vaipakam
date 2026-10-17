@@ -76,6 +76,24 @@ describe('candidateOwners', () => {
   });
 });
 
+describe('planSanctionsHold — urgency order, never address order (#2497 r4)', () => {
+  it('lists the oldest observation first, so a capped tick rotates through every held owner', () => {
+    const own = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as OwnerSanctionsStatus['owner'];
+    // 200 held owners, all due; a LATER address carries an OLDER observation, so
+    // address order and urgency order disagree everywhere.
+    const statuses = Array.from({ length: 200 }, (_, i) =>
+      held({ owner: own(i + 1), lastSeenAt: NOW - 7 * 3600 - i, observeBy: NOW + DAY }),
+    );
+    const plan = planSanctionsHold(statuses, NOW);
+    expect(plan.observe).toHaveLength(200);
+    expect(plan.observe[0], 'the stalest owner, the last address, first').toBe(own(200));
+    expect(plan.observe.at(-1), 'the freshest, the first address, last').toBe(own(1));
+    // A never-observed owner outranks every observed one.
+    const fresh = planSanctionsHold([...statuses, held({ owner: own(999), lastSeenAt: 0, flaggedAt: 0, observeBy: 0 })], NOW);
+    expect(fresh.observe[0]).toBe(own(999));
+  });
+});
+
 describe('planSanctionsHold', () => {
   it('observes a held owner once its latest observation is OBSERVE_AFTER_SEC old (straddle)', () => {
     const at = (age: number) => planSanctionsHold([held({ lastSeenAt: NOW - age, observeBy: NOW - age + DAY })], NOW);

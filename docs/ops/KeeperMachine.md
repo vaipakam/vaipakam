@@ -169,8 +169,8 @@ a commit. The template documents each line. In short:
   with the account's D1 Edit permission only. Cloudflare cannot limit a token
   to one database, so it can reach every D1 database on the account. Make one
   for this machine; never reuse a deploy token. `D1_DATABASE_ID` is prefilled.
-  `KEEPER_D1_DATABASE_ID` (the keeper's private database) stays EMPTY until the
-  one-time cutover in §4a is done.
+  The keeper's private database needs no setting: its id is pinned in the code,
+  as the Worker's binding is (§4a).
 - **Runner id:** leave `KEEPER_RUNNER_ID` empty and the machine uses
   `host:<host name>`. Set it only if two machines could share a host name;
   never give two machines the same one.
@@ -194,9 +194,11 @@ today, and they move ONCE, with the keeper stopped.
 
 The machine never moves them and never applies the private migrations itself:
 the keeper's deploy is the one applier of that database. Instead, every tick
-checks, and declines naming the reason, until all of this holds:
-`KEEPER_DB` is bound (`KEEPER_D1_DATABASE_ID` set), it records every keeper
-migration, and the cutover verdict passes. That verdict is the same rule the
+checks, and declines naming the reason, until all of this holds: the private
+database, at its pinned id, records every keeper migration, and the cutover
+verdict passes. After that first pass it re-reads the old shared copies' count
+and latest write time every tick, so a keeper that writes them later stops the
+machine on its next tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
 match. So a machine that picks up the new build early stops; it does not start
 from empty state.
@@ -213,9 +215,7 @@ from empty state.
 4. **Run the cutover,** same place: `pnpm --filter @vaipakam/keeper run
    cutover` (DeploymentRunbook, "Keeper private D1 — one-time cutover"). It
    records completion only when all five tables match on both sides.
-5. **Set** `KEEPER_D1_DATABASE_ID=f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095` in
-   `/etc/vaipakam/keeper.env`.
-6. **Resume deploys** (§6). The next run installs the new build and starts the
+5. **Resume deploys** (§6). The next run installs the new build and starts the
    keeper on it. Then confirm, as in §5, that ticks run, with no `tick declined`
    line.
 

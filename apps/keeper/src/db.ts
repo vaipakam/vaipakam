@@ -898,6 +898,8 @@ export interface BudgetDeliveryRow {
   /** True for a rooted (d6) delivery (`RewardBudgetRootReceived`). */
   rooted: boolean;
   block_at: number;
+  /** The packet's block, for the pass's done frontier (#2497 r4). */
+  block: number;
 }
 
 /** Budget-packet kind (`LibRewardCustody.PACKET_KIND_BUDGET`). */
@@ -927,7 +929,7 @@ const PACKET_KIND_BUDGET = 1;
 export async function listBudgetDeliveries(db: D1Database, chainId: number, fromBlock: number): Promise<BudgetDeliveryRow[]> {
   const rows = await db
     .prepare(
-      `SELECT kind, tx_hash, args_json, block_at
+      `SELECT kind, tx_hash, args_json, block_at, block_number
          FROM activity_events
         WHERE chain_id = ?1 AND block_number >= ?2
           AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRecorded', 'IngressPacketDayListRooted',
@@ -935,12 +937,18 @@ export async function listBudgetDeliveries(db: D1Database, chainId: number, from
         ORDER BY block_number ASC, log_index ASC`,
     )
     .bind(chainId, fromBlock)
-    .all<{ kind: string; tx_hash: string; args_json: string; block_at: number }>();
-  type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number };
+    .all<{ kind: string; tx_hash: string; args_json: string; block_at: number; block_number: number }>();
+  type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number; block: number };
   const evs: Ev[] = [];
   for (const r of rows.results ?? []) {
     try {
-      evs.push({ kind: r.kind, tx: r.tx_hash, args: JSON.parse(r.args_json) as Record<string, unknown>, block_at: r.block_at });
+      evs.push({
+        kind: r.kind,
+        tx: r.tx_hash,
+        args: JSON.parse(r.args_json) as Record<string, unknown>,
+        block_at: r.block_at,
+        block: Number(r.block_number),
+      });
     } catch {
       /* an unreadable row pairs with nothing */
     }
@@ -994,6 +1002,7 @@ export async function listBudgetDeliveries(db: D1Database, chainId: number, from
       flatDayIds: matched.flat,
       rooted: matched.rooted,
       block_at: p.block_at,
+      block: p.block,
     });
   }
   return out;
@@ -1014,19 +1023,63 @@ export function flatDayListHash(dayIds: readonly string[]): string {
  *  pass skips every release in the keeper's DONE set ({@link listWorkDone}), so
  *  only open ones are read on chain. */
 export async function listReleasedRemitIds(db: D1Database, chainId: number, fromBlock: number): Promise<number[]> {
+  return (await listReleasedRemits(db, chainId, fromBlock)).map((r) => r.remitId);
+}
+
+/** {@link listReleasedRemitIds} with each release's first block, for the
+ *  late-ack pass's done frontier (#2497 r4). */
+export async function listReleasedRemits(
+  db: D1Database,
+  chainId: number,
+  fromBlock: number,
+): Promise<{ remitId: number; block: number }[]> {
   const rows = await db
     .prepare(
-      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
+      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id, MIN(block_number) AS block
          FROM activity_events
         WHERE chain_id = ?1 AND block_number >= ?2 AND kind = 'RemitReservationReleased'
         GROUP BY remit_id
         ORDER BY MIN(block_number)`,
     )
     .bind(chainId, fromBlock)
-    .all<{ remit_id: number | null }>();
+    .all<{ remit_id: number | null; block: number }>();
   return (rows.results ?? [])
-    .map((r) => r.remit_id)
-    .filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+    .filter((r): r is { remit_id: number; block: number } => typeof r.remit_id === 'number' && Number.isSafeInteger(r.remit_id) && r.remit_id > 0)
+    .map((r) => ({ remitId: r.remit_id, block: Number(r.block) }));
+}
+
+// ─── #2497 r4 — the DONE frontier of a done-set pass (keeper-private, 0003) ──
+
+/** Where a done-set pass starts reading the ledger: the first block that may
+ *  hold an item not yet confirmed done; 0 when none is recorded. */
+export async function getWorkFrontier(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind): Promise<number> {
+  const row = await db
+    .prepare('SELECT from_block FROM keeper_work_frontier WHERE chain_id = ? AND diamond = ? AND kind = ?')
+    .bind(chainId, diamond.toLowerCase(), kind)
+    .first<{ from_block: number }>();
+  const b = Number(row?.from_block ?? 0);
+  return Number.isSafeInteger(b) && b > 0 ? b : 0;
+}
+
+export async function putWorkFrontier(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, fromBlock: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_work_frontier (chain_id, diamond, kind, from_block, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (chain_id, diamond, kind) DO UPDATE SET from_block = excluded.from_block, updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, fromBlock, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/**
+ * The next frontier, from this tick's items in ledger order: the block of the
+ * first item NOT confirmed done; past the last item when every one is; and the
+ * current frontier when there were no items. Never moves backwards, never past
+ * an open item. Pure; pinned by the tests.
+ */
+export function nextFrontier(items: readonly { block: number; done: boolean }[], current: number): number {
+  for (const it of items) if (!it.done) return Math.max(current, it.block);
+  return items.length === 0 ? current : Math.max(current, items[items.length - 1].block + 1);
 }
 
 // ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────

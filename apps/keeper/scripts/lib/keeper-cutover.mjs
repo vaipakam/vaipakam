@@ -27,6 +27,9 @@ import { PRIVATE_DATABASES } from '../../../indexer/scripts/lib/d1-workers.mjs';
 
 /** Both names from their pinned registries, never spelled here. */
 export const PRIVATE_DB = PRIVATE_DATABASES.find((d) => d.binding === 'KEEPER_DB').name;
+/** The private database's pinned id, the one the Worker binds and the machine
+ *  host binds too — never taken from host config (#2497 r4). */
+export const PRIVATE_DB_ID = PRIVATE_DATABASES.find((d) => d.binding === 'KEEPER_DB').id;
 export const SHARED_DB = SUCCESSOR.name;
 
 /**

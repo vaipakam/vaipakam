@@ -22,8 +22,11 @@
  *     binds (`D1_DATABASE_ID`), with the account id and an API token.
  *
  *   - `KEEPER_DB` is a second adapter, pointed at the keeper's PRIVATE
- *     database (#2450, `KEEPER_D1_DATABASE_ID`), with the same account and
- *     token — the Worker binds both, so the machine supplies both.
+ *     database (#2450) with the same account and token — the Worker binds
+ *     both, so the machine supplies both. Its id is the PINNED one from the
+ *     D1 registry (`PRIVATE_DB_ID`), never host config (#2497 r4): a wrong
+ *     id could point the keeper at an empty or unrelated ledger whose
+ *     cutover check passes vacuously.
  *
  * A private id equal to the shared one is refused: that would be a second
  * handle onto the shared data under the private name, which the registry
@@ -37,13 +40,13 @@
 
 import { hostname as osHostname } from 'node:os';
 import { SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
+import { PRIVATE_DB_ID } from '../scripts/lib/keeper-cutover.mjs';
 import { createD1HttpDatabase } from './d1Http';
 
 /** The settings the machine host reads that a Worker never sees. */
 export const HOST_SETTINGS = {
   accountId: 'CLOUDFLARE_ACCOUNT_ID',
   databaseId: 'D1_DATABASE_ID',
-  keeperDatabaseId: 'KEEPER_D1_DATABASE_ID',
   apiToken: 'CLOUDFLARE_D1_API_TOKEN',
 } as const;
 
@@ -82,17 +85,19 @@ export function buildHostEnv(
 
   const accountId = vars[HOST_SETTINGS.accountId];
   const databaseId = vars[HOST_SETTINGS.databaseId];
-  const keeperDatabaseId = vars[HOST_SETTINGS.keeperDatabaseId];
   const apiToken = vars[HOST_SETTINGS.apiToken];
   const missingD1 = Object.values(HOST_SETTINGS).filter((k) => !vars[k]);
   if (accountId && databaseId && apiToken) {
     out.DB = createD1HttpDatabase({ accountId, databaseId, apiToken, fetchFn });
   }
   let refusedD1: string | null = null;
-  if (keeperDatabaseId && databaseId && keeperDatabaseId.toLowerCase() === databaseId.toLowerCase()) {
-    refusedD1 = `${HOST_SETTINGS.keeperDatabaseId} names the shared database (${HOST_SETTINGS.databaseId}); KEEPER_DB is left unbound`;
-  } else if (accountId && keeperDatabaseId && apiToken) {
-    out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: keeperDatabaseId, apiToken, fetchFn });
+  if (databaseId && databaseId.toLowerCase() === PRIVATE_DB_ID.toLowerCase()) {
+    // The shared setting names the keeper's private database: both handles
+    // would be one database, the barrier gone. Neither is bound.
+    refusedD1 = `${HOST_SETTINGS.databaseId} names the keeper's private database; no database is bound`;
+    delete out.DB;
+  } else if (accountId && apiToken) {
+    out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: PRIVATE_DB_ID, apiToken, fetchFn });
   }
   return { env: out as WorkerEnv, missingD1, refusedD1 };
 }

@@ -13,6 +13,7 @@ export interface Fingerprint {
 export type FingerprintRead = Fingerprint | 'absent' | null;
 export type Marker = { completedAt: number; fingerprint: Record<string, Fingerprint> } | 'none' | null;
 export const PRIVATE_DB: string;
+export const PRIVATE_DB_ID: string;
 export const SHARED_DB: string;
 export const CUTOVER_TABLES: readonly CutoverTable[];
 export function fingerprintSql(t: CutoverTable): string;

@@ -204,6 +204,10 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: 'keeper done set (#2489), keeper-private; disposable — recorded only from an on-chain read, so an empty table costs one more read per finished item and never drops an open one — #1481',
   },
+  keeper_work_frontier: {
+    class: 'decision-needed',
+    reason: "keeper done-set frontier (#2497), keeper-private; disposable — an empty table reads from the active Diamond's deploy block, and it only ever moves past items the done set confirms — #1481",
+  },
   keeper_runner_lease: {
     class: 'decision-needed',
     reason: 'one-runner keeper lease (#2503); self-expires within 10 min, so restore needs no step either way — moves to the keeper DB with #2497',

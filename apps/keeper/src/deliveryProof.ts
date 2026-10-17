@@ -48,7 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { deploymentFloor, listBudgetDeliveries, listWorkDone, markWorkDone, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, getWorkFrontier, listBudgetDeliveries, listWorkDone, nextFrontier, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -228,8 +228,16 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // Every delivery the log holds, less the ones already seen finished: work is
   // dropped only on the chain's word, never by its age.
   const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
-  const rows = (await listBudgetDeliveries(env.DB, chain.id, deploymentFloor(chain.id))).filter((r) => !done.has(r.packetHash.toLowerCase()));
-  if (rows.length === 0) return;
+  // Read from the DONE frontier (#2497 r4): every delivery below it is
+  // confirmed finished, so the ledger read is bounded by the open backlog,
+  // never by history. Floored at the active Diamond's first block.
+  const frontier = await getWorkFrontier(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
+  const all = await listBudgetDeliveries(env.DB, chain.id, Math.max(deploymentFloor(chain.id), frontier));
+  const rows = all.filter((r) => !done.has(r.packetHash.toLowerCase()));
+  if (rows.length === 0) {
+    await advanceFrontier(env, chain.id, diamond, all, done, new Set(), frontier);
+    return;
+  }
 
   const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex));
   // Packets read as finished are recorded however the tick ends (a failed
@@ -276,6 +284,33 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
     }
   } finally {
     await markWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND, [...finished]);
+    await advanceFrontier(env, chain.id, diamond, all, done, finished, frontier);
+  }
+}
+
+/** Move the done frontier past every delivery now confirmed finished — only
+ *  on the done set's word, never past an open one (`nextFrontier`). */
+async function advanceFrontier(
+  env: Env,
+  chainId: number,
+  diamond: Address,
+  all: readonly BudgetDeliveryRow[],
+  done: ReadonlySet<string>,
+  finished: ReadonlySet<string>,
+  current: number,
+): Promise<void> {
+  const next = nextFrontier(
+    all.map((r) => {
+      const k = r.packetHash.toLowerCase();
+      return { block: r.block, done: done.has(k) || finished.has(k) };
+    }),
+    current,
+  );
+  if (next === current) return;
+  try {
+    await putWorkFrontier(env.KEEPER_DB, chainId, diamond, DONE_KIND, next);
+  } catch (err) {
+    console.warn(`[keeper] deliveryProof chain=${chainId}: frontier not saved (${shortErr(err)}); the next tick rereads from ${current}`);
   }
 }
 
