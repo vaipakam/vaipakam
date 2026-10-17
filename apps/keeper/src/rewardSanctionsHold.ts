@@ -246,7 +246,8 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   // with the claim — so a bounded slice of every loan party is classified each
   // tick, and the held or confirmed ones join. Its first observation is what
   // starts the chain the forfeit window is counted from.
-  const screened = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
+  const screen = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
+  const screened = screen.statuses;
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
   // An owner with an OPEN alert who is not a candidate this tick (a screen
@@ -267,10 +268,15 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   const plan = planSanctionsHold(statuses, nowSec);
   const ctx = buildKeeperContext(env, chain, client as never);
   const budget = { writes: MAX_WRITES_PER_TICK, touched: new Set<string>() };
+  /** Observations this tick never reached because the write budget ran out. */
+  const unreached = new Set<string>();
   if (ctx?.wallet.account) {
     const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
     for (const owner of plan.observe) {
-      if (budget.writes <= 0) break;
+      if (budget.writes <= 0) {
+        unreached.add(owner);
+        continue;
+      }
       // A held owner with no chain is observed only while the oracle answers:
       // during an outage the observation records nothing, and an hourly
       // transaction would buy nothing until it recovers.
@@ -299,6 +305,13 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
+  // The screen cursor moves only now, never past a screened party whose
+  // observation the budget left unsent (#2497 r5). A party the loop REACHED is
+  // done for the screen whatever the send decided — its own rules (simulation,
+  // the oracle check) re-decide each tick — so the cursor cannot stall on one.
+  // Without a key nothing is reachable and the screen keeps moving: its reads
+  // still feed the alerts below.
+  await screen.commit(unreached);
   // Alerts reflect the state AFTER this tick's writes (#2497 r2): an owner this
   // tick sent anything for is classified again, so an observation that
   // started a chain or recorded a clean result does not raise an alert for the
@@ -406,6 +419,13 @@ export function nextScreenCursor(after: string, slice: readonly string[], read: 
   return terminal || slice.length === 0 ? '' : slice[slice.length - 1];
 }
 
+/** Which slice parties the screen may move past: read AND, if the read asked
+ *  for an observation, reached by this tick's sends (#2497 r5). An unreached
+ *  one is treated exactly like a failed read. Pure; pinned by the tests. */
+export function screenSettled(slice: readonly string[], read: readonly boolean[], unreached: ReadonlySet<string>): boolean[] {
+  return slice.map((a, i) => read[i] && !unreached.has(a));
+}
+
 /** One tick of the screen: the next slice of loan parties (skipping ones the
  *  pass already knows), classified; the held or confirmed are returned to
  *  join the candidates, and the cursor moves on. */
@@ -415,9 +435,9 @@ async function screenLoanParties(
   client: PublicClient,
   diamond: Address,
   known: ReadonlySet<string>,
-): Promise<OwnerSanctionsStatus[]> {
+): Promise<ScreenResult> {
   const total = await countLoanParties(env.DB, chainId);
-  if (total === 0) return [];
+  if (total === 0) return { statuses: [], commit: async () => {} };
   const size = screenSliceSize(total);
   if (Math.ceil(total / size) > SCREENS_PER_DAY) {
     console.warn(
@@ -433,8 +453,24 @@ async function screenLoanParties(
   const read = await readStatuses(client, diamond, toRead);
   const byOwner = new Map(toRead.map((a, i) => [a, read[i]]));
   const ok = slice.map((a) => known.has(a) || byOwner.get(a) !== null);
-  await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, terminal));
-  return read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER);
+  return {
+    statuses: read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER),
+    // The cursor is written only AFTER the tick's actions (#2497 r5): a party
+    // this slice found to need an observation that the tick could not send
+    // (the write budget ran out) counts as not done, exactly like a failed
+    // read — it leaves no other trace, so moving past it would lose it until
+    // the next cycle.
+    commit: async (unserved) => {
+      await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, screenSettled(slice, ok, unserved), terminal));
+    },
+  };
+}
+
+/** One screen slice's outcome: the parties to join the candidates, and the
+ *  cursor write, deferred until the caller knows which of them it served. */
+interface ScreenResult {
+  statuses: OwnerSanctionsStatus[];
+  commit: (unserved: ReadonlySet<string>) => Promise<void>;
 }
 
 /** The owner settlement, repeated while it makes progress: each call is

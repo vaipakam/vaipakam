@@ -239,6 +239,38 @@ async function run(shared: unknown, keeper: unknown): Promise<void> {
 const wroteScanState = (sql: string[]): boolean =>
   sql.some((q) => q.includes('keeper_remit_ack_frontier') && q.includes('INSERT'));
 
+describe('remitAck — the late path is contained (#2497 r5)', () => {
+  it('a failing release-ledger read is reported and never unwinds the tick', async () => {
+    const { restore } = install();
+    const base = db();
+    // The shared database answers everything except the late path's ledger read.
+    const shared = {
+      ...(base.handle as object),
+      prepare: (q: string) => {
+        if (q.includes('RemitReservationReleased')) throw new Error('D1 unavailable');
+        return (base.handle as { prepare: (q: string) => unknown }).prepare(q);
+      },
+    };
+    const { handle, sql } = db();
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(run(shared, handle)).resolves.toBeUndefined();
+    } finally {
+      restore();
+      spy.mockRestore();
+      warn.mockRestore();
+      log.mockRestore();
+    }
+    expect(errors.some((e) => /late deliveries failed this tick \(pending acks continue\)/.test(e))).toBe(true);
+    expect(wroteScanState(sql), 'the scan still recorded its progress').toBe(true);
+  });
+});
+
 describe('remitAck reservation scan (#1896)', () => {
   it('batches the whole window, with no per-reservation read', async () => {
     const { seen, restore } = install();

@@ -38,6 +38,8 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
 import {
+  indexedThrough,
+  pruneWorkDone,
   getWorkFrontier,
   listReleasedRemits,
   nextFrontier,
@@ -140,7 +142,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
-    await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
+    await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -219,7 +221,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
+  await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
   if (pendingIds.length === 0) return;
 
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, pendingIds);
@@ -368,6 +370,17 @@ function mirrorFor(
   return cfg;
 }
 
+/** The late path, CONTAINED (#2497 r5): it is auxiliary to the Pending acks,
+ *  so a failure of its own (the release ledger unreadable, say) is reported and
+ *  never unwinds the tick before the Pending reservations are acknowledged. */
+async function ackLateDeliveriesContained(...args: Parameters<typeof ackLateDeliveries>): Promise<void> {
+  try {
+    await ackLateDeliveries(...args);
+  } catch (err) {
+    console.error(`[keeper] remitAck late deliveries failed this tick (pending acks continue): ${(err as Error).message}`);
+  }
+}
+
 async function ackLateDeliveries(
   env: Env,
   publicClient: PublicClient,
@@ -387,10 +400,12 @@ async function ackLateDeliveries(
     const next = nextFrontier(
       all.map((r) => ({ block: r.block, done: done.has(String(r.remitId)) || fin.has(String(r.remitId)) })),
       frontier,
+      await indexedThrough(env.DB, baseChainId), // never past a block still being ingested (#2497 r5)
     );
     if (next === frontier) return;
     try {
       await putWorkFrontier(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, next);
+      await pruneWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, all.filter((r) => r.block < next).map((r) => String(r.remitId)));
     } catch (err) {
       console.warn(`[keeper] remitAck late: frontier not saved (${(err as Error).message}); the next tick rereads from ${frontier}`);
     }

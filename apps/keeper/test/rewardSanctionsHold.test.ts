@@ -20,6 +20,7 @@ import {
   PASS_CADENCE_SEC,
   candidateOwners,
   nextScreenCursor,
+  screenSettled,
   planSanctionsHold,
   SCREEN_MAX_PER_TICK,
   SCREEN_MIN_PER_TICK,
@@ -306,6 +307,14 @@ describe('the loan-party screen (Codex #2489 r2)', () => {
     expect(nextScreenCursor('0x00', s, [true, false, true], true), 'a failure on the last page still holds the cursor').toBe('0x01');
   });
 
+  it('never moves past a party whose observation the write budget left unsent (#2497 r5)', () => {
+    const s = ['0x01', '0x02', '0x03'];
+    const settled = screenSettled(s, [true, true, true], new Set(['0x02']));
+    expect(settled).toEqual([true, false, true]);
+    expect(nextScreenCursor('0x00', s, settled, true), 'held just before it, even on the last page').toBe('0x01');
+    expect(nextScreenCursor('0x00', s, screenSettled(s, [true, true, true], new Set(['0x99'])), false), 'an unreached owner outside the slice changes nothing').toBe('0x03');
+  });
+
   it('reads every original and current lender and borrower once, in address order, from the cursor', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     const ins = h.db.prepare(
@@ -320,6 +329,25 @@ describe('the loan-party screen (Codex #2489 r2)', () => {
     expect(await countLoanParties(h.d1 as D1Database, CHAIN)).toBe(4);
     expect(await listLoanPartiesAfter(h.d1 as D1Database, CHAIN, '', 10)).toEqual([w(1), w(2), w(3), w(9)]);
     expect(await listLoanPartiesAfter(h.d1 as D1Database, CHAIN, w(2), 2), 'after the cursor, bounded').toEqual([w(3), w(9)]);
+  });
+
+  it('also reads every INTERMEDIATE holder a position ever had (#2497 r5)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const w = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+    h.db
+      .prepare(
+        `INSERT INTO loans (chain_id, loan_id, offer_id, lender, borrower, lender_current_owner, borrower_current_owner,
+           principal, collateral_amount, start_block, start_at, updated_at)
+         VALUES (?, 1, 0, ?, ?, ?, ?, '0', '0', 1, 1, 1)`,
+      )
+      .run(CHAIN, w(1), w(2), w(5), w(2)); // lender position: 1 -> 4 -> 5
+    const part = h.db.prepare(`INSERT INTO loan_participants (chain_id, loan_id, wallet, role, from_at) VALUES (?, 1, ?, ?, ?)`);
+    part.run(CHAIN, w(1), 'lender', 1);
+    part.run(CHAIN, w(4), 'lender', 2); // neither the original nor the current lender
+    part.run(CHAIN, w(5), 'lender', 3);
+    part.run(CHAIN + 1, w(6), 'lender', 1); // another chain
+    expect(await listLoanPartiesAfter(h.d1 as D1Database, CHAIN, '', 10)).toEqual([w(1), w(2), w(4), w(5)]);
+    expect(await countLoanParties(h.d1 as D1Database, CHAIN)).toBe(4);
   });
 });
 

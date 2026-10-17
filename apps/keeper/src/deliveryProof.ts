@@ -48,7 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { deploymentFloor, getWorkFrontier, listBudgetDeliveries, listWorkDone, nextFrontier, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, getWorkFrontier, indexedThrough, listBudgetDeliveries, listWorkDone, nextFrontier, pruneWorkDone, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -299,16 +299,28 @@ async function advanceFrontier(
   finished: ReadonlySet<string>,
   current: number,
 ): Promise<void> {
+  // Never past what the indexer has COMPLETELY recorded (#2497 r5): a block
+  // still being ingested may gain a delivery after this read.
   const next = nextFrontier(
     all.map((r) => {
       const k = r.packetHash.toLowerCase();
       return { block: r.block, done: done.has(k) || finished.has(k) };
     }),
     current,
+    await indexedThrough(env.DB, chainId),
   );
   if (next === current) return;
   try {
     await putWorkFrontier(env.KEEPER_DB, chainId, diamond, DONE_KIND, next);
+    // The items below the new frontier can never be read again: drop their
+    // done rows so the done-set read stays bounded too (#2497 r5).
+    await pruneWorkDone(
+      env.KEEPER_DB,
+      chainId,
+      diamond,
+      DONE_KIND,
+      all.filter((r) => r.block < next).map((r) => r.packetHash.toLowerCase()),
+    );
   } catch (err) {
     console.warn(`[keeper] deliveryProof chain=${chainId}: frontier not saved (${shortErr(err)}); the next tick rereads from ${current}`);
   }

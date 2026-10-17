@@ -109,14 +109,40 @@ describe('lateAckDone — the done set takes only what the chain shows finished'
     expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond: a redeploy starts empty').toBe(0);
     expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass').toBe(0);
   });
+
+  it('prunes only the named items of one Diamond and pass, so the done set stays bounded (#2497 r5)', async () => {
+    const { pruneWorkDone } = await import('../src/db');
+    const h = createKeeperD1();
+    const db = h.d1 as KeeperD1;
+    await markWorkDone(db, 84532, '0xab', 'late_ack', ['4', '9', '12']);
+    await markWorkDone(db, 84532, '0xab', 'delivery_proof', ['4']);
+    await markWorkDone(db, 84532, '0xcd', 'late_ack', ['4']);
+    await pruneWorkDone(db, 84532, '0xAB', 'late_ack', ['4', '9']);
+    expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack'))]).toEqual(['12']);
+    expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass untouched').toBe(1);
+    expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond untouched').toBe(1);
+  });
 });
 
 describe('nextFrontier — the done frontier moves only past confirmed-done items (#2497 r4)', () => {
   it('stops at the first open item, passes the last when all are done, and never moves back', async () => {
     const { nextFrontier } = await import('../src/db');
-    expect(nextFrontier([{ block: 10, done: true }, { block: 12, done: false }, { block: 15, done: true }], 0), 'first open').toBe(12);
-    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0), 'all done: past the last').toBe(16);
-    expect(nextFrontier([], 40), 'nothing read: unchanged').toBe(40);
-    expect(nextFrontier([{ block: 30, done: false }], 40), 'never backwards').toBe(40);
+    expect(nextFrontier([{ block: 10, done: true }, { block: 12, done: false }, { block: 15, done: true }], 0, 100), 'first open').toBe(12);
+    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0, 15), 'all done: past the last indexed block').toBe(16);
+    expect(nextFrontier([], 40, 39), 'nothing read, nothing newly indexed: unchanged').toBe(40);
+    expect(nextFrontier([{ block: 30, done: false }], 40, 100), 'never backwards').toBe(40);
+  });
+
+  it('never passes what the indexer has completely recorded (#2497 r5)', async () => {
+    const { nextFrontier } = await import('../src/db');
+    // Every read item done, but the indexer is only through block 20: a delivery
+    // still landing in block 21+ must be read next tick.
+    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0, 20)).toBe(21);
+    // An item above the watermark (a partially written window) settles nothing.
+    expect(nextFrontier([{ block: 10, done: true }, { block: 25, done: true }], 0, 20)).toBe(21);
+    // An empty read moves to the watermark, so the next read starts there.
+    expect(nextFrontier([], 5, 50)).toBe(51);
+    // The watermark unreadable: the frontier does not move.
+    expect(nextFrontier([{ block: 10, done: true }], 5, null)).toBe(5);
   });
 });

@@ -819,6 +819,10 @@ const LOAN_PARTIES_SQL = `
     UNION SELECT lower(borrower) FROM loans WHERE chain_id = ?1
     UNION SELECT lower(lender_current_owner) FROM loans WHERE chain_id = ?1
     UNION SELECT lower(borrower_current_owner) FROM loans WHERE chain_id = ?1
+    -- #2497 r5 — every holder a position EVER had, not only its first and
+    -- latest: an intermediate holder can still own closed or split reward
+    -- entries. The indexer appends each acquisition to loan_participants.
+    UNION SELECT lower(wallet) FROM loan_participants WHERE chain_id = ?1
   )
   WHERE addr LIKE '0x%' AND length(addr) = 42`;
 
@@ -1077,9 +1081,51 @@ export async function putWorkFrontier(db: KeeperD1, chainId: number, diamond: st
  * current frontier when there were no items. Never moves backwards, never past
  * an open item. Pure; pinned by the tests.
  */
-export function nextFrontier(items: readonly { block: number; done: boolean }[], current: number): number {
-  for (const it of items) if (!it.done) return Math.max(current, it.block);
-  return items.length === 0 ? current : Math.max(current, items[items.length - 1].block + 1);
+export function nextFrontier(
+  items: readonly { block: number; done: boolean }[],
+  current: number,
+  /** The last block the indexer has COMPLETELY recorded (#2497 r5), or null
+   *  when it could not be read — then the frontier does not move. A block above
+   *  it may still be gaining rows, so nothing there or beyond is settled. */
+  indexedThrough: number | null,
+): number {
+  if (indexedThrough === null) return current;
+  const cap = indexedThrough + 1;
+  for (const it of items) {
+    if (it.block >= cap) break;
+    if (!it.done) return Math.max(current, Math.min(it.block, cap));
+  }
+  return Math.max(current, cap);
+}
+
+/** The last block the shared indexer has completely recorded on `chainId`
+ *  (its `diamond` cursor, advanced only after a whole window is written), or
+ *  null when it cannot be read. The keeper's done frontiers never pass it. */
+export async function indexedThrough(db: D1Database, chainId: number): Promise<number | null> {
+  try {
+    const row = await db
+      .prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`)
+      .bind(chainId)
+      .first<{ last_block: number }>();
+    const b = Number(row?.last_block);
+    return row && Number.isSafeInteger(b) && b >= 0 ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop done-set rows the frontier has moved past (#2497 r5): the ledger read
+ *  starts at the frontier, so those items can never be read again, and keeping
+ *  them would let the done-set read grow with history. Bounded by the items
+ *  this tick passed. */
+export async function pruneWorkDone(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
+  if (items.length === 0) return;
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    await db
+      .prepare(`DELETE FROM keeper_work_done WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
 }
 
 // ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────
