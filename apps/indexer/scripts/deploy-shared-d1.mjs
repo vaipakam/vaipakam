@@ -45,9 +45,13 @@
  * this script. Stated in CLAUDE.md's D1 schema discipline section.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { applyRetiredDeployment, readRetiredDeploymentsFile } from './lib/retiredDeploymentSeed.mjs';
+
+/** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const REQUIRED_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'requiredMigrations.json');
 
@@ -184,9 +188,31 @@ function main() {
     );
   }
 
+  // Retired deployments are SEEDED here, after the schema is verified current
+  // and BEFORE the publish (Codex #2545 r3): the only moment the table is
+  // guaranteed to exist and the new code is guaranteed not to be running. A
+  // seed that cannot land stops the deploy — publishing first would let the
+  // new Worker's first pass adopt the new Diamond blind, and a later seed
+  // would then have to correct it (it can, but only while that row is blind).
+  if (gate.mode === 'apply') seedRetiredDeployments();
+
   console.log('[deploy] publishing');
   const d = sh('wrangler', ['deploy', '--keep-vars'], { stdio: 'inherit' });
   if (d.status !== 0) process.exit(d.status ?? 1);
+}
+
+/** `INDEXER_RETIRED_DEPLOYMENTS_FILE` → one seed per entry; absent = nothing to seed. */
+function seedRetiredDeployments() {
+  const file = process.env.INDEXER_RETIRED_DEPLOYMENTS_FILE;
+  if (!file) return;
+  if (!existsSync(file)) fail(`[deploy] INDEXER_RETIRED_DEPLOYMENTS_FILE names a missing file: ${file} — not publishing.`);
+  const entries = readRetiredDeploymentsFile(file);
+  console.log(`[deploy] seeding ${entries.length} retired deployment(s) for the indexer's epoch reset`);
+  for (const e of entries) {
+    const r = applyRetiredDeployment(e, { cwd: ROOT });
+    if (!r.ok) fail(`[deploy] could not seed retired Diamond ${e.diamond} for chainId=${e.chainId} — not publishing.\n  ${r.output.trim()}`);
+    console.log(`  ✓ chainId=${e.chainId}: retired Diamond ${e.diamond} (deploy block ${e.deployBlock}) recorded`);
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();

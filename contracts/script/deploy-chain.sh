@@ -1447,7 +1447,14 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
-  ( cd "$INDEXER_DIR" && pnpm run deploy )
+  # A retired Diamond recorded under --fresh is seeded by the applier between
+  # the migration apply and the publish (#1566, Codex #2545 r3).
+  if [ -s "$DEPLOY_DIR/.markers/retired-deployments.json" ]; then
+    echo "  retired deployment(s) to seed before publishing: $DEPLOY_DIR/.markers/retired-deployments.json"
+    ( cd "$INDEXER_DIR" && INDEXER_RETIRED_DEPLOYMENTS_FILE="$DEPLOY_DIR/.markers/retired-deployments.json" pnpm run deploy )
+  else
+    ( cd "$INDEXER_DIR" && pnpm run deploy )
+  fi
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

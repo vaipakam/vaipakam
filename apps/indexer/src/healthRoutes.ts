@@ -50,6 +50,9 @@ export interface AdoptedDeployment {
   adoptedAt: number;
   /** True while a Diamond-change reset is claimed but its batch has not landed. */
   resetPending: boolean;
+  /** True when a first pass recorded this Diamond with nothing reset; a
+   *  retired-Diamond seed may still replace it (see deploymentEpoch.ts). */
+  adoptedBlind: boolean;
 }
 
 /** One scanned chain's ingest position. */
@@ -102,18 +105,24 @@ export async function readIngestHealth(
   const deployments = new Map<number, AdoptedDeployment>();
   try {
     const d = await db
-      .prepare(`SELECT chain_id, diamond, deploy_block, adopted_at, reset_pending FROM indexer_deployment`)
-      .all<{ chain_id: number; diamond: string; deploy_block: number; adopted_at: number; reset_pending: number }>();
+      .prepare(`SELECT chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind FROM indexer_deployment`)
+      .all<{ chain_id: number; diamond: string; deploy_block: number; adopted_at: number; reset_pending: number; adopted_blind: number }>();
     for (const r of d.results ?? []) {
       deployments.set(r.chain_id, {
         diamond: r.diamond,
         deployBlock: r.deploy_block,
         adoptedAt: r.adopted_at,
         resetPending: r.reset_pending !== 0,
+        adoptedBlind: r.adopted_blind !== 0,
       });
     }
-  } catch {
-    // Table not there yet: every chain reports `deployment: null` below.
+  } catch (err) {
+    // Only the KNOWN pre-migration case is tolerated: the table is not there
+    // yet, and every chain reports `deployment: null` below. Any other
+    // failure — a transient D1 fault, a malformed schema — propagates to the
+    // route's 503, so a failed read never masquerades as "no adopted epoch"
+    // (Codex #2545 r3 P2).
+    if (!/no such table/i.test((err as Error).message ?? '')) throw err;
   }
   // The UNION of cursor rows and deployment rows (Codex #2545 r2 P2): an
   // epoch reset deletes the chain's cursor, and if the scan that follows

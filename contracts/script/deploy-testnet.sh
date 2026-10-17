@@ -209,6 +209,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/retired-deployment.sh
+source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -705,48 +707,22 @@ archive_chain_state() {
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
 }
 
-# Helper: record the RETIRED Diamond for the indexer (#1566, Codex #2545 r1).
-#
-# The indexer owns deployment epochs: `apps/indexer/src/deploymentEpoch.ts`
-# keeps, per chain, the Diamond its rows were indexed from (`indexer_deployment`)
-# and resets the chain's chain-scoped rows itself when the bundle names a
-# different one — cursor included, so the scan reseeds from the new deploy
-# block. This script therefore no longer deletes D1 rows (its old schema
-# introspection returned nothing on D1 and the purge skipped silently). It
-# states one fact the indexer cannot know on its own: which Diamond the rows
-# that exist today came from. A chain already recorded is left alone (the
-# record is the indexer's; this run only seeds a missing one).
-#
-# Best-effort, loud: when wrangler is not authenticated or the table is not
-# there yet (migration 0063 not applied), the exact statement is printed for
-# the operator to run after the indexer deploy — nothing is skipped silently.
+# Helper: record the RETIRED Diamond for the indexer (#1566, Codex #2545 r1–r3).
+# Writes the marker the indexer's deploy seeds from (between migration apply
+# and publish) and tries the seed right away. See lib/retired-deployment.sh.
 record_retired_diamond_for_indexer() {
   local prior_diamond="${1:-}" prior_block="${2:-}"
-  local indexer_dir="$REPO_ROOT/apps/indexer"
   if [ -z "$prior_diamond" ] || [ "$prior_diamond" = "null" ]; then
     echo "    (no prior Diamond to record — a first deploy, or the artifact was already archived;"
-    echo "     if rows from a retired Diamond exist in D1, record it by hand with this shape, then"
-    echo "     the indexer's next pass under the new bundle resets the chain)"
-    echo "     INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending)"
-    echo "       VALUES ($CHAIN_ID, '<retired diamond>', <its deployBlock>, strftime('%s','now'), 0)"
-    echo "       ON CONFLICT(chain_id) DO NOTHING;"
+    echo "     if rows from a retired Diamond exist in D1, write $MARKERS_DIR/retired-deployments.json as"
+    echo "     [{\"chainId\": $CHAIN_ID, \"diamond\": \"<retired>\", \"deployBlock\": <its deployBlock>}] and the"
+    echo "     indexer's deploy seeds it; or: node apps/indexer/scripts/lib/retiredDeploymentSeed.mjs apply <file>)"
     return 0
   fi
-  [ -n "$prior_block" ] && [ "$prior_block" != "null" ] || prior_block=0
-  local sql="INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES ($CHAIN_ID, '$prior_diamond', $prior_block, strftime('%s','now'), 0) ON CONFLICT(chain_id) DO NOTHING;"
-  echo "  recording retired Diamond $prior_diamond (deploy block $prior_block) for the indexer on chainId=$CHAIN_ID..."
-  if [ ! -d "$indexer_dir/node_modules" ]; then
-    echo "    ⚠ apps/indexer has no node_modules here — run this against vaipakam-warm after the indexer deploy:"
-    echo "      $sql"
-    return 0
-  fi
-  if ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm --remote --command "$sql" 2>&1 | grep -qE "Executed|rows (read|written)" ); then
-    echo "    ✓ recorded — the indexer's next pass under the new bundle resets this chain's chain-scoped rows"
-  else
-    echo "    ⚠ could not record it (wrangler not authenticated, D1 unreachable, or migration 0063 not applied yet)."
-    echo "      Run this against vaipakam-warm after the indexer deploy, then confirm /health/ingest names the NEW Diamond:"
-    echo "      $sql"
-  fi
+  local file
+  file=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "$prior_diamond" "$prior_block")
+  echo "  recorded retired Diamond $prior_diamond (deploy block ${prior_block:-0}) for chainId=$CHAIN_ID in $file"
+  seed_retired_deployments_now "$REPO_ROOT" "$file"
 }
 
 # Helper: re-seed indexer_cursor at the chain's safe head. Called
@@ -1908,7 +1884,18 @@ phase_cf_indexer() {
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
-  ( cd "$INDEXER_DIR" && pnpm run deploy )
+  # A retired Diamond recorded by the contracts phase (lib/retired-deployment.sh)
+  # is SEEDED by the applier between the migration apply and the publish —
+  # before the new code can run, so its first pass finds the retired Diamond
+  # and resets the chain rather than adopting the new one blind (#1566,
+  # Codex #2545 r3).
+  local retired="$MARKERS_DIR/retired-deployments.json"
+  if [ -s "$retired" ]; then
+    echo "  retired deployment(s) to seed before publishing: $retired"
+    ( cd "$INDEXER_DIR" && INDEXER_RETIRED_DEPLOYMENTS_FILE="$retired" pnpm run deploy )
+  else
+    ( cd "$INDEXER_DIR" && pnpm run deploy )
+  fi
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

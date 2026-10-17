@@ -23,7 +23,8 @@ const DDL = [
   `CREATE TABLE indexer_deployment (
      chain_id INTEGER PRIMARY KEY, diamond TEXT NOT NULL,
      deploy_block INTEGER NOT NULL, adopted_at INTEGER NOT NULL,
-     reset_pending INTEGER NOT NULL DEFAULT 0
+     reset_pending INTEGER NOT NULL DEFAULT 0,
+     adopted_blind INTEGER NOT NULL DEFAULT 0
    )`,
 ];
 const DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -61,7 +62,7 @@ describe('readIngestHealth', () => {
           lastBlock: 500,
           scannedAt: 1_000,
           ageSeconds: 100,
-          deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false },
+          deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, adoptedBlind: false },
         },
       ],
     });
@@ -82,8 +83,22 @@ describe('readIngestHealth', () => {
       lastBlock: null,
       scannedAt: null,
       ageSeconds: null,
-      deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false },
+      deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false, adoptedBlind: false },
     });
+  });
+
+  it('a deployment read that fails for any reason other than the missing table is a failure, not an empty answer', async () => {
+    const h = seeded(REQUIRED_D1_MIGRATIONS);
+    const inner = h.d1 as { prepare: (sql: string) => unknown };
+    const faulty = {
+      prepare: (sql: string) => {
+        if (/FROM indexer_deployment/.test(sql)) throw new Error('D1_ERROR: internal error');
+        return inner.prepare(sql);
+      },
+    };
+    await expect(readIngestHealth(faulty as never, createSchemaGate(), 1_100)).rejects.toThrow(/internal error/);
+    const res = await handleIngestHealth(faulty as never);
+    expect(res.status).toBe(503);
   });
 
   it('reports every chain with `deployment: null` while the deployment table does not exist yet', async () => {

@@ -716,10 +716,14 @@ a change, resets the chain's chain-scoped rows — every table carrying
 `src/diamondEpochKeep.json` names — atomically with its own completion mark,
 so the cursor reseeds from the new deploy block. The deploy scripts no
 longer purge D1 themselves; a `--fresh` redeploy RECORDS the retired Diamond
-and the indexer's next pass does the rest. The first record for a chain
-resets nothing (nothing says which Diamond its existing rows came from), so
-a chain that predates this table needs its retired Diamond recorded once by
-hand. `/health/ingest` states the adopted Diamond per chain.
+in `deployments/<slug>/.markers/retired-deployments.json`, the indexer's
+deploy (`deploy-shared-d1.mjs apply`, via `INDEXER_RETIRED_DEPLOYMENTS_FILE`)
+SEEDS it between the migration apply and the publish, and the indexer's next
+pass does the rest. The seed statement lives in ONE place,
+`apps/indexer/scripts/lib/retiredDeploymentSeed.mjs`. A record a pass wrote
+on its own resets nothing and is marked `adopted_blind`; a later seed may
+replace it, never an epoch earned by a reset. `/health/ingest` states the
+adopted Diamond per chain (and a chain with a deployment but no cursor).
 
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into

@@ -17,7 +17,12 @@ import {
   listChainScopedTables,
   listTablesResetOnDiamondChange,
   readAdoptedDeployment,
+  resetChainAs,
 } from '../src/deploymentEpoch';
+// The seed statement is a script-side module (the deploy runs it); it is
+// exercised here against the real migrated schema so its upsert semantics are
+// pinned where the epoch logic that depends on them is.
+import { seedRetiredDeploymentSql } from '../scripts/lib/retiredDeploymentSeed.mjs';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const migrations = () =>
@@ -74,7 +79,7 @@ function seedEveryChainScopedTable(h: ReturnType<typeof createSqliteD1>, tables:
       }
       try {
         h.db
-          .prepare(`INSERT INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`)
+          .prepare(`INSERT OR IGNORE INTO "${t}" (${names.map((n) => `"${n}"`).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`)
           .run(...values);
       } catch (err) {
         throw new Error(`could not seed ${t}: ${(err as Error).message}`);
@@ -105,6 +110,19 @@ describe('listChainScopedTables', () => {
     expect(tables).toEqual([...new Set(tables)].sort());
   });
 
+  it('the one-query answer equals a per-table pragma oracle on the real schema', async () => {
+    // The runtime reads the DDL text (one query, within the pass's D1 budget);
+    // the oracle asks SQLite per table. A DDL comment that merely mentions
+    // the column, or a column named like it, would show up here.
+    const h = createSqliteD1(migrations());
+    const names = (h.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).all() as Array<{ name: string }>).map((r) => r.name);
+    const oracle = names.filter(
+      (t) => (h.db.prepare(`SELECT count(*) AS n FROM pragma_table_info(?) WHERE name = 'chain_id'`).get(t) as { n: number }).n === 1,
+    );
+    expect(await listChainScopedTables(h.d1 as never)).toEqual(oracle);
+    expect(oracle.length).toBeGreaterThan(30);
+  });
+
   it('every keep entry names a real table that carries chain_id', async () => {
     const h = createSqliteD1(migrations());
     const tables = await listChainScopedTables(h.d1 as never);
@@ -131,6 +149,7 @@ describe('adoptDeployment', () => {
       deployBlock: 100,
       adoptedAt: 1_000,
       resetPending: false,
+      adoptedBlind: true,
     });
     for (const t of tables) expect(countFor(h, t, BASE), t).toBe(1);
     expect(describeAdoption(BASE, OLD, 100n, r)).toMatch(/first record, no reset/);
@@ -178,6 +197,7 @@ describe('adoptDeployment', () => {
       deployBlock: 500,
       adoptedAt: 3_000,
       resetPending: false,
+      adoptedBlind: false,
     });
     expect(await readAdoptedDeployment(h.d1 as never, ARB)).toMatchObject({ diamond: OLD, deployBlock: 7 });
     expect(describeAdoption(BASE, NEW, 500n, r)).toMatch(/Diamond changed .* → .*; reset \d+ chain-scoped table/);
@@ -223,6 +243,76 @@ describe('adoptDeployment', () => {
     expect(isAdoptedEpoch({ outcome: 'reset-resumed', tables: [] })).toBe(true);
     expect(isAdoptedEpoch({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 })).toBe(false);
     expect(isAdoptedEpoch({ outcome: 'raced', adopted: NEW })).toBe(false);
+  });
+
+  it('a reset whose claim was overtaken by a later deployment deletes nothing and is not owned', async () => {
+    const h = createSqliteD1(migrations());
+    const reset = (await listChainScopedTables(h.d1 as never)).filter(
+      (t) => t !== 'indexer_deployment' && !Object.hasOwn(KEEP_ON_DIAMOND_CHANGE, t),
+    );
+    seedEveryChainScopedTable(h, reset);
+    // B claimed, paused; C (deployed later) replaced the row and holds its own pending reset.
+    const C = '0x00000000000000000000000000000000000000cc';
+    h.db
+      .prepare(`INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind) VALUES (?, ?, 900, 5000, 1, 0)`)
+      .run(BASE, C);
+    const r = await resetChainAs(h.d1 as never, { chainId: BASE, diamond: NEW, deployBlock: 500 });
+    expect(r.owned).toBe(false);
+    for (const t of reset) expect(countFor(h, t, BASE), `${t} untouched by the overtaken claim`).toBe(1);
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: C, deployBlock: 900, resetPending: true });
+    // And C's own claim, when it runs, owns the reset.
+    const c = await resetChainAs(h.d1 as never, { chainId: BASE, diamond: C, deployBlock: 900 });
+    expect(c.owned).toBe(true);
+    for (const t of reset) expect(countFor(h, t, BASE), t).toBe(0);
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: C, resetPending: false });
+  });
+
+  it('a pass that overtakes its own claim mid-reset reports raced and does not scan', async () => {
+    const h = createSqliteD1(migrations());
+    await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: OLD, deployBlock: 100n, nowSec: 1_000 });
+    // Make the claim UPDATE succeed but the batch find a different owner: a
+    // D1 wrapper that swaps the record to C right after the claim lands.
+    const C = '0x00000000000000000000000000000000000000cc';
+    const inner = h.d1 as { prepare: (sql: string) => unknown; batch: (s: unknown[]) => Promise<unknown> };
+    const wrapped = {
+      prepare: (sql: string) => inner.prepare(sql),
+      batch: async (statements: unknown[]) => {
+        h.db.prepare(`UPDATE indexer_deployment SET diamond = ?, deploy_block = 900, reset_pending = 1 WHERE chain_id = ?`).run(C, BASE);
+        return inner.batch(statements);
+      },
+    };
+    const r = await adoptDeployment(wrapped as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 2_000 });
+    expect(r).toEqual({ outcome: 'raced', adopted: C });
+    expect(isAdoptedEpoch(r)).toBe(false);
+  });
+
+  it('seeding a retired Diamond: inserts, corrects a BLIND row, never replaces an earned epoch', async () => {
+    const h = createSqliteD1(migrations());
+    const reset = (await listChainScopedTables(h.d1 as never)).filter(
+      (t) => t !== 'indexer_deployment' && !Object.hasOwn(KEEP_ON_DIAMOND_CHANGE, t),
+    );
+    // 1. No row: the seed records the retired Diamond; the next pass resets.
+    h.db.exec(seedRetiredDeploymentSql({ chainId: BASE, diamond: OLD, deployBlock: 100 }));
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: OLD, deployBlock: 100, adoptedBlind: false });
+    seedEveryChainScopedTable(h, reset);
+    expect((await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 3_000 })).outcome).toBe('reset');
+    for (const t of reset) expect(countFor(h, t, BASE), t).toBe(0);
+    // 2. The seed arrives AFTER the new Worker's first pass adopted blind (the
+    //    published-before-seeded race): the blind row is replaced and the next
+    //    pass resets.
+    h.db.prepare(`DELETE FROM indexer_deployment WHERE chain_id = ?`).run(ARB);
+    seedEveryChainScopedTable(h, reset);
+    expect((await adoptDeployment(h.d1 as never, { chainId: ARB, diamond: NEW, deployBlock: 500n, nowSec: 3_000 })).outcome).toBe('first');
+    h.db.exec(seedRetiredDeploymentSql({ chainId: ARB, diamond: OLD, deployBlock: 100 }));
+    expect(await readAdoptedDeployment(h.d1 as never, ARB)).toMatchObject({ diamond: OLD, deployBlock: 100, adoptedBlind: false });
+    expect((await adoptDeployment(h.d1 as never, { chainId: ARB, diamond: NEW, deployBlock: 500n, nowSec: 4_000 })).outcome).toBe('reset');
+    for (const t of reset) expect(countFor(h, t, ARB), t).toBe(0);
+    // 3. A second seed against an epoch EARNED by a reset changes nothing: no second reset.
+    seedEveryChainScopedTable(h, reset);
+    h.db.exec(seedRetiredDeploymentSql({ chainId: ARB, diamond: OLD, deployBlock: 100 }));
+    expect(await readAdoptedDeployment(h.d1 as never, ARB)).toMatchObject({ diamond: NEW, deployBlock: 500, adoptedBlind: false });
+    expect((await adoptDeployment(h.d1 as never, { chainId: ARB, diamond: NEW, deployBlock: 500n, nowSec: 5_000 })).outcome).toBe('same');
+    for (const t of reset) expect(countFor(h, t, ARB), t).toBe(1);
   });
 
   it('two passes seeing the same change: only the one whose claim landed resets', async () => {
