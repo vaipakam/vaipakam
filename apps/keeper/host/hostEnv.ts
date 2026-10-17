@@ -21,9 +21,13 @@
  *   - `DB` is the D1 HTTP adapter, pointed at the same database the Worker
  *     binds (`D1_DATABASE_ID`), with the account id and an API token.
  *
- * Without the three D1 settings `DB` is left absent, which the tick already
- * treats as a maintenance build: it declines the whole tick, by name, rather
- * than running passes against no database.
+ *   - `KEEPER_DB` is a second adapter, pointed at the keeper's PRIVATE
+ *     database (#2450, `KEEPER_D1_DATABASE_ID`), with the same account and
+ *     token — the Worker binds both, so the machine supplies both.
+ *
+ * A database whose settings are missing is left absent, which the tick
+ * already treats as a maintenance build: it declines the whole tick, naming
+ * the unbound database, rather than running passes against half the state.
  */
 
 import { hostname as osHostname } from 'node:os';
@@ -34,6 +38,7 @@ import { createD1HttpDatabase } from './d1Http';
 export const HOST_SETTINGS = {
   accountId: 'CLOUDFLARE_ACCOUNT_ID',
   databaseId: 'D1_DATABASE_ID',
+  keeperDatabaseId: 'KEEPER_D1_DATABASE_ID',
   apiToken: 'CLOUDFLARE_D1_API_TOKEN',
 } as const;
 
@@ -70,10 +75,14 @@ export function buildHostEnv(
 
   const accountId = vars[HOST_SETTINGS.accountId];
   const databaseId = vars[HOST_SETTINGS.databaseId];
+  const keeperDatabaseId = vars[HOST_SETTINGS.keeperDatabaseId];
   const apiToken = vars[HOST_SETTINGS.apiToken];
   const missingD1 = Object.values(HOST_SETTINGS).filter((k) => !vars[k]);
   if (accountId && databaseId && apiToken) {
     out.DB = createD1HttpDatabase({ accountId, databaseId, apiToken, fetchFn });
+  }
+  if (accountId && keeperDatabaseId && apiToken) {
+    out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: keeperDatabaseId, apiToken, fetchFn });
   }
   return { env: out as WorkerEnv, missingD1 };
 }

@@ -343,10 +343,15 @@ export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly big
  * dispatch (Codex #2489 r2): the live per-day mark this used to filter by is
  * deleted by a release and rewritten by a later remit of the same days, so a
  * delivery that executed after its release rebuilt an empty or wrong list
- * forever. Only a reservation dispatched before the record existed falls back
- * to the live mark. Then chunk, root — and refuse unless the rebuilt root
- * equals the reservation's AND the packet's, so a wrong list is never
- * submitted.
+ * forever. Then chunk, root — and refuse unless the rebuilt root equals the
+ * reservation's AND the packet's, so a wrong list is never submitted.
+ *
+ * A reservation WITHOUT the record is declined, never rebuilt from the live
+ * mark (#2516 forbids it, and this used to be the fallback). Slices 2–3 reach
+ * a chain only by fresh deploy (owner decision O1 = A), so every reservation a
+ * Diamond running this code holds carries the record; one that does not is an
+ * unknown, logged by name, and the day stays gated rather than proven from a
+ * list that may have been rewritten.
  */
 async function rebuildRootedList(
   baseClient: PublicClient,
@@ -367,24 +372,13 @@ async function rebuildRootedList(
     return null;
   }
   const recorded = fundedDaysFromBits(r.dayIds, r.fundedDayBits ?? []);
-  if (recorded !== null) return checkedRoot(recorded, r.dayListRoot, packetRoot, remitId);
-  const remitted = await batchedRead(
-    baseClient as never,
-    r.dayIds.map((d) => ({
-      address: baseDiamond,
-      abi: ABI,
-      functionName: 'getRewardBudgetRemitted' as const,
-      args: [chainId, d] as const,
-    })),
-    `deliveryProof remitted remit=${remitId}`,
-  );
-  const funded: bigint[] = [];
-  for (let i = 0; i < r.dayIds.length; i++) {
-    const res = remitted[i];
-    if (!res || res.status !== 'success') return null; // never guess a list
-    if ((res.result as bigint) !== 0n) funded.push(r.dayIds[i]);
+  if (recorded === null) {
+    console.warn(
+      `[keeper] deliveryProof remit=${remitId}: the reservation carries no funded-day record, so its list is not rebuilt (never from the live remitted map) — the day stays gated`,
+    );
+    return null;
   }
-  return checkedRoot(funded, r.dayListRoot, packetRoot, remitId);
+  return checkedRoot(recorded, r.dayListRoot, packetRoot, remitId);
 }
 
 /** `funded`, only when its d6 root equals BOTH the reservation's and the
