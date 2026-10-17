@@ -499,7 +499,7 @@ const PINNED = new Map([
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "5f91cb0ab0b5"]],
   ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "4358e3667e43"]],
   ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "b0b59696db74"]],
-  ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "4dac8a4cde88"]],
+  ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "b08c4de23ba5"]],
 ]);
 
 /**
