@@ -1,0 +1,334 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
+
+/**
+ * @title  SanctionsList
+ * @notice Vaipakam's own on-chain record of OFAC SDN digital-currency
+ *         addresses, optionally OR-composed with RedStone's Sanctions Oracle
+ *         where that oracle is deployed. A wallet is sanctioned when EITHER
+ *         source flags it. This is the sanctions oracle a mainnet Diamond is
+ *         meant to screen against (owner decision on #2443, 2026-10-17).
+ *
+ * @dev    Why it exists: Chainalysis retired its on-chain Sanctions Oracle
+ *         (last updated 2026-03-18). Its contracts still answer, so a Diamond
+ *         pointed at it screens against a frozen list with nothing on-chain
+ *         to say so. The replacement keeps the list's freshness and
+ *         provenance ON-CHAIN, where any reader can check them:
+ *
+ *         1. **Updates are attributable to a published OFAC file.** Every
+ *            update records the SHA-256 of the exact `sdn_advanced.xml` it
+ *            was built from and that file's publication identifier (its
+ *            `DateOfIssue`), plus the block time it was applied. An update
+ *            with no changes is allowed and still recorded: "checked against
+ *            the 2026-10-15 publication, nothing changed" is a freshness fact
+ *            worth stating. Note the difference between the two clocks:
+ *            `lastUpdatedAt` says when the updater last synced, the
+ *            publication id says how new the file it synced against was.
+ *
+ *         2. **The list is reconstructible from logs and enumerable from
+ *            state.** Every listing and delisting emits its own event, and
+ *            the current set is enumerable on-chain (`listedPage`), so the
+ *            off-chain diff tool reads the live set from state at one block
+ *            instead of depending on a node that keeps old logs.
+ *
+ *         3. **An update applies to the state it was computed against, or not
+ *            at all.** `applyUpdate` takes the `listVersion` its diff was
+ *            computed from and refuses any other; adding an address already
+ *            listed, removing one not listed, or adding and removing the same
+ *            address in one update each revert. A stale or double-submitted
+ *            diff therefore fails loudly instead of leaving a list that
+ *            matches no OFAC publication.
+ *
+ *         4. **Roles are split.** The owner (the chain's admin, two-step
+ *            transfer, renouncing disabled) decides WHO may update; updaters
+ *            change the list's CONTENT and nothing else. The owner is not an
+ *            updater unless it appoints itself.
+ *
+ *         5. **Attribution.** `sanctionSource` says which source flags an
+ *            address, so a surface that tells a flagged user whom to contact
+ *            can name OFAC's list or RedStone's oracle truthfully.
+ *            `listedByOwnList` answers for the own record alone and never
+ *            touches the secondary.
+ *
+ *         The OR rule and the secondary-failure semantics (a secondary
+ *         revert propagates for an address the own record does not flag)
+ *         are `ComposedSanctionsList`'s, shared with `TestnetSanctionsOverlay`
+ *         — see that base for why propagating is the right choice.
+ *
+ *         Scope of the own record: OFAC SDN only, and only addresses in EVM
+ *         format (`0x` + 40 hex) — an address listed under any digital
+ *         currency label is the same key on every EVM chain. EU, UK and UN
+ *         lists are not in it; on a chain where RedStone's oracle is
+ *         configured as the secondary, that oracle's own coverage applies on
+ *         top. A designation reaches the record only when an updater applies
+ *         it, which is why the freshness views exist.
+ */
+contract SanctionsList is ComposedSanctionsList, Ownable2Step {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
+    /// @dev The currently listed addresses.
+    EnumerableSet.AddressSet private _listed;
+
+    /// @notice The update version at which `who` was listed, or 0 when it is
+    ///         not listed. Versions start at 1.
+    mapping(address who => uint64 version) public listedSinceVersion;
+
+    /// @notice Addresses allowed to apply updates.
+    mapping(address account => bool enabled) public isUpdater;
+
+    /// @notice The number of updates applied so far; 0 before the first.
+    uint64 public listVersion;
+
+    /// @notice Block timestamp of the last applied update; 0 before the first.
+    uint64 public lastUpdatedAt;
+
+    /// @notice SHA-256 of the OFAC source file the last update was built
+    ///         from; zero before the first update.
+    bytes32 public sourceHash;
+
+    /// @notice The publication identifier of that file (its `DateOfIssue`,
+    ///         `YYYY-MM-DD`); empty before the first update.
+    string public sourcePublicationId;
+
+    /// @notice An updater was appointed or removed.
+    /// @custom:event-category informational/admin
+    event UpdaterSet(address indexed account, bool enabled);
+    /// @notice `who` was added to the own record by update `version`.
+    /// @custom:event-category informational/config
+    event AddressListed(address indexed who, uint64 indexed version);
+    /// @notice `who` was removed from the own record by update `version`.
+    /// @custom:event-category informational/config
+    event AddressDelisted(address indexed who, uint64 indexed version);
+    /// @notice An update was applied. Emitted once per update, after its
+    ///         per-address events.
+    /// @param version              The new `listVersion`.
+    /// @param sourceHash           SHA-256 of the OFAC file it was built from.
+    /// @param sourcePublicationId  That file's publication identifier.
+    /// @param added                Addresses listed by this update.
+    /// @param removed              Addresses delisted by this update.
+    /// @param listedCount          Addresses listed after it.
+    /// @param updater              Who applied it.
+    /// @custom:event-category informational/config
+    event ListUpdated(
+        uint64 indexed version,
+        bytes32 indexed sourceHash,
+        string sourcePublicationId,
+        uint256 added,
+        uint256 removed,
+        uint256 listedCount,
+        address indexed updater
+    );
+
+    /// @notice The caller is not an updater.
+    error NotUpdater(address caller);
+    /// @notice A non-zero secondary was given with no code behind it.
+    error SecondaryHasNoCode(address secondary);
+    /// @notice The diff was computed against a different list version.
+    error StaleListVersion(uint64 expected, uint64 actual);
+    /// @notice The zero address cannot be listed, delisted or appointed.
+    error ZeroAddress();
+    /// @notice The address to add is already listed.
+    error AlreadyListed(address who);
+    /// @notice The address to remove is not listed.
+    error NotListed(address who);
+    /// @notice One update named the same address to add and to remove.
+    error AddedAndRemovedInOneUpdate(address who);
+    /// @notice An update named no source file hash.
+    error MissingSourceHash();
+    /// @notice An update named no publication identifier.
+    error MissingPublicationId();
+    /// @notice Renouncing ownership is disabled: it would leave the updater
+    ///         set impossible to rotate.
+    error RenounceDisabled();
+
+    /// @param owner_      The chain's admin. Two-step ownership applies to
+    ///                    every later transfer.
+    /// @param secondary_  RedStone's Sanctions Oracle on this chain, or
+    ///                    `address(0)` where it is not deployed. Immutable.
+    constructor(address owner_, address secondary_) Ownable(owner_) ComposedSanctionsList(secondary_) {}
+
+    modifier onlyUpdater() {
+        if (!isUpdater[msg.sender]) revert NotUpdater(msg.sender);
+        _;
+    }
+
+    // ── Roles ─────────────────────────────────────────────────────────
+
+    /// @notice Appoint or remove an updater.
+    function setUpdater(address account, bool enabled) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        isUpdater[account] = enabled;
+        emit UpdaterSet(account, enabled);
+    }
+
+    /// @notice Disabled — see {RenounceDisabled}.
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
+    }
+
+    // ── Updates ───────────────────────────────────────────────────────
+
+    /// @notice Apply one update built from one OFAC publication: list
+    ///         `toAdd`, delist `toRemove`, and record the source.
+    /// @dev    All or nothing. Additions are applied before removals, so an
+    ///         address in both lists is caught by its `listedSinceVersion`
+    ///         stamp rather than silently netting to no change.
+    /// @param expectedVersion      The `listVersion` the diff was computed
+    ///                             against.
+    /// @param toAdd                Addresses to list; none may be listed.
+    /// @param toRemove             Addresses to delist; each must be listed.
+    /// @param sourceHash_          SHA-256 of the OFAC file.
+    /// @param sourcePublicationId_ That file's publication identifier.
+    function applyUpdate(
+        uint64 expectedVersion,
+        address[] calldata toAdd,
+        address[] calldata toRemove,
+        bytes32 sourceHash_,
+        string calldata sourcePublicationId_
+    ) external onlyUpdater {
+        uint64 current = listVersion;
+        if (expectedVersion != current) revert StaleListVersion(expectedVersion, current);
+        if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
+        if (bytes(sourcePublicationId_).length == 0) revert MissingPublicationId();
+
+        uint64 version = current + 1;
+        uint256 nAdd = toAdd.length;
+        for (uint256 i; i < nAdd; ++i) {
+            address who = toAdd[i];
+            if (who == address(0)) revert ZeroAddress();
+            if (!_listed.add(who)) revert AlreadyListed(who);
+            listedSinceVersion[who] = version;
+            emit AddressListed(who, version);
+        }
+        uint256 nRemove = toRemove.length;
+        for (uint256 i; i < nRemove; ++i) {
+            address who = toRemove[i];
+            if (who == address(0)) revert ZeroAddress();
+            if (listedSinceVersion[who] == version) revert AddedAndRemovedInOneUpdate(who);
+            if (!_listed.remove(who)) revert NotListed(who);
+            delete listedSinceVersion[who];
+            emit AddressDelisted(who, version);
+        }
+
+        listVersion = version;
+        lastUpdatedAt = uint64(block.timestamp);
+        sourceHash = sourceHash_;
+        sourcePublicationId = sourcePublicationId_;
+        emit ListUpdated(version, sourceHash_, sourcePublicationId_, nAdd, nRemove, _listed.length(), msg.sender);
+    }
+
+    // ── Reads ─────────────────────────────────────────────────────────
+
+    /// @notice RedStone's oracle (or another secondary) this list ORs with,
+    ///         or `address(0)` when it has none.
+    function secondary() external view returns (ISanctionsList) {
+        return _secondary;
+    }
+
+    /// @notice True iff the own record lists `who`. Never reads the
+    ///         secondary, so it answers during a secondary outage.
+    function listedByOwnList(address who) public view returns (bool) {
+        return _listed.contains(who);
+    }
+
+    /// @notice Which source flags `addr`.
+    /// @dev    Reverts when the secondary cannot be read, even for an address
+    ///         the own record lists — see `ComposedSanctionsList`. Use
+    ///         {listedByOwnList} for the own record alone.
+    /// @return byOwnList    The own record lists it.
+    /// @return bySecondary  The secondary reports it; always false when there
+    ///                      is no secondary.
+    function sanctionSource(address addr) external view returns (bool byOwnList, bool bySecondary) {
+        return _sanctionSource(addr);
+    }
+
+    /// @notice How many addresses the own record lists.
+    function listedCount() external view returns (uint256) {
+        return _listed.length();
+    }
+
+    /// @notice Up to `limit` listed addresses starting at `offset`, in the
+    ///         set's internal order. That order is stable between updates
+    ///         but NOT across them (a removal moves the last element into the
+    ///         gap), so page through the whole set at ONE block.
+    function listedPage(uint256 offset, uint256 limit) external view returns (address[] memory page) {
+        uint256 n = _listed.length();
+        if (offset >= n) return new address[](0);
+        // `n - offset` cannot underflow (offset < n), and comparing against
+        // it avoids overflowing `offset + limit` for a huge `limit`.
+        uint256 end = limit > n - offset ? n : offset + limit;
+        page = new address[](end - offset);
+        for (uint256 i; i < page.length; ++i) {
+            page[i] = _listed.at(offset + i);
+        }
+    }
+
+    /// @notice The secondary's own freshness, when it reports one.
+    /// @dev    Calls `getLastUpdateBlockTimestamp()` (RedStone's freshness
+    ///         read) with a low-level static call, so a secondary that lacks
+    ///         the function, reverts, or answers in an unexpected shape
+    ///         yields `known = false` instead of reverting this view. A
+    ///         freshness that cannot be read is reported as unknown, never as
+    ///         a time.
+    /// @return known      The secondary answered with a 32-byte word.
+    /// @return timestamp  Its answer; 0 when `known` is false.
+    function secondaryLastUpdate() public view returns (bool known, uint256 timestamp) {
+        if (address(_secondary) == address(0)) return (false, 0);
+        (bool ok, bytes memory ret) =
+            address(_secondary).staticcall(abi.encodeWithSignature("getLastUpdateBlockTimestamp()"));
+        if (!ok || ret.length != 32) return (false, 0);
+        return (true, abi.decode(ret, (uint256)));
+    }
+
+    /// @notice Everything a reader needs to judge how current this list is,
+    ///         in one call.
+    /// @return version                 `listVersion`.
+    /// @return ownLastUpdatedAt        When the own record was last updated.
+    /// @return ownSourceHash           SHA-256 of the OFAC file behind it.
+    /// @return ownSourcePublicationId  That file's publication identifier.
+    /// @return hasSecondary            A secondary is configured.
+    /// @return secondaryTimestampKnown The secondary reported its freshness.
+    /// @return secondaryLastUpdatedAt  That report; 0 when unknown.
+    function freshness()
+        external
+        view
+        returns (
+            uint64 version,
+            uint64 ownLastUpdatedAt,
+            bytes32 ownSourceHash,
+            string memory ownSourcePublicationId,
+            bool hasSecondary,
+            bool secondaryTimestampKnown,
+            uint256 secondaryLastUpdatedAt
+        )
+    {
+        (secondaryTimestampKnown, secondaryLastUpdatedAt) = secondaryLastUpdate();
+        return (
+            listVersion,
+            lastUpdatedAt,
+            sourceHash,
+            sourcePublicationId,
+            address(_secondary) != address(0),
+            secondaryTimestampKnown,
+            secondaryLastUpdatedAt
+        );
+    }
+
+    // ── ComposedSanctionsList hooks ───────────────────────────────────
+
+    /// @inheritdoc ComposedSanctionsList
+    function _revertSecondaryHasNoCode(address secondary_) internal pure override {
+        revert SecondaryHasNoCode(secondary_);
+    }
+
+    /// @inheritdoc ComposedSanctionsList
+    function _flaggedByOwnRecord(address addr) internal view override returns (bool) {
+        return _listed.contains(addr);
+    }
+}

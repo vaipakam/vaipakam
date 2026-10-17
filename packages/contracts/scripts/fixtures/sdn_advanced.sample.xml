@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Sanctions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Version="3" xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML">
+  <DateOfIssue CalendarTypeID="1">
+    <Year>2026</Year>
+    <Month>3</Month>
+    <Day>7</Day>
+  </DateOfIssue>
+  <ReferenceValueSets>
+    <FeatureTypeValues>
+      <FeatureType ID="25" FeatureTypeGroupID="1">Place of Birth</FeatureType>
+      <FeatureType ID="344" FeatureTypeGroupID="1">Digital Currency Address - XBT</FeatureType>
+      <FeatureType ID="345" FeatureTypeGroupID="1">Digital Currency Address - ETH</FeatureType>
+      <FeatureType ID="887" FeatureTypeGroupID="1">Digital Currency Address - USDT</FeatureType>
+      <FeatureType ID="1007" FeatureTypeGroupID="1">Digital Currency Address - ARB</FeatureType>
+    </FeatureTypeValues>
+    <ReliabilityValues>
+      <Reliability ID="1560">Confirmed</Reliability>
+      <Reliability ID="1561">False</Reliability>
+      <Reliability ID="91479">Reported</Reliability>
+      <Reliability ID="1">Unknown</Reliability>
+    </ReliabilityValues>
+  </ReferenceValueSets>
+  <DistinctParties>
+    <DistinctParty FixedRef="1">
+      <Profile ID="1" PartySubTypeID="4">
+        <Feature ID="5" FeatureTypeID="345" />
+        <Feature ID="10" FeatureTypeID="25">
+          <FeatureVersion ID="11" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">0x0000000000000000000000000000000000000bad</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="20" FeatureTypeID="345">
+          <FeatureVersion ID="21" ReliabilityID="91479">
+            <Comment />
+            <VersionDetail DetailTypeID="1432">0x252a8bd2319d8a555b872990601221b3a2053bce</VersionDetail>
+          </FeatureVersion>
+          <IdentityReference IdentityID="1" IdentityFeatureLinkTypeID="1" />
+        </Feature>
+        <Feature ID="30" FeatureTypeID="887">
+          <FeatureVersion ID="31" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">0x252A8BD2319D8A555B872990601221B3A2053BCE</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="40" FeatureTypeID="887">
+          <FeatureVersion ID="41" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">TJ5usJLLwjwn7Pw3TPbdzreG7dvgKzfQ5y</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="50" FeatureTypeID="344">
+          <FeatureVersion ID="51" ReliabilityID="1560">
+            <VersionDetail DetailTypeID="1432">1AjZPMsnmpdK2Rv9KQNfMurTXinscVro9V</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="60" FeatureTypeID="345">
+          <FeatureVersion ID="61" ReliabilityID="1561">
+            <VersionDetail DetailTypeID="1432">0x1111111111111111111111111111111111111111</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="70" FeatureTypeID="1007">
+          <FeatureVersion ID="71" ReliabilityID="1560">
+            <VersionDetail DetailTypeID="1432">  0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB </VersionDetail>
+          </FeatureVersion>
+        </Feature>
+        <Feature ID="80" FeatureTypeID="345">
+          <FeatureVersion ID="81" ReliabilityID="1">
+            <VersionDetail DetailTypeID="1432">0x123</VersionDetail>
+          </FeatureVersion>
+        </Feature>
+      </Profile>
+    </DistinctParty>
+  </DistinctParties>
+</Sanctions>

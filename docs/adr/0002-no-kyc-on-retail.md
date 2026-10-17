@@ -51,9 +51,14 @@ Specifically:
    Chainalysis's on-chain oracle. Chainalysis has since retired it
    (last updated 2026-03-18, "no longer supported or maintained"); it
    still answers reads, so nothing on-chain shows it is frozen, and it
-   must not be configured anywhere. Which supported source replaces it
-   is open in #2443; testnets screen against the admin's
-   `TestnetSanctionsOverlay` alone. The requirement itself is
+   must not be configured anywhere. *Amended 2026-10-17 (#2443, owner
+   decision):* mainnets screen against Vaipakam's own `SanctionsList` —
+   the OFAC SDN digital-currency addresses, kept on-chain by an updater
+   role with each update's source-file hash and publication date
+   recorded — OR-composed with RedStone's Sanctions Oracle where it is
+   deployed; a wallet is flagged if either flags it. Who runs and signs
+   the updater is still open, so no mainnet is configured yet. Testnets
+   screen against the admin's `TestnetSanctionsOverlay` alone. The requirement itself is
    unchanged. Tier-1 entry points
    (`createOffer`, `acceptOffer`, vault create, VPFI deposit /
    buy / withdraw, `triggerLiquidation`, EarlyWithdrawal, Preclose,
@@ -95,7 +100,7 @@ Specifically:
   StorageGated` helper being a clearly separate function from the
   pure-true retail path, with tests in `CountryPairGatedTest`.
 - Sanctions screening introduces a third-party oracle dependency
-  (a supported source; which one is open, #2443). If the oracle is misconfigured or
+  (Vaipakam's own OFAC list, plus RedStone's oracle where deployed, #2443). If the oracle is misconfigured or
   fails, the protocol fails-open temporarily (returns `false` for
   every address — the intentional pre-`setSanctionsOracle` window).
 - Operators must remember to call `setSanctionsOracle` on retail
