@@ -4,4 +4,6 @@ The end-of-programme redeploy the build-first work (PR 1 #2459, PR 2 #2489, PR 3
 
 Alongside, the three deploy scripts (testnet tiered, testnet one-shot and mainnet) no longer compile the test tree in their first build step. That step used a bare build, which folds every test file into one compilation unit; this codebase has outgrown that form (a 19 GB compiler run that swapped for an hour and never finished during this deploy). The pre-deploy check had already switched to skipping tests for exactly this reason, and it compiles the test closure a deploy relies on where it is exercised, in the deploy-sanity suite. The deploy scripts now do the same, so the build step compiles only the contracts and deploy scripts a deploy actually touches.
 
+One app unit test (the acceptance-pin sync frames) had copied the live Base Sepolia Diamond address into its fixtures because the receiver refuses any frame not mined against the deployment the build reads. Every one of its cells failed on the new address alone. It now reads the address from the deployments bundle, so a redeploy can no longer break it.
+
 Refs #1566, #1349, #636.
