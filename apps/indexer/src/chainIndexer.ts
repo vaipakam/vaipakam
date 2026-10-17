@@ -139,6 +139,7 @@ import {
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
+import { adoptDeployment, describeAdoption } from './deploymentEpoch';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2042,6 +2043,15 @@ async function runChainPass(
   // → deployments.json. We re-look it up here because ChainConfig
   // intentionally exposes only the runtime essentials.
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
+
+  // DEPLOYMENT EPOCH (#1566, Codex #2545 r1 P1) — before the cursor read and
+  // before any write. A bundle naming a different Diamond than the one this
+  // chain's rows were indexed from is a new epoch: the chain's chain-scoped
+  // rows are reset (cursor included, so the scan below reseeds from
+  // `deployBlock - 1`). Steady state is one SELECT. See deploymentEpoch.ts.
+  const adoption = await adoptDeployment(env.DB, { chainId, diamond, deployBlock });
+  const adoptionLine = describeAdoption(chainId, diamond, deployBlock, adoption);
+  if (adoptionLine !== null) console.warn(adoptionLine);
 
   // METERED AT EGRESS, not at the client's methods (#2227 r1 `4033546264`).
   // viem retries a failed request up to three more times INSIDE one method

@@ -42,9 +42,21 @@ interface D1Like {
   };
 }
 
+/** The deployment a chain's rows were indexed from (#1566 / Codex #2545 r1). */
+export interface AdoptedDeployment {
+  diamond: string;
+  deployBlock: number;
+  /** When the indexer adopted this Diamond (unix seconds). */
+  adoptedAt: number;
+  /** True while a Diamond-change reset is claimed but its batch has not landed. */
+  resetPending: boolean;
+}
+
 /** One scanned chain's ingest position. */
 export interface ChainIngestState {
   chainId: number;
+  /** Null before the first pass under migration 0063 records one. */
+  deployment: AdoptedDeployment | null;
   /** The last block the diamond scan completed through. */
   lastBlock: number;
   /** When the cursor last advanced (unix seconds). */
@@ -79,11 +91,33 @@ export async function readIngestHealth(
     )
     .bind(CURSOR_KIND)
     .all<{ chain_id: number; last_block: number; updated_at: number }>();
+  // The adopted deployment per chain (#1566 / Codex #2545 r1) — which
+  // Diamond the rows were indexed from, so a prober can tell a redeploy the
+  // indexer has adopted from one it has not. Read separately and tolerantly:
+  // before migration 0063 lands the table does not exist, and that window is
+  // exactly when the schema answer above must still be served, not a 503.
+  const deployments = new Map<number, AdoptedDeployment>();
+  try {
+    const d = await db
+      .prepare(`SELECT chain_id, diamond, deploy_block, adopted_at, reset_pending FROM indexer_deployment`)
+      .all<{ chain_id: number; diamond: string; deploy_block: number; adopted_at: number; reset_pending: number }>();
+    for (const r of d.results ?? []) {
+      deployments.set(r.chain_id, {
+        diamond: r.diamond,
+        deployBlock: r.deploy_block,
+        adoptedAt: r.adopted_at,
+        resetPending: r.reset_pending !== 0,
+      });
+    }
+  } catch {
+    // Table not there yet: every chain reports `deployment: null` below.
+  }
   const chains = (res.results ?? []).map((r) => ({
     chainId: r.chain_id,
     lastBlock: r.last_block,
     scannedAt: r.updated_at,
     ageSeconds: nowSec - r.updated_at,
+    deployment: deployments.get(r.chain_id) ?? null,
   }));
   return { checkedAt: nowSec, schema, chains };
 }

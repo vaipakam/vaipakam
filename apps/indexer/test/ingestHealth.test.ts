@@ -20,7 +20,13 @@ const DDL = [
      last_block INTEGER NOT NULL, updated_at INTEGER NOT NULL,
      PRIMARY KEY (chain_id, kind)
    )`,
+  `CREATE TABLE indexer_deployment (
+     chain_id INTEGER PRIMARY KEY, diamond TEXT NOT NULL,
+     deploy_block INTEGER NOT NULL, adopted_at INTEGER NOT NULL,
+     reset_pending INTEGER NOT NULL DEFAULT 0
+   )`,
 ];
+const DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
 
 function seeded(migrations: readonly string[]) {
   const h = createSqliteD1(DDL);
@@ -32,6 +38,12 @@ function seeded(migrations: readonly string[]) {
   cursor.run(97, 'diamond', 900, 1_090);
   // Other cursor kinds are watermarks, not the scan position.
   cursor.run(84532, 'loan_reconcile', 7, 10);
+  // Base has adopted a deployment; 97 has not been through a pass under 0063 yet.
+  h.db
+    .prepare(
+      'INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(84532, DIAMOND, 400, 950, 0);
   return h;
 }
 
@@ -43,10 +55,26 @@ describe('readIngestHealth', () => {
       checkedAt: 1_100,
       schema: { state: 'current' },
       chains: [
-        { chainId: 97, lastBlock: 900, scannedAt: 1_090, ageSeconds: 10 },
-        { chainId: 84532, lastBlock: 500, scannedAt: 1_000, ageSeconds: 100 },
+        { chainId: 97, lastBlock: 900, scannedAt: 1_090, ageSeconds: 10, deployment: null },
+        {
+          chainId: 84532,
+          lastBlock: 500,
+          scannedAt: 1_000,
+          ageSeconds: 100,
+          deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false },
+        },
       ],
     });
+  });
+
+  it('reports every chain with `deployment: null` while the deployment table does not exist yet', async () => {
+    // The deploy-before-migration window for 0063: the schema answer must
+    // still be served, never a 503 because the new table is missing.
+    const h = createSqliteD1([DDL[0], DDL[1]]);
+    for (const n of REQUIRED_D1_MIGRATIONS) h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run(n);
+    h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(84532, 'diamond', 500, 1_000);
+    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    expect(out.chains).toEqual([{ chainId: 84532, lastBlock: 500, scannedAt: 1_000, ageSeconds: 100, deployment: null }]);
   });
 
   it('names the missing migration when the gate is the reason ingest declines', async () => {

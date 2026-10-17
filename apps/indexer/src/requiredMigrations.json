@@ -59,5 +59,6 @@
   "0059_keeper_runner_lease.sql",
   "0060_terminal_by_repair.sql",
   "0061_market_summary_rebuild_legacy_signed.sql",
-  "0062_recycle_backing_custody.sql"
+  "0062_recycle_backing_custody.sql",
+  "0063_indexer_deployment.sql"
 ]

@@ -707,6 +707,20 @@ handler — reads and the POST writes (signed offers, prepay match-source, the
 chain-event webhook) — must tolerate the previous schema. Keeper and agent
 have no runtime gate yet (#2410).
 
+**A fresh Diamond on a chain is a new indexer EPOCH, and the indexer owns
+it** (#1566, Codex #2545 r1). `indexer_deployment` records, per chain, the
+Diamond and deploy block the indexer has adopted; `src/deploymentEpoch.ts`
+compares the bundle's Diamond with that row at the top of every pass and, on
+a change, resets the chain's chain-scoped rows — every table carrying
+`chain_id`, discovered from the schema, minus the user-owned tables
+`src/diamondEpochKeep.json` names — atomically with its own completion mark,
+so the cursor reseeds from the new deploy block. The deploy scripts no
+longer purge D1 themselves; a `--fresh` redeploy RECORDS the retired Diamond
+and the indexer's next pass does the rest. The first record for a chain
+resets nothing (nothing says which Diamond its existing rows came from), so
+a chain that predates this table needs its retired Diamond recorded once by
+hand. `/health/ingest` states the adopted Diamond per chain.
+
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into
 `pnpm --filter @vaipakam/indexer typecheck`). D1 keys its applied record

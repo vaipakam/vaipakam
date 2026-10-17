@@ -155,7 +155,17 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // to end and asserts the values those reads produce (a rental claim found
     // through the loan→offer join, an NFT claim through the loan's collateral
     // columns), so a wrong column or join fails there.
-    expect(skipped.length).toBeLessThanOrEqual(19);
+    // Raised 19 → 20 for #1566 (Codex #2545 r1): the deployment-epoch reset
+    // deletes one chain's rows from EVERY table carrying `chain_id`, and the
+    // table names come from the schema at run time (`sqlite_master` +
+    // `pragma_table_info`), so `DELETE FROM "${t}" WHERE chain_id = ?` is
+    // dynamic by construction — the spec asks for schema-aware rather than
+    // a hand-kept list, and a static statement per table would be that list.
+    // The value is still bound. Covered against the REAL migrated schema by
+    // `deploymentEpoch.test.ts`, which seeds every chain-scoped table for two
+    // chains and asserts, per table, that the redeployed chain's rows are
+    // gone and the other chain's remain.
+    expect(skipped.length).toBeLessThanOrEqual(20);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {
