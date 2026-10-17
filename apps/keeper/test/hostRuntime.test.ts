@@ -226,6 +226,9 @@ describe('host tick schema check', () => {
       vars: () => vars,
       log: (l) => lines.push(l),
       gate: createSchemaGate(['0001_a.sql', '0002_b.sql']),
+      // The private-database gate has its own suite (hostPrivateDb.test.ts);
+      // here it passes, so these cells isolate the SHARED schema gate.
+      privateGate: { check: async () => ({ ok: true }) },
       runTick: async (_env, t) => {
         ran.push(t);
       },

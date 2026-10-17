@@ -151,12 +151,30 @@ export function candidateOwners(openChains: readonly string[], stagingOwners: re
   return [...new Set([...openChains, ...stagingOwners].map((w) => w.toLowerCase() as Address))];
 }
 
+/** Most urgent first: the oldest observation (never observed first of all),
+ *  then the nearest deadline, then the address — a total order (#2497 r4). */
+function byUrgency(a: OwnerSanctionsStatus, b: OwnerSanctionsStatus): number {
+  if (a.lastSeenAt !== b.lastSeenAt) return a.lastSeenAt - b.lastSeenAt;
+  const da = a.observeBy === 0 ? Number.MAX_SAFE_INTEGER : a.observeBy;
+  const db = b.observeBy === 0 ? Number.MAX_SAFE_INTEGER : b.observeBy;
+  if (da !== db) return da - db;
+  return a.owner < b.owner ? -1 : a.owner > b.owner ? 1 : 0;
+}
+
 /** What to do for each classified candidate. Pure: the contract's verdict and
- *  deadlines in, the pass's actions out. */
+ *  deadlines in, the pass's actions out.
+ *
+ *  The action lists are in URGENCY order ({@link byUrgency}), never address
+ *  order (#2497 r4): the tick's write cap is spent from the front, so with
+ *  more held owners than one tick can observe, address order would observe the
+ *  same first slice forever. Staleness order is a rotation that needs no
+ *  cursor — an owner just observed carries the newest observation and goes to
+ *  the back — so every held owner is observed, the most overdue first. */
 export function planSanctionsHold(
   statuses: readonly OwnerSanctionsStatus[],
   nowSec: number,
 ): SanctionsHoldPlan {
+  statuses = [...statuses].sort(byUrgency);
   const plan: SanctionsHoldPlan = {
     observe: [],
     settleObserveDue: [],

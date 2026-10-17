@@ -46,6 +46,7 @@ const EXPECTED_PRIVATE = [
   'keeper_remit_ack_frontier',
   'keeper_sanctions_screen',
   'keeper_work_done',
+  'keeper_work_frontier',
 ];
 
 /**
