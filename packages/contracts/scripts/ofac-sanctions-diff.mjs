@@ -90,7 +90,8 @@
  *   node scripts/ofac-sanctions-diff.mjs --xml sdn_advanced.xml \
  *     --rpc "$RPC" --list 0xList [--block N] [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
- *     --current current.json --current-version 3
+ *     --current current.json --current-version 3 \
+ *     --current-publication 20261015 --current-source-hash 0x…
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
@@ -171,6 +172,37 @@ export function decodeXmlText(raw, offset = 0) {
 /** `name` without a namespace prefix. */
 const localName = (name) => name.slice(name.indexOf(':') + 1);
 
+/** The one prefix XML binds without a declaration (Namespaces in XML §3). */
+const XML_NS = 'http://www.w3.org/XML/1998/namespace';
+
+/**
+ * The element's namespace scope: the parent's bindings plus any `xmlns` /
+ * `xmlns:p` declared on the element itself. `''` under the key `''` means no
+ * default namespace (an `xmlns=""` undeclaration).
+ */
+function scopeWith(parent, attrs, offset) {
+  let scope = parent;
+  for (const [k, v] of attrs) {
+    if (k !== 'xmlns' && !k.startsWith('xmlns:')) continue;
+    const prefix = k === 'xmlns' ? '' : k.slice(6);
+    if (prefix === 'xmlns' || (prefix === 'xml' && v !== XML_NS)) throw new Error(`malformed XML: reserved prefix ${prefix} rebound at offset ${offset}`);
+    if (prefix !== '' && v === '') throw new Error(`malformed XML: prefix ${prefix} undeclared at offset ${offset}`);
+    if (scope === parent) scope = new Map(parent);
+    scope.set(prefix, v);
+  }
+  return scope;
+}
+
+/** Expanded namespace of a qualified element name in `scope`; throws on an unbound prefix. */
+function resolveNs(qname, scope, offset) {
+  const c = qname.indexOf(':');
+  if (c === -1) return scope.get('') ?? '';
+  const prefix = qname.slice(0, c);
+  const ns = scope.get(prefix);
+  if (ns === undefined) throw new Error(`malformed XML: unbound namespace prefix ${prefix} in <${qname}> at offset ${offset}`);
+  return ns;
+}
+
 /**
  * THE tokenizer (Codex #2543 r1/r2). One pass over the WHOLE input that both
  * proves the document complete and drives extraction, so nothing reads raw
@@ -184,9 +216,16 @@ const localName = (name) => name.slice(name.indexOf(':') + 1);
  * and an internal subset would need a grammar). This is a structural
  * well-formedness check, not a full XML 1.0 validator — see the header.
  *
- * Handlers, all optional, receive LOCAL names (no prefix):
- *   open(name, attrs, depth)   attrs: Map of decoded attribute values
- *   close(name, depth)
+ * It is namespace-aware (Codex #2543 r4): every element's prefix is resolved
+ * against the `xmlns` declarations in scope, an unbound prefix is refused,
+ * and handlers receive the EXPANDED namespace beside the local name, so a
+ * consumer matches on (namespace, local name) — never on a prefix or on a
+ * local name alone.
+ *
+ * Handlers, all optional, receive LOCAL names (no prefix) and the element's
+ * namespace URI (`''` when it is in no namespace):
+ *   open(name, attrs, depth, ns)   attrs: Map of decoded attribute values
+ *   close(name, depth, ns)
  *   text(value)                decoded character data, including CDATA
  *                              content, which is literal text by definition
  *                              (decoded, never parsed as markup).
@@ -195,7 +234,8 @@ export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
   const { open = () => {}, close = () => {}, text = () => {} } = handlers;
   const n = xml.length;
   let i = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
-  const stack = [];
+  const stack = []; // { name, ns, scope }
+  const BASE_SCOPE = new Map([['xml', XML_NS]]);
   let root = null;
   let rootClosed = false;
   while (i < n) {
@@ -235,10 +275,10 @@ export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
     if (body.startsWith('/')) {
       const name = body.slice(1).trimEnd();
       const top = stack.pop();
-      if (top === undefined || top !== name) {
-        throw new Error(`malformed XML: </${name}> at offset ${lt} closes ${top === undefined ? 'nothing' : `<${top}>`}`);
+      if (top === undefined || top.name !== name) {
+        throw new Error(`malformed XML: </${name}> at offset ${lt} closes ${top === undefined ? 'nothing' : `<${top.name}>`}`);
       }
-      close(localName(name), stack.length);
+      close(localName(name), stack.length, top.ns);
       if (stack.length === 0) rootClosed = true;
     } else {
       const m = body.match(NAME_RE);
@@ -259,16 +299,18 @@ export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
         root = name;
         if (localName(name) !== rootName) throw new Error(`unexpected root element <${name}> (want <${rootName}>)`);
       }
-      open(localName(name), attrs, stack.length);
+      const scope = scopeWith(stack.length ? stack[stack.length - 1].scope : BASE_SCOPE, attrs, lt);
+      const ns = resolveNs(name, scope, lt);
+      open(localName(name), attrs, stack.length, ns);
       if (selfClosing) {
-        close(localName(name), stack.length);
+        close(localName(name), stack.length, ns);
         if (stack.length === 0) rootClosed = true;
-      } else stack.push(name);
+      } else stack.push({ name, ns, scope });
     }
     i = gt + 1;
   }
   if (root === null) throw new Error('incomplete XML: no root element');
-  if (stack.length) throw new Error(`incomplete XML: ${stack.length} element(s) never closed, innermost <${stack[stack.length - 1]}> — the file is truncated`);
+  if (stack.length) throw new Error(`incomplete XML: ${stack.length} element(s) never closed, innermost <${stack[stack.length - 1].name}> — the file is truncated`);
 }
 
 /** Throws unless `xml` is a complete document — {@link scanXml} with no handlers. */
@@ -331,11 +373,17 @@ export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, 
  *   …/Reliability[@ID]           (reference set; text = reliability name)
  *   …/Feature[@FeatureTypeID]/FeatureVersion[@ReliabilityID]/VersionDetail
  * Records are resolved against the reference sets AFTER the pass, so their
- * order in the file does not matter.
+ * order in the file does not matter — and every record must resolve: a
+ * `FeatureTypeID` or `ReliabilityID` that names no reference value refuses
+ * the file rather than silently dropping (or keeping) an address
+ * (Codex #2543 r4).
+ *
+ * Only elements in OFAC's namespace are read. The root must be OFAC's
+ * `Sanctions` element; an element in any other namespace is opaque, and
+ * nothing inside it is consumed (Codex #2543 r4).
  */
 export function parseSdnAdvanced(xml) {
   const path = [];
-  let rootAttrs = null;
   const date = {};
   const featureTypes = new Map();
   const reliability = new Map();
@@ -345,10 +393,23 @@ export function parseSdnAdvanced(xml) {
   let buf = null; // text accumulator for the element being read
   let reading = null; // what `buf` belongs to
   let refId = null;
+  let foreignDepth = 0; // >0 while inside an element outside OFAC's namespace
 
   scanXml(xml, {
-    open(name, attrs, depth) {
-      if (depth === 0) rootAttrs = attrs;
+    open(name, attrs, depth, ns) {
+      if (depth === 0) {
+        // Exact match, not a substring test: a namespace that merely
+        // CONTAINS the OFAC host is not OFAC's document. If OFAC ever
+        // changes its namespace the tool refuses loudly instead of guessing.
+        if (ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
+          throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
+        }
+      }
+      if (foreignDepth > 0 || ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
+        if (reading) throw new Error(`unexpected foreign-namespace <${name}> inside <${reading}>`);
+        foreignDepth++;
+        return;
+      }
       const parent = path[path.length - 1];
       path.push(name);
       if (depth === 2 && parent === 'DateOfIssue' && (name === 'Year' || name === 'Month' || name === 'Day')) {
@@ -375,14 +436,22 @@ export function parseSdnAdvanced(xml) {
       }
     },
     text(value) {
-      if (reading) buf += value;
+      if (reading && foreignDepth === 0) buf += value;
     },
     close(name) {
+      if (foreignDepth > 0) {
+        foreignDepth--;
+        return;
+      }
       path.pop();
       if (reading === name) {
         if (name === 'Year' || name === 'Month' || name === 'Day') date[name] = buf.trim();
-        else if (name === 'FeatureType') featureTypes.set(refId, buf.trim());
-        else if (name === 'Reliability') reliability.set(refId, buf.trim());
+        else if (name === 'FeatureType' || name === 'Reliability') {
+          const set = name === 'FeatureType' ? featureTypes : reliability;
+          if (refId === undefined) throw new Error(`a <${name}> has no ID`);
+          if (set.has(refId)) throw new Error(`<${name}> ID ${refId} is defined twice`);
+          set.set(refId, buf.trim());
+        }
         else if (name === 'VersionDetail') records.push({ typeId: feature.typeId, rel: version.rel, value: buf.trim() });
         reading = null;
         buf = null;
@@ -391,13 +460,6 @@ export function parseSdnAdvanced(xml) {
     },
   });
 
-  // Exact match, not a substring test: a namespace that merely CONTAINS
-  // the OFAC host (e.g. on another domain) is not OFAC's document. If OFAC
-  // ever changes its namespace the tool refuses loudly instead of guessing.
-  const ns = rootAttrs?.get('xmlns') ?? '';
-  if (ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
-    throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
-  }
   if (!/^\d{4}$/.test(date.Year ?? '') || !/^\d{1,2}$/.test(date.Month ?? '') || !/^\d{1,2}$/.test(date.Day ?? '')) {
     throw new Error('no <DateOfIssue> — cannot identify the publication');
   }
@@ -414,11 +476,17 @@ export function parseSdnAdvanced(xml) {
   const malformed = [];
   const nonEvmByAsset = {};
   for (const { typeId, rel, value } of records) {
+    if (typeId === undefined || !featureTypes.has(typeId)) {
+      throw new Error(`a <Feature> names FeatureTypeID ${JSON.stringify(typeId ?? null)}, which no <FeatureType> defines — refusing a file whose records do not resolve`);
+    }
+    if (rel === undefined || !reliability.has(rel)) {
+      throw new Error(`a <FeatureVersion> names ReliabilityID ${JSON.stringify(rel ?? null)}, which no <Reliability> defines — refusing a file whose records do not resolve`);
+    }
     const asset = dcaTypes.get(typeId);
     if (asset === undefined) continue;
     if (EVM_RE.test(value)) {
       const address = getAddress(value.toLowerCase());
-      if (rel !== undefined && falseIds.has(rel)) {
+      if (falseIds.has(rel)) {
         excludedFalse.push({ address, asset });
         continue;
       }

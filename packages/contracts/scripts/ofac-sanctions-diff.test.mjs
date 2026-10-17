@@ -243,3 +243,33 @@ test('tokenizer: malformed attributes are refused; a quoted ">" or "<Feature" in
   });
   assert.deepEqual(seen, [['Sanctions', { note: 'x > y' }], ['F', { q: '<Feature/>' }]]);
 });
+
+// ---- Codex #2543 r4: namespace-aware extraction, every record resolves ----
+const NS = 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML';
+
+test('namespaces: a foreign-namespace <Feature> is opaque; a prefixed OFAC root is accepted', () => {
+  const foreign = parseSdnAdvanced(withInProfile(`<x:Feature xmlns:x="https://evil.example/" FeatureTypeID="345"><x:FeatureVersion ReliabilityID="1"><x:VersionDetail>${E}</x:VersionDetail></x:FeatureVersion></x:Feature>`));
+  assert.ok(!foreign.addresses.includes(E), 'a foreign-namespace Feature is not consumed');
+  // A default-namespace switch on a wrapper puts unprefixed children outside OFAC's namespace too.
+  const wrapped = parseSdnAdvanced(withInProfile(`<Wrap xmlns="https://evil.example/">${feature(E)}</Wrap>`));
+  assert.ok(!wrapped.addresses.includes(E), 'nothing inside a foreign element is consumed');
+  // The same document with OFAC's namespace bound to a prefix is still OFAC's document.
+  const prefixed = FIXTURE.toString('utf8')
+    .replace(`xmlns="${NS}"`, `xmlns:o="${NS}"`)
+    .replace(/<(\/?)(?![?!])([A-Za-z])/g, '<$1o:$2');
+  assert.deepEqual(parseSdnAdvanced(prefixed).addresses, normaliseAddresses([A, B]));
+  // A prefixed root bound to another namespace is refused, as is an unbound prefix.
+  assert.throws(() => parseSdnAdvanced(`<o:Sanctions xmlns:o="https://evil.example/" xmlns="${NS}"></o:Sanctions>`), /not an OFAC SDN Advanced XML/);
+  assert.throws(() => scanXml('<Sanctions><q:Feature/></Sanctions>'), /unbound namespace prefix q/);
+});
+
+test('references: a record whose FeatureTypeID or ReliabilityID resolves to nothing refuses the file', () => {
+  const badType = feature(E).replace('FeatureTypeID="345"', 'FeatureTypeID="99999"');
+  assert.throws(() => parseSdnAdvanced(withInProfile(badType)), /FeatureTypeID "99999"/);
+  const badRel = feature(E).replace('ReliabilityID="1"', 'ReliabilityID="99999"');
+  assert.throws(() => parseSdnAdvanced(withInProfile(badRel)), /ReliabilityID "99999"/);
+  const noRel = feature(E).replace(' ReliabilityID="1"', '');
+  assert.throws(() => parseSdnAdvanced(withInProfile(noRel)), /ReliabilityID null/);
+  const dupType = FIXTURE.toString('utf8').replace('<FeatureTypeValues>', '<FeatureTypeValues><FeatureType ID="345">Digital Currency Address - XBT</FeatureType>');
+  assert.throws(() => parseSdnAdvanced(dupType), /defined twice/);
+});
