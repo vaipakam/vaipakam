@@ -18,8 +18,10 @@
  *      Every `0x`/`0X`-prefixed value that is not exactly an address is
  *      reported, raw, as malformed for a human — never guessed at.
  *   3. Reads the CURRENT list: from the deployed contract at ONE pinned block
- *      (`--rpc` + `--list`; version, publication, hash, count and every page
- *      read at that block), or from a file (`--current` + `--current-version`
+ *      (`--rpc` + `--list` [+ `--block N`, default the `finalized` block];
+ *      the block is resolved once to its HASH and every read — version,
+ *      publication, hash, count, each page — is pinned to it by EIP-1898
+ *      with `requireCanonical`, using the census tooling's helper), or from a file (`--current` + `--current-version`
  *      + `--current-publication` [+ `--current-source-hash`]).
  *   4. Prints the add / remove sets, the source SHA-256 and publication date
  *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calldata
@@ -27,16 +29,23 @@
  *      apply to any other state).
  *
  * WHAT IT REFUSES, AND WHY:
- *   - An INCOMPLETE document (Codex #2543 r1). Before anything is extracted,
- *     the whole input is scanned as XML structure: every tag must be
- *     terminated, every element closed in order, exactly one root
- *     (`<Sanctions>`) must close at the end, and nothing but whitespace,
- *     comments or processing instructions may follow it. A truncated download
- *     fails that check wherever it was cut. This is a structural
- *     well-formedness check, not a full XML 1.0 validator: entity, attribute
- *     and character-class rules would need a parser dependency, and they are
- *     not what a truncated or spliced file breaks. A DOCTYPE is refused
- *     outright (OFAC's file has none, and an internal subset needs a grammar).
+ *   - An INCOMPLETE or malformed document (Codex #2543 r1/r2). ONE tokenizer
+ *     (`scanXml`) reads the whole input once; the completeness check and the
+ *     extraction consume the same token stream, and no regex ever runs over
+ *     raw text, so a comment, processing instruction, CDATA section or
+ *     attribute value can never be read as an element. The pass requires every
+ *     tag terminated with well-formed, unique, quoted attributes, every element
+ *     closed in order, exactly one `<Sanctions>` root closed at the end, and
+ *     nothing but whitespace, comments or processing instructions outside it.
+ *     A truncated download fails wherever it was cut. CDATA content is
+ *     DECODED as the literal text it is by definition (never parsed as
+ *     markup); the five predefined entities and numeric character references
+ *     are decoded in text and attribute values, and any other entity or a bare
+ *     `&` is refused. A DOCTYPE is refused outright (OFAC's file has none, and
+ *     an internal subset needs a grammar). This is a structural
+ *     well-formedness check, not a full XML 1.0 validator: character-class and
+ *     encoding rules would need a parser dependency, and they are not what a
+ *     truncated, spliced or commented file breaks.
  *   - A file in which it finds NO EVM address, no `DateOfIssue`, or no
  *     digital-currency feature types. A parser that silently finds nothing
  *     would emit a diff that delists everyone.
@@ -94,6 +103,9 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPublicClient, http, getAddress, encodeFunctionData, parseAbi, parseAbiItem } from 'viem';
+// The census tooling's EIP-1898 helper: every state read below is pinned to
+// ONE block by HASH with requireCanonical, never by number (Codex #2543 r2).
+import { callAtHash } from './census-grandfathered-custody.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const OFAC_SDN_ADVANCED_URL =
@@ -114,14 +126,6 @@ export function sourceHash(bytes) {
   return `0x${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
-/** Text of every `<Tag ID="n" …>text</Tag>` in the document, by ID. */
-function referenceValues(xml, tag) {
-  const out = new Map();
-  const re = new RegExp(`<${tag}\\b[^>]*\\bID="(\\d+)"[^>]*>([^<]*)</${tag}>`, 'g');
-  for (const m of xml.matchAll(re)) out.set(m[1], m[2].trim());
-  return out;
-}
-
 /** Index of the `>` that ends the tag opened at `lt`, skipping quoted
  *  attribute values; -1 when the input ends first. */
 function tagEnd(xml, lt) {
@@ -137,43 +141,88 @@ function tagEnd(xml, lt) {
 }
 
 const NAME_RE = /^[A-Za-z_][\w.:-]*/;
+const ATTR_RE = /\s+([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/y;
+const PREDEFINED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
 /**
- * Throws unless `xml` is a COMPLETE document: every tag terminated, every
- * element closed in order, one root named `rootName` closed at the end, and
- * only whitespace, comments or processing instructions outside it. The scan
- * covers the whole input. See the header for what this does and does not
- * check, and why.
+ * Decode the XML-predefined entities and numeric character references in
+ * text or an attribute value. Any other `&…` (a named entity, which would
+ * need a DTD, or a bare `&`) is refused rather than passed through: a value
+ * that cannot be decoded exactly is not data this tool may act on.
  */
-export function assertCompleteXml(xml, rootName = 'Sanctions') {
+export function decodeXmlText(raw, offset = 0) {
+  if (!raw.includes('&')) return raw;
+  return raw.replace(/&([^;&\s]*);?/g, (whole, ref) => {
+    if (!whole.endsWith(';')) throw new Error(`malformed XML: bare '&' near offset ${offset}`);
+    if (ref in PREDEFINED_ENTITIES) return PREDEFINED_ENTITIES[ref];
+    const num = /^#x([0-9a-fA-F]+)$/.exec(ref) ?? /^#([0-9]+)$/.exec(ref);
+    if (num) {
+      const cp = Number.parseInt(num[1], ref[1] === 'x' ? 16 : 10);
+      if (!Number.isSafeInteger(cp) || cp > 0x10ffff) throw new Error(`malformed XML: bad character reference &${ref}; near offset ${offset}`);
+      return String.fromCodePoint(cp);
+    }
+    throw new Error(`refusing the undeclared entity &${ref}; near offset ${offset}`);
+  });
+}
+
+/** `name` without a namespace prefix. */
+const localName = (name) => name.slice(name.indexOf(':') + 1);
+
+/**
+ * THE tokenizer (Codex #2543 r1/r2). One pass over the WHOLE input that both
+ * proves the document complete and drives extraction, so nothing reads raw
+ * text with a regex afterwards: a comment, a processing instruction, CDATA
+ * content or an attribute value can never be mistaken for an element.
+ *
+ * It throws unless every tag is terminated and its attributes are
+ * well-formed, every element is closed in order, one root named `rootName`
+ * closes at the end, and only whitespace, comments or processing
+ * instructions lie outside it. A DOCTYPE is refused (OFAC's file has none,
+ * and an internal subset would need a grammar). This is a structural
+ * well-formedness check, not a full XML 1.0 validator — see the header.
+ *
+ * Handlers, all optional, receive LOCAL names (no prefix):
+ *   open(name, attrs, depth)   attrs: Map of decoded attribute values
+ *   close(name, depth)
+ *   text(value)                decoded character data, including CDATA
+ *                              content, which is literal text by definition
+ *                              (decoded, never parsed as markup).
+ */
+export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
+  const { open = () => {}, close = () => {}, text = () => {} } = handlers;
   const n = xml.length;
   let i = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
   const stack = [];
   let root = null;
   let rootClosed = false;
-  const outside = (from, to) => {
-    if (/\S/.test(xml.slice(from, to))) throw new Error(`incomplete XML: content outside the root element at offset ${from}`);
-  };
   while (i < n) {
     const lt = xml.indexOf('<', i);
-    if (stack.length === 0) outside(i, lt === -1 ? n : lt);
+    const textEnd = lt === -1 ? n : lt;
+    if (textEnd > i) {
+      const raw = xml.slice(i, textEnd);
+      if (stack.length === 0) {
+        if (/\S/.test(raw)) throw new Error(`incomplete XML: content outside the root element at offset ${i}`);
+      } else text(decodeXmlText(raw, i));
+    }
     if (lt === -1) break;
     const closer = (token, from) => {
       const e = xml.indexOf(token, from);
       if (e === -1) throw new Error(`incomplete XML: unterminated construct at offset ${lt}`);
-      return e + token.length;
+      return e;
     };
     if (xml.startsWith('<!--', lt)) {
-      i = closer('-->', lt + 4);
+      i = closer('-->', lt + 4) + 3;
       continue;
     }
     if (xml.startsWith('<![CDATA[', lt)) {
       if (stack.length === 0) throw new Error(`incomplete XML: CDATA outside the root at offset ${lt}`);
-      i = closer(']]>', lt + 9);
+      const e = closer(']]>', lt + 9);
+      text(xml.slice(lt + 9, e));
+      i = e + 3;
       continue;
     }
     if (xml.startsWith('<?', lt)) {
-      i = closer('?>', lt + 2);
+      i = closer('?>', lt + 2) + 2;
       continue;
     }
     if (xml.startsWith('<!', lt)) throw new Error(`refusing a DOCTYPE or markup declaration at offset ${lt}`);
@@ -181,26 +230,47 @@ export function assertCompleteXml(xml, rootName = 'Sanctions') {
     if (gt === -1) throw new Error(`incomplete XML: unterminated tag at offset ${lt}`);
     const body = xml.slice(lt + 1, gt);
     if (body.startsWith('/')) {
-      const name = body.slice(1).trim();
-      const open = stack.pop();
-      if (open === undefined || open !== name) {
-        throw new Error(`malformed XML: </${name}> at offset ${lt} closes ${open === undefined ? 'nothing' : `<${open}>`}`);
+      const name = body.slice(1).trimEnd();
+      const top = stack.pop();
+      if (top === undefined || top !== name) {
+        throw new Error(`malformed XML: </${name}> at offset ${lt} closes ${top === undefined ? 'nothing' : `<${top}>`}`);
       }
+      close(localName(name), stack.length);
       if (stack.length === 0) rootClosed = true;
     } else {
       const m = body.match(NAME_RE);
       if (!m) throw new Error(`malformed XML: bad tag at offset ${lt}`);
-      if (rootClosed || (stack.length === 0 && root !== null)) throw new Error(`malformed XML: second root element <${m[0]}> at offset ${lt}`);
-      if (root === null) root = m[0];
-      if (body.endsWith('/')) {
+      const name = m[0];
+      if (rootClosed || (stack.length === 0 && root !== null)) throw new Error(`malformed XML: second root element <${name}> at offset ${lt}`);
+      const selfClosing = body.endsWith('/');
+      const attrText = body.slice(name.length, selfClosing ? -1 : undefined);
+      const attrs = new Map();
+      ATTR_RE.lastIndex = 0;
+      let at = 0;
+      for (let a; (a = ATTR_RE.exec(attrText)); at = ATTR_RE.lastIndex) {
+        if (attrs.has(a[1])) throw new Error(`malformed XML: duplicate attribute ${a[1]} at offset ${lt}`);
+        attrs.set(a[1], decodeXmlText(a[2] ?? a[3], lt));
+      }
+      if (/\S/.test(attrText.slice(at))) throw new Error(`malformed XML: bad attribute syntax in <${name}> at offset ${lt}`);
+      if (root === null) {
+        root = name;
+        if (localName(name) !== rootName) throw new Error(`unexpected root element <${name}> (want <${rootName}>)`);
+      }
+      open(localName(name), attrs, stack.length);
+      if (selfClosing) {
+        close(localName(name), stack.length);
         if (stack.length === 0) rootClosed = true;
-      } else stack.push(m[0]);
+      } else stack.push(name);
     }
     i = gt + 1;
   }
   if (root === null) throw new Error('incomplete XML: no root element');
   if (stack.length) throw new Error(`incomplete XML: ${stack.length} element(s) never closed, innermost <${stack[stack.length - 1]}> — the file is truncated`);
-  if (root !== rootName) throw new Error(`unexpected root element <${root}> (want <${rootName}>)`);
+}
+
+/** Throws unless `xml` is a complete document — {@link scanXml} with no handlers. */
+export function assertCompleteXml(xml, rootName = 'Sanctions') {
+  scanXml(xml, {}, rootName);
 }
 
 /**
@@ -246,57 +316,113 @@ export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, 
 }
 
 /**
- * Parse SDN Advanced XML text into its EVM addresses and publication id.
+ * Parse SDN Advanced XML text into its EVM addresses and publication date.
  * PURE; throws on any shape that would make an empty or partial answer look
  * like a real one.
+ *
+ * Extraction walks the token stream of {@link scanXml} — the same single pass
+ * that proves the document complete — and reads only elements in their
+ * documented places:
+ *   Sanctions/DateOfIssue/{Year,Month,Day}
+ *   …/FeatureType[@ID]           (reference set; text = type name)
+ *   …/Reliability[@ID]           (reference set; text = reliability name)
+ *   …/Feature[@FeatureTypeID]/FeatureVersion[@ReliabilityID]/VersionDetail
+ * Records are resolved against the reference sets AFTER the pass, so their
+ * order in the file does not matter.
  */
 export function parseSdnAdvanced(xml) {
-  assertCompleteXml(xml);
-  if (!/<Sanctions\b[^>]*ofac\.treas\.gov/.test(xml)) {
+  const path = [];
+  let rootAttrs = null;
+  const date = {};
+  const featureTypes = new Map();
+  const reliability = new Map();
+  const records = []; // { typeId, rel, value }
+  let feature = null; // { typeId }
+  let version = null; // { rel }
+  let buf = null; // text accumulator for the element being read
+  let reading = null; // what `buf` belongs to
+  let refId = null;
+
+  scanXml(xml, {
+    open(name, attrs, depth) {
+      if (depth === 0) rootAttrs = attrs;
+      const parent = path[path.length - 1];
+      path.push(name);
+      if (depth === 2 && parent === 'DateOfIssue' && (name === 'Year' || name === 'Month' || name === 'Day')) {
+        reading = name;
+        buf = '';
+      } else if (name === 'FeatureType' && parent === 'FeatureTypeValues') {
+        reading = 'FeatureType';
+        refId = attrs.get('ID');
+        buf = '';
+      } else if (name === 'Reliability' && parent === 'ReliabilityValues') {
+        reading = 'Reliability';
+        refId = attrs.get('ID');
+        buf = '';
+      } else if (name === 'Feature') {
+        if (feature) throw new Error('unexpected nested <Feature>');
+        feature = { typeId: attrs.get('FeatureTypeID') };
+      } else if (name === 'FeatureVersion' && feature && parent === 'Feature') {
+        version = { rel: attrs.get('ReliabilityID') };
+      } else if (name === 'VersionDetail' && version && parent === 'FeatureVersion') {
+        reading = 'VersionDetail';
+        buf = '';
+      } else if (reading) {
+        throw new Error(`unexpected <${name}> inside <${reading}>`);
+      }
+    },
+    text(value) {
+      if (reading) buf += value;
+    },
+    close(name) {
+      path.pop();
+      if (reading === name) {
+        if (name === 'Year' || name === 'Month' || name === 'Day') date[name] = buf.trim();
+        else if (name === 'FeatureType') featureTypes.set(refId, buf.trim());
+        else if (name === 'Reliability') reliability.set(refId, buf.trim());
+        else if (name === 'VersionDetail') records.push({ typeId: feature.typeId, rel: version.rel, value: buf.trim() });
+        reading = null;
+        buf = null;
+      } else if (name === 'FeatureVersion') version = null;
+      else if (name === 'Feature') feature = null;
+    },
+  });
+
+  const ns = rootAttrs?.get('xmlns') ?? '';
+  if (!/ofac\.treas\.gov/.test(ns)) {
     throw new Error('not an OFAC SDN Advanced XML document (no <Sanctions> root in the OFAC namespace)');
   }
-  const doi = xml.match(/<DateOfIssue\b[^>]*>\s*<Year>(\d{4})<\/Year>\s*<Month>(\d{1,2})<\/Month>\s*<Day>(\d{1,2})<\/Day>/);
-  if (!doi) throw new Error('no <DateOfIssue> — cannot identify the publication');
-  const publicationId = `${doi[1]}-${doi[2].padStart(2, '0')}-${doi[3].padStart(2, '0')}`;
+  if (!/^\d{4}$/.test(date.Year ?? '') || !/^\d{1,2}$/.test(date.Month ?? '') || !/^\d{1,2}$/.test(date.Day ?? '')) {
+    throw new Error('no <DateOfIssue> — cannot identify the publication');
+  }
+  const publicationId = `${date.Year}-${date.Month.padStart(2, '0')}-${date.Day.padStart(2, '0')}`;
   const publicationDate = Number(publicationId.replaceAll('-', ''));
   if (!isPublicationDate(publicationDate)) throw new Error(`<DateOfIssue> ${publicationId} is not a valid date`);
 
-  const featureTypes = referenceValues(xml, 'FeatureType');
   const dcaTypes = new Map([...featureTypes].filter(([, n]) => n.startsWith(DCA_PREFIX)).map(([id, n]) => [id, n.slice(DCA_PREFIX.length)]));
   if (dcaTypes.size === 0) throw new Error('no "Digital Currency Address - *" feature types — the file format may have changed');
-  const reliability = referenceValues(xml, 'Reliability');
   const falseIds = new Set([...reliability].filter(([, n]) => n === 'False').map(([id]) => id));
 
   const byAddress = new Map(); // lowercase -> { address, assets:Set }
   const excludedFalse = [];
   const malformed = [];
   const nonEvmByAsset = {};
-  // The lookahead skips a self-closing `<Feature … />`, which would otherwise
-  // swallow the NEXT feature's body and file its address under this type.
-  const featureRe = /<Feature\b(?![^>]*\/>)[^>]*\bFeatureTypeID="(\d+)"[^>]*>([\s\S]*?)<\/Feature>/g;
-  for (const f of xml.matchAll(featureRe)) {
-    const asset = dcaTypes.get(f[1]);
+  for (const { typeId, rel, value } of records) {
+    const asset = dcaTypes.get(typeId);
     if (asset === undefined) continue;
-    const versionRe = /<FeatureVersion\b(?![^>]*\/>)([^>]*)>([\s\S]*?)<\/FeatureVersion>/g;
-    for (const v of f[2].matchAll(versionRe)) {
-      const rel = (v[1].match(/\bReliabilityID="(\d+)"/) ?? [])[1];
-      for (const d of v[2].matchAll(/<VersionDetail\b[^>]*>([^<]*)<\/VersionDetail>/g)) {
-        const raw = d[1].trim();
-        if (EVM_RE.test(raw)) {
-          const address = getAddress(raw.toLowerCase());
-          if (rel !== undefined && falseIds.has(rel)) {
-            excludedFalse.push({ address, asset });
-            continue;
-          }
-          const key = address.toLowerCase();
-          if (!byAddress.has(key)) byAddress.set(key, { address, assets: new Set() });
-          byAddress.get(key).assets.add(asset);
-        } else if (HEX_PREFIX_RE.test(raw)) {
-          malformed.push({ value: raw, asset });
-        } else {
-          nonEvmByAsset[asset] = (nonEvmByAsset[asset] ?? 0) + 1;
-        }
+    if (EVM_RE.test(value)) {
+      const address = getAddress(value.toLowerCase());
+      if (rel !== undefined && falseIds.has(rel)) {
+        excludedFalse.push({ address, asset });
+        continue;
       }
+      const key = address.toLowerCase();
+      if (!byAddress.has(key)) byAddress.set(key, { address, assets: new Set() });
+      byAddress.get(key).assets.add(asset);
+    } else if (HEX_PREFIX_RE.test(value)) {
+      malformed.push({ value, asset });
+    } else {
+      nonEvmByAsset[asset] = (nonEvmByAsset[asset] ?? 0) + 1;
     }
   }
   if (byAddress.size === 0) throw new Error('no EVM-format digital-currency address found — refusing an empty list');
@@ -438,10 +564,18 @@ function readList(path) {
   return normaliseAddresses(list, path);
 }
 
-async function readCurrentFromChain(rpc, list, block, abi) {
+/**
+ * The current list, read as ONE snapshot. The block is resolved once — the
+ * given number, or the `finalized` tag by default — to its hash, and every
+ * read (version, publication, hash, count, each page) is pinned to that hash
+ * with `requireCanonical`, so a reorg during the reads makes them fail
+ * instead of mixing two forks at one height.
+ */
+async function readCurrentFromChain(rpc, list, blockNumberArg, abi) {
   const client = createPublicClient({ transport: http(rpc) });
-  const blockNumber = block ?? (await client.getBlockNumber());
-  const read = (functionName, args = []) => client.readContract({ address: list, abi, functionName, args, blockNumber });
+  const block = blockNumberArg !== undefined ? await client.getBlock({ blockNumber: blockNumberArg }) : await client.getBlock({ blockTag: 'finalized' });
+  const blockNumber = block.number;
+  const read = (functionName, args = []) => callAtHash(client, block, { address: list, abi, functionName, args });
   const version = await read('listVersion');
   const recordedDate = Number(await read('sourcePublicationDate'));
   const recordedHash = await read('sourceHash');
@@ -450,7 +584,7 @@ async function readCurrentFromChain(rpc, list, block, abi) {
   const PAGE = 200n;
   for (let off = 0n; off < count; off += PAGE) addrs.push(...(await read('listedPage', [off, PAGE])));
   if (BigInt(addrs.length) !== count) throw new Error(`read ${addrs.length} addresses, listedCount says ${count}`);
-  return { version, recordedDate, recordedHash, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber };
+  return { version, recordedDate, recordedHash, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
 }
 
 async function readChainalysisFromChain(rpc, oracle, fromBlock, toBlockArg, chunk) {
@@ -497,7 +631,7 @@ async function main() {
     if (!args.rpc || !args.list) throw new Error('--rpc and --list go together');
     const block = args.block !== undefined ? parseUintArg('--block', args.block) : undefined;
     current = await readCurrentFromChain(args.rpc, getAddress(args.list), block, abi);
-    current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString() };
+    current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
   } else if (args.current) {
     if (args['current-version'] === undefined || args['current-publication'] === undefined) {
       throw new Error('--current needs --current-version and --current-publication (YYYYMMDD, or 0 before the first update)');
@@ -590,6 +724,7 @@ async function main() {
   console.error(
     `OFAC ${parsed.publicationId} sha256 ${hash}: ${parsed.addresses.length} EVM addresses; +${update.add.length} -${update.remove.length} against list version ${current.version}.`,
   );
+  if (current.blockHash) console.error(`Current list read at block ${current.blockNumber} (${current.blockHash}, ${current.blockTag}).`);
   if (update.order === 'rollback') {
     console.error(`ROLLBACK: the owner must first call authorizePublicationRollback(${parsed.publicationDate}, ${hash}); see ownerMustFirstCall.`);
   }

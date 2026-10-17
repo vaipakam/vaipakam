@@ -621,6 +621,31 @@
   },
   {
     "type": "event",
+    "name": "PublicationRollbackCleared",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "authorizedDate",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "authorizedHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "UpdaterSet",
     "inputs": [
       {
@@ -750,6 +775,22 @@
     "type": "error",
     "name": "RenounceDisabled",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RollbackNotNeeded",
+    "inputs": [
+      {
+        "name": "publicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "recordedDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",

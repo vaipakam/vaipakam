@@ -20,6 +20,8 @@ import {
   assertCompleteXml,
   parseUintArg,
   checkPublicationOrder,
+  scanXml,
+  decodeXmlText,
 } from './ofac-sanctions-diff.mjs';
 import { toEventSelector, getAddress } from 'viem';
 
@@ -194,4 +196,45 @@ test('buildUpdate: an older publication is refused; an allowed rollback carries 
   assert.equal(args[0], 20260307);
   assert.equal(args[1], hash);
   assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5 }), /recorded publication/);
+});
+
+// ---- Codex #2543 r2: one tokenizer drives completeness AND extraction ----
+const PROFILE_OPEN = '<Profile ID="1" PartySubTypeID="4">';
+const E = getAddress('0x00000000000000000000000000000000000000e0');
+const feature = (addr, id = 90) =>
+  `<Feature ID="${id}" FeatureTypeID="345"><FeatureVersion ID="${id + 1}" ReliabilityID="1"><VersionDetail DetailTypeID="1432">${addr}</VersionDetail></FeatureVersion></Feature>`;
+const withInProfile = (snippet) => FIXTURE.toString('utf8').replace(PROFILE_OPEN, PROFILE_OPEN + snippet);
+
+test('tokenizer: a commented-out <Feature> is not extracted', () => {
+  const p = parseSdnAdvanced(withInProfile(`<!-- ${feature(E)} -->`));
+  assert.ok(!p.addresses.includes(E));
+  assert.deepEqual(p.addresses, normaliseAddresses([A, B]));
+  // A comment that never closes is truncation, not a hidden feature.
+  assert.throws(() => parseSdnAdvanced(withInProfile(`<!-- ${feature(E)}`)), /malformed|truncat|unterminated|unclosed/i);
+});
+
+test('tokenizer: a <Feature> inside CDATA is text, never markup; CDATA inside a value is decoded', () => {
+  const asText = parseSdnAdvanced(withInProfile(`<![CDATA[${feature(E)}]]>`));
+  assert.ok(!asText.addresses.includes(E), 'markup inside CDATA is literal text');
+  const inValue = parseSdnAdvanced(withInProfile(feature(`<![CDATA[${E}]]>`)));
+  assert.ok(inValue.addresses.includes(E), 'a CDATA-wrapped value is the value');
+});
+
+test('tokenizer: entities are decoded; an undeclared entity or a bare & is refused', () => {
+  const hexRef = `&#x30;x${E.slice(2)}`; // &#x30; is "0"
+  assert.ok(parseSdnAdvanced(withInProfile(feature(hexRef))).addresses.includes(E));
+  assert.equal(decodeXmlText('a &amp; b &lt;&gt; &quot;&apos; &#65;'), 'a & b <> "\' A');
+  assert.throws(() => decodeXmlText('&nbsp;'), /undeclared entity/);
+  assert.throws(() => decodeXmlText('a & b'), /bare '&'/);
+  assert.throws(() => parseSdnAdvanced(withInProfile(feature(`&ent;${E}`))), /undeclared entity/);
+});
+
+test('tokenizer: malformed attributes are refused; a quoted ">" or "<Feature" in an attribute is not markup', () => {
+  assert.throws(() => scanXml('<Sanctions a="1" a="2"></Sanctions>'), /duplicate|attribute/i);
+  assert.throws(() => scanXml('<Sanctions a=1></Sanctions>'), /attribute|malformed/i);
+  const seen = [];
+  scanXml('<Sanctions note="x &gt; y"><!-- <Feature/> --><F q="&lt;Feature/&gt;"/></Sanctions>', {
+    open: (name, attrs) => seen.push([name, Object.fromEntries(attrs)]),
+  });
+  assert.deepEqual(seen, [['Sanctions', { note: 'x > y' }], ['F', { q: '<Feature/>' }]]);
 });

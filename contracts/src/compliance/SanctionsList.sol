@@ -46,7 +46,10 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            - anything else (an earlier date, or a different file on the
  *              same date) needs a one-shot owner authorization naming that
  *              exact date and hash ({authorizePublicationRollback}). Both the
- *              authorization and its use are evented. A legitimate same-day
+ *              authorization and its use are evented. An authorization for
+ *              a NEWER date is refused, and every successful update clears
+ *              a pending one (evented when unused), so no authorization
+ *              outlives the state it was granted against. A legitimate same-day
  *              OFAC reissue therefore takes the owner's explicit sign-off; it
  *              is rare, and silently accepting one would also accept a
  *              same-day rollback.
@@ -157,6 +160,10 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         authorization, with zero values).
     /// @custom:event-category informational/admin
     event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    /// @notice An update that did not need the pending authorization
+    ///         cleared it unused (the state it was granted against is gone).
+    /// @custom:event-category informational/config
+    event PublicationRollbackCleared(uint64 indexed version, uint32 authorizedDate, bytes32 authorizedHash);
     /// @notice An update consumed that authorization.
     /// @custom:event-category informational/config
     event PublicationRollbackApplied(
@@ -185,6 +192,9 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @notice The publication is not newer than the recorded one, and no
     ///         owner authorization names it.
     error PublicationNotNewer(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
+    /// @notice A rollback authorization named a publication newer than the
+    ///         recorded one, which needs no authorization.
+    error RollbackNotNeeded(uint32 publicationDate, uint32 recordedDate);
     /// @notice Renouncing ownership is disabled: it would leave the updater
     ///         set impossible to rotate.
     error RenounceDisabled();
@@ -218,7 +228,10 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         than the recorded one — a deliberate rollback, or a different
     ///         file issued on the recorded date. The update must name exactly
     ///         this date and hash; the authorization is consumed by it.
-    ///         Pass `(0, 0)` to clear a pending authorization.
+    ///         Pass `(0, 0)` to clear a pending authorization. A date newer
+    ///         than the recorded one is refused, and ANY successful update
+    ///         clears a pending authorization, used or not, so none can
+    ///         outlive the state it was granted against.
     /// @dev    The owner authorizes the ORDERING exception only; the content
     ///         is still applied by an updater through {applyUpdate}, with its
     ///         usual version, duplicate and provenance checks.
@@ -226,6 +239,12 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         if (publicationDate != 0 || sourceHash_ != bytes32(0)) {
             _checkPublicationDate(publicationDate);
             if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
+            // A newer publication needs no authorization, and one granted for
+            // it would never be consumed — it would linger as a standing
+            // exception (Codex #2543 r2).
+            if (publicationDate > sourcePublicationDate) {
+                revert RollbackNotNeeded(publicationDate, sourcePublicationDate);
+            }
         }
         rollbackAuthorizedDate = publicationDate;
         rollbackAuthorizedHash = sourceHash_;
@@ -288,17 +307,26 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @dev Accepts a newer publication, or a same-date refresh (identical
     ///      hash, no changes); otherwise consumes a matching owner
     ///      authorization or reverts. Note 1a on the contract says why.
+    ///      Whatever path is taken, a successful update leaves NO pending
+    ///      authorization: one it did not use is cleared and evented.
     function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool noChanges) private {
         uint32 recordedDate = sourcePublicationDate;
         bytes32 recordedHash = sourceHash;
-        if (date > recordedDate) return;
-        if (date == recordedDate && hash == recordedHash && noChanges) return;
-        if (date != rollbackAuthorizedDate || hash != rollbackAuthorizedHash) {
-            revert PublicationNotNewer(date, hash, recordedDate, recordedHash);
+        uint32 pendingDate = rollbackAuthorizedDate;
+        bytes32 pendingHash = rollbackAuthorizedHash;
+        bool ordered = date > recordedDate || (date == recordedDate && hash == recordedHash && noChanges);
+        if (!ordered) {
+            if (pendingDate == 0 || date != pendingDate || hash != pendingHash) {
+                revert PublicationNotNewer(date, hash, recordedDate, recordedHash);
+            }
+            emit PublicationRollbackApplied(version, recordedDate, recordedHash, date, hash);
+        } else if (pendingDate != 0) {
+            emit PublicationRollbackCleared(version, pendingDate, pendingHash);
         }
-        delete rollbackAuthorizedDate;
-        delete rollbackAuthorizedHash;
-        emit PublicationRollbackApplied(version, recordedDate, recordedHash, date, hash);
+        if (pendingDate != 0) {
+            delete rollbackAuthorizedDate;
+            delete rollbackAuthorizedHash;
+        }
     }
 
     /// @dev A `YYYYMMDD` shape check. It does not know month lengths; its job

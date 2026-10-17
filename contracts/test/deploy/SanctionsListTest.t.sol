@@ -287,6 +287,7 @@ contract SanctionsListTest is Test {
 
     event PublicationRollbackAuthorized(uint32 publicationDate, bytes32 sourceHash, uint32 recordedDate, bytes32 recordedHash);
     event PublicationRollbackApplied(uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash);
+    event PublicationRollbackCleared(uint64 indexed version, uint32 authorizedDate, bytes32 authorizedHash);
 
     bytes32 internal constant H0 = keccak256("sdn_advanced.xml@2026-10-14");
     bytes32 internal constant H1B = keccak256("sdn_advanced.xml@2026-10-15-reissue");
@@ -368,6 +369,7 @@ contract SanctionsListTest is Test {
     }
 
     function test_Order_AuthorizationIsOwnerOnlyAndClearable() public {
+        _update(_arr(a), _none(), H1, 20261015);
         vm.prank(updater);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, updater));
         list.authorizePublicationRollback(20261014, H0);
@@ -386,6 +388,50 @@ contract SanctionsListTest is Test {
         vm.expectRevert(SanctionsList.MissingSourceHash.selector);
         list.authorizePublicationRollback(20261014, bytes32(0));
         vm.stopPrank();
+    }
+
+    /// @notice An authorization for a NEWER publication is refused — it
+    ///         would never be consumed and would linger (Codex #2543 r2).
+    function test_Order_RefusesAForwardDatedAuthorization() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.RollbackNotNeeded.selector, uint32(20261016), uint32(20261015)));
+        list.authorizePublicationRollback(20261016, H2);
+        // Before any update, every date is newer than "none".
+        SanctionsList fresh = new SanctionsList(admin, address(0));
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.RollbackNotNeeded.selector, uint32(20261014), uint32(0)));
+        fresh.authorizePublicationRollback(20261014, H0);
+    }
+
+    /// @notice A newer update that does not use a pending authorization
+    ///         clears it, evented, so it cannot be used later against a state
+    ///         it was never granted for.
+    function test_Order_ANewerUpdateClearsAnUnusedAuthorization() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(admin);
+        list.authorizePublicationRollback(20261014, H0);
+        vm.expectEmit(true, false, false, true, address(list));
+        emit PublicationRollbackCleared(2, 20261014, H0);
+        _update(_arr(b), _none(), H2, 20261016);
+        assertEq(list.rollbackAuthorizedDate(), 0);
+        assertEq(list.rollbackAuthorizedHash(), bytes32(0));
+        vm.prank(updater);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H0, uint32(20261016), H2)
+        );
+        list.applyUpdate(2, _none(), _arr(b), H0, 20261014);
+    }
+
+    /// @notice A same-date refresh clears a pending authorization too.
+    function test_Order_ARefreshClearsAnUnusedAuthorization() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(admin);
+        list.authorizePublicationRollback(20261015, H1B);
+        vm.expectEmit(true, false, false, true, address(list));
+        emit PublicationRollbackCleared(2, 20261015, H1B);
+        _update(_none(), _none(), H1, 20261015);
+        assertEq(list.rollbackAuthorizedDate(), 0);
     }
 
     /// @notice Encodings that are not `YYYYMMDD` are refused: `YYMMDD`, a
