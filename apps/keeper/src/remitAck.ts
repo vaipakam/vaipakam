@@ -38,6 +38,7 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
 import {
+  deploymentFloor,
   getRemitAckScanState,
   putRemitAckScanState,
   getRemitAckAttempts,
@@ -350,7 +351,7 @@ async function ackLateDeliveries(
   ackBudget: { remaining: number },
 ): Promise<void> {
   const done = await listWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
-  const ids = (await listReleasedRemitIds(env.DB, baseChainId)).filter((id) => !done.has(String(id)));
+  const ids = (await listReleasedRemitIds(env.DB, baseChainId, deploymentFloor(baseChainId))).filter((id) => !done.has(String(id)));
   if (ids.length === 0) return;
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {

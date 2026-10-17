@@ -77,7 +77,7 @@ describe('listReleasedRemitIds (real schema)', () => {
     seed(84532, 'RemitReservationReleased', '4'); // a repeat: once
     // 60 newer releases: the old read took the newest 50, so 4 and 9 fell out.
     for (let i = 0; i < 60; i++) seed(84532, 'RemitReservationReleased', String(100 + i));
-    const ids = await listReleasedRemitIds(h.d1 as D1Database, 84532);
+    const ids = await listReleasedRemitIds(h.d1 as D1Database, 84532, 0);
     expect(ids.slice(0, 2)).toEqual([4, 9]);
     expect(ids).toHaveLength(62);
   });

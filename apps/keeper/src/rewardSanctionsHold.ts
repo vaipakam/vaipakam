@@ -62,6 +62,7 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
 import {
+  deploymentFloor,
   countLoanParties,
   getSanctionsScreenCursor,
   listLoanPartiesAfter,
@@ -214,8 +215,8 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   // chain (the oracle was unavailable when its page ran, a flag marker set)
   // emits no evidence event, so the events alone never surface it.
   const known = candidateOwners(
-    await listOpenSanctionsChains(env.DB, chain.id),
-    await listOpenStagingOwners(env.DB, chain.id),
+    await listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id)),
+    await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id)),
   );
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
@@ -478,7 +479,7 @@ async function resolveOwnerRecords(
   if (budget.writes <= 0) return;
   // The owner's OPEN records only, however old (Codex #2489 r1); read in
   // bounded chunks, each record's own phase deciding whether a page is due.
-  const keys = await listOpenStagingRecordKeysForUser(env.DB, ctx.chainId, owner);
+  const keys = await listOpenStagingRecordKeysForUser(env.DB, ctx.chainId, owner, deploymentFloor(ctx.chainId));
   for (let c = 0; c < keys.length && budget.writes > 0; c += STATUS_CHUNK) {
     const chunk = keys.slice(c, c + STATUS_CHUNK);
     // eslint-disable-next-line no-await-in-loop

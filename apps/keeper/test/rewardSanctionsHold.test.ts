@@ -156,7 +156,7 @@ describe('the D1 reads, on the real schema', () => {
     for (let i = 0; i < 6000; i++) {
       ins.run(CHAIN, 100 + i, `0x${(100 + i).toString(16).padStart(64, '0')}`, JSON.stringify({ who: `0x${(i + 0x1000).toString(16).padStart(40, '0')}` }), NOW);
     }
-    const open = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN);
+    const open = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN, 0);
     expect(open.includes(A), 'the old chain is still open').toBe(true);
     expect(open.length).toBe(6001);
     // B: started, then cleared — closed. C: cleared, then started again — open.
@@ -164,10 +164,10 @@ describe('the D1 reads, on the real schema', () => {
     seed('RewardSanctionsEvidenceCleared', 7001, { who: B });
     seed('RewardSanctionsEvidenceCleared', 7002, { who: C });
     seed('RewardSanctionsEvidenceRecorded', 7003, { who: C });
-    const again = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN);
+    const again = await listOpenSanctionsChains(h.d1 as D1Database, CHAIN, 0);
     expect(again.includes(B), 'a cleared chain is closed').toBe(false);
     expect(again.includes(C), 'a later start reopens').toBe(true);
-    expect(await listOpenSanctionsChains(h.d1 as D1Database, CHAIN + 1), 'another chain').toEqual([]);
+    expect(await listOpenSanctionsChains(h.d1 as D1Database, CHAIN + 1, 0), 'another chain').toEqual([]);
   });
 
   it("lists one user's OPEN staging-record keys, case-insensitively, oldest first — a closed one never", async () => {
@@ -180,10 +180,10 @@ describe('the D1 reads, on the real schema', () => {
     seed('StagingRecordOpened', 5, { key: k3, user: A });
     seed('StagingRecordClosed', 6, { key: k3, paid: true });
     seed('StagingRecordOpened', 7, { key: `0x${'4'.repeat(64)}`, user: B });
-    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k1, k2]);
+    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A, 0)).toEqual([k1, k2]);
     // Reopened after its close: open again (positions, not presence, decide).
     seed('StagingRecordOpened', 8, { key: k3, user: A });
-    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A)).toEqual([k1, k2, k3]);
+    expect(await listOpenStagingRecordKeysForUser(h.d1 as D1Database, CHAIN, A, 0)).toEqual([k1, k2, k3]);
   });
 
   it('lists the owners of open records AND open domains, however old; a closed one drops (straddle on the close)', async () => {
@@ -198,11 +198,11 @@ describe('the D1 reads, on the real schema', () => {
     seed('StagingDomainOpened', 12, { domainKey: k(4), user: D, side: 0, firstDay: 1, lastDay: 9, chunks: 1 });
     seed('StagingDomainCleared', 13, { domainKey: k(4), paid: true });
     seed('RewardSanctionsEvidenceRecorded', 14, { who: D }); // not staging work
-    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN)).toEqual([A, C]);
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN, 0)).toEqual([A, C]);
     // B's record reopened AFTER its close: B is back.
     seed('StagingRecordOpened', 15, { key: k(2), user: B });
-    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN)).toEqual([A, B, C]);
-    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN + 1), 'another chain').toEqual([]);
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN, 0)).toEqual([A, B, C]);
+    expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN + 1, 0), 'another chain').toEqual([]);
   });
 });
 
