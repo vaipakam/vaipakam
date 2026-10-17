@@ -21,9 +21,9 @@ import {
   planDelivery,
   type PacketState,
 } from '../src/deliveryProof';
-import { BaseError } from 'viem';
+import { BaseError, encodeAbiParameters, keccak256 } from 'viem';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
-import { listBudgetDeliveries } from '../src/db';
+import { flatDayListHash, listBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
@@ -126,56 +126,77 @@ describe('planDelivery — flat', () => {
 });
 
 describe('listBudgetDeliveries (real schema)', () => {
-  it('joins each budget packet to its day-list event in the same transaction, EVERY one oldest first — no age window (Codex #2489 r1)', async () => {
+  function ledger() {
     const h = createSqliteD1(ALL_MIGRATIONS);
     let block = 10;
-    const seed = (tx: string, kind: string, args: Record<string, unknown>, at: number) =>
+    const seed = (tx: string, kind: string, args: Record<string, unknown>, at = 5_000, at_block?: number) =>
       h.db
         .prepare(
           `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
            VALUES (?, ?, 0, ?, ?, ?, ?)`,
         )
-        .run(421614, block++, tx, kind, JSON.stringify(args), at);
+        .run(421614, at_block ?? block++, tx, kind, JSON.stringify(args), at);
+    return { h, seed };
+  }
+  const S = '84532';
+
+  it('lists every budget packet with a VERIFIED day list, oldest first — no age window (Codex #2489 r1)', async () => {
+    const { h, seed } = ledger();
     const P1 = `0x${'1'.repeat(64)}`;
     const P2 = `0x${'2'.repeat(64)}`;
     const P3 = `0x${'3'.repeat(64)}`;
-    const S = '84532';
-    seed('0xt1', 'IngressPacketRecorded', { packetHash: P1, kind: 1, remitId: '7', sourceChainId: S }, 5_000);
-    seed('0xt1', 'RewardBudgetReceived', { dayIds: ['4', '5'], remitId: '7', sourceChainId: S }, 5_000);
-    seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8', sourceChainId: S }, 6_000);
-    seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H, remitId: '8', sourceChainId: S }, 6_000);
-    seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9', sourceChainId: S }, 7_000); // compensation: not a budget
-    seed('0xt0', 'IngressPacketRecorded', { packetHash: `0x${'4'.repeat(64)}`, kind: 1, remitId: '6', sourceChainId: S }, 100); // 'old': still listed
-    seed('0xt0', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '6', sourceChainId: S }, 100);
-    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614);
+    const P4 = `0x${'4'.repeat(64)}`;
+    seed('0xt1', 'IngressPacketRecorded', { packetHash: P1, kind: 1, remitId: '7', sourceChainId: S });
+    seed('0xt1', 'IngressPacketDayListRecorded', { packetHash: P1, dayListHash: flatDayListHash(['4', '5']), dayCount: '2' });
+    seed('0xt1', 'RewardBudgetReceived', { dayIds: ['4', '5'], remitId: '7', sourceChainId: S });
+    seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8', sourceChainId: S });
+    seed('0xt2', 'IngressPacketDayListRooted', { packetHash: P2, dayListRoot: H });
+    seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H, remitId: '8', sourceChainId: S });
+    seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9', sourceChainId: S }); // not a budget
+    seed('0xt5', 'IngressPacketRecorded', { packetHash: P4, kind: 1, remitId: '6', sourceChainId: S }); // no stamp: not provable
+    seed('0xt5', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '6', sourceChainId: S });
+    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 0);
     expect(rows.map((r) => [r.packetHash, r.remitId, r.rooted, r.flatDayIds])).toEqual([
       [P1, '7', false, ['4', '5']],
       [P2, '8', true, null],
-      [`0x${'4'.repeat(64)}`, '6', false, ['1']],
     ]);
   });
 
-  it('pairs each packet with ITS delivery when one transaction lands two (no cross-product)', async () => {
-    const h = createSqliteD1(ALL_MIGRATIONS);
-    let block = 10;
-    const seed = (kind: string, args: Record<string, unknown>) =>
-      h.db
-        .prepare(
-          `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
-           VALUES (?, ?, 0, '0xtx', ?, ?, 5000)`,
-        )
-        .run(421614, block++, kind, JSON.stringify(args));
+  it('pairs two ZERO-id deliveries in one transaction by their stamped commitment, never by source and remit id (#2497 r3)', async () => {
+    const { h, seed } = ledger();
     const A = `0x${'a'.repeat(64)}`;
     const B = `0x${'c'.repeat(64)}`;
-    seed('IngressPacketRecorded', { packetHash: A, kind: 1, remitId: '11', sourceChainId: '84532' });
-    seed('RewardBudgetReceived', { dayIds: ['1', '2'], remitId: '11', sourceChainId: '84532' });
-    seed('IngressPacketRecorded', { packetHash: B, kind: 1, remitId: '12', sourceChainId: '84532' });
-    seed('RewardBudgetReceived', { dayIds: ['3'], remitId: '12', sourceChainId: '84532' });
-    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614);
+    // Both legacy/manual: remitId 0 and the same source — the old join paired each packet with BOTH.
+    seed('0xtx', 'IngressPacketRecorded', { packetHash: A, kind: 1, remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketDayListRecorded', { packetHash: A, dayListHash: flatDayListHash(['1', '2']), dayCount: '2' });
+    seed('0xtx', 'RewardBudgetReceived', { dayIds: ['1', '2'], remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketRecorded', { packetHash: B, kind: 1, remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketDayListRecorded', { packetHash: B, dayListHash: flatDayListHash(['3']), dayCount: '1' });
+    seed('0xtx', 'RewardBudgetReceived', { dayIds: ['3'], remitId: '0', sourceChainId: S });
+    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 0);
     expect(rows.map((r) => [r.packetHash, r.flatDayIds])).toEqual([
       [A, ['1', '2']],
       [B, ['3']],
     ]);
+  });
+
+  it("reads nothing from before the active Diamond's first block (#2497 r3)", async () => {
+    const { h, seed } = ledger();
+    const OLD = `0x${'5'.repeat(64)}`;
+    const NEW = `0x${'6'.repeat(64)}`;
+    seed('0xold', 'IngressPacketRecorded', { packetHash: OLD, kind: 1, remitId: '1', sourceChainId: S }, 100, 50);
+    seed('0xold', 'IngressPacketDayListRecorded', { packetHash: OLD, dayListHash: flatDayListHash(['1']), dayCount: '1' }, 100, 51);
+    seed('0xold', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '1', sourceChainId: S }, 100, 52);
+    seed('0xnew', 'IngressPacketRecorded', { packetHash: NEW, kind: 1, remitId: '2', sourceChainId: S }, 200, 500);
+    seed('0xnew', 'IngressPacketDayListRecorded', { packetHash: NEW, dayListHash: flatDayListHash(['2']), dayCount: '1' }, 200, 501);
+    seed('0xnew', 'RewardBudgetReceived', { dayIds: ['2'], remitId: '2', sourceChainId: S }, 200, 502);
+    const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 400);
+    expect(rows.map((r) => r.packetHash)).toEqual([NEW]);
+  });
+
+  it('computes the flat commitment exactly as the contract does: keccak256(abi.encode(uint256[]))', () => {
+    const want = keccak256(encodeAbiParameters([{ type: 'uint256[]' }], [[4n, 5n]])).toLowerCase();
+    expect(flatDayListHash(['4', '5'])).toBe(want);
   });
 });
 

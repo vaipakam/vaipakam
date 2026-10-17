@@ -48,7 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { listBudgetDeliveries, listWorkDone, markWorkDone, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, listBudgetDeliveries, listWorkDone, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -228,7 +228,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // Every delivery the log holds, less the ones already seen finished: work is
   // dropped only on the chain's word, never by its age.
   const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
-  const rows = (await listBudgetDeliveries(env.DB, chain.id)).filter((r) => !done.has(r.packetHash.toLowerCase()));
+  const rows = (await listBudgetDeliveries(env.DB, chain.id, deploymentFloor(chain.id))).filter((r) => !done.has(r.packetHash.toLowerCase()));
   if (rows.length === 0) return;
 
   const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex));

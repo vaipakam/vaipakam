@@ -11,8 +11,23 @@
  * reads each side separately (see `recordHfBandNotifications`).
  */
 
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { encodeAbiParameters, keccak256, type Hex } from 'viem';
 import type { KeeperD1 } from './env';
+
+/**
+ * The first block of the ACTIVE Diamond on `chainId` (#2497 r3). The event
+ * ledger (`activity_events`) is append-only and outlives a redeploy, while
+ * every keeper done set is keyed by the Diamond — so a read of the ledger
+ * without this floor would hand the new Diamond the old one's history to
+ * re-check forever. ONE floor for every keeper read of the ledger; 0 (read
+ * everything) only for a chain the deployment record does not know.
+ */
+export function deploymentFloor(chainId: number): number {
+  const b = getDeployment(chainId)?.deployBlock;
+  return typeof b === 'number' && Number.isSafeInteger(b) && b > 0 ? b : 0;
+}
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -689,7 +704,7 @@ export async function markReconciledDayConsumed(
  * resolution of a staging record or domain, and {@link listOpenStagingOwners}
  * lists every owner of one of those, however old.
  */
-export async function listOpenSanctionsChains(db: D1Database, chainId: number): Promise<string[]> {
+export async function listOpenSanctionsChains(db: D1Database, chainId: number, fromBlock: number): Promise<string[]> {
   const rows = await db
     .prepare(
       `SELECT who FROM (
@@ -699,13 +714,13 @@ export async function listOpenSanctionsChains(db: D1Database, chainId: number): 
                   ORDER BY block_number DESC, log_index DESC
                 ) AS rn
            FROM activity_events
-          WHERE chain_id = ?1
+          WHERE chain_id = ?1 AND block_number >= ?2
             AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
        )
         WHERE rn = 1 AND kind = 'RewardSanctionsEvidenceRecorded'
         ORDER BY who`,
     )
-    .bind(chainId)
+    .bind(chainId, fromBlock)
     .all<{ who: string | null }>();
   return (rows.results ?? [])
     .map((r) => r.who)
@@ -728,14 +743,15 @@ export async function listOpenSanctionsChains(db: D1Database, chainId: number): 
  * Positions compare `(block_number, log_index)` as one integer; a block's log
  * index is far below the multiplier.
  */
-const OPEN_STAGING_SQL = `
+/** `floor` is the placeholder that binds {@link deploymentFloor}. */
+const openStagingSql = (floor: string) => `
   WITH ev AS (
     SELECT kind,
            lower(json_extract(args_json, '$.user')) AS who,
            lower(COALESCE(json_extract(args_json, '$.key'), json_extract(args_json, '$.domainKey'))) AS k,
            block_number * 1000000 + log_index AS pos
       FROM activity_events
-     WHERE chain_id = ?1
+     WHERE chain_id = ?1 AND block_number >= ${floor}
        AND kind IN ('StagingRecordOpened', 'StagingRecordClosed', 'StagingDomainOpened', 'StagingDomainCleared')
   ),
   opened AS (
@@ -755,10 +771,10 @@ const OPEN_STAGING_SQL = `
 /** Distinct owners of an open staging record or domain on `chainId` —
  *  candidates the sanctions-hold pass classifies even when no evidence event
  *  names them (a claimant held with no observation chain, a cleared one). */
-export async function listOpenStagingOwners(db: D1Database, chainId: number): Promise<string[]> {
+export async function listOpenStagingOwners(db: D1Database, chainId: number, fromBlock: number): Promise<string[]> {
   const rows = await db
-    .prepare(`SELECT DISTINCT who FROM (${OPEN_STAGING_SQL}) ORDER BY who`)
-    .bind(chainId)
+    .prepare(`SELECT DISTINCT who FROM (${openStagingSql('?2')}) ORDER BY who`)
+    .bind(chainId, fromBlock)
     .all<{ who: string | null }>();
   return (rows.results ?? [])
     .map((r) => r.who)
@@ -772,14 +788,15 @@ export async function listOpenStagingRecordKeysForUser(
   db: D1Database,
   chainId: number,
   user: string,
+  fromBlock: number,
 ): Promise<string[]> {
   const rows = await db
     .prepare(
-      `SELECT k FROM (${OPEN_STAGING_SQL})
+      `SELECT k FROM (${openStagingSql('?3')})
         WHERE what = 'record' AND who = ?2
         ORDER BY pos`,
     )
-    .bind(chainId, user.toLowerCase())
+    .bind(chainId, user.toLowerCase(), fromBlock)
     .all<{ k: string | null }>();
   return (rows.results ?? [])
     .map((r) => r.k)
@@ -887,68 +904,105 @@ export interface BudgetDeliveryRow {
 const PACKET_KIND_BUDGET = 1;
 
 /**
- * EVERY budget delivery recorded on `chainId`, oldest first: each packet joined
- * (same transaction) to the event that carries its day list — the flat list
- * itself, or the rooted wire's marker. The indexer decodes every Diamond event
- * into `activity_events`, so no log scan is needed.
+ * EVERY budget delivery recorded on the ACTIVE Diamond of `chainId`, oldest
+ * first, each packet paired with the event that carries its day list — the
+ * flat list itself, or the rooted wire's marker.
+ *
+ * PAIRING IS VERIFIED, never inferred (#2497 r3, root fix). The packet's own
+ * stamp event names it AND its commitment: `IngressPacketDayListRecorded
+ * (packetHash, dayListHash)` for a flat list, `IngressPacketDayListRooted
+ * (packetHash, dayListRoot)` for a rooted one. A delivery event in the same
+ * transaction belongs to the packet only when it carries THAT commitment: its
+ * `dayListRoot` equals the stamped root, or `keccak256(abi.encode(dayIds))`
+ * equals the stamped hash — the contract's own formula
+ * (`LibRewardCustody.stampPacketDayList`). Two zero-id deliveries in one
+ * transaction can no longer swap lists, and a packet with no verified match is
+ * left out (a pre-3a packet with no commitment is not provable anyway).
  *
  * No age and no count bound (Codex #2489 r1): a delivery is work until the
- * chain shows it whole, and the earlier 45-day / 200-row window let one still
- * waiting on its proof drop out for good. What keeps a tick's chain work
- * bounded is the keeper's DONE set ({@link listWorkDone}): the pass skips every
- * packet it has seen finished, so only open deliveries are read on chain. The
- * rows read here grow by one per delivery ever made to this mirror.
+ * chain shows it whole. What keeps a tick's chain work bounded is the keeper's
+ * DONE set ({@link listWorkDone}), and `fromBlock` — the active Diamond's first
+ * block ({@link deploymentFloor}) — keeps a redeploy's old history out.
  */
-export async function listBudgetDeliveries(db: D1Database, chainId: number): Promise<BudgetDeliveryRow[]> {
+export async function listBudgetDeliveries(db: D1Database, chainId: number, fromBlock: number): Promise<BudgetDeliveryRow[]> {
   const rows = await db
     .prepare(
-      `SELECT json_extract(p.args_json, '$.packetHash') AS packet_hash,
-              json_extract(p.args_json, '$.remitId')    AS remit_id,
-              d.kind                                     AS day_kind,
-              json_extract(d.args_json, '$.dayIds')      AS day_ids,
-              p.block_at                                 AS block_at
-         FROM activity_events p
-         LEFT JOIN activity_events d
-           ON d.chain_id = p.chain_id AND d.tx_hash = p.tx_hash
-          AND d.kind IN ('RewardBudgetReceived', 'RewardBudgetRootReceived')
-          -- One CCIP execution can land more than one delivery: pair each packet
-          -- with ITS delivery event (one receipt per remit and source), never
-          -- with every delivery of the transaction.
-          AND CAST(json_extract(d.args_json, '$.remitId') AS TEXT) = CAST(json_extract(p.args_json, '$.remitId') AS TEXT)
-          AND CAST(json_extract(d.args_json, '$.sourceChainId') AS TEXT) = CAST(json_extract(p.args_json, '$.sourceChainId') AS TEXT)
-        WHERE p.chain_id = ?1
-          AND p.kind = 'IngressPacketRecorded'
-          AND CAST(json_extract(p.args_json, '$.kind') AS INTEGER) = ?2
-        ORDER BY p.block_number ASC, p.log_index ASC`,
+      `SELECT kind, tx_hash, args_json, block_at
+         FROM activity_events
+        WHERE chain_id = ?1 AND block_number >= ?2
+          AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRecorded', 'IngressPacketDayListRooted',
+                       'RewardBudgetReceived', 'RewardBudgetRootReceived')
+        ORDER BY block_number ASC, log_index ASC`,
     )
-    .bind(chainId, PACKET_KIND_BUDGET)
-    .all<{ packet_hash: string | null; remit_id: string | number | null; day_kind: string | null; day_ids: string | null; block_at: number }>();
-  const out: BudgetDeliveryRow[] = [];
+    .bind(chainId, fromBlock)
+    .all<{ kind: string; tx_hash: string; args_json: string; block_at: number }>();
+  type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number };
+  const evs: Ev[] = [];
   for (const r of rows.results ?? []) {
-    if (typeof r.packet_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(r.packet_hash)) continue;
-    if (r.day_kind !== 'RewardBudgetReceived' && r.day_kind !== 'RewardBudgetRootReceived') continue;
-    let flat: string[] | null = null;
-    if (r.day_kind === 'RewardBudgetReceived') {
-      try {
-        const parsed = JSON.parse(r.day_ids ?? '[]');
-        if (!Array.isArray(parsed)) continue;
-        flat = parsed.map((x) => String(x));
-      } catch {
-        continue;
+    try {
+      evs.push({ kind: r.kind, tx: r.tx_hash, args: JSON.parse(r.args_json) as Record<string, unknown>, block_at: r.block_at });
+    } catch {
+      /* an unreadable row pairs with nothing */
+    }
+  }
+  const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+  const flatStamp = new Map<string, string>(); // packetHash -> dayListHash
+  const rootStamp = new Map<string, string>(); // packetHash -> dayListRoot
+  const deliveriesByTx = new Map<string, Ev[]>();
+  for (const e of evs) {
+    if (e.kind === 'IngressPacketDayListRecorded') flatStamp.set(lower(e.args.packetHash), lower(e.args.dayListHash));
+    else if (e.kind === 'IngressPacketDayListRooted') rootStamp.set(lower(e.args.packetHash), lower(e.args.dayListRoot));
+    else if (e.kind === 'RewardBudgetReceived' || e.kind === 'RewardBudgetRootReceived') {
+      const list = deliveriesByTx.get(e.tx) ?? [];
+      list.push(e);
+      deliveriesByTx.set(e.tx, list);
+    }
+  }
+  const out: BudgetDeliveryRow[] = [];
+  for (const p of evs) {
+    if (p.kind !== 'IngressPacketRecorded' || Number(p.args.kind) !== PACKET_KIND_BUDGET) continue;
+    const packetHash = lower(p.args.packetHash);
+    if (!/^0x[0-9a-f]{64}$/.test(packetHash)) continue;
+    const candidates = deliveriesByTx.get(p.tx) ?? [];
+    const root = rootStamp.get(packetHash);
+    const hash = flatStamp.get(packetHash);
+    let matched: { flat: string[] | null; rooted: boolean } | null = null;
+    if (root !== undefined) {
+      if (candidates.some((d) => d.kind === 'RewardBudgetRootReceived' && lower(d.args.dayListRoot) === root)) {
+        matched = { flat: null, rooted: true };
+      }
+    } else if (hash !== undefined) {
+      for (const d of candidates) {
+        if (d.kind !== 'RewardBudgetReceived' || !Array.isArray(d.args.dayIds)) continue;
+        const ids = (d.args.dayIds as unknown[]).map((x) => String(x));
+        let ok = false;
+        try {
+          ok = flatDayListHash(ids) === hash;
+        } catch {
+          ok = false;
+        }
+        if (ok) {
+          matched = { flat: ids, rooted: false };
+          break;
+        }
       }
     }
+    if (matched === null) continue;
     out.push({
-      packetHash: r.packet_hash,
-      remitId: String(r.remit_id ?? '0'),
-      flatDayIds: flat,
-      rooted: r.day_kind === 'RewardBudgetRootReceived',
-      block_at: r.block_at,
+      packetHash: p.args.packetHash as string,
+      remitId: String(p.args.remitId ?? '0'),
+      flatDayIds: matched.flat,
+      rooted: matched.rooted,
+      block_at: p.block_at,
     });
   }
   return out;
 }
 
-// ─── #1461 — released remittances whose delivery may still land ─────────────
+/** The contract's flat day-list commitment: `keccak256(abi.encode(uint256[]))`. */
+export function flatDayListHash(dayIds: readonly string[]): string {
+  return keccak256(encodeAbiParameters([{ type: 'uint256[]' }], [dayIds.map((d) => BigInt(d))])).toLowerCase() as Hex;
+}
 
 /** EVERY remit id the canonical chain RELEASED, oldest first, from the
  *  indexer's record of `RemitReservationReleased`. The ack pass's frontier scan
@@ -959,16 +1013,16 @@ export async function listBudgetDeliveries(db: D1Database, chainId: number): Pro
  *  still awaiting its late acknowledgement drop out behind 50 newer ones. The
  *  pass skips every release in the keeper's DONE set ({@link listWorkDone}), so
  *  only open ones are read on chain. */
-export async function listReleasedRemitIds(db: D1Database, chainId: number): Promise<number[]> {
+export async function listReleasedRemitIds(db: D1Database, chainId: number, fromBlock: number): Promise<number[]> {
   const rows = await db
     .prepare(
       `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
          FROM activity_events
-        WHERE chain_id = ?1 AND kind = 'RemitReservationReleased'
+        WHERE chain_id = ?1 AND block_number >= ?2 AND kind = 'RemitReservationReleased'
         GROUP BY remit_id
         ORDER BY MIN(block_number)`,
     )
-    .bind(chainId)
+    .bind(chainId, fromBlock)
     .all<{ remit_id: number | null }>();
   return (rows.results ?? [])
     .map((r) => r.remit_id)
