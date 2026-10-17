@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
 import {TestnetChains} from "./TestnetChains.sol";
 
 /**
@@ -48,12 +49,15 @@ import {TestnetChains} from "./TestnetChains.sol";
  *         was retired by Chainalysis on 2026-03-18 and no longer updates
  *         (#2443). It is immutable: a different upstream is a different
  *         overlay, deployed and configured on the Diamond in the open.
+ *
+ *         Since #2443 the OR rule and the upstream-failure semantics (property
+ *         2) live in `ComposedSanctionsList`, the base it shares with the
+ *         mainnet `SanctionsList`, so the testnet list and the production
+ *         list cannot drift apart on either. Its external surface — every
+ *         getter, event and error name — is unchanged, so the app and
+ *         `ConfigureSanctionsOracle` read it exactly as before.
  */
-contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
-    /// @notice The real oracle this overlay extends, or `address(0)` when it
-    ///         extends none.
-    ISanctionsList public immutable upstream;
-
+contract TestnetSanctionsOverlay is ComposedSanctionsList, Ownable2Step {
     /// @notice Addresses the owner has flagged on this test network.
     mapping(address => bool) public flaggedByOverlay;
 
@@ -73,12 +77,35 @@ contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
     /// @param owner_     The chain's admin. Two-step ownership applies to every
     ///                   later transfer.
     /// @param upstream_  The oracle to extend, or `address(0)` for none.
-    constructor(address owner_, address upstream_) Ownable(owner_) {
+    constructor(address owner_, address upstream_)
+        Ownable(owner_)
+        ComposedSanctionsList(_testnetOnly(upstream_))
+    {}
+
+    /// @dev Refuses every chain outside `TestnetChains` BEFORE the base
+    ///      constructor looks at the upstream, so a mainnet deploy fails on
+    ///      the chain check whatever upstream it names. Base-constructor
+    ///      arguments are evaluated before any constructor body runs, which
+    ///      is what puts this check first.
+    function _testnetOnly(address upstream_) private view returns (address) {
         if (!TestnetChains.isTestnet(block.chainid)) revert NotATestnet(block.chainid);
-        if (upstream_ != address(0) && upstream_.code.length == 0) {
-            revert UpstreamHasNoCode(upstream_);
-        }
-        upstream = ISanctionsList(upstream_);
+        return upstream_;
+    }
+
+    /// @inheritdoc ComposedSanctionsList
+    function _revertSecondaryHasNoCode(address upstream_) internal pure override {
+        revert UpstreamHasNoCode(upstream_);
+    }
+
+    /// @inheritdoc ComposedSanctionsList
+    function _flaggedByOwnRecord(address addr) internal view override returns (bool) {
+        return flaggedByOverlay[addr];
+    }
+
+    /// @notice The real oracle this overlay extends, or `address(0)` when it
+    ///         extends none.
+    function upstream() external view returns (ISanctionsList) {
+        return _secondary;
     }
 
     /// @notice True iff `chainId` is one this contract may be deployed on —
@@ -103,15 +130,6 @@ contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
         }
     }
 
-    /// @inheritdoc ISanctionsList
-    /// @dev An upstream revert propagates for any address the owner has not
-    ///      flagged — see property 2 in the contract notes.
-    function isSanctioned(address addr) external view returns (bool) {
-        if (flaggedByOverlay[addr]) return true;
-        if (address(upstream) == address(0)) return false;
-        return upstream.isSanctioned(addr);
-    }
-
     /// @notice Which list flags `addr`.
     /// @dev    Reads upstream unconditionally, so an upstream outage reverts
     ///         here even for an overlay-flagged address: an attribution that
@@ -120,7 +138,6 @@ contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
     /// @return byUpstream  The upstream oracle reports it; always false when
     ///                     there is no upstream.
     function sanctionSource(address addr) external view returns (bool byOverlay, bool byUpstream) {
-        byOverlay = flaggedByOverlay[addr];
-        byUpstream = address(upstream) != address(0) && upstream.isSanctioned(addr);
+        return _sanctionSource(addr);
     }
 }

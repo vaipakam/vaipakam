@@ -306,7 +306,7 @@ contract ConfigureSanctionsOracleTest is Test {
 
             vm.expectRevert(
                 bytes(
-                    "ConfigureSanctionsOracle: no supported on-chain sanctions source for a mainnet (Chainalysis retired its oracle on 2026-03-18; see #2443)"
+                    "ConfigureSanctionsOracle: mainnet refused - the SanctionsList updater (host and signer) is undecided (#2443); Chainalysis's retired oracle is never configured"
                 )
             );
             s.run();
