@@ -108,4 +108,11 @@ describe('buildHostEnv — the private database', () => {
     expect(env.KEEPER_DB).toBeUndefined();
     expect(missingD1).toContain(HOST_SETTINGS.keeperDatabaseId);
   });
+
+  it('refuses a private id that names the shared database, leaving KEEPER_DB unbound', () => {
+    const shared = String(base[HOST_SETTINGS.databaseId]);
+    const { env, refusedD1 } = buildHostEnv({ ...base, [HOST_SETTINGS.keeperDatabaseId]: shared.toUpperCase() }, undefined, () => 'h');
+    expect(env.KEEPER_DB).toBeUndefined();
+    expect(refusedD1).toMatch(/names the shared database/);
+  });
 });
