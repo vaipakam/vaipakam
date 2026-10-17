@@ -278,10 +278,14 @@ describe('the loan-party screen (Codex #2489 r2)', () => {
 
   it('resumes past the last party read, never past a failed read, and starts over at the end', () => {
     const s = ['0x01', '0x02', '0x03'];
-    expect(nextScreenCursor('0x00', s, [true, true, true], 3)).toBe('0x03');
-    expect(nextScreenCursor('0x00', s, [true, false, true], 3), 'stops before the failure').toBe('0x01');
-    expect(nextScreenCursor('0x00', s, [false, true, true], 3), 'no progress past it').toBe('0x00');
-    expect(nextScreenCursor('0x00', s, [true, true, true], 5), 'a short slice reached the end').toBe('');
+    expect(nextScreenCursor('0x00', s, [true, true, true], false)).toBe('0x03');
+    expect(nextScreenCursor('0x00', s, [true, false, true], false), 'stops before the failure').toBe('0x01');
+    expect(nextScreenCursor('0x00', s, [false, true, true], false), 'no progress past it').toBe('0x00');
+    expect(nextScreenCursor('0x00', s, [true, true, true], true), 'the last page: start over').toBe('');
+    // #2497 r2 — an EXACTLY full last page (2,400 parties at 100 a tick) resets
+    // on that tick, not one empty page later.
+    expect(nextScreenCursor('0x00', s, [true, true, true], true), 'full and terminal: reset now').toBe('');
+    expect(nextScreenCursor('0x00', s, [true, false, true], true), 'a failure on the last page still holds the cursor').toBe('0x01');
   });
 
   it('reads every original and current lender and borrower once, in address order, from the cursor', async () => {

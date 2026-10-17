@@ -247,7 +247,7 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
 
   const plan = planSanctionsHold(statuses, nowSec);
   const ctx = buildKeeperContext(env, chain, client as never);
-  const budget = { writes: MAX_WRITES_PER_TICK };
+  const budget = { writes: MAX_WRITES_PER_TICK, touched: new Set<string>() };
   if (ctx?.wallet.account) {
     const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
     for (const owner of plan.observe) {
@@ -280,7 +280,23 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
-  await raiseAlerts(env, chain.id, statuses, plan, nowSec);
+  // Alerts reflect the state AFTER this tick's writes (#2497 r2): an owner this
+  // tick sent anything for is classified again, so an observation that
+  // started a chain or recorded a clean result does not raise an alert for the
+  // condition it just removed. An owner whose fresh read fails is left out of
+  // this tick's alerts entirely — neither raised from stale state nor cleared.
+  let alertStatuses = statuses;
+  let alertPlan = plan;
+  if (budget.touched.size > 0) {
+    const touched = [...budget.touched];
+    const fresh = await readStatuses(client as never, diamond, touched);
+    alertStatuses = [
+      ...statuses.filter((st) => !budget.touched.has(st.owner.toLowerCase())),
+      ...fresh.filter((st): st is OwnerSanctionsStatus => st !== null),
+    ];
+    alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
+  }
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec);
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -360,12 +376,15 @@ export function screenSliceSize(total: number): number {
 
 /** Where the screen resumes after a slice: past the last address read, or —
  *  if a read failed — just before the first failure, so no party is skipped
- *  for a cycle by a transient error. A slice shorter than asked has reached
- *  the end: start over. Pure; pinned by the tests. */
-export function nextScreenCursor(after: string, slice: readonly string[], read: readonly boolean[], asked: number): string {
+ *  for a cycle by a transient error. A TERMINAL slice — the caller read one
+ *  row past it and found none — has reached the end: start over now, on this
+ *  tick, even when the slice was exactly full (#2497 r2: the cursor used to
+ *  wait for an empty page, which cost the cycle a whole extra tick).
+ *  Pure; pinned by the tests. */
+export function nextScreenCursor(after: string, slice: readonly string[], read: readonly boolean[], terminal: boolean): string {
   const firstFail = read.indexOf(false);
   if (firstFail >= 0) return firstFail === 0 ? after : slice[firstFail - 1];
-  return slice.length < asked ? '' : slice[slice.length - 1];
+  return terminal || slice.length === 0 ? '' : slice[slice.length - 1];
 }
 
 /** One tick of the screen: the next slice of loan parties (skipping ones the
@@ -387,12 +406,15 @@ async function screenLoanParties(
     );
   }
   const after = await getSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond);
-  const slice = await listLoanPartiesAfter(env.DB, chainId, after, size);
+  // One row past the slice, so the end of the cycle is known on its last page.
+  const page = await listLoanPartiesAfter(env.DB, chainId, after, size + 1);
+  const terminal = page.length <= size;
+  const slice = page.slice(0, size);
   const toRead = slice.filter((a) => !known.has(a));
   const read = await readStatuses(client, diamond, toRead);
   const byOwner = new Map(toRead.map((a, i) => [a, read[i]]));
   const ok = slice.map((a) => known.has(a) || byOwner.get(a) !== null);
-  await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, size));
+  await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, terminal));
   return read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER);
 }
 
@@ -528,7 +550,7 @@ async function sendIfEffective(
 
 async function send(
   ctx: KeeperContext,
-  budget: { writes: number },
+  budget: { writes: number; touched?: Set<string> },
   fn: string,
   args: readonly unknown[],
   owner: Address,
@@ -544,6 +566,9 @@ async function send(
       account: ctx.wallet.account ?? null,
     } as never);
     budget.writes -= 1;
+    // Sent: this owner's state may have changed, whatever the receipt says,
+    // so its alerts are judged on a fresh read (#2497 r2).
+    budget.touched?.add(owner.toLowerCase());
     console.log(`[keeper] rewardSanctionsHold ${fn} owner=${owner} chain=${ctx.chainId} tx=${hash}`);
     // Wait for inclusion before the next send, as the matcher and the daily
     // oracle snapshot do: the keeper's liquidator and matcher sign from the
