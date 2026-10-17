@@ -225,36 +225,35 @@ describe('raiseAlerts', () => {
       observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
-    await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW, new Set([A, B]));
+    await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
     expect(prepared.filter((s) => s.startsWith('DELETE')), 'one clear: the alert that was open').toHaveLength(1);
     const left = h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[];
     expect(left.map((r) => r.alert_key), "another chain's alert is not this pass's to clear").toEqual([otherChain]);
   });
 });
 
-describe('raiseAlerts — an owner who left the candidates (Codex #2489 r2)', () => {
+describe('raiseAlerts — alerts clear only on a fresh clean read, never on absence (#2497 r1)', () => {
   const quiet = {
     observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
     deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
   };
-  it("clears a former candidate's alerts, keeps a current candidate's even when its read failed this tick", async () => {
+  it('keeps the alert of an owner it did not read, and clears one it read as clean', async () => {
     const h = createKeeperD1();
     const C = '0x00000000000000000000000000000000000000cc';
     const keys = [
-      `sanctions-hold-overdue:${CHAIN}:${A}`, // A: still a candidate, classified this tick
-      `sanctions-hold-no-chain:${CHAIN}:${B}`, // B: still a candidate, but its read failed (not in statuses)
-      `sanctions-observe-deadline:${CHAIN}:${C}`, // C: left the candidates
+      `sanctions-hold-overdue:${CHAIN}:${A}`, // A: read this tick, still overdue — stands
+      `sanctions-hold-no-chain:${CHAIN}:${B}`, // B: NOT read this tick (a slice moved on, or its read failed) — stands
+      `sanctions-observe-deadline:${CHAIN}:${C}`, // C: read this tick and clean — cleared
       `sanctions-hold-overdue:${CHAIN + 1}:${C}`, // another chain: not this pass's
     ];
     for (const k of keys) {
       h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
     }
     const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
-    // A's overdue alert stands this tick (still overdue), so it must survive.
     const plan = { ...quiet, overdue: [held({ owner: A })] };
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
     try {
-      await raiseAlerts(env, CHAIN, [held({ owner: A })], plan, NOW, new Set([A, B]));
+      await raiseAlerts(env, CHAIN, [held({ owner: A }), held({ owner: C })], plan, NOW);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -262,8 +261,8 @@ describe('raiseAlerts — an owner who left the candidates (Codex #2489 r2)', ()
       (r) => r.alert_key,
     );
     expect(left).toContain(keys[0]);
-    expect(left, 'a failed read is not a departure').toContain(keys[1]);
-    expect(left, 'gone from the candidates: cleared').not.toContain(keys[2]);
+    expect(left, 'not read this tick is not evidence: the alert stands').toContain(keys[1]);
+    expect(left, 'read freshly and clean: cleared').not.toContain(keys[2]);
     expect(left).toContain(keys[3]);
   });
 });

@@ -26,8 +26,9 @@
 import {
   CUTOVER_TABLES,
   cutoverVerdict,
+  fingerprintFromReads,
   fingerprintSql,
-  parseFingerprint,
+  rowsSql,
   type FingerprintRead,
   type Marker,
 } from '../scripts/lib/keeper-cutover.mjs';
@@ -51,7 +52,7 @@ async function sharedFingerprints(shared: D1Database): Promise<Record<string, Fi
   for (const t of CUTOVER_TABLES) {
     if (present === null) out[t.table] = null;
     else if (!present.some((r) => r.name === t.table)) out[t.table] = 'absent';
-    else out[t.table] = parseFingerprint(await rows(shared, fingerprintSql(t)));
+    else out[t.table] = fingerprintFromReads(await rows(shared, fingerprintSql(t)), await rows(shared, rowsSql(t)));
   }
   return out;
 }

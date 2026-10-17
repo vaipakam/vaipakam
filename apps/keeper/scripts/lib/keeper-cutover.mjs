@@ -9,14 +9,19 @@
  *   - `scripts/deploy-keeper.mjs` REFUSES to publish unless that marker exists
  *     and still matches the shared copies.
  *
- * A table's FINGERPRINT is its row count and the latest write time any of its
- * rows carries. Every keeper write to these tables stamps one of the time
- * columns below with "now", so a write after the copy moves the fingerprint,
- * and a partial copy has the wrong count. The earlier gate looked at two of the
+ * A table's FINGERPRINT is its row count, the latest write time any of its
+ * rows carries, and a DIGEST of every row's contents (#2497 r1). Count and
+ * time alone were not enough: they are whole seconds, so an ack attempt or a
+ * band change in the same second as the table's latest write left both
+ * unchanged, and a stale copy passed. The digest is SHA-256 over the rows in a
+ * canonical form (each row's columns sorted by name, the rows sorted), so it
+ * moves on any change to any row and is the same whether the rows were read
+ * through wrangler or the D1 HTTP API. The earlier gate looked at two of the
  * five tables and passed as soon as the private side held a single row, so a
  * partial copy (or one the old keeper wrote past) published.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { SUCCESSOR } from '../../../indexer/scripts/lib/cutover-databases.mjs';
 import { PRIVATE_DATABASES } from '../../../indexer/scripts/lib/d1-workers.mjs';
 
@@ -36,9 +41,32 @@ export const CUTOVER_TABLES = [
   { table: 'hf_band_state', at: 'updated_at' },
 ];
 
-/** The one query that reads a table's fingerprint, on either database. */
+/** The one query that reads a table's count and latest write time, on either database. */
 export function fingerprintSql({ table, at }) {
   return `SELECT COUNT(*) AS n, COALESCE(MAX(${at}), 0) AS at FROM ${table}`;
+}
+
+/** The one query that reads a table's rows for its digest. */
+export function rowsSql({ table }) {
+  return `SELECT * FROM ${table}`;
+}
+
+/** SHA-256 over the rows in canonical form: each row as JSON of its
+ *  [column, value] pairs sorted by column, the rows sorted. Order-independent,
+ *  and the same for any reader that returns the same values. */
+export function rowDigest(rows) {
+  const canon = rows
+    .map((r) => JSON.stringify(Object.keys(r).sort().map((k) => [k, r[k]])))
+    .sort();
+  return createHash('sha256').update(canon.join('\n')).digest('hex');
+}
+
+/** A table's whole fingerprint from its two reads, or `null` when either
+ *  failed (never a partial fingerprint). */
+export function fingerprintFromReads(countRows, rows) {
+  const base = parseFingerprint(countRows);
+  if (base === null || !Array.isArray(rows) || rows.length !== base.n) return null;
+  return { ...base, digest: rowDigest(rows) };
 }
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
@@ -85,7 +113,7 @@ export function readFingerprints(db) {
   for (const t of CUTOVER_TABLES) {
     if (present === null) out[t.table] = null;
     else if (!present.some((r) => r?.name === t.table)) out[t.table] = 'absent';
-    else out[t.table] = parseFingerprint(query(db, fingerprintSql(t)));
+    else out[t.table] = fingerprintFromReads(query(db, fingerprintSql(t)), query(db, rowsSql(t)));
   }
   return out;
 }
@@ -103,7 +131,15 @@ export function readMarker(db = PRIVATE_DB) {
   }
 }
 
-const same = (a, b) => a !== null && b !== null && typeof a === 'object' && typeof b === 'object' && a.n === b.n && a.at === b.at;
+const same = (a, b) =>
+  a !== null &&
+  b !== null &&
+  typeof a === 'object' &&
+  typeof b === 'object' &&
+  a.n === b.n &&
+  a.at === b.at &&
+  typeof a.digest === 'string' &&
+  a.digest === b.digest;
 
 /**
  * The deploy's verdict — pure, for the tests. `shared` is

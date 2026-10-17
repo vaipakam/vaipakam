@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { checkPrivateDb, createPrivateDbGate } from '../host/privateDbGate';
+import { CUTOVER_TABLES, fingerprintFromReads, fingerprintSql, rowsSql } from '../scripts/lib/keeper-cutover.mjs';
 import { buildHostEnv, HOST_SETTINGS } from '../host/hostEnv';
 import REQUIRED from '../src/requiredKeeperMigrations.json';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -54,14 +55,13 @@ describe('checkPrivateDb', () => {
   it('passes once the recorded cutover matches every shared table, and declines again if the old copy moved', async () => {
     const shared = sharedDb();
     shared.db.prepare('INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (1, 1, ?, 1000, ?, 100)').run('warn', '0xabc');
-    const zero = { n: 0, at: 0 };
-    const fingerprint = {
-      keeper_remit_ack: zero,
-      keeper_remit_ack_frontier: zero,
-      keeper_commitment_scan: zero,
-      keeper_commitment_day: zero,
-      hf_band_state: { n: 1, at: 100 },
-    };
+    // The marker the cutover would record: every table's fingerprint as read now.
+    const fingerprint = Object.fromEntries(
+      CUTOVER_TABLES.map((t) => [
+        t.table,
+        fingerprintFromReads(shared.db.prepare(fingerprintSql(t)).all(), shared.db.prepare(rowsSql(t)).all()),
+      ]),
+    );
     const priv = privateDb();
     priv.db.prepare('INSERT INTO keeper_cutover (id, completed_at, fingerprint) VALUES (1, 200, ?)').run(JSON.stringify(fingerprint));
     expect(await checkPrivateDb(d1(shared), d1(priv))).toEqual({ ok: true });

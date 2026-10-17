@@ -198,6 +198,11 @@ describe('the pass wiring', () => {
     expect(packetMayNeedWork({ ...base, kind: 2 })).toBe(false);
     expect(packetMayNeedWork({ ...base, dayListRoot: Z, dayListHash: H })).toBe(true); // a flat list: the planner decides
     expect(packetMayNeedWork({ ...base, dayListRoot: Z })).toBe(false); // a pre-3a packet: no provable list
+    // The protocol's maximum, 256 chunks: the uint256 bitmap with every bit set
+    // is finished, and one bit short is not (#2497 r1 — the mask was -1n).
+    const full256 = (1n << 256n) - 1n;
+    expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 }), 'all 256 landed').toBe(false);
+    expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 >> 1n }), 'chunk 255 missing').toBe(true);
   });
 });
 

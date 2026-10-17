@@ -1761,8 +1761,8 @@ caught at the cheapest stage.
 
    **Skip step 4 entirely — it cannot be satisfied while the hold is
    active, and it is not a step to "wait out".** Step 4 confirms the flags
-   *from a tick* and holds the restore incomplete until all seven gated passes
-   emit. With `"crons": []` there is never a tick, so an operator following
+   *from a tick* and holds the restore incomplete until every gated pass
+   (the list in step 4) emits. With `"crons": []` there is never a tick, so an operator following
    the numbered order lands in a wait that cannot end. A quiet tail here is
    the expected state, not a pending check.
 
@@ -1817,7 +1817,7 @@ caught at the cheapest stage.
    restored the schedule after it — the exact inverse of the sequence kept
    beside the empty list in `apps/keeper/wrangler.jsonc`, and it skipped the
    production validation entirely. Arming before a schedule exists means the
-   seven fund-moving passes begin submitting on the FIRST tick after the
+   gated (fund-moving) passes begin submitting on the FIRST tick after the
    schedule lands, on a Worker whose CPU fix has not been observed working.
    The whole point of the canonical order is that everything provable while
    the passes are inert gets proved first.
@@ -2213,8 +2213,13 @@ caught at the cheapest stage.
    line names all three — you are never fixing one and waiting a tick to
    discover the next.
 
-   The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-   `graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`.
+   The gated passes are every pass in `KEEPER_PASSES`
+   (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
+   that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `rewardSanctionsHold`
+   and `deliveryProof`. This list is the one place the set is written down;
+   every other step here says "every gated pass" rather than counting them,
+   because a count goes stale the day a pass is added (#2497 r1).
    `watcher`,
    `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
    and `liquidityConfidence` always runs and consults the gate only to decide
@@ -2223,7 +2228,7 @@ caught at the cheapest stage.
 
    > **One exception, and it is the whole point of branch B's ordering: while
    > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
-   > `false` ON PURPOSE.** All seven gated passes therefore emit
+   > `false` ON PURPOSE.** Every gated pass therefore emits
    > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
    > state, not a fault to repair — "fixing" them here arms the fund-moving
    > passes before the CPU and cadence validation has finished, which is
@@ -2309,7 +2314,7 @@ caught at the cheapest stage.
    > are now obsolete. If you are reading a stale copy, prefer this one.
 
    Do not conclude the restore is complete until one tick has produced a
-   line from **each of the seven gated passes**, and every line reads the way
+   line from **every gated pass** (the list in step 4), and every line reads the way
    you intended. The other four emit nothing by design — waiting for them
    would be waiting forever.
 
@@ -2344,7 +2349,7 @@ caught at the cheapest stage.
 
    Only reachable if you came through branch B (the #1896 hold has lifted).
    Everything above has run with `KEEPER_ENABLED` at `false`, which is what
-   made the CPU validation meaningful: the seven fund-moving passes were inert
+   made the CPU validation meaningful: the gated (fund-moving) passes were inert
    while the Worker was proved to survive a production tick.
 
    Before running this, confirm all of the following from the ticks you just
@@ -2381,13 +2386,16 @@ caught at the cheapest stage.
      wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
    ```
 
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` /
-   `GRACE_DEFAULT_ENABLED` the same way and at this same point, and only if
-   they were on before.
+   Set every per-pass flag that was on before the same way and at this same
+   point: `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+   `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED` and
+   `GRACE_DEFAULT_ENABLED` (the captured table in step 1 is the record of
+   which were on).
 
    Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit` (and `graceDefault` if it was armed).
+   `rewardBudgetRemit` and `deliveryProof`, `graceDefault` if it was armed,
+   and one hourly run of `rewardSanctionsHold` if it was armed.
 
    **IF STEP 10 FAILS, ROLL BACK BOTH HALVES — and note this rollback is
    NOT the one above.** That one covers the still-disarmed validation
@@ -2395,8 +2403,8 @@ caught at the cheapest stage.
    nothing. Past this point the fund-moving passes are genuinely armed, so
    the order matters and the schedule alone is not enough:
 
-   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the seven
-      fund-moving passes, and it takes effect without waiting for a
+   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates every
+      fund-moving pass, and it takes effect without waiting for a
       schedule change to propagate.
    2. Then restore `"crons": []`, **commit that**, and redeploy
       `( cd apps/keeper && wrangler deploy --keep-vars )` — same directory
