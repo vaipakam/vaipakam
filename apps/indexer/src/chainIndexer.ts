@@ -488,6 +488,10 @@ export interface ChainIndexerResult {
    *  cron tick. Absent on paths that never learned the head. */
   headBlock?: bigint;
   skipped?: string;
+  /** This pass began a new deployment epoch: the chain's client-visible rows
+   *  were deleted before it scanned (deploymentEpoch.ts). The DO broadcasts
+   *  the full recovery set on it, since the counters cannot say so. */
+  epochReset?: boolean;
 }
 
 /**
@@ -1998,8 +2002,38 @@ export async function runChainIndexerForChain(
         invocationSubrequestsSpent: spent(budget),
       };
     }
+    // DEPLOYMENT EPOCH (#1566, Codex #2545 r1–r4) — after the schema gate (the
+    // record table is part of the schema) and before the pass touches
+    // anything. A bundle naming a different, newer Diamond than the one this
+    // chain's rows were indexed from is a new epoch: the chain's chain-scoped
+    // rows are reset (cursor included, so the pass reseeds from
+    // `deployBlock - 1`). Only the adopted epoch scans: a pass refused as a
+    // stale build, or out-raced by a different Diamond, returns here —
+    // declined like a schema decline, since no retry can change the bundle a
+    // build carries — so a retired or losing Diamond never repopulates rows
+    // or moves the shared cursor. Steady state is one SELECT.
+    const deployBlock = BigInt(getDeployBlock(chain.id) ?? 0);
+    const adoption = await adoptDeployment(meterD1(rawEnv.DB, budget), {
+      chainId: chain.id,
+      diamond: chain.diamond,
+      deployBlock,
+    });
+    const adoptionLine = describeAdoption(chain.id, chain.diamond, deployBlock, adoption);
+    if (adoptionLine !== null) console.warn(adoptionLine);
+    if (!isAdoptedEpoch(adoption)) {
+      return {
+        ...emptyResult('epoch-not-adopted'),
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
     const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
-    return { ...result, invocationSubrequestsSpent: spent(budget) };
+    // A reset just deleted client-visible rows (offers, loans, activity,
+    // notifications). The pass's counters say nothing about that, so the
+    // fact rides the result itself and the DO broadcasts a full invalidation
+    // even when the fresh Diamond has no events yet (Codex #2545 r4 P2).
+    const epochReset = adoption.outcome === 'reset' || adoption.outcome === 'reset-resumed';
+    return { ...result, ...(epochReset ? { epochReset: true } : {}), invocationSubrequestsSpent: spent(budget) };
   } finally {
     // The NORMAL figure, on every tick. A number that is only logged when it
     // is already too late tells an operator nothing about the headroom they
@@ -2053,15 +2087,6 @@ async function runChainPass(
   // intentionally exposes only the runtime essentials.
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
-  // DEPLOYMENT EPOCH (#1566, Codex #2545 r1 P1) — before the cursor read and
-  // before any write. A bundle naming a different Diamond than the one this
-  // chain's rows were indexed from is a new epoch: the chain's chain-scoped
-  // rows are reset (cursor included, so the scan below reseeds from
-  // `deployBlock - 1`). Steady state is one SELECT. See deploymentEpoch.ts.
-  const adoption = await adoptDeployment(env.DB, { chainId, diamond, deployBlock });
-  const adoptionLine = describeAdoption(chainId, diamond, deployBlock, adoption);
-  if (adoptionLine !== null) console.warn(adoptionLine);
-
   // METERED AT EGRESS, not at the client's methods (#2227 r1 `4033546264`).
   // viem retries a failed request up to three more times INSIDE one method
   // call, so counting method calls undercounts by a factor of four in exactly
@@ -2099,15 +2124,6 @@ async function runChainPass(
   // same claim tested one level up, which is where it should have been
   // tested the first time.
   await _reportQuarantineForChain(env, chainId);
-
-  // Only the adopted epoch scans (Codex #2545 r2 P1). A pass refused as a
-  // stale build, or one that lost the claim to a different Diamond, would
-  // otherwise read the retired or losing Diamond, repopulate rows after the
-  // reset and advance the shared cursor. Declined, not retried: no retry can
-  // change the bundle this build carries. Placed AFTER the D1-only backfills
-  // above, which run before every return out of this function (#1527 r1),
-  // and BEFORE the first RPC request below.
-  if (!isAdoptedEpoch(adoption)) return emptyResult('epoch-not-adopted');
 
   // #1415 — identity before any chain read: a wrong-network RPC must
   // fail LOUDLY here, not silently as "caught up" below. A transport

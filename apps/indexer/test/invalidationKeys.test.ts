@@ -88,6 +88,16 @@ describe('invalidationKeysFromResult', () => {
     ).toEqual(['notification.created']);
   });
 
+  it('an epoch reset fans out the whole recovery set even when every counter is zero (#2545 r4)', () => {
+    // The reset deleted the chain's client-visible rows before the pass
+    // scanned; a fresh Diamond with no events reports zeros, which must not
+    // read as "nothing changed".
+    expect(invalidationKeysFromResult(result({ epochReset: true })).sort()).toEqual(
+      ['activity.appended', 'loan.updated', 'offer.changed', 'ownership.changed'],
+    );
+    expect(invalidationKeysFromResult(result({ epochReset: false }))).toEqual([]);
+  });
+
   it('treats absent optional counts as zero (older result shapes)', () => {
     // The two PR 0 counts are optional on ChainIndexerResult so the early
     // return paths stay untouched — absence must read as "no key", not a

@@ -69,6 +69,28 @@ describe('a pass whose bundle is not the adopted epoch does not scan', () => {
     });
   });
 
+  it('a reset is stamped on the result even when the scan that follows fails, so the DO broadcasts a full invalidation', async () => {
+    const h = migratedDb();
+    // The chain adopted the RETIRED Diamond at a lower block: this build's
+    // bundle is a forward deployment, so the pass resets, then its identity
+    // probe fails (the RPC spy throws) — the counters stay zero.
+    h.db
+      .prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind) VALUES (?, ?, ?, ?, 0, 0)')
+      .run(BASE, '0x00000000000000000000000000000000000000ee', bundle.deployBlock - 1_000, 1_000);
+    h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(BASE, 'diamond', bundle.deployBlock + 5, 1);
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('no RPC in this cell');
+    });
+    const env = { DB: h.d1, fetchFn: fetchSpy } as unknown as Env;
+
+    const r = await runChainIndexerForChain(env, chain);
+
+    expect(r.epochReset).toBe(true);
+    expect(r.skipped).toBe('rpc-error');
+    expect(h.db.prepare(`SELECT count(*) AS n FROM indexer_cursor WHERE chain_id = ?`).get(BASE)).toEqual({ n: 0 });
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: bundle.diamond, resetPending: false, adoptedBlind: false });
+  });
+
   it('the ingest loop finishes, rather than rearming, on the declined pass', () => {
     expect(isEpochDeclinedSkip('epoch-not-adopted')).toBe(true);
     expect(isEpochDeclinedSkip('caught-up')).toBe(false);

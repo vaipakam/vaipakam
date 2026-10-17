@@ -315,6 +315,59 @@ describe('adoptDeployment', () => {
     for (const t of reset) expect(countFor(h, t, ARB), t).toBe(1);
   });
 
+  it('two isolates with DIFFERENT bundles reading an empty record: the losing insert is raced, not first', async () => {
+    const h = createSqliteD1(migrations());
+    const C = '0x00000000000000000000000000000000000000cc';
+    // A D1 wrapper that lets another isolate's insert land first: when this
+    // pass's INSERT runs, the row already names C, so DO NOTHING changes 0.
+    const inner = h.d1 as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const wrapped = {
+      prepare: (sql: string) => {
+        const stmt = inner.prepare(sql);
+        if (/INSERT INTO indexer_deployment/.test(sql)) {
+          h.db
+            .prepare(`INSERT OR IGNORE INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind) VALUES (?, ?, 500, 1, 0, 1)`)
+            .run(BASE, C);
+        }
+        return stmt;
+      },
+      batch: (s: unknown[]) => (h.d1 as { batch: (s: unknown[]) => Promise<unknown> }).batch(s),
+    };
+    const r = await adoptDeployment(wrapped as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 1_000 });
+    expect(r).toEqual({ outcome: 'raced', adopted: C });
+    expect(isAdoptedEpoch(r)).toBe(false);
+    // A sibling pass of the SAME bundle winning is still a first adoption for this pass.
+    const h2 = createSqliteD1(migrations());
+    const inner2 = h2.d1 as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const wrapped2 = {
+      prepare: (sql: string) => {
+        const stmt = inner2.prepare(sql);
+        if (/INSERT INTO indexer_deployment/.test(sql)) {
+          h2.db
+            .prepare(`INSERT OR IGNORE INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind) VALUES (?, ?, 500, 1, 0, 1)`)
+            .run(BASE, NEW.toLowerCase());
+        }
+        return stmt;
+      },
+      batch: (s: unknown[]) => (h2.d1 as { batch: (s: unknown[]) => Promise<unknown> }).batch(s),
+    };
+    expect(await adoptDeployment(wrapped2 as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 1_000 })).toEqual({ outcome: 'first' });
+  });
+
+  it('a different Diamond at the SAME deploy block is refused — the first adopted keeps the epoch', async () => {
+    const h = createSqliteD1(migrations());
+    const reset = (await listChainScopedTables(h.d1 as never)).filter(
+      (t) => t !== 'indexer_deployment' && !Object.hasOwn(KEEP_ON_DIAMOND_CHANGE, t),
+    );
+    seedEveryChainScopedTable(h, reset);
+    await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: NEW, deployBlock: 500n, nowSec: 1_000 });
+    const C = '0x00000000000000000000000000000000000000cc';
+    const r = await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: C, deployBlock: 500n, nowSec: 2_000 });
+    expect(r).toEqual({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 });
+    for (const t of reset) expect(countFor(h, t, BASE), t).toBe(1);
+    expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: NEW, deployBlock: 500 });
+  });
+
   it('two passes seeing the same change: only the one whose claim landed resets', async () => {
     const h = createSqliteD1(migrations());
     await adoptDeployment(h.d1 as never, { chainId: BASE, diamond: OLD, deployBlock: 100n, nowSec: 1_000 });

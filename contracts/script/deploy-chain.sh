@@ -190,6 +190,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/retired-deployment.sh
+source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -616,19 +618,30 @@ if [ "$FRESH" = "1" ]; then
       || { echo "ERROR: could not reconcile the unrecorded sidecar $(basename "$prior") into archive-manifest.json; refusing --fresh" >&2; exit 1; }
   done
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
+    # The retired Diamond, captured BEFORE the artifact moves: the indexer's
+    # deploy seeds it between migration apply and publish so its first pass
+    # resets this chain rather than adopting the new Diamond blind (#1566,
+    # Codex #2545 r3/r4; lib/retired-deployment.sh).
+    PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+    PRIOR_DEPLOY_BLOCK=$(jq -r '.deployBlock // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
     TS="$(date +%s)"
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
     node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
+    if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
+      RETIRED_FILE=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "$PRIOR_DIAMOND" "$PRIOR_DEPLOY_BLOCK")
+      echo "  ✓ retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) recorded for the indexer in $RETIRED_FILE"
+      seed_retired_deployments_now "$REPO_ROOT" "$RETIRED_FILE"
+    fi
   else
     echo "  (no prior addresses.json — already clean)"
   fi
   # Wipe step markers so every step re-runs.
   rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true
   echo "  ✓ cleared step markers in $MARKERS_DIR"
-  echo "  (indexer D1 cursor will be re-seeded in step [8d] for chainId=$CHAIN_ID)"
+  echo "  (the indexer resets this chain's rows itself on its first pass under the new bundle — deploymentEpoch.ts)"
   echo
 fi
 

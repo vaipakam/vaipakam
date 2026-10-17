@@ -319,6 +319,13 @@ type PushFrame =
 export function invalidationKeysFromResult(
   result: ChainIndexerResult,
 ): InvalidationKey[] {
+  // An epoch reset deleted every client-visible row for the chain (offers,
+  // loans, activity, notifications) before the pass scanned; the counters
+  // below cannot say so — a fresh Diamond with no events yet reports zeros —
+  // so the pass carries the fact and the whole recovery set goes out
+  // (Codex #2545 r4 P2). Clients then refetch rather than keep presenting the
+  // retired deployment's cached positions until their slow poll.
+  if (result.epochReset) return [...RECOVERY_KEYS];
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
   // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145

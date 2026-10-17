@@ -222,7 +222,7 @@ export async function adoptDeployment(
   const current = await readAdoptedDeployment(db, chainId);
 
   if (current === null) {
-    await db
+    const inserted = await db
       .prepare(
         `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind)
          VALUES (?, ?, ?, ?, 0, 1)
@@ -230,7 +230,14 @@ export async function adoptDeployment(
       )
       .bind(chainId, diamond, deployBlock, nowSec)
       .run();
-    return { outcome: 'first' };
+    if ((inserted.meta?.changes ?? 0) === 1) return { outcome: 'first' };
+    // Two isolates read an empty table; only one insert lands. The loser is
+    // adopted only if the winner recorded ITS Diamond (a sibling pass of the
+    // same bundle); a different Diamond means this pass must not scan
+    // (Codex #2545 r4 P1).
+    const now = await readAdoptedDeployment(db, chainId);
+    if (now !== null && same(now.diamond, diamond) && !now.resetPending) return { outcome: 'first' };
+    return { outcome: 'raced', adopted: now?.diamond ?? '(none)' };
   }
 
   if (same(current.diamond, diamond)) {
@@ -243,12 +250,16 @@ export async function adoptDeployment(
     return { outcome: 'raced', adopted: now?.diamond ?? '(none)' };
   }
 
-  // A new epoch only ever moves FORWARD. A Worker built from a stale branch
-  // carries a bundle naming an OLDER deployment than the one adopted; letting
-  // it "adopt" would wipe a live chain's index for a Diamond that was retired.
-  // The reset is reserved for a Diamond deployed after the adopted one; this
-  // case is refused loudly and the pass does not scan.
-  if (deployBlock < current.deployBlock) {
+  // A new epoch only ever moves FORWARD, and strictly so. A Worker built from
+  // a stale branch carries a bundle naming an OLDER deployment than the one
+  // adopted; letting it "adopt" would wipe a live chain's index for a Diamond
+  // that was retired. Two DIFFERENT Diamonds deployed in the SAME block (a
+  // fast L2 can do that) have no ordering the artifact can express, so the
+  // one adopted first keeps the epoch and the other is refused too — the
+  // alternative is two bundles resetting each other's rows indefinitely
+  // (Codex #2545 r4 P1). The reset is reserved for a Diamond deployed in a
+  // later block than the adopted one; a refused pass does not scan.
+  if (deployBlock <= current.deployBlock) {
     return { outcome: 'refused-older', adopted: current.diamond, adoptedDeployBlock: current.deployBlock };
   }
 
