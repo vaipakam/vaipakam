@@ -48,9 +48,19 @@
  * indexer DO's `notification.created` invalidation — an acceptable
  * lag for a band alert whose Telegram/Push twin (for subscribers) is
  * immediate.
+ *
+ * Two databases (#2450): the band STATE (`hf_band_state`) is keeper-
+ * private and lives behind `KEEPER_DB`; the indexer's `indexer_cursor`
+ * and `loans`, and the inbox `notifications` the app reads, are SHARED
+ * (`DB`). D1 cannot join across databases, so every statement here
+ * touches one side only. Splitting them changed no failure ordering: the
+ * inbox insert and the state commit were already two separate batches,
+ * inbox first — a state commit that fails re-mints next tick, and the
+ * day-bucket dedup key absorbs the repeat.
  */
 
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import type { Env } from './env';
 
 export type HfBand = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -142,15 +152,23 @@ const WATERMARK_MAX_AGE_SEC = 900;
  * EVERY successful reading — including an empty set, so the terminal
  * prune still runs on a quiet book. Fail-open: returns zeros on any
  * error.
+ *
+ * Takes both bindings by NAME rather than two positional handles, so the
+ * shared and the private database cannot be passed the wrong way round.
  */
 export async function recordHfBandNotifications(
-  db: D1Database,
+  dbs: Pick<Env, 'DB' | 'KEEPER_DB'>,
   chainId: number,
   readings: HfReading[],
   nowSec: number,
 ): Promise<HfBandResult> {
   const empty: HfBandResult = { inserted: 0, stateWrites: 0 };
   try {
+    // Read inside the try: a build without a binding must fail open here
+    // like every other error, not escape into the liquidator.
+    const db = dbs.DB; // shared — indexer_cursor, loans, notifications
+    const keeper = dbs.KEEPER_DB; // private — hf_band_state
+
     // The indexer's "notifications complete through last_block"
     // watermark (Codex #1300 r1) — NOT the main `diamond` cursor, which
     // advances BEFORE materializeNotifications: stamping a cron-sentinel
@@ -179,18 +197,7 @@ export async function recordHfBandNotifications(
     // is safe against a lagging index: a terminal D1 status is
     // definitive, it can only arrive late — never wrongly. Bounded:
     // hf_band_state holds only at-risk loans.
-    await db
-      .prepare(
-        `DELETE FROM hf_band_state
-          WHERE chain_id = ?1
-            AND EXISTS (
-              SELECT 1 FROM loans l
-               WHERE l.chain_id = ?1 AND l.loan_id = hf_band_state.loan_id
-                 AND l.status <> 'active'
-            )`,
-      )
-      .bind(chainId)
-      .run();
+    await pruneTerminalBandState(db, keeper, chainId);
 
     if (readings.length === 0) return empty;
 
@@ -230,7 +237,7 @@ export async function recordHfBandNotifications(
     });
 
     // Stored (band, recipient) per loan — absence = healthy; healthy
-    // loans carry no row (migration 0041). The recipient is part of
+    // loans carry no row (keeper migration 0001). The recipient is part of
     // the edge (Codex #1300 r2): a borrower transfer inside the SAME
     // band must still notify the new holder.
     const prev = new Map<number, { band: HfBand; recipient: string }>();
@@ -238,7 +245,7 @@ export async function recordHfBandNotifications(
       observed.map((o) => o.loanId),
       { before: [chainId] },
     )) {
-      const res = await db
+      const res = await keeper
         .prepare(
           `SELECT loan_id, last_band, last_recipient FROM hf_band_state
             WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
@@ -365,12 +372,12 @@ export async function recordHfBandNotifications(
     for (let i = 0; i < commits.length; i += INSERT_CHUNK) {
       const batch = commits.slice(i, i + INSERT_CHUNK).map((o) =>
         o.band === 'healthy'
-          ? db
+          ? keeper
               .prepare(
                 `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id = ?`,
               )
               .bind(chainId, o.loanId)
-          : db
+          : keeper
               .prepare(
                 `INSERT INTO hf_band_state
                    (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
@@ -383,7 +390,7 @@ export async function recordHfBandNotifications(
               )
               .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec),
       );
-      await db.batch(batch);
+      await keeper.batch(batch);
       stateWrites += batch.length;
     }
 
@@ -394,4 +401,58 @@ export async function recordHfBandNotifications(
     );
     return empty;
   }
+}
+
+/**
+ * Drop band state for this chain's loans that the indexer reports as no
+ * longer active.
+ *
+ * TWO READS AND A DELETE where there used to be one statement (#2450). The
+ * old prune was a single `DELETE … WHERE EXISTS (SELECT … FROM loans …)`;
+ * band state is now keeper-private and `loans` is the indexer's, and D1
+ * cannot join across databases. The semantics are kept exactly: a state row
+ * goes only when a `loans` row for it EXISTS with a non-active status, so a
+ * loan the index has not caught up with yet keeps its state.
+ *
+ * Bounded the way the join was — the state table holds only at-risk loans —
+ * and cheap in the subrequests this Worker counts: one read when nothing is
+ * banded (as before), and each multi-chunk step below goes out as ONE
+ * `batch()`, however many chunks it carries.
+ */
+async function pruneTerminalBandState(
+  db: D1Database,
+  keeper: Env['KEEPER_DB'],
+  chainId: number,
+): Promise<void> {
+  const state = await keeper
+    .prepare(`SELECT loan_id FROM hf_band_state WHERE chain_id = ?1`)
+    .bind(chainId)
+    .all<{ loan_id: number }>();
+  const banded = (state.results ?? []).map((r) => r.loan_id);
+  if (banded.length === 0) return;
+
+  const reads = chunkD1InList(banded, { before: [chainId] }).map((c) =>
+    db
+      .prepare(
+        `SELECT loan_id FROM loans
+          WHERE chain_id = ? AND loan_id IN (${c.placeholders})
+            AND status <> 'active'`,
+      )
+      .bind(...c.binds),
+  );
+  const terminal: number[] = [];
+  for (const part of await db.batch<{ loan_id: number }>(reads)) {
+    for (const r of part.results ?? []) terminal.push(r.loan_id);
+  }
+  if (terminal.length === 0) return;
+
+  await keeper.batch(
+    chunkD1InList(terminal, { before: [chainId] }).map((c) =>
+      keeper
+        .prepare(
+          `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
+        )
+        .bind(...c.binds),
+    ),
+  );
 }

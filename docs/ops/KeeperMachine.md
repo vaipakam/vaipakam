@@ -169,10 +169,12 @@ a commit. The template documents each line. In short:
   with the account's D1 Edit permission only. Cloudflare cannot limit a token
   to one database, so it can reach every D1 database on the account. Make one
   for this machine; never reuse a deploy token. `D1_DATABASE_ID` is prefilled.
+  The keeper's private database needs no setting: its id is pinned in the code,
+  as the Worker's binding is (§4a).
 - **Runner id:** leave `KEEPER_RUNNER_ID` empty and the machine uses
   `host:<host name>`. Set it only if two machines could share a host name;
   never give two machines the same one.
-- **Arming:** leave `KEEPER_ENABLED=false` and the three per-pass flags empty.
+- **Arming:** leave `KEEPER_ENABLED=false` and every per-pass flag empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
   `TG_BOT_TOKEN` (the user bot, never `TG_OPS_BOT_TOKEN`), `PUSH_CHANNEL_PK`
   and the aggregator keys.
@@ -181,6 +183,44 @@ a commit. The template documents each line. In short:
 An empty value is unset, as an unbound setting is on the Worker. A chain or
 pass that needs it skips without an error, so check the `chains resolved`
 line (§5).
+
+## 4a. The keeper's private database (#2450): migrations and the one-time cutover
+
+From #2497 the keeper keeps its own operational state (scan cursors,
+completion markers, the remit-ack log, HF-band edge state, alert de-dup) in a
+private database, `vaipakam-keeper-db`, instead of the shared one. Five of those
+tables already hold rows in the shared database, written by the keeper running
+today, and they move ONCE, with the keeper stopped.
+
+The machine never moves them and never applies the private migrations itself:
+the keeper's deploy is the one applier of that database. Instead, every tick
+checks, and declines naming the reason, until all of this holds: the private
+database, at its pinned id, records every keeper migration, and the cutover
+verdict passes. After that first pass it re-reads the old shared copies' count
+and latest write time every tick, so a keeper that writes them later stops the
+machine on its next tick. That verdict is the same rule the
+Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
+match. So a machine that picks up the new build early stops; it does not start
+from empty state.
+
+**Order, once, when the release carrying #2497 is merged:**
+
+1. **Pause deploys BEFORE the merge** (§6, "Pause deploys"). Otherwise the
+   update timer installs the new build and the keeper starts declining every
+   tick. That is safe, but it is an outage of the armed passes.
+2. **Stop the keeper:** `sudo systemctl stop vaipakam-keeper`, and wait for it
+   to exit. The copy is only valid while nothing writes the shared tables.
+3. **Apply the private migrations,** from a checkout with the Cloudflare
+   credentials: `pnpm --filter @vaipakam/keeper run migrate`.
+4. **Run the cutover,** same place: `pnpm --filter @vaipakam/keeper run
+   cutover` (DeploymentRunbook, "Keeper private D1 — one-time cutover"). It
+   records completion only when all five tables match on both sides.
+5. **Resume deploys** (§6). The next run installs the new build and starts the
+   keeper on it. Then confirm, as in §5, that ticks run, with no `tick declined`
+   line.
+
+If step 4 refuses because a table changed, a keeper wrote the old copy after
+step 2. Find it and stop it, then run step 4 again.
 
 ## 5. Start disarmed, validate, then arm
 
@@ -259,12 +299,11 @@ empty.
 
 - **The lease is not a fencing token** (§2). It stops a second runner from
   starting ticks, not a pass that outlives the lease from finishing.
-- **The lease is in the shared database.** It is keeper-only state and moves
-  to the keeper's private database (#2497) with the other keeper tables.
 - **Batch atomicity over the D1 HTTP API is unverified, and nothing relies on
   it.** Both `batch` call sites ([`apps/keeper/src/hfBandNotifications.ts`](../../apps/keeper/src/hfBandNotifications.ts)) are idempotent
   and already run as two separate batches, so a partial write leaves the same
   state a failed tick does. A new `batch` that needs all-or-nothing must be
   verified on a scratch database first, never on `vaipakam-warm`.
-- **One database.** The keeper's private database (#2497) adds a second one,
-  and the machine then needs a second database id.
+- **The lease stays in the shared database** for now, while every other
+  keeper-only table moves to the private one (§4a). Moving it later is its own
+  change, because two runners must agree on one lease while they cut over.

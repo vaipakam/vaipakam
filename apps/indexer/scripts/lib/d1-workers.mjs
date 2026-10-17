@@ -19,7 +19,7 @@
  * a listed-membership question and not a scan.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -43,6 +43,79 @@ export const SHARED_CONSUMERS = [
 export const WRITERS = new Set(
   SHARED_CONSUMERS.filter((c) => c.writer).map((c) => c.file),
 );
+
+/**
+ * Worker-PRIVATE databases: a SECOND D1 that a shared consumer binds, under
+ * its own binding name, for state no other Worker, the app or the backup
+ * reads (#2450). Listed here, with the binding that owns it, for the same
+ * reason the consumers are — every tool that has to tell "a second handle to
+ * the shared database" from "the Worker's own private database" reads this
+ * one list, so the two cannot be told apart differently in two places.
+ *
+ * Pinned by name AND id, as `cutover-databases.mjs` pins the shared pair: a
+ * name can be reissued to a different database, an id cannot.
+ *
+ * What the entry permits and what it does not:
+ *   - the owning Worker binds it under exactly `binding`, alongside its
+ *     shared binding, and NOTHING else binds it — a private database another
+ *     Worker can write is not private;
+ *   - it is never the shared database, nor either end of the #2214 cutover,
+ *     by name or by id — that would be a second handle to the shared data
+ *     under a name the shared-database checks do not watch;
+ *   - inside the cutover barrier it is absent with the rest: the barrier is
+ *     an EMPTY `d1_databases`, so a maintenance build drops this entry too.
+ *
+ * `migrationsDir` is the private schema's own directory; the tables its
+ * migrations create are the ones that live there (`privateTables` below).
+ */
+export const PRIVATE_DATABASES = [
+  {
+    file: 'apps/keeper/wrangler.jsonc',
+    binding: 'KEEPER_DB',
+    name: 'vaipakam-keeper-db',
+    id: 'f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095',
+    migrationsDir: 'apps/keeper/migrations',
+    reason:
+      "apps/keeper's private operational state (scan cursors, completion " +
+      'markers, ack log, HF-band edge state, ops-alert de-dup) — separate ' +
+      'from the shared, user-facing database by trust boundary',
+  },
+];
+
+/**
+ * Every table a private database's own migrations create, mapped to that
+ * database's registry entry.
+ *
+ * Derived from the migration files rather than listed, so a table added to a
+ * private schema is known to every tool that reads this the moment its
+ * migration exists. A table name claimed by two private databases is an error:
+ * a table lives in one place.
+ */
+export function privateTables(repo) {
+  const out = new Map();
+  for (const db of PRIVATE_DATABASES) {
+    const dir = `${repo}/${db.migrationsDir}`;
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) {
+      const sql = readFileSync(`${dir}/${f}`, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/--[^\n]*/g, ' ');
+      for (const m of sql.matchAll(
+        /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`[]?([A-Za-z_][A-Za-z0-9_]*)/gi,
+      )) {
+        const table = m[1].toLowerCase();
+        const prior = out.get(table);
+        if (prior && prior !== db) {
+          throw new Error(
+            `${table} is created by both ${prior.migrationsDir} and ` +
+              `${db.migrationsDir} — a table lives in one database.`,
+          );
+        }
+        out.set(table, db);
+      }
+    }
+  }
+  return out;
+}
 
 /** Workers that must NOT bind the shared database, and why. */
 export const MUST_NOT_SHARE = [

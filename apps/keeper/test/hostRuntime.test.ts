@@ -147,13 +147,13 @@ describe('host env', () => {
     const raw = new Proxy({} as Record<string, unknown>, {
       get: (_t, key) => {
         if (typeof key !== 'string') return undefined;
-        if (key === 'DB') return { prepare: () => null };
+        if (key === 'DB' || key === 'KEEPER_DB') return { prepare: () => null };
         return listed.has(key) ? { get: async () => `v:${key}` } : `v:${key}`;
       },
     }) as unknown as WorkerEnv;
     const resolved = (await resolveEnv(raw)) as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(resolved)) {
-      if (key === 'DB') continue;
+      if (key === 'DB' || key === 'KEEPER_DB') continue;
       expect(value, key).toBe(`v:${key}`);
     }
   });
@@ -226,6 +226,9 @@ describe('host tick schema check', () => {
       vars: () => vars,
       log: (l) => lines.push(l),
       gate: createSchemaGate(['0001_a.sql', '0002_b.sql']),
+      // The private-database gate has its own suite (hostPrivateDb.test.ts);
+      // here it passes, so these cells isolate the SHARED schema gate.
+      privateGate: { check: async () => ({ ok: true }) },
       runTick: async (_env, t) => {
         ran.push(t);
       },
