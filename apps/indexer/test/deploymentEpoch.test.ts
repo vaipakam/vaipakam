@@ -8,6 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import {
   KEEP_ON_DIAMOND_CHANGE,
@@ -22,7 +23,10 @@ import {
 // The seed statement is a script-side module (the deploy runs it); it is
 // exercised here against the real migrated schema so its upsert semantics are
 // pinned where the epoch logic that depends on them is.
-import { seedRetiredDeploymentSql } from '../scripts/lib/retiredDeploymentSeed.mjs';
+import { retiredDeploymentsFromManifest, seedRetiredDeploymentSql } from '../scripts/lib/retiredDeploymentSeed.mjs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const migrations = () =>
@@ -366,6 +370,43 @@ describe('adoptDeployment', () => {
     expect(r).toEqual({ outcome: 'refused-older', adopted: NEW, adoptedDeployBlock: 500 });
     for (const t of reset) expect(countFor(h, t, BASE), t).toBe(1);
     expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: NEW, deployBlock: 500 });
+  });
+
+  it('the retired Diamonds to seed are DERIVED from the committed archive manifest and the live bundle', () => {
+    // The repository's own files: this deploy retired one Diamond per live
+    // chain, so both appear; a chain whose newest archived Diamond is the live
+    // one, or with no archived entry, contributes nothing.
+    const real = retiredDeploymentsFromManifest();
+    const ids = real.map((e) => e.chainId);
+    expect(ids).toContain(84532);
+    expect(ids).toContain(421614);
+    for (const e of real) expect(e.diamond).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    // Never the live Diamond itself: that is the one case the derivation skips.
+    for (const e of real) expect(e.diamond.toLowerCase()).not.toBe(getDeployment(e.chainId)?.diamond.toLowerCase());
+    // A synthetic pair: the newest entry wins, a same-as-live entry is skipped,
+    // an entry for a chain the bundle does not name is ignored.
+    const dir = mkdtempSync(join(tmpdir(), 'epoch-manifest-'));
+    const manifestPath = join(dir, 'archive-manifest.json');
+    const deploymentsPath = join(dir, 'deployments.json');
+    writeFileSync(
+      deploymentsPath,
+      JSON.stringify({
+        '84532': { chainSlug: 'base-sepolia', diamond: NEW, deployBlock: 500 },
+        '421614': { chainSlug: 'arb-sepolia', diamond: NEW, deployBlock: 900 },
+      }),
+    );
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        entries: [
+          { chainId: 84532, slug: 'base-sepolia', diamond: '0x00000000000000000000000000000000000000a1', deployBlock: 10, stamp: '2026-01-01T00-00-00Z' },
+          { chainId: 84532, slug: 'base-sepolia', diamond: OLD, deployBlock: 100, stamp: '2026-06-01T00-00-00Z' },
+          { chainId: 421614, slug: 'arb-sepolia', diamond: NEW, deployBlock: 900, stamp: '2026-06-01T00-00-00Z' },
+          { chainId: 11155111, slug: 'sepolia', diamond: OLD, deployBlock: 5, stamp: '2026-06-01T00-00-00Z' },
+        ],
+      }),
+    );
+    expect(retiredDeploymentsFromManifest({ manifestPath, deploymentsPath })).toEqual([{ chainId: 84532, diamond: OLD, deployBlock: 100 }]);
   });
 
   it('two passes seeing the same change: only the one whose claim landed resets', async () => {

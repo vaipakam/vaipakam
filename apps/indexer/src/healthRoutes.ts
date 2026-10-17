@@ -90,62 +90,74 @@ export async function readIngestHealth(
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<IngestHealth> {
   const schema = await gate.check(db);
-  const res = await db
-    .prepare(
-      `SELECT chain_id, last_block, updated_at FROM indexer_cursor
-        WHERE kind = ? ORDER BY chain_id`,
-    )
-    .bind(CURSOR_KIND)
-    .all<{ chain_id: number; last_block: number; updated_at: number }>();
-  // The adopted deployment per chain (#1566 / Codex #2545 r1) — which
-  // Diamond the rows were indexed from, so a prober can tell a redeploy the
-  // indexer has adopted from one it has not. Read separately and tolerantly:
-  // before migration 0063 lands the table does not exist, and that window is
-  // exactly when the schema answer above must still be served, not a 503.
-  const deployments = new Map<number, AdoptedDeployment>();
+  // ONE statement, ONE snapshot (Codex #2545 r6 P2): the UNION of cursor rows
+  // and deployment rows is read atomically, so an epoch reset committing
+  // between two separate reads cannot pair the retired epoch's cursor with
+  // the new Diamond's record. A chain is listed from its cursor OR its
+  // deployment (#2545 r2 P2): right after a reset it may have a deployment
+  // and no cursor yet, and is stated with null cursor fields, never omitted.
+  type Row = {
+    chain_id: number;
+    last_block: number | null;
+    updated_at: number | null;
+    diamond: string | null;
+    deploy_block: number | null;
+    adopted_at: number | null;
+    reset_pending: number | null;
+    adopted_blind: number | null;
+  };
+  const joined =
+    `SELECT c.chain_id, c.last_block, c.updated_at,
+            d.diamond, d.deploy_block, d.adopted_at, d.reset_pending, d.adopted_blind
+       FROM indexer_cursor c LEFT JOIN indexer_deployment d ON d.chain_id = c.chain_id
+      WHERE c.kind = ?
+     UNION ALL
+     SELECT d.chain_id, NULL, NULL,
+            d.diamond, d.deploy_block, d.adopted_at, d.reset_pending, d.adopted_blind
+       FROM indexer_deployment d
+      WHERE NOT EXISTS (SELECT 1 FROM indexer_cursor c WHERE c.chain_id = d.chain_id AND c.kind = ?)
+      ORDER BY 1`;
+  let rows: Row[];
   try {
-    const d = await db
-      .prepare(`SELECT chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind FROM indexer_deployment`)
-      .all<{ chain_id: number; diamond: string; deploy_block: number; adopted_at: number; reset_pending: number; adopted_blind: number }>();
-    for (const r of d.results ?? []) {
-      deployments.set(r.chain_id, {
-        diamond: r.diamond,
-        deployBlock: r.deploy_block,
-        adoptedAt: r.adopted_at,
-        resetPending: r.reset_pending !== 0,
-        adoptedBlind: r.adopted_blind !== 0,
-      });
-    }
+    rows = (await db.prepare(joined).bind(CURSOR_KIND, CURSOR_KIND).all<Row>()).results ?? [];
   } catch (err) {
-    // Only the KNOWN pre-migration case is tolerated: the table is not there
-    // yet, and every chain reports `deployment: null` below. Any other
-    // failure — a transient D1 fault, a malformed schema — propagates to the
-    // route's 503, so a failed read never masquerades as "no adopted epoch"
-    // (Codex #2545 r3 P2).
+    // Only the KNOWN pre-migration case is tolerated: before migration 0063
+    // the deployment table does not exist, and that window is exactly when
+    // the schema answer above must still be served, not a 503. Any other
+    // failure propagates to the route's 503, so a failed read never
+    // masquerades as "no adopted epoch" (Codex #2545 r3 P2).
     if (!/no such table/i.test((err as Error).message ?? '')) throw err;
+    const cursorOnly = await db
+      .prepare(`SELECT chain_id, last_block, updated_at FROM indexer_cursor WHERE kind = ? ORDER BY chain_id`)
+      .bind(CURSOR_KIND)
+      .all<{ chain_id: number; last_block: number; updated_at: number }>();
+    rows = (cursorOnly.results ?? []).map((r) => ({
+      chain_id: r.chain_id,
+      last_block: r.last_block,
+      updated_at: r.updated_at,
+      diamond: null,
+      deploy_block: null,
+      adopted_at: null,
+      reset_pending: null,
+      adopted_blind: null,
+    }));
   }
-  // The UNION of cursor rows and deployment rows (Codex #2545 r2 P2): an
-  // epoch reset deletes the chain's cursor, and if the scan that follows
-  // fails before it recreates one (RPC identity, head read) the chain would
-  // otherwise vanish from this answer exactly while an operator is checking
-  // the redeploy. A chain with a deployment and no cursor is stated as such,
-  // with its cursor fields null — never omitted.
-  const byChain = new Map<number, ChainIngestState>();
-  for (const r of res.results ?? []) {
-    byChain.set(r.chain_id, {
-      chainId: r.chain_id,
-      lastBlock: r.last_block,
-      scannedAt: r.updated_at,
-      ageSeconds: nowSec - r.updated_at,
-      deployment: deployments.get(r.chain_id) ?? null,
-    });
-  }
-  for (const [chainId, deployment] of deployments) {
-    if (!byChain.has(chainId)) {
-      byChain.set(chainId, { chainId, lastBlock: null, scannedAt: null, ageSeconds: null, deployment });
-    }
-  }
-  const chains = [...byChain.values()].sort((a, b) => a.chainId - b.chainId);
+  const chains: ChainIngestState[] = rows.map((r) => ({
+    chainId: r.chain_id,
+    lastBlock: r.last_block,
+    scannedAt: r.updated_at,
+    ageSeconds: r.updated_at === null ? null : nowSec - r.updated_at,
+    deployment:
+      r.diamond === null
+        ? null
+        : {
+            diamond: r.diamond,
+            deployBlock: r.deploy_block ?? 0,
+            adoptedAt: r.adopted_at ?? 0,
+            resetPending: (r.reset_pending ?? 0) !== 0,
+            adoptedBlind: (r.adopted_blind ?? 0) !== 0,
+          },
+  }));
   return { checkedAt: nowSec, schema, chains };
 }
 

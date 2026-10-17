@@ -92,12 +92,20 @@ describe('a pass whose bundle is not the adopted epoch does not scan', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(h.db.prepare(`SELECT count(*) AS n FROM indexer_cursor WHERE chain_id = ?`).get(BASE)).toEqual({ n: 0 });
     expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: bundle.diamond, resetPending: false, adoptedBlind: false });
-    // Neither declined nor a failure: the ingest loop rearms a fresh pass.
+    // Neither declined nor a failure: the ingest loop rearms a fresh pass —
+    // EXPLICITLY on the reset signal, since on the cron path the target is 0
+    // and the plain comparison would read scannedTo 0 as "met" (r6 P2).
     expect(isEpochDeclinedSkip(r.skipped)).toBe(false);
     expect(isRetryableScanSkip(r.skipped)).toBe(false);
+    for (const target of [0n, 500n]) {
+      expect(
+        alarmNextStep({ schemaDeclined: false, retryableFailure: false, scannedTo: r.scannedTo, target, headBlock: undefined, epochReset: r.epochReset }),
+        `target ${target}`,
+      ).toBe('rearm');
+    }
     expect(
-      alarmNextStep({ schemaDeclined: false, retryableFailure: false, scannedTo: r.scannedTo, target: 500n, headBlock: undefined }),
-    ).toBe('rearm');
+      alarmNextStep({ schemaDeclined: false, retryableFailure: false, scannedTo: 0n, target: 0n, headBlock: undefined, epochReset: false }),
+    ).toBe('finish');
   });
 
   it('the ingest loop finishes, rather than rearming, on the declined pass', () => {

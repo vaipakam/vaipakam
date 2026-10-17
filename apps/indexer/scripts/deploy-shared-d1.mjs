@@ -48,7 +48,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { applyRetiredDeployment, readRetiredDeploymentsFile } from './lib/retiredDeploymentSeed.mjs';
+import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsFromManifest } from './lib/retiredDeploymentSeed.mjs';
 
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -194,6 +194,8 @@ function main() {
   // seed that cannot land stops the deploy — publishing first would let the
   // new Worker's first pass adopt the new Diamond blind, and a later seed
   // would then have to correct it (it can, but only while that row is blind).
+  // The entries come from the committed archive manifest (r6), so every
+  // deploy of the merged tree seeds what the repository records.
   if (gate.mode === 'apply') seedRetiredDeployments();
 
   console.log('[deploy] publishing');
@@ -201,12 +203,25 @@ function main() {
   if (d.status !== 0) process.exit(d.status ?? 1);
 }
 
-/** `INDEXER_RETIRED_DEPLOYMENTS_FILE` → one seed per entry; absent = nothing to seed. */
+/**
+ * The retired Diamonds the COMMITTED archive manifest records for the chains
+ * the live bundle names (Codex #2545 r6: nothing untracked decides this —
+ * a deploy from a clean checkout seeds exactly what the repository says),
+ * plus any `INDEXER_RETIRED_DEPLOYMENTS_FILE` adds. Idempotent per entry.
+ */
 function seedRetiredDeployments() {
+  const entries = retiredDeploymentsFromManifest();
   const file = process.env.INDEXER_RETIRED_DEPLOYMENTS_FILE;
-  if (!file) return;
-  if (!existsSync(file)) fail(`[deploy] INDEXER_RETIRED_DEPLOYMENTS_FILE names a missing file: ${file} — not publishing.`);
-  const entries = readRetiredDeploymentsFile(file);
+  if (file) {
+    if (!existsSync(file)) fail(`[deploy] INDEXER_RETIRED_DEPLOYMENTS_FILE names a missing file: ${file} — not publishing.`);
+    for (const e of readRetiredDeploymentsFile(file)) {
+      if (!entries.some((x) => x.chainId === e.chainId && x.diamond.toLowerCase() === e.diamond.toLowerCase())) entries.push(e);
+    }
+  }
+  if (entries.length === 0) {
+    console.log('[deploy] no retired deployment recorded for a live chain — nothing to seed');
+    return;
+  }
   console.log(`[deploy] seeding ${entries.length} retired deployment(s) for the indexer's epoch reset`);
   for (const e of entries) {
     const r = applyRetiredDeployment(e, { cwd: ROOT });

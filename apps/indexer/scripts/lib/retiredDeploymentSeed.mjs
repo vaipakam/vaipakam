@@ -15,15 +15,25 @@
  *     blind), or the seed is not older than what is recorded. A second seed
  *     can never trigger a second reset.
  *
+ * WHERE THE RETIRED DIAMONDS COME FROM (Codex #2545 r6): the COMMITTED archive
+ * inventory, `contracts/deployments/archive-manifest.json`, which every
+ * `--fresh` redeploy writes BEFORE it moves the artifact. For each chain the
+ * live bundle (`packages/contracts/src/deployments.json`) names, the newest
+ * archived entry whose Diamond differs from the live one is a retired Diamond
+ * to seed. Nothing untracked is involved, so a deploy from a clean checkout of
+ * the merged tree — a Workers Build, an operator's `pnpm run deploy` — seeds
+ * exactly what the repository records. Seeding is idempotent (see above), so
+ * every deploy may run it.
+ *
  * Used by `deploy-shared-d1.mjs apply` (the indexer's deploy, between the
  * migration apply and the publish — the only moment the table is guaranteed
- * to exist and the new code is guaranteed not to be running yet) with
- * `INDEXER_RETIRED_DEPLOYMENTS_FILE` pointing at a JSON array of
- * `{ chainId, diamond, deployBlock }`, and by the deploy scripts directly.
+ * to exist and the new code is guaranteed not to be running yet), and by the
+ * deploy scripts directly. `INDEXER_RETIRED_DEPLOYMENTS_FILE` may ADD entries
+ * from a JSON array of `{ chainId, diamond, deployBlock }`.
  *
  * CLI:
- *   node retiredDeploymentSeed.mjs print  <file.json | chainId diamond deployBlock>
- *   node retiredDeploymentSeed.mjs apply  <file.json | chainId diamond deployBlock>   (wrangler d1 execute --remote)
+ *   node retiredDeploymentSeed.mjs print  (--from-manifest | <file.json> | <chainId> <diamond> <deployBlock>)
+ *   node retiredDeploymentSeed.mjs apply  (--from-manifest | <file.json> | <chainId> <diamond> <deployBlock>)   (wrangler d1 execute --remote)
  */
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -64,7 +74,38 @@ export function readRetiredDeploymentsFile(path) {
   return list.map(validateRetiredDeployment);
 }
 
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+export const MANIFEST_PATH = join(REPO_ROOT, 'contracts', 'deployments', 'archive-manifest.json');
+export const DEPLOYMENTS_PATH = join(REPO_ROOT, 'packages', 'contracts', 'src', 'deployments.json');
+
+/**
+ * The retired Diamonds the repository records: for each chain the live bundle
+ * names, the newest archived entry for that chain's slug whose Diamond is not
+ * the live one. A chain with no archived entry, or whose newest archived
+ * Diamond IS the live one, contributes nothing.
+ */
+export function retiredDeploymentsFromManifest({ manifestPath = MANIFEST_PATH, deploymentsPath = DEPLOYMENTS_PATH } = {}) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const deployments = JSON.parse(readFileSync(deploymentsPath, 'utf8'));
+  const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
+  const out = [];
+  for (const [chainIdKey, live] of Object.entries(deployments)) {
+    const chainId = Number(chainIdKey);
+    if (!Number.isInteger(chainId) || !live || typeof live.diamond !== 'string') continue;
+    const slug = typeof live.chainSlug === 'string' ? live.chainSlug : null;
+    const archived = entries
+      .filter((e) => e && typeof e.diamond === 'string' && (Number(e.chainId) === chainId || (slug !== null && e.slug === slug)))
+      .sort((a, b) => String(a.stamp ?? '').localeCompare(String(b.stamp ?? '')));
+    const newest = archived[archived.length - 1];
+    if (!newest) continue;
+    if (newest.diamond.toLowerCase() === live.diamond.toLowerCase()) continue;
+    out.push(validateRetiredDeployment({ chainId, diamond: newest.diamond, deployBlock: Number(newest.deployBlock ?? 0) }));
+  }
+  return out;
+}
+
 function entriesFromArgs(args) {
+  if (args.length === 1 && args[0] === '--from-manifest') return retiredDeploymentsFromManifest();
   if (args.length === 1) return readRetiredDeploymentsFile(args[0]);
   if (args.length === 3) return [validateRetiredDeployment({ chainId: args[0], diamond: args[1], deployBlock: args[2] })];
   throw new Error('usage: retiredDeploymentSeed.mjs <print|apply> (<file.json> | <chainId> <diamond> <deployBlock>)');
@@ -90,6 +131,7 @@ function main() {
     return 2;
   }
   const entries = entriesFromArgs(rest);
+  if (entries.length === 0) console.log('  (no retired deployment to seed)');
   let failed = 0;
   for (const e of entries) {
     if (mode === 'print') {

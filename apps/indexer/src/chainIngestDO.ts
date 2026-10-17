@@ -207,8 +207,14 @@ export function alarmNextStep(p: {
   scannedTo: bigint | null;
   target: bigint;
   headBlock: bigint | undefined;
+  /** The pass began a deployment epoch and returned without scanning
+   *  (deploymentEpoch.ts): the fresh pass it promises must be rearmed
+   *  EXPLICITLY — on the cron path the target is 0, which the comparison
+   *  below would read as already met (Codex #2545 r6 P2). */
+  epochReset?: boolean;
 }): 'finish' | 'slow-lane' | 'rearm' {
   if (p.schemaDeclined) return 'finish';
+  if (p.epochReset) return 'rearm';
   if (!p.retryableFailure && p.scannedTo !== null && p.scannedTo >= p.target) {
     return shouldRearmForBacklog(p.headBlock, p.scannedTo, p.retryableFailure)
       ? 'slow-lane'
@@ -576,6 +582,7 @@ export class ChainIngestDO {
       let headBlock: bigint | undefined;
       let retryableFailure = false;
       let schemaDeclined = false;
+      let epochReset = false;
       try {
         // The Secrets Store reads at the top of the alarm are counted too —
         // the scan is not the only thing that spends here.
@@ -601,6 +608,9 @@ export class ChainIngestDO {
         );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;
+        // A pass that began a deployment epoch returned without scanning; the
+        // fresh pass it promises is rearmed explicitly (Codex #2545 r6 P2).
+        epochReset = result.epochReset === true;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
         // `scannedTo` rewound to the previous cursor instead of throwing
         // (Codex #764 round 5). Treat it as retryable so the caught-up check
@@ -641,7 +651,7 @@ export class ChainIngestDO {
       const target = BigInt(
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
-      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock });
+      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock, epochReset });
       if (step === 'slow-lane') {
         // #1416 — truncated backlog pass: the cron target (0 for a
         // plain tick) is met, but the safe head is still more than a

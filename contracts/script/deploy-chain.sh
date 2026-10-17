@@ -631,21 +631,12 @@ if [ "$FRESH" = "1" ]; then
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
     if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
-      RETIRED_FILE=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "$PRIOR_DIAMOND" "$PRIOR_DEPLOY_BLOCK")
-      echo "  ✓ retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) recorded for the indexer in $RETIRED_FILE"
-      seed_retired_deployments_now "$REPO_ROOT" "$RETIRED_FILE"
+      echo "  retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) is in archive-manifest.json for the indexer"
+      seed_retired_deployments_now "$REPO_ROOT"
     fi
   else
-    echo "  (no prior addresses.json — already clean)"
-    # A re-run after an earlier --fresh was interrupted between the mv and the
-    # marker write: the manifest was written before the move, so the retired
-    # Diamond is recovered from there (Codex #2545 r5).
-    RECOVERED=$(latest_retired_from_manifest "$ARCHIVE_MANIFEST" "$CHAIN_SLUG")
-    if [ -n "$RECOVERED" ]; then
-      RETIRED_FILE=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "${RECOVERED%% *}" "${RECOVERED##* }")
-      echo "  ✓ retired Diamond ${RECOVERED%% *} recovered from archive-manifest.json for the indexer in $RETIRED_FILE"
-      seed_retired_deployments_now "$REPO_ROOT" "$RETIRED_FILE"
-    fi
+    echo "  (no prior addresses.json — already clean; whatever archive-manifest.json records is what the indexer seeds)"
+    seed_retired_deployments_now "$REPO_ROOT"
   fi
   # Wipe step markers so every step re-runs.
   rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true
@@ -1469,14 +1460,10 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
-  # A retired Diamond recorded under --fresh is seeded by the applier between
-  # the migration apply and the publish (#1566, Codex #2545 r3).
-  if [ -s "$DEPLOY_DIR/.markers/retired-deployments.json" ]; then
-    echo "  retired deployment(s) to seed before publishing: $DEPLOY_DIR/.markers/retired-deployments.json"
-    ( cd "$INDEXER_DIR" && INDEXER_RETIRED_DEPLOYMENTS_FILE="$DEPLOY_DIR/.markers/retired-deployments.json" pnpm run deploy )
-  else
-    ( cd "$INDEXER_DIR" && pnpm run deploy )
-  fi
+  # The retired Diamonds the committed archive manifest records are seeded by
+  # the applier between the migration apply and the publish (#1566, Codex
+  # #2545 r3/r6).
+  ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

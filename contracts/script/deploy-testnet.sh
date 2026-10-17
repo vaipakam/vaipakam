@@ -707,33 +707,19 @@ archive_chain_state() {
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
 }
 
-# Helper: record the RETIRED Diamond for the indexer (#1566, Codex #2545 r1–r3).
-# Writes the marker the indexer's deploy seeds from (between migration apply
-# and publish) and tries the seed right away. See lib/retired-deployment.sh.
+# Helper: record the RETIRED Diamond for the indexer (#1566, Codex #2545 r1–r6).
+# The record IS the committed archive manifest (written at [0a] BEFORE the
+# artifact moves); this only triggers the best-effort immediate seed from it.
+# The indexer's own deploy seeds from the manifest regardless, between the
+# migration apply and the publish. See lib/retired-deployment.sh.
 record_retired_diamond_for_indexer() {
   local prior_diamond="${1:-}" prior_block="${2:-}"
-  if [ -z "$prior_diamond" ] || [ "$prior_diamond" = "null" ]; then
-    # No artifact on disk: a first deploy, or a re-run after an earlier --fresh
-    # was interrupted between archiving the artifact and writing the marker.
-    # The archive manifest was written BEFORE the move, so the retired Diamond
-    # is recovered from there rather than lost (Codex #2545 r5).
-    local recovered
-    recovered=$(latest_retired_from_manifest "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG")
-    if [ -n "$recovered" ]; then
-      prior_diamond="${recovered%% *}"; prior_block="${recovered##* }"
-      echo "  recovered the retired Diamond from archive-manifest.json: $prior_diamond (deploy block $prior_block)"
-    else
-      echo "    (no prior Diamond to record and none archived for $CHAIN_SLUG — a first deploy;"
-      echo "     if rows from a retired Diamond exist in D1, write $MARKERS_DIR/retired-deployments.json as"
-      echo "     [{\"chainId\": $CHAIN_ID, \"diamond\": \"<retired>\", \"deployBlock\": <its deployBlock>}] and the"
-      echo "     indexer's deploy seeds it; or: node apps/indexer/scripts/lib/retiredDeploymentSeed.mjs apply <file>)"
-      return 0
-    fi
+  if [ -n "$prior_diamond" ] && [ "$prior_diamond" != "null" ]; then
+    echo "  retired Diamond $prior_diamond (deploy block ${prior_block:-0}) is in archive-manifest.json for chainId=$CHAIN_ID"
+  else
+    echo "  (no artifact on disk — whatever archive-manifest.json records for $CHAIN_SLUG is what the indexer seeds)"
   fi
-  local file
-  file=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "$prior_diamond" "$prior_block")
-  echo "  recorded retired Diamond $prior_diamond (deploy block ${prior_block:-0}) for chainId=$CHAIN_ID in $file"
-  seed_retired_deployments_now "$REPO_ROOT" "$file"
+  seed_retired_deployments_now "$REPO_ROOT"
 }
 
 # Helper: re-seed indexer_cursor at the chain's safe head. Called
@@ -1895,18 +1881,11 @@ phase_cf_indexer() {
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
-  # A retired Diamond recorded by the contracts phase (lib/retired-deployment.sh)
-  # is SEEDED by the applier between the migration apply and the publish —
-  # before the new code can run, so its first pass finds the retired Diamond
-  # and resets the chain rather than adopting the new one blind (#1566,
-  # Codex #2545 r3).
-  local retired="$MARKERS_DIR/retired-deployments.json"
-  if [ -s "$retired" ]; then
-    echo "  retired deployment(s) to seed before publishing: $retired"
-    ( cd "$INDEXER_DIR" && INDEXER_RETIRED_DEPLOYMENTS_FILE="$retired" pnpm run deploy )
-  else
-    ( cd "$INDEXER_DIR" && pnpm run deploy )
-  fi
+  # The retired Diamonds the committed archive manifest records are SEEDED by
+  # the applier between the migration apply and the publish — before the new
+  # code can run, so its first pass finds the retired Diamond and resets the
+  # chain rather than adopting the new one blind (#1566, Codex #2545 r3/r6).
+  ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
