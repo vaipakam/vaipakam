@@ -58,3 +58,19 @@ seed_retired_deployments_now() {
     ( cd "$repo_root/apps/indexer" && node "$seed" print "$file" 2>/dev/null | sed 's/^/      /' ) || true
   fi
 }
+
+# latest_retired_from_manifest <archive-manifest.json> <slug>
+#   The newest archived Diamond for a chain, as "<diamond> <deployBlock>", or
+#   nothing. The manifest is written BEFORE the artifact moves ("record first,
+#   then move"), so it survives an interruption between the archive and the
+#   marker write; the no-artifact branch of a `--fresh` re-run recovers the
+#   retired Diamond from here (Codex #2545 r5).
+latest_retired_from_manifest() {
+  local manifest="${1:?manifest}" slug="${2:?slug}"
+  [ -s "$manifest" ] || return 0
+  jq -r --arg slug "$slug" '
+    [ (.entries // [])[] | select(.slug == $slug and (.diamond | type) == "string") ]
+    | sort_by(.stamp) | last
+    | if . == null then empty else "\(.diamond) \(.deployBlock // 0)" end' "$manifest" 2>/dev/null
+}
+

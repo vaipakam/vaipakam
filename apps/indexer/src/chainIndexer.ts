@@ -2027,13 +2027,25 @@ export async function runChainIndexerForChain(
         invocationSubrequestsSpent: spent(budget),
       };
     }
-    const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
     // A reset just deleted client-visible rows (offers, loans, activity,
-    // notifications). The pass's counters say nothing about that, so the
-    // fact rides the result itself and the DO broadcasts a full invalidation
-    // even when the fresh Diamond has no events yet (Codex #2545 r4 P2).
-    const epochReset = adoption.outcome === 'reset' || adoption.outcome === 'reset-resumed';
-    return { ...result, ...(epochReset ? { epochReset: true } : {}), invocationSubrequestsSpent: spent(budget) };
+    // notifications) in a batch of one query per chain-scoped table — most of
+    // this invocation's 50-query D1 budget (Codex #2545 r5 P1). The scan does
+    // NOT follow in the same invocation: this pass returns `epoch-reset`
+    // carrying `epochReset`, the DO broadcasts the full invalidation on it
+    // (its counters cannot say rows were deleted, Codex r4 P2) and, being
+    // neither declined nor a failure, rearms a FRESH invocation whose full
+    // budget scans the new Diamond from `deployBlock - 1`; the cron path's
+    // next tick does the same.
+    if (adoption.outcome === 'reset' || adoption.outcome === 'reset-resumed') {
+      return {
+        ...emptyResult('epoch-reset'),
+        epochReset: true,
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
+    const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
+    return { ...result, invocationSubrequestsSpent: spent(budget) };
   } finally {
     // The NORMAL figure, on every tick. A number that is only logged when it
     // is already too late tells an operator nothing about the headroom they

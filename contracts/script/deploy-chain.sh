@@ -637,6 +637,15 @@ if [ "$FRESH" = "1" ]; then
     fi
   else
     echo "  (no prior addresses.json — already clean)"
+    # A re-run after an earlier --fresh was interrupted between the mv and the
+    # marker write: the manifest was written before the move, so the retired
+    # Diamond is recovered from there (Codex #2545 r5).
+    RECOVERED=$(latest_retired_from_manifest "$ARCHIVE_MANIFEST" "$CHAIN_SLUG")
+    if [ -n "$RECOVERED" ]; then
+      RETIRED_FILE=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "${RECOVERED%% *}" "${RECOVERED##* }")
+      echo "  ✓ retired Diamond ${RECOVERED%% *} recovered from archive-manifest.json for the indexer in $RETIRED_FILE"
+      seed_retired_deployments_now "$REPO_ROOT" "$RETIRED_FILE"
+    fi
   fi
   # Wipe step markers so every step re-runs.
   rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true

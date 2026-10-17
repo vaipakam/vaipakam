@@ -713,11 +713,22 @@ archive_chain_state() {
 record_retired_diamond_for_indexer() {
   local prior_diamond="${1:-}" prior_block="${2:-}"
   if [ -z "$prior_diamond" ] || [ "$prior_diamond" = "null" ]; then
-    echo "    (no prior Diamond to record — a first deploy, or the artifact was already archived;"
-    echo "     if rows from a retired Diamond exist in D1, write $MARKERS_DIR/retired-deployments.json as"
-    echo "     [{\"chainId\": $CHAIN_ID, \"diamond\": \"<retired>\", \"deployBlock\": <its deployBlock>}] and the"
-    echo "     indexer's deploy seeds it; or: node apps/indexer/scripts/lib/retiredDeploymentSeed.mjs apply <file>)"
-    return 0
+    # No artifact on disk: a first deploy, or a re-run after an earlier --fresh
+    # was interrupted between archiving the artifact and writing the marker.
+    # The archive manifest was written BEFORE the move, so the retired Diamond
+    # is recovered from there rather than lost (Codex #2545 r5).
+    local recovered
+    recovered=$(latest_retired_from_manifest "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG")
+    if [ -n "$recovered" ]; then
+      prior_diamond="${recovered%% *}"; prior_block="${recovered##* }"
+      echo "  recovered the retired Diamond from archive-manifest.json: $prior_diamond (deploy block $prior_block)"
+    else
+      echo "    (no prior Diamond to record and none archived for $CHAIN_SLUG — a first deploy;"
+      echo "     if rows from a retired Diamond exist in D1, write $MARKERS_DIR/retired-deployments.json as"
+      echo "     [{\"chainId\": $CHAIN_ID, \"diamond\": \"<retired>\", \"deployBlock\": <its deployBlock>}] and the"
+      echo "     indexer's deploy seeds it; or: node apps/indexer/scripts/lib/retiredDeploymentSeed.mjs apply <file>)"
+      return 0
+    fi
   fi
   local file
   file=$(write_retired_deployment_marker "$MARKERS_DIR" "$CHAIN_ID" "$prior_diamond" "$prior_block")

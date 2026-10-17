@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { REQUIRED_D1_MIGRATIONS } from '../src/requiredMigrations';
-import { isEpochDeclinedSkip, runChainIndexerForChain } from '../src/chainIndexer';
+import { isEpochDeclinedSkip, isRetryableScanSkip, runChainIndexerForChain } from '../src/chainIndexer';
 import { alarmNextStep } from '../src/chainIngestDO';
 import { readAdoptedDeployment } from '../src/deploymentEpoch';
 import type { ChainConfig, Env } from '../src/env';
@@ -69,26 +69,35 @@ describe('a pass whose bundle is not the adopted epoch does not scan', () => {
     });
   });
 
-  it('a reset is stamped on the result even when the scan that follows fails, so the DO broadcasts a full invalidation', async () => {
+  it('a reset ends the invocation with `epoch-reset` and no RPC: the scan gets a fresh budget, the DO a full invalidation', async () => {
     const h = migratedDb();
     // The chain adopted the RETIRED Diamond at a lower block: this build's
-    // bundle is a forward deployment, so the pass resets, then its identity
-    // probe fails (the RPC spy throws) — the counters stay zero.
+    // bundle is a forward deployment, so the pass resets — and returns, since
+    // the reset's one-query-per-table batch spent most of this invocation's
+    // D1 budget. No RPC request is made; the spy would throw (and viem would
+    // retry for seconds) if it were.
     h.db
       .prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind) VALUES (?, ?, ?, ?, 0, 0)')
       .run(BASE, '0x00000000000000000000000000000000000000ee', bundle.deployBlock - 1_000, 1_000);
     h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(BASE, 'diamond', bundle.deployBlock + 5, 1);
     const fetchSpy = vi.fn(async () => {
-      throw new Error('no RPC in this cell');
+      throw new Error('RPC reached in the reset invocation');
     });
     const env = { DB: h.d1, fetchFn: fetchSpy } as unknown as Env;
 
     const r = await runChainIndexerForChain(env, chain);
 
+    expect(r.skipped).toBe('epoch-reset');
     expect(r.epochReset).toBe(true);
-    expect(r.skipped).toBe('rpc-error');
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(h.db.prepare(`SELECT count(*) AS n FROM indexer_cursor WHERE chain_id = ?`).get(BASE)).toEqual({ n: 0 });
     expect(await readAdoptedDeployment(h.d1 as never, BASE)).toMatchObject({ diamond: bundle.diamond, resetPending: false, adoptedBlind: false });
+    // Neither declined nor a failure: the ingest loop rearms a fresh pass.
+    expect(isEpochDeclinedSkip(r.skipped)).toBe(false);
+    expect(isRetryableScanSkip(r.skipped)).toBe(false);
+    expect(
+      alarmNextStep({ schemaDeclined: false, retryableFailure: false, scannedTo: r.scannedTo, target: 500n, headBlock: undefined }),
+    ).toBe('rearm');
   });
 
   it('the ingest loop finishes, rather than rearming, on the declined pass', () => {
