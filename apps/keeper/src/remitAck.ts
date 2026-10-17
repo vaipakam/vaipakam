@@ -128,10 +128,14 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   const mirrorConfigs = new Map<number, ChainConfig>();
   for (const c of getChainConfigs(env)) mirrorConfigs.set(c.id, c);
   const mirrorClients = new Map<number, PublicClient>();
+  // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
+  // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
+  // more than the cap however its work splits between them.
+  const ackBudget = { remaining: MAX_ACKS_PER_TICK };
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
-    await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients);
+    await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -210,32 +214,25 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients);
+  await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
   if (pendingIds.length === 0) return;
 
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, pendingIds);
   const now = Math.floor(Date.now() / 1000);
-  let acksSent = 0;
-
   for (const remitId of pendingIds) {
-    if (acksSent >= MAX_ACKS_PER_TICK) break;
+    if (ackBudget.remaining <= 0) break;
     const r = reservations.get(remitId);
     if (!r) continue;
     const prior = attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
 
-    const mirrorCfg = mirrorConfigs.get(r.dstChainId);
-    if (!mirrorCfg) {
-      console.warn(
-        `[keeper] remitAck remit=${remitId} dst=${r.dstChainId} has no configured RPC — cannot drive the ack`,
-      );
-      continue;
-    }
+    const mirrorCfg = mirrorFor(mirrorConfigs, r.dstChainId, remitId);
+    if (!mirrorCfg) continue;
     try {
       const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond);
       if (sent) {
         await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, remitId, r.dstChainId);
-        acksSent++;
+        ackBudget.remaining--;
       }
     } catch (err) {
       console.log(
@@ -324,6 +321,25 @@ const LATE_DONE_KIND = 'late_ack' as const;
  * ({@link lateAckDone}), when it joins the keeper's done set and is never read
  * again (Codex #2489 r1: the newest-50 window let an open one drop out).
  */
+/** The destination's chain config, or undefined after saying so by name —
+ *  ONE rule for both the Pending and the late paths (#2497 r2): a remit whose
+ *  mirror has no configured RPC is live accounting work this keeper cannot
+ *  drive, never a silent skip. */
+function mirrorFor(
+  mirrorConfigs: Map<number, ChainConfig>,
+  dstChainId: number,
+  remitId: number,
+  path: 'pending' | 'late' = 'pending',
+): ChainConfig | undefined {
+  const cfg = mirrorConfigs.get(dstChainId);
+  if (!cfg) {
+    console.warn(
+      `[keeper] remitAck${path === 'late' ? ' late' : ''} remit=${remitId} dst=${dstChainId} has no configured RPC — cannot drive the ack`,
+    );
+  }
+  return cfg;
+}
+
 async function ackLateDeliveries(
   env: Env,
   publicClient: PublicClient,
@@ -331,6 +347,7 @@ async function ackLateDeliveries(
   diamond: Address,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
+  ackBudget: { remaining: number },
 ): Promise<void> {
   const done = await listWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
   const ids = (await listReleasedRemitIds(env.DB, baseChainId)).filter((id) => !done.has(String(id)));
@@ -358,15 +375,14 @@ async function ackLateDeliveries(
   await markWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, finished.map(String));
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
-  let sent = 0;
-  for (let i = 0; i < ids.length && sent < MAX_ACKS_PER_TICK; i++) {
+  for (let i = 0; i < ids.length && ackBudget.remaining > 0; i++) {
     const r = res[i];
     if (!r || r.status !== 'success') continue;
     const v = r.result as RemitReservationView;
     if (!isLateDeliveryCandidate(v)) continue;
     const prior = attempts.get(ids[i]);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
-    const mirrorCfg = mirrorConfigs.get(Number(v.dstChainId));
+    const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), ids[i], 'late');
     if (!mirrorCfg) continue;
     try {
       // eslint-disable-next-line no-await-in-loop
@@ -374,7 +390,7 @@ async function ackLateDeliveries(
       if (ok) {
         // eslint-disable-next-line no-await-in-loop
         await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, ids[i], Number(v.dstChainId));
-        sent++;
+        ackBudget.remaining--;
       }
     } catch (err) {
       console.log(`[keeper] remitAck late remit=${ids[i]} skipped: ${(err as Error).message}`);
