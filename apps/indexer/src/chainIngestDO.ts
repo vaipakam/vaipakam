@@ -328,10 +328,12 @@ export function invalidationKeysFromResult(
   // An epoch reset deleted every client-visible row for the chain (offers,
   // loans, activity, notifications) before the pass scanned; the counters
   // below cannot say so — a fresh Diamond with no events yet reports zeros —
-  // so the pass carries the fact and the whole recovery set goes out
-  // (Codex #2545 r4 P2). Clients then refetch rather than keep presenting the
-  // retired deployment's cached positions until their slow poll.
-  if (result.epochReset) return [...RECOVERY_KEYS];
+  // so the pass carries the fact and EVERY key goes out (Codex #2545 r4 P2,
+  // r7 P2: the lost-push recovery set omits `loan.created`, the only key that
+  // reaches the desk tape and candles, and a reset invalidates those too).
+  // Clients then refetch rather than keep presenting the retired deployment's
+  // cached positions until their slow poll.
+  if (result.epochReset) return [...ALL_INVALIDATION_KEYS];
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
   // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145
@@ -383,6 +385,23 @@ export function invalidationKeysFromResult(
   if (result.activityEvents > 0) keys.push('activity.appended');
   return keys;
 }
+
+/** Every key the push channel knows — the fan-out of a deployment-epoch reset,
+ *  which invalidates every slice at once. Exhaustive BY TYPE: adding a member
+ *  to `InvalidationKey` without listing it here fails to compile, so the reset
+ *  cannot silently leave a new slice stale (Codex #2545 r7 P2). */
+const ALL_INVALIDATION_KEYS = [
+  'offer.created',
+  'offer.changed',
+  'loan.created',
+  'loan.updated',
+  'ownership.changed',
+  'notification.created',
+  'activity.appended',
+] as const satisfies readonly InvalidationKey[];
+type MissingInvalidationKey = Exclude<InvalidationKey, (typeof ALL_INVALIDATION_KEYS)[number]>;
+const _everyInvalidationKeyListed: MissingInvalidationKey extends never ? true : never = true;
+void _everyInvalidationKeyListed;
 
 /** Coarse "refetch everything" set used to recover a push that was lost when a
  *  prior post-write scan threw (its counts never reached `broadcast()`). The

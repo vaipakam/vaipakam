@@ -3,6 +3,7 @@
     "admin": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
     "baseRewardDeployment": "0x2535baC87F3df287268fC697F2f31cf418365303",
     "ccipMessenger": "0x4958e015481c32E2fEf07604928C6e6Bc154540e",
+    "ccipMessengerImpl": "0xe88e98d5b34a1325311fd37c16a3e4ed6f452477",
     "chainId": 421614,
     "chainSlug": "arb-sepolia",
     "deployBlock": 320151741,
@@ -111,6 +112,7 @@
     "rewardCustodyHolder": "0xaf9767390Bf71f73Ae2cF99c415427303Acf3a24",
     "rewardGraceSeconds": 14400,
     "rewardMessenger": "0x9a7DeA118EB90F39eb28E2A7C9Fecd5fCC7f663c",
+    "rewardMessengerImpl": "0x29d771ca6d749e6ebd0a76a61de4b88832e30107",
     "rewardRemittanceReceiver": "0x04E2fEFF625BbFd7B510B9c0629ffCde3568EEF8",
     "rewardRemittanceReceiverImpl": "0x4fD72cE8CE6c7A2a5AFEf14aBaE4aF4A538C04c7",
     "sanctions": {
@@ -155,6 +157,7 @@
     "buybackRemittanceReceiver": "0xc307193139e3855019ede616ec1db1c4FfC18B37",
     "buybackRemittanceReceiverImpl": "0x7eC30eEE4EF47fE9e08203e7c75e666A05D390AD",
     "ccipMessenger": "0x647e8E2af0b25Ea5608b4B8e3430E7930A0a1108",
+    "ccipMessengerImpl": "0xa567b27f45f6d8660494ef87b3b42209613678d4",
     "chainId": 84532,
     "chainSlug": "base-sepolia",
     "deployBlock": 48245206,
@@ -263,6 +266,7 @@
     "rewardCustodyHolder": "0x9f856a7d02b3096356A1F7C02fcBaA844f78cA51",
     "rewardGraceSeconds": 14400,
     "rewardMessenger": "0x27Cf255E25d92d1eB397d550E5EA5f8F3e4a342A",
+    "rewardMessengerImpl": "0x17a52c04cfcd922fcea955ca54c095133cda2418",
     "sanctions": {
       "kind": "testnet-overlay",
       "oracle": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6"

@@ -92,8 +92,11 @@ describe('invalidationKeysFromResult', () => {
     // The reset deleted the chain's client-visible rows before the pass
     // scanned; a fresh Diamond with no events reports zeros, which must not
     // read as "nothing changed".
+    // EVERY key, not the lost-push recovery set: that set omits `loan.created`,
+    // the only key reaching the desk tape and candles, which a reset also
+    // invalidates (#2545 r7).
     expect(invalidationKeysFromResult(result({ epochReset: true })).sort()).toEqual(
-      ['activity.appended', 'loan.updated', 'offer.changed', 'ownership.changed'],
+      ['activity.appended', 'loan.created', 'loan.updated', 'notification.created', 'offer.changed', 'offer.created', 'ownership.changed'],
     );
     expect(invalidationKeysFromResult(result({ epochReset: false }))).toEqual([]);
   });
