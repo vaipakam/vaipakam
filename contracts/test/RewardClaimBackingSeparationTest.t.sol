@@ -239,6 +239,49 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// #1499 acceptance — the BACKING refusal, straddled at the exact wei on
+    /// BOTH readers. The two cells above pin the countdown on each side; this
+    /// one moves ONE variable (the earmark, via the bucket) across the exact
+    /// boundary `payableFresh == freshBackingRoom` and asserts the predicate
+    /// AND the claim on both sides of it.
+    ///
+    /// Room one wei short of the payout: the predicate reads false and the
+    /// claim reverts `InteractionRewardBackingShort(X, X - 1)`. Room exactly
+    /// the payout: the predicate reads true and the claim pays X. Kills
+    /// dropping the earmark from the predicate's funding requirement
+    /// (`required = freshTotal + earmarked` → `freshTotal`: the short side
+    /// reads true while the claim reverts). The met side guards a predicate
+    /// stuck closed, or one stricter than the claim by a wei.
+    function testBackingStraddle_PredicateAndClaimAgreeAtTheExactWei() public {
+        (uint256 id, ) = _seedPayable(alice, 79);
+        _cfg().setRewardClaimHorizonDays(180);
+        _mut().userClaimFundingNeedRaw(alice); // the cursor advance the claim performs first
+        _mut().setRecycleBucketRaw(1 ether);
+        uint256 snap = vm.snapshotState();
+        vm.prank(alice);
+        (uint256 x, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        vm.revertToState(snap);
+        assertGt(x, 1, "fixture pays something");
+        uint256 room0 = _mut().freshBackingRoomRaw();
+        assertGt(room0, x, "fixture: ample room to start");
+
+        // Room = X - 1: one wei of earmark too many.
+        _mut().setRecycleBucketRaw(1 ether + room0 - x + 1);
+        assertEq(_mut().freshBackingRoomRaw(), x - 1, "fixture: room one wei short");
+        assertFalse(_mut().entryExecutableNowRaw(id), "one wei short: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InteractionRewardBackingShort.selector, x, x - 1));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // Room = X: the one variable moves by one wei.
+        _mut().setRecycleBucketRaw(1 ether + room0 - x);
+        assertEq(_mut().freshBackingRoomRaw(), x, "fixture: room exactly the payout");
+        assertTrue(_mut().entryExecutableNowRaw(id), "exactly backed: executable");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(paid, x, "exactly backed: the claim pays in full");
+    }
+
     // #1499 matrix — TWO CELLS WITHDRAWN, deliberately, rather than shipped green.
     //
     // A forfeit-present cell and a recycled-only cell were written here and

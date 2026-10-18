@@ -2020,6 +2020,53 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev #1499 acceptance — the recycled DROUGHT, straddled at the exact
+    ///      wei on BOTH readers. The cell above pins the clock through a
+    ///      drained bucket; this one moves ONE variable — the bucket — across
+    ///      the boundary `bucket == bucketRecycled` (the walk's own draw on it,
+    ///      read from the armed-need view the predicate reads) and asserts the
+    ///      predicate AND the claim on each side. Inactive custody with ledger
+    ///      headroom raw, so the bucket is the only gate that can bind.
+    ///
+    ///      One wei short: predicate false, and the claim — whose walk defers
+    ///      the recycled-short day whole — pays nothing. Exactly met:
+    ///      predicate true and the claim pays the day. The short day reaches
+    ///      the predicate as the armed-need view's `capHit` (with a zero draw),
+    ///      so it is the `capHit` refusal that fires there. Kills: dropping the
+    ///      `capHit` refusal (short side reads true while the claim refuses)
+    ///      and `>` → `>=` in `_recycledDroughtWith` (met side reads false
+    ///      while the claim pays). Dropping the drought comparison alone is not
+    ///      killed, since `capHit` refuses the short side upstream of it.
+    function testRecycledDroughtStraddle_PredicateAndClaimAgreeAtTheExactWei() public {
+        _canonicalLedgerRaw();
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "fixture: the day carries a recycled component");
+        uint256 id = _seedEntry(alice, 58, 5, 6);
+        _mut().userClaimFundingNeedRaw(alice); // the cursor advance the claim performs first
+        (, , , , uint256 bucketRecycled, , , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(id);
+        assertGt(bucketRecycled, 1, "fixture: the walk draws on the bucket");
+
+        _mut().setRecycleBucketRaw(bucketRecycled - 1);
+        // The short day is reported as the walk's deferral (`capHit`, zero
+        // draw), which is the predicate refusal that fires here.
+        (, , , , uint256 drawShort, bool capShort, , ) = RewardEpochViewFacet(address(diamond)).getRewardEntryArmedNeed(id);
+        assertTrue(capShort, "short: the read reports the walk's deferral");
+        assertEq(drawShort, 0, "short: and no draw figure for the deferred day");
+        assertFalse(_mut().entryExecutableNowRaw(id), "one wei short of the draw: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        _mut().setRecycleBucketRaw(bucketRecycled);
+        assertTrue(_mut().entryExecutableNowRaw(id), "exactly the draw: executable");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+        assertGt(paid, bucketRecycled, "exactly the draw: the claim pays the day, fresh and recycled");
+        assertEq(_cfg().getRecycleBucket(), 0, "and draws the bucket exactly empty");
+    }
+
     /// @dev Codex #1410 r8 P1 — the drought sum must use the RAW recycled
     ///      share: the loan-side cap is fresh-first over the aggregate
     ///      window, so a capped entry's CAPPED recycled can read 0 while the

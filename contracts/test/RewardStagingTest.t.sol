@@ -2229,6 +2229,79 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable once the reservation released");
     }
 
+    /// @dev #1499 acceptance — the LIVE-FRESH ROOM net of a staging
+    ///      reservation, straddled at the exact wei on BOTH readers. The cell
+    ///      above pins the predicate across the reservation; this one holds the
+    ///      reservation STANDING and moves one variable — the live fresh row —
+    ///      so the room (row less what is reserved by count) crosses bob's need
+    ///      by one wei, asserting the predicate AND bob's claim on each side.
+    ///      Room = need − 1: predicate false, the claim refuses (its walk
+    ///      DEFERS the day — a reservation binds as a deferral, never a
+    ///      truncation). Room = need: predicate true, the claim pays the need.
+    ///
+    ///      Which predicate test refuses the short side, measured rather than
+    ///      assumed: the armed-need read reports the deferred day as `capHit`
+    ///      with no figure, so it is the predicate's `capHit` refusal — not the
+    ///      transfer test's room comparison, which sees a zero need for the
+    ///      deferred day. Kills dropping the `capHit` refusal (the short side
+    ///      reads true while the claim refuses). Replacing the room with the
+    ///      bare row in `_claimTransferable` is NOT killed by this cell, for the
+    ///      same reason; the met side guards a predicate stuck closed.
+    function test_1499_TheReservedLiveFreshRoom_StraddlesTheNeed_PredicateAndClaimAgree() public {
+        _stagedAndScanned();
+        _liveFresh(0.1e18);
+        _staging().reserveStagedDay(_key());
+        _mut().setArmedFreshLedgerRaw(4000e18, 0);
+        uint256 reserved = _mut().liveFreshReservedRaw();
+        assertEq(reserved, NEED - WIDE * TINY, "fixture: alice's record reserves by count");
+        uint256 bobNeed = 0.05e18;
+        address bob = makeAddr("staging-bob-1499");
+        _armedDay(2, bobNeed);
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 1e18, 2);
+        _mut().closeRewardEntryRaw(bobEntry, 3);
+        _mut().userClaimFundingNeedRaw(bob);
+
+        // Raise the row so the ROOM is one wei short of bob's need.
+        uint256 row = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
+        uint256 topUp = bobNeed + reserved - row - 1;
+        _ingress().onRewardBudgetReceived(
+            address(vpfi), topUp, _one(1), CHAIN_BASE, 1499, REMITTER, 0, topUp, keccak256("live-1499-a"), true
+        );
+        _mut().setArmedFreshLedgerRaw(4000e18, 0);
+        assertEq(_mut().freshBackingRoomRaw(), bobNeed - 1, "fixture: the room is one wei short");
+        assertGe(_row(LibVaipakam.RewardCustodyRow.LiveFresh), bobNeed, "while the ROW alone covers the need");
+        assertFalse(_mut().entryExecutableNowRaw(bobEntry), "room one wei short: non-executable");
+        // The claim's walk DEFERS the day (a reservation binds as a deferral,
+        // never a truncation), so nothing is payable and the claim refuses.
+        vm.prank(bob);
+        vm.expectRevert(NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // The one missing wei.
+        _ingress().onRewardBudgetReceived(
+            address(vpfi), 1, _one(1), CHAIN_BASE, 1500, REMITTER, 0, 1, keccak256("live-1499-b"), true
+        );
+        _mut().setArmedFreshLedgerRaw(4000e18, 0);
+        assertEq(_mut().freshBackingRoomRaw(), bobNeed, "fixture: the room is exactly the need");
+        assertTrue(_mut().entryExecutableNowRaw(bobEntry), "room exactly the need: executable");
+        vm.prank(bob);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(paid, bobNeed, "room exactly the need: the claim pays it");
+    }
+
     // ───────────────────────── round 13 ─────────────────────────
 
     function test_ARoleChange_IsRefusedWhileARecordIsReserved() public {
