@@ -1797,7 +1797,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    rebuilt, install it per `KeeperMachine.md` §3 and fill the env file per §4
    from the offline record. Either way, BEFORE starting, set
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
-   `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`) empty — by editing the
+   `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
+   `GRACE_DEFAULT_ENABLED`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 
