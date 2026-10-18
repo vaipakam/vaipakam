@@ -8107,6 +8107,15 @@ library LibVaipakam {
         ///      the FallbackPending clause of `LibTierExclusion`.
         ///      Appended — the Storage struct is append-only.
         mapping(uint256 => uint256) fallbackVaultCustody;
+        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset`,
+        ///      the `lenderIntent` key), whether its owner opted it into priority
+        ///      routing: a fill the solver's capacity would refuse may then spend
+        ///      one of the owner's priority credits instead. Written ONLY through
+        ///      `LibPriorityRouting.writeFlag` (one event per change): reset to
+        ///      false by every `setLenderIntent` (a replacement intent never
+        ///      inherits an old opt-in), cleared by `cancelLenderIntent`, toggled by
+        ///      the owner on a live intent. Appended — append-only.
+        mapping(address => mapping(address => mapping(address => bool))) lenderIntentPriority;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

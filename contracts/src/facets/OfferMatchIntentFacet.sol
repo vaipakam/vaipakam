@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
+import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 
 /**
  * @title  OfferMatchIntentFacet
@@ -225,7 +226,10 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // fill whole and `previewIntent` reports it as its last check. A
         // keeper-authorized fill is ONE executed item: the keeper-auth check above
         // stays an authorization, not a second charge.
-        LibServiceCapacity.chargeSolver();
+        // #2550 — when the solver's capacity would REFUSE it, an opted-in intent
+        // whose owner holds a priority credit spends that credit instead
+        // (`LibPriorityRouting.chargeFill`; otherwise this is `chargeSolver()`).
+        LibPriorityRouting.chargeFill(s, lender, lendingAsset, collateralAsset, loanId);
 
         // Record exposure + the originating intent key (so the terminal-close
         // release survives a lender-position sale that mutates `loan.lender`).

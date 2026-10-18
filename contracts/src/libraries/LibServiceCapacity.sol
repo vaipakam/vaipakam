@@ -373,6 +373,19 @@ library LibServiceCapacity {
         if (outer == address(0)) outer = tx.origin;
     }
 
+    /// @dev #2550 — {chargedOuter} without consuming the backstop's transient
+    ///      initiator, for a pre-check that runs BEFORE the real charge in the same
+    ///      transaction (the charge must still find the initiator to consume).
+    function peekChargedOuter(LibVaipakam.Storage storage s, address caller) internal view returns (address outer) {
+        if (caller == s.backstopVault) {
+            bytes32 slot = BACKSTOP_INITIATOR_TSLOT;
+            assembly ("memory-safe") {
+                outer := tload(slot)
+            }
+        }
+        if (outer == address(0)) outer = tx.origin;
+    }
+
     bytes32 internal constant BACKSTOP_INITIATOR_TSLOT = keccak256("vaipakam.service-capacity.backstop-initiator");
 
     /// @dev Actor rule 3 — `backstopFill` records its caller in TRANSIENT storage

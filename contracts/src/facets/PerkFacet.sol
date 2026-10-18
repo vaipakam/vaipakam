@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -155,6 +156,13 @@ contract PerkFacet is
         uint32 durationSeconds
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #2550 — the priority-routing perk is COUNTED only (one credit = one
+        // capacity-free fill). Refused HERE, before any unit can be sold, so no
+        // buyer can pay for a timed unit the effect never reads, and no timed sale
+        // can lock the id's mode into the wrong shape.
+        if (perkId == LibPriorityRouting.PERK_ID && durationSeconds != 0) {
+            revert IVaipakamErrors.PerkPriorityMustBeCounted(durationSeconds);
+        }
         // The mode is frozen once anything has been sold. Entitlements are
         // per-user records that no setter can walk, so flipping a timed perk
         // to a counted one would strand every holder on a basis the perk no
@@ -202,6 +210,14 @@ contract PerkFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 price = s.perkPriceVpfi[perkId];
         if (price == 0) revert PerkNotForSale(perkId);
+        // #2550 — never sell the priority-routing perk while it can deliver
+        // nothing: one deliverability predicate (Solver capacity lit AND both
+        // intent master gates on), read at the purchase itself, so a later curve
+        // clear (a VPFI rotation, an admin) or a gate switched off can never leave
+        // a stale price buyable.
+        if (perkId == LibPriorityRouting.PERK_ID && !LibPriorityRouting.deliverable(s)) {
+            revert IVaipakamErrors.PerkNotDeliverable(perkId);
+        }
 
         uint32 dur = s.perkDurationSeconds[perkId];
         if (dur != expectedDurationSeconds) {

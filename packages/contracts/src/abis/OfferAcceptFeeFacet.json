@@ -1782,6 +1782,17 @@
   },
   {
     "type": "error",
+    "name": "LenderIntentPriorityProtocolOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },
@@ -2148,6 +2159,33 @@
         "name": "shortfall",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkCreditConsumeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PerkNotDeliverable",
+    "inputs": [
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkPriorityMustBeCounted",
+    "inputs": [
+      {
+        "name": "durationSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },
