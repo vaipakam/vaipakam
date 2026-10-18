@@ -443,3 +443,14 @@ test('buildUpdate: delistings are batched too, each call declaring what remains'
   assert.deepEqual(u.calls.map((c) => [c.signer, c.remove.length, c.delistingsLeft]), [['remover', 2, 3], ['remover', 2, 1], ['remover', 1, 0]]);
   u.calls.forEach((c, i) => assert.equal(decodeFunctionData({ abi, data: c.calldata }).args[0], 2n + BigInt(i)));
 });
+
+// ---- Codex #2543 r12: only an address-type detail is read as an address ----
+test('parseSdnAdvanced: a digital-currency detail must be of the TEXT detail type', () => {
+  const lookup = feature(E).replace('DetailTypeID="1432"', 'DetailTypeID="1431"');
+  assert.throws(() => parseSdnAdvanced(withInProfile(lookup)), /is of type "LOOKUP", not TEXT/);
+  const missing = feature(E).replace(' DetailTypeID="1432"', '');
+  assert.throws(() => parseSdnAdvanced(withInProfile(missing)), /DetailTypeID null/);
+  const unknown = feature(E).replace('DetailTypeID="1432"', 'DetailTypeID="99999"');
+  assert.throws(() => parseSdnAdvanced(withInProfile(unknown)), /DetailTypeID "99999", which no <DetailType> defines/);
+  assert.ok(parseSdnAdvanced(withInProfile(feature(E))).addresses.includes(E));
+});

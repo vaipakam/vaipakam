@@ -19,6 +19,12 @@
       <Reliability ID="91479">Reported</Reliability>
       <Reliability ID="1">Unknown</Reliability>
     </ReliabilityValues>
+    <DetailTypeValues>
+      <DetailType ID="1430">DATE</DetailType>
+      <DetailType ID="1431">LOOKUP</DetailType>
+      <DetailType ID="1432">TEXT</DetailType>
+      <DetailType ID="1433">COUNTRY</DetailType>
+    </DetailTypeValues>
   </ReferenceValueSets>
   <DistinctParties>
     <DistinctParty FixedRef="1">

@@ -143,6 +143,8 @@ export const DEFAULT_MAX_REMOVE = 10;
 export const DEFAULT_MAX_CHANGES_PER_CALL = 200;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
+/** The `DetailType` name an address detail carries in OFAC's schema. */
+const ADDRESS_DETAIL_TYPE = 'TEXT';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
 /** The zero address: EVM-shaped, but the contract refuses to list or delist it. */
 const ZERO_RE = /^0x0{40}$/i;
@@ -439,6 +441,7 @@ export const SDN_PATHS = Object.freeze({
   day: 'Sanctions/DateOfIssue/Day',
   featureType: 'Sanctions/ReferenceValueSets/FeatureTypeValues/FeatureType',
   reliability: 'Sanctions/ReferenceValueSets/ReliabilityValues/Reliability',
+  detailType: 'Sanctions/ReferenceValueSets/DetailTypeValues/DetailType',
   feature: PARTY_FEATURE,
   featureVersion: `${PARTY_FEATURE}/FeatureVersion`,
   versionDetail: `${PARTY_FEATURE}/FeatureVersion/VersionDetail`,
@@ -472,12 +475,20 @@ export function parseSdnAdvanced(xml) {
   const date = {};
   const featureTypes = new Map();
   const reliability = new Map();
+  const detailTypes = new Map();
+  // The reference sets, one entry each: full path -> where its values go.
+  const refSets = new Map([
+    [SDN_PATHS.featureType, { label: 'FeatureType', set: featureTypes }],
+    [SDN_PATHS.reliability, { label: 'Reliability', set: reliability }],
+    [SDN_PATHS.detailType, { label: 'DetailType', set: detailTypes }],
+  ]);
   const records = []; // { typeId, rel, value } — value null: a version with no detail
   let feature = null; // { typeId }
   let version = null; // { rel, details }
   let buf = null; // text accumulator for the element being read
   let reading = null; // the full path `buf` belongs to
   let refId = null;
+  let detailTypeId = null; // DetailTypeID of the <VersionDetail> being read
   let foreignDepth = 0; // >0 while inside an element outside OFAC's namespace
 
   scanXml(xml, {
@@ -515,12 +526,17 @@ export function parseSdnAdvanced(xml) {
         case SDN_PATHS.year:
         case SDN_PATHS.month:
         case SDN_PATHS.day:
+          reading = at;
+          buf = '';
+          break;
         case SDN_PATHS.versionDetail:
           reading = at;
+          detailTypeId = attrs.get('DetailTypeID');
           buf = '';
           break;
         case SDN_PATHS.featureType:
         case SDN_PATHS.reliability:
+        case SDN_PATHS.detailType:
           reading = at;
           refId = attrs.get('ID');
           buf = '';
@@ -553,11 +569,10 @@ export function parseSdnAdvanced(xml) {
         else if (at === SDN_PATHS.day) date.Day = value;
         else if (at === SDN_PATHS.versionDetail) {
           version.details++;
-          records.push({ typeId: feature.typeId, rel: version.rel, value });
+          records.push({ typeId: feature.typeId, rel: version.rel, detailTypeId, value });
         }
         else {
-          const label = at === SDN_PATHS.featureType ? 'FeatureType' : 'Reliability';
-          const set = at === SDN_PATHS.featureType ? featureTypes : reliability;
+          const { label, set } = refSets.get(at);
           if (refId === undefined) throw new Error(`a <${label}> has no ID`);
           if (set.has(refId)) throw new Error(`<${label}> ID ${refId} is defined twice`);
           set.set(refId, value);
@@ -590,7 +605,7 @@ export function parseSdnAdvanced(xml) {
   const excludedFalse = [];
   const malformed = [];
   const nonEvmByAsset = {};
-  for (const { typeId, rel, value } of records) {
+  for (const { typeId, rel, detailTypeId: dt, value } of records) {
     if (typeId === undefined || !featureTypes.has(typeId)) {
       throw new Error(`a <Feature> names FeatureTypeID ${JSON.stringify(typeId ?? null)}, which no <FeatureType> defines — refusing a file whose records do not resolve`);
     }
@@ -604,6 +619,16 @@ export function parseSdnAdvanced(xml) {
       // cannot read, not a record with nothing to list: refuse the file
       // rather than drop the entry silently (Codex #2543 r9).
       throw new Error(`a "${DCA_PREFIX}${asset}" <FeatureVersion> carries no <VersionDetail> address — refusing a file whose digital-currency records do not resolve`);
+    }
+    // An address is free text in OFAC's schema. A detail of any other type
+    // (or none) is not one, however it is shaped, so it is never listed
+    // (Codex #2543 r12); the type resolves against the reference set like
+    // every other ID.
+    if (dt === undefined || !detailTypes.has(dt)) {
+      throw new Error(`a <VersionDetail> names DetailTypeID ${JSON.stringify(dt ?? null)}, which no <DetailType> defines — refusing a file whose records do not resolve`);
+    }
+    if (detailTypes.get(dt) !== ADDRESS_DETAIL_TYPE) {
+      throw new Error(`a "${DCA_PREFIX}${asset}" <VersionDetail> is of type ${JSON.stringify(detailTypes.get(dt))}, not ${ADDRESS_DETAIL_TYPE} — refusing a digital-currency record that is not an address`);
     }
     if (EVM_RE.test(value) && ZERO_RE.test(value)) {
       // The contract reverts ZeroAddress on it, so it can never reach a
