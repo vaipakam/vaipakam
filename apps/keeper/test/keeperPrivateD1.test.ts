@@ -265,6 +265,15 @@ describe('keeper-cutover — records nothing unless every table copied whole', (
     expect(insert, 'it records a marker').toBeGreaterThan(0);
     expect(src.indexOf('copyVerdict(after, priv)'), 'the verify precedes the record').toBeLessThan(insert);
     expect(src.indexOf('copyVerdict(before, after)'), 'so does the unchanged-source check').toBeLessThan(insert);
+    // The indexer's epochs are read BEFORE the export and again AFTER the
+    // verify, before the record (#2569 r2), so the seed matches the snapshot.
+    const firstEpochs = src.indexOf('query(SHARED_DB, EPOCHS_SQL)');
+    const exportAt = src.indexOf("'d1', 'export'");
+    const secondEpochs = src.indexOf('query(SHARED_DB, EPOCHS_SQL)', firstEpochs + 1);
+    expect(firstEpochs, 'epochs read before the export').toBeGreaterThan(0);
+    expect(firstEpochs).toBeLessThan(exportAt);
+    expect(secondEpochs, 'and re-read after the verify, before the record').toBeGreaterThan(src.indexOf('copyVerdict(after, priv)'));
+    expect(secondEpochs).toBeLessThan(insert);
     // `process.exit` would skip the `finally` that removes the export files.
     expect(src.slice(src.indexOf('function run()')), 'no exit inside the copy').not.toMatch(/process\.exit\(/);
   });

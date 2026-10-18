@@ -51,6 +51,7 @@ import {
   readMarker,
   recordSql,
   COPIED_CHAINS_SQL,
+  EPOCHS_SQL,
 } from './lib/keeper-cutover.mjs';
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
@@ -114,6 +115,15 @@ function run() {
     fail(`${PRIVATE_DB} does not have every keeper table — apply its schema first: \`pnpm --filter @vaipakam/keeper run migrate\`.`);
   }
 
+  // The indexer's epochs, taken BEFORE the copy (#2569 r2) and checked
+  // unchanged after it, so the epoch seed describes the same snapshot as the
+  // copied rows. A reset still in progress (`reset_pending = 1`) means the
+  // shared rows are mid-change: refuse until it finishes.
+  const epochsBefore = query(SHARED_DB, EPOCHS_SQL);
+  if (epochsBefore === null) fail(`could not read the indexer's epochs in ${SHARED_DB} — nothing was changed.`);
+  const pending = epochsBefore.filter((e) => Number(e.reset_pending) !== 0).map((e) => e.chain_id);
+  if (pending.length > 0) fail(`the indexer is mid-reset on chain(s) ${pending.join(', ')} — nothing was changed; re-run once its next pass finishes the reset.`);
+
   const dir = mkdtempSync(join(tmpdir(), 'keeper-cutover-'));
   try {
     // 3. Export, empty, import.
@@ -150,12 +160,16 @@ function run() {
     // --command string, whose size would grow with the copy): the per-row
     // digests, the keeper's deployment epoch seeded from the indexer's adopted
     // Diamonds (the copied rows belong to those), and LAST the marker.
-    // Only COMPLETE epochs (reset finished, #2569 r1), and one for EVERY chain
-    // the copied keyed-by-chain rows belong to — a chain with copied rows and
-    // no complete epoch would be adopted blind on the first tick and keep
-    // rows that may belong to a retired Diamond.
-    const deployments = query(SHARED_DB, 'SELECT chain_id, diamond FROM indexer_deployment WHERE reset_pending = 0');
-    if (deployments === null) fail(`could not read the indexer's adopted Diamonds in ${SHARED_DB} — no record written; re-run the cutover.`);
+    // The epochs must not have moved during the copy (#2569 r2): an adoption
+    // finished in between would seed the NEW Diamond for rows copied from the
+    // old one. And one complete epoch for EVERY chain the copied keyed-by-chain
+    // rows belong to (#2569 r1) — a chain with copied rows and no epoch would
+    // be adopted blind on the first tick.
+    const epochsAfter = query(SHARED_DB, EPOCHS_SQL);
+    if (epochsAfter === null || JSON.stringify(epochsAfter) !== JSON.stringify(epochsBefore)) {
+      fail(`the indexer's epochs changed during the copy (or could not be re-read) in ${SHARED_DB} — no record written; re-run the cutover.`);
+    }
+    const deployments = epochsBefore;
     const copiedChains = query(PRIVATE_DB, COPIED_CHAINS_SQL);
     if (copiedChains === null) fail(`could not read which chains the copied rows belong to in ${PRIVATE_DB} — no record written; re-run the cutover.`);
     const seeded = new Set(deployments.map((d) => Number(d.chain_id)));

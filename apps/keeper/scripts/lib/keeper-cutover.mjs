@@ -190,6 +190,10 @@ export function markerFromReads(markerRows, digestRows) {
   return { completedAt: Number(markerRows[0].completed_at), fingerprint };
 }
 
+/** The indexer's epochs, ordered, for the before/after comparison and the
+ *  seed (#2569 r2). */
+export const EPOCHS_SQL = 'SELECT chain_id, lower(diamond) AS diamond, reset_pending FROM indexer_deployment ORDER BY chain_id';
+
 /** Every chain the copied keyed-by-chain rows belong to (#2569 r1) — the
  *  tables whose rows the keeper's epoch reset would clear. */
 export const COPIED_CHAINS_SQL =
