@@ -17,6 +17,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title #1219 (S-4) slice 3 — the arming fee's shape and the rotation epochs.
 /// @dev   The fee is a governance-set RATE over a positive floor the code enforces, charged
@@ -73,6 +74,44 @@ contract ServiceCapacityArmingTest is SetupTest {
         _f().setArmingFeeRate(FEE);
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
+
+    /// @dev Codex #2556 r1 — the bounds are enforced where the rate is USED. A
+    ///      Diamond refreshed in place keeps the rate the earlier facet accepted
+    ///      (its ceiling was 100%), so a stored rate outside [0.5%, 10%] must read
+    ///      as DARK: the preview names the dark refusal, the post reverts, and the
+    ///      getter reports 0 — never a silent clamp that re-prices a post. Each
+    ///      bound is straddled on the STORED value (bound in force, one unit out
+    ///      dark), and an admin re-lights arming by setting a rate in bounds.
+    function test_StoredRateOutOfBounds_ReadsDark_UntilAnInBoundsRateIsSet() public {
+        _ready();
+        uint256 lo = LibServiceCapacity.MIN_ARMING_FEE_RATE;
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        uint256[4] memory dark = [uint256(0.5e18), hi + 1, lo - 1, uint256(1)];
+        for (uint256 i = 0; i < dark.length; i++) {
+            TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(dark[i]);
+            (uint8 refusal, uint256 fee, , , ) = _f().previewArming(SOLVER, op, 10e18);
+            assertEq(refusal, LibServiceCapacity.POST_ARMING_DARK, "an out-of-bounds stored rate previews as dark");
+            assertEq(fee, 0, "and quotes no fee");
+            (uint256 rate, , ) = _f().getArmingFee();
+            assertEq(rate, 0, "the getter reports the rate in force: none");
+            LibServiceCapacity.ArmingBind memory b = _bind(SOLVER); // before the prank (a view call would consume it)
+            vm.prank(op);
+            vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingDark.selector, SOLVER));
+            _f().postCapacityDeposit(SOLVER, 10e18, b);
+        }
+        // the bounds themselves are in force when stored directly
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(lo);
+        (uint8 r1, uint256 feeLo, , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(r1, LibServiceCapacity.POST_OK);
+        assertEq(feeLo, Math.mulDiv(10e18, lo, 1e18, Math.Rounding.Ceil), "0.5% of the armed principal");
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(hi);
+        (, uint256 feeHi, , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(feeHi, Math.mulDiv(10e18, hi, 1e18, Math.Rounding.Ceil), "10% of the armed principal");
+        // an admin re-lights arming from a dark legacy rate with an in-bounds one
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(0.5e18);
+        _f().setArmingFeeRate(2e16);
+        assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit again at 2%");
+    }
 
     /// @dev #1219 (owner direction 2026-10-18) — at the fixed CEILING of 10%, on the
     ///      largest knee a curve accepts, the fee is exactly ceil(grant x 10%):

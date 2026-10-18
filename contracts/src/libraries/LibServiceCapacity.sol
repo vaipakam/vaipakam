@@ -460,6 +460,21 @@ library LibServiceCapacity {
         emit ArmingFeeSet(rate);
     }
 
+    /// @notice The arming fee rate IN FORCE: the stored rate when it is zero or
+    ///         inside the fixed bounds, otherwise ZERO — arming dark, posting
+    ///         refused. The bounds are enforced where the rate is USED, not only
+    ///         where it is set (Codex #2556 r1): a Diamond refreshed in place keeps
+    ///         whatever rate the earlier facet accepted (up to 100% under the
+    ///         retired ceiling), and a rate the setter would now refuse must not
+    ///         keep being charged. Out of bounds reads as dark rather than being
+    ///         clamped, because clamping would silently re-price a post; an admin
+    ///         re-lights arming by setting a rate inside the bounds.
+    function armingFeeRateInForce(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 rate = s.armingFeeRate;
+        if (rate < MIN_ARMING_FEE_RATE || rate > MAX_ARMING_FEE_RATE) return 0;
+        return rate;
+    }
+
     /// @notice The arming quote for posting `amount` into `operator`'s `role`
     ///         deposit. The ARMED (eligible) balance is the principal under the
     ///         knee `bondAt4x` as it stood when the principal was armed, and only it
@@ -478,17 +493,19 @@ library LibServiceCapacity {
         returns (uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter, bool dark)
     {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (s.armingFeeRate == 0 || c.freeTier == 0) return (0, 0, 0, 0, true);
+        uint256 rate = armingFeeRateInForce(s);
+        if (rate == 0 || c.freeTier == 0) return (0, 0, 0, 0, true);
         LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][s.vpfiRotationEpoch];
         uint256 before = d.eligibleAmount;
         uint256 principalAfter = d.amount + amount;
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        // Rounded up, so no armed principal is ever free. The setters bound the
-        // rate by {MAX_ARMING_FEE_RATE} (#2459 r4) and `setCurve` the knee by
-        // 2^128, so the fee is at most the grant and the product cannot overflow.
-        fee = granted == 0 ? 0 : Math.mulDiv(granted, s.armingFeeRate, 1e18, Math.Rounding.Ceil);
+        // Rounded up, so no armed principal is ever free. The rate in force is
+        // at most {MAX_ARMING_FEE_RATE} and `setCurve` bounds the knee by 2^128,
+        // so the fee is at most a tenth of the grant and the product cannot
+        // overflow.
+        fee = granted == 0 ? 0 : Math.mulDiv(granted, rate, 1e18, Math.Rounding.Ceil);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 

@@ -106,12 +106,13 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         LibServiceCapacity.setArmingFeeRate(LibVaipakam.storageSlot(), rate);
     }
 
-    /// @notice The arming fee: the live `rate` (0 = arming dark) and the fixed
-    ///         bounds a positive rate must sit inside, so a reader needs no
-    ///         knowledge of the code to see the permitted range.
+    /// @notice The arming fee: the `rate` IN FORCE (0 = arming dark — including a
+    ///         stored rate outside the bounds, which posting treats as dark) and
+    ///         the fixed bounds a positive rate must sit inside, so a reader needs
+    ///         no knowledge of the code to see the permitted range.
     function getArmingFee() external view returns (uint256 rate, uint256 minRate, uint256 maxRate) {
         return (
-            LibVaipakam.storageSlot().armingFeeRate,
+            LibServiceCapacity.armingFeeRateInForce(LibVaipakam.storageSlot()),
             LibServiceCapacity.MIN_ARMING_FEE_RATE,
             LibServiceCapacity.MAX_ARMING_FEE_RATE
         );
