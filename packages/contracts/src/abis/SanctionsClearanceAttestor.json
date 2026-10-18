@@ -68,6 +68,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "challenge",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "accounts",
         "type": "address[]",
         "internalType": "address[]"
@@ -163,6 +168,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "challenge",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "accounts",
         "type": "address[]",
         "internalType": "address[]"
@@ -200,6 +210,12 @@
         "internalType": "address"
       },
       {
+        "name": "challenge",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
         "name": "accounts",
         "type": "address[]",
         "indexed": false,
@@ -212,7 +228,7 @@
         "internalType": "bool[]"
       },
       {
-        "name": "asOf",
+        "name": "oracleUpdatedAt",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -276,6 +292,11 @@
   {
     "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroChallenge",
     "inputs": []
   }
 ]
