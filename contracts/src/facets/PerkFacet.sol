@@ -317,23 +317,37 @@ contract PerkFacet is
     /// @notice #2559 (Codex #2563 r6) — why perk 1 (priority routing) does or does
     ///         not sell RIGHT NOW, condition by condition, so an operator can tell
     ///         the required arming write from any other refusal without replaying
-    ///         event history. `deliverable` is exactly the predicate `purchasePerk`
-    ///         reads; the others are its parts.
+    ///         event history. `purchasable` is exactly what `purchasePerk` checks
+    ///         for perk 1 (a price, and deliverability); the others are its parts
+    ///         (Codex #2563 r7: a DISARMED perk reads `priced = false`, so it is
+    ///         never reported as for sale).
+    /// @return purchasable        A purchase would go through now: priced AND deliverable.
+    /// @return priced             Perk 1 has a non-zero price (zero = disarmed, not for sale).
     /// @return armed              This version's first priced, counted write has
     ///                            armed the effect (`PriorityRoutingPerkArmed`).
-    /// @return deliverable        All conditions hold: a priced purchase would not be
-    ///                            refused `PerkNotDeliverable`.
+    /// @return deliverable        Every condition but the price holds: a priced
+    ///                            purchase would not be refused `PerkNotDeliverable`.
     /// @return counted            Perk 1 is configured counted (duration zero).
     /// @return solverCapacityLit  The Solver service-capacity curve is set.
     /// @return intentMatchingLive Both intent master gates are on.
     function getPriorityRoutingStatus()
         external
         view
-        returns (bool armed, bool deliverable, bool counted, bool solverCapacityLit, bool intentMatchingLive)
+        returns (
+            bool purchasable,
+            bool priced,
+            bool armed,
+            bool deliverable,
+            bool counted,
+            bool solverCapacityLit,
+            bool intentMatchingLive
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        priced = s.perkPriceVpfi[LibPriorityRouting.PERK_ID] != 0;
         armed = s.priorityRoutingPerkArmed;
         deliverable = LibPriorityRouting.deliverable(s);
+        purchasable = priced && deliverable;
         counted = s.perkDurationSeconds[LibPriorityRouting.PERK_ID] == 0;
         solverCapacityLit = s.capacityCurves[uint8(LibVaipakam.ServiceCapacityRole.Solver)].freeTier != 0;
         intentMatchingLive = s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled;

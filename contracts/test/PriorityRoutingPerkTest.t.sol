@@ -643,19 +643,31 @@ contract PriorityRoutingPerkTest is SetupTest {
         _lightCurve();
         TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
         _expectNotDeliverableNoMove();
-        (bool armed, bool deliverable, bool counted, bool lit, bool live) = _perk().getPriorityRoutingStatus();
+        (bool purchasable, bool priced, bool armed, bool deliverable, bool counted, bool lit, bool live) =
+            _perk().getPriorityRoutingStatus();
+        assertFalse(purchasable, "status: not purchasable");
         assertFalse(armed, "status: not armed");
         assertFalse(deliverable, "status: not deliverable");
-        assertTrue(counted && lit && live, "status: every OTHER condition holds, so the arming write is what is missing");
+        assertTrue(priced && counted && lit && live, "status: every OTHER condition holds, so the arming write is what is missing");
         vm.expectEmit(false, false, false, true, address(diamond));
         emit LibPriorityRouting.PriorityRoutingPerkArmed(PRICE);
         _perk().setPerkConfig(PERK, PRICE, 0);
-        (armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
-        assertTrue(armed && deliverable, "status: armed and deliverable after the arming write");
+        (purchasable,, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
+        assertTrue(purchasable && armed && deliverable, "status: armed, deliverable and purchasable after the arming write");
         _expectPurchaseSucceeds();
         vm.recordLogs();
         _perk().setPerkConfig(PERK, PRICE * 2, 0); // re-pricing: armed once, no second event
         assertEq(vm.getRecordedLogs().length, 1, "only PerkConfigured on a re-price");
+        // Codex #2563 r7 — a DISARMED perk is never reported for sale, though it
+        // stays armed and deliverable.
+        _perk().setPerkConfig(PERK, 0, 0);
+        (purchasable, priced, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
+        assertFalse(purchasable, "disarmed: not purchasable");
+        assertFalse(priced, "disarmed: no price");
+        assertTrue(armed && deliverable, "disarmed: still armed and deliverable");
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(PerkFacet.PerkNotForSale.selector, PERK));
+        _perk().purchasePerk(PERK, 1, PRICE * 2, 0);
     }
 
     /// @dev Codex #2563 r5 — perk-1 CREDITS sold before the effect existed never
