@@ -194,6 +194,34 @@ contract SanctionsListTest is Test {
         list.applyUpdate(3, _arr(c), _none(), H2, 20261016, 0);
     }
 
+    /// @notice A repeat of a partly applied publication cannot clear its
+    ///         outstanding delistings without applying them (Codex #2543 r8).
+    function test_Pending_ARefreshCannotClearOutstandingDelistings() public {
+        _update(_arr(a, b), _none(), H1, 20261015);
+        vm.prank(bot);
+        list.applyUpdate(1, _arr(c), _none(), H2, 20261016, 2);
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.PendingDelistingsMismatch.selector, uint32(0), uint32(2)));
+        list.applyUpdate(2, _none(), _none(), H2, 20261016, 0);
+        vm.prank(bot);
+        list.applyUpdate(2, _none(), _none(), H2, 20261016, 2); // an honest refresh keeps it
+        assertEq(list.pendingDelistings(), 2);
+        // Partial completion lowers it by what was applied.
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.PendingDelistingsMismatch.selector, uint32(0), uint32(1)));
+        list.applyUpdate(3, _none(), _arr(a), H2, 20261016, 0);
+        vm.prank(safe);
+        list.applyUpdate(3, _none(), _arr(a), H2, 20261016, 1);
+        assertEq(list.pendingDelistings(), 1);
+        vm.prank(safe);
+        list.applyUpdate(4, _none(), _arr(b), H2, 20261016, 0);
+        assertEq(list.pendingDelistings(), 0);
+        // A new publication takes its own declaration again.
+        vm.prank(bot);
+        list.applyUpdate(5, _none(), _none(), keccak256("p3"), 20261017, 0);
+        assertEq(list.pendingDelistings(), 0);
+    }
+
     /// @notice A remover may apply a whole update, additions included.
     function test_Remover_AppliesAWholeUpdate() public {
         _update(_arr(a), _none(), H1, 20261015);

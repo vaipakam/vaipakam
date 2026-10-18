@@ -867,6 +867,22 @@
   },
   {
     "type": "error",
+    "name": "PendingDelistingsMismatch",
+    "inputs": [
+      {
+        "name": "declared",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "actual",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PublicationNotNewer",
     "inputs": [
       {

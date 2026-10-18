@@ -22,7 +22,8 @@
  *      the block is resolved once to its HASH and every read — version,
  *      publication, hash, count, each page — is pinned to it by EIP-1898
  *      with `requireCanonical`, using the census tooling's helper), or from a file (`--current` + `--current-version`
- *      + `--current-publication` [+ `--current-source-hash`]).
+ *      + `--current-publication` [+ `--current-source-hash`]
+ *      [+ `--current-pending`, the list's `pendingDelistings`, default 0]).
  *   4. Prints the add / remove sets, the source SHA-256 and publication date
  *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calls, each
  *      carrying the list version it applies to, so it cannot apply to any
@@ -632,6 +633,7 @@ export function buildUpdate({
   currentVersion,
   recordedDate,
   recordedHash,
+  recordedPending = 0,
   allowRollback = false,
   maxRemove = DEFAULT_MAX_REMOVE,
   abi = sanctionsListAbi(),
@@ -669,10 +671,16 @@ export function buildUpdate({
     }),
   });
   const calls = [];
+  // A NEW publication declares its own outstanding count. A REPEAT of the
+  // recorded one cannot: the contract lowers the recorded count only by the
+  // delistings applied, and requires the declaration to match (Codex #2543
+  // r8), so mirror that rule here.
+  const pending = Number(recordedPending);
+  const left = (applied, declaredForNew) => (order === 'same-publication' ? Math.max(0, pending - applied) : declaredForNew);
   // A delisting-only update of a NEWER publication still goes to the remover
   // alone; otherwise the adder records the publication (and its additions).
-  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, [], remove.length));
-  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove, 0));
+  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, [], left(0, remove.length)));
+  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove, left(remove.length, 0)));
   return {
     add,
     remove,
@@ -724,12 +732,13 @@ async function readCurrentFromChain(rpc, list, blockNumberArg, abi) {
   const version = await read('listVersion');
   const recordedDate = Number(await read('sourcePublicationDate'));
   const recordedHash = await read('sourceHash');
+  const recordedPending = Number(await read('pendingDelistings'));
   const count = await read('listedCount');
   const addrs = [];
   const PAGE = 200n;
   for (let off = 0n; off < count; off += PAGE) addrs.push(...(await read('listedPage', [off, PAGE])));
   if (BigInt(addrs.length) !== count) throw new Error(`read ${addrs.length} addresses, listedCount says ${count}`);
-  return { version, recordedDate, recordedHash, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
+  return { version, recordedDate, recordedHash, recordedPending, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
 }
 
 async function readChainalysisFromChain(rpc, oracle, fromBlock, toBlockArg, chunk) {
@@ -792,6 +801,7 @@ async function main() {
       version: parseUintArg('--current-version', args['current-version'], { max: 2n ** 64n - 1n }),
       recordedDate,
       recordedHash,
+      recordedPending: args['current-pending'] !== undefined ? Number(parseUintArg('--current-pending', args['current-pending'], { max: 2n ** 32n - 1n })) : 0,
       addresses: readList(args.current),
       source: { file: args.current },
     };
@@ -805,6 +815,7 @@ async function main() {
     currentVersion: current.version,
     recordedDate: current.recordedDate,
     recordedHash: current.recordedHash,
+    recordedPending: current.recordedPending,
     allowRollback: args['allow-rollback'] === true,
     maxRemove,
     abi,

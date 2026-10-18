@@ -314,3 +314,20 @@ test('zero address: refused in a current list, surfaced as malformed in OFAC dat
   assert.ok(!p.addresses.includes(ZERO_ADDR));
   assert.ok(p.malformed.some((m) => m.value === ZERO_ADDR));
 });
+
+// ---- Codex #2543 r8: a repeated publication mirrors the contract's count rule ----
+test('buildUpdate: completing a partly applied publication declares what the contract will compute', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const same = { recordedDate: 20260307, recordedHash: hash };
+  const abi = sanctionsListAbi();
+  const last = (u) => decodeFunctionData({ abi, data: u.calls[u.calls.length - 1].calldata }).args[5];
+  // Two outstanding, the diff applies one: one stays outstanding.
+  const partial = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, recordedPending: 2 });
+  assert.equal(last(partial), 1);
+  const full = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 3, ...same, recordedPending: 2 });
+  assert.equal(last(full), 0);
+  // A no-change refresh keeps the recorded count.
+  const refresh = buildUpdate({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPending: 2 });
+  assert.equal(last(refresh), 2);
+});

@@ -98,10 +98,13 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            `pendingDelistings`, evented, and returned by `freshness()`. A
  *            non-zero value means "this publication is only partly applied:
  *            N addresses it removed are still listed". The remover's
- *            completing update declares 0. The value is the updater's
- *            declaration, computed by the diff tool from the same diff; the
- *            contract cannot verify it, and an adder that understates it can
- *            hide only a delay it could equally cause by not submitting.
+ *            completing update declares 0. For a NEW publication the value
+ *            is the updater's declaration, computed by the diff tool from the
+ *            same diff; the contract cannot verify it, and an adder that
+ *            understates it can hide only a delay it could equally cause by
+ *            not submitting. A REPEAT of the recorded publication cannot
+ *            declare freely: the count only falls by the delistings it
+ *            actually applies, so a no-change refresh leaves it as it was.
  *
  *         5. **Attribution.** `sanctionSource` says which source flags an
  *            address, so a surface that tells a flagged user whom to contact
@@ -226,6 +229,9 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     error NotUpdater(address caller);
     /// @notice The update delists addresses and the caller is not a remover.
     error NotRemover(address caller);
+    /// @notice A repeat of the recorded publication declared an outstanding-
+    ///         delistings count other than the one it leaves (note 4a).
+    error PendingDelistingsMismatch(uint32 declared, uint32 actual);
     /// @notice A non-zero secondary was given with no code behind it.
     error SecondaryHasNoCode(address secondary);
     /// @notice The diff was computed against a different list version.
@@ -361,6 +367,8 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         _checkPublicationDate(publicationDate);
 
         uint64 version = current + 1;
+        // Read before the update overwrites the recorded publication.
+        bool samePublication = publicationDate == sourcePublicationDate && sourceHash_ == sourceHash;
         _checkPublicationOrder(version, publicationDate, sourceHash_, toAdd.length == 0);
         uint256 nAdd = toAdd.length;
         for (uint256 i; i < nAdd; ++i) {
@@ -384,9 +392,27 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         lastUpdatedAt = uint64(block.timestamp);
         sourceHash = sourceHash_;
         sourcePublicationDate = publicationDate;
-        pendingDelistings = delistingsLeft;
+        pendingDelistings = _nextPendingDelistings(samePublication, toRemove.length, delistingsLeft);
         emit DelistingsPending(version, delistingsLeft);
         emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
+    }
+
+    /// @dev The outstanding-delistings count after an update (note 4a). A NEW
+    ///      publication (newer, or an authorized rollback) takes the count
+    ///      its update declares. A REPEAT of the recorded publication can only
+    ///      reduce the count, and only by delistings it actually applies, so
+    ///      a no-change refresh cannot report a partly applied publication as
+    ///      complete (Codex #2543 r8); the declared value must equal that
+    ///      result, so a caller cannot believe it set something it did not.
+    function _nextPendingDelistings(bool samePublication, uint256 nRemoved, uint32 declared)
+        private
+        view
+        returns (uint32 next)
+    {
+        if (!samePublication) return declared;
+        uint32 pending = pendingDelistings;
+        next = nRemoved >= pending ? 0 : pending - uint32(nRemoved);
+        if (declared != next) revert PendingDelistingsMismatch(declared, next);
     }
 
     /// @dev Accepts a newer publication, or the same publication again
