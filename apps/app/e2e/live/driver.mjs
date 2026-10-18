@@ -1486,6 +1486,9 @@ export async function launch({
     setChain: (id) => {
       chainId = id;
     },
+    /** The chain the injected wallet is on NOW — after whatever switches the
+     *  page requested — so a driver can prove it ran on the chain it asked for. */
+    activeChainId: () => chainId,
     shot: async (name) => {
       const dir = path.join(HERE, 'shots');
       fs.mkdirSync(dir, { recursive: true });

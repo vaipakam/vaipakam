@@ -54,6 +54,17 @@
  *
  *   JOURNEY_ROLES=visitor        # optional subset, comma-separated
  *   JOURNEY_JSON=out/report.json # optional machine-readable dump
+ *   JOURNEY_CHAIN=421614         # optional: the chain the CONNECTED roles
+ *                                # start on (default 84532, Base Sepolia).
+ *                                # Any chain the driver's CHAINS table lists.
+ *
+ * JOURNEY_CHAIN moves the connected roles only. The visitor is keyless, so
+ * it has no wallet chain to choose and sees whatever the app shows a visitor
+ * with no wallet. A connected role FAILS its chain check, and none of its
+ * scenarios run, if the app is not on the requested chain once connected.
+ * It also fails if the app moved the wallet to another chain by the end of
+ * the role. Without that check, a run asked for Arbitrum Sepolia could
+ * silently review Base Sepolia.
  *
  * `TESTNET_WALLETS_FILE` is required for the CONNECTED roles, whose
  * sessions build an injected provider from the role's key. The visitor
@@ -79,6 +90,7 @@ import {
   LiveSetupError,
   SITE,
   requireSiteUrl,
+  CHAINS,
 } from './driver.mjs';
 
 // Entry-point guard: this driver reads `SITE` directly, before any guarded
@@ -767,6 +779,35 @@ if (wanted.length === 0) {
   process.exit(2);
 }
 
+/** The chain the connected roles start on. A value the driver cannot serve is
+ *  a configuration mistake, so it exits BLOCKED (2) — like the role guards. */
+const JOURNEY_CHAIN = Number(process.env.JOURNEY_CHAIN ?? 84532);
+if (!CHAINS[JOURNEY_CHAIN]) {
+  console.error(
+    `BLOCKED: JOURNEY_CHAIN=${process.env.JOURNEY_CHAIN} is not a chain the driver serves — known: ${Object.keys(CHAINS).join(', ')}`,
+  );
+  process.exit(2);
+}
+const CHAIN_NAME = CHAINS[JOURNEY_CHAIN].chain.name;
+console.log(`journeys: connected roles on ${CHAIN_NAME} (${JOURNEY_CHAIN})`);
+
+/** Record the connected role's chain check. Returns whether it passed. */
+function chainCheck(roleKey, when, active) {
+  const ok = active === JOURNEY_CHAIN;
+  results.push({
+    id: `CHAIN-${when}-${roleKey}`,
+    roleKey,
+    role: roleKey,
+    route: '/',
+    goal: `The connected role runs on the requested chain (${when})`,
+    desired: `The injected wallet is on ${CHAIN_NAME} (${JOURNEY_CHAIN}).`,
+    ok,
+    actual: ok ? `on ${JOURNEY_CHAIN}` : `the wallet is on ${active}, not ${JOURNEY_CHAIN} — the app moved it`,
+  });
+  console.log(`${ok ? 'PASS' : 'FAIL'}  CHAIN-${when}-${roleKey}  [${roleKey}] wallet on ${active}, wanted ${JOURNEY_CHAIN}`);
+  return ok;
+}
+
 for (const r of wanted) {
   if (!ROLE_POSTURE[r]) {
     console.error(`BLOCKED: unknown role "${r}" — known: ${Object.keys(ROLE_POSTURE).join(', ')}`);
@@ -934,6 +975,7 @@ for (const roleKey of wanted) {
     session = await launch({
       ...posture,
       ...READ_ONLY,
+      startChainId: JOURNEY_CHAIN,
       freshProfile: true,
       onSetupFailure: 'throw',
     });
@@ -1037,6 +1079,12 @@ for (const roleKey of wanted) {
         // so the report fills with verdicts about a session that does
         // not exist. The thrown-error path already closes and moves on;
         // this branch fell through.
+        await done();
+        continue;
+      }
+      // ON THE REQUESTED CHAIN, or nothing below says anything about it.
+      if (!chainCheck(roleKey, 'connect', session.activeChainId())) {
+        hardFail += 1;
         await done();
         continue;
       }
@@ -1162,6 +1210,10 @@ for (const roleKey of wanted) {
         `      actual  : ${actual}${note ? `\n      note    : ${note}` : ''}`,
     );
   }
+
+  // Still on it at the end: a page that switched the wallet mid-run would have
+  // had the later scenarios review another chain.
+  if (posture.preAuthorized && !chainCheck(roleKey, 'end', session.activeChainId())) hardFail += 1;
 
   // THE READ-ONLY GUARANTEE, CHECKED. `readOnly: true` makes the injected
   // wallet refuse write RPCs; this turns a refusal into a FAILED RUN.
