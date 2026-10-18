@@ -19,7 +19,8 @@
 // so the path stays dark until the operator has also authorized the keeper EOA
 // on-chain (`setRewardRemittanceKeeper`, or ADMIN).
 
-import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   RewardRemittanceFacetABI,
   RewardRemittanceLensFacetABI,
@@ -219,7 +220,7 @@ export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<vo
 }
 
 async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
-  const publicClient = createPublicClient({ transport: http(chain.rpc) });
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // `remitRewardBudget` is Base-only; find the canonical chain and remit from it.

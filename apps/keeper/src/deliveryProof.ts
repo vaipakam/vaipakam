@@ -32,13 +32,12 @@
 import {
   BaseError,
   ContractFunctionRevertedError,
-  createPublicClient,
-  http,
   type Abi,
   type Address,
   type Hex,
   type PublicClient,
 } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   RewardEpochFacetABI,
   RewardRemittanceLensFacetABI,
@@ -48,7 +47,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { RunDeadlinePassed, isRunDeadlinePassed, pastDeadline } from './runDeadline';
+import { isRunDeadlinePassed } from './runDeadline';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -231,7 +230,7 @@ export async function runDeliveryProof(env: Env, tick: PassTick): Promise<void> 
 }
 
 async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number): Promise<void> {
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  const client = keeperPublicClient(chain.rpc, deadline);
   const diamond = chain.diamond as Address;
   const cfg = (await client.readContract({
     address: diamond,
@@ -259,7 +258,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const finished = new Set<string>();
   // The chain each rooted packet was REMITTED from, by the packet's own
   // record (#2497 r6) — never the canonical chain as configured today.
-  const sources = sourceReader(byId);
+  const sources = sourceReader(byId, deadline);
   const ctx = buildKeeperContext(env, chain, client as never, deadline);
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
@@ -306,15 +305,15 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   }
 }
 
-/** A client per remitting chain, made on first use. */
-function sourceReader(byId: ReadonlyMap<number, ChainConfig>): (chainId: number) => PublicClient | null {
+/** A client per remitting chain, made on first use, bound by the run's deadline like every other. */
+function sourceReader(byId: ReadonlyMap<number, ChainConfig>, deadline: number): (chainId: number) => PublicClient | null {
   const made = new Map<number, PublicClient>();
   return (chainId) => {
     const c = byId.get(chainId);
     if (!c) return null;
     let cl = made.get(chainId);
     if (!cl) {
-      cl = createPublicClient({ transport: http(c.rpc) }) as PublicClient;
+      cl = keeperPublicClient(c.rpc, deadline);
       made.set(chainId, cl);
     }
     return cl;
@@ -542,23 +541,13 @@ export function isWalkExceeded(err: unknown): boolean {
   return String((err as { message?: string })?.message ?? '').includes('TransportIndexWalkExceeded');
 }
 
-/** One Diamond view read, refused unissued once the run's deadline has
- *  passed (#2497 r20). Every read the hint derivation makes goes through
- *  this — the packet, the batch and each page of the day walk — so a
- *  traversal that is still paging when the run runs out of time stops at
- *  its next read and the action stays queued for the next run; nothing
- *  here needs a check of its own. */
-function boundedViewReader(client: PublicClient, diamond: Address, deadlineMs: number) {
-  return (functionName: string, args: readonly unknown[]): Promise<unknown> => {
-    if (pastDeadline(deadlineMs)) return Promise.reject(new RunDeadlinePassed(`deliveryProof ${functionName}`));
-    return client.readContract({ address: diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
-  };
-}
-
-/** The chain's own day-order views (#2489 r2), each read bounded by the
- *  run's deadline. Exported for its test. */
-export function dayOrderReader(client: PublicClient, diamond: Address, deadlineMs: number): DayOrderReader {
-  const read = boundedViewReader(client, diamond, deadlineMs);
+/** The chain's own day-order views (#2489 r2). Every read goes through the
+ *  run's deadline-bound client (`keeperClient.ts`), so a walk still paging
+ *  when the run runs out of time stops at its next read and the action stays
+ *  queued for the next run. Exported for its test. */
+export function dayOrderReader(client: PublicClient, diamond: Address): DayOrderReader {
+  const read = (functionName: string, args: readonly unknown[]) =>
+    client.readContract({ address: diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
   const asPage = (r: unknown): OrderPage => {
     const [page, arrivedAt, next] = r as readonly [readonly Hex[], readonly (bigint | number)[], Hex];
     return { page, arrivedAt: arrivedAt.map((x) => BigInt(x)), next };
@@ -577,10 +566,11 @@ export function dayOrderReader(client: PublicClient, diamond: Address, deadlineM
 async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call | null> {
   if (a.kind !== 'indexPage' && a.kind !== 'indexChunk') return null;
   const client = ctx.client as unknown as PublicClient;
-  const read = boundedViewReader(client, ctx.diamond, ctx.deadlineMs);
+  const read = (functionName: string, args: readonly unknown[]) =>
+    client.readContract({ address: ctx.diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
   const packet = (await read('getIngressPacket', [a.batchId])) as { arrivedAt: bigint | number };
   const arrived = BigInt(packet.arrivedAt);
-  const reader = dayOrderReader(client, ctx.diamond, ctx.deadlineMs);
+  const reader = dayOrderReader(client, ctx.diamond);
   if (a.kind === 'indexChunk') {
     const h = await hintsForDays(reader, a.dayIds, 0, a.dayIds.length, a.batchId, arrived);
     return {
@@ -607,6 +597,13 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
   try {
     await simulate(call);
   } catch (err) {
+    // The run's deadline refused the simulation (`keeperClient.ts`): not a
+    // skip, the action and the rest of this run's sends wait for the next run.
+    if (isRunDeadlinePassed(err)) {
+      console.log(`[keeper] deliveryProof chain=${ctx.chainId}: ${shortErr(err)}`);
+      budget.writes = 0;
+      return;
+    }
     // A day too crowded for the contract's bounded walk (Codex #2489 r2):
     // retry once with verified hints, rather than skipping the same action
     // on every tick and leaving the batch forever short of whole.
@@ -615,8 +612,9 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
       try {
         hinted = await hintedCallFor(ctx, a);
       } catch (hintErr) {
-        // The deadline stopped the hint walk mid-traversal: the action is
-        // still queued, and the rest of this run's sends wait with it.
+        // The deadline stopped the hint walk mid-traversal (every read goes
+        // through the bound client): the action is still queued, and the
+        // rest of this run's sends wait with it.
         if (isRunDeadlinePassed(hintErr)) {
           console.log(`[keeper] deliveryProof chain=${ctx.chainId}: ${shortErr(hintErr)}`);
           budget.writes = 0;

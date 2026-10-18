@@ -27,7 +27,8 @@
 // Gated by KEEPER_ENABLED + REWARD_REMIT_ENABLED (the ack completes remits —
 // same arming as the remit pass itself).
 
-import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   RewardRemittanceFacetABI,
   RewardReporterFacetABI,
@@ -107,7 +108,7 @@ export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
 }
 
 async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
-  const publicClient = createPublicClient({ transport: http(chain.rpc) });
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // The reservation ledger lives on Base only.
@@ -296,7 +297,7 @@ async function sendAckFromMirror(
 ): Promise<boolean> {
   let client = clients.get(mirrorCfg.id);
   if (!client) {
-    client = createPublicClient({ transport: http(mirrorCfg.rpc) });
+    client = keeperPublicClient(mirrorCfg.rpc, ackBudget.deadlineMs);
     clients.set(mirrorCfg.id, client);
   }
   const diamond = mirrorCfg.diamond as Address;

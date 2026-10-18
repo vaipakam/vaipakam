@@ -15,7 +15,8 @@
  * + speed win the higher-LTV regime needs. See that file's header.
  */
 
-import { createPublicClient, http, type Address } from 'viem';
+import { type Address } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import type { ChainConfig } from './env';
@@ -87,9 +88,7 @@ async function watchChain(env: Env, chain: ChainConfig, deadlineMs: number): Pro
   const users = await listThresholdsForChain(env.DB, chain.id);
   if (users.length === 0) return;
 
-  const client = createPublicClient({
-    transport: http(chain.rpc),
-  });
+  const client = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // BATCHED, not per-user and per-loan (#1896). This loop used to issue one

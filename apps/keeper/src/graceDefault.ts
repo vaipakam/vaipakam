@@ -68,7 +68,8 @@
  * keeper-wide one, and it is dark until that flag is armed.
  */
 
-import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import { DefaultedFacetABI, MetricsFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
@@ -172,9 +173,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   // Every request below goes through this one budget — reads, quotes and
   // the wallet's send alike.
   const budget = createSubrequestBudget(SUBREQUEST_BUDGET);
-  const client = createPublicClient({
-    transport: http(chain.rpc, { fetchFn: budget.fetch }),
-  }) as PublicClient;
+  const client = keeperPublicClient(chain.rpc, deadlineMs, budget.fetch);
   const ctx = buildKeeperContext(env, chain, client, deadlineMs, budget.fetch);
   if (!ctx) return;
   const keeper = ctx.wallet.account?.address;

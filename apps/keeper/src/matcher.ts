@@ -43,7 +43,8 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
-import { createPublicClient, http, zeroAddress, type Abi, type Address, type Hex } from 'viem';
+import { zeroAddress, type Abi, type Address, type Hex } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   MetricsFacetABI,
   OfferCreateFacetABI,
@@ -1344,7 +1345,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   const chains: ChainConfig[] = getChainConfigs(env);
   for (const chain of chains) {
     try {
-      const publicClient = createPublicClient({ transport: http(chain.rpc) });
+      const publicClient = keeperPublicClient(chain.rpc, tick.deadlineMs);
       const ctx = buildKeeperContext(env, chain, publicClient, tick.deadlineMs);
       if (!ctx) continue;
       await runOfferMatcherTickForChain(ctx);

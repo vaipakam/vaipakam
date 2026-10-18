@@ -39,7 +39,8 @@
 // KEEPER_ROLE-gated on-chain (anti-grief) and arming the pass before the
 // keeper EOA holds the role would just burn reverts every tick.
 
-import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
+import { type Abi, type Address, type PublicClient } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   RewardCommitmentFacetABI,
   RewardReporterFacetABI,
@@ -116,7 +117,7 @@ export async function runCommitmentReport(env: Env, tick: PassTick): Promise<voi
 type TickBudget = { batches: number; pages: number };
 
 async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
-  const publicClient = createPublicClient({ transport: http(chain.rpc) });
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // Mirror-only: the canonical chain never sends a commitment report, and a

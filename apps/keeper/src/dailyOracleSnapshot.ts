@@ -19,12 +19,12 @@
 import { queuedWallet } from './submissionQueue';
 import {
   http,
-  createPublicClient,
   createWalletClient,
   isAddress,
   zeroAddress,
   type Address,
 } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 
 import type { Env, ChainConfig } from './env';
 import type { PassTick } from './passSchedule';
@@ -145,7 +145,7 @@ async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number)
   const { account } = resolved;
   // Queued with the other passes' sends (#2486): same key, same chain.
   const wallet = queuedWallet(createWalletClient({ account, transport: http(chain.rpc) }), chain.id, deadlineMs);
-  const publicClient = createPublicClient({ transport: http(chain.rpc) });
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
 
   try {
     const hash = await wallet.writeContract({

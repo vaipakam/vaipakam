@@ -23,7 +23,9 @@ import {
   planDelivery,
   type PacketState,
 } from '../src/deliveryProof';
-import { BaseError, encodeAbiParameters, keccak256 } from 'viem';
+import { BaseError, createPublicClient, custom, decodeFunctionData, encodeAbiParameters, encodeFunctionResult, keccak256, type PublicClient } from 'viem';
+import { RewardEpochFacetABI } from '@vaipakam/contracts/abis';
+import { deadlineBoundTransport } from '../src/keeperClient';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
 import { flatDayListHash, listBudgetDeliveries } from '../src/db';
 import { hintsForDays } from '../src/transportHints';
@@ -296,39 +298,41 @@ describe('isWalkExceeded — the one failure a verified hint cures', () => {
   });
 });
 
-describe('the hint walk reads through one deadline-bound reader (#2497 r20)', () => {
+describe('the hint walk reads through the deadline-bound client (#2497 r20–r21)', () => {
   afterEach(() => vi.useRealTimers());
 
-  /** A client whose day views answer from a hand-built day: a cursor, a
-   *  list page that chains to a second, and an empty late chain. Every
-   *  read is counted. */
-  function fakeClient(calls: string[], clock?: { advanceTo: number; on: number }) {
-    const node = (i: number) => `0x${i.toString(16).padStart(64, '0')}` as Hex;
-    return {
-      readContract: async ({ functionName }: { functionName: string }) => {
+  const DIAMOND = `0x${'d'.repeat(40)}` as const;
+  const node = (i: number) => `0x${i.toString(16).padStart(64, '0')}` as Hex;
+
+  /** A client on the deadline-bound transport whose day views answer from a
+   *  hand-built day: a cursor, a list page that chains to a second, and an
+   *  empty late chain. Every request that reaches the RPC is counted. */
+  function boundClient(calls: string[], deadlineMs: number, clock?: { advanceTo: number; on: number }) {
+    const inner = custom({
+      request: async ({ method, params }: { method: string; params?: unknown }) => {
+        if (method !== 'eth_call') throw new Error(`unexpected ${method}`);
+        const { data } = (params as [{ data: Hex }])[0];
+        const { functionName } = decodeFunctionData({ abi: RewardEpochFacetABI, data });
         calls.push(functionName);
         if (clock && calls.length === clock.on) vi.setSystemTime(clock.advanceTo);
-        switch (functionName) {
-          case 'getTransportDayIndex':
-            return [1n, node(1)];
-          case 'getTransportDayBatchesFrom':
-            return [[node(1)], [5n], node(2)];
-          case 'getTransportDayLateFrom':
-            return [[], [], Z];
-          default:
-            throw new Error(`unexpected read ${functionName}`);
-        }
+        const result =
+          functionName === 'getTransportDayIndex'
+            ? [1n, node(1)]
+            : functionName === 'getTransportDayBatchesFrom'
+              ? [[node(1)], [5n], node(2)]
+              : [[], [], Z];
+        return encodeFunctionResult({ abi: RewardEpochFacetABI, functionName, result } as never);
       },
-    } as never;
+    });
+    return createPublicClient({ transport: deadlineBoundTransport(inner, deadlineMs) }) as PublicClient;
   }
 
   it('a reader past the deadline refuses every view unissued', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
     const calls: string[] = [];
-    const reader = dayOrderReader(fakeClient(calls), `0x${'d'.repeat(40)}`, 10_000);
-    const err = await reader.cursor(1n).then(() => null, (e: unknown) => e);
-    expect(isRunDeadlinePassed(err)).toBe(true);
+    const reader = dayOrderReader(boundClient(calls, 10_000), DIAMOND);
+    await expect(reader.cursor(1n)).rejects.toSatisfy(isRunDeadlinePassed);
     await expect(reader.listFrom(1n, Z, 100)).rejects.toSatisfy(isRunDeadlinePassed);
     await expect(reader.lateFrom(1n, Z, 100)).rejects.toSatisfy(isRunDeadlinePassed);
     expect(calls, 'nothing reached the RPC').toEqual([]);
@@ -340,7 +344,7 @@ describe('the hint walk reads through one deadline-bound reader (#2497 r20)', ()
     const calls: string[] = [];
     // The second read (the first list page) moves the clock past the
     // deadline: the walk may finish that page, and the next read refuses.
-    const reader = dayOrderReader(fakeClient(calls, { advanceTo: 10_000, on: 2 }), `0x${'d'.repeat(40)}`, 10_000);
+    const reader = dayOrderReader(boundClient(calls, 10_000, { advanceTo: 10_000, on: 2 }), DIAMOND);
     const err = await hintsForDays(reader, [1n, 2n], 0, 2, BATCH, 7n).then(() => null, (e: unknown) => e);
     expect(isRunDeadlinePassed(err), String(err)).toBe(true);
     expect(calls.length, 'the reads issued before the deadline, and none after').toBe(2);
@@ -348,11 +352,11 @@ describe('the hint walk reads through one deadline-bound reader (#2497 r20)', ()
 
   it('a reader inside its deadline answers the views as the chain shapes them', async () => {
     const calls: string[] = [];
-    const reader = dayOrderReader(fakeClient(calls), `0x${'d'.repeat(40)}`, Number.MAX_SAFE_INTEGER);
-    expect(await reader.cursor(1n)).toBe(`0x${'1'.padStart(64, '0')}`);
+    const reader = dayOrderReader(boundClient(calls, Number.MAX_SAFE_INTEGER), DIAMOND);
+    expect(await reader.cursor(1n)).toBe(node(1));
     const page = await reader.listFrom(1n, Z, 100);
     expect(page.arrivedAt).toEqual([5n]);
-    expect(page.next).toBe(`0x${'2'.padStart(64, '0')}`);
+    expect(page.next).toBe(node(2));
     expect(calls).toEqual(['getTransportDayIndex', 'getTransportDayBatchesFrom']);
   });
 });

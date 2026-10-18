@@ -43,13 +43,12 @@
  */
 
 import {
-  createPublicClient,
-  http,
   erc20Abi,
   type Abi,
   type Address,
   type PublicClient,
 } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   ConfigFacetABI,
   OracleFacetABI,
@@ -930,7 +929,7 @@ async function runRelayForChain(
 export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
   for (const chain of getChainConfigs(env)) {
     try {
-      const client = createPublicClient({ transport: http(chain.rpc) });
+      const client = keeperPublicClient(chain.rpc, tick.deadlineMs);
       await runRelayForChain(env, chain, client, tick.deadlineMs);
     } catch (err) {
       console.error(

@@ -48,12 +48,11 @@
  */
 
 import {
-  createPublicClient,
-  http,
   type Abi,
   type Address,
   type PublicClient,
 } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   AdminFacetABI,
   AutoLifecycleFacetABI,
@@ -112,9 +111,7 @@ export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> 
 
 async function processChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   if (!chain.diamond) return;
-  const publicClient = createPublicClient({
-    transport: http(chain.rpc),
-  }) as PublicClient;
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
 
   // Admin kill switch.
   const adminEnabled = (await publicClient.readContract({

@@ -50,12 +50,11 @@
  */
 
 import {
-  createPublicClient,
-  http,
   type Abi,
   type Address,
   type PublicClient,
 } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   AutoLifecycleFacetABI,
   LoanFacetABI,
@@ -182,9 +181,7 @@ export async function runPreGraceWatcher(env: Env, tick: PassTick): Promise<void
 
 async function watchChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   if (!chain.diamond) return;
-  const publicClient = createPublicClient({
-    transport: http(chain.rpc),
-  }) as PublicClient;
+  const publicClient = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // Enumerate active loans on this chain.

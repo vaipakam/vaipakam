@@ -35,7 +35,8 @@
  * confidence relay. The watcher's notification pass stays unconditional.
  */
 
-import { createPublicClient, http, type Abi, type Address } from 'viem';
+import { type Abi, type Address } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -103,7 +104,7 @@ async function liquidatePassForChain(
   /** The run's deadline (#2497 r19): a submit reached past it is refused. */
   deadlineMs: number,
 ): Promise<HfReading[]> {
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  const client = keeperPublicClient(chain.rpc, deadlineMs);
   const diamond = chain.diamond as Address;
 
   // PIN THE WHOLE SCAN TO ONE BLOCK (Codex #1924 r20).

@@ -1,21 +1,21 @@
 /**
- * The one rule for a run that has a deadline (#2497 r18–r19).
+ * The one rule for a run that has a deadline (#2497 r18–r21).
  *
  * Every pass runs with a {@link PassTick.deadlineMs}: its scheduled minute plus
- * its own cadence, less a margin. The two places a run spends time on the
- * network — a batched chain read (`batchRead.ts`) and a transaction send
- * (`submissionQueue.ts`) — both take that deadline and refuse past it, so a
- * pass needs no deadline check of its own in any read or send loop: a read past
- * the deadline returns every entry unread, and a send past it is refused before
- * anything is signed. What a run did not reach waits for the next run. A
- * walk whose every read depends on the last one (the transport day walk in
- * `deliveryProof.ts`, where a page names the next page) cannot be batched;
- * its reader applies the same refusal to each read, so the walk stops at
- * the first read past the deadline and the action stays queued.
+ * its own cadence, less a margin. The two places a run touches the network
+ * both refuse past it: the read client (`keeperClient.ts`) refuses every
+ * request at its transport — a read, a simulation, a multicall, a log scan,
+ * a receipt poll — and the submission queue (`submissionQueue.ts`) refuses a
+ * send before anything is signed. So a pass needs no deadline check of its
+ * own in any read or send loop, and none in a loop written later: a batched
+ * read past the deadline returns every entry unread (`batchRead.ts`), any
+ * other request rejects with {@link RunDeadlinePassed}, and a send past it is
+ * never signed. What a run did not reach waits for the next run.
  *
  * Until r19 each pass checked the deadline in the phases a review had named,
- * and each round found the next unbounded phase. One rule at the two seams
- * removes the class.
+ * and each round found the next unbounded phase; r20 and r21 then found the
+ * raw reads the batched reader did not cover. Binding the transport removes
+ * the class, because there is no read that does not go through it.
  */
 
 /** Refused because the run's deadline has passed. Nothing was issued. */

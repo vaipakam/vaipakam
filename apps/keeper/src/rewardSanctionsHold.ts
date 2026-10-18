@@ -48,7 +48,8 @@
 //
 // Gated by KEEPER_ENABLED + REWARD_SANCTIONS_KEEPER_ENABLED.
 
-import { createPublicClient, http, parseAbi, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { parseAbi, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { keeperPublicClient } from './keeperClient';
 import {
   InteractionRewardsLensFacetABI,
   ProfileFacetABI,
@@ -327,7 +328,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number): Pro
     [...(await listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id))), ...watched],
     await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id)),
   );
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  const client = keeperPublicClient(chain.rpc, deadline);
   const diamond = chain.diamond as Address;
   const statuses = (await readStatuses(client as never, diamond, known, deadline)).filter(
     (st): st is OwnerSanctionsStatus => st !== null,
@@ -397,7 +398,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number): Pro
       // during an outage the observation records nothing, and an hourly
       // transaction would buy nothing until it recovers.
       // eslint-disable-next-line no-await-in-loop
-      if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) continue;
+      if (noChain.has(owner) && !(await oracleAnswers(sender, budget, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(sender, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
@@ -408,7 +409,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number): Pro
     for (const owner of plan.commitClean) {
       if (budget.writes <= 0) break;
       // eslint-disable-next-line no-await-in-loop
-      if (!(await oracleSaysClean(client, diamond, owner))) continue;
+      if (!(await oracleSaysClean(sender, budget, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(sender, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
@@ -665,7 +666,7 @@ async function runOwnerSettlement(
       });
       decision = Number((sim.result as readonly [number, bigint, bigint, bigint])[0]);
     } catch (err) {
-      console.log(`[keeper] rewardSanctionsHold settle ${owner} would revert: ${shortErr(err)}`);
+      if (!endsRun(err, ctx, budget)) console.log(`[keeper] rewardSanctionsHold settle ${owner} would revert: ${shortErr(err)}`);
       return sentAny;
     }
     if (decision !== DECISION_CONFIRMED) return sentAny;
@@ -682,25 +683,38 @@ async function runOwnerSettlement(
  *  observation can record something. No oracle, or a failing read: false. */
 /** Whether the configured oracle answers that `owner` is NOT sanctioned — the
  *  authoritative Clean read an observation commits. False on any failure. */
-async function oracleSaysClean(client: PublicClient, diamond: Address, owner: Address): Promise<boolean> {
+async function oracleSaysClean(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
   try {
-    const oracle = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
+    const oracle = (await ctx.client.readContract({ address: ctx.diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
     if (!oracle || /^0x0{40}$/i.test(oracle)) return false;
-    return (await client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] })) === false;
-  } catch {
+    return (await ctx.client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] })) === false;
+  } catch (err) {
+    endsRun(err, ctx, budget);
     return false;
   }
 }
 
-async function oracleAnswers(client: PublicClient, diamond: Address, owner: Address): Promise<boolean> {
+async function oracleAnswers(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
   try {
-    const oracle = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
+    const oracle = (await ctx.client.readContract({ address: ctx.diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
     if (!oracle || /^0x0{40}$/i.test(oracle)) return false;
-    await client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] });
+    await ctx.client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] });
     return true;
-  } catch {
+  } catch (err) {
+    endsRun(err, ctx, budget);
     return false;
   }
+}
+
+/** The run's deadline, met on a read, a simulation or a send: every request
+ *  through the context's client is refused past it (`keeperClient.ts`), and
+ *  a send is refused by the queue. Not a failure — this run's sends end here
+ *  and the next run picks up. Logged once per chain. */
+function endsRun(err: unknown, ctx: KeeperContext, budget: { writes: number }): boolean {
+  if (!isRunDeadlinePassed(err)) return false;
+  if (budget.writes > 0) console.log(`[keeper] rewardSanctionsHold chain=${ctx.chainId}: ${shortErr(err)}`);
+  budget.writes = 0;
+  return true;
 }
 
 /** Resolve every Resolving staging record and domain of `owner`. The page pays
@@ -785,7 +799,7 @@ async function sendIfEffective(
     });
     if (!effective(sim.result)) return false;
   } catch (err) {
-    console.log(`[keeper] rewardSanctionsHold ${fn} ${owner} would revert: ${shortErr(err)}`);
+    if (!endsRun(err, ctx, budget)) console.log(`[keeper] rewardSanctionsHold ${fn} ${owner} would revert: ${shortErr(err)}`);
     return false;
   }
   return send(ctx, budget, fn, args, owner);
@@ -828,9 +842,10 @@ async function send(
   } catch (err) {
     // The run's send window refused it unsigned (`runDeadline.ts`, #2497
     // r16, r19): not a failure — the rest waits for the next run.
-    if (isRunDeadlinePassed(err)) console.log(`[keeper] rewardSanctionsHold chain=${ctx.chainId}: ${shortErr(err)}`);
-    else console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
-    budget.writes = 0;
+    if (!endsRun(err, ctx, budget)) {
+      console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
+      budget.writes = 0;
+    }
     return false;
   }
 }
