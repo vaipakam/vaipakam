@@ -524,8 +524,10 @@ release cycle of each other — the flywheel no longer depending on any single
 attach rate. **Count three, not four, until the arming fee is armed** (marker
 above, 2026-09-24): the bond channel's permanent absorption is the fee, the
 fee stays at zero until its own gate is satisfied on EITHER branch — the
-bounded legal glance or a recorded owner approval of the fee shape — and
-neither has a schedule. A zero fee absorbs nothing, so planning that counts it is planning
+bounded legal glance or a recorded owner approval of the fee shape. (Update
+2026-10-18: the owner recorded that approval — fixed bounds of 0.5%–10%, PR
+#2556 — so the gate is satisfied; the fee counts once a rate is set in the M7
+sequence, and until then it is still zero.) A zero fee absorbs nothing, so planning that counts it is planning
 against a channel that is shipped but inert.
 
 ### RL-6 — Legal evidence pack + copy rules — ADOPT (docs only)

@@ -8111,17 +8111,17 @@ library LibVaipakam {
         ///      the FallbackPending clause of `LibTierExclusion`.
         ///      Appended — the Storage struct is append-only.
         mapping(uint256 => uint256) fallbackVaultCustody;
-        /// @dev #1219 (Codex #2556 r3/r5) — per capacity deposit record
-        ///      (`role → operator → rotation epoch`), the FRACTIONAL arming fee
-        ///      still owed, in 1e18ths of one token unit (always < 1e18). Each post
-        ///      pays `floor((granted × rate + carry) / 1e18)` and carries the
-        ///      remainder, so over a record's life the fees total exactly
-        ///      `floor(rate × total principal armed)` however the posts are split
-        ///      (no split arms anything fee-free), and no sub-unit gap is ever
-        ///      stranded unarmed. See `LibServiceCapacity.armingFeeAndCarry`.
+        /// @dev #1219 (Codex #2556 r3–r6) — per capacity deposit record
+        ///      (`role → operator → rotation epoch`), the arming fee PREPAID beyond
+        ///      what the record has armed so far, in 1e18ths of one token unit
+        ///      (always < 1e18). Each post charges its share less this credit,
+        ///      rounded UP, and keeps the overpayment here, so no record ever pays
+        ///      below `rate × everything it armed` (no split post and no fresh
+        ///      operator arms anything fee-free) nor more than one smallest unit
+        ///      above it. See `LibServiceCapacity.armingFeeAndCredit`.
         ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
         ///      that struct's getter ABI is unchanged. Appended — append-only.
-        mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeeCarry;
+        mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

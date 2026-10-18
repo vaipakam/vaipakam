@@ -485,11 +485,12 @@ library LibServiceCapacity {
     ///         itself — principal deposited above the old knee stays unarmed until a
     ///         post arms it and pays for it). A post arms up to the live knee:
     ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
-    ///         `granted` is what that newly arms; `fee = floor((granted × rate +
-    ///         carry) / 1e18)` with the remainder carried to the record's next post
-    ///         ({armingFeeAndCarry}: the record's lifetime total is exactly
-    ///         `floor(rate × everything armed)`, however the posts are split, and
-    ///         each post pays its own share rounded down or up); `ceilingAfter` is
+    ///         `granted` is what that newly arms; the fee is that share less the
+    ///         record's prepaid credit, rounded UP, with the overpayment kept as the
+    ///         record's next credit ({armingFeeAndCredit}: no record ever pays less
+    ///         than `rate × everything it armed`, nor more than one smallest unit
+    ///         above it, however the posts are split or the operators chosen);
+    ///         `ceilingAfter` is
     ///         the capacity the armed balance buys. A zero-principal post therefore
     ///         arms already-deposited excess. `dark` (no positive rate, or the role's
     ///         curve unset) ⇒ zeros.
@@ -507,44 +508,51 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        (fee, ) = armingFeeAndCarry(s, role, operator, s.vpfiRotationEpoch, granted, rate);
+        (fee, ) = armingFeeAndCredit(s, role, operator, s.vpfiRotationEpoch, granted, rate);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 
     /// @notice The fee a post owes for `granted` newly armed principal at `rate`,
-    ///         and the fraction it leaves owed — the ONE computation the quote and
-    ///         the post share. Every grant arms; the fee is the whole units of
-    ///         `granted × rate + carry`, rounded DOWN, and the remainder (always
-    ///         under one unit) is carried on the deposit record to its next post.
-    /// @dev    THE BOUND IS CUMULATIVE, BY DESIGN (Codex #2556 r2–r5). Two rules
-    ///         cannot both hold per post once the token's smallest unit is coarse:
-    ///         "no post pays above `rate × what it arms`" forces a 1-unit post at
-    ///         10% to pay 0, and then splitting a deposit into small posts arms
-    ///         any principal fee-free (r5: a 0-decimal token, eleven 9-unit posts
-    ///         and a 1-unit post arm 100 units for nothing). So the guarantee is
-    ///         stated over the deposit record, where it is exact:
-    ///         - over a record's life the fees paid total EXACTLY
-    ///           `floor(rate × total principal armed)` (at one rate; across a
-    ///           rate change, the sum of each post's exact share, floored), so
-    ///           splitting saves nothing and nothing is ever paid above the rate;
-    ///         - each post pays its own exact share rounded DOWN or UP — never more
-    ///           than one smallest unit above `rate × what it arms`, because the
-    ///           carry is always under one unit (r4: on an 18-decimal VPFI that is
-    ///           one wei; on a coarse token it is the token's own granularity);
+    ///         and the prepaid credit it leaves — the ONE computation the quote and
+    ///         the post share. Every grant arms. The post's exact share is
+    ///         `granted × rate` (in 1e18ths of a token unit); the record's prepaid
+    ///         credit (always under one unit) is spent against it first, and what
+    ///         remains is charged ROUNDED UP to whole units, the overpayment
+    ///         becoming the record's new credit.
+    /// @dev    WHY ROUND UP WITH A CREDIT (Codex #2556 r2–r6). On a token whose
+    ///         smallest unit is coarse, any rule that lets a post pay LESS than its
+    ///         share leaves an exemption someone can multiply: rounding each post
+    ///         down lets small posts arm for free (r5), and carrying the unpaid
+    ///         fraction forward still lets every FRESH operator arm a sub-unit
+    ///         share for free (r6 — capacity is per address, so fresh addresses
+    ///         cost nothing). Rounding up and carrying the overpayment as credit
+    ///         closes both: no record ever pays below its share, so neither
+    ///         splitting posts nor spreading over operators saves anything. Stated
+    ///         over the deposit record, the guarantee is:
+    ///         - over a record's life the fees total at least `rate × total
+    ///           principal armed` and at most ONE smallest unit more (one wei of
+    ///           an 18-decimal VPFI; the token's own unit on a coarse token);
+    ///         - no single post pays more than its own share rounded up — again
+    ///           at most one smallest unit above `rate × what it arms` — and a
+    ///           post whose share the credit already covers pays nothing;
     ///         - no sub-unit gap is ever stranded unarmed (r3).
-    ///         The product cannot overflow: `granted` ≤ `bondAt4x` ≤ 2^128,
-    ///         `rate` ≤ 1e17 < 2^57, carry < 1e18.
-    function armingFeeAndCarry(
+    ///         The credit is a fraction of one fee unit, so it is independent of the
+    ///         rate in force and carries across a rate change. No overflow:
+    ///         `granted` ≤ `bondAt4x` ≤ 2^128, `rate` ≤ 1e17 < 2^57, credit < 1e18.
+    function armingFeeAndCredit(
         LibVaipakam.Storage storage s,
         uint8 role,
         address operator,
         uint64 epoch,
         uint256 granted,
         uint256 rate
-    ) internal view returns (uint256 fee, uint256 carryAfter) {
-        uint256 owed = granted * rate + s.armingFeeCarry[role][operator][epoch];
-        fee = owed / 1e18;
-        carryAfter = owed % 1e18;
+    ) internal view returns (uint256 fee, uint256 creditAfter) {
+        uint256 owed = granted * rate;
+        uint256 credit = s.armingFeePrepaid[role][operator][epoch];
+        if (owed <= credit) return (0, credit - owed);
+        uint256 need = owed - credit;
+        fee = (need + 1e18 - 1) / 1e18;
+        creditAfter = fee * 1e18 - need;
     }
 
     /// @notice The post's own checks, in the post's order, without moving anything
@@ -768,11 +776,11 @@ library LibServiceCapacity {
         if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = eligibleAfter;
-        // #1219 (Codex #2556 r3) — the fraction this post leaves owed, through the
-        // SAME computation the quote charged (same transaction, same state).
+        // #1219 (Codex #2556 r6) — the prepaid credit this post leaves, through
+        // the SAME computation the quote charged (same transaction, same state).
         {
-            (, uint256 carryAfter) = armingFeeAndCarry(s, role, operator, epoch, granted, armingFeeRateInForce(s));
-            s.armingFeeCarry[role][operator][epoch] = carryAfter;
+            (, uint256 creditAfter) = armingFeeAndCredit(s, role, operator, epoch, granted, armingFeeRateInForce(s));
+            s.armingFeePrepaid[role][operator][epoch] = creditAfter;
         }
         s.serviceDepositEscrowByEpoch[epoch] += amount;
         if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
