@@ -618,7 +618,7 @@ if [ "$FRESH" = "1" ]; then
   for prior in "$CONTRACTS_DIR/deployments/$CHAIN_SLUG"/addresses.prior-rehearsal.*.json; do
     [ -f "$prior" ] || continue
     ts="$(basename "$prior" .json)"; ts="${ts##*.}"
-    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$ts" "$prior" \
+    append_verified_archive_entry "$ARCHIVE_MANIFEST" "$MANIFEST_WRITER" "$CHAIN_SLUG" "prior-rehearsal-$ts" "$prior" "$RPC" \
       || { echo "ERROR: could not reconcile the unrecorded sidecar $(basename "$prior") into archive-manifest.json; refusing --fresh" >&2; exit 1; }
   done
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
@@ -630,10 +630,7 @@ if [ "$FRESH" = "1" ]; then
     PRIOR_DEPLOY_BLOCK=$(jq -r '.deployBlock // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
     TS="$(date +%s)"
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
-    # #2548 — never record a phantom artifact (killed simulation, no code) as
-    # a retired deployment; lib/artifact-code-check.sh prints the recovery.
-    require_artifact_diamond_has_code "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$RPC" "$CHAIN_SLUG" || exit 1
-    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+    append_verified_archive_entry "$ARCHIVE_MANIFEST" "$MANIFEST_WRITER" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$RPC" \
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"

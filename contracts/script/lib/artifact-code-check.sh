@@ -58,3 +58,19 @@ EOF
   fi
   return 0
 }
+
+# append_verified_archive_entry <manifest> <writer> <chain_slug> <stamp> <artifact> <rpc_url>
+#   THE single path by which a deploy script records an artifact in the
+#   committed archive inventory: the code check, then the append. Every append
+#   site in deploy-testnet.sh, deploy-mainnet.sh and deploy-chain.sh routes here
+#   — the top-level artifact a --fresh archives, every unrecorded `.archive/*/`
+#   entry the reconcile pass finds, and deploy-chain's prior-rehearsal sidecars
+#   (Codex #2552 r3: guarding only the top-level file left the other two paths
+#   able to record a phantom). An entry the inventory already lists is a no-op
+#   in the writer, so re-checking it costs one code read and nothing else.
+append_verified_archive_entry() {
+  local manifest="${1:?manifest}" writer="${2:?writer}" slug="${3:?chain_slug}" stamp="${4:?stamp}"
+  local artifact="${5:?artifact}" rpc="${6:?rpc_url}"
+  require_artifact_diamond_has_code "$artifact" "$rpc" "$slug" || return 1
+  node "$writer" append "$manifest" "$slug" "$stamp" "$artifact"
+}

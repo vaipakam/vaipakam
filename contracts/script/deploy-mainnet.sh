@@ -643,7 +643,9 @@ append_archive_manifest() {
   [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
   command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
   [ -f "$writer" ] || { echo "ERROR: manifest writer missing at $writer" >&2; return 1; }
-  node "$writer" append "$manifest" "$chain_slug" "$stamp" "$addr" || return 1
+  # #2548 (Codex #2552 r3) — the code check is part of the append, so no
+  # caller (top-level archive or reconcile) can record a phantom.
+  append_verified_archive_entry "$manifest" "$writer" "$chain_slug" "$stamp" "$addr" "$RPC" || return 1
 }
 
 # Every local archive that the committed inventory does not yet list is
@@ -676,9 +678,6 @@ archive_chain_state() {
   # Nothing is moved unless both succeed.
   reconcile_unrecorded_archives "$chain_slug" \
     || { echo "ERROR: unrecorded local archives could not be reconciled; refusing to archive" >&2; exit 1; }
-  # #2548 — a phantom artifact (written by a killed simulation, no code
-  # behind its Diamond) must never be recorded as a retired deployment.
-  require_artifact_diamond_has_code "$deploy_dir/addresses.json" "$RPC" "$chain_slug" || exit 1
   append_archive_manifest "$chain_slug" "$stamp" "$deploy_dir/addresses.json" \
     || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
