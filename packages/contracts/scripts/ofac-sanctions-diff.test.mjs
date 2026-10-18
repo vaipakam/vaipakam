@@ -35,6 +35,12 @@ const C = getAddress('0x00000000000000000000000000000000000000c0');
 const D = getAddress('0x00000000000000000000000000000000000000d0');
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 // A list that has never been updated: any valid publication is newer.
+/**
+ * buildUpdate with every delisting the diff computes confirmed, for tests
+ * about batching, ordering and counts. The confirmation rule itself is tested
+ * against buildUpdate directly.
+ */
+const buildConfirmed = (o) => buildUpdate({ confirmedDelistings: diffSets(o.parsed.addresses, o.current ?? []).remove, ...o });
 const FRESH = { recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
 
 test('parse: publication id, EVM addresses checksummed and deduped across assets', () => {
@@ -89,7 +95,7 @@ test('diff: case-insensitive add and remove sets', () => {
 test('buildUpdate: additions go to the adder, delistings to the remover at the next version', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const hash = sourceHash(FIXTURE);
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 4, ...FRESH });
+  const u = buildConfirmed({ parsed, sourceHash: hash, current: [C], currentVersion: 4, ...FRESH });
   const abi = sanctionsListAbi();
   assert.deepEqual(u.calls.map((c) => [c.signer, c.expectedVersion]), [['adder', 4n], ['remover', 5n]]);
   const first = decodeFunctionData({ abi, data: u.calls[0].calldata });
@@ -105,23 +111,23 @@ test('buildUpdate: adds-only, delist-only and empty diffs each make exactly one 
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const hash = sourceHash(FIXTURE);
   const signers = (current, rec = FRESH) =>
-    buildUpdate({ parsed, sourceHash: hash, current, currentVersion: 2, ...rec }).calls.map((c) => [c.signer, c.expectedVersion]);
+    buildConfirmed({ parsed, sourceHash: hash, current, currentVersion: 2, ...rec }).calls.map((c) => [c.signer, c.expectedVersion]);
   assert.deepEqual(signers([]), [['adder', 2n]]);
   assert.deepEqual(signers([...parsed.addresses, C]), [['remover', 2n]]);
   assert.deepEqual(signers(parsed.addresses), [['adder', 2n]], 'a refresh needs no multisig');
   // The remover completing the recorded publication's delistings.
   const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0, recordedPendingDelistings: 1 };
   assert.deepEqual(signers([...parsed.addresses, C], same), [['remover', 2n]]);
-  assert.equal(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 2, ...same }).order, 'same-publication');
+  assert.equal(buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 2, ...same }).order, 'same-publication');
   assert.throws(() => signers([], same), /already records this exact file/);
 });
 
 test('buildUpdate: a large removal set is refused unless the bound is raised', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const current = Array.from({ length: 11 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
-  assert.throws(() => buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH }), /refusing to delist 11/);
-  assert.throws(() => buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH, maxRemove: NaN }), /maxRemove/);
-  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, maxRemove: 11, ...FRESH });
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH }), /refusing to delist 11/);
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, ...FRESH, maxRemove: NaN }), /maxRemove/);
+  const u = buildConfirmed({ parsed, sourceHash: sourceHash(FIXTURE), current, currentVersion: 1, maxRemove: 11, ...FRESH });
   assert.equal(u.remove.length, 11);
 });
 
@@ -146,7 +152,7 @@ test('cross-check: three sets, and Chainalysis-only never reaches the update', (
   assert.deepEqual(x.inBoth, normaliseAddresses([B]));
   assert.deepEqual(x.ofacOnly, [A]);
   assert.deepEqual(x.chainalysisOnly, [D]);
-  const u = buildUpdate({ parsed, sourceHash: sourceHash(FIXTURE), current: [], currentVersion: 0, ...FRESH });
+  const u = buildConfirmed({ parsed, sourceHash: sourceHash(FIXTURE), current: [], currentVersion: 0, ...FRESH });
   assert.ok(!u.add.includes(D));
 });
 
@@ -209,15 +215,15 @@ test('buildUpdate: an older publication is refused; an allowed rollback carries 
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8')); // 20260307
   const hash = sourceHash(FIXTURE);
   const newer = { recordedDate: 20260308, recordedHash: `0x${'b'.repeat(64)}`, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
-  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer }), /not newer/);
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer, allowRollback: true });
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer }), /not newer/);
+  const u = buildConfirmed({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer, allowRollback: true });
   assert.equal(u.order, 'rollback');
   const { functionName, args } = decodeFunctionData({ abi: sanctionsListAbi(), data: u.authorizeCalldata });
   assert.equal(functionName, 'authorizePublicationRollback');
   assert.equal(args[0], 5n, 'bound to the list version the diff was computed against');
   assert.equal(args[1], 20260307);
   assert.equal(args[2], hash);
-  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5 }), /recorded publication/);
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: hash, current: [], currentVersion: 5 }), /recorded publication/);
 });
 
 // ---- Codex #2543 r2: one tokenizer drives completeness AND extraction ----
@@ -355,12 +361,12 @@ test('buildUpdate: completing a partly applied publication declares what the con
   const abi = sanctionsListAbi();
   const last = (u) => decodeFunctionData({ abi, data: u.calls[u.calls.length - 1].calldata }).args[6];
   // Two outstanding, the diff applies one: one stays outstanding.
-  const partial = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
+  const partial = buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(partial), 1);
-  const full = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
+  const full = buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(full), 0);
   // A no-change refresh keeps the recorded count.
-  const refresh = buildUpdate({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPendingDelistings: 2 });
+  const refresh = buildConfirmed({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(refresh), 2);
 });
 
@@ -420,7 +426,7 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
   const abi = sanctionsListAbi();
   const n = parsed.addresses.length;
   assert.ok(n >= 2, 'fixture needs at least two addresses');
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 7, ...FRESH, maxChangesPerCall: 1 });
+  const u = buildConfirmed({ parsed, sourceHash: hash, current: [C], currentVersion: 7, ...FRESH, maxChangesPerCall: 1 });
   const decoded = u.calls.map((c) => decodeFunctionData({ abi, data: c.calldata }).args);
   assert.equal(u.calls.length, n + 1);
   decoded.slice(0, n).forEach((args, i) => {
@@ -435,18 +441,18 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
   assert.deepEqual(u.calls.map((c) => c.signer), [...Array(n).fill('adder'), 'remover']);
   // Resuming a partly applied publication continues from the recorded counts.
   const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: n - 1, recordedPendingDelistings: 1 };
-  const resumed = buildUpdate({ parsed, sourceHash: hash, current: [parsed.addresses[0], C], currentVersion: 8, ...same, maxChangesPerCall: 100 });
+  const resumed = buildConfirmed({ parsed, sourceHash: hash, current: [parsed.addresses[0], C], currentVersion: 8, ...same, maxChangesPerCall: 100 });
   assert.equal(resumed.order, 'same-publication');
   const r0 = decodeFunctionData({ abi, data: resumed.calls[0].calldata }).args;
   assert.deepEqual([r0[5], r0[6]], [0, 1]);
   // More additions than the publication declared outstanding is refused.
   assert.throws(
-    () => buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 8, ...same }),
+    () => buildConfirmed({ parsed, sourceHash: hash, current: [C], currentVersion: 8, ...same }),
     /already records this exact file/,
   );
-  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, maxChangesPerCall: 0 }), /maxChangesPerCall/);
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, maxChangesPerCall: 0 }), /maxChangesPerCall/);
   assert.throws(
-    () => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, recordedDate: 0, recordedHash: ZERO_HASH }),
+    () => buildConfirmed({ parsed, sourceHash: hash, current: [], currentVersion: 1, recordedDate: 0, recordedHash: ZERO_HASH }),
     /pendingAdditions and pendingDelistings are required/,
   );
 });
@@ -465,15 +471,15 @@ test('buildUpdate: a completed publication cannot be cited for further delisting
   const hash = sourceHash(FIXTURE);
   const done = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
   assert.throws(
-    () => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...done }),
+    () => buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...done }),
     /already records this exact file/,
   );
   const one = { ...done, recordedPendingDelistings: 1 };
   assert.throws(
-    () => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 4, ...one }),
+    () => buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 4, ...one }),
     /already records this exact file/,
   );
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...one });
+  const u = buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...one });
   assert.deepEqual([u.calls.length, u.calls[0].signer, u.calls[0].delistingsLeft], [1, 'remover', 0]);
 });
 
@@ -483,7 +489,7 @@ test('buildUpdate: delistings are batched too, each call declaring what remains'
   const hash = sourceHash(FIXTURE);
   const abi = sanctionsListAbi();
   const extra = Array.from({ length: 5 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, ...extra], currentVersion: 2, ...FRESH, maxChangesPerCall: 2 });
+  const u = buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, ...extra], currentVersion: 2, ...FRESH, maxChangesPerCall: 2 });
   assert.deepEqual(u.calls.map((c) => [c.signer, c.remove.length, c.delistingsLeft]), [['remover', 2, 3], ['remover', 2, 1], ['remover', 1, 0]]);
   u.calls.forEach((c, i) => assert.equal(decodeFunctionData({ abi, data: c.calldata }).args[0], 2n + BigInt(i)));
 });
@@ -523,24 +529,49 @@ test('buildUpdate: a delisting is refused while the address still appears in the
   const parsed = parseSdnAdvanced(text);
   assert.ok(!parsed.addresses.includes(E));
   const hash = sourceHash(Buffer.from(text));
-  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, E], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  assert.throws(() => buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, E], currentVersion: 1, ...FRESH }), /still appears in the source file/);
   // An address absent from the file is a genuine delisting.
-  const ok = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH });
+  const ok = buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH });
   assert.deepEqual(ok.remove, [C]);
   // An address the file carries only as OFAC-marked False may be delisted.
   const F = getAddress('0x1111111111111111111111111111111111111111');
   assert.ok(parsed.excludedFalse.some((e) => e.address === F));
-  assert.deepEqual(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, F], currentVersion: 1, ...FRESH }).remove, [F]);
+  assert.deepEqual(buildConfirmed({ parsed, sourceHash: hash, current: [...parsed.addresses, F], currentVersion: 1, ...FRESH }).remove, [F]);
   // A False record cannot mask another mention of the same address (r20).
   const masked = withInProfile(`<Other>${F}</Other>`);
   const parsedMasked = parseSdnAdvanced(masked);
   assert.ok(parsedMasked.excludedFalse.some((e) => e.address === F));
-  assert.throws(() => buildUpdate({ parsed: parsedMasked, sourceHash: sourceHash(Buffer.from(masked)), current: [...parsedMasked.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  assert.throws(() => buildConfirmed({ parsed: parsedMasked, sourceHash: sourceHash(Buffer.from(masked)), current: [...parsedMasked.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
   // An entity-encoded mention is counted in decoded text even though the raw bytes miss it.
   const encoded = withInProfile(`<Other>&#x30;x${'1'.repeat(40)}</Other>`);
   const parsedEnc = parseSdnAdvanced(encoded);
-  assert.throws(() => buildUpdate({ parsed: parsedEnc, sourceHash: sourceHash(Buffer.from(encoded)), current: [...parsedEnc.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  assert.throws(() => buildConfirmed({ parsed: parsedEnc, sourceHash: sourceHash(Buffer.from(encoded)), current: [...parsedEnc.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
   // A hand-built parsed object without the witness is refused, never skipped.
-  assert.throws(() => buildUpdate({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
+  assert.throws(() => buildConfirmed({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
+});
+
+// ---- Codex #2543 r21: delistings need a second source; reliability is a closed vocabulary ----
+test('buildUpdate: a delisting needs the operator\'s exact confirmation', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const base = { parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH };
+  // Unconfirmed: refused, naming the malformed values the file carries.
+  assert.throws(() => buildUpdate(base), /does not name.*malformed digital-currency value/s);
+  // Confirmed exactly: emitted.
+  assert.deepEqual(buildUpdate({ ...base, confirmedDelistings: [C.toLowerCase()] }).remove, [C]);
+  // A confirmation the diff does not delist: refused.
+  assert.throws(() => buildUpdate({ ...base, confirmedDelistings: [C, D] }), /which the diff does not delist/);
+  // No removals, no confirmation needed.
+  assert.doesNotThrow(() => buildUpdate({ ...base, current: parsed.addresses }));
+  // A corrupted listed address (one char changed) cannot become a silent delisting.
+  const corrupted = FIXTURE.toString('utf8').replace(/1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB/gi, '1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEZ');
+  const p2 = parseSdnAdvanced(corrupted);
+  assert.throws(() => buildUpdate({ parsed: p2, sourceHash: sourceHash(Buffer.from(corrupted)), current: [...p2.addresses, A], currentVersion: 1, ...FRESH }), /does not name/);
+});
+
+test('references: reliability must be one of OFAC\'s four values, with False defined', () => {
+  const xml = FIXTURE.toString('utf8');
+  assert.throws(() => parseSdnAdvanced(xml.replace('>False</Reliability>', '>FALSE</Reliability>')), /not one of Confirmed, False, Reported, Unknown/);
+  assert.throws(() => parseSdnAdvanced(xml.replace('<Reliability ID="1561">False</Reliability>', '')), /does not define|which no <Reliability> defines|defined as False/);
 });
 

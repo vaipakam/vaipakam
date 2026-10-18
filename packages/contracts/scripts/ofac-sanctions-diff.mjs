@@ -102,9 +102,9 @@
  *
  * Usage:
  *   node scripts/ofac-sanctions-diff.mjs --xml sdn_advanced.xml \
- *     --rpc "$RPC" --list 0xList [--out update.json]
+ *     --rpc "$RPC" --chain-id 8453 --list 0xList [--confirm-delist 0xA,0xB] [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
- *     --rpc "$RPC" --list 0xList [--max-changes-per-call 200]
+ *     --rpc "$RPC" --chain-id 8453 --list 0xList [--max-changes-per-call 200]
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
@@ -144,6 +144,8 @@ export const DEFAULT_MAX_REMOVE = 10;
 export const DEFAULT_MAX_CHANGES_PER_CALL = 200;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
+/** OFAC's reliability vocabulary — the whole of it, as published in schema version 3. */
+const RELIABILITY_VALUES = new Set(['Confirmed', 'False', 'Reported', 'Unknown']);
 /** The `DetailType` name an address detail carries in OFAC's schema. */
 const ADDRESS_DETAIL_TYPE = 'TEXT';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -675,7 +677,16 @@ export function parseSdnAdvanced(xml) {
 
   const dcaTypes = new Map([...featureTypes].filter(([, n]) => n.startsWith(DCA_PREFIX)).map(([id, n]) => [id, n.slice(DCA_PREFIX.length)]));
   if (dcaTypes.size === 0) throw new Error('no "Digital Currency Address - *" feature types — the file format may have changed');
+  // Reliability is a value this tool INTERPRETS (False excludes an
+  // address), so its vocabulary is closed: every definition must be one of
+  // OFAC's four, and False must be defined. A damaged or renamed value
+  // ("FALSE", a typo) would otherwise silently turn excluded entries into
+  // listings (Codex #2543 r21).
+  for (const [id, name] of reliability) {
+    if (!RELIABILITY_VALUES.has(name)) throw new Error(`<Reliability> ID ${id} is ${JSON.stringify(name)}, not one of ${[...RELIABILITY_VALUES].join(', ')} — refusing a reference table this tool cannot interpret`);
+  }
   const falseIds = new Set([...reliability].filter(([, n]) => n === 'False').map(([id]) => id));
+  if (falseIds.size === 0) throw new Error('no <Reliability> is defined as False — refusing a reference table that cannot mark an entry false');
 
   const byAddress = new Map(); // lowercase -> { address, assets:Set }
   const excludedFalse = [];
@@ -852,6 +863,30 @@ export function assertDelistingsWitnessed(parsed, remove) {
   }
 }
 
+/**
+ * THE second source for a delisting (Codex #2543 r21). A diff of two lists
+ * cannot tell a record OFAC removed from one the file lost or damaged — every
+ * round from r14 to r21 found another way to lose one. OFAC announces each
+ * delisting in its Recent Actions notice, so the operator names the
+ * addresses that notice delists, and a removal is emitted only when the diff
+ * and that confirmation agree EXACTLY: an unconfirmed removal is refused, and
+ * so is a confirmed address the diff does not remove. Malformed values the
+ * file carries are named in the refusal, since one may be a damaged copy of
+ * an address the diff would otherwise delist.
+ */
+export function assertDelistingsConfirmed(remove, confirmed, malformed = []) {
+  const want = new Set(normaliseAddresses(confirmed, 'confirmed delistings').map((a) => a.toLowerCase()));
+  const have = new Set(remove.map((a) => a.toLowerCase()));
+  const unconfirmed = remove.filter((a) => !want.has(a.toLowerCase()));
+  const notRemoved = [...want].filter((a) => !have.has(a));
+  if (unconfirmed.length === 0 && notRemoved.length === 0) return;
+  const parts = [];
+  if (unconfirmed.length) parts.push(`the diff would delist ${unconfirmed.join(', ')}, which --confirm-delist does not name; check OFAC's Recent Actions notice for this publication and confirm each address it delists`);
+  if (notRemoved.length) parts.push(`--confirm-delist names ${notRemoved.join(', ')}, which the diff does not delist`);
+  if (malformed.length) parts.push(`the file also carries ${malformed.length} malformed digital-currency value(s) (${malformed.map((m) => JSON.stringify(m.value)).join(', ')}), any of which may be a damaged copy of a listed address`);
+  throw new Error(`refusing the delistings: ${parts.join('; ')}`);
+}
+
 export function buildUpdate({
   parsed,
   sourceHash: hash,
@@ -864,6 +899,7 @@ export function buildUpdate({
   allowRollback = false,
   maxRemove = DEFAULT_MAX_REMOVE,
   maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL,
+  confirmedDelistings = [],
   abi = sanctionsListAbi(),
 }) {
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
@@ -894,6 +930,7 @@ export function buildUpdate({
     );
   }
   assertDelistingsWitnessed(parsed, remove);
+  assertDelistingsConfirmed(remove, confirmedDelistings, parsed.malformed ?? []);
   const version = BigInt(currentVersion);
   // `additionsLeft` / `delistingsLeft` are what the contract publishes as
   // `pendingAdditions` / `pendingDelistings` after each call.
@@ -983,8 +1020,12 @@ function readList(path) {
  * with `requireCanonical`, so a reorg during the reads makes them fail
  * instead of mixing two forks at one height.
  */
-async function readCurrentFromChain(rpc, list, abi) {
+async function readCurrentFromChain(rpc, list, abi, expectedChainId) {
   const client = createPublicClient({ transport: http(rpc) });
+  // The same list address and version can exist on another chain; reads
+  // there are self-consistent and wrong (Codex #2543 r21).
+  const chainId = BigInt(await client.getChainId());
+  if (chainId !== expectedChainId) throw new Error(`--rpc serves chain ${chainId}, not the --chain-id ${expectedChainId} this update is for`);
   const block = await client.getBlock({ blockTag: 'finalized' });
   const blockNumber = block.number;
   const read = (functionName, args = []) => callAtHash(client, block, { address: list, abi, functionName, args });
@@ -998,7 +1039,7 @@ async function readCurrentFromChain(rpc, list, abi) {
   const PAGE = 200n;
   for (let off = 0n; off < count; off += PAGE) addrs.push(...(await read('listedPage', [off, PAGE])));
   if (BigInt(addrs.length) !== count) throw new Error(`read ${addrs.length} addresses, listedCount says ${count}`);
-  return { version, recordedDate, recordedHash, recordedPendingAdditions, recordedPendingDelistings, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: 'finalized' };
+  return { version, recordedDate, recordedHash, recordedPendingAdditions, recordedPendingDelistings, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: 'finalized', chainId };
 }
 
 async function readChainalysisFromChain(rpc, oracle, fromBlock, toBlockArg, chunk) {
@@ -1048,8 +1089,9 @@ async function main() {
   if (!args.rpc || !args.list) throw new Error('give the current list: --rpc + --list (the deployed SanctionsList)');
   if (args.current !== undefined) throw new Error('--current (a file of addresses) is no longer accepted: read the list from the chain with --rpc + --list');
   if (args.block !== undefined) throw new Error('--block is no longer accepted: the list is always read at the finalized block, so no reorg can replace the state an update is computed from');
-  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), abi);
-  current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
+  if (args['chain-id'] === undefined) throw new Error('give --chain-id: the chain the list lives on, checked against what --rpc serves');
+  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), abi, parseUintArg('--chain-id', args['chain-id'], { min: 1n }));
+  current.source = { chainId: current.chainId.toString(), list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
 
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;
   const update = buildUpdate({
@@ -1063,6 +1105,7 @@ async function main() {
     recordedPendingDelistings: current.recordedPendingDelistings,
     allowRollback: args['allow-rollback'] === true,
     maxRemove,
+    confirmedDelistings: args['confirm-delist'] === undefined ? [] : String(args['confirm-delist']).split(',').map((a) => a.trim()).filter(Boolean),
     maxChangesPerCall: args['max-changes-per-call'] !== undefined ? Number(parseUintArg('--max-changes-per-call', args['max-changes-per-call'], { min: 1n, max: 100_000n })) : DEFAULT_MAX_CHANGES_PER_CALL,
     abi,
   });
