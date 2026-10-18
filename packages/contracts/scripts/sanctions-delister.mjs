@@ -147,13 +147,16 @@ const sameAddress = (a, b) => typeof a === 'string' && typeof b === 'string' && 
 
 /**
  * What decides whether a chain's publication work can be skipped this run:
- * every value a propose, a reconfirm or the pre-execute check depends on. A
+ * every value a propose or a reconfirm depends on, and where every pending
+ * proposal stands. A proposal moving to a new stage — out of its window,
+ * requested, answered, ready — changes it, so each step that advances a
+ * proposal is taken on a reading of OFAC's files made in that same state. A
  * change in any of them, or a day passing, means the chain is checked
  * against OFAC's files again.
  */
 export function fingerprint(snap) {
   const l = snap.list;
-  return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, executable(snap).map((p) => p.id).join(',')].join('|');
+  return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, snap.proposals.map((p) => `${p.id}:${stage(snap, p)}`).join(',')].join('|');
 }
 
 /** The reasons a snapshot rules out acting at all, as a refusal message. */
@@ -171,19 +174,24 @@ export function refusal(snap) {
 /**
  * Whether a chain's state calls for OFAC's files, and the cache allows it.
  * Three things need them: a new proposal that could land, one of this key's
- * proposals left behind by a newer publication, and a proposal about to be
- * executed — the irreversible step is taken only after the files were last
- * read in this same state.
+ * proposals left behind by a newer publication, and any proposal with a step
+ * that moves it toward a delisting — a clearance to request, an answer to
+ * relay, an execution — since each is taken only on a reading of the files
+ * made in this same state (see {@link planChain}).
  */
 export function wantsPublication(snap, key, cached, nowMs) {
   if (refusal(snap) || !publicationGate(snap)) return false;
-  if (!canPropose(snap) && ownStale(snap, key).length === 0 && executable(snap).length === 0) return false;
+  if (!canPropose(snap) && ownStale(snap, key).length === 0 && !snap.proposals.some((p) => ADVANCING.has(stage(snap, p)))) return false;
   return !freshCache(snap, cached, nowMs);
 }
 
-/** A cache entry that still describes this chain's state. */
+/** A cache entry that still describes this chain's state. An entry stamped
+ *  in the future (the host clock was corrected backwards) is stale, so a
+ *  clock error can never stretch the re-read window. */
 function freshCache(snap, cached, nowMs) {
-  return Boolean(cached && typeof cached === 'object' && cached.fingerprint === fingerprint(snap) && nowMs - cached.at < RE_EVALUATE_MS);
+  if (!cached || typeof cached !== 'object' || cached.fingerprint !== fingerprint(snap)) return false;
+  const age = nowMs - cached.at;
+  return age >= 0 && age < RE_EVALUATE_MS;
 }
 
 /** Publication-derived actions read the FINALIZED list; they wait while the
@@ -198,12 +206,25 @@ function samePublication(snap, p) {
   return lower(p.sourceHash) === lower(snap.list.sourceHash) && Number(p.publicationDate) === Number(snap.list.publicationDate);
 }
 
-/** Pending proposals `execute` would accept now: ready, under the recorded
- *  publication, and every address still listed (`readiness` does not check
- *  the last; the removal inside `execute` does). */
-function executable(snap) {
-  return snap.proposals.filter((p) => p.ready && p.proposerAppointed && p.unlisted.length === 0 && samePublication(snap, p));
+/**
+ * Where a pending proposal stands, as far as the next step goes: its
+ * proposer removed, an address already delisted another way (`readiness`
+ * does not check that; the removal inside `execute` does), under an older
+ * publication, in its window, ready, or the reason `readiness` gives — with
+ * the relay's state when that reason is an unanswered clearance.
+ */
+function stage(snap, p) {
+  if (!p.proposerAppointed) return 'unappointed';
+  if (p.unlisted.length) return 'unlisted';
+  if (!samePublication(snap, p)) return 'stale';
+  if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
+  if (p.ready) return 'ready';
+  return p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
 }
+
+/** The stages with a step that moves a proposal toward a delisting:
+ *  executing, requesting the clearance, relaying RedStone's answer. */
+const ADVANCING = new Set(['ready', 'ClearanceNotRequested', 'ClearanceExpired', 'ClearanceNotAnswered:owed']);
 
 /** The delistings the list declares outstanding that no proposal reserves. */
 function freeDelistings(snap) {
@@ -227,14 +248,14 @@ function ownStale(snap, key) {
  * support. `publication` is `{ advanced: {parsed, sourceHash}, plain:
  * {parsed} }`, `{ error }` when loading failed, or null when it was not
  * loaded. Returns `{ status: 'ready', removals, absent, stillMentioned }`, or
- * `{ status, reason }` with status `not-loaded`, `mismatch` (OFAC served this
- * run another file than the list records) or `refused` (the files or the
- * counts do not support an unattended delisting). Two flags travel with it:
- *   transient — the outcome may change with no change on the chain (a failed
- *     download, OFAC publishing between the two downloads, a stale copy), so
- *     it is never cached and the next run reads the files again;
- *   hold — OFAC serves a NEWER publication than the list records, so
- *     executing or requesting a clearance waits until the adder records it.
+ * `{ status, reason }` with status `not-loaded`, `mismatch` (OFAC serves a
+ * newer publication than the list records, which the adder will record) or
+ * `refused` (the files or the counts do not support an unattended delisting,
+ * or the run could not tell). Only `ready` lets a proposal be made or moved
+ * toward a delisting. `transient` travels with an outcome that may change
+ * with no change on the chain (a failed download, OFAC publishing between the
+ * two downloads, a stale copy): it is never cached, and the next run reads
+ * the files again.
  */
 export function evaluatePublication(snap, publication) {
   if (!publication) return { status: 'not-loaded', reason: 'OFAC files not loaded this run' };
@@ -244,9 +265,14 @@ export function evaluatePublication(snap, publication) {
   const recorded = Number(snap.list.publicationDate);
   if (lower(advanced.sourceHash) !== lower(snap.list.sourceHash)) {
     const what = `the list records publication ${recorded} (${snap.list.sourceHash.slice(0, 18)}…) and OFAC served ${served} (${advanced.sourceHash.slice(0, 18)}…) to this run`;
-    if (served < recorded) return { status: 'mismatch', transient: true, reason: `${what}, an older copy than the list's; the next run downloads again` };
-    const reason = `${what}, a newer publication; proposing, executing and requesting wait for the adder to record it`;
-    return { status: 'mismatch', hold: reason, reason };
+    if (served < recorded) return { status: 'refused', transient: true, reason: `${what}, an older copy than the list's; the next run downloads again` };
+    if (served === recorded) {
+      // A same-day reissue: the adder applies it only after the owner
+      // authorizes a rollback (checkPublicationOrder), so it will not
+      // resolve by itself.
+      return { status: 'refused', reason: `${what}, a different file under the list's own date — a same-day reissue, which the adder applies only with the owner's authorizePublicationRollback; a person must reconcile it` };
+    }
+    return { status: 'mismatch', reason: `${what}, a newer publication; proposals wait for the adder to record it` };
   }
   if (served !== recorded) {
     return { status: 'refused', reason: `the list records date ${recorded} for this file, which is dated ${served} — a person must reconcile the list's record` };
@@ -283,6 +309,17 @@ export function factsWanted(snap, evaluation) {
  * NEXT run, so a failed send never leaves a later one built on a state that
  * did not happen. An action built on this run's reading of OFAC's files
  * carries `derived`, so a failed one keeps the chain from being cached.
+ *
+ * THE RULE for moving a proposal toward a delisting — requesting its
+ * clearance, relaying RedStone's answer, executing it — whoever proposed it:
+ * the step is taken only on a conclusive (`ready`) reading of OFAC's files
+ * made in this chain state, and only when that reading supports delisting
+ * EVERY address the proposal names. The contract checks a proposal's
+ * publication hash and date, the outstanding count, vetoes and RedStone; it
+ * never checks the addresses against OFAC's files, so this is the one place
+ * that does. Anything short of a conclusive reading — a failed or stale
+ * download, files that disagree, a newer publication the list has not
+ * recorded, a list mid-update — and the step waits.
  */
 export function planChain(snap, key, evaluation, facts = new Map(), { factsError = null } = {}) {
   const actions = [];
@@ -290,22 +327,23 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
   const review = [];
   const route = ROUTE[snap.route] ?? `route ${snap.route}`;
   const gate = publicationGate(snap);
-  if (!gate) notes.push(`the list is at version ${snap.list.latestVersion} but the finalized block shows ${snap.list.version}; proposing, reconfirming, requesting and executing wait for it to be final`);
+  if (!gate) notes.push(`the list is at version ${snap.list.latestVersion} but the finalized block shows ${snap.list.version}; proposing, reconfirming, requesting, relaying and executing wait for it to be final`);
   const ready = evaluation.status === 'ready';
   const absent = new Set(ready ? evaluation.absent.map(lower) : []);
-  // Executing and requesting wait while the list is mid-update, or while
-  // OFAC serves a newer publication than the list records (this run's
-  // reading, or the cached one for this same state).
-  const hold = !gate ? 'the list is mid-update' : (evaluation.hold ?? null);
+  const date = snap.list.publicationDate;
+  /** Why this reading cannot move proposals on, or null when it can. */
+  const waitReason = !gate ? 'the list is mid-update' : ready ? null : evaluation.reason;
+  let waitedOnReading = false;
 
   for (const p of snap.proposals) {
     const mine = sameAddress(p.proposer, key);
     const tag = `proposal ${p.id}`;
-    if (!p.proposerAppointed) {
+    const at = stage(snap, p);
+    if (at === 'unappointed') {
       actions.push({ kind: 'discard', id: p.id, why: `its proposer ${p.proposer} was removed` });
       continue;
     }
-    if (p.unlisted.length) {
+    if (at === 'unlisted') {
       const gone = `${p.unlisted.join(', ')} ${p.unlisted.length === 1 ? 'is' : 'are'} no longer listed (delisted another way)`;
       if (mine) actions.push({ kind: 'withdraw', id: p.id, why: gone });
       else {
@@ -314,45 +352,56 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       }
       continue;
     }
-    if (!samePublication(snap, p)) {
+    // Every address the reading supports delisting, or those it does not.
+    const unsupported = ready ? p.accounts.filter((a) => !absent.has(lower(a))) : [];
+    if (at === 'stale') {
       if (!mine) notes.push(`${tag} (another proposer's) names an older publication; only its proposer may reconfirm it`);
-      else if (!gate) notes.push(`${tag} names an older publication; reconfirming waits for the list to be final`);
-      else if (!ready) {
-        notes.push(`${tag} names an older publication and cannot be re-checked yet: ${evaluation.reason}`);
-        if (evaluation.status === 'refused' && !evaluation.transient) review.push(`${tag} names an older publication and cannot be re-checked: ${evaluation.reason}.`);
-      } else {
-        const dropped = p.accounts.filter((a) => !absent.has(lower(a)));
-        if (dropped.length === 0) actions.push({ kind: 'reconfirm', id: p.id, sourceHash: snap.list.sourceHash, publicationDate: snap.list.publicationDate, derived: true });
-        else {
-          actions.push({ kind: 'withdraw', id: p.id, why: `OFAC's publication ${snap.list.publicationDate} no longer supports delisting ${dropped.join(', ')}`, derived: true });
-          review.push(`${tag} was withdrawn: publication ${snap.list.publicationDate} no longer supports delisting ${dropped.join(', ')}.`);
-        }
+      else if (waitReason) {
+        notes.push(`${tag} names an older publication; reconfirming waits: ${waitReason}`);
+        waitedOnReading ||= gate;
+      } else if (unsupported.length === 0) actions.push({ kind: 'reconfirm', id: p.id, sourceHash: snap.list.sourceHash, publicationDate: date, derived: true });
+      else {
+        actions.push({ kind: 'withdraw', id: p.id, why: `OFAC's publication ${date} no longer supports delisting ${unsupported.join(', ')}`, derived: true });
+        review.push(`${tag} was withdrawn: publication ${date} no longer supports delisting ${unsupported.join(', ')}.`);
       }
       continue;
     }
-    if (BigInt(snap.now) < BigInt(p.eta)) {
+    if (at === 'window') {
       notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${new Date(Number(p.eta) * 1000).toISOString()}`);
       continue;
     }
-    if (p.ready) {
-      if (hold) notes.push(`${tag} is ready, but executing waits: ${hold}`);
-      else actions.push({ kind: 'execute', id: p.id });
+    if (ADVANCING.has(at)) {
+      const step = p.ready ? 'executing' : at === 'ClearanceNotAnswered:owed' ? "relaying RedStone's answer" : 'requesting the clearance';
+      if (waitReason) {
+        notes.push(`${tag}: ${step} waits: ${waitReason}`);
+        waitedOnReading ||= gate;
+        continue;
+      }
+      if (unsupported.length) {
+        const why = `publication ${date} does not support delisting ${unsupported.join(', ')} (OFAC still lists it, or SDN.XML still mentions it)`;
+        if (mine) {
+          actions.push({ kind: 'withdraw', id: p.id, why, derived: true });
+          review.push(`${tag} was withdrawn: ${why}.`);
+        } else {
+          notes.push(`${tag} (another proposer's) is not moved on: ${why}`);
+          review.push(`${tag} (another proposer's) names ${unsupported.join(', ')}, which publication ${date} does not support delisting; this bot will not move it on, but anyone may — the Safe should veto it.`);
+        }
+        continue;
+      }
+      if (p.ready) actions.push({ kind: 'execute', id: p.id, derived: true });
+      else if (at === 'ClearanceNotAnswered:owed') {
+        const r = p.relay;
+        actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload, derived: true });
+        if (r.balance !== undefined && BigInt(r.balance) < LOW_BALANCE_WEI) {
+          review.push(`the delister key holds ${formatEther(r.balance)} of native gas on chain ${r.sourceChainId}, where it pays the reply's CCIP fee — top it up.`);
+        }
+      } else actions.push({ kind: 'request', id: p.id, derived: true });
       continue;
     }
     switch (p.reason) {
-      case 'ClearanceNotRequested':
-      case 'ClearanceExpired':
-        if (hold) notes.push(`${tag} needs a clearance request, which waits: ${hold}`);
-        else actions.push({ kind: 'request', id: p.id });
-        break;
       case 'ClearanceNotAnswered': {
         const r = p.relay ?? { status: 'unknown', detail: 'no relay reading' };
-        if (r.status === 'owed') {
-          actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload });
-          if (r.balance !== undefined && BigInt(r.balance) < LOW_BALANCE_WEI) {
-            review.push(`the delister key holds ${formatEther(r.balance)} of native gas on chain ${r.sourceChainId}, where it pays the reply's CCIP fee — top it up.`);
-          }
-        } else if (r.status === 'in-flight') notes.push(`${tag}: its clearance request is on its way to the attestor`);
+        if (r.status === 'in-flight') notes.push(`${tag}: its clearance request is on its way to the attestor`);
         else if (r.status === 'sent') notes.push(`${tag}: RedStone's answer is on its way back`);
         else {
           notes.push(`${tag}: its clearance answer cannot be relayed: ${r.detail}`);
@@ -411,13 +460,15 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       }
       const take = candidates.slice(0, free);
       for (let i = 0; i < take.length; i += MAX_BATCH) {
-        actions.push({ kind: 'propose', accounts: take.slice(i, i + MAX_BATCH), sourceHash: snap.list.sourceHash, publicationDate: snap.list.publicationDate, derived: true });
+        actions.push({ kind: 'propose', accounts: take.slice(i, i + MAX_BATCH), sourceHash: snap.list.sourceHash, publicationDate: date, derived: true });
       }
     }
-  } else if (!ready && evaluation.status !== 'not-loaded' && free > 0) {
+  } else if (gate && !ready && evaluation.status !== 'not-loaded' && free > 0) {
     notes.push(`nothing proposed: ${evaluation.reason}`);
-    if (evaluation.status === 'refused' && !evaluation.transient) review.push(`publication work refused: ${evaluation.reason}`);
+    waitedOnReading = true;
   }
+  // A reading a person must fix, once per chain, when anything waited on it.
+  if (waitedOnReading && evaluation.status === 'refused' && !evaluation.transient) review.push(`publication work refused: ${evaluation.reason}`);
   if (snap.balance !== undefined && BigInt(snap.balance) < LOW_BALANCE_WEI) {
     review.push(`the delister key holds ${formatEther(snap.balance)} of native gas here; it pays every transaction and the CCIP fees — top it up.`);
   }
@@ -462,8 +513,8 @@ export function describeAction(a) {
  *   key: the signing address;
  *   loadPublication(): the parsed OFAC files, called at most once and only
  *     when some chain needs them;
- *   cache: `{ [chainId]: { fingerprint, at, status, hold, outcome } }` from
- *     the last runs;
+ *   cache: `{ [chainId]: { fingerprint, at, status, outcome } }` from the
+ *     last runs;
  *   nowMs: the run's clock.
  * Returns `{ report, cache }`: the report, and the cache to keep. The cache
  * only ever saves a download: a chain is cached only after a CONCLUSIVE
@@ -516,8 +567,13 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
       const refused = refusal(snap);
       if (refused) return [c.slug, { ...head, status: 'refused', error: refused, actions: [] }];
       const cached = cache[c.id];
+      const fresh = freshCache(snap, cached, nowMs);
       let evaluation = evaluatePublication(snap, publication);
-      if (evaluation.status === 'not-loaded' && freshCache(snap, cached, nowMs) && cached.hold) evaluation = { ...evaluation, hold: cached.hold };
+      // Unchanged since a conclusive reading: that reading already did what
+      // it allowed, and nothing it did not allow moves on without a new one.
+      if (evaluation.status === 'not-loaded' && fresh) {
+        evaluation = { ...evaluation, reason: `nothing changed since OFAC's files were last read at ${new Date(cached.at).toISOString()} (${cached.outcome})` };
+      }
       let facts = new Map();
       let factsError = null;
       const wanted = factsWanted(snap, evaluation);
@@ -542,7 +598,7 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
           });
           Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), state: 'included' });
         } catch (e) {
-          Object.assign(entry, { state: !entry.tx ? 'failed' : e?.notBroadcast ? 'rejected' : 'unknown', error: redactError(String(e?.message ?? e)) });
+          Object.assign(entry, { state: sendState(entry, e), error: redactError(String(e?.message ?? e)) });
         }
       }
       // Remember the chain's state only after a conclusive reading of the
@@ -554,12 +610,11 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
           fingerprint: fingerprint(snap),
           at: nowMs,
           status: evaluation.status,
-          hold: evaluation.hold ?? null,
           outcome: evaluation.status === 'ready' ? `checked publication ${snap.list.publicationDate}` : evaluation.reason,
         };
       }
       const notes = [...plan.notes];
-      if (evaluation.status === 'not-loaded' && freshCache(snap, cached, nowMs)) {
+      if (evaluation.status === 'not-loaded' && fresh) {
         notes.push(`last checked against OFAC's files at ${new Date(cached.at).toISOString()} (${cached.outcome}); unchanged since`);
       }
       const failed = sent.filter((e) => e.state !== 'included');
@@ -591,6 +646,16 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
   };
 }
 
+/** A failed send's report state, from what the send is known to have done
+ *  (sanctions-service SEND_OUTCOMES): nothing signed, refused by the node,
+ *  included and reverted, or — knowing none of those — unknown. */
+function sendState(entry, e) {
+  if (!entry.tx) return 'failed';
+  if (e?.sendOutcome === 'refused') return 'rejected';
+  if (e?.sendOutcome === 'reverted') return 'reverted';
+  return 'unknown';
+}
+
 /** The lines a person reads for one chain. */
 export function summarizeChain(c) {
   if (c.status === 'skipped') return `skipped: ${c.reason}`;
@@ -600,6 +665,7 @@ export function summarizeChain(c) {
     included: 'included',
     failed: 'FAILED, not sent',
     rejected: 'signed, but the node refused it; not broadcast',
+    reverted: 'included, but REVERTED; it changed nothing',
     unknown: 'signed and broadcast attempted, outcome unknown — check it',
     submitted: 'signed and broadcast attempted, no receipt seen',
   };
@@ -984,10 +1050,10 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       }
       const included = await queues.run(c.id, () => sendTransaction({ client, wallet, account, to: c.timelock, data, value, onSubmitted, label }));
       if (action.kind === 'request') {
-        // Remember the request's message id, so the relay need not search
-        // for it.
-        const receipt = await client.getTransactionReceipt({ hash: included.hash });
-        for (const log of receipt.logs) {
+        // Remember the request's message id from the receipt the send already
+        // returned, so the relay need not search for it — no second read
+        // that could fail after the request is known to be included.
+        for (const log of included.logs ?? []) {
           if (!sameAddress(log.address, c.timelock)) continue;
           try {
             const ev = decodeEventLog({ abi: tl, data: log.data, topics: log.topics });

@@ -56,8 +56,9 @@ Every hour it, for every configured chain with a timelock recorded:
 1. reads the timelock, the list and every pending proposal;
 2. only when there is **publication work** (a delisting the list declares
    outstanding that no proposal covers and that could be proposed now, one of
-   its own proposals left behind by a newer publication, or a proposal ready
-   to execute) downloads OFAC's **two** exports of the publication once for
+   its own proposals left behind by a newer publication, or a proposal with a
+   step to take — a clearance to request, an answer to relay, an execution)
+   downloads OFAC's **two** exports of the publication once for
    every chain: `sdn_advanced.xml` (the file the list records by hash) and the
    plain `SDN.XML`, read by a separate parser
    (`packages/contracts/scripts/ofac-sdn-plain.mjs`). An unchanged chain is
@@ -71,9 +72,12 @@ Every hour it, for every configured chain with a timelock recorded:
    way, or no longer delisted by OFAC's newer file); reconfirms one of its own
    onto a newer publication (the window is kept); after the window, on the
    cross-chain route, requests RedStone's answer and relays it back; and
-   executes it once the timelock reports it ready. Requesting and executing
-   wait while the list is mid-update, or while OFAC serves a newer publication
-   than the list records (until the adder records it);
+   executes it once the timelock reports it ready. Each of those steps, for
+   anyone's proposal, needs a reading of OFAC's files made in that same state
+   that supports delisting every address the proposal names: with a failed,
+   stale or newer download, files that disagree, or the list mid-update, none
+   is taken, and another proposer's proposal naming an address the files do
+   not support is named for the Safe to veto;
 4. proposes the rest: the delistings **both files** support (the advanced
    file's diff, with its witness that the address's digits are gone from the
    file, and the plain file, which must not mention the address at all),
@@ -204,11 +208,12 @@ the installed release).
 - **The adder** marks a chain `applied` only once its transactions are final
   and still in the blocks they were included in. A chain that stops part-way
   is `stopped`, and lists each transaction it broadcast as final, included but
-  not final, or broadcast with no receipt (it may still land); check those
-  before acting.
-- **The delister** lists each transaction it sent as included, failed (not
-  sent), or broadcast with its outcome unknown, and every pending proposal's
-  state. It waits for inclusion only: the next run reads the chain again, and
+  not final, included and reverted, or broadcast with no receipt (it may still
+  land); check those before acting.
+- **The delister** lists each transaction it sent as included, reverted,
+  refused by the node (not broadcast), failed (not sent), or broadcast with
+  its outcome unknown, and every pending proposal's state. After an unknown
+  outcome it sends nothing more on that chain that run. It waits for inclusion only: the next run reads the chain again, and
   every step it takes is refused on-chain if it no longer applies. Its state
   directory also holds caches only (`evaluations.json`, `relay.json`,
   `last-alert.json`); deleting them costs a download, never a wrong action.

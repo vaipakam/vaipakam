@@ -45,7 +45,7 @@
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { getAddress } from 'viem';
-import { createXmlScanner, isPublicationDate } from './ofac-sanctions-diff.mjs';
+import { createHexRunCollector, createXmlScanner, isPublicationDate } from './ofac-sanctions-diff.mjs';
 
 export const OFAC_SDN_PLAIN_URL = 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML';
 /** The plain file's root namespace, matched exactly. */
@@ -54,9 +54,7 @@ export const OFAC_SDN_PLAIN_NAMESPACE = 'https://sanctionslistservice.ofac.treas
 const DCA_PREFIX = 'Digital Currency Address - ';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
 const HEX_PREFIX_RE = /^0x/i;
-const HEX_RUN_RE = /[0-9a-fA-F]{40,}/g;
 const DATE_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-const isHexDigit = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
 
 /**
  * The ONLY paths read, as full paths from the root. In the 2026-10-15
@@ -85,11 +83,8 @@ const SINGLETONS = new Set([SDN_PLAIN_PATHS.publishInformation, SDN_PLAIN_PATHS.
  */
 export function createSdnPlainParser() {
   const path = [];
-  const hexRuns = { raw: [], text: [] };
-  let hexTail = '';
-  const countRaw = (s) => {
-    for (const run of s.match(HEX_RUN_RE) ?? []) hexRuns.raw.push(run.toLowerCase());
-  };
+  // The witness's hex runs, collected exactly as the advanced parser does.
+  const hex = createHexRunCollector();
   const seen = new Map();
   let publishDate;
   let recordCount;
@@ -137,7 +132,7 @@ export function createSdnPlainParser() {
       },
       text(value) {
         if (reading) buf += value;
-        for (const run of value.match(HEX_RUN_RE) ?? []) hexRuns.text.push(run.toLowerCase());
+        hex.text(value);
       },
       close() {
         const at = path.join('/');
@@ -173,17 +168,12 @@ export function createSdnPlainParser() {
 
   return {
     write(chunk) {
-      const joined = hexTail + chunk;
-      let cut = joined.length;
-      while (cut > 0 && isHexDigit(joined.charCodeAt(cut - 1))) cut--;
-      countRaw(joined.slice(0, cut));
-      hexTail = joined.slice(cut);
+      hex.raw(chunk);
       scanner.write(chunk);
     },
     end() {
-      countRaw(hexTail);
-      hexTail = '';
       scanner.end();
+      const hexRuns = hex.end();
       const m = DATE_RE.exec(publishDate ?? '');
       if (!m) throw new Error(`no readable <Publish_Date> (got ${JSON.stringify(publishDate ?? null)}) — cannot identify the publication`);
       const publicationDate = Number(m[3]) * 10000 + Number(m[1]) * 100 + Number(m[2]);

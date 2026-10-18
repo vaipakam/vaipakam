@@ -44,19 +44,38 @@ test('checkPrivateKey and configuredChains', () => {
   for (const c of SERVICE_CHAINS) assert.ok(!mainnets.includes(c.id), `${c.name} is a testnet`);
 });
 
-test('createSendQueues: sends on one chain run one at a time, in order, and a failure does not stall the queue', async () => {
+test('createSendQueues: sends on one chain run one at a time, in order, and a known failure does not stall the queue', async () => {
   const q = createSendQueues();
   const log = [];
-  const slow = (tag, ms, fail) => () => new Promise((resolve, reject) => setTimeout(() => (log.push(tag), fail ? reject(new Error(tag)) : resolve(tag)), ms));
+  const slow = (tag, ms, fail) => () => new Promise((resolve, reject) => setTimeout(() => (log.push(tag), fail ? reject(Object.assign(new Error(tag), { sendOutcome: fail })) : resolve(tag)), ms));
   const a = q.run(1, slow('a', 30));
-  const b = q.run(1, slow('b', 1, true));
-  const c = q.run(1, slow('c', 1));
+  const b = q.run(1, slow('b', 1, 'reverted'));
+  const c = q.run(1, slow('c', 1, 'refused'));
+  const d = q.run(1, slow('d', 1));
   const other = q.run(2, slow('x', 1));
   await assert.rejects(b, /b/);
+  await assert.rejects(c, /c/);
   assert.equal(await a, 'a');
-  assert.equal(await c, 'c');
+  assert.equal(await d, 'd');
   assert.equal(await other, 'x');
-  assert.deepEqual(log, ['x', 'a', 'b', 'c']);
+  assert.deepEqual(log, ['x', 'a', 'b', 'c', 'd']);
+});
+
+test('createSendQueues: a send with an unknown outcome halts that chain for the run, and only that chain', async () => {
+  const q = createSendQueues();
+  const ran = [];
+  const lost = q.run(1, async () => {
+    ran.push('lost');
+    throw Object.assign(new Error('socket hang up'), { hash: '0xabc' });
+  });
+  const later = q.run(1, async () => ran.push('later'));
+  const elsewhere = q.run(2, async () => ran.push('elsewhere'));
+  await assert.rejects(lost, /socket hang up/);
+  await assert.rejects(later, (e) => e.sendOutcome === 'not-sent' && /0xabc\) has an unknown outcome/.test(e.message));
+  await elsewhere;
+  // The halt holds for every later send on that chain.
+  await assert.rejects(q.run(1, async () => ran.push('again')), /unknown outcome/);
+  assert.deepEqual(ran, ['lost', 'elsewhere']);
 });
 
 test('notifyOps: skips without a token, never throws, reports a failed delivery, never leaks the token', async () => {
@@ -78,29 +97,36 @@ test('notifyOps: skips without a token, never throws, reports a failed delivery,
   assert.match(cut, /the full report is in the journal\)$/);
 });
 
-test('sendTransaction: a refusal the node does not know is not broadcast; a lost reply to a known send goes on', async () => {
+test('sendTransaction: every failure says what is known — not sent, refused, reverted — or carries the hash of an unknown one', async () => {
   const account = { address: '0x00000000000000000000000000000000000000aa' };
   const wallet = { prepareTransactionRequest: async () => ({}), signTransaction: async () => '0x01' };
   const refusal = new RpcRequestError({ body: {}, error: { code: -32000, message: 'nonce too low' }, url: 'http://rpc' });
-  const make = ({ sendError, known }) => ({
-    call: async () => ({}),
-    sendRawTransaction: async () => Promise.reject(sendError),
+  const logs = [{ address: '0x01', data: '0x', topics: [] }];
+  const make = ({ sendError, known = false, simulate, status = 'success', receiptError } = {}) => ({
+    call: async () => (simulate ? Promise.reject(simulate) : {}),
+    sendRawTransaction: async () => (sendError ? Promise.reject(sendError) : '0x'),
     getTransaction: async () => (known ? {} : Promise.reject(new Error('not found'))),
-    waitForTransactionReceipt: async () => ({ status: 'success', blockNumber: 7n, blockHash: '0xb' }),
+    waitForTransactionReceipt: async () => (receiptError ? Promise.reject(receiptError) : { status, blockNumber: 7n, blockHash: '0xb', logs }),
   });
+  const send = (client, extra = {}) => sendTransaction({ client, wallet, account, to: account.address, data: '0x', label: 'l', ...extra });
+  // The simulation refuses it: nothing was signed.
+  let submitted = false;
+  await assert.rejects(send(make({ simulate: new Error('execution reverted: X') }), { onSubmitted: () => (submitted = true) }), (e) => e.sendOutcome === 'not-sent' && /X/.test(e.message));
+  assert.equal(submitted, false);
+  // Signed, refused by the node, and unknown to it.
   let hash;
-  await assert.rejects(
-    sendTransaction({ client: make({ sendError: refusal, known: false }), wallet, account, to: account.address, data: '0x', onSubmitted: (h) => (hash = h), label: 'l' }),
-    (e) => e.notBroadcast === true && e.message.includes(hash),
-  );
-  // A dropped connection the node cannot vouch for stays unknown.
-  await assert.rejects(
-    sendTransaction({ client: make({ sendError: new Error('socket hang up'), known: false }), wallet, account, to: account.address, data: '0x', label: 'l' }),
-    (e) => !e.notBroadcast && /socket hang up/.test(e.message),
-  );
-  // The node has it (a retry answered "already known"): the send goes on.
-  const sent = await sendTransaction({ client: make({ sendError: refusal, known: true }), wallet, account, to: account.address, data: '0x', label: 'l' });
+  await assert.rejects(send(make({ sendError: refusal }), { onSubmitted: (h) => (hash = h) }), (e) => e.sendOutcome === 'refused' && e.message.includes(hash));
+  // A dropped connection the node cannot vouch for stays unknown, by hash.
+  await assert.rejects(send(make({ sendError: new Error('socket hang up') })), (e) => e.sendOutcome === undefined && e.hash === hash && /socket hang up/.test(e.message));
+  // A receipt that never comes is unknown too.
+  await assert.rejects(send(make({ receiptError: new Error('timed out') })), (e) => e.sendOutcome === undefined && e.hash === hash);
+  // Included and reverted is known.
+  await assert.rejects(send(make({ status: 'reverted' })), (e) => e.sendOutcome === 'reverted');
+  // The node has it (a retry answered "already known"): the send goes on, and
+  // the receipt's logs come back with it.
+  const sent = await send(make({ sendError: refusal, known: true }));
   assert.equal(sent.blockNumber, 7n);
+  assert.deepEqual(sent.logs, logs);
 });
 
 test('redact: an RPC URL and its key never reach a report, in any of the forms viem prints', () => {

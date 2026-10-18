@@ -90,45 +90,69 @@ export function chainClients(c, account) {
 }
 
 /**
+ * What a failed send is KNOWN to have done, set as `sendOutcome` on the error
+ * {@link sendTransaction} throws. An error without it left the outcome
+ * UNKNOWN: the transaction may be in a node's pool or on its way to a block.
+ *   not-sent — refused before anything was signed (the simulation reverted,
+ *              or preparing or signing failed);
+ *   refused  — signed, but the node answered with a JSON-RPC refusal (nonce,
+ *              funds, gas) and does not know the hash: not broadcast;
+ *   reverted — included in a block, and reverted.
+ */
+export const SEND_OUTCOMES = Object.freeze(['not-sent', 'refused', 'reverted']);
+const known = (e, outcome) => Object.assign(e instanceof Error ? e : new Error(String(e)), { sendOutcome: outcome });
+
+/**
  * Send one transaction the way both services do: SIMULATED first, so a call
  * the contract would refuse is reported with its revert reason instead of
  * spending gas; then signed locally and handed to `onSubmitted(hash)` BEFORE
  * it is broadcast, so a send whose outcome is unknown (the node accepted it
  * but the reply was lost) is still reported by hash; then broadcast and
- * waited on until INCLUDED. Throws if it reverts. Returns
- * `{ hash, blockNumber, blockHash }`.
+ * waited on until INCLUDED. Returns `{ hash, blockNumber, blockHash, logs }`
+ * from the receipt, so a caller never needs a second read to see what the
+ * transaction did. Every error it throws says what is known (see
+ * {@link SEND_OUTCOMES}); one that says nothing left the outcome unknown,
+ * and carries the `hash`.
  *
  * When the broadcast call fails, the node is asked for the hash first: if it
  * has the transaction, the failure was the reply's and the send goes on. If
- * it does not, and its answer was a JSON-RPC refusal (nonce, funds, gas), the
- * error carries `notBroadcast` — most likely never broadcast. Any other
- * failure (a timeout, a dropped connection) leaves the outcome unknown.
+ * it does not, and its answer was a JSON-RPC refusal, the send is `refused`.
+ * Any other failure (a timeout, a dropped connection), and a receipt that
+ * never came, leaves the outcome unknown.
  */
 export async function sendTransaction({ client, wallet, account, to, data, value = 0n, onSubmitted = () => {}, label }) {
-  await client.call({ account: account.address, to, data, value });
-  const request = await wallet.prepareTransactionRequest({ to, data, value });
-  const serializedTransaction = await wallet.signTransaction(request);
+  let serializedTransaction;
+  try {
+    await client.call({ account: account.address, to, data, value });
+    const request = await wallet.prepareTransactionRequest({ to, data, value });
+    serializedTransaction = await wallet.signTransaction(request);
+  } catch (e) {
+    throw known(e, 'not-sent');
+  }
   const hash = keccak256(serializedTransaction);
   onSubmitted(hash);
   try {
-    await client.sendRawTransaction({ serializedTransaction });
-  } catch (e) {
-    const known = await client.getTransaction({ hash }).then(
-      () => true,
-      () => false,
-    );
-    if (!known) {
-      if (e instanceof BaseError && e.walk((x) => x instanceof RpcRequestError)) {
-        const refused = new Error(`the node refused ${label} (${hash}) and does not know it: ${e.shortMessage ?? e.message}`, { cause: e });
-        refused.notBroadcast = true;
-        throw refused;
+    try {
+      await client.sendRawTransaction({ serializedTransaction });
+    } catch (e) {
+      const held = await client.getTransaction({ hash }).then(
+        () => true,
+        () => false,
+      );
+      if (!held) {
+        if (e instanceof BaseError && e.walk((x) => x instanceof RpcRequestError)) {
+          throw known(new Error(`the node refused ${label} (${hash}) and does not know it: ${e.shortMessage ?? e.message}`, { cause: e }), 'refused');
+        }
+        throw e;
       }
-      throw e;
     }
+    const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
+    if (receipt.status !== 'success') throw known(new Error(`${label} reverted in ${hash}`), 'reverted');
+    return { hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, logs: receipt.logs ?? [] };
+  } catch (e) {
+    if (e && typeof e === 'object' && !e.sendOutcome) e.hash = hash;
+    throw e;
   }
-  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
-  if (receipt.status !== 'success') throw new Error(`${label} reverted in ${hash}`);
-  return { hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash };
 }
 
 /**
@@ -137,13 +161,33 @@ export async function sendTransaction({ client, wallet, account, to, data, value
  * timelock lives), and two sends from one key racing for a nonce would
  * replace or reject each other. `run(chainId, fn)` runs `fn` after every
  * earlier send on that chain has settled.
+ *
+ * A send whose outcome is UNKNOWN (its error carries no `sendOutcome`) halts
+ * that chain's queue for the rest of the run: the transaction may still be in
+ * a pool that the next nonce lookup does not see, and a later send could take
+ * its nonce and replace it. Every later `run` on that chain rejects without
+ * calling `fn`, with `sendOutcome: 'not-sent'`. A send known to have failed
+ * (not sent, refused, reverted) leaves the queue running.
  */
 export function createSendQueues() {
   const tails = new Map();
+  const halted = new Map();
   return {
     run(chainId, fn) {
       const prior = tails.get(chainId) ?? Promise.resolve();
-      const next = prior.then(fn, fn);
+      const guarded = () => {
+        const why = halted.get(chainId);
+        if (why) return Promise.reject(known(new Error(`not sent: ${why}`), 'not-sent'));
+        return Promise.resolve()
+          .then(fn)
+          .catch((e) => {
+            if (!e?.sendOutcome) {
+              halted.set(chainId, `an earlier transaction on chain ${chainId}${e?.hash ? ` (${e.hash})` : ''} has an unknown outcome, and another send could take its nonce; the next run sends once it has settled`);
+            }
+            throw e;
+          });
+      };
+      const next = prior.then(guarded, guarded);
       tails.set(chainId, next.catch(() => {}));
       return next;
     },

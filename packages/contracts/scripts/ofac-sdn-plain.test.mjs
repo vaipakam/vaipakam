@@ -96,6 +96,17 @@ test('plainWitness: checks the two files agree, then splits delistings by whethe
   // Mentioned anywhere counts — a remark, in any case.
   const remark = parse(XML.replace('<uid>38</uid>', '<uid>38</uid><remarks>was 0x000000000000000000000000000000000000DEAD</remarks>'));
   assert.deepEqual(plainWitness(remark, advanced, [gone]).stillMentioned, [gone]);
+  // A mention split across decoded pieces of one value — text then CDATA, or
+  // around a comment — is still a mention, wherever the input is cut.
+  for (const split of ['0x00000000000000000000<![CDATA[0000000000000000dEaD]]>', '0x00000000000000000000<!-- x -->0000000000000000dEaD']) {
+    const xml = XML.replace('<uid>38</uid>', `<uid>38</uid><remarks>${split}</remarks>`);
+    assert.deepEqual(plainWitness(parse(xml), advanced, [gone]).stillMentioned, [gone], split);
+    const { parsed } = await parseSdnPlainStream((function* () {
+      const bytes = Buffer.from(xml);
+      for (let i = 0; i < bytes.length; i += 13) yield bytes.subarray(i, i + 13);
+    })());
+    assert.deepEqual(plainWitness(parsed, advanced, [gone]).stillMentioned, [gone], `${split}, cut every 13 bytes`);
+  }
   assert.throws(() => plainWitness({ ...plain, publicationDate: 20260308 }, advanced, []), /plain SDN file is publication 20260308 but the advanced file is 20260307/);
   const missing = parse(XML.replace('0x252a8bd2319d8a555b872990601221b3a2053bce', 'TNotEvm'));
   assert.throws(() => plainWitness(missing, advanced, []), /advanced file lists 0x252A8Bd2319d8A555b872990601221B3a2053Bce, which the plain file does not/);

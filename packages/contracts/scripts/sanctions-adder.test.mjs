@@ -196,11 +196,20 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
   ({ chain } = await run({ version: 7n, addresses: [C] }, {
     send: async (call, { onSubmitted }) => {
       onSubmitted(`0x${'f'.repeat(64)}`);
-      throw Object.assign(new Error('the node refused it'), { notBroadcast: true });
+      throw Object.assign(new Error('the node refused it'), { sendOutcome: 'refused' });
     },
   }));
   assert.equal(chain.status, 'refused');
   assert.match(summarizeFailure(chain), /REFUSED, nothing sent: the node refused it/);
+  // Included and reverted: broadcast, so the chain stopped, and said as such.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'d'.repeat(64)}`);
+      throw Object.assign(new Error('applyUpdate reverted'), { sendOutcome: 'reverted' });
+    },
+  }));
+  assert.equal(chain.status, 'stopped');
+  assert.match(summarizeFailure(chain), /0xd+ — included but REVERTED/);
   const failed = failureReport('x', [{ tx: null, state: 'submitting' }]);
   assert.equal(failed.status, 'refused');
   assert.match(summarizeFailure(failed), /REFUSED, nothing sent/);

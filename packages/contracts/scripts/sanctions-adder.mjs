@@ -168,8 +168,10 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
         },
       });
     } catch (e) {
-      // Signed, but the node refused it and does not know it.
-      if (e?.notBroadcast) entry.state = 'rejected';
+      // What the send is known to have done (sanctions-service SEND_OUTCOMES):
+      // signed but refused by the node, or included and reverted.
+      if (e?.sendOutcome === 'refused') entry.state = 'rejected';
+      else if (e?.sendOutcome === 'reverted') entry.state = 'reverted';
       throw e;
     }
     Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
@@ -245,7 +247,8 @@ export function needsAlert(report) {
  * The report for a chain whose update threw, built from what it had already
  * sent. A chain that sent nothing is `refused`; one that broadcast anything is
  * `stopped`, and says per transaction whether it is final, included but not
- * yet final, or broadcast with no receipt seen (it may still land).
+ * yet final, included and reverted, or broadcast with no receipt seen (it
+ * may still land).
  */
 export function failureReport(reason, progress) {
   const sent = progress.filter((e) => e.tx && e.state !== 'rejected');
@@ -255,7 +258,7 @@ export function failureReport(reason, progress) {
 /** The lines a person reads for one chain that did not complete. */
 export function summarizeFailure(report) {
   if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
-  const word = { final: 'final', included: 'included, NOT yet final', submitted: 'signed and broadcast attempted, no receipt seen — it may still land' };
+  const word = { final: 'final', included: 'included, NOT yet final', reverted: 'included but REVERTED — it listed nothing', submitted: 'signed and broadcast attempted, no receipt seen — it may still land' };
   const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
   for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
   lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');

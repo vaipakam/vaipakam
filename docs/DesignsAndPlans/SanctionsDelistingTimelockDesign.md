@@ -237,11 +237,20 @@ Both accept native value only as their messenger's fee refund.
     or that only one file supports, are reported for the Safe; an unreadable
     RedStone answer skips the address for that run.
 
-  Publication-derived steps, and requesting and executing, wait while the
-  list's latest version is not the finalized one. Requesting and executing
-  also wait while OFAC serves a newer publication than the list records,
-  which the bot checks whenever a proposal is ready to execute; between OFAC
-  publishing and the bot's next check anyone may still execute a matured
+  Publication-derived steps wait while the list's latest version is not the
+  finalized one. Every step that moves a proposal toward a delisting —
+  requesting the clearance, relaying RedStone's answer, executing — is
+  taken, whoever proposed it, only on a conclusive reading of OFAC's files
+  made in that same chain state (a proposal reaching a new stage forces a new
+  reading), and only when that reading supports delisting every address the
+  proposal names. The contract checks a proposal's publication hash and date,
+  the outstanding count, vetoes and RedStone, never the addresses against
+  OFAC's files, so the bot is the only check on them: another proposer's
+  proposal naming an address the reading does not support is never moved on
+  and is reported for the Safe to veto, and the bot withdraws its own. A
+  failed, stale or newer download, files that disagree, or a same-day
+  reissue the adder will not apply by itself, and nothing moves. Between OFAC
+  publishing and the bot's next reading anyone may still execute a matured
   proposal, and the RedStone check is then the guard. With no RedStone check configured (every testnet today) the
   route is unavailable, so the bot proposes nothing and reports that the
   delistings await the Safe. The OFAC files are downloaded only when a chain
@@ -249,8 +258,9 @@ Both accept native value only as their messenger's fee refund.
   daily; only a conclusive reading is remembered, so a failed download, two
   files from different publications, or a send that did not land is retried
   the next hour. Every transaction is simulated, recorded by hash before broadcast,
-  and reported as included, refused by the node, failed or unknown; one failure never stops the
-  other steps. The key needs native gas on both chains of a cross-chain
+  and reported as included, reverted, refused by the node, failed or unknown; one failure never stops the
+  other steps, except that a transaction with an unknown outcome stops further sends on that chain
+  for the run, so a later one cannot take its nonce. The key needs native gas on both chains of a cross-chain
   route, for the two CCIP fees.
 - **CCIP clearance wiring** (next): deploy the attestor where RedStone
   runs; register it as the clearance channel's handler there with the

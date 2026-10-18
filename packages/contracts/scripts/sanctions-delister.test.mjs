@@ -124,18 +124,25 @@ test('an unreadable RedStone holds the address back; the proposal stays within w
 });
 
 test('publication work is refused or deferred, never guessed at', () => {
-  // OFAC serves a newer file than the list records: wait for the adder, and
-  // hold executing and requesting meanwhile.
+  // OFAC serves a newer file than the list records: wait for the adder,
+  // which resolves it by changing the list.
   const behind = evaluatePublication(snapOf({ list: { sourceHash: OLD_HASH, publicationDate: 20260301 } }), PUBLICATION);
   assert.equal(behind.status, 'mismatch');
-  assert.match(behind.reason, /a newer publication; proposing, executing and requesting wait for the adder to record it/);
-  assert.equal(behind.hold, behind.reason);
+  assert.match(behind.reason, /a newer publication; proposals wait for the adder to record it/);
   assert.equal(behind.transient, undefined);
-  // An OLDER copy than the list's (a stale download): no hold, read again next run.
+  // An OLDER copy than the list's (a stale download): read again next run.
   const stale = evaluatePublication(snapOf({ list: { sourceHash: OLD_HASH, publicationDate: 20260310 } }), PUBLICATION);
-  assert.equal(stale.status, 'mismatch');
-  assert.equal(stale.hold, undefined);
+  assert.equal(stale.status, 'refused');
   assert.equal(stale.transient, true);
+  // Another file under the list's own date: a same-day reissue the adder
+  // will not apply by itself, so a person reconciles it.
+  const reissue = evaluatePublication(snapOf({ list: { sourceHash: OLD_HASH } }), PUBLICATION);
+  assert.equal(reissue.status, 'refused');
+  assert.equal(reissue.transient, undefined);
+  assert.match(reissue.reason, /same-day reissue.*a person must reconcile it/);
+  const reissuePlan = planChain(snapOf({ list: { sourceHash: OLD_HASH }, proposals: [proposal({ sourceHash: OLD_HASH, ready: true, reason: null })], reservedDelistings: 1 }), KEY, reissue, new Map());
+  assert.deepEqual(reissuePlan.actions, []);
+  assert.ok(reissuePlan.review.some((r) => r.includes('publication work refused') && r.includes('same-day reissue')));
   // The list records this file under another date: a person reconciles it.
   const misdated = evaluatePublication(snapOf({ list: { publicationDate: 20260308 } }), PUBLICATION);
   assert.equal(misdated.status, 'refused');
@@ -200,6 +207,11 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
     proposal({ id: 15n, proposer: OTHER, unlisted: [D3], accounts: [D3], ready: true, reason: null }),
     proposal({ id: 16n, reason: 'OracleStale' }),
     proposal({ id: 17n, publicationDate: 20260301, accounts: [D4] }),
+    // Under the list's publication, but naming an address OFAC still lists,
+    // or one SDN.XML still mentions.
+    proposal({ id: 18n, proposer: OTHER, ready: true, reason: null, accounts: [D1, A1] }),
+    proposal({ id: 19n, reason: 'ClearanceNotRequested', proposer: OTHER, accounts: [FALSE_ONLY] }),
+    proposal({ id: 20n, ready: true, reason: null, accounts: [FALSE_ONLY] }),
   ];
   const plan = planChain(snapOf({ proposals, reservedDelistings: 5 }), KEY, ev, new Map());
   const byId = Object.fromEntries(plan.actions.map((a) => [a.id?.toString(), a]));
@@ -208,10 +220,10 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   assert.deepEqual(byId['3'], { kind: 'reconfirm', id: 3n, sourceHash: adv.sourceHash, publicationDate: 20260307, derived: true });
   assert.equal(byId['4'].kind, 'withdraw');
   assert.match(byId['4'].why, /no longer supports delisting 0x1CAb/);
-  assert.equal(byId['5'].kind, 'execute');
-  assert.equal(byId['6'].kind, 'request');
-  assert.equal(byId['7'].kind, 'request');
-  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234' });
+  assert.deepEqual(byId['5'], { kind: 'execute', id: 5n, derived: true });
+  assert.deepEqual(byId['6'], { kind: 'request', id: 6n, derived: true });
+  assert.deepEqual(byId['7'], { kind: 'request', id: 7n, derived: true }, "another proposer's proposal moves on when OFAC supports every address in it");
+  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234', derived: true });
   assert.equal(byId['9'], undefined);
   assert.equal(byId['10'].kind, 'withdraw');
   assert.equal(byId['11'], undefined, "another proposer's proposal is never withdrawn");
@@ -231,24 +243,47 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   assert.ok(plan.review.some((r) => r.includes('proposal 16 is matured but not executable: OracleStale')));
   // Same file, another date: the publication changed as far as execute is concerned.
   assert.equal(byId['17'].kind, 'reconfirm');
+  // A proposal naming an address the publication does not support delisting
+  // is never moved on, whoever made it: another proposer's goes to the Safe
+  // to veto, this key's own is withdrawn.
+  assert.equal(byId['18'], undefined);
+  assert.ok(plan.review.some((r) => r.includes(`proposal 18 (another proposer's) names ${A1}`) && r.includes('the Safe should veto it')));
+  assert.equal(byId['19'], undefined);
+  assert.ok(plan.review.some((r) => r.includes(`proposal 19 (another proposer's) names ${FALSE_ONLY}`)));
+  assert.equal(byId['20'].kind, 'withdraw');
+  assert.equal(byId['20'].derived, true);
+  assert.match(byId['20'].why, /does not support delisting 0x1111/);
 });
 
-test('executing and requesting wait while OFAC serves a newer publication or the list is mid-update', () => {
-  const proposals = [proposal({ id: 1n, ready: true, reason: null }), proposal({ id: 2n, reason: 'ClearanceExpired' })];
-  const newer = evaluatePublication(snapOf({ list: { sourceHash: OLD_HASH, publicationDate: 20260301 } }), PUBLICATION);
-  const held = planChain(snapOf({ proposals: proposals.map((p) => ({ ...p, sourceHash: OLD_HASH, publicationDate: 20260301 })), reservedDelistings: 2, list: { sourceHash: OLD_HASH, publicationDate: 20260301 } }), KEY, newer, new Map());
-  assert.deepEqual(held.actions, []);
-  assert.ok(held.notes.some((n) => n.includes('proposal 1 is ready, but executing waits: the list records publication 20260301')));
-  assert.ok(held.notes.some((n) => n.includes('proposal 2 needs a clearance request, which waits')));
-  const moving = planChain(snapOf({ proposals, reservedDelistings: 2, list: { latestVersion: 6n } }), KEY, { status: 'not-loaded', reason: 'x' }, new Map());
-  assert.deepEqual(moving.actions, []);
-  assert.ok(moving.notes.some((n) => n.includes('executing waits: the list is mid-update')));
+test('nothing moves a proposal on without a conclusive reading of OFAC\'s files', () => {
+  const owed = { status: 'owed', messageId: `0x${'e'.repeat(64)}`, payload: '0x1234', sourceChainId: 421614, attestor: OTHER };
+  const proposals = (o = {}) => [
+    proposal({ id: 1n, ready: true, reason: null, ...o }),
+    proposal({ id: 2n, reason: 'ClearanceExpired', ...o }),
+    proposal({ id: 3n, reason: 'ClearanceNotAnswered', relay: owed, proposer: OTHER, ...o }),
+  ];
+  const older = { sourceHash: OLD_HASH, publicationDate: 20260301 };
+  const torn = { ...PUBLICATION, plain: { ...PUBLICATION.plain, parsed: { ...plain.parsed, publicationDate: 20260308 } } };
+  for (const [label, snap, ev] of [
+    ['a newer publication', snapOf({ proposals: proposals(older), reservedDelistings: 3, list: older }), evaluatePublication(snapOf({ list: older }), PUBLICATION)],
+    ['a failed download', snapOf({ proposals: proposals(), reservedDelistings: 3 }), evaluatePublication(snapOf(), { error: 'the OFAC files could not be loaded: timeout' })],
+    ['files from two publications', snapOf({ proposals: proposals(), reservedDelistings: 3 }), evaluatePublication(snapOf(), torn)],
+    ['a count the files do not support', snapOf({ proposals: proposals(), reservedDelistings: 3, list: { pendingDelistings: 4 } }), evaluatePublication(snapOf({ list: { pendingDelistings: 4 } }), PUBLICATION)],
+    ['files not read', snapOf({ proposals: proposals(), reservedDelistings: 3 }), { status: 'not-loaded', reason: 'x' }],
+    ['a list mid-update', snapOf({ proposals: proposals(), reservedDelistings: 3, list: { latestVersion: 6n } }), evaluatePublication(snapOf(), PUBLICATION)],
+  ]) {
+    const plan = planChain(snap, KEY, ev, new Map());
+    assert.deepEqual(plan.actions, [], label);
+    for (const step of ['proposal 1: executing waits', 'proposal 2: requesting the clearance waits', "proposal 3: relaying RedStone's answer waits"]) {
+      assert.ok(plan.notes.some((n) => n.startsWith(step)), `${label}: ${step}`);
+    }
+  }
 });
 
 test('a stale proposal of its own waits when the files cannot be read', () => {
   const plan = planChain(snapOf({ proposals: [proposal({ sourceHash: OLD_HASH })] }), KEY, { status: 'not-loaded', reason: 'x' }, new Map());
   assert.deepEqual(plan.actions, []);
-  assert.match(plan.notes[0], /older publication and cannot be re-checked yet/);
+  assert.match(plan.notes[0], /older publication; reconfirming waits: x/);
 });
 
 test('refuses a key that holds more than the proposer role, and a timelock serving another list', async () => {
@@ -297,6 +332,9 @@ test('downloads only when there is publication work, and re-checks an unchanged 
   assert.equal(loads, 2);
   await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, cache: first.cache, nowMs: t0 + RE_EVALUATE_MS });
   assert.equal(loads, 3);
+  // An entry stamped after "now" (the host clock went backwards) is stale.
+  await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, cache: first.cache, nowMs: t0 - 60_000 });
+  assert.equal(loads, 4);
   // Nothing outstanding beyond what is proposed: no download at all.
   assert.equal(wantsPublication(snapOf({ reservedDelistings: 5 }), KEY, undefined, t0), false);
   // A route closed: no download either.
@@ -342,9 +380,9 @@ test('a failed send is recorded, the others still go, and a failed proposal is r
 
 test('a send the node refused is reported as not broadcast', async () => {
   const snap = snapOf({ reservedDelistings: 5, proposals: [proposal({ id: 1n, reason: 'ClearanceNotRequested' })] });
-  const refused = Object.assign(new Error('the node refused it'), { notBroadcast: true });
+  const refused = Object.assign(new Error('the node refused it'), { sendOutcome: 'refused' });
   const chain = { slug: 'b', name: 'B', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async (a, { onSubmitted }) => (onSubmitted('0xdef'), Promise.reject(refused)) } };
-  const { report } = await runDelister({ chains: [chain], key: KEY, loadPublication: async () => assert.fail('no download'), nowMs: 1 });
+  const { report } = await runDelister({ chains: [chain], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 1 });
   assert.equal(report.chains.b.actions[0].state, 'rejected');
   assert.match(summarize(report), /0xdef — signed, but the node refused it; not broadcast/);
 });
@@ -385,20 +423,52 @@ test('only a conclusive reading is cached', async () => {
   const stale = snapOf({ reservedDelistings: 5, proposals: [proposal({ sourceHash: OLD_HASH })] });
   const failedReconfirm = await runDelister({ chains: [chainWith(stale, async () => Promise.reject(new Error('reverted')))], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 4 });
   assert.equal(failedReconfirm.cache[84532], undefined);
-  // A newer publication than the list's: cached WITH its hold, which the
-  // next run applies without downloading.
+  // A newer publication than the list's is cached: only a change to the
+  // list resolves it. The next run, unchanged, downloads nothing and still
+  // moves nothing on.
   const behind = snapOf({ reservedDelistings: 1, proposals: [proposal({ id: 1n, sourceHash: OLD_HASH, publicationDate: 20260301, ready: true, reason: null })], list: { sourceHash: OLD_HASH, publicationDate: 20260301 } });
   const sends = [];
   const first = await runDelister({ chains: [chainWith(behind, async (a) => (sends.push(a.kind), { hash: '0x02', blockNumber: 3n }))], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 5 });
-  assert.ok(first.cache[84532].hold);
+  assert.equal(first.cache[84532].status, 'mismatch');
   const second = await runDelister({ chains: [chainWith(behind, async (a) => (sends.push(a.kind), { hash: '0x02', blockNumber: 3n }))], key: KEY, loadPublication: async () => assert.fail('cached'), cache: first.cache, nowMs: 6 });
   assert.deepEqual(sends, []);
-  assert.ok(second.report.chains.b.notes.some((n) => n.includes('executing waits')));
+  assert.ok(second.report.chains.b.notes.some((n) => n.startsWith("proposal 1: executing waits: nothing changed since OFAC's files were last read")));
 });
 
-test('a proposal ready to execute is checked against OFAC first', () => {
-  const ready = snapOf({ reservedDelistings: 5, proposals: [proposal({ ready: true, reason: null })] });
-  assert.equal(wantsPublication(ready, KEY, undefined, 0), true);
+test('a proposal reaching a new stage is checked against OFAC again, cache or not', async () => {
+  let loads = 0;
+  const sends = [];
+  const chainWith = (snap) => ({ slug: 'b', name: 'B', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async (a) => (sends.push(a.kind), { hash: '0x02', blockNumber: 3n, logs: [] }) } });
+  const loadPublication = async () => (loads++, PUBLICATION);
+  const run = (snap, cache, nowMs) => runDelister({ chains: [chainWith(snap)], key: KEY, loadPublication, cache, nowMs });
+  const at = (o) => snapOf({ reservedDelistings: 5, proposalCount: 1, proposals: [proposal(o)] });
+  // In its window: nothing to do, nothing read.
+  const inWindow = await run(at({ eta: 2_000_000n }), {}, 1);
+  assert.equal(loads, 0);
+  // Out of the window, a request is due: read, then requested.
+  const requested = await run(at({ reason: 'ClearanceNotRequested' }), inWindow.cache, 2);
+  assert.equal(loads, 1);
+  // Requested, the answer on its way: nothing to send, nothing read.
+  const inFlight = await run(at({ reason: 'ClearanceNotAnswered', relay: { status: 'in-flight' } }), requested.cache, 3);
+  assert.equal(loads, 1);
+  // The answer is owed: read again before relaying it, though the cache is fresh.
+  const replied = await run(at({ reason: 'ClearanceNotAnswered', relay: { status: 'owed', messageId: `0x${'e'.repeat(64)}`, payload: '0x12', sourceChainId: 421614, attestor: OTHER } }), inFlight.cache, 4);
+  assert.equal(loads, 2);
+  // Ready: read again before executing.
+  await run(at({ ready: true, reason: null }), replied.cache, 5);
+  assert.equal(loads, 3);
+  assert.deepEqual(sends, ['request', 'reply', 'execute']);
+});
+
+test('every step that moves a proposal on is checked against OFAC first', () => {
+  const at = (o) => snapOf({ reservedDelistings: 5, proposals: [proposal(o)] });
+  assert.equal(wantsPublication(at({ ready: true, reason: null }), KEY, undefined, 0), true);
+  assert.equal(wantsPublication(at({ reason: 'ClearanceNotRequested', proposer: OTHER }), KEY, undefined, 0), true);
+  assert.equal(wantsPublication(at({ reason: 'ClearanceExpired' }), KEY, undefined, 0), true);
+  assert.equal(wantsPublication(at({ reason: 'ClearanceNotAnswered', relay: { status: 'owed' } }), KEY, undefined, 0), true);
+  // Nothing to send: no download.
+  assert.equal(wantsPublication(at({ reason: 'ClearanceNotAnswered', relay: { status: 'in-flight' } }), KEY, undefined, 0), false);
+  assert.equal(wantsPublication(at({ eta: 2_000_000n }), KEY, undefined, 0), false);
   // Another proposer's proposal that would revert on a delisted address does not count.
   assert.equal(wantsPublication(snapOf({ reservedDelistings: 5, proposals: [proposal({ proposer: OTHER, ready: true, reason: null, unlisted: [D1] })] }), KEY, undefined, 0), false);
 });

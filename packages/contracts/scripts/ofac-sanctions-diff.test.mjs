@@ -28,6 +28,7 @@ import {
   parseSdnAdvancedStream,
   createSdnParser,
   createXmlScanner,
+  createHexRunCollector,
   downloadToFile,
 } from './ofac-sanctions-diff.mjs';
 import { toEventSelector, getAddress } from 'viem';
@@ -551,8 +552,27 @@ test('buildUpdate: a delisting is refused while the address still appears in the
   const encoded = withInProfile(`<Other>&#x30;x${'1'.repeat(40)}</Other>`);
   const parsedEnc = parseSdnAdvanced(encoded);
   assert.throws(() => buildConfirmed({ parsed: parsedEnc, sourceHash: sourceHash(Buffer.from(encoded)), current: [...parsedEnc.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  // A mention split across decoded pieces — text then CDATA, or around a
+  // comment — is one run of the decoded text, so it still counts (#2567 r1).
+  for (const split of [`${E.slice(0, 22)}<![CDATA[${E.slice(22)}]]>`, `${E.slice(0, 22)}<!-- x -->${E.slice(22)}`]) {
+    const t = withInProfile(`<Other>${split}</Other>`);
+    const p = parseSdnAdvanced(t);
+    assert.throws(() => buildConfirmed({ parsed: p, sourceHash: sourceHash(Buffer.from(t)), current: [...p.addresses, E], currentVersion: 1, ...FRESH }), /still appears in the source file/, split);
+  }
   // A hand-built parsed object without the witness is refused, never skipped.
   assert.throws(() => buildConfirmed({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
+});
+
+test('createHexRunCollector: runs carry across raw pieces and across decoded-text calls, never split', () => {
+  const body = 'ab'.repeat(20);
+  const c = createHexRunCollector();
+  c.raw(`x${body.slice(0, 7)}`);
+  c.raw(`${body.slice(7)}<`);
+  c.text(body.slice(0, 30));
+  c.text(body.slice(30));
+  c.text(' ');
+  c.text(body.slice(0, 39));
+  assert.deepEqual(c.end(), { raw: [body], text: [body] });
 });
 
 // ---- Codex #2543 r21: delistings need a second source; reliability is a closed vocabulary ----
