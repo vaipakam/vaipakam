@@ -722,16 +722,23 @@ contract PriorityRoutingPerkTest is SetupTest {
     function test_PreviewIntent_AppliesTheCreditRule_LikeTheFill() public {
         _optedInFixture(1);
         uint256 cp = _postBorrower("b-preview");
-        _exhaustSolver();
         LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
+        assertTrue(r.ok, "capacity covers: Ok");
+        assertFalse(r.spendsPriorityCredit, "covered by capacity: the solver is charged, no credit spent");
+        _exhaustSolver();
+        r = RiskPreviewFacet(address(diamond)).previewIntent(
+            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
         assertTrue(r.ok, "exhausted + opted in + credit: the preview is Ok");
+        assertTrue(r.spendsPriorityCredit, "and it names the credit as what carries the fill");
         _setPriority(false);
         r = RiskPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         assertFalse(r.ok, "opted out: refused");
+        assertFalse(r.spendsPriorityCredit, "a refused preview names no credit");
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "for capacity");
         _expectExhausted();
         _fill(cp);
@@ -740,6 +747,7 @@ contract PriorityRoutingPerkTest is SetupTest {
             solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         assertTrue(r.ok, "opted back in: Ok again");
+        assertTrue(r.spendsPriorityCredit, "carried by the credit again");
         _fill(cp);
         assertEq(_credits(), 0, "and the fill it previewed spent the credit");
     }

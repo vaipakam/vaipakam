@@ -421,13 +421,16 @@ contract RiskPreviewFacet {
         // (`LibPriorityRouting.chargeFill`): a capacity refusal on an opted-in intent
         // whose owner holds a priority credit is lifted, so the preview stays Ok
         // exactly when the fill would succeed, and a keeper reading it does not
-        // stop at a fill a credit would carry.
-        if (
-            res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)
-                && !LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)
-        ) {
-            res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
-            res.ok = false;
+        // stop at a fill a credit would carry. Codex #2563 r4 — and it says WHICH
+        // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
+        // solver whether the fill charges its capacity or spends the owner's credit.
+        if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
+            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)) {
+                res.spendsPriorityCredit = true;
+            } else {
+                res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
+                res.ok = false;
+            }
         }
     }
 
