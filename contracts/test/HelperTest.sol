@@ -2211,13 +2211,14 @@ contract HelperTest {
     }
 
     function getPerkFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory s = new bytes4[](6);
+        bytes4[] memory s = new bytes4[](7);
         s[0] = PerkFacet.setPerkConfig.selector;
         s[1] = PerkFacet.purchasePerk.selector;
         s[2] = PerkFacet.consumePerkCredit.selector;
         s[3] = PerkFacet.getPerkConfig.selector;
         s[4] = PerkFacet.getPerkEntitlement.selector;
         s[5] = PerkFacet.getPerkSpendCumulative.selector;
+        s[6] = PerkFacet.getPriorityRoutingStatus.selector; // #2559 Codex #2563 r6
         return s;
     }
 

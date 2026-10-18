@@ -643,9 +643,15 @@ contract PriorityRoutingPerkTest is SetupTest {
         _lightCurve();
         TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
         _expectNotDeliverableNoMove();
+        (bool armed, bool deliverable, bool counted, bool lit, bool live) = _perk().getPriorityRoutingStatus();
+        assertFalse(armed, "status: not armed");
+        assertFalse(deliverable, "status: not deliverable");
+        assertTrue(counted && lit && live, "status: every OTHER condition holds, so the arming write is what is missing");
         vm.expectEmit(false, false, false, true, address(diamond));
         emit LibPriorityRouting.PriorityRoutingPerkArmed(PRICE);
         _perk().setPerkConfig(PERK, PRICE, 0);
+        (armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
+        assertTrue(armed && deliverable, "status: armed and deliverable after the arming write");
         _expectPurchaseSucceeds();
         vm.recordLogs();
         _perk().setPerkConfig(PERK, PRICE * 2, 0); // re-pricing: armed once, no second event

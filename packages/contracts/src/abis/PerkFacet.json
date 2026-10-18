@@ -95,6 +95,39 @@
   },
   {
     "type": "function",
+    "name": "getPriorityRoutingStatus",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "armed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "deliverable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "counted",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "solverCapacityLit",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "intentMatchingLive",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "purchasePerk",
     "inputs": [
       {

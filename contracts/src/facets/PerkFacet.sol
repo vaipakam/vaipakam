@@ -314,6 +314,31 @@ contract PerkFacet is
         emit PerkCreditConsumed(user, perkId, held);
     }
 
+    /// @notice #2559 (Codex #2563 r6) — why perk 1 (priority routing) does or does
+    ///         not sell RIGHT NOW, condition by condition, so an operator can tell
+    ///         the required arming write from any other refusal without replaying
+    ///         event history. `deliverable` is exactly the predicate `purchasePerk`
+    ///         reads; the others are its parts.
+    /// @return armed              This version's first priced, counted write has
+    ///                            armed the effect (`PriorityRoutingPerkArmed`).
+    /// @return deliverable        All conditions hold: a priced purchase would not be
+    ///                            refused `PerkNotDeliverable`.
+    /// @return counted            Perk 1 is configured counted (duration zero).
+    /// @return solverCapacityLit  The Solver service-capacity curve is set.
+    /// @return intentMatchingLive Both intent master gates are on.
+    function getPriorityRoutingStatus()
+        external
+        view
+        returns (bool armed, bool deliverable, bool counted, bool solverCapacityLit, bool intentMatchingLive)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        armed = s.priorityRoutingPerkArmed;
+        deliverable = LibPriorityRouting.deliverable(s);
+        counted = s.perkDurationSeconds[LibPriorityRouting.PERK_ID] == 0;
+        solverCapacityLit = s.capacityCurves[uint8(LibVaipakam.ServiceCapacityRole.Solver)].freeTier != 0;
+        intentMatchingLive = s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled;
+    }
+
     /// @notice Price and duration of one perk. `priceVpfi == 0` ⇒ not for sale.
     /// @return priceVpfi       VPFI wei per unit.
     /// @return durationSeconds Seconds one unit grants; zero ⇒ counted perk.
