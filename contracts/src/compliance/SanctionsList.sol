@@ -6,6 +6,7 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
+import {LibOracleFreshness} from "./LibOracleFreshness.sol";
 
 /**
  * @title  SanctionsList
@@ -550,25 +551,16 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     }
 
     /// @notice The secondary's own freshness, when it reports one.
-    /// @dev    Calls `getLastUpdateBlockTimestamp()` (RedStone's freshness
-    ///         read) with a low-level static call, so a secondary that lacks
-    ///         the function, reverts, or answers in an unexpected shape
-    ///         yields `known = false` instead of reverting this view. A
-    ///         freshness that cannot be read is reported as unknown, never as
-    ///         a time. So is a word that cannot be one: zero (never updated,
-    ///         or a fallback answering with an empty word) and any value
-    ///         after the current block are reported as unknown, so a reader
-    ///         is never shown a 1970 or future "last updated" figure.
+    /// @dev    Read through {LibOracleFreshness}, the one rule for this
+    ///         reading: a secondary that lacks `getLastUpdateBlockTimestamp()`,
+    ///         reverts, or answers in an unexpected shape yields
+    ///         `known = false` instead of reverting this view, and so do zero
+    ///         and any time after the current block, so a reader is never
+    ///         shown a 1970 or future "last updated" figure.
     /// @return known      The secondary answered with a plausible timestamp.
     /// @return timestamp  Its answer; 0 when `known` is false.
     function secondaryLastUpdate() public view returns (bool known, uint256 timestamp) {
-        if (address(_secondary) == address(0)) return (false, 0);
-        (bool ok, bytes memory ret) =
-            address(_secondary).staticcall(abi.encodeWithSignature("getLastUpdateBlockTimestamp()"));
-        if (!ok || ret.length != 32) return (false, 0);
-        uint256 ts = abi.decode(ret, (uint256));
-        if (ts == 0 || ts > block.timestamp) return (false, 0);
-        return (true, ts);
+        return LibOracleFreshness.lastUpdate(address(_secondary));
     }
 
     /// @notice Everything a reader needs to judge how current this list is,

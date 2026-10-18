@@ -339,6 +339,10 @@ export interface Deployment {
    *  rehearsal target and is NOT what the Diamond screens against
    *  (`sanctions.oracle` says what it does). */
   sanctionsList?: HexAddress;
+  /** #2443 — the `SanctionsDelistingTimelock` `DeploySanctionsDelisting`
+   *  deployed for `sanctionsList` on this chain: the bot-proposes,
+   *  Safe-vetoes delisting route, appointed as one of the list's removers. */
+  sanctionsDelistingTimelock?: HexAddress;
 
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven

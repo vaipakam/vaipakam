@@ -415,6 +415,11 @@ library Deployments {
     ///         `SanctionsList` `DeploySanctionsList` last deployed on this
     ///         chain. Zero where none was deployed.
     function readSanctionsListOptional() internal view returns (address) { return _tryReadAddr(".sanctionsList"); }
+    /// @notice #2443 — optional, non-reverting read of
+    ///         `.sanctionsDelistingTimelock`, the delisting timelock
+    ///         `DeploySanctionsDelisting` last deployed on this chain. Zero
+    ///         where none was deployed.
+    function readSanctionsDelistingTimelockOptional() internal view returns (address) { return _tryReadAddr(".sanctionsDelistingTimelock"); }
     /// #2548 — one key of the faucet mock rig `DeployTestnetMocks` records
     /// under `.testnetMocks` (e.g. "feedRegistry"); `address(0)` when the
     /// chain carries no mock rig or the key is absent.
@@ -551,6 +556,9 @@ library Deployments {
     /// @notice #2443 — the `SanctionsList` deployed on this chain, recorded
     ///         when deployed and independently of what the Diamond screens.
     function writeSanctionsList(address a) internal { _writeAddr(".sanctionsList", a); }
+    /// @notice #2443 — the `SanctionsDelistingTimelock` deployed on this
+    ///         chain for the recorded `SanctionsList`.
+    function writeSanctionsDelistingTimelock(address a) internal { _writeAddr(".sanctionsDelistingTimelock", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
