@@ -51,7 +51,7 @@ const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
  * the under-water skip (Codex #2485 r4). The wall clock picked an odd id
  * about half the time. Re-derive this if the fixture's chain count changes.
  */
-const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000 } as const;
+const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000, deadlineMs: Number.MAX_SAFE_INTEGER } as const;
 
 
 /**

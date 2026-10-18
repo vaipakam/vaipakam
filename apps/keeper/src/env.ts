@@ -129,6 +129,10 @@ interface BaseEnv {
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
 
+  // #1944 + the transport epochs — the delivery-proof pass (`deliveryProof.ts`).
+  /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
+  REWARD_DELIVERY_PROOF_ENABLED?: string;
+
   // #2483 — time-based default pass. `secret_text` like the flags above.
   /** 'true' arms the grace-default pass (in addition to KEEPER_ENABLED). It
    *  submits `triggerDefault`, which sells a defaulted borrower's collateral. */
@@ -274,6 +278,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_REMIT_LOOKBACK_DAYS',
   'REWARD_REMIT_LANE_CAP',
   'REWARD_COMMIT_ENABLED',
+  'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_COMMIT_LOOKBACK_DAYS',
   'GRACE_DEFAULT_ENABLED',
   'LIQ_CONFIDENCE_MIN_CHECKS',
@@ -426,6 +431,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
+    REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,

@@ -831,14 +831,16 @@ artifacts and stay in their respective env / config:
   `PUSH_CHANNEL_PK`, aggregator API keys, `KEEPER_PRIVATE_KEY`.
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+  `REWARD_DELIVERY_PROOF_ENABLED`,
   `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
   `ZEROEX_API_KEY`, `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
   entry in `wrangler.jsonc`'s `vars`. At the 2026-07-30 readback the two
   `REWARD_*` flags then existing were **absent** on the live Worker,
   which left THREE scheduled passes dark — `rewardBudgetRemit` and
   `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
-  `REWARD_COMMIT_ENABLED`; `graceDefault` (#2483), added after it, gates
-  on `GRACE_DEFAULT_ENABLED`. `graceDefault` submits
+  `REWARD_COMMIT_ENABLED`; `deliveryProof` (#1944) on
+  `REWARD_DELIVERY_PROOF_ENABLED` and `graceDefault` (#2483) on
+  `GRACE_DEFAULT_ENABLED`, both added after it. `graceDefault` submits
   `triggerDefault` for past-grace loans; it ships unset, so that pass is
   dark until an owner arms it. All are provisioned the same way when
   armed. Their `*_LOOKBACK_DAYS` /

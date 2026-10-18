@@ -202,6 +202,14 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: "keeper-private deployment epoch per chain (#2497 r10); disposable — an empty table adopts the indexer's adopted Diamond, so it resets nothing — #1481",
   },
+  keeper_work_open: {
+    class: 'decision-needed',
+    reason: "keeper open-work queue (#2489, #2497 r8), keeper-private; disposable ONLY together with keeper_work_cursor — clearing both re-discovers from the active Diamond's deploy block and drops each finished item after one on-chain read; clearing this one alone loses the items behind the cursor — #1481",
+  },
+  keeper_work_cursor: {
+    class: 'decision-needed',
+    reason: "keeper open-work discovery cursor (#2497 r8), keeper-private; disposable — an empty table re-discovers from the active Diamond's deploy block, and re-queuing an item is a no-op — #1481",
+  },
   keeper_runner_lease: {
     class: 'decision-needed',
     reason: 'one-runner keeper lease (#2503); self-expires within 10 min, so restore needs no step either way — moves to the keeper DB with #2497',

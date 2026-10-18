@@ -37,7 +37,7 @@ describe('host env template', () => {
   it('ships disarmed, with no secret filled in', () => {
     const values = Object.fromEntries(templateEntries());
     expect(values.KEEPER_ENABLED).toBe('false');
-    for (const flag of ['GRACE_DEFAULT_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_COMMIT_ENABLED']) {
+    for (const flag of ['GRACE_DEFAULT_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_COMMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED']) {
       expect(values[flag]).toBe('');
     }
     for (const key of [...SECRET_BINDING_KEYS, HOST_SETTINGS.apiToken, HOST_SETTINGS.accountId]) {

@@ -11,11 +11,25 @@
  * reads each side separately (see `recordHfBandNotifications`).
  */
 
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import { encodeAbiParameters, keccak256, type Hex } from 'viem';
 import type { KeeperD1 } from './env';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
+
+/**
+ * The first block of the ACTIVE Diamond on `chainId` (#2497 r3). The event
+ * ledger (`activity_events`) is append-only and outlives a redeploy, while
+ * every keeper done set is keyed by the Diamond — so a read of the ledger
+ * without this floor would hand the new Diamond the old one's history to
+ * re-check forever. ONE floor for every keeper read of the ledger; 0 (read
+ * everything) only for a chain the deployment record does not know.
+ */
+export function deploymentFloor(chainId: number): number {
+  const b = getDeployment(chainId)?.deployBlock;
+  return typeof b === 'number' && Number.isSafeInteger(b) && b > 0 ? b : 0;
+}
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -683,4 +697,369 @@ export async function markReconciledDayConsumed(
       Math.floor(Date.now() / 1000),
     )
     .run();
+}
+
+// ─── #1944 / transport epochs — the delivery-proof pass's discovery read ─────
+
+/** One budget delivery a mirror recorded, joined to its day-list event. */
+export interface BudgetDeliveryRow {
+  /** The packet's ingress stamp (`IngressPacketRecorded.packetHash`). */
+  packetHash: string;
+  /** Base's remittance id (0 for a manual / legacy delivery). */
+  remitId: string;
+  /** The FLAT day list from `RewardBudgetReceived` (decimal strings), or null
+   *  for a rooted (d6) delivery, whose list is rebuilt from Base. */
+  flatDayIds: string[] | null;
+  /** True for a rooted (d6) delivery (`RewardBudgetRootReceived`). */
+  rooted: boolean;
+  block_at: number;
+  /** The packet's block, for the pass's done frontier (#2497 r4). */
+  block: number;
+}
+
+/** Budget-packet kind (`LibRewardCustody.PACKET_KIND_BUDGET`). */
+const PACKET_KIND_BUDGET = 1;
+
+/**
+ * EVERY budget delivery recorded on the ACTIVE Diamond of `chainId`, oldest
+ * first, each packet paired with the event that carries its day list — the
+ * flat list itself, or the rooted wire's marker.
+ *
+ * PAIRING IS VERIFIED, never inferred (#2497 r3, root fix). The packet's own
+ * stamp event names it AND its commitment: `IngressPacketDayListRecorded
+ * (packetHash, dayListHash)` for a flat list, `IngressPacketDayListRooted
+ * (packetHash, dayListRoot)` for a rooted one. A delivery event in the same
+ * transaction belongs to the packet only when it carries THAT commitment: its
+ * `dayListRoot` equals the stamped root, or `keccak256(abi.encode(dayIds))`
+ * equals the stamped hash — the contract's own formula
+ * (`LibRewardCustody.stampPacketDayList`). Two zero-id deliveries in one
+ * transaction can no longer swap lists, and a packet with no verified match is
+ * left out (a pre-3a packet with no commitment is not provable anyway).
+ *
+ * No age and no count bound on what is WORK (Codex #2489 r1): a delivery is
+ * work until the chain shows it whole. The READ is bounded instead (#2497 r8):
+ * the pass discovers deliveries a page at a time past its cursor
+ * ({@link discoverBudgetDeliveries}) into its open-work queue, and the active
+ * Diamond's first block ({@link deploymentFloor}) keeps a redeploy's history out.
+ */
+export async function listBudgetDeliveries(db: D1Database, chainId: number, fromBlock: number): Promise<BudgetDeliveryRow[]> {
+  return pairBudgetDeliveries(await budgetEvents(db, chainId, fromBlock, Number.MAX_SAFE_INTEGER, null));
+}
+
+/** One discovery page of {@link listBudgetDeliveries}: the deliveries in
+ *  `[from, through]`, read `limit` events at a time and cut at a block
+ *  boundary ({@link pageByBlock}), so a packet's events — one transaction —
+ *  are always paired together. */
+export async function discoverBudgetDeliveries(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: BudgetDeliveryRow[]; next: number }> {
+  const page = await pageByBlock((f, t, l) => budgetEvents(db, chainId, f, t, l), from, through, limit);
+  return { rows: pairBudgetDeliveries(page.rows), next: page.next };
+}
+
+type BudgetEventRow = { kind: string; tx_hash: string; args_json: string; block_at: number; block_number: number };
+
+async function budgetEvents(db: D1Database, chainId: number, from: number, through: number, limit: number | null): Promise<BudgetEventRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT kind, tx_hash, args_json, block_at, block_number
+         FROM activity_events
+        WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
+          AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRecorded', 'IngressPacketDayListRooted',
+                       'RewardBudgetReceived', 'RewardBudgetRootReceived')
+        ORDER BY block_number ASC, log_index ASC
+        LIMIT ?4`,
+    )
+    .bind(chainId, from, through, limit ?? -1)
+    .all<BudgetEventRow>();
+  return rows.results ?? [];
+}
+
+function pairBudgetDeliveries(eventRows: readonly BudgetEventRow[]): BudgetDeliveryRow[] {
+  type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number; block: number };
+  const evs: Ev[] = [];
+  for (const r of eventRows) {
+    try {
+      evs.push({
+        kind: r.kind,
+        tx: r.tx_hash,
+        args: JSON.parse(r.args_json) as Record<string, unknown>,
+        block_at: r.block_at,
+        block: Number(r.block_number),
+      });
+    } catch {
+      /* an unreadable row pairs with nothing */
+    }
+  }
+  const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
+  const flatStamp = new Map<string, string>(); // packetHash -> dayListHash
+  const rootStamp = new Map<string, string>(); // packetHash -> dayListRoot
+  const deliveriesByTx = new Map<string, Ev[]>();
+  for (const e of evs) {
+    if (e.kind === 'IngressPacketDayListRecorded') flatStamp.set(lower(e.args.packetHash), lower(e.args.dayListHash));
+    else if (e.kind === 'IngressPacketDayListRooted') rootStamp.set(lower(e.args.packetHash), lower(e.args.dayListRoot));
+    else if (e.kind === 'RewardBudgetReceived' || e.kind === 'RewardBudgetRootReceived') {
+      const list = deliveriesByTx.get(e.tx) ?? [];
+      list.push(e);
+      deliveriesByTx.set(e.tx, list);
+    }
+  }
+  const out: BudgetDeliveryRow[] = [];
+  for (const p of evs) {
+    if (p.kind !== 'IngressPacketRecorded' || Number(p.args.kind) !== PACKET_KIND_BUDGET) continue;
+    const packetHash = lower(p.args.packetHash);
+    if (!/^0x[0-9a-f]{64}$/.test(packetHash)) continue;
+    const candidates = deliveriesByTx.get(p.tx) ?? [];
+    const root = rootStamp.get(packetHash);
+    const hash = flatStamp.get(packetHash);
+    let matched: { flat: string[] | null; rooted: boolean } | null = null;
+    if (root !== undefined) {
+      if (candidates.some((d) => d.kind === 'RewardBudgetRootReceived' && lower(d.args.dayListRoot) === root)) {
+        matched = { flat: null, rooted: true };
+      }
+    } else if (hash !== undefined) {
+      for (const d of candidates) {
+        if (d.kind !== 'RewardBudgetReceived' || !Array.isArray(d.args.dayIds)) continue;
+        const ids = (d.args.dayIds as unknown[]).map((x) => String(x));
+        let ok = false;
+        try {
+          ok = flatDayListHash(ids) === hash;
+        } catch {
+          ok = false;
+        }
+        if (ok) {
+          matched = { flat: ids, rooted: false };
+          break;
+        }
+      }
+    }
+    if (matched === null) continue;
+    out.push({
+      packetHash: p.args.packetHash as string,
+      remitId: String(p.args.remitId ?? '0'),
+      flatDayIds: matched.flat,
+      rooted: matched.rooted,
+      block_at: p.block_at,
+      block: p.block,
+    });
+  }
+  return out;
+}
+
+/** The contract's flat day-list commitment: `keccak256(abi.encode(uint256[]))`. */
+export function flatDayListHash(dayIds: readonly string[]): string {
+  return keccak256(encodeAbiParameters([{ type: 'uint256[]' }], [dayIds.map((d) => BigInt(d))])).toLowerCase() as Hex;
+}
+
+/** EVERY remit id the canonical chain RELEASED, oldest first, from the
+ *  indexer's record of `RemitReservationReleased`. The ack pass's frontier scan
+ *  treats a released reservation as terminal, so a delivery that executes after
+ *  its release is found here instead.
+ *
+ *  No count bound on what is work (Codex #2489 r1): the earlier newest-50 read
+ *  let a release still awaiting its late acknowledgement drop out behind 50
+ *  newer ones. The pass discovers releases a page at a time
+ *  ({@link discoverReleasedRemits}) into its open-work queue (#2497 r8). */
+export async function listReleasedRemitIds(db: D1Database, chainId: number, fromBlock: number): Promise<number[]> {
+  return (await listReleasedRemits(db, chainId, fromBlock)).map((r) => r.remitId);
+}
+
+/** {@link listReleasedRemitIds} with each release's first block. */
+export async function listReleasedRemits(
+  db: D1Database,
+  chainId: number,
+  fromBlock: number,
+): Promise<{ remitId: number; block: number }[]> {
+  return firstReleases(await releaseEvents(db, chainId, fromBlock, Number.MAX_SAFE_INTEGER, null));
+}
+
+/** One discovery page of {@link listReleasedRemits} in `[from, through]`, cut
+ *  at a block boundary ({@link pageByBlock}). A remit released twice is listed
+ *  once per page; the queue's insert is idempotent across pages. */
+export async function discoverReleasedRemits(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: { remitId: number; block: number }[]; next: number }> {
+  const page = await pageByBlock((f, t, l) => releaseEvents(db, chainId, f, t, l), from, through, limit);
+  return { rows: firstReleases(page.rows), next: page.next };
+}
+
+type ReleaseEventRow = { remit_id: number | null; block_number: number };
+
+async function releaseEvents(db: D1Database, chainId: number, from: number, through: number, limit: number | null): Promise<ReleaseEventRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id, block_number
+         FROM activity_events
+        WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3 AND kind = 'RemitReservationReleased'
+        ORDER BY block_number ASC, log_index ASC
+        LIMIT ?4`,
+    )
+    .bind(chainId, from, through, limit ?? -1)
+    .all<ReleaseEventRow>();
+  return rows.results ?? [];
+}
+
+function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; block: number }[] {
+  const seen = new Map<number, number>();
+  for (const r of rows) {
+    const id = r.remit_id;
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) continue;
+    if (!seen.has(id)) seen.set(id, Number(r.block_number));
+  }
+  return [...seen].map(([remitId, block]) => ({ remitId, block }));
+}
+
+// ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
+
+/** The passes that keep an open-work queue, by the `kind` each records under. */
+export type WorkKind = 'delivery_proof' | 'late_ack';
+
+/** The last block the shared indexer has completely recorded on `chainId`
+ *  (its `diamond` cursor, advanced only after a whole window is written), or
+ *  null when it cannot be read. The keeper's done frontiers never pass it. */
+export async function indexedThrough(db: D1Database, chainId: number): Promise<number | null> {
+  try {
+    const row = await db
+      .prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`)
+      .bind(chainId)
+      .first<{ last_block: number }>();
+    const b = Number(row?.last_block);
+    return row && Number.isSafeInteger(b) && b >= 0 ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The first ledger block the pass has not yet discovered work in; 0 when none
+ *  is recorded (the caller floors it at the active Diamond's deploy block). */
+export async function getWorkCursor(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind): Promise<number> {
+  const row = await db
+    .prepare('SELECT next_block FROM keeper_work_cursor WHERE chain_id = ? AND diamond = ? AND kind = ?')
+    .bind(chainId, diamond.toLowerCase(), kind)
+    .first<{ next_block: number }>();
+  const b = Number(row?.next_block ?? 0);
+  return Number.isSafeInteger(b) && b > 0 ? b : 0;
+}
+
+/** Move the discovery cursor forward — never back (`MAX`). */
+export async function putWorkCursor(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, nextBlock: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_work_cursor (chain_id, diamond, kind, next_block, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (chain_id, diamond, kind) DO UPDATE SET next_block = MAX(next_block, excluded.next_block), updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, nextBlock, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** One discovered item: its id, ledger block and what the pass needs to work it. */
+export interface WorkItem<T> {
+  item: string;
+  block: number;
+  payload: T;
+}
+
+/** Queue `items` as open. Idempotent: an item already queued keeps its row,
+ *  so re-discovering a block is harmless. */
+export async function enqueueWork<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  items: readonly WorkItem<T>[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch(
+    items.map((w) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)`,
+        )
+        .bind(chainId, diamond.toLowerCase(), kind, w.item, w.block, JSON.stringify(w.payload), now),
+    ),
+  );
+}
+
+/** A bounded slice of the open items, the least recently checked first (then
+ *  the oldest), so every open item is reached in turn however many there are,
+ *  and one that never finishes holds back nothing but its own slot. */
+export async function listOpenWork<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  limit: number,
+): Promise<WorkItem<T>[]> {
+  const rows = await db
+    .prepare(
+      `SELECT item, block, payload FROM keeper_work_open
+        WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3
+        ORDER BY checked_at ASC, block ASC, item ASC LIMIT ?4`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, limit)
+    .all<{ item: string; block: number; payload: string }>();
+  const out: WorkItem<T>[] = [];
+  for (const r of rows.results ?? []) {
+    try {
+      out.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+    } catch {
+      console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
+    }
+  }
+  return out;
+}
+
+/** Stamp `items` as checked now, moving them to the back of the rotation. */
+export async function touchOpenWork(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
+  if (items.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const c of chunkD1InList(items, { before: [now, chainId, diamond.toLowerCase(), kind] })) {
+    await db
+      .prepare(`UPDATE keeper_work_open SET checked_at = ? WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/** Retire `items` — only on an on-chain read that shows them finished. */
+export async function finishWork(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
+  if (items.length === 0) return;
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    await db
+      .prepare(`DELETE FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/**
+ * One discovery PAGE of ledger rows in `[from, through]`, cut at a block
+ * boundary so no block — and so no transaction — is split across pages:
+ * `limit + 1` rows are read, and when the page overflows, the rows of its last
+ * block are left for the next page. A single block holding more than a page is
+ * read whole. `next` is the first block the next page starts at. Pure over
+ * `fetch`; pinned by the tests.
+ */
+export async function pageByBlock<R extends { block_number: number }>(
+  fetch: (from: number, through: number, limit: number | null) => Promise<R[]>,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: R[]; next: number }> {
+  const rows = await fetch(from, through, limit + 1);
+  if (rows.length <= limit) return { rows, next: through + 1 };
+  const cut = Number(rows[limit].block_number);
+  const below = rows.filter((r) => Number(r.block_number) < cut);
+  if (below.length > 0) return { rows: below, next: cut };
+  return { rows: await fetch(cut, cut, null), next: cut + 1 };
 }
