@@ -1715,6 +1715,8 @@ interface IVaipakamErrors {
     error PerkPriorityMustBeCounted(uint32 durationSeconds);
     /// @notice #2550 — the priority-routing perk cannot be delivered right now (Solver capacity dark, or intent matching off), so it is not sold.
     error PerkNotDeliverable(uint256 perkId);
+    /// @notice #2559 (Codex #2563 r5) — perk 1 was sold (`unitsSold`) before it had the priority-routing effect, so it cannot be armed for that effect: those credits were bought for something else.
+    error PerkPriorityLegacyUnitsSold(uint256 unitsSold);
     /// @notice #2550 — priority routing is a perk for users; a protocol-run intent owner (an aggregator adapter or the backstop vault) cannot opt in.
     error LenderIntentPriorityProtocolOwner(address owner);
 

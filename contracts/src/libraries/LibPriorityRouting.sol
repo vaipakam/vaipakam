@@ -44,6 +44,11 @@ library LibPriorityRouting {
         address indexed owner, address indexed lendingAsset, address indexed collateralAsset, bool enabled
     );
 
+    /// @notice The priority-routing effect was ARMED: the first priced, counted
+    ///         configuration of perk 1 written by this version. Emitted once.
+    /// @custom:event-category informational/config
+    event PriorityRoutingPerkArmed(uint256 priceVpfi);
+
     /// @notice A fill the solver's capacity would have refused went through on the
     ///         intent owner's priority credit. The mined event is the authoritative
     ///         record that a credit was spent (a preview is only a block snapshot).
@@ -65,22 +70,28 @@ library LibPriorityRouting {
     ///         configured COUNTED: the fill only ever reads credits, so a timed
     ///         configuration (possible only as legacy state from before #2550,
     ///         Codex #2563 r2) would sell an expiry the effect never honours.
-    ///         Any future precondition of the fill joins THIS predicate rather
-    ///         than a second check.
+    ///         And the effect must have been ARMED by this version
+    ///         (`priorityRoutingPerkArmed`, Codex #2563 r5), so a priced counted
+    ///         configuration inherited from before #2550 does not start selling
+    ///         by itself. Any future precondition of the fill joins THIS predicate
+    ///         rather than a second check.
     function deliverable(LibVaipakam.Storage storage s) internal view returns (bool) {
         return s.capacityCurves[uint8(LibVaipakam.ServiceCapacityRole.Solver)].freeTier != 0
             && s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled
-            && s.perkDurationSeconds[PERK_ID] == 0;
+            && s.perkDurationSeconds[PERK_ID] == 0 && s.priorityRoutingPerkArmed;
     }
 
     /// @notice Whether `owner`'s intent for the pair is opted in AND `owner` holds a
-    ///         credit — i.e. a capacity refusal on its fill would be lifted.
+    ///         credit — i.e. a capacity refusal on its fill would be lifted. Only
+    ///         once the effect is armed: id-1 credits from before #2550 were bought
+    ///         for no effect and must not acquire one (Codex #2563 r5).
     function covers(LibVaipakam.Storage storage s, address owner, address lendingAsset, address collateralAsset)
         internal
         view
         returns (bool)
     {
-        return s.lenderIntentPriority[owner][lendingAsset][collateralAsset] && s.perkCredits[owner][PERK_ID] != 0;
+        return s.priorityRoutingPerkArmed && s.lenderIntentPriority[owner][lendingAsset][collateralAsset]
+            && s.perkCredits[owner][PERK_ID] != 0;
     }
 
     /// @notice Write an intent's opt-in and emit on EVERY write — an explicit
@@ -88,6 +99,18 @@ library LibPriorityRouting {
     ///         and the clear on cancellation (Codex #2563 r1): each is a consent
     ///         action the owner or the protocol took, so the logs record all of
     ///         them, not only the changes.
+    /// @notice Arm the effect on the first priced, counted write of perk 1 — the
+    ///         ONE place `priorityRoutingPerkArmed` is set (`PerkFacet.setPerkConfig`).
+    ///         Refused while units of id 1 sold before the effect existed are
+    ///         outstanding: those buyers paid for something else. Idempotent after.
+    function armOnPricedWrite(LibVaipakam.Storage storage s, uint256 priceVpfi) internal {
+        if (s.priorityRoutingPerkArmed) return;
+        uint256 sold = s.perkUnitsSold[PERK_ID];
+        if (sold != 0) revert IVaipakamErrors.PerkPriorityLegacyUnitsSold(sold);
+        s.priorityRoutingPerkArmed = true;
+        emit PriorityRoutingPerkArmed(priceVpfi);
+    }
+
     function writeFlag(
         LibVaipakam.Storage storage s,
         address owner,

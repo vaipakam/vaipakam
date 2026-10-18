@@ -160,7 +160,13 @@ would already have paid irreversibly. So the sale itself is guarded:
    surface.
 
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
-chain.
+chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):
+the first priced, counted write by this version sets a one-time marker that the
+deliverability predicate and the fill's credit check both require, with an event.
+So a price or credits for id 1 inherited from before #2550 never activate by
+themselves after an upgrade, and the arming write is refused outright while
+units of id 1 sold before the effect existed are outstanding — those buyers paid
+for something else, so their credits must never acquire a capacity exemption.
 
 ## Surfaces and scope of the first PR
 

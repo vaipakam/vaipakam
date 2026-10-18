@@ -677,6 +677,13 @@ intent owner's credits instead.
 
   Only then set the price, as the last step. The on-chain gate covers the
   first two; the keeper and the fork check are the operator's to confirm.
+- **The price write is the arming.** The first priced, counted
+  `setPerkConfig(1, price, 0)` made by this version arms the effect once
+  (`PriorityRoutingPerkArmed`). Until then, a price or credits for perk 1 left
+  over from before #2550 do nothing: nothing sells and no credit carries a fill.
+  If units of perk 1 were ever sold before the effect existed, the arming write
+  is refused (`PerkPriorityLegacyUnitsSold`) and perk 1 cannot be used for
+  priority routing on that deployment.
 
 **This setter stays callable while the protocol is PAUSED**, deliberately —
 a pause is when withdrawing an armed offer is most wanted, and gating the

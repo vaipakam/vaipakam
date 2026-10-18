@@ -630,8 +630,47 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PerkPriorityMustBeCounted.selector, uint32(3600)));
         _perk().setPerkConfig(PERK, PRICE, 3600);
 
-        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
+        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, 0, 0, 0);
+        _perk().setPerkConfig(PERK, PRICE, 0); // the explicit, counted arming write
         _expectPurchaseSucceeds();
+    }
+
+    /// @dev Codex #2563 r5 — a priced COUNTED configuration of perk 1 inherited from
+    ///      before #2550 does not start selling by itself, even with every live
+    ///      condition on: only this version's priced write ARMS the effect (once,
+    ///      with an event). Straddle: after that write, the same rig sells.
+    function test_LegacyCountedPrice_DoesNotSell_UntilTheArmingWrite() public {
+        _lightCurve();
+        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
+        _expectNotDeliverableNoMove();
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit LibPriorityRouting.PriorityRoutingPerkArmed(PRICE);
+        _perk().setPerkConfig(PERK, PRICE, 0);
+        _expectPurchaseSucceeds();
+        vm.recordLogs();
+        _perk().setPerkConfig(PERK, PRICE * 2, 0); // re-pricing: armed once, no second event
+        assertEq(vm.getRecordedLogs().length, 1, "only PerkConfigured on a re-price");
+    }
+
+    /// @dev Codex #2563 r5 — perk-1 CREDITS sold before the effect existed never
+    ///      acquire it: with the intent opted in, the owner holding two legacy
+    ///      credits and the solver exhausted, the fill is refused and no credit is
+    ///      spent; and the effect cannot be armed while those sold units stand.
+    function test_LegacyCredits_NeverCarryAFill_AndBlockArming() public {
+        _setIntent();
+        _fundIntent(3 * PRINCIPAL);
+        _lightCurve();
+        _setPriority(true);
+        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, 0, 0, 2);
+        TestMutatorFacet(address(diamond)).setPerkCreditsRaw(lender, PERK, 2);
+        uint256 cp = _postBorrower("b-legacy");
+        _exhaustSolver();
+        _expectExhausted();
+        _fill(cp);
+        assertEq(_credits(), 2, "no legacy credit spent");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PerkPriorityLegacyUnitsSold.selector, uint256(2)));
+        _perk().setPerkConfig(PERK, PRICE, 0);
+        _perk().setPerkConfig(PERK, 0, 0); // disarming stays available
     }
 
     function _expectNotDeliverableNoMove() internal {

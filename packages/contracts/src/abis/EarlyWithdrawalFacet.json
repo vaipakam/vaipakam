@@ -2477,6 +2477,17 @@
   },
   {
     "type": "error",
+    "name": "PerkPriorityLegacyUnitsSold",
+    "inputs": [
+      {
+        "name": "unitsSold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PerkPriorityMustBeCounted",
     "inputs": [
       {

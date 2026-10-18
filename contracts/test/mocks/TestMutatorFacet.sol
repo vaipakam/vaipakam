@@ -2895,4 +2895,10 @@ contract TestMutatorFacet {
         s.perkDurationSeconds[perkId] = durationSeconds;
         s.perkUnitsSold[perkId] = unitsSold;
     }
+
+    /// @dev #2559 (Codex #2563 r5) test-only — give `user` credits of `perkId`
+    ///      directly, standing up LEGACY credits sold before the effect existed.
+    function setPerkCreditsRaw(address user, uint256 perkId, uint256 credits) external {
+        LibVaipakam.storageSlot().perkCredits[user][perkId] = credits;
+    }
 }

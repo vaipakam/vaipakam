@@ -8116,6 +8116,16 @@ library LibVaipakam {
         ///      inherits an old opt-in), cleared by `cancelLenderIntent`, toggled by
         ///      the owner on a live intent. Appended — append-only.
         mapping(address => mapping(address => mapping(address => bool))) lenderIntentPriority;
+        /// @dev #2559 (Codex #2563 r5) — set ONCE, by this version's
+        ///      `PerkFacet.setPerkConfig`, on the first priced counted write of the
+        ///      priority-routing perk (id 1): the explicit arming of its effect. A
+        ///      configuration or credits of id 1 inherited from before #2550 carry
+        ///      no effect until it is set (`LibPriorityRouting.deliverable` and
+        ///      `.covers` both read it), and it refuses to be set while units of
+        ///      id 1 sold before the effect existed are outstanding. Never cleared:
+        ///      disarming (a zero price) stops sales, not credits already bought.
+        ///      Appended — append-only.
+        bool priorityRoutingPerkArmed;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

@@ -239,6 +239,19 @@
   },
   {
     "type": "event",
+    "name": "PriorityRoutingPerkArmed",
+    "inputs": [
+      {
+        "name": "priceVpfi",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VpfiRecycled",
     "inputs": [
       {
@@ -2515,6 +2528,17 @@
       },
       {
         "name": "maxTotalVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkPriorityLegacyUnitsSold",
+    "inputs": [
+      {
+        "name": "unitsSold",
         "type": "uint256",
         "internalType": "uint256"
       }

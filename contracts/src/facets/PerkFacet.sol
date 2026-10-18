@@ -169,6 +169,12 @@ contract PerkFacet is
         if (perkId == LibPriorityRouting.PERK_ID && durationSeconds != 0 && priceVpfi != 0) {
             revert IVaipakamErrors.PerkPriorityMustBeCounted(durationSeconds);
         }
+        // Codex #2563 r5 — a priced counted write of id 1 by THIS version is the
+        // explicit arming of its effect; state inherited from before #2550 (a
+        // price, or credits sold for no effect) never activates by itself.
+        if (perkId == LibPriorityRouting.PERK_ID && priceVpfi != 0) {
+            LibPriorityRouting.armOnPricedWrite(s, priceVpfi);
+        }
         // The mode is frozen once anything has been sold. Entitlements are
         // per-user records that no setter can walk, so flipping a timed perk
         // to a counted one would strand every holder on a basis the perk no
