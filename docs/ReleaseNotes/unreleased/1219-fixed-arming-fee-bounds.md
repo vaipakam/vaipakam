@@ -1,0 +1,9 @@
+## Thread — the capacity arming fee gets fixed bounds of 0.5% to 10% (#1219)
+
+The arming fee a solver, matcher or keeper pays when a capacity deposit buys more capacity is unchanged in shape. It is a one-time charge in VPFI, a percentage of the principal the post newly arms, paid beside the deposit and never out of it, and credited to the recycle bucket. What changes is how its range is held. The first build kept a mutable floor that the admin could only raise, and a ceiling of the whole armed principal. Following the owner's direction of 2026-10-18, the range is now two fixed bounds written into the contract: a positive rate must be at least 0.5% and at most 10%. The separate floor setter is gone, and the rate is the one remaining setting. Zero is still accepted, and only as the switch that keeps arming dark. The getter now reports the rate together with both bounds, so the permitted range can be read without the code.
+
+The reason is the same guarantee with less to reason about. The fee can never be configured down to a token or up past a tenth of what it arms. Because the bounds are constants rather than admin state, nobody has to check which floor a given chain was left on. Moving them later takes a contract upgrade, which is intended for a bound with a legal purpose. A payer who quoted a fee is still protected mid-flight by the ceiling they bound at the quote. The intended starting rate is 2%. The owner approved this fee shape on 2026-10-18, which discharges the fee-shape review that had gated arming. Setting the rate on a chain, and enabling service capacity there, remain admin steps in the activation sequence. Nothing in this change sets a rate, and service capacity stays dark everywhere.
+
+The former floor's storage slot stays in place, retired, so the storage layout remains append-only. On the testnets already carrying the earlier facet, the old floor setter stays routed until the next facet refresh sweeps it.
+
+Refs #1219.

@@ -69,13 +69,21 @@ library LibServiceCapacity {
     ///         of an action, so no armed principal sits in a dead zone.
     uint256 internal constant CURVE_RESOLUTION = 1e6;
 
-    /// @notice The arming fee knob's CEILING (#2459 r4): 1e18, the whole newly-armed
-    ///         principal. The design makes the fee a BOUNDED governance knob with a
-    ///         positive floor; a fee above the principal it arms is no setting the
-    ///         product needs, and under this ceiling every fee is representable for
-    ///         any grant a curve allows (`granted` ≤ `bondAt4x` ≤ 2^128), so no
-    ///         accepted rate can make a post or its preview revert.
-    uint256 internal constant MAX_ARMING_FEE_RATE = 1e18;
+    /// @notice The arming fee's FIXED bounds (#1219, owner direction 2026-10-18):
+    ///         a lit rate is 0.5%–10% of the newly armed principal (1e18 = 100%).
+    ///         They replace the mutable raise-only floor and the 100% ceiling
+    ///         (#2459 r4) with bounds anyone can read in the contract and no admin
+    ///         state to reason about: the same "never silently configured away to
+    ///         nothing" guarantee the floor gave, without a second setter. Moving
+    ///         the range later is a contract upgrade, which is intended — these
+    ///         bounds carry a legal purpose (a one-time consumptive spend of a
+    ///         bounded size), so they should not be retunable by a single call.
+    ///         Under the ceiling every fee is representable for any grant a curve
+    ///         allows (`granted` ≤ `bondAt4x` ≤ 2^128), so no accepted rate can make
+    ///         a post or its preview revert. Zero stays allowed, and only as the
+    ///         dark switch (posting refused).
+    uint256 internal constant MIN_ARMING_FEE_RATE = 0.5e16;
+    uint256 internal constant MAX_ARMING_FEE_RATE = 10e16;
 
     /// @custom:event-category informational/config
     event ServiceCapacityEnabledSet(bool enabled);
@@ -132,9 +140,9 @@ library LibServiceCapacity {
     /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
     /// @custom:event-category informational/config
     event AdapterOperatorBound(address indexed adapter, address indexed operator);
-    /// @notice The arming fee's shape changed (slice 3): `rate` (1e18 = the whole newly-armed principal; 0 = arming dark) over `floor`.
+    /// @notice The arming fee rate changed: `rate` (1e18 = the whole newly-armed principal; 0 = arming dark; otherwise within the fixed bounds).
     /// @custom:event-category informational/config
-    event ArmingFeeSet(uint256 rate, uint256 floor);
+    event ArmingFeeSet(uint256 rate);
     /// @notice `operator` paid `fee` of the live VPFI into Diamond custody (recycled, never escrowed) for `capacityGranted` of principal newly armed for `role`; the deposit now buys `ceilingAfter`.
     /// @custom:event-category state-change/service-capacity
     event ArmingFeePaid(
@@ -438,33 +446,18 @@ library LibServiceCapacity {
 
     // ─── slice 3 — the arming fee ───
 
-    /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
-    ///         newly-armed principal, which is also the knob's ceiling
-    ///         ({MAX_ARMING_FEE_RATE}). Zero keeps arming DARK (posting refused); a
-    ///         positive rate must sit at or above a positive floor — the floor is
-    ///         the code's guarantee that the fee is never configured away to a
-    ///         token once lit.
+    /// @notice Set the arming fee rate (ADMIN; governance later), where 1e18 is the
+    ///         whole newly-armed principal. Zero keeps arming DARK (posting
+    ///         refused). A positive rate must sit inside the fixed bounds
+    ///         [{MIN_ARMING_FEE_RATE}, {MAX_ARMING_FEE_RATE}] — 0.5% to 10%.
+    ///         Payers already mid-flight are protected by the `maxFee` they bound
+    ///         at the quote, so a retune never charges a post more than it agreed.
     function setArmingFeeRate(LibVaipakam.Storage storage s, uint256 rate) internal {
-        if (rate > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(rate, MAX_ARMING_FEE_RATE);
-        if (rate != 0 && (s.armingFeeFloor == 0 || rate < s.armingFeeFloor)) {
-            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(rate, s.armingFeeFloor);
+        if (rate != 0 && (rate < MIN_ARMING_FEE_RATE || rate > MAX_ARMING_FEE_RATE)) {
+            revert IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds(rate, MIN_ARMING_FEE_RATE, MAX_ARMING_FEE_RATE);
         }
         s.armingFeeRate = rate;
-        emit ArmingFeeSet(rate, s.armingFeeFloor);
-    }
-
-    /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero).
-    ///         A live rate under the new floor is refused rather than silently
-    ///         re-priced: lift the rate first. Never above the ceiling — a floor
-    ///         there would leave no rate the setter accepts.
-    function setArmingFeeFloor(LibVaipakam.Storage storage s, uint256 floor) internal {
-        if (floor <= s.armingFeeFloor) revert IVaipakamErrors.ServiceCapacityArmingFloorNotRaised(s.armingFeeFloor, floor);
-        if (floor > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(floor, MAX_ARMING_FEE_RATE);
-        if (s.armingFeeRate != 0 && s.armingFeeRate < floor) {
-            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(s.armingFeeRate, floor);
-        }
-        s.armingFeeFloor = floor;
-        emit ArmingFeeSet(s.armingFeeRate, floor);
+        emit ArmingFeeSet(rate);
     }
 
     /// @notice The arming quote for posting `amount` into `operator`'s `role`

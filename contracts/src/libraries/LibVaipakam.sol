@@ -7940,11 +7940,15 @@ library LibVaipakam {
         ///      rule 2): written by the adapter factory at creation (the keeper it
         ///      names), overridable by the admin for adapters created before this.
         mapping(address => address) adapterOperator;
-        /// @dev Slice 3 — the ARMING FEE's shape: a rate (1e18 = the whole newly-armed
+        /// @dev Slice 3 — the ARMING FEE rate (1e18 = the whole newly-armed
         ///      principal) charged on the principal a post or raise ACTUALLY arms
-        ///      (the part landing below `bondAt4x`), and the floor it may never sit
-        ///      under. `armingFeeRate == 0` ⇒ arming is dark: posting is refused.
+        ///      (the part landing below `bondAt4x`). `armingFeeRate == 0` ⇒ arming
+        ///      is dark: posting is refused. A positive rate sits inside the fixed
+        ///      bounds in `LibServiceCapacity` (0.5%–10%).
         uint256 armingFeeRate;
+        /// @dev RETIRED (#1219, 2026-10-18) — the former mutable arming-fee floor,
+        ///      replaced by the fixed bounds. Never read or written; the slot stays
+        ///      so the Storage layout remains append-only.
         uint256 armingFeeFloor;
         /// @dev Slice 3 — rotation epochs RETIRED by a VPFI token rotation, and the
         ///      token each epoch's principal is denominated in (the live epoch's is

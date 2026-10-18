@@ -60,7 +60,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
+        "name": "minRate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxRate",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -512,19 +517,6 @@
   },
   {
     "type": "function",
-    "name": "setArmingFeeFloor",
-    "inputs": [
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setArmingFeeRate",
     "inputs": [
       {
@@ -708,12 +700,6 @@
     "inputs": [
       {
         "name": "rate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "floor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -4952,23 +4938,7 @@
   },
   {
     "type": "error",
-    "name": "ServiceCapacityArmingFeeAboveCap",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFeeBelowFloor",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
     "inputs": [
       {
         "name": "rate",
@@ -4976,23 +4946,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFloorNotRaised",
-    "inputs": [
-      {
-        "name": "current",
+        "name": "min",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "proposed",
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }

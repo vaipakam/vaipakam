@@ -98,23 +98,23 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         return LibServiceCapacity.withdrawArchived(LibVaipakam.storageSlot(), role, msg.sender, epoch);
     }
 
-    /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
-    ///         newly-armed principal; zero keeps arming DARK (posting refused); a
-    ///         positive rate must sit at or above the positive floor.
+    /// @notice Set the arming fee rate (ADMIN; governance later), where 1e18 is the
+    ///         whole newly-armed principal. Zero keeps arming DARK (posting
+    ///         refused); a positive rate must sit inside the fixed bounds of 0.5%
+    ///         to 10% (`ServiceCapacityArmingFeeOutOfBounds` otherwise).
     function setArmingFeeRate(uint256 rate) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibServiceCapacity.setArmingFeeRate(LibVaipakam.storageSlot(), rate);
     }
 
-    /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero,
-    ///         never above the live rate — lift the rate first).
-    function setArmingFeeFloor(uint256 floor) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibServiceCapacity.setArmingFeeFloor(LibVaipakam.storageSlot(), floor);
-    }
-
-    /// @notice The arming fee's shape: `rate` (0 = arming dark) over `floor`.
-    function getArmingFee() external view returns (uint256 rate, uint256 floor) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.armingFeeRate, s.armingFeeFloor);
+    /// @notice The arming fee: the live `rate` (0 = arming dark) and the fixed
+    ///         bounds a positive rate must sit inside, so a reader needs no
+    ///         knowledge of the code to see the permitted range.
+    function getArmingFee() external view returns (uint256 rate, uint256 minRate, uint256 maxRate) {
+        return (
+            LibVaipakam.storageSlot().armingFeeRate,
+            LibServiceCapacity.MIN_ARMING_FEE_RATE,
+            LibServiceCapacity.MAX_ARMING_FEE_RATE
+        );
     }
 
     /// @notice The quote for posting `amount` into `operator`'s `role` deposit

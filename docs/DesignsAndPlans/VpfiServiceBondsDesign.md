@@ -16,6 +16,25 @@ explicit recorded owner approval of the fee shape).
 > predates the 2026-09-07 ratification of the fee as a SHAPE rather than a
 > figure. It is left in place below because the reasoning around it is still
 > sound; only the gate it names has moved.
+> **Fee bounds fixed (owner direction, 2026-10-18, #1219):** the arming fee is a
+> percentage of the newly armed principal, paid in VPFI beside it, with **fixed
+> bounds in code of 0.5% to 10%** (intended start 2%) and zero kept only as the
+> dark switch. This replaces the mutable raise-only floor and the 100% ceiling
+> the build first shipped: the same "never silently configured away" guarantee,
+> readable in the contract with no admin state to reason about. Wherever this
+> note says "a positive floor enforced in code", read the fixed 0.5% bound.
+> Considered and rejected: a flat fee per arming (regressive, and the fee would
+> stop tracking the capacity granted), a USD- or stablecoin-pegged fee (needs an
+> oracle and reads as a published price), burning the fee (deflation framing,
+> banned by RL-6), and no fee (loses the permanent sink).
+>
+> **Fee-shape glance DISCHARGED by owner sign-off, 2026-10-18** (#1219: "the fee
+> shape is fine now, we can go ahead on it"). Arming is no longer legally gated;
+> what remains is sequencing — deploy the fixed-bounds facet, then set the rate
+> and enable service capacity per chain as admin actions in the M7 sequence,
+> under the activation runbook's economic precondition (VPFI distributed widely
+> enough that the gated roles stay contestable).
+
 **All four owner decisions are RATIFIED (2026-09-07)** — see §owner
 decisions: **fork C**; the **capacity terms as proposed** (4× ceiling per
 `(role, address)`, no minimum bond, clamp on any capacity reduction);

@@ -16,6 +16,7 @@ import {LibServiceCapacity} from "../src/libraries/LibServiceCapacity.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title #1219 (S-4) slice 3 — the arming fee's shape and the rotation epochs.
 /// @dev   The fee is a governance-set RATE over a positive floor the code enforces, charged
@@ -35,10 +36,9 @@ contract ServiceCapacityArmingTest is SetupTest {
     uint256 internal constant RATE = 1e16;
     uint256 internal constant AT4X = 100e18;
     uint256 internal constant COST = 1e18;
-    uint256 internal constant FLOOR = 1e15; // 0.1% of newly armed principal
     uint256 internal constant FEE = 1e16; // 1%
 
-    event ArmingFeeSet(uint256 rate, uint256 floor);
+    event ArmingFeeSet(uint256 rate);
     event ArmingFeePaid(
         uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 fee, uint256 capacityGranted, uint256 ceilingAfter
     );
@@ -70,28 +70,24 @@ contract ServiceCapacityArmingTest is SetupTest {
     function _bucket() internal view returns (uint256) { return ConfigFacet(address(diamond)).getRecycleBucket(); }
     function _escrow() internal view returns (address e) { (e, , ) = _f().getServiceCapacityEscrow(); }
     function _arm() internal {
-        _f().setArmingFeeFloor(FLOOR);
         _f().setArmingFeeRate(FEE);
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
 
-    /// @dev #2459 r4 — the arming fee is a BOUNDED knob: a rate or a floor above
-    ///      the ceiling (the whole newly-armed principal) is refused by name, so no
-    ///      accepted rate can make a quote or a post unrepresentable; at the ceiling,
-    ///      on the largest knee a curve accepts, the fee is exactly the grant.
-    function test_ArmingFee_IsBoundedByTheWholeArmedPrincipal() public {
+    /// @dev #1219 (owner direction 2026-10-18) — at the fixed CEILING of 10%, on the
+    ///      largest knee a curve accepts, the fee is exactly ceil(grant x 10%):
+    ///      still representable, so no accepted rate can make a quote or a post
+    ///      revert (the property #2459 r4's 100% ceiling guarded).
+    function test_ArmingFee_AtTheCeiling_IsRepresentableOnTheLargestKnee() public {
         _ready();
         uint256 cap = LibServiceCapacity.MAX_ARMING_FEE_RATE;
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
-        _f().setArmingFeeRate(cap + 1);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
-        _f().setArmingFeeFloor(cap + 1);
-        _f().setArmingFeeRate(cap); // straddle: the ceiling itself is accepted
+        _f().setArmingFeeRate(cap);
         _f().setCapacityCurve(SOLVER, FREE, RATE, type(uint128).max, COST); // the largest knee
         uint256 most = type(uint128).max;
         (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, most);
         assertEq(granted, most, "fixture-live: the post arms the whole knee");
-        assertEq(fee, granted, "at the ceiling the fee is the whole grant, and representable");
+        assertEq(fee, Math.mulDiv(granted, cap, 1e18, Math.Rounding.Ceil), "10% of the grant, rounded up");
+        assertLt(fee, granted, "under the ceiling the fee is a fraction of the grant");
     }
     function _ready() internal {
         _arm();
@@ -147,42 +143,52 @@ contract ServiceCapacityArmingTest is SetupTest {
         (refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
         assertEq(refusal, LibServiceCapacity.POST_OK);
         assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit: posts");
-        (uint256 rate, uint256 floor) = _f().getArmingFee();
+        (uint256 rate, uint256 minRate, uint256 maxRate) = _f().getArmingFee();
         assertEq(rate, FEE);
-        assertEq(floor, FLOOR);
+        assertEq(minRate, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the getter reports the fixed floor");
+        assertEq(maxRate, LibServiceCapacity.MAX_ARMING_FEE_RATE, "and the fixed ceiling");
     }
 
-    /// @dev The floors: a positive rate needs a positive floor and may not sit under
-    ///      it; the floor is raise-only and may not climb over the live rate; zero
-    ///      (dark) is always allowed; admin only.
-    function test_Fee_Floors_AdminOnly_RaiseOnly() public {
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FEE, 0));
-        _f().setArmingFeeRate(FEE); // no floor yet
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFloorNotRaised.selector, 0, 0));
-        _f().setArmingFeeFloor(0);
+    /// @dev #1219 (owner direction 2026-10-18) — the FIXED bounds. A positive rate
+    ///      must sit in [0.5%, 10%]: each bound is accepted exactly and refused one
+    ///      unit outside, so a bound that drifted (or a check that compared the wrong
+    ///      way) fails a cell on its own. Zero — the dark switch — is always
+    ///      accepted, from any rate. The bounds are constants, so they are the same
+    ///      before and after any admin call. Admin only.
+    function test_Fee_FixedBounds_StraddledBothEnds_ZeroIsDark_AdminOnly() public {
+        uint256 lo = LibServiceCapacity.MIN_ARMING_FEE_RATE;
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        assertEq(lo, 0.5e16, "0.5%");
+        assertEq(hi, 10e16, "10%");
+        // under the floor: refused by name, nothing written
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, lo - 1, lo, hi));
+        _f().setArmingFeeRate(lo - 1);
+        (uint256 rate, , ) = _f().getArmingFee();
+        assertEq(rate, 0, "a refused rate writes nothing");
+        // the floor itself
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmingFeeSet(0, FLOOR);
-        _f().setArmingFeeFloor(FLOOR);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FLOOR - 1, FLOOR));
-        _f().setArmingFeeRate(FLOOR - 1);
+        emit ArmingFeeSet(lo);
+        _f().setArmingFeeRate(lo);
+        (rate, , ) = _f().getArmingFee();
+        assertEq(rate, lo);
+        // the ceiling itself, and one over it
+        _f().setArmingFeeRate(hi);
+        (rate, , ) = _f().getArmingFee();
+        assertEq(rate, hi);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, hi + 1, lo, hi));
+        _f().setArmingFeeRate(hi + 1);
+        (rate, , ) = _f().getArmingFee();
+        assertEq(rate, hi, "a refused rate leaves the live one standing");
+        // zero is the dark switch, always accepted
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmingFeeSet(FEE, FLOOR);
-        _f().setArmingFeeRate(FEE);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFloorNotRaised.selector, FLOOR, FLOOR));
-        _f().setArmingFeeFloor(FLOOR); // not a raise
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FEE, FEE + 1));
-        _f().setArmingFeeFloor(FEE + 1); // over the live rate
-        _f().setArmingFeeFloor(FEE); // may meet it
-        _f().setArmingFeeRate(0); // dark again, always allowed
-        (uint256 rate, uint256 floor) = _f().getArmingFee();
+        emit ArmingFeeSet(0);
+        _f().setArmingFeeRate(0);
+        (rate, , ) = _f().getArmingFee();
         assertEq(rate, 0);
-        assertEq(floor, FEE);
+        // admin only
         vm.prank(op);
         vm.expectRevert();
         _f().setArmingFeeRate(FEE);
-        vm.prank(op);
-        vm.expectRevert();
-        _f().setArmingFeeFloor(FEE + 1);
     }
 
     /// @dev The fee is 1% of the principal newly armed, paid BESIDE the principal into
