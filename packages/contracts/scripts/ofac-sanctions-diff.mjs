@@ -568,6 +568,7 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
   if (!res.ok) throw new Error(`download of ${url} failed: HTTP ${res.status}`);
   if (!res.body) throw new Error(`download of ${url} returned no body`);
   const part = `${path}.part`;
+  const file = createWriteStream(part);
   let size = 0;
   try {
     // `pipeline` owns the streams: an error from the response, the size cap
@@ -583,9 +584,13 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
           yield chunk;
         }
       },
-      createWriteStream(part),
+      file,
     );
   } catch (e) {
+    // The write stream opens its file asynchronously; a refusal that lands
+    // before that open completes would see the partial file created AFTER
+    // it was removed. Wait for the stream to close, then remove.
+    if (!file.closed) await new Promise((resolve) => file.once('close', resolve));
     rmSync(part, { force: true });
     throw e;
   }
