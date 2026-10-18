@@ -13,13 +13,15 @@
  * stored notification meant for another borrower's loan. Checking once at
  * launch does not hold that invariant for the pass's lifetime.
  *
- * So the invariant is enforced where a pass has an EFFECT, at three seams and
+ * So the invariant is enforced where a pass has an EFFECT, at four seams and
  * nowhere else:
  *
  *   - a transaction: `withSubmissionSlot` (`submissionQueue.ts`), which every
  *     send passes through, asserts the fence before the signature;
  *   - an alert to a subscriber: `deliverAlert` (`alertDelivery.ts`) asserts
  *     it before either channel;
+ *   - an operator alert about a chain: `sendOpsAlert` (`opsAlert.ts`) asserts
+ *     it before the post (a global ops alert names no chain and is not held);
  *   - a write to a SHARED table the indexer resets on a Diamond change: the
  *     statement itself carries the guard ({@link epochWriteGuard}), so the
  *     check and the write are ONE statement, atomic on any transport.

@@ -321,8 +321,16 @@
   //     KEEPER_ROLE).
   //   - REWARD_DELIVERY_PROOF_ENABLED — 'true' arms the #1944 / transport-epoch
   //     delivery pass (mirrors: index epoch days, prove no-epoch day lists).
-  //     Added after the 2026-07-30 readback above, so that readback says
-  //     nothing about it.
+  //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
+  //     observer (every reward chain; its ops-alert table is in the keeper's
+  //     private `vaipakam-keeper-db`).
+  //     Both added after the 2026-07-30 readback above, so that readback says
+  //     nothing about them.
+  //
+  //   The ops alert channel those passes report to — TG_OPS_BOT_TOKEN and
+  //   TG_OPS_CHAT_ID — is likewise a secret / machine env value (the delivery
+  //   ops/mesh-watcher uses), never a `vars` entry and never the user-facing
+  //   TG_BOT_TOKEN.
   //   - GRACE_DEFAULT_ENABLED — 'true' arms the #2483 time-based default
   //     pass, which submits the permissionless `triggerDefault` for
   //     past-grace loans and so sells or transfers the borrower's

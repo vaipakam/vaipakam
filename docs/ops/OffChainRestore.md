@@ -348,7 +348,13 @@ then deploy.
    >   **you** are acting on while you work. @BotFather `/revoke`, re-issue,
    >   and upload the replacement to **every** consumer —
    >   `ops/offchain-data-warm` AND `apps/agent` (steps 6d and 6e below,
-   >   which otherwise re-upload the saved token verbatim). `TG_OPS_CHAT_ID`
+   >   which otherwise re-upload the saved token verbatim) AND the keeper
+   >   machine, whose sanctions-hold pass posts operator alerts with it
+   >   (#2450): replace the `TG_OPS_BOT_TOKEN=` line in
+   >   `/etc/vaipakam/keeper.env` (`sudo -e`, never pasting the value
+   >   elsewhere), then `sudo systemctl restart vaipakam-keeper` and check a
+   >   tick logs no `ops alert … failed`. A surviving machine otherwise keeps
+   >   the revoked token and every operator alert fails. `TG_OPS_CHAT_ID`
    >   is not a credential and needs no rotation.
    > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
    >   before anything else in this branch, so no further attacker uploads
@@ -533,6 +539,11 @@ then deploy.
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
+      | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
+
+      The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
+      captured the same way: while unset the observer's operator alerts reach
+      only the log.
 
       Capture their **values** in the same offline record as the
       credentials — they are operator state that nothing else preserves.
@@ -1798,7 +1809,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    from the offline record. Either way, BEFORE starting, set
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
-   `GRACE_DEFAULT_ENABLED`) empty — by editing the
+   `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 
@@ -1950,7 +1961,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
-   `rewardBudgetRemit`, `remitAck`, `commitmentReport` and `deliveryProof`.
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
+   `rewardSanctionsHold`.
    This list is the one place the set is written down; every other step here says "every
    gated pass" rather than counting them, because a count goes stale the day
    a pass is added (#2497 r1). `watcher`, `dailyOracleSnapshot` and

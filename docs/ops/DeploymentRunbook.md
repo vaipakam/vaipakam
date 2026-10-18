@@ -1041,7 +1041,9 @@ keeper deployed today still reads the shared copies of these tables.
 (id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
 operational state nothing outside the keeper reads: `hf_band_state`,
 `keeper_commitment_scan`, `keeper_commitment_day`,
-`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_work_open` +
+`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_ops_alert`,
+`keeper_sanctions_screen` + `keeper_sanctions_watch` (where the sanctions
+screen resumes, and the owners it is watching), `keeper_work_open` +
 `keeper_work_cursor` (the passes' open-work queue and where its discovery
 resumes), `keeper_deployment` (the Diamond each chain's private state belongs
 to) and `keeper_cutover` (this

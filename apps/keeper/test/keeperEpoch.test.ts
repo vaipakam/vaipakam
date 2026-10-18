@@ -47,7 +47,7 @@ describe('listResetOnDiamondChange — schema-aware, pinned to the real schema',
         return cols.includes('chain_id') && !cols.includes('diamond');
       });
     expect(await listResetOnDiamondChange(keeper.d1 as KeeperD1)).toEqual(oracle);
-    expect(oracle).toEqual(['hf_band_state', 'keeper_commitment_day', 'keeper_commitment_scan']);
+    expect(oracle).toEqual(['hf_band_state', 'keeper_commitment_day', 'keeper_commitment_scan', 'keeper_ops_alert']);
   });
 });
 
@@ -197,5 +197,23 @@ describe('adoptKeeperDeployments', () => {
     } finally {
       log.mockRestore();
     }
+  });
+  it("clears the chain's alert de-dup with it, and leaves a global alert alone (#2497 r11)", async () => {
+    const { keeper, env, indexerAdopts } = setup();
+    indexerAdopts(OLD);
+    await adoptKeeperDeployments(env, [chain(OLD)]);
+    indexerAdopts(NEW);
+    const { recordOpsAlertSent } = await import('../src/db');
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:84532:all`, 100, 84532);
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:97:all`, 100, 97);
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, 'global-thing', 100);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await adoptKeeperDeployments(env, [chain(NEW)]);
+    } finally {
+      log.mockRestore();
+    }
+    const keys = (keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+    expect(keys).toEqual(['global-thing', 'sanctions-capacity:97:all']);
   });
 });

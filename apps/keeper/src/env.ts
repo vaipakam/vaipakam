@@ -133,6 +133,19 @@ interface BaseEnv {
   /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
   REWARD_DELIVERY_PROOF_ENABLED?: string;
 
+  // #2450 — the #1566 sanctions-hold observer (`rewardSanctionsHold.ts`).
+  /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
+  REWARD_SANCTIONS_KEEPER_ENABLED?: string;
+
+  // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
+  // Telegram bots": split by who reads the alert). Plain `wrangler secret
+  // put` strings / machine env values, the same delivery `ops/mesh-watcher`
+  // uses. Unset = alerts go to the log only, and the pass says so.
+  /** Ops bot token. */
+  TG_OPS_BOT_TOKEN?: string;
+  /** The single operator chat the ops bot posts to. */
+  TG_OPS_CHAT_ID?: string;
+
   // #2483 — time-based default pass. `secret_text` like the flags above.
   /** 'true' arms the grace-default pass (in addition to KEEPER_ENABLED). It
    *  submits `triggerDefault`, which sells a defaulted borrower's collateral. */
@@ -279,6 +292,9 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_REMIT_LANE_CAP',
   'REWARD_COMMIT_ENABLED',
   'REWARD_DELIVERY_PROOF_ENABLED',
+  'REWARD_SANCTIONS_KEEPER_ENABLED',
+  'TG_OPS_BOT_TOKEN',
+  'TG_OPS_CHAT_ID',
   'REWARD_COMMIT_LOOKBACK_DAYS',
   'GRACE_DEFAULT_ENABLED',
   'LIQ_CONFIDENCE_MIN_CHECKS',
@@ -432,6 +448,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
+    REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
+    TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
+    TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,

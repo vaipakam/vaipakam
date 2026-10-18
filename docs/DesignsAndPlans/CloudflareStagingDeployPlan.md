@@ -176,7 +176,9 @@ as a privilege boundary:
   **#2450 takes the per-Worker-database answer for the keeper's OWN
   records** (effective once its one-time cutover is deployed —
   `docs/ops/DeploymentRunbook.md`). `keeper_commitment_day`, the scan
-  frontiers, the remit-ack log and `hf_band_state` (with the passes'
+  frontiers, the remit-ack log, `hf_band_state` and `keeper_ops_alert`
+  (with the sanctions screen's `keeper_sanctions_screen` and
+  `keeper_sanctions_watch`, the passes'
   open-work queue `keeper_work_open` + `keeper_work_cursor`, the keeper's
   redeploy epoch `keeper_deployment` and the cutover's `keeper_cutover`) move to a keeper-private D1 (`vaipakam-keeper-db`) that the indexer
   does not bind, so (c) no longer reaches the completion marker above.
@@ -407,6 +409,7 @@ NO secrets — the frontend bundle is static.
   **Since #2450 it binds a second, PRIVATE D1** — `vaipakam-keeper-db`
   as `KEEPER_DB` — and `hf_band_state`, the `keeper_commitment_scan` /
   `keeper_commitment_day` pair, the `keeper_remit_ack*` pair,
+  `keeper_ops_alert`, `keeper_sanctions_screen` + `keeper_sanctions_watch`,
   `keeper_work_open` + `keeper_work_cursor`, `keeper_deployment` and
   `keeper_cutover` live there, with their schema in
   `apps/keeper/migrations/`. The rest of the list above stays on the
