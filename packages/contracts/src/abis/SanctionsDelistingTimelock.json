@@ -1504,23 +1504,28 @@
   },
   {
     "type": "error",
-    "name": "NotCanceller",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotCrossChainRoute",
     "inputs": [
       {
         "name": "route",
         "type": "uint8",
         "internalType": "enum SanctionsDelistingTimelock.Route"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotItsProposer",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
