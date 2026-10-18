@@ -94,9 +94,25 @@ describe('planSanctionsHold — urgency order, never address order (#2497 r4)', 
     expect(plan.observe).toHaveLength(200);
     expect(plan.observe[0], 'the stalest owner, the last address, first').toBe(own(200));
     expect(plan.observe.at(-1), 'the freshest, the first address, last').toBe(own(1));
-    // A never-observed owner outranks every observed one.
+    // A live chain's deadline outranks a first observation, which has no bound
+    // to miss (pre-review of re-cut 3/3): a never-observed owner goes after
+    // every live chain, never ahead of one.
     const fresh = planSanctionsHold([...statuses, held({ owner: own(999), lastSeenAt: 0, flaggedAt: 0, observeBy: 0 })], NOW);
-    expect(fresh.observe[0]).toBe(own(999));
+    expect(fresh.observe[0]).toBe(own(200));
+    expect(fresh.observe.at(-1)).toBe(own(999));
+  });
+
+  it('a burst of newly screened owners cannot take the budget a live chain needs: nearest deadline first', () => {
+    const own = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as OwnerSanctionsStatus['owner'];
+    const live = Array.from({ length: 60 }, (_, i) =>
+      held({ owner: own(i + 1), lastSeenAt: NOW - 5 * 3600, observeBy: NOW + 3600 - i }),
+    );
+    const burst = Array.from({ length: 200 }, (_, i) => held({ owner: own(1000 + i), lastSeenAt: 0, observeBy: 0 }));
+    const plan = planSanctionsHold([...burst, ...live], NOW);
+    const firstWrites = plan.dueObservations.slice(0, plan.writes).map((d) => d.owner);
+    expect(plan.writes).toBeLessThan(300);
+    for (const st of live) expect(firstWrites, 'every live chain inside the run budget').toContain(st.owner);
+    expect(plan.dueObservations[0].owner, 'the nearest deadline first').toBe(own(60));
   });
 });
 
@@ -377,17 +393,21 @@ describe('raiseAlerts', () => {
     try {
       // The finding's case: the predicted cap binds on clean-commit demand, but
       // every due observation was sent — no evidence-chain alert, only the backlog.
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 100 });
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, skippedOracleDown: 0, clean: 100, unread: 0 });
       expect(warned.some((w) => /due observation\(s\) did NOT land/.test(w)), 'no false chain-lapse alert').toBe(false);
       expect(warned.some((w) => /100 clean result\(s\) were NOT committed this tick; every due observation was sent first/.test(w))).toBe(true);
       warned.length = 0;
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, unreached: 3, clean: 0 });
-      expect(warned.some((w) => /3 due observation\(s\) did NOT land this tick \(3 unreached/.test(w))).toBe(true);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 4, unreached: 3, skippedOracleDown: 1, clean: 0, unread: 0 });
+      expect(warned.some((w) => /4 due observation\(s\) did NOT land this tick: 3 unreached .*, 1 not sent because the sanctions oracle is not answering, 0 attempted but not recorded/.test(w))).toBe(true);
+      warned.length = 0;
+      // A run that could not READ its candidates keeps the alert raised, and says why.
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 7 });
+      expect(warned.some((w) => /7 candidate\(s\) could not be classified at all/.test(w))).toBe(true);
       // Seed both open, then a tick with no shortfall clears them.
       for (const k of [`sanctions-capacity:${CHAIN}:all`, `sanctions-clean-backlog:${CHAIN}:all`]) {
         h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
       }
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 0 });
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 0 });
       expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
       // Not measured (no key): both are left as they are.
       h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);

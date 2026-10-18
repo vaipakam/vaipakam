@@ -61,7 +61,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { boundedRead } from './batchRead';
+import { boundedRead, deadlineClient } from './batchRead';
 import {
   deploymentFloor,
   countLoanParties,
@@ -211,13 +211,25 @@ export function candidateOwners(openChains: readonly string[], stagingOwners: re
   return [...new Set([...openChains, ...stagingOwners].map((w) => w.toLowerCase() as Address))];
 }
 
-/** Most urgent first: the oldest observation (never observed first of all),
- *  then the nearest deadline, then the address — a total order (#2497 r4). */
+/** A chain with a live observation deadline: observed before, with a bound
+ *  the contract enforces. Missing it restarts the confirmation window. */
+function hasLiveDeadline(st: OwnerSanctionsStatus): boolean {
+  return st.observeBy !== 0 && st.lastSeenAt !== 0;
+}
+
+/** Most urgent first — a total order (#2497 r4, pre-review of re-cut 3/3):
+ *  every chain with a LIVE deadline, nearest deadline first, ahead of every
+ *  owner without one (never observed, or held with no chain), oldest
+ *  observation first, then the address. A first observation starts a chain
+ *  and has no bound to miss; an observation on a live chain does, so a burst
+ *  of newly screened owners cannot spend the budget a live chain's deadline
+ *  needs. */
 function byUrgency(a: OwnerSanctionsStatus, b: OwnerSanctionsStatus): number {
+  const la = hasLiveDeadline(a);
+  const lb = hasLiveDeadline(b);
+  if (la !== lb) return la ? -1 : 1;
+  if (la && a.observeBy !== b.observeBy) return a.observeBy - b.observeBy;
   if (a.lastSeenAt !== b.lastSeenAt) return a.lastSeenAt - b.lastSeenAt;
-  const da = a.observeBy === 0 ? Number.MAX_SAFE_INTEGER : a.observeBy;
-  const db = b.observeBy === 0 ? Number.MAX_SAFE_INTEGER : b.observeBy;
-  if (da !== db) return da - db;
   return a.owner < b.owner ? -1 : a.owner > b.owner ? 1 : 0;
 }
 
@@ -333,17 +345,33 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     [...(await listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id))), ...watched],
     await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id)),
   );
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // Every single read and simulation is refused past the run's deadline
+  // (`deadlineClient`); the batched status reads carry it themselves. The
+  // alert-phase re-read uses the plain client, bounded by the alert window.
+  const plainClient = createPublicClient({ transport: http(chain.rpc) });
+  const client = deadlineClient(plainClient, deadline);
   const diamond = chain.diamond as Address;
-  const statuses = (await readStatuses(client as never, diamond, known, deadline)).filter(
-    (st): st is OwnerSanctionsStatus => st !== null,
-  );
+  /** Candidates whose classification could not be read this run (#2497
+   *  re-cut 3/3 pre-review): MEASURED, so a run that read nothing never
+   *  reports its observations as covered. */
+  let unread = 0;
+  const readKnown = await readStatuses(plainClient as never, diamond, known, deadline);
+  unread += readKnown.filter((st) => st === null).length;
+  const statuses = readKnown.filter((st): st is OwnerSanctionsStatus => st !== null);
   // The SCREEN (Codex #2489 r2): a wallet flagged while it holds only ordinary
   // reward leaves neither of those traces — its claim's observation reverts
   // with the claim — so a bounded slice of every loan party is classified each
   // tick, and the held or confirmed ones join. Its first observation is what
   // starts the chain the forfeit window is counted from.
-  const screen = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known), deadline);
+  // Discovery failures cost discovery, never the due observations (#2497
+  // re-cut 3/3 pre-review): a screen that cannot run this time leaves the
+  // known candidates to be served, and says so.
+  let screen: ScreenOutcome = { found: [], overCapacity: null };
+  try {
+    screen = await screenLoanParties(env, chain.id, plainClient as never, diamond, new Set(known), deadline);
+  } catch (err) {
+    console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: screen failed this run (known candidates are still served): ${shortErr(err)}`);
+  }
   const screened = screen.found;
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
@@ -355,35 +383,43 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // read leaves its alerts as they are.
   const departed = await departedAlertOwners(env, chain.id, candidates);
   if (departed.length > 0) {
-    statuses.push(
-      ...(await readStatuses(client as never, diamond, departed, deadline)).filter(
-        (st): st is OwnerSanctionsStatus => st !== null,
-      ),
-    );
+    const readDeparted = await readStatuses(plainClient as never, diamond, departed, deadline);
+    unread += readDeparted.filter((st) => st === null).length;
+    statuses.push(...readDeparted.filter((st): st is OwnerSanctionsStatus => st !== null));
   }
 
   const plan = planSanctionsHold(statuses, nowSec);
   // A watched owner read as Deliver with nothing stored has nothing left for
   // this pass: it leaves the watch. Any other verdict keeps it.
   const watchedSet = new Set(watched);
-  await unwatchSanctionsOwners(
-    env.KEEPER_DB,
-    chain.id,
-    diamondAddr,
-    statuses.filter((st) => watchedSet.has(st.owner.toLowerCase()) && st.decision === DECISION_DELIVER && !st.stored).map((st) => st.owner),
-  );
-  const ctx = buildKeeperContext(env, chain, client as never);
+  try {
+    await unwatchSanctionsOwners(
+      env.KEEPER_DB,
+      chain.id,
+      diamondAddr,
+      statuses.filter((st) => watchedSet.has(st.owner.toLowerCase()) && st.decision === DECISION_DELIVER && !st.stored).map((st) => st.owner),
+    );
+  } catch (err) {
+    // Bookkeeping only: the owner stays watched and is read again next run.
+    console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: watch-list cleanup failed this run: ${shortErr(err)}`);
+  }
+  // The run's deadline is honoured at each send's turn in the queue too
+  // (`SendPastDeadline`), not only before the send joins it.
+  const ctx = buildKeeperContext(env, chain, client as never, undefined, deadline);
   const budget = { writes: plan.writes, touched: new Set<string>(), deadline };
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
-  let shortfall: { due: number; unreached: number; clean: number } | null = null;
+  let shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null;
   if (ctx?.wallet.account) {
     let dueReached = 0;
     /** Due observations that LANDED — counted on the write's own success
      *  (#2497 r18), never on the attempt. */
     let dueLanded = 0;
     let cleanLanded = 0;
+    /** Held-without-chain owners not sent this run because the oracle is not
+     *  answering — stated apart from attempts that failed. */
+    let skippedOracleDown = 0;
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
     // call. A Confirmed owner gets ONE settlement call (its observation is part
@@ -412,7 +448,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       // during an outage the observation records nothing, and an hourly
       // transaction would buy nothing until it recovers.
       // eslint-disable-next-line no-await-in-loop
-      if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) continue;
+      if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) {
+        skippedOracleDown += 1;
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueLanded += 1;
     }
@@ -431,7 +470,9 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     shortfall = {
       due: plan.dueObservations.length - dueLanded,
       unreached: plan.dueObservations.length - dueReached,
+      skippedOracleDown,
       clean: plan.commitClean.length - cleanLanded,
+      unread,
     };
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
     // then the staging pages, with whatever budget is left. The same rotation
@@ -830,7 +871,7 @@ export async function raiseAlerts(
   nowSec: number,
   screenOverCapacity: { total: number; ticks: number } | null = null,
   /** What this tick left undone, measured ({@link observeChain}); null = not measured. */
-  shortfall: { due: number; unreached: number; clean: number } | null = null,
+  shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null,
   /** Past this, alerts wait for the next run (#2497 r17); none by default. */
   alertDeadline: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
@@ -867,9 +908,17 @@ export async function raiseAlerts(
   // unsent clean commit is a separate backlog, said as such. A tick that could
   // not measure (no key) leaves both as they are.
   if (shortfall !== null) {
-    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0, () =>
-      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) did NOT land this tick (${shortfall.unreached} unreached — the write budget or the run's time window ran out — and ${shortfall.due - shortfall.unreached} attempted but not recorded) — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`,
-    );
+    // A run that could not READ a candidate cannot say whether it was due, so
+    // an unread candidate keeps this alert raised — it is never cleared by a
+    // run that did not look.
+    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0 || shortfall.unread > 0, () => {
+      const attempted = shortfall.due - shortfall.unreached - shortfall.skippedOracleDown;
+      const parts = [
+        `${shortfall.due} due observation(s) did NOT land this tick: ${shortfall.unreached} unreached (the write budget or the run's time window ran out), ${shortfall.skippedOracleDown} not sent because the sanctions oracle is not answering, ${attempted} attempted but not recorded`,
+      ];
+      if (shortfall.unread > 0) parts.push(`${shortfall.unread} candidate(s) could not be classified at all (their status read failed), so whether they were due is unknown`);
+      return `[chain ${chainId}] reward sanctions hold: ${parts.join('; ')} — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`;
+    });
     await toggle(`sanctions-clean-backlog:${chainId}:all`, shortfall.clean > 0, () =>
       `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) were NOT committed this tick; every due observation was sent first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
     );
@@ -882,7 +931,7 @@ export async function raiseAlerts(
     );
     // eslint-disable-next-line no-await-in-loop
     await toggle(k('hold-overdue'), overdue.has(st.owner), () =>
-      `[chain ${chainId}] reward sanctions hold: ${st.owner} has been held past ${iso(st.forfeitableAt)} by more than the maximum observation gap. A held staging record blocks custody activation and reward-role changes while it stands.`,
+      `[chain ${chainId}] reward sanctions hold: ${st.owner} has been held past ${iso(st.forfeitableAt)} by more than the maximum observation gap.${st.stored ? ' Its held staging record blocks custody activation and reward-role changes while it stands.' : ''}`,
     );
     // eslint-disable-next-line no-await-in-loop
     await toggle(k('hold-no-chain'), noChain.has(st.owner), () =>
