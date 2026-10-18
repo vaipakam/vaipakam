@@ -1486,6 +1486,10 @@ export async function launch({
     setChain: (id) => {
       chainId = id;
     },
+    // The chain the injected wallet is on NOW. A page can move it with
+    // `wallet_switchEthereumChain` to any configured chain, so a drive that
+    // targets one chain reads this at the end to prove it stayed there.
+    activeChainId: () => chainId,
     shot: async (name) => {
       const dir = path.join(HERE, 'shots');
       fs.mkdirSync(dir, { recursive: true });

@@ -54,6 +54,19 @@
  *
  *   JOURNEY_ROLES=visitor        # optional subset, comma-separated
  *   JOURNEY_JSON=out/report.json # optional machine-readable dump
+ *   JOURNEY_CHAIN_ID=421614      # optional: the chain the CONNECTED roles'
+ *                                # wallet starts on (default 84532, Base
+ *                                # Sepolia; any chain `driver.mjs` CHAINS has)
+ *
+ * WHICH CHAIN A RUN REVIEWED. The connected roles' wallet starts on
+ * `JOURNEY_CHAIN_ID`, so the app reads and would transact on that chain's
+ * Diamond. The run then proves the wallet is STILL there once the role's
+ * scenarios end: a page may switch the injected wallet to any configured
+ * chain, and a drive meant for Arbitrum Sepolia that the app quietly moved
+ * to Base would otherwise report Base's results as Arbitrum's. The visitor
+ * posture has no wallet at all, so it always reads the app's default chain
+ * (`VITE_DEFAULT_CHAIN_ID`) whatever this is set to — a run on another
+ * chain says so rather than implying the visitor half reviewed it.
  *
  * `TESTNET_WALLETS_FILE` is required for the CONNECTED roles, whose
  * sessions build an injected provider from the role's key. The visitor
@@ -78,6 +91,7 @@ import {
   ensureConnected,
   LiveSetupError,
   SITE,
+  CHAINS,
   requireSiteUrl,
 } from './driver.mjs';
 
@@ -774,6 +788,26 @@ for (const r of wanted) {
   }
 }
 
+// The chain the connected roles review. Refused BEFORE any browser starts
+// when it is not one the driver can serve: `launch()` would otherwise
+// answer `eth_chainId` with a chain it has no RPC for, and the run would
+// report the app's unsupported-network state as the journeys' outcome.
+const CHAIN_ID = Number(process.env.JOURNEY_CHAIN_ID ?? 84532);
+if (!CHAINS[CHAIN_ID]) {
+  console.error(
+    `BLOCKED: JOURNEY_CHAIN_ID=${process.env.JOURNEY_CHAIN_ID} is not a chain this driver serves — ` +
+      `known: ${Object.keys(CHAINS).join(', ')}`,
+  );
+  process.exit(2);
+}
+const CHAIN_NAME = CHAINS[CHAIN_ID].chain.name;
+console.log(
+  `connected roles review ${CHAIN_NAME} (${CHAIN_ID})` +
+    (wanted.includes('visitor')
+      ? "; the visitor posture has no wallet and reads the app's default chain"
+      : ''),
+);
+
 // ONE reachability probe for the WHOLE RUN, not one per role (review
 // round 2 P2). `visit()` calls the shared BLOCKED exit directly on a
 // timeout or HTTP error — correct before anything has been observed,
@@ -934,6 +968,9 @@ for (const roleKey of wanted) {
     session = await launch({
       ...posture,
       ...READ_ONLY,
+      // Only a connected posture has a wallet to put on a chain; the
+      // keyless visitor installs no provider, so this is inert for it.
+      startChainId: CHAIN_ID,
       freshProfile: true,
       onSetupFailure: 'throw',
     });
@@ -1233,6 +1270,32 @@ for (const roleKey of wanted) {
     );
   }
 
+  // THE RUN REVIEWED THE CHAIN IT NAMES. Checked at the END of the role,
+  // because a switch can happen on any scenario's page: the wallet must
+  // still be on `CHAIN_ID` after all of them, or every connected verdict
+  // above describes some other chain's Diamond.
+  if (posture.preAuthorized) {
+    const endChain = session.activeChainId();
+    if (endChain !== CHAIN_ID) {
+      hardFail += 1;
+      results.push({
+        id: `CHAIN-${roleKey}`,
+        roleKey,
+        role: roleKey,
+        route: '(session)',
+        goal: `This role's journeys ran on ${CHAIN_NAME}`,
+        desired: `The injected wallet is still on chain ${CHAIN_ID} after every scenario.`,
+        ok: false,
+        actual: `the app switched the wallet to chain ${endChain} during the session, so the results above are not ${CHAIN_NAME}'s`,
+      });
+      console.log(
+        `FAIL  CHAIN-${roleKey}  [${roleKey}] (session)\n` +
+          `      goal    : journeys ran on ${CHAIN_NAME} (${CHAIN_ID})\n` +
+          `      actual  : wallet ended on chain ${endChain}`,
+      );
+    }
+  }
+
   const isAccountPrompt = (b) =>
     /requestAccounts|requestPermissions/i.test(b.reason ?? '');
   const writeAttempts = (blockedRequests ?? []).filter(
@@ -1326,7 +1389,7 @@ for (const roleKey of wanted) {
 }
 
 console.log(
-  `\n=== ${SITE} — ${results.length} scenario(s), ` +
+  `\n=== ${SITE} on ${CHAIN_NAME} (${CHAIN_ID}) — ${results.length} scenario(s), ` +
     `${results.length - hardFail - unverified} pass, ${hardFail} fail` +
     `${unverified ? `, ${unverified} unverified` : ''} ===`,
 );
@@ -1345,7 +1408,15 @@ if (process.env.JOURNEY_JSON) {
   writeFileSync(
     process.env.JOURNEY_JSON,
     JSON.stringify(
-      { site: SITE, at: new Date().toISOString(), results, setupFailures },
+      {
+        site: SITE,
+        // The chain the CONNECTED roles reviewed. The visitor rows read the
+        // app's default chain whatever this says (see the header).
+        chainId: CHAIN_ID,
+        at: new Date().toISOString(),
+        results,
+        setupFailures,
+      },
       null,
       2,
     ),
