@@ -207,11 +207,17 @@ have only gone are accepted: the indexer's reset after a Diamond redeploy
 deletes a chain's rows, and that is not a keeper write. The keeper applies the
 same reset to its own private records when a chain's Diamond changes, logging
 `Diamond changed … reset private …` once. It does that only once the indexer has adopted
-the same Diamond. Until then every tick declines with `not yet the indexer's
-… waiting for it to adopt the new deployment`, for every chain, because the
-passes must not read the new Diamond's ids against the old one's shared rows.
-That window lasts until the indexer's next run after its own deploy. A decline
-that persists means the indexer has not picked up the redeploy. Once the
+the same Diamond, and a chain runs at all only while the indexer's adopted
+Diamond equals the one the keeper is configured with — checked on every tick,
+not only when the keeper's own record is due to change. Otherwise the tick
+declines with `is not the indexer's … waiting for it to adopt the same
+deployment`, for every chain, because the passes must not read one
+deployment's ids against the other's shared rows: the keeper's deploy landed
+before the indexer's, or the indexer is still mid-reset, or it has moved to a
+Diamond this build does not name yet. That window lasts until the indexer's
+next run after its own deploy (or, in the last case, until the keeper's next
+update). A decline that persists means one of the two has not picked up the
+redeploy. Once the
 cutover is recorded the old copies no longer grow, so the check costs the
 same every tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still

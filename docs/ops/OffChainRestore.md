@@ -1787,18 +1787,52 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    and `KEEPER_PRIVATE_KEY` bindings drive NO pass any more. Leave them as §1
    step 6 restored them; they are not what step 4 confirms.
 
-   **B. The machine, with every flag off.** If the machine survived (a
-   Cloudflare-side restore), `/etc/vaipakam/keeper.env` still holds the
-   keeper's secrets, RPC URLs, knobs and flags. If it was rebuilt, install it
-   per `KeeperMachine.md` §3 and fill the env file per §4 from the offline
-   record. Either way, BEFORE starting, set `KEEPER_ENABLED=false` and every
-   per-pass flag (`REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
-   `GRACE_DEFAULT_ENABLED`) empty — by editing the file (`sudo -e
-   /etc/vaipakam/keeper.env`), never by assuming what it held. Never paste a
-   value from that file anywhere. The update timer deploys `main`'s tip on
-   its own; a build that reads `KEEPER_DB` declines every tick, naming the
-   missing migration, until step A has applied it — that is the gate
-   working, not a fault.
+   **B. The machine, with every flag off — and pointed at the NEW account.**
+   If the machine survived (a Cloudflare-side restore), `/etc/vaipakam/keeper.env`
+   still holds the keeper's secrets, RPC URLs, knobs and flags. If it was
+   rebuilt, install it per `KeeperMachine.md` §3 and fill the env file per §4
+   from the offline record. Either way, BEFORE starting, set
+   `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
+   `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`) empty — by editing the
+   file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
+   Never paste a value from that file anywhere.
+
+   The machine reaches BOTH databases over the D1 HTTP API, and a fresh
+   account changes every coordinate it uses, in two places that a surviving
+   machine still carries from the lost account:
+
+   - **The env file's three D1 settings** name the shared database:
+     `CLOUDFLARE_ACCOUNT_ID` (the new account), `D1_DATABASE_ID` (the new
+     `vaipakam-warm` uuid from §1 step 3) and `CLOUDFLARE_D1_API_TOKEN` (a
+     token minted in the new account with D1 Edit on both databases). Set all
+     three in the same edit as the flags. A surviving machine still holds the
+     old account's values, and the old token is dead with the account.
+   - **The private database's id is NOT in the env file.** The build pins it
+     from `PRIVATE_DATABASES` in `apps/indexer/scripts/lib/d1-workers.mjs`
+     (`apps/keeper/host/hostEnv.ts` binds `KEEPER_DB` from that pin, never
+     from a host setting), so the machine reaches the new `vaipakam-keeper-db`
+     only once it runs a build carrying §1 step 5's recovery commit — the new
+     pin, the wrangler ids and `SUCCESSOR.id`. The updater installs whatever
+     branch `/opt/vaipakam-keeper/deploy-branch` names (`main` unless
+     `KEEPER_DEPLOY_BRANCH` set another at install). Get that commit onto the
+     installed branch BEFORE the service starts: merge it to `main` and run
+     `sudo systemctl start vaipakam-keeper-update.service` once, or, while
+     it is still under review, write its branch name to
+     `/opt/vaipakam-keeper/deploy-branch` (on a rebuild, install with
+     `KEEPER_DEPLOY_BRANCH=<recovery branch>`) and run the update service once;
+     set it back to `main` after the merge. The update service reports the
+     installed commit in its log — confirm it is the recovery one.
+
+   A machine started with either place still pointing at the lost account
+   does not fail loudly: the shared reads go to an account or database that
+   no longer exists, and the private reads to a uuid that exists nowhere, so
+   every tick declines, naming an unread migration record or an unread
+   indexer record, for as long as it runs. Step C's first good tick is what
+   confirms the retarget took; a decline that names an unread record after
+   step A has applied the migrations means one of the two places above still
+   carries the old account. A build that reads `KEEPER_DB` also declines
+   every tick, naming the missing migration, until step A has applied it —
+   that is the gate working, not a fault.
 
    **C. Start disarmed and validate** — `KeeperMachine.md` §5 step 1:
 

@@ -16,10 +16,15 @@
  * `diamond` is already namespaced by it and needs no reset; a new keyed-by-
  * chain table joins the rule by existing, not by being listed.
  *
- * NEVER AHEAD OF THE INDEXER. A change is applied only once the indexer has
- * adopted the same Diamond (its `indexer_deployment` record); until then the
- * tick declines, since the shared rows the passes read still belong to the old
- * one (#2497 r12). What counts as adopted is defined ONCE, in
+ * NEVER AHEAD OF — OR BEHIND — THE INDEXER. A chain runs only while the
+ * indexer has adopted the SAME Diamond the keeper is configured with (its
+ * `indexer_deployment` record), checked on EVERY tick and not only when the
+ * keeper's own record is due to change (#2569 r3): the shared rows the passes
+ * join to (loans, events) belong to whatever Diamond the indexer has settled
+ * on, so a keeper whose record already matches its bundle is still reading
+ * another deployment's ids while the indexer is mid-reset, or has moved to a
+ * Diamond the keeper's bundle does not yet name. Either way the tick declines
+ * (#2497 r12). What counts as adopted is defined ONCE, in
  * `scripts/lib/indexer-adoption.mjs`, shared with the one-time copy: a record
  * whose `reset_pending` is still set is NOT an adoption (#2569 r1) — the
  * indexer writes the new Diamond first and clears the old rows after, and in
@@ -89,11 +94,28 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
   const now = Math.floor(Date.now() / 1000);
   for (const chain of chains) {
     const want = String(chain.diamond).toLowerCase();
+    // The INDEXER first, every tick (#2497 r12, #2569 r3): until it has
+    // settled on the configured Diamond, the shared rows the passes join to
+    // (loans, events) belong to another deployment, and a loan id the new
+    // Diamond reuses would be read against the retired Diamond's row. That
+    // holds whether the keeper's own record is behind (the keeper's deploy
+    // landed before the indexer's), already matches (the indexer is mid-reset
+    // on the same Diamond, or has moved on to one this bundle does not name),
+    // or does not exist yet (a first record is never written against rows
+    // the indexer has not settled). So the tick declines, and nothing below
+    // runs, until the indexer's adoption equals the keeper's configuration.
+    // eslint-disable-next-line no-await-in-loop
+    const indexer = await indexerAdoptedFor(env, chain.id);
+    if (indexer !== want) {
+      throw new Error(
+        `chain ${chain.id}: the configured Diamond ${want} is not the indexer's (${indexer ?? 'none settled: no record, or one whose reset is still pending'}); waiting for it to adopt the same deployment`,
+      );
+    }
     // eslint-disable-next-line no-await-in-loop
     const rec = await env.KEEPER_DB.prepare('SELECT diamond FROM keeper_deployment WHERE chain_id = ?')
       .bind(chain.id)
       .first<{ diamond: string }>();
-    let have = rec?.diamond?.toLowerCase() ?? null;
+    const have = rec?.diamond?.toLowerCase() ?? null;
     if (have === null) {
       // No record. The copy seeds one for every chain its rows are keyed by,
       // so no record should mean no private rows — CHECKED, not assumed: rows
@@ -110,25 +132,13 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
             'the one-time copy seeds that record (DeploymentRunbook, "Keeper private D1 — one-time cutover") — run it, or delete those rows if they are known stale',
         );
       }
-      have = want;
       // eslint-disable-next-line no-await-in-loop
       await env.KEEPER_DB.prepare('INSERT OR IGNORE INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)')
-        .bind(chain.id, have, now)
+        .bind(chain.id, want, now)
         .run();
+      continue;
     }
     if (have === want) continue;
-    // Not before the INDEXER has adopted the new Diamond (#2497 r12): until it
-    // does, the shared rows the passes join to (loans, events) still belong to
-    // the old one, and a loan id the new Diamond reuses would be read against
-    // the retired Diamond's row. So the tick declines until it has; the
-    // keeper's deploy can land before the indexer's.
-    // eslint-disable-next-line no-await-in-loop
-    const indexer = await indexerAdoptedFor(env, chain.id);
-    if (indexer !== want) {
-      throw new Error(
-        `chain ${chain.id}: the configured Diamond ${want} is not yet the indexer's (${indexer ?? 'none settled: no record, or one whose reset is still pending'}); waiting for it to adopt the new deployment`,
-      );
-    }
     // eslint-disable-next-line no-await-in-loop
     tables ??= await listResetOnDiamondChange(env.KEEPER_DB);
     // Delete, VERIFY, and only then record (#2497 r11) — never a batch: the
