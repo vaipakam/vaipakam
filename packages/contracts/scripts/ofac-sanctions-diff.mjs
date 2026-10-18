@@ -17,21 +17,24 @@
  *      excluded and reported. Addresses are checksummed and de-duplicated.
  *      Every `0x`/`0X`-prefixed value that is not exactly an address is
  *      reported, raw, as malformed for a human — never guessed at.
- *   3. Reads the CURRENT list: from the deployed contract at ONE pinned block
- *      (`--rpc` + `--list` [+ `--block N`, default the `finalized` block];
- *      the block is resolved once to its HASH and every read — version,
- *      publication, hash, count, each page — is pinned to it by EIP-1898
- *      with `requireCanonical`, using the census tooling's helper), or from a file (`--current` + `--current-version`
- *      + `--current-publication` + `--current-pending` (the list's
- *      `pendingDelistings`; required, no default) [+ `--current-source-hash`]).
+ *   3. Reads the CURRENT list from the deployed contract, and only from it,
+ *      at ONE pinned block (`--rpc` + `--list` [+ `--block N`, default the
+ *      `finalized` block]; the block is resolved once to its HASH and every
+ *      read — version, publication, hash, outstanding counts, count, each
+ *      page — is pinned to it by EIP-1898 with `requireCanonical`, using the
+ *      census tooling's helper). A file of addresses is not accepted: nothing
+ *      ties it to the version it would claim (Codex #2543 r10).
  *   4. Prints the add / remove sets, the source SHA-256 and publication date
  *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calls, each
  *      carrying the list version it applies to, so it cannot apply to any
  *      other state. Additions and delistings are SEPARATE calls with separate
  *      signers (owner decision 2026-10-18): the adder (the automated
- *      updater) sends the additions, then the remover (the multisig) sends
- *      the delistings against the same publication. The contract refuses a
- *      delisting from anyone but a remover.
+ *      updater) sends the additions, in batches of `--max-adds-per-call`
+ *      (default 200) so a large publication fits each transaction's gas,
+ *      then the remover (the multisig) sends the delistings against the same
+ *      publication. The contract refuses a delisting from anyone but a
+ *      remover. Each call states how many of the publication's additions and
+ *      delistings remain after it; the list publishes those counts.
  *
  * WHAT IT REFUSES, AND WHY:
  *   - An INCOMPLETE or malformed document (Codex #2543 r1/r2). ONE tokenizer
@@ -57,7 +60,8 @@
  *   - A publication that is not NEWER than the one the list records — an
  *     older file would re-list delisted addresses and drop newer designations
  *     while still diffing cleanly against the current state. The same date is
- *     accepted only as a refresh (identical hash, nothing to change). The
+ *     accepted only to finish what that same file declared outstanding
+ *     (identical hash, adding no more than its outstanding additions). The
  *     contract enforces the same rule; `--allow-rollback` builds the update
  *     anyway and prints the owner's `authorizePublicationRollback` call that
  *     must be executed first.
@@ -95,9 +99,7 @@
  *   node scripts/ofac-sanctions-diff.mjs --xml sdn_advanced.xml \
  *     --rpc "$RPC" --list 0xList [--block N] [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
- *     --current current.json --current-version 3 \
- *     --current-publication 20261015 --current-source-hash 0x… \
- *     --current-pending 0
+ *     --rpc "$RPC" --list 0xList [--max-adds-per-call 200]
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
@@ -122,6 +124,13 @@ export const OFAC_SDN_ADVANCED_NAMESPACE =
 export const OFAC_SDN_ADVANCED_URL =
   'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN_ADVANCED.XML';
 export const DEFAULT_MAX_REMOVE = 10;
+/**
+ * Additions per `applyUpdate` call. Listing one address costs roughly 70k gas
+ * (two set slots, the version stamp, an event), so 200 stays near 14M gas —
+ * under the 2^24 per-transaction cap (EIP-7825) and every target chain's
+ * block limit. `--max-adds-per-call` changes it.
+ */
+export const DEFAULT_MAX_ADDS_PER_CALL = 200;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -343,24 +352,47 @@ export function parseUintArg(flag, value, { min = 0n, max } = {}) {
   return v;
 }
 
-/** True iff `d` is a `YYYYMMDD` shape the contract accepts. */
+/**
+ * True iff `d` is a real calendar date as `YYYYMMDD`, years 2000–2999 — the
+ * contract's rule, month lengths and leap years included (Codex #2543 r10):
+ * the date orders publications, so an impossible one is refused, not sorted.
+ */
 export function isPublicationDate(d) {
+  if (!Number.isInteger(d)) return false;
   const year = Math.floor(d / 10000);
   const month = Math.floor(d / 100) % 100;
   const day = d % 100;
-  return Number.isInteger(d) && year >= 2000 && year <= 2999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+  if (year < 2000 || year > 2999 || month < 1 || month > 12 || day < 1) return false;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const days = month === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+  return day <= days;
+}
+
+/**
+ * Decode the source bytes as UTF-8, refusing any invalid sequence (Codex
+ * #2543 r10). A lenient decode turns a corrupted byte into U+FFFD, and a
+ * corrupted address then reads as a non-EVM value — silently dropped, and
+ * delisted if it was listed. The hash is taken over the same bytes.
+ */
+export function decodeSource(bytes) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('the source file is not valid UTF-8 — refusing a file whose bytes were corrupted');
+  }
 }
 
 /**
  * The contract's publication-order rule, applied before calldata is built:
  * a newer date passes; the same publication (identical date and hash) passes
- * again only when it adds nothing — a refresh, or the remover completing that
- * publication's delistings; anything else is refused unless `allowRollback`,
- * in which case the owner must authorize it on-chain first.
+ * again only to finish what it declared outstanding — adding no more than
+ * `pendingAdditions` (a refresh, the adder's next batch, or the remover
+ * completing its delistings); anything else is refused unless
+ * `allowRollback`, in which case the owner must authorize it on-chain first.
  */
-export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, noAdditions, allowRollback = false }) {
+export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, additions, pendingAdditions = 0, allowRollback = false }) {
   if (date > recordedDate) return 'newer';
-  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase() && noAdditions) return 'same-publication';
+  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase() && additions <= pendingAdditions) return 'same-publication';
   if (allowRollback) return 'rollback';
   if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase()) {
     throw new Error(`the list already records this exact file (${date}) yet differs from it — investigate before updating`);
@@ -631,16 +663,21 @@ export function replayChainalysisLogs(logs) {
 }
 
 /**
- * The `applyUpdate` call. Refuses a publication that is not newer than the
+ * The `applyUpdate` calls. Refuses a publication that is not newer than the
  * recorded one (see {@link checkPublicationOrder}) and a removal set above
  * `maxRemove`. For an allowed rollback it also returns the owner's
  * `authorizePublicationRollback` calldata, which must execute first.
  *
  * `calls` is the ordered list of `applyUpdate` transactions, each naming its
- * signer: one `adder` call with the additions (or with nothing, as a
- * refresh), then one `remover` call with the delistings when there are any.
- * The second is computed against the version the first produces, and the
- * contract accepts it because it repeats the publication without adding.
+ * signer and computed against the version the one before it produces: the
+ * additions in `adder` batches of at most `maxAddsPerCall` (one call with
+ * nothing, as a refresh, when there are none), then one `remover` call with
+ * the delistings when there are any. A publication can need several
+ * transactions — a first population will not fit one block's gas — so the
+ * first call of a NEW publication declares how many additions and delistings
+ * remain after it, and every later call repeats that publication and lowers
+ * the counts by exactly what it applies, as the contract requires (Codex
+ * #2543 r7, r8, r10).
  */
 export function buildUpdate({
   parsed,
@@ -649,20 +686,31 @@ export function buildUpdate({
   currentVersion,
   recordedDate,
   recordedHash,
-  recordedPending = 0,
+  recordedPendingAdditions,
+  recordedPendingDelistings,
   allowRollback = false,
   maxRemove = DEFAULT_MAX_REMOVE,
+  maxAddsPerCall = DEFAULT_MAX_ADDS_PER_CALL,
   abi = sanctionsListAbi(),
 }) {
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
+  if (!Number.isSafeInteger(maxAddsPerCall) || maxAddsPerCall < 1) throw new Error(`maxAddsPerCall must be a positive integer, got ${maxAddsPerCall}`);
   if (recordedDate === undefined || recordedHash === undefined) throw new Error('the recorded publication date and hash are required');
+  // No defaults: a guessed count would build calls the contract refuses, or
+  // hide a partly applied publication from the reviewer (Codex #2543 r9).
+  if (recordedPendingAdditions === undefined || recordedPendingDelistings === undefined) {
+    throw new Error('the recorded pendingAdditions and pendingDelistings are required');
+  }
   const { add, remove } = diffSets(parsed.addresses, current);
+  const pendingAdd = Number(recordedPendingAdditions);
+  const pendingDel = Number(recordedPendingDelistings);
   const order = checkPublicationOrder({
     recordedDate: Number(recordedDate),
     recordedHash,
     date: parsed.publicationDate,
     hash,
-    noAdditions: add.length === 0,
+    additions: add.length,
+    pendingAdditions: pendingAdd,
     allowRollback,
   });
   if (remove.length > maxRemove) {
@@ -671,32 +719,45 @@ export function buildUpdate({
     );
   }
   const version = BigInt(currentVersion);
-  // `delistingsLeft` is what the contract publishes as `pendingDelistings`:
-  // the adder's call leaves the remover's delistings outstanding, and the
-  // remover's call completes the publication (Codex #2543 r7).
-  const call = (signer, expectedVersion, toAdd, toRemove, delistingsLeft) => ({
-    signer,
-    expectedVersion,
-    add: toAdd,
-    remove: toRemove,
-    delistingsLeft,
-    calldata: encodeFunctionData({
-      abi,
-      functionName: 'applyUpdate',
-      args: [expectedVersion, toAdd, toRemove, hash, parsed.publicationDate, delistingsLeft],
-    }),
-  });
+  // `additionsLeft` / `delistingsLeft` are what the contract publishes as
+  // `pendingAdditions` / `pendingDelistings` after each call.
   const calls = [];
-  // A NEW publication declares its own outstanding count. A REPEAT of the
-  // recorded one cannot: the contract lowers the recorded count only by the
-  // delistings applied, and requires the declaration to match (Codex #2543
-  // r8), so mirror that rule here.
-  const pending = Number(recordedPending);
-  const left = (applied, declaredForNew) => (order === 'same-publication' ? Math.max(0, pending - applied) : declaredForNew);
+  const push = (signer, toAdd, toRemove, additionsLeft, delistingsLeft) => {
+    const expectedVersion = version + BigInt(calls.length);
+    calls.push({
+      signer,
+      expectedVersion,
+      add: toAdd,
+      remove: toRemove,
+      additionsLeft,
+      delistingsLeft,
+      calldata: encodeFunctionData({
+        abi,
+        functionName: 'applyUpdate',
+        args: [expectedVersion, toAdd, toRemove, hash, parsed.publicationDate, additionsLeft, delistingsLeft],
+      }),
+    });
+  };
+  // The counts outstanding BEFORE the first call: a NEW publication starts
+  // from its whole diff; a REPEAT continues from what the list records, since
+  // the contract lowers those only by what is applied.
+  let addsLeft = order === 'same-publication' ? pendingAdd : add.length;
+  let delsLeft = order === 'same-publication' ? pendingDel : remove.length;
   // A delisting-only update of a NEWER publication still goes to the remover
   // alone; otherwise the adder records the publication (and its additions).
-  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, [], left(0, remove.length)));
-  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove, left(remove.length, 0)));
+  if (add.length > 0 || remove.length === 0) {
+    let i = 0;
+    do {
+      const batch = add.slice(i, i + maxAddsPerCall);
+      i += batch.length;
+      addsLeft -= batch.length;
+      push('adder', batch, [], addsLeft, delsLeft);
+    } while (i < add.length);
+  }
+  if (remove.length > 0) {
+    delsLeft = Math.max(0, delsLeft - remove.length);
+    push('remover', [], remove, addsLeft, delsLeft);
+  }
   return {
     add,
     remove,
@@ -748,13 +809,14 @@ async function readCurrentFromChain(rpc, list, blockNumberArg, abi) {
   const version = await read('listVersion');
   const recordedDate = Number(await read('sourcePublicationDate'));
   const recordedHash = await read('sourceHash');
-  const recordedPending = Number(await read('pendingDelistings'));
+  const recordedPendingAdditions = Number(await read('pendingAdditions'));
+  const recordedPendingDelistings = Number(await read('pendingDelistings'));
   const count = await read('listedCount');
   const addrs = [];
   const PAGE = 200n;
   for (let off = 0n; off < count; off += PAGE) addrs.push(...(await read('listedPage', [off, PAGE])));
   if (BigInt(addrs.length) !== count) throw new Error(`read ${addrs.length} addresses, listedCount says ${count}`);
-  return { version, recordedDate, recordedHash, recordedPending, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
+  return { version, recordedDate, recordedHash, recordedPendingAdditions, recordedPendingDelistings, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
 }
 
 async function readChainalysisFromChain(rpc, oracle, fromBlock, toBlockArg, chunk) {
@@ -792,39 +854,20 @@ async function main() {
     source = args.xml;
   } else throw new Error('give --xml <file> or --fetch');
 
-  const parsed = parseSdnAdvanced(bytes.toString('utf8'));
+  const parsed = parseSdnAdvanced(decodeSource(bytes));
   const hash = sourceHash(bytes);
   const abi = sanctionsListAbi();
 
-  let current;
-  if (args.rpc || args.list) {
-    if (!args.rpc || !args.list) throw new Error('--rpc and --list go together');
-    const block = args.block !== undefined ? parseUintArg('--block', args.block) : undefined;
-    current = await readCurrentFromChain(args.rpc, getAddress(args.list), block, abi);
-    current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
-  } else if (args.current) {
-    if (args['current-version'] === undefined || args['current-publication'] === undefined || args['current-pending'] === undefined) {
-      // No default for the pending count: a guessed 0 would let a repeated
-      // publication's calls carry the wrong `delistingsLeft` and revert on
-      // chain, or hide outstanding delistings from the reviewer (Codex #2543 r9).
-      throw new Error('--current needs --current-version, --current-publication (YYYYMMDD, or 0 before the first update) and --current-pending (the list\'s pendingDelistings)');
-    }
-    const recordedDate = Number(parseUintArg('--current-publication', args['current-publication'], { max: 29991231n }));
-    if (recordedDate !== 0 && !isPublicationDate(recordedDate)) throw new Error(`--current-publication ${recordedDate} is not YYYYMMDD`);
-    let recordedHash = `0x${'0'.repeat(64)}`;
-    if (recordedDate !== 0) {
-      if (!/^0x[0-9a-fA-F]{64}$/.test(args['current-source-hash'] ?? '')) throw new Error('--current-source-hash (0x + 64 hex) is required with a non-zero --current-publication');
-      recordedHash = args['current-source-hash'];
-    }
-    current = {
-      version: parseUintArg('--current-version', args['current-version'], { max: 2n ** 64n - 1n }),
-      recordedDate,
-      recordedHash,
-      recordedPending: Number(parseUintArg('--current-pending', args['current-pending'], { max: 2n ** 32n - 1n })),
-      addresses: readList(args.current),
-      source: { file: args.current },
-    };
-  } else throw new Error('give the current list: --rpc + --list, or --current + --current-version + --current-publication + --current-pending');
+  // The current list is read from the deployed contract and nowhere else
+  // (Codex #2543 r10): a file of addresses cannot be tied to the version it
+  // claims, so a truncated or stale one would build calldata that applies
+  // cleanly while silently keeping a delisted address or dropping a
+  // designation.
+  if (!args.rpc || !args.list) throw new Error('give the current list: --rpc + --list (the deployed SanctionsList)');
+  if (args.current !== undefined) throw new Error('--current (a file of addresses) is no longer accepted: read the list from the chain with --rpc + --list');
+  const block = args.block !== undefined ? parseUintArg('--block', args.block) : undefined;
+  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), block, abi);
+  current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
 
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;
   const update = buildUpdate({
@@ -834,9 +877,11 @@ async function main() {
     currentVersion: current.version,
     recordedDate: current.recordedDate,
     recordedHash: current.recordedHash,
-    recordedPending: current.recordedPending,
+    recordedPendingAdditions: current.recordedPendingAdditions,
+    recordedPendingDelistings: current.recordedPendingDelistings,
     allowRollback: args['allow-rollback'] === true,
     maxRemove,
+    maxAddsPerCall: args['max-adds-per-call'] !== undefined ? Number(parseUintArg('--max-adds-per-call', args['max-adds-per-call'], { min: 1n, max: 100_000n })) : DEFAULT_MAX_ADDS_PER_CALL,
     abi,
   });
 
@@ -868,6 +913,8 @@ async function main() {
       version: current.version.toString(),
       publicationDate: current.recordedDate,
       sourceHash: current.recordedHash,
+      pendingAdditions: current.recordedPendingAdditions,
+      pendingDelistings: current.recordedPendingDelistings,
       count: current.addresses.length,
     },
     update: {
@@ -900,9 +947,11 @@ async function main() {
     `OFAC ${parsed.publicationId} sha256 ${hash}: ${parsed.addresses.length} EVM addresses; +${update.add.length} -${update.remove.length} against list version ${current.version}.`,
   );
   for (const c of update.calls) {
-    console.error(`applyUpdate at version ${c.expectedVersion}: +${c.add.length} -${c.remove.length}, signed by the ${c.signer === 'remover' ? 'REMOVER (the multisig)' : 'adder'}.`);
+    console.error(
+      `applyUpdate at version ${c.expectedVersion}: +${c.add.length} -${c.remove.length}, leaving +${c.additionsLeft} -${c.delistingsLeft} outstanding, signed by the ${c.signer === 'remover' ? 'REMOVER (the multisig)' : 'adder'}.`,
+    );
   }
-  if (current.blockHash) console.error(`Current list read at block ${current.blockNumber} (${current.blockHash}, ${current.blockTag}).`);
+  console.error(`Current list read at block ${current.blockNumber} (${current.blockHash}, ${current.blockTag}).`);
   if (update.order === 'rollback') {
     console.error(`ROLLBACK: the owner must first call authorizePublicationRollback(${current.version}, ${parsed.publicationDate}, ${hash}); see ownerMustFirstCall.`);
   }

@@ -100,9 +100,16 @@ Specifically:
   StorageGated` helper being a clearly separate function from the
   pure-true retail path, with tests in `CountryPairGatedTest`.
 - Sanctions screening introduces a third-party oracle dependency
-  (Vaipakam's own OFAC list, plus RedStone's oracle where deployed, #2443). If the oracle is misconfigured or
-  fails, the protocol fails-open temporarily (returns `false` for
-  every address — the intentional pre-`setSanctionsOracle` window).
+  (Vaipakam's own OFAC list, plus RedStone's oracle where deployed, #2443).
+  While no oracle is configured, the screen returns `false` for every
+  address (the intentional pre-`setSanctionsOracle` window). Once the
+  list is configured, a RedStone outage does not open that window: an
+  address on Vaipakam's own list is still flagged, and only for an
+  address the own list does not flag does the RedStone failure reach the
+  Diamond, whose screens then fail open or closed exactly where the
+  sanctions rules say. The own list itself goes stale only as fast as
+  its adder stops applying OFAC publications, which is why it publishes
+  its freshness on-chain.
 - Operators must remember to call `setSanctionsOracle` on retail
   deploys. Documented in `CLAUDE.md` § "Retail-deploy policy".
 

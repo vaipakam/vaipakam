@@ -40,9 +40,11 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            here, not only in the tool:
  *            - a publication date later than the recorded one is accepted;
  *            - the SAME publication (identical date AND source hash) is
- *              accepted again only when it adds nothing: a refresh with no
- *              changes, or the remover completing that publication's
- *              delistings after an adder applied its additions (note 4).
+ *              accepted again only to finish what its first update declared
+ *              outstanding (note 4a): a refresh with no changes, the adder's
+ *              next batch of that publication's additions, or the remover
+ *              completing its delistings. It may add no more than the
+ *              additions still declared outstanding.
  *              A DIFFERENT file on the same date is not accepted, because the
  *              date alone cannot order two files issued on one day, and an
  *              update that changes the list must be orderable;
@@ -89,22 +91,27 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            remover then applies the delistings against the SAME
  *            publication, which note 1a accepts because it adds nothing.
  *
- *         4a. **The window between the two transactions is stated, not
- *            hidden** (Codex #2543 r7). The adder's update records the new
- *            publication as soon as its additions land, while that
- *            publication's delistings still wait for the multisig. Each update
- *            therefore declares how many of the recorded publication's
- *            delistings remain outstanding after it, held in
- *            `pendingDelistings`, evented, and returned by `freshness()`. A
- *            non-zero value means "this publication is only partly applied:
- *            N addresses it removed are still listed". The remover's
- *            completing update declares 0. For a NEW publication the value
- *            is the updater's declaration, computed by the diff tool from the
- *            same diff; the contract cannot verify it, and an adder that
- *            understates it can hide only a delay it could equally cause by
+ *         4a. **A publication may land over several transactions, and how
+ *            much of it is still outstanding is stated, not hidden** (Codex
+ *            #2543 r7, r10). Two things split one publication: the role split
+ *            (the delistings wait for the multisig after the adder's
+ *            additions land) and size (a first population, or a large
+ *            publication, may not fit one transaction's gas, so the adder
+ *            applies its additions in batches). The first update of a
+ *            publication records it and declares how many of its additions
+ *            and of its delistings remain outstanding after it, held in
+ *            `pendingAdditions` / `pendingDelistings`, evented, and returned
+ *            by `freshness()`. Non-zero means "this publication is only
+ *            partly applied". For a NEW publication the counts are the
+ *            updater's declaration, computed by the diff tool from the same
+ *            diff; the contract cannot verify them, and an updater that
+ *            understates them can hide only a delay it could equally cause by
  *            not submitting. A REPEAT of the recorded publication cannot
- *            declare freely: the count only falls by the delistings it
- *            actually applies, so a no-change refresh leaves it as it was.
+ *            declare freely: it may add at most the additions still
+ *            outstanding, each count falls only by the changes it actually
+ *            applies, and the declared values must equal the result. So a
+ *            no-change refresh leaves both counts as they were, and a batch
+ *            cannot add beyond what the publication's first update declared.
  *
  *         5. **Attribution.** `sanctionSource` says which source flags an
  *            address, so a surface that tells a flagged user whom to contact
@@ -155,6 +162,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         delistings for the same publication; a reader must not treat
     ///         the recorded publication as fully applied while it is.
     uint32 public pendingDelistings;
+
+    /// @notice Additions the recorded publication calls for that have NOT
+    ///         been applied yet, as declared by the last update (note 4a).
+    ///         Non-zero while the adder is still applying a publication in
+    ///         batches; a later batch of the same publication may add at most
+    ///         this many.
+    uint32 public pendingAdditions;
 
     /// @notice SHA-256 of the OFAC source file the last update was built
     ///         from; zero before the first update.
@@ -214,11 +228,11 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         cleared it unused (the state it was granted against is gone).
     /// @custom:event-category informational/config
     event PublicationRollbackCleared(uint64 indexed version, uint32 authorizedDate, bytes32 authorizedHash);
-    /// @notice Update `version` left `count` of its publication's delistings
-    ///         outstanding (note 4a). Emitted on every update, so a return to
-    ///         0 is visible too.
+    /// @notice Update `version` left `additions` of its publication's
+    ///         additions and `delistings` of its delistings outstanding (note
+    ///         4a). Emitted on every update, so a return to 0 is visible too.
     /// @custom:event-category informational/config
-    event DelistingsPending(uint64 indexed version, uint32 count);
+    event ChangesPending(uint64 indexed version, uint32 additions, uint32 delistings);
     /// @notice An update consumed that authorization.
     /// @custom:event-category informational/config
     event PublicationRollbackApplied(
@@ -229,9 +243,11 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     error NotUpdater(address caller);
     /// @notice The update delists addresses and the caller is not a remover.
     error NotRemover(address caller);
-    /// @notice A repeat of the recorded publication declared an outstanding-
-    ///         delistings count other than the one it leaves (note 4a).
-    error PendingDelistingsMismatch(uint32 declared, uint32 actual);
+    /// @notice A repeat of the recorded publication declared an outstanding
+    ///         count other than the one it leaves (note 4a).
+    error PendingCountMismatch(
+        uint32 declaredAdditions, uint32 actualAdditions, uint32 declaredDelistings, uint32 actualDelistings
+    );
     /// @notice A non-zero secondary was given with no code behind it.
     error SecondaryHasNoCode(address secondary);
     /// @notice The diff was computed against a different list version.
@@ -345,15 +361,19 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @param toRemove             Addresses to delist; each must be listed.
     /// @param sourceHash_          SHA-256 of the OFAC file.
     /// @param publicationDate      That file's publication date, `YYYYMMDD`.
+    /// @param additionsLeft        How many of this publication's additions
+    ///                             remain to be applied AFTER this update
+    ///                             (note 4a); 0 once they are all applied.
     /// @param delistingsLeft       How many of this publication's delistings
     ///                             remain to be applied AFTER this update
-    ///                             (note 4a); 0 when it is fully applied.
+    ///                             (note 4a); 0 once they are all applied.
     function applyUpdate(
         uint64 expectedVersion,
         address[] calldata toAdd,
         address[] calldata toRemove,
         bytes32 sourceHash_,
         uint32 publicationDate,
+        uint32 additionsLeft,
         uint32 delistingsLeft
     ) external {
         if (toRemove.length != 0) {
@@ -368,8 +388,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
 
         uint64 version = current + 1;
         // Read before the update overwrites the recorded publication.
-        bool samePublication = publicationDate == sourcePublicationDate && sourceHash_ == sourceHash;
-        _checkPublicationOrder(version, publicationDate, sourceHash_, toAdd.length == 0);
+        // A REPEAT finishes the recorded publication: same file, adding no
+        // more than it declared outstanding. Anything else is a new
+        // publication, even the same file re-applied under an owner
+        // authorization, and declares its counts afresh (note 4a).
+        bool repeat = publicationDate == sourcePublicationDate && sourceHash_ == sourceHash
+            && toAdd.length <= pendingAdditions;
+        _checkPublicationOrder(version, publicationDate, sourceHash_, repeat);
         uint256 nAdd = toAdd.length;
         for (uint256 i; i < nAdd; ++i) {
             address who = toAdd[i];
@@ -392,41 +417,54 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         lastUpdatedAt = uint64(block.timestamp);
         sourceHash = sourceHash_;
         sourcePublicationDate = publicationDate;
-        pendingDelistings = _nextPendingDelistings(samePublication, toRemove.length, delistingsLeft);
-        emit DelistingsPending(version, delistingsLeft);
+        _setPendingCounts(repeat, nAdd, nRemove, additionsLeft, delistingsLeft);
+        emit ChangesPending(version, additionsLeft, delistingsLeft);
         emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
     }
 
-    /// @dev The outstanding-delistings count after an update (note 4a). A NEW
-    ///      publication (newer, or an authorized rollback) takes the count
+    /// @dev The outstanding counts after an update (note 4a). A NEW
+    ///      publication (newer, or an authorized rollback) takes the counts
     ///      its update declares. A REPEAT of the recorded publication can only
-    ///      reduce the count, and only by delistings it actually applies, so
-    ///      a no-change refresh cannot report a partly applied publication as
-    ///      complete (Codex #2543 r8); the declared value must equal that
+    ///      reduce each count, and only by the changes it actually applies,
+    ///      so a no-change refresh cannot report a partly applied publication
+    ///      as complete (Codex #2543 r8); the declared values must equal that
     ///      result, so a caller cannot believe it set something it did not.
-    function _nextPendingDelistings(bool samePublication, uint256 nRemoved, uint32 declared)
-        private
-        view
-        returns (uint32 next)
-    {
-        if (!samePublication) return declared;
-        uint32 pending = pendingDelistings;
-        next = nRemoved >= pending ? 0 : pending - uint32(nRemoved);
-        if (declared != next) revert PendingDelistingsMismatch(declared, next);
+    ///      A repeat adds at most `pendingAdditions` by definition, so the
+    ///      subtraction cannot underflow.
+    function _setPendingCounts(
+        bool repeat,
+        uint256 nAdded,
+        uint256 nRemoved,
+        uint32 declaredAdditions,
+        uint32 declaredDelistings
+    ) private {
+        if (repeat) {
+            uint32 additions = pendingAdditions - uint32(nAdded);
+            uint32 pendingDel = pendingDelistings;
+            uint32 delistings = nRemoved >= pendingDel ? 0 : pendingDel - uint32(nRemoved);
+            if (declaredAdditions != additions || declaredDelistings != delistings) {
+                revert PendingCountMismatch(declaredAdditions, additions, declaredDelistings, delistings);
+            }
+        }
+        pendingAdditions = declaredAdditions;
+        pendingDelistings = declaredDelistings;
     }
 
     /// @dev Accepts a newer publication, or the same publication again
-    ///      (identical date and hash) when it adds nothing; otherwise consumes
-    ///      a matching owner
+    ///      (identical date and hash) when it adds no more than its declared
+    ///      outstanding additions; otherwise consumes a matching owner
     ///      authorization or reverts. Note 1a on the contract says why.
     ///      Whatever path is taken, a successful update leaves NO pending
     ///      authorization: one it did not use is cleared and evented.
-    function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool noAdditions) private {
+    /// @param repeatWithinDeclared The update repeats the recorded
+    ///                             publication and adds no more than
+    ///                             `pendingAdditions`.
+    function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool repeatWithinDeclared) private {
         uint32 recordedDate = sourcePublicationDate;
         bytes32 recordedHash = sourceHash;
         uint32 pendingDate = rollbackAuthorizedDate;
         bytes32 pendingHash = rollbackAuthorizedHash;
-        bool ordered = date > recordedDate || (date == recordedDate && hash == recordedHash && noAdditions);
+        bool ordered = date > recordedDate || repeatWithinDeclared;
         if (!ordered) {
             if (pendingDate == 0 || date != pendingDate || hash != pendingHash) {
                 revert PublicationNotNewer(date, hash, recordedDate, recordedHash);
@@ -441,16 +479,27 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         }
     }
 
-    /// @dev A `YYYYMMDD` shape check. It does not know month lengths; its job
-    ///      is to make the value sortable and to refuse an obvious encoding
-    ///      mistake (a Unix timestamp, `YYMMDD`, a swapped month and day).
+    /// @dev A `YYYYMMDD` calendar check, month lengths and leap years
+    ///      included (Codex #2543 r10). The date orders publications, so an
+    ///      impossible one (`20260231`) is refused rather than sorted, along
+    ///      with an obvious encoding mistake (a Unix timestamp, `YYMMDD`, a
+    ///      swapped month and day).
     function _checkPublicationDate(uint32 date) private pure {
         uint32 year = date / 10_000;
         uint32 month = (date / 100) % 100;
         uint32 day = date % 100;
-        if (year < 2000 || year > 2999 || month == 0 || month > 12 || day == 0 || day > 31) {
+        if (year < 2000 || year > 2999 || month == 0 || month > 12 || day == 0 || day > _daysInMonth(year, month)) {
             revert InvalidPublicationDate(date);
         }
+    }
+
+    /// @dev Days in `month` of `year` (Gregorian).
+    function _daysInMonth(uint32 year, uint32 month) private pure returns (uint32) {
+        if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            return leap ? 29 : 28;
+        }
+        return (month == 4 || month == 6 || month == 9 || month == 11) ? 30 : 31;
     }
 
     // ── Reads ─────────────────────────────────────────────────────────
@@ -522,6 +571,9 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @return ownLastUpdatedAt        When the own record was last updated.
     /// @return ownSourceHash           SHA-256 of the OFAC file behind it.
     /// @return ownSourcePublicationDate That file's publication date, `YYYYMMDD`.
+    /// @return ownPendingAdditions     That publication's additions not yet
+    ///                                 applied; non-zero means it is only
+    ///                                 partly applied (note 4a).
     /// @return ownPendingDelistings    That publication's delistings not yet
     ///                                 applied; non-zero means it is only
     ///                                 partly applied (note 4a).
@@ -536,6 +588,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             uint64 ownLastUpdatedAt,
             bytes32 ownSourceHash,
             uint32 ownSourcePublicationDate,
+            uint32 ownPendingAdditions,
             uint32 ownPendingDelistings,
             bool hasSecondary,
             bool secondaryTimestampKnown,
@@ -548,6 +601,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             lastUpdatedAt,
             sourceHash,
             sourcePublicationDate,
+            pendingAdditions,
             pendingDelistings,
             address(_secondary) != address(0),
             secondaryTimestampKnown,

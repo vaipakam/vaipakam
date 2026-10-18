@@ -22,6 +22,8 @@ import {
   checkPublicationOrder,
   scanXml,
   decodeXmlText,
+  decodeSource,
+  isPublicationDate,
 } from './ofac-sanctions-diff.mjs';
 import { toEventSelector, getAddress } from 'viem';
 
@@ -33,7 +35,7 @@ const C = getAddress('0x00000000000000000000000000000000000000c0');
 const D = getAddress('0x00000000000000000000000000000000000000d0');
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 // A list that has never been updated: any valid publication is newer.
-const FRESH = { recordedDate: 0, recordedHash: ZERO_HASH };
+const FRESH = { recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
 
 test('parse: publication id, EVM addresses checksummed and deduped across assets', () => {
   const p = parseSdnAdvanced(FIXTURE.toString('utf8'));
@@ -92,9 +94,9 @@ test('buildUpdate: additions go to the adder, delistings to the remover at the n
   assert.deepEqual(u.calls.map((c) => [c.signer, c.expectedVersion]), [['adder', 4n], ['remover', 5n]]);
   const first = decodeFunctionData({ abi, data: u.calls[0].calldata });
   assert.equal(first.functionName, 'applyUpdate');
-  assert.deepEqual(first.args, [4n, parsed.addresses, [], hash, 20260307, 1], 'the adder declares the delisting it leaves outstanding');
+  assert.deepEqual(first.args, [4n, parsed.addresses, [], hash, 20260307, 0, 1], 'the adder declares the delisting it leaves outstanding');
   const second = decodeFunctionData({ abi, data: u.calls[1].calldata });
-  assert.deepEqual(second.args, [5n, [], [C], hash, 20260307, 0], 'the remover repeats the publication with delistings only, completing it');
+  assert.deepEqual(second.args, [5n, [], [C], hash, 20260307, 0, 0], 'the remover repeats the publication with delistings only, completing it');
   assert.equal(u.order, 'newer');
   assert.equal(u.authorizeCalldata, null);
 });
@@ -108,7 +110,7 @@ test('buildUpdate: adds-only, delist-only and empty diffs each make exactly one 
   assert.deepEqual(signers([...parsed.addresses, C]), [['remover', 2n]]);
   assert.deepEqual(signers(parsed.addresses), [['adder', 2n]], 'a refresh needs no multisig');
   // The remover completing the recorded publication's delistings.
-  const same = { recordedDate: 20260307, recordedHash: hash };
+  const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0, recordedPendingDelistings: 1 };
   assert.deepEqual(signers([...parsed.addresses, C], same), [['remover', 2n]]);
   assert.equal(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 2, ...same }).order, 'same-publication');
   assert.throws(() => signers([], same), /already records this exact file/);
@@ -195,18 +197,18 @@ test('numeric flags: one parser refuses everything but plain non-negative intege
 test('publication order: newer passes; older and same-day reissues are refused', () => {
   const H = (c) => `0x${c.repeat(64)}`;
   const base = { recordedDate: 20261015, recordedHash: H('a') };
-  assert.equal(checkPublicationOrder({ ...base, date: 20261016, hash: H('b'), noAdditions: false }), 'newer');
-  assert.equal(checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), noAdditions: true }), 'same-publication');
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), noAdditions: false }), /not newer/);
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('b'), noAdditions: true }), /not newer/);
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), noAdditions: false }), /already records this exact file/);
-  assert.equal(checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), noAdditions: false, allowRollback: true }), 'rollback');
+  assert.equal(checkPublicationOrder({ ...base, date: 20261016, hash: H('b'), additions: 1 }), 'newer');
+  assert.equal(checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), additions: 0 }), 'same-publication');
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), additions: 1 }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('b'), additions: 0 }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), additions: 1 }), /already records this exact file/);
+  assert.equal(checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), additions: 1, allowRollback: true }), 'rollback');
 });
 
 test('buildUpdate: an older publication is refused; an allowed rollback carries the owner call', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8')); // 20260307
   const hash = sourceHash(FIXTURE);
-  const newer = { recordedDate: 20260308, recordedHash: `0x${'b'.repeat(64)}` };
+  const newer = { recordedDate: 20260308, recordedHash: `0x${'b'.repeat(64)}`, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
   assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer }), /not newer/);
   const u = buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 5, ...newer, allowRollback: true });
   assert.equal(u.order, 'rollback');
@@ -319,16 +321,16 @@ test('zero address: refused in a current list, surfaced as malformed in OFAC dat
 test('buildUpdate: completing a partly applied publication declares what the contract will compute', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const hash = sourceHash(FIXTURE);
-  const same = { recordedDate: 20260307, recordedHash: hash };
+  const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0 };
   const abi = sanctionsListAbi();
-  const last = (u) => decodeFunctionData({ abi, data: u.calls[u.calls.length - 1].calldata }).args[5];
+  const last = (u) => decodeFunctionData({ abi, data: u.calls[u.calls.length - 1].calldata }).args[6];
   // Two outstanding, the diff applies one: one stays outstanding.
-  const partial = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, recordedPending: 2 });
+  const partial = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(partial), 1);
-  const full = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 3, ...same, recordedPending: 2 });
+  const full = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(full), 0);
   // A no-change refresh keeps the recorded count.
-  const refresh = buildUpdate({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPending: 2 });
+  const refresh = buildUpdate({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPendingDelistings: 2 });
   assert.equal(last(refresh), 2);
 });
 
@@ -345,23 +347,62 @@ test('parseSdnAdvanced: a digital-currency FeatureVersion without a VersionDetai
   assert.ok(parseSdnAdvanced(withInProfile(otherType)).addresses.length > 0);
 });
 
-// ---- Codex #2543 r9: file mode has no default for the pending count ----
-test('CLI file mode: --current-pending is required, never defaulted', async () => {
+// ---- Codex #2543 r10: the current list comes from the chain only ----
+test('CLI: a file of current addresses is refused; the list is read from the chain', async () => {
   const { spawnSync } = await import('node:child_process');
-  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const dir = mkdtempSync(join(tmpdir(), 'ofac-cli-'));
-  try {
-    const current = join(dir, 'current.json');
-    writeFileSync(current, '[]');
-    const base = [join(HERE, 'ofac-sanctions-diff.mjs'), '--xml', join(HERE, 'fixtures', 'sdn_advanced.sample.xml'),
-      '--current', current, '--current-version', '0', '--current-publication', '0'];
-    const missing = spawnSync(process.execPath, base, { encoding: 'utf8' });
-    assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /--current-pending/);
-    const given = spawnSync(process.execPath, [...base, '--current-pending', '0', '--out', join(dir, 'u.json')], { encoding: 'utf8' });
-    assert.equal(given.status, 0, given.stderr);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const xml = join(HERE, 'fixtures', 'sdn_advanced.sample.xml');
+  const r = spawnSync(process.execPath, [join(HERE, 'ofac-sanctions-diff.mjs'), '--xml', xml, '--current', 'x.json'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--rpc \+ --list/);
+});
+
+// ---- Codex #2543 r10: corrupted bytes are refused, not replaced ----
+test('decodeSource: invalid UTF-8 is refused; valid UTF-8 decodes unchanged', () => {
+  assert.equal(decodeSource(FIXTURE), FIXTURE.toString('utf8'));
+  const corrupt = Buffer.concat([Buffer.from('<a>0'), Buffer.from([0xff]), Buffer.from('</a>')]);
+  assert.throws(() => decodeSource(corrupt), /not valid UTF-8/);
+});
+
+// ---- Codex #2543 r10: impossible calendar dates are refused ----
+test('isPublicationDate: month lengths and leap years', () => {
+  for (const d of [20260231, 20260431, 20270229, 21000229, 20261301, 20261000]) assert.equal(isPublicationDate(d), false, String(d));
+  for (const d of [20280229, 24000229, 20260430, 20261231, 20260101]) assert.equal(isPublicationDate(d), true, String(d));
+});
+
+// ---- Codex #2543 r10: a large publication is applied in batches ----
+test('buildUpdate: additions are batched, each call declaring what remains', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const abi = sanctionsListAbi();
+  const n = parsed.addresses.length;
+  assert.ok(n >= 2, 'fixture needs at least two addresses');
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 7, ...FRESH, maxAddsPerCall: 1 });
+  const decoded = u.calls.map((c) => decodeFunctionData({ abi, data: c.calldata }).args);
+  assert.equal(u.calls.length, n + 1);
+  decoded.slice(0, n).forEach((args, i) => {
+    assert.equal(args[0], 7n + BigInt(i), 'each call applies to the version the one before produces');
+    assert.deepEqual(args[1], [parsed.addresses[i]]);
+    assert.equal(args[5], n - i - 1, 'additions still to come');
+    assert.equal(args[6], 1, 'the delisting stays outstanding until the remover');
+  });
+  assert.deepEqual(decoded[n].slice(0, 3), [7n + BigInt(n), [], [C]]);
+  assert.equal(decoded[n][5], 0);
+  assert.equal(decoded[n][6], 0);
+  assert.deepEqual(u.calls.map((c) => c.signer), [...Array(n).fill('adder'), 'remover']);
+  // Resuming a partly applied publication continues from the recorded counts.
+  const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: n - 1, recordedPendingDelistings: 1 };
+  const resumed = buildUpdate({ parsed, sourceHash: hash, current: [parsed.addresses[0], C], currentVersion: 8, ...same, maxAddsPerCall: 100 });
+  assert.equal(resumed.order, 'same-publication');
+  const r0 = decodeFunctionData({ abi, data: resumed.calls[0].calldata }).args;
+  assert.deepEqual([r0[5], r0[6]], [0, 1]);
+  // More additions than the publication declared outstanding is refused.
+  assert.throws(
+    () => buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 8, ...same }),
+    /already records this exact file/,
+  );
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, maxAddsPerCall: 0 }), /maxAddsPerCall/);
+  assert.throws(
+    () => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, recordedDate: 0, recordedHash: ZERO_HASH }),
+    /pendingAdditions and pendingDelistings are required/,
+  );
 });
