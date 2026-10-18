@@ -44,7 +44,7 @@ import {
   numberToHex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia, arbitrumSepolia } from 'viem/chains';
+import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -540,6 +540,13 @@ export const CHAINS = {
   421614: {
     chain: arbitrumSepolia,
     rpc: process.env.ARB_SEPOLIA_RPC ?? 'https://sepolia-rollup.arbitrum.io/rpc',
+  },
+  // BNB Testnet: a cross-chain rehearsal mirror, not a Phase-1 mainnet
+  // target. The default is the app's own `rpcUrlDefault` for chain 97
+  // (`src/chain/chains.ts`), so the wallet and the app read one endpoint.
+  97: {
+    chain: bscTestnet,
+    rpc: process.env.BNB_TESTNET_RPC ?? 'https://data-seed-prebsc-1-s1.bnbchain.org:8545',
   },
 };
 

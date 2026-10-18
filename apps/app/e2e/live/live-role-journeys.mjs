@@ -55,7 +55,8 @@
  *   JOURNEY_ROLES=visitor        # optional subset, comma-separated
  *   JOURNEY_JSON=out/report.json # optional machine-readable dump
  *   JOURNEY_CHAIN=421614         # optional: the chain the CONNECTED roles
- *                                # start on (default 84532, Base Sepolia).
+ *                                # start on (default 84532, Base Sepolia;
+ *                                # 421614 Arbitrum Sepolia, 97 BNB Testnet).
  *                                # Any chain the driver's CHAINS table lists.
  *
  * JOURNEY_CHAIN moves the connected roles only. The visitor is keyless, so
