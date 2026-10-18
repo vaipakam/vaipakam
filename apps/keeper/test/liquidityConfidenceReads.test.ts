@@ -26,6 +26,7 @@
  * run and an `err/run` of 0.0.
  */
 import { describe, expect, it, vi } from 'vitest';
+import { farTick } from './helpers/tick';
 import {
   decodeFunctionData,
   encodeFunctionResult,
@@ -323,7 +324,7 @@ async function run(): Promise<void> {
   await runLiquidityConfidence({
     DB: db(),
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-  } as never);
+  } as never, farTick());
 }
 
 /** How many times `x` appears in `xs`. */

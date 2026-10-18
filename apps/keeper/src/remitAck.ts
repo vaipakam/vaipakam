@@ -34,6 +34,7 @@ import {
   RewardRemittanceLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
@@ -49,7 +50,7 @@ import {
   recordRemitAckAttempt,
   markRemitAcked,
 } from './db';
-import { discoverWork } from './workQueue';
+import { discoverWork, rotationOrder } from './workQueue';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
 // headroom on the mutating facet; viem resolves functions from the
@@ -93,19 +94,19 @@ interface RemitReservationView {
   dayIds: readonly bigint[];
 }
 
-export async function runRemitAck(env: Env): Promise<void> {
+export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {
-      await ackFromBaseLedger(env, chain);
+      await ackFromBaseLedger(env, chain, tick.deadlineMs);
     } catch (err) {
       console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
     }
   }
 }
 
-async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
+async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -133,8 +134,9 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   const mirrorClients = new Map<number, PublicClient>();
   // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
-  // more than the cap however its work splits between them.
-  const ackBudget = { remaining: MAX_ACKS_PER_TICK };
+  // more than the cap however its work splits between them. It carries the
+  // run's deadline too (#2497 r19), which bounds every read and send below.
+  const ackBudget: AckBudget = { remaining: MAX_ACKS_PER_TICK, deadlineMs };
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
@@ -180,6 +182,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
         args: [id] as const,
       })),
       `remitAck getRemitReservation ${i}/${windowIds.length}`,
+      { deadlineMs },
     );
     scanResults.push(...part);
   }
@@ -225,10 +228,16 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
 }
 
-/** The rotation order for acknowledgements: never attempted first, then the
- *  least recently attempted, then by id. Pure; pinned by the tests. */
-export function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, { lastAttemptAt: number }>): number[] {
-  return [...ids].sort((a, b) => (attempts.get(a)?.lastAttemptAt ?? 0) - (attempts.get(b)?.lastAttemptAt ?? 0) || a - b);
+/** The tick's ONE send budget (#2497 r2) and the run's deadline (#2497 r19). */
+interface AckBudget {
+  remaining: number;
+  deadlineMs: number;
+}
+
+/** The acknowledgements' turn order: the open-work rotation
+ *  ({@link rotationOrder}) over each id's last attempt, ties by id. */
+function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, { lastAttemptAt: number }>): number[] {
+  return rotationOrder(ids, (id) => attempts.get(id)?.lastAttemptAt ?? 0, (a, b) => a - b);
 }
 
 async function ackPending(
@@ -239,7 +248,7 @@ async function ackPending(
   reservations: ReadonlyMap<number, RemitReservationView>,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number },
+  ackBudget: AckBudget,
 ): Promise<void> {
   if (pendingIds.length === 0) return;
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
@@ -279,7 +288,7 @@ async function sendAckFromMirror(
   // diamond whose reservation ledger this pass is scanning.
   baseDiamond: Address,
   /** The tick's ONE send budget (#2497 r2), charged at the broadcast. */
-  ackBudget: { remaining: number },
+  ackBudget: AckBudget,
   // A LATE ack (a released reservation) only resolves a settled receipt: Base's
   // released branch stamps nothing for a provisional one, so sending it would
   // pay the CCIP fee every backoff window for nothing.
@@ -304,7 +313,7 @@ async function sendAckFromMirror(
     return false;
   }
 
-  const ctx = buildKeeperContext(env, mirrorCfg, client);
+  const ctx = buildKeeperContext(env, mirrorCfg, client, ackBudget.deadlineMs);
   if (!ctx || !ctx.wallet.account) return false;
 
   const fee = (await client.readContract({
@@ -412,7 +421,7 @@ async function ackLateDeliveries(
   diamond: Address,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number },
+  ackBudget: AckBudget,
 ): Promise<void> {
   // DISCOVER new releases into the open-work queue, then WORK a bounded slice
   // of what is open (#2497 r8, `workQueue.ts`): a release leaves only when the
@@ -436,6 +445,7 @@ async function ackLateDeliveries(
         args: [BigInt(id)] as const,
       })),
       `remitAck late deliveries ${i}/${ids.length}`,
+      { deadlineMs: ackBudget.deadlineMs },
     );
     res.push(...part);
   }

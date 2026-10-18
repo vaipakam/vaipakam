@@ -31,7 +31,6 @@ import {
   findDefaultable,
   pickBatch,
   SCAN_WINDOW,
-  rotate,
   type GraceDefaultDeps,
   type GraceLoan,
 } from '../src/graceDefault';
@@ -166,6 +165,7 @@ function harness(scene: Scene) {
     wallet,
     diamond: DIAMOND,
     chainId: 84532,
+    deadlineMs: Number.POSITIVE_INFINITY,
     buildRoute: async (loan) => {
       routes.push(loan);
       const n = scene.calls ?? 1;
@@ -482,7 +482,7 @@ describe("the liquidator's no-route fallback (#2487)", () => {
   const UNDER = 9n * 10n ** 17n;
   const CHAIN = { id: 84532, name: 'base-sepolia' };
   const ctxOf = (h: ReturnType<typeof harness>) =>
-    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 });
+    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532, deadlineMs: Number.POSITIVE_INFINITY });
 
   it('closes in kind when the loan is past grace', async () => {
     const h = harness({ hf: UNDER, ending: 'other', defaulted: true, defaultable: true });
@@ -547,16 +547,6 @@ describe('pickBatch', () => {
   });
 });
 
-describe('rotate', () => {
-  it('brings every candidate to the front within length runs', () => {
-    const items = [1, 2, 3, 4, 5, 6, 7];
-    const fronts = new Set<number>();
-    for (let step = 0; step < items.length; step += 1) fronts.add(rotate(items, step)[0]);
-    expect(fronts.size).toBe(items.length);
-    expect(rotate(items, 3)).toEqual([4, 5, 6, 7, 1, 2, 3]);
-    expect(rotate([], 5)).toEqual([]);
-  });
-});
 
 describe('findDefaultable', () => {
   it('reads the active list AND every eligibility answer at one pinned block', async () => {
@@ -578,7 +568,7 @@ describe('findDefaultable', () => {
         ];
       },
     } as unknown as PublicClient;
-    await expect(findDefaultable(client, DIAMOND, 84532)).resolves.toEqual({
+    await expect(findDefaultable(client, DIAMOND, 84532, 0, Number.POSITIVE_INFINITY)).resolves.toEqual({
       defaultable: [5n],
       unread: [6n],
       window: { index: 0, count: 1, total: 3 },
@@ -607,7 +597,7 @@ describe('findDefaultable', () => {
       },
     } as unknown as PublicClient;
 
-    const third = await findDefaultable(client, DIAMOND, 84532, 2);
+    const third = await findDefaultable(client, DIAMOND, 84532, 2, Number.POSITIVE_INFINITY);
     expect(third.window).toEqual({ index: 2, count: 3, total: Number(total) });
     // The last window holds only the 50 ids past 2 × SCAN_WINDOW.
     expect(pages).toEqual([[BigInt(SCAN_WINDOW * 2), 50n]]);
@@ -615,7 +605,7 @@ describe('findDefaultable', () => {
 
     pages.length = 0;
     aggregates = 0;
-    const wrapped = await findDefaultable(client, DIAMOND, 84532, 3);
+    const wrapped = await findDefaultable(client, DIAMOND, 84532, 3, Number.POSITIVE_INFINITY);
     expect(wrapped.window.index).toBe(0);
     // A full window: never more than SCAN_WINDOW ids, whatever the book.
     expect(pages.reduce((n, [, l]) => n + Number(l), 0)).toBe(SCAN_WINDOW);
@@ -642,7 +632,7 @@ describe('findDefaultable', () => {
         throw new Error('multicall unavailable');
       },
     } as unknown as PublicClient;
-    const scan = await findDefaultable(client, DIAMOND, 84532);
+    const scan = await findDefaultable(client, DIAMOND, 84532, 0, Number.POSITIVE_INFINITY);
     expect(eligibilityReads).toBe(0);
     expect(aggregates).toBe(2);
     expect(scan.defaultable).toEqual([]);

@@ -87,7 +87,7 @@ function harness(scene: Scene) {
       return keccak256(SIGNED);
     },
   } as unknown as WalletClient;
-  const deps = { client, wallet, diamond: DIAMOND, chainId: 84532 };
+  const deps = { client, wallet, diamond: DIAMOND, chainId: 84532, deadlineMs: Number.POSITIVE_INFINITY };
   return { deps, writes, previews };
 }
 
@@ -157,7 +157,7 @@ describe('a broadcast the node refused', () => {
     const h = harness({ broadcast: 'refused' });
     await expect(attemptMatchLiquidation(h.deps, LOAN_ID)).rejects.toThrow(/insufficient funds/);
     const CHAIN = { id: 84532, name: 'base-sepolia' };
-    const ctx = { client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 } as never;
+    const ctx = { client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532, deadlineMs: Number.POSITIVE_INFINITY } as never;
     // False, so the liquidator goes on to its in-kind check this tick.
     expect(await tryMatchLiquidation(CHAIN, ctx, h.deps.client, LOAN_ID)).toBe(false);
   });
@@ -166,7 +166,7 @@ describe('a broadcast the node refused', () => {
 describe('tryMatchLiquidation', () => {
   const CHAIN = { id: 84532, name: 'base-sepolia' };
   const ctxOf = (h: ReturnType<typeof harness>) =>
-    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 }) as never;
+    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532, deadlineMs: Number.POSITIVE_INFINITY }) as never;
 
   it('is true for a sent or possibly-sent liquidation and false otherwise', async () => {
     const sent = harness({});

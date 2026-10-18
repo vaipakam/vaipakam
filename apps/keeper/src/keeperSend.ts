@@ -47,18 +47,20 @@ export type SendOutcome =
 
 /**
  * Send `data` to `to` from the wallet's account, in that account's
- * submission slot on `chainId`. Throws when nothing was sent: a failure
- * before the signature, the subrequest budget's refusal (which comes before
- * any network call), or a node's coded refusal of the broadcast such as
- * insufficient funds, judged by the slot's own `isDefinitiveRejection`.
- * Any other broadcast failure may have been relayed, so its nonce stays
- * reserved and the outcome is `unconfirmed`.
+ * submission slot on `chainId`, bounded by the run's `deadlineMs` (#2497
+ * r19). Throws when nothing was sent: a failure before the signature, the
+ * subrequest budget's or the deadline's refusal (both before any network
+ * call), or a node's coded refusal of the broadcast such as insufficient
+ * funds, judged by the slot's own `isDefinitiveRejection`. Any other
+ * broadcast failure may have been relayed, so its nonce stays reserved and
+ * the outcome is `unconfirmed`.
  */
 export async function sendInSubmissionSlot(
   wallet: WalletClient,
   chainId: number,
   to: Address,
   data: Hex,
+  deadlineMs: number,
 ): Promise<SendOutcome> {
   const account = wallet.account;
   if (!account) throw new Error('no keeper account');
@@ -78,7 +80,7 @@ export async function sendInSubmissionSlot(
       tx = keccak256(serialized);
       signed();
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
-    });
+    }, { deadlineMs });
   } catch (err) {
     // Failed before signing, or the node answered with a refusal (or the
     // subrequest budget refused before any network call): nothing was

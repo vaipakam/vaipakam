@@ -22,6 +22,33 @@
 import type { Env } from './env';
 import { enqueueWork, getWorkCursor, indexedThrough, putWorkCursor, type WorkItem, type WorkKind } from './db';
 
+/**
+ * The ONE rotation rule (#2497 r16–r19), in two shapes, so no bounded pass
+ * re-serves the same head run after run:
+ *
+ *  - {@link rotate}: a STATELESS rotation keyed by the run — `items` started at
+ *    `turn mod length` — for a pass that persists nothing between runs
+ *    (graceDefault's candidate batches, the sanctions pass's owner backlogs).
+ *  - {@link rotationOrder}: a RECORDED rotation — least recently attempted
+ *    first, never attempted first of all, ties by the caller's order — for a
+ *    pass that stamps each attempt (the remit acks). `listOpenWork` reads the
+ *    open-work queue in this same order (`checked_at ASC, block ASC, item
+ *    ASC`), and the test pins the two to each other.
+ */
+export function rotate<T>(items: readonly T[], turn: number): T[] {
+  if (items.length === 0) return [];
+  const start = ((turn % items.length) + items.length) % items.length;
+  return [...items.slice(start), ...items.slice(0, start)];
+}
+
+export function rotationOrder<T>(
+  items: readonly T[],
+  lastAttemptAt: (item: T) => number,
+  tie: (a: T, b: T) => number,
+): T[] {
+  return [...items].sort((a, b) => lastAttemptAt(a) - lastAttemptAt(b) || tie(a, b));
+}
+
 /** Ledger rows one discovery page reads (a block is never split). */
 export const DISCOVER_PAGE = 500;
 /** Pages one tick may discover, so a backlog (a fresh queue over a long

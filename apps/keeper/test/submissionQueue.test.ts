@@ -19,12 +19,15 @@ import {
   resetSubmissionQueues,
   withSubmissionSlot,
 } from '../src/submissionQueue';
+import { RunDeadlinePassed } from '../src/runDeadline';
 
 const KEY = `0x${'11'.repeat(32)}` as Hex;
 const account = privateKeyToAccount(KEY);
 const CHAIN_ID = 84532;
 const TO = `0x${'22'.repeat(20)}` as const;
 const FEES = { gas: 21_000n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n } as const;
+/** A deadline no test here reaches. */
+const FAR = Number.POSITIVE_INFINITY;
 
 const PING_ABI = [
   { type: 'function', name: 'ping', inputs: [], outputs: [], stateMutability: 'nonpayable' },
@@ -103,7 +106,7 @@ describe('submission queue (#2486)', () => {
 
   it('two passes sending at once on one chain both land, in sequence', async () => {
     const node: Node = { accepted: [], rejected: [] };
-    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     // One pass through writeContract's route, one through a raw slot the
     // way graceDefault sends, started together.
     const passA = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
@@ -119,7 +122,7 @@ describe('submission queue (#2486)', () => {
       } as never);
       signed();
       return base.sendRawTransaction({ serializedTransaction: signedTx });
-    });
+    }, { deadlineMs: FAR });
     await Promise.all([passA, passB]);
     expect(node.rejected).toEqual([]);
     expect(node.accepted).toEqual([0, 1]);
@@ -127,7 +130,7 @@ describe('submission queue (#2486)', () => {
 
   it('two writeContract calls at once both land, in sequence', async () => {
     const node: Node = { accepted: [], rejected: [] };
-    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     const call = () =>
       wallet.writeContract({
         account,
@@ -145,7 +148,7 @@ describe('submission queue (#2486)', () => {
   it('a send the node refuses outright leaves its nonce free', async () => {
     // The node answering the count is the one that refused, so it is right.
     const node: Node = { accepted: [], rejected: [], reportedPending: () => 0, refuseNext: true };
-    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     await expect(
       wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never),
     ).rejects.toThrow();
@@ -157,7 +160,7 @@ describe('submission queue (#2486)', () => {
 
   it('a send whose estimate reverts leaves no gap', async () => {
     const node: Node = { accepted: [], rejected: [], failNextEstimate: true };
-    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     // No explicit gas, so the first send estimates and fails before signing.
     const failing = wallet.sendTransaction({ account, chain: null, to: TO } as never);
     const ok = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
@@ -181,7 +184,7 @@ describe('submission queue (#2486)', () => {
           signed();
           return nonce;
         },
-        () => now,
+        { deadlineMs: Number.POSITIVE_INFINITY, now: () => now },
       );
     expect(await slot()).toBe(0);
     expect(await slot()).toBe(1);
@@ -196,9 +199,9 @@ describe('submission queue (#2486)', () => {
     await expect(
       withSubmissionSlot(wallet, CHAIN_ID, account.address, async () => {
         throw new Error('execution reverted');
-      }),
+      }, { deadlineMs: FAR }),
     ).rejects.toThrow();
-    const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, async (n) => n);
+    const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, async (n) => n, { deadlineMs: FAR });
     expect(nonce).toBe(0);
   });
 
@@ -206,7 +209,7 @@ describe('submission queue (#2486)', () => {
     // The node takes the transaction but the answer is lost, and the node
     // answering the next count has not seen it.
     const node: Node = { accepted: [], rejected: [], reportedPending: () => 0, loseAnswer: true };
-    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID);
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
     const first = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
     await expect(first).rejects.toThrow();
     // The next send must not reuse nonce 0, which would replace it.
@@ -235,13 +238,45 @@ describe('submission queue (#2486)', () => {
     const a = withSubmissionSlot(wallet, 1, account.address, async () => {
       await holding;
       order.push('chain1');
-    });
+    }, { deadlineMs: FAR });
     const b = withSubmissionSlot(wallet, 2, account.address, async () => {
       order.push('chain2');
-    });
+    }, { deadlineMs: FAR });
     await b;
     releaseA();
     await a;
     expect(order).toEqual(['chain2', 'chain1']);
+  });
+
+  it('a slot reached past the run deadline is refused unsigned: no nonce read, nothing sent, nothing reserved (#2497 r19)', async () => {
+    const node: Node = { accepted: [], rejected: [], reportedPending: () => 0 };
+    const wallet = nodeWallet(node);
+    let signedCalls = 0;
+    // The deadline passes while an earlier send holds the slot.
+    let now = 1_000;
+    let releaseFirst!: () => void;
+    const holding = new Promise<void>((r) => (releaseFirst = r));
+    const first = withSubmissionSlot(wallet, CHAIN_ID, account.address, async (_n, signed) => {
+      // Holding the slot, the clock passes the deadline.
+      now = 5_000;
+      await holding;
+      signed();
+    }, { deadlineMs: 5_000, now: () => now });
+    const second = withSubmissionSlot(wallet, CHAIN_ID, account.address, async (_n, signed) => {
+      signedCalls += 1;
+      signed();
+    }, { deadlineMs: 5_000, now: () => now }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    releaseFirst();
+    await first;
+    const refusal = await second;
+    expect(refusal).toBeInstanceOf(RunDeadlinePassed);
+    expect(signedCalls).toBe(0);
+    expect(isDefinitiveRejection(refusal), 'nothing left the process').toBe(true);
+    // The refused send reserved nothing: the next one takes the nonce after the first.
+    const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, async (n) => n, { deadlineMs: FAR, now: () => now });
+    expect(nonce).toBe(1);
   });
 });

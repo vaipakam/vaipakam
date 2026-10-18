@@ -8,9 +8,9 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ackOrder, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
+import { isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
 import { enqueueWork, finishWork, listOpenWork, listReleasedRemitIds, pageByBlock, touchOpenWork } from '../src/db';
-import { discoverWork } from '../src/workQueue';
+import { discoverWork, rotate, rotationOrder } from '../src/workQueue';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { Env } from '../src/env';
 import type { KeeperD1 } from '../src/env';
@@ -217,13 +217,46 @@ describe('discoverWork — the cursor stops at the indexed watermark read BEFORE
   });
 });
 
-describe('ackOrder — the Pending acks rotate, so no id waits behind ever-retried earlier ones (#2497 r16)', () => {
-  it('never-attempted first, then least recently attempted, then by id', () => {
+describe('the one rotation rule (#2497 r16–r19, workQueue.ts)', () => {
+  it('rotationOrder: never attempted first, then least recently attempted, then the tie order', () => {
     const at = new Map([
-      [1, { lastAttemptAt: 900 }],
-      [2, { lastAttemptAt: 100 }],
-      [3, { lastAttemptAt: 900 }],
+      [1, 900],
+      [2, 100],
+      [3, 900],
     ]);
-    expect(ackOrder([1, 2, 3, 76, 77], at)).toEqual([76, 77, 2, 1, 3]);
+    expect(rotationOrder([1, 2, 3, 76, 77], (id) => at.get(id) ?? 0, (a, b) => a - b)).toEqual([76, 77, 2, 1, 3]);
+  });
+
+  it('rotate: starts at turn mod length, keeps every element, and brings each to the front within length turns', () => {
+    const items = [1, 2, 3, 4, 5, 6, 7];
+    const fronts = new Set<number>();
+    for (let turn = 0; turn < items.length; turn += 1) fronts.add(rotate(items, turn)[0]);
+    expect(fronts.size).toBe(items.length);
+    expect(rotate(items, 3)).toEqual([4, 5, 6, 7, 1, 2, 3]);
+    expect(rotate(['a', 'b', 'c'], 4)).toEqual(['b', 'c', 'a']);
+    expect(rotate([], 5)).toEqual([]);
+  });
+
+  it('listOpenWork reads the queue in rotationOrder: least recently checked first, then block, then item', async () => {
+    const keeper = createKeeperD1();
+    const db = keeper.d1 as KeeperD1;
+    const rows = [
+      { item: 'c', block: 30, payload: {} },
+      { item: 'a', block: 10, payload: {} },
+      { item: 'b', block: 10, payload: {} },
+      { item: 'd', block: 40, payload: {} },
+    ];
+    await enqueueWork(db, 1, '0xab', 'late_ack', rows);
+    // Two have been checked, one more recently than the other.
+    keeper.db.prepare(`UPDATE keeper_work_open SET checked_at = 500 WHERE item = 'a'`).run();
+    keeper.db.prepare(`UPDATE keeper_work_open SET checked_at = 900 WHERE item = 'd'`).run();
+    const checkedAt = new Map([['a', 500], ['d', 900]]);
+    const expected = rotationOrder(
+      rows,
+      (r) => checkedAt.get(r.item) ?? 0,
+      (x, y) => x.block - y.block || (x.item < y.item ? -1 : x.item > y.item ? 1 : 0),
+    ).map((r) => r.item);
+    expect(expected).toEqual(['b', 'c', 'a', 'd']);
+    expect((await listOpenWork(db, 1, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(expected);
   });
 });

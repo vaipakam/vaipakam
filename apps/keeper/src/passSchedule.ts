@@ -39,7 +39,7 @@ import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
-import { runRewardSanctionsHold } from './rewardSanctionsHold';
+import { PASS_CADENCE_SEC as SANCTIONS_HOLD_CADENCE_SEC, runRewardSanctionsHold } from './rewardSanctionsHold';
 import { runDeliveryProof } from './deliveryProof';
 import { runGraceDefault } from './graceDefault';
 
@@ -214,7 +214,9 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'rewardSanctionsHold',
-    cadenceMinutes: 60,
+    // The pass's own constant (#2497 r19): its observation margins are one
+    // cadence, so the two can never disagree.
+    cadenceMinutes: SANCTIONS_HOLD_CADENCE_SEC / 60,
     // :14, not :13 — graceDefault (#2483, 5-minute cadence from :03) took
     // :13 when the two branches met; the stagger test pins one pass a minute.
     offsetMinutes: 14,

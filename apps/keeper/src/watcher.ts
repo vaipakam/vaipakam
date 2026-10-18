@@ -19,6 +19,7 @@ import { createPublicClient, http, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import type { ChainConfig } from './env';
+import type { PassTick } from './passSchedule';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { batchedRead } from './batchRead';
@@ -57,7 +58,7 @@ const BAND_RANK: Record<Band, number> = {
   critical: 3,
 };
 
-export async function runWatcher(env: Env): Promise<void> {
+export async function runWatcher(env: Env, tick: PassTick): Promise<void> {
   // Sweep expired handshake codes first so the table stays bounded.
   await sweepExpiredLinks(env.DB);
 
@@ -69,7 +70,7 @@ export async function runWatcher(env: Env): Promise<void> {
 
   for (const chain of chains) {
     try {
-      await watchChain(env, chain);
+      await watchChain(env, chain, tick.deadlineMs);
     } catch (err) {
       // Keep the loop going — one bad RPC shouldn't kill the whole tick.
       console.error(
@@ -82,7 +83,7 @@ export async function runWatcher(env: Env): Promise<void> {
 /** Loans per `aggregate3`. Matches the liquidator's bound (#1946). */
 const HF_MULTICALL_CHUNK = 100;
 
-async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
+async function watchChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const users = await listThresholdsForChain(env.DB, chain.id);
   if (users.length === 0) return;
 
@@ -111,6 +112,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       args: [u.wallet as Address] as const,
     })),
     `${chain.name} getUserActiveLoans`,
+    { deadlineMs },
   );
 
   // Flatten to (user, loanId) pairs, preserving per-user failure isolation:
@@ -146,6 +148,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
         args: [p.loanId] as const,
       })),
       `${chain.name} calculateHealthFactor ${i}/${pairs.length}`,
+      { deadlineMs },
     );
     hfResults.push(...part);
   }

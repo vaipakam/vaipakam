@@ -79,6 +79,7 @@ import { createSubrequestBudget } from './subrequestBudget';
 import { orchestrateServerQuotes } from './serverQuotes';
 import type { PassTick } from './passSchedule';
 import { attemptGraceDefault, type GraceDefaultDeps, type GraceDefaultOutcome } from './closeOut';
+import { rotate } from './workQueue';
 
 // The per-loan attempt lives in ./closeOut, shared with the liquidator's
 // in-kind fallback (#2487). Re-exported so existing importers keep working.
@@ -138,7 +139,7 @@ const ROTATION_STEP_MS = 5 * 60_000;
 /** LibVaipakam.AssetType.ERC20. */
 const ASSET_TYPE_ERC20 = 0;
 
-export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> {
+export async function runGraceDefault(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
   const chains = getChainConfigs(env).filter((c) => c.diamond);
   if (chains.length === 0) return;
@@ -147,7 +148,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   // delivery must not land on the previous run's index and repeat its work
   // (or skip some). Only an invocation that is not a cron tick reads the
   // clock.
-  const run = Math.floor((tick?.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
+  const run = Math.floor((tick.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
 
   // ONE chain per run, and a bounded window of its active list: the
   // subrequest allowance is the invocation's — shared by every chain and
@@ -159,7 +160,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   const chain = chains[run % chains.length];
   const visit = Math.floor(run / chains.length);
   try {
-    await processChain(env, chain, visit);
+    await processChain(env, chain, visit, tick.deadlineMs);
   } catch (err) {
     // Described, never stringified: a viem transport error carries the
     // request URL, and this Worker's RPC URLs carry API keys.
@@ -167,14 +168,14 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   }
 }
 
-async function processChain(env: Env, chain: ChainConfig, visit: number): Promise<void> {
+async function processChain(env: Env, chain: ChainConfig, visit: number, deadlineMs: number): Promise<void> {
   // Every request below goes through this one budget — reads, quotes and
   // the wallet's send alike.
   const budget = createSubrequestBudget(SUBREQUEST_BUDGET);
   const client = createPublicClient({
     transport: http(chain.rpc, { fetchFn: budget.fetch }),
   }) as PublicClient;
-  const ctx = buildKeeperContext(env, chain, client, budget.fetch);
+  const ctx = buildKeeperContext(env, chain, client, deadlineMs, budget.fetch);
   if (!ctx) return;
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
@@ -182,7 +183,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
 
   let scan: Awaited<ReturnType<typeof findDefaultable>>;
   try {
-    scan = await findDefaultable(client, ctx.diamond, chain.id, visit);
+    scan = await findDefaultable(client, ctx.diamond, chain.id, visit, deadlineMs);
   } catch (err) {
     if (!budget.exhausted()) throw err;
     console.log(`[keeper] graceDefault chain=${chain.id} scan stopped: ${BUDGET_SPENT} ${spent()}`);
@@ -205,6 +206,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     wallet: ctx.wallet,
     diamond: ctx.diamond,
     chainId: chain.id,
+    deadlineMs,
     buildRoute: (loan) =>
       orchestrateServerQuotes(env, client, {
         chainId: chain.id,
@@ -280,7 +282,9 @@ export async function findDefaultable(
   client: PublicClient,
   diamond: Address,
   chainId: number,
-  visit = 0,
+  visit: number,
+  /** The run's deadline (#2497 r19): a chunk reached past it reads as unread. */
+  deadlineMs: number,
 ): Promise<{ defaultable: bigint[]; unread: bigint[]; window: ScanWindow }> {
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const total = (await client.readContract({
@@ -320,11 +324,10 @@ export async function findDefaultable(
         args: [id],
       })),
       `graceDefault chain=${chainId} isLoanDefaultable`,
-      blockNumber,
       // No serial retry: it would cost one subrequest per id, up to
       // SCAN_WINDOW of them, and break the scan's bound. A failed chunk is
       // reported as eligibility-unread and is read again on a later visit.
-      'unread',
+      { deadlineMs, blockNumber, onAggregateFailure: 'unread' },
     );
     results.push(...part);
   }
@@ -335,13 +338,6 @@ export async function findDefaultable(
     else if (r.result === true) defaultable.push(ids[i]);
   });
   return { defaultable, unread, window };
-}
-
-/** The candidates starting at `step mod length`. */
-export function rotate<T>(items: readonly T[], step: number): T[] {
-  if (items.length === 0) return [];
-  const start = ((step % items.length) + items.length) % items.length;
-  return [...items.slice(start), ...items.slice(0, start)];
 }
 
 /** This run's batch: `width` candidates starting `run × width` along the

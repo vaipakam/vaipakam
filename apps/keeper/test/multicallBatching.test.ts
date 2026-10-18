@@ -28,6 +28,7 @@
  * chunks and silently fell back on others would still pass.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { farTick } from './helpers/tick';
 import {
   decodeFunctionData,
   encodeFunctionResult,
@@ -317,7 +318,7 @@ describe('Multicall3 batching (#1946)', () => {
         KEEPER_PRIVATE_KEY:
           '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-      } as never);
+      } as never, farTick());
     } finally {
       restore();
       spy.mockRestore();
@@ -372,7 +373,7 @@ describe('Multicall3 batching (#1946)', () => {
         KEEPER_PRIVATE_KEY:
           '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-      } as never);
+      } as never, farTick());
     } finally {
       restore();
       spy.mockRestore();
@@ -416,7 +417,7 @@ describe('watcher batching (#1896)', () => {
         DB: watcherDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
         TG_BOT_TOKEN: 'test:token',
-      } as never);
+      } as never, farTick());
     } finally {
       restore();
       spy.mockRestore();
@@ -465,7 +466,7 @@ describe('watcher batching (#1896)', () => {
         DB: watcherDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
         TG_BOT_TOKEN: 'test:token',
-      } as never);
+      } as never, farTick());
     } finally {
       restore();
       spy.mockRestore();
@@ -687,7 +688,7 @@ describe('preGraceWatcher batching (#1896)', () => {
         DB: emptyDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
         TG_BOT_TOKEN: 'test:token',
-      } as never);
+      } as never, farTick());
     } finally {
       restore();
       warn.mockRestore();

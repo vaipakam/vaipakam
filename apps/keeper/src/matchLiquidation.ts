@@ -90,7 +90,7 @@ export type MatchLiquidationOutcome =
 
 /** Preview, hold, send. Never sends when a step cannot establish its answer. */
 export async function attemptMatchLiquidation(
-  deps: Pick<KeeperContext, 'wallet' | 'diamond' | 'chainId'> & {
+  deps: Pick<KeeperContext, 'wallet' | 'diamond' | 'chainId' | 'deadlineMs'> & {
     client: Pick<PublicClient, 'simulateCalls' | 'getBlockNumber' | 'getTransactionCount'>;
   },
   loanId: bigint,
@@ -108,7 +108,7 @@ export async function attemptMatchLiquidation(
   const pending = await keeperTxPending(client, keeper);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
-  return sendInSubmissionSlot(wallet, deps.chainId, diamond, emptyListLiquidation(loanId));
+  return sendInSubmissionSlot(wallet, deps.chainId, diamond, emptyListLiquidation(loanId), deps.deadlineMs);
 }
 
 /**
@@ -123,7 +123,7 @@ export async function tryMatchLiquidation(
   loanIdBig: bigint,
 ): Promise<boolean> {
   const outcome = await attemptMatchLiquidation(
-    { client: publicClient, wallet: ctx.wallet, diamond: ctx.diamond, chainId: chain.id },
+    { client: publicClient, wallet: ctx.wallet, diamond: ctx.diamond, chainId: chain.id, deadlineMs: ctx.deadlineMs },
     loanIdBig,
   ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
   if (outcome.kind === 'skipped') {

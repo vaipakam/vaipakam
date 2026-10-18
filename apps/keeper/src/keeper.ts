@@ -240,6 +240,9 @@ export interface KeeperContext {
   client: PublicClient;
   diamond: Address;
   chainId: number;
+  /** The run's deadline ({@link PassTick.deadlineMs}): every batched read and
+   *  every send through `wallet` is bounded by it (#2497 r19). */
+  deadlineMs: number;
 }
 
 const ATTEMPTED: Set<string> = new Set();
@@ -306,6 +309,7 @@ export async function tryInKindCloseOut(
       wallet: ctx.wallet,
       diamond: ctx.diamond,
       chainId: chain.id,
+      deadlineMs: ctx.deadlineMs,
       // The in-kind role sends an empty list and never builds a route.
       buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
     },
@@ -335,6 +339,8 @@ export async function maybeAutonomousLiquidate(
   loanIdBig: bigint,
   hfRaw: bigint,
   publicClient: PublicClient,
+  /** The run's deadline (#2497 r19): sends past it are refused. */
+  deadlineMs: number,
 ): Promise<boolean> {
   // Eligibility: keeper enabled, HF actually below 1, dedupe miss.
   if (!isKeeperEnabled(env)) return false;
@@ -344,7 +350,7 @@ export async function maybeAutonomousLiquidate(
   if (ATTEMPTED.has(key)) return false;
   ATTEMPTED.add(key);
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, deadlineMs);
   if (!ctx) return false;
 
   try {
@@ -1062,6 +1068,10 @@ export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
+  /** The run's deadline ({@link PassTick.deadlineMs}): the wallet's sends
+   *  are refused past it, and the context carries it for the pass's batched
+   *  reads (#2497 r19, `runDeadline.ts`). */
+  deadlineMs: number,
   /** The fetch the wallet's requests go through — a pass that caps its
    *  requests passes its budget's (see subrequestBudget.ts). */
   fetchFn?: typeof fetch,
@@ -1083,12 +1093,14 @@ export function buildKeeperContext(
       transport: http(chain.rpc, fetchFn ? { fetchFn } : undefined),
     }),
     chain.id,
+    deadlineMs,
   );
   return {
     wallet,
     client: publicClient,
     diamond: chain.diamond as Address,
     chainId: chain.id,
+    deadlineMs,
   };
 }
 

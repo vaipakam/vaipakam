@@ -57,6 +57,7 @@ import {
   LoanFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -186,6 +187,7 @@ async function loadConfig(
 async function activeCollateralAssets(
   client: PublicClient,
   diamond: Address,
+  deadlineMs: number,
 ): Promise<Address[]> {
   let total: bigint;
   try {
@@ -244,6 +246,7 @@ async function activeCollateralAssets(
         args: [id] as const,
       })),
       `liq-confidence getLoanDetails ${i}/${ids.length}`,
+      { deadlineMs },
     );
     for (const r of results) {
       if (out.length >= MAX_ASSETS_PER_TICK) break;
@@ -794,6 +797,7 @@ async function runRelayForChain(
   env: Env,
   chain: ChainConfig,
   client: PublicClient,
+  deadlineMs: number,
 ): Promise<void> {
   const diamond = chain.diamond as Address;
   const cfg = await loadConfig(client, diamond, env);
@@ -803,7 +807,7 @@ async function runRelayForChain(
   // the `setKeeperTier` signer. Reads work without the key (0x is then
   // not asked; each aggregator's taker is its adapter either way); writes
   // need `isKeeperEnabled`.
-  const ctx = buildKeeperContext(env, chain, client);
+  const ctx = buildKeeperContext(env, chain, client, deadlineMs);
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
   const txOrigin = ctx?.wallet.account?.address as Address | undefined;
   // Lazily, once per chain tick — see `aggregatorConfirmedTier`. The
@@ -818,7 +822,7 @@ async function runRelayForChain(
       () => null,
     ));
 
-  const assets = await activeCollateralAssets(client, diamond);
+  const assets = await activeCollateralAssets(client, diamond, deadlineMs);
   if (assets.length === 0) return;
 
   // One cache for this chain's whole tick — see the TickCache note. It dies
@@ -923,11 +927,11 @@ async function runRelayForChain(
   }
 }
 
-export async function runLiquidityConfidence(env: Env): Promise<void> {
+export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
   for (const chain of getChainConfigs(env)) {
     try {
       const client = createPublicClient({ transport: http(chain.rpc) });
-      await runRelayForChain(env, chain, client);
+      await runRelayForChain(env, chain, client, tick.deadlineMs);
     } catch (err) {
       console.error(
         `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,

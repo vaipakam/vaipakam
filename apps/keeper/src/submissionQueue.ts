@@ -81,6 +81,7 @@ import {
 } from 'viem/actions';
 import { HttpRequestError, TimeoutError } from 'viem';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
+import { RunDeadlinePassed, pastDeadline } from './runDeadline';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -103,6 +104,17 @@ export function resetSubmissionQueues(): void {
   floors.clear();
 }
 
+/** What bounds one slot. `deadlineMs` is REQUIRED (#2497 r19): the slot is
+ *  refused, before anything is read or signed, when the run's deadline has
+ *  passed by the time the queue reaches it — so a send that waited behind
+ *  other passes' sends cannot start past the run (see `runDeadline.ts`). */
+export interface SlotBounds {
+  /** The run's deadline ({@link PassTick.deadlineMs}). */
+  deadlineMs: number;
+  /** Test seam: the clock the floor's age and the deadline are judged by. */
+  now?: () => number;
+}
+
 /**
  * Run `send` in this account's next slot on `chainId`, handing it the
  * nonce to use. `send` must broadcast at most one transaction with that
@@ -111,14 +123,18 @@ export function resetSubmissionQueues(): void {
  *
  * The nonce is read through `wallet`'s own transport, so a pass that caps
  * its requests counts the read.
+ *
+ * Throws {@link RunDeadlinePassed} — before the nonce is read, so nothing is
+ * signed and no floor moves — when the slot is reached past `deadlineMs`.
  */
 export async function withSubmissionSlot<T>(
   wallet: WalletClient,
   chainId: number,
   address: Address,
   send: (nonce: number, signed: () => void) => Promise<T>,
-  now: () => number = Date.now,
+  bounds: SlotBounds,
 ): Promise<T> {
+  const { deadlineMs, now = Date.now } = bounds;
   const key = keyOf(chainId, address);
   const previous = tails.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -129,6 +145,7 @@ export async function withSubmissionSlot<T>(
   tails.set(key, tail);
   await previous;
   try {
+    if (pastDeadline(deadlineMs, now())) throw new RunDeadlinePassed(`send on chain ${chainId}`);
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
@@ -181,7 +198,9 @@ export function isDefinitiveRejection(err: unknown): boolean {
   for (let e: unknown = err; e && chain.length < 8; e = (e as { cause?: unknown }).cause) {
     chain.push(e);
   }
-  if (chain.some((e) => e instanceof SubrequestBudgetExhausted)) return true;
+  // Refused by the budget or by the run's deadline before any network call:
+  // nothing left the process.
+  if (chain.some((e) => e instanceof SubrequestBudgetExhausted || e instanceof RunDeadlinePassed)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
     return false;
@@ -201,8 +220,11 @@ export function isDefinitiveRejection(err: unknown): boolean {
  * `sendTransaction` is the queued one, which is where viem looks it up.
  * The queued send calls viem's actions on the UNEXTENDED client, so
  * nothing re-enters the queue. Every other action is untouched.
+ *
+ * Every slot the wallet takes is bounded by `deadlineMs`, the run's deadline:
+ * a send reached past it is refused unsigned (#2497 r19).
  */
-export function queuedWallet(wallet: WalletClient, chainId: number): WalletClient {
+export function queuedWallet(wallet: WalletClient, chainId: number, deadlineMs: number): WalletClient {
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
@@ -229,7 +251,7 @@ export function queuedWallet(wallet: WalletClient, chainId: number): WalletClien
         } as never);
         signed();
         return sendRawTransaction(base, { serializedTransaction: serialized });
-      });
+      }, { deadlineMs });
     };
     const routed = { ...base, sendTransaction: queuedSend };
     return {

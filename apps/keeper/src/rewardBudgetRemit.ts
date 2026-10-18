@@ -28,6 +28,7 @@ import {
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -205,19 +206,19 @@ function readBigint(env: Env, key: string, fallback: bigint): bigint {
   }
 }
 
-export async function runRewardBudgetRemit(env: Env): Promise<void> {
+export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {
-      await remitFromCanonical(env, chain);
+      await remitFromCanonical(env, chain, tick.deadlineMs);
     } catch (err) {
       console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
     }
   }
 }
 
-async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
+async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -238,7 +239,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   })) as readonly [bigint, boolean];
   if (!active || currentDay <= 1n) return; // no finalized (day < currentDay) yet
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, deadlineMs);
   if (!ctx || !ctx.wallet.account) return;
 
   // Mirror list comes from the ON-CHAIN reward topology (the expected reward

@@ -64,6 +64,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import { erc721Abi } from 'viem';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { listThresholdsForChain, type UserThresholds } from './db';
 import {
@@ -100,6 +101,7 @@ async function chunkedRead<T>(
   items: readonly T[],
   build: (item: T) => unknown,
   label: string,
+  deadlineMs: number,
 ): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
   const out: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
   for (let i = 0; i < items.length; i += READ_CHUNK) {
@@ -109,6 +111,7 @@ async function chunkedRead<T>(
       client as never,
       chunk.map(build),
       `${label} ${i}/${items.length}`,
+      { deadlineMs },
     );
     out.push(...part);
   }
@@ -159,7 +162,7 @@ interface OfferRow {
   amountMax: bigint;
 }
 
-export async function runPreGraceWatcher(env: Env): Promise<void> {
+export async function runPreGraceWatcher(env: Env, tick: PassTick): Promise<void> {
   if (!env.DB) {
     console.log('[keeper] preGraceWatcher skipped: DB not bound');
     return;
@@ -167,7 +170,7 @@ export async function runPreGraceWatcher(env: Env): Promise<void> {
   const chains = getChainConfigs(env);
   for (const chain of chains) {
     try {
-      await watchChain(env, chain);
+      await watchChain(env, chain, tick.deadlineMs);
     } catch (err) {
       console.error(
         `[keeper] preGraceWatcher chain=${chain.id} failed:`,
@@ -177,7 +180,7 @@ export async function runPreGraceWatcher(env: Env): Promise<void> {
   }
 }
 
-async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
+async function watchChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   if (!chain.diamond) return;
   const publicClient = createPublicClient({
     transport: http(chain.rpc),
@@ -239,6 +242,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
     publicClient,
     diamond,
     chain.id,
+    deadlineMs,
   );
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -269,6 +273,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       args: [loanIdBig] as const,
     }),
     `${chain.id} getAutoRefinanceCaps`,
+    deadlineMs,
   );
 
   const optedIn: bigint[] = [];
@@ -297,6 +302,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       args: [loanIdBig] as const,
     }),
     `${chain.id} getLoanDetails`,
+    deadlineMs,
   );
 
   const due: { loanId: bigint; loan: LoanDetails; endTime: number }[] = [];
@@ -337,6 +343,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       args: [d.loan.borrowerTokenId] as const,
     }),
     `${chain.id} ownerOf`,
+    deadlineMs,
   );
 
   // The dispatch tail stays serial: it writes D1 and sends messages, so it is
@@ -388,6 +395,7 @@ async function _scanLenderOfferBook(
   publicClient: PublicClient,
   diamond: Address,
   chainId: number,
+  deadlineMs: number,
 ): Promise<OfferRow[] | null> {
   let total: bigint;
   try {
@@ -444,6 +452,7 @@ async function _scanLenderOfferBook(
       args: [offerIdBig] as const,
     }),
     `${chainId} getOffer`,
+    deadlineMs,
   );
 
   const lenderOffers: OfferRow[] = [];

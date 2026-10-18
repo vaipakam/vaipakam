@@ -21,7 +21,7 @@ import {
   candidateOwners,
   nextScreenCursor,
   writeBudgetFor,
-  rotate,
+  measureShortfall,
   planSanctionsHold,
   SCREEN_MAX_PER_TICK,
   SCREEN_MIN_PER_TICK,
@@ -135,30 +135,22 @@ describe('planSanctionsHold — every due observation, Held AND Confirmed, in on
   });
 });
 
-describe('rotate — a stateless rotation keyed by the run (#2497 r18)', () => {
-  it('starts at turn mod length and keeps every element', () => {
-    expect(rotate(['a', 'b', 'c'], 0)).toEqual(['a', 'b', 'c']);
-    expect(rotate(['a', 'b', 'c'], 4)).toEqual(['b', 'c', 'a']);
-    expect(rotate([], 7)).toEqual([]);
-  });
-});
-
-describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#2497 r7)', () => {
+describe('writeBudgetFor — sized by the six-hour bound, capped (#2497 r7)', () => {
   it('adds one observation per held owner per bound on top of the floor', () => {
-    expect(writeBudgetFor(0)).toEqual({ writes: 25, overCapacity: false });
-    expect(writeBudgetFor(150), '150 held over 5 runs (due one cadence early): 30 more').toEqual({ writes: 55, overCapacity: false });
-    expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits an extra run').toBe(56);
+    expect(writeBudgetFor(0)).toBe(25);
+    expect(writeBudgetFor(150), '150 held over 5 runs (due one cadence early): 30 more').toBe(55);
+    expect(writeBudgetFor(151), 'rounds up, so nobody waits an extra run').toBe(56);
   });
 
-  it('caps at the ceiling and says the cap binds (straddle)', () => {
-    expect(writeBudgetFor(475), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
-    expect(writeBudgetFor(476), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
+  it('caps at the ceiling (straddle); whether the cap bound is measured after the tick, not predicted here', () => {
+    expect(writeBudgetFor(475), 'exactly the ceiling').toBe(120);
+    expect(writeBudgetFor(476), 'one owner past it').toBe(120);
   });
 
   it('counts the clean commits as demand too, so they cannot crowd out observations (#2497 r8)', () => {
     // The finding's case: 100 clean commits + 60 held owners.
-    expect(writeBudgetFor(60, 100)).toEqual({ writes: 120, overCapacity: true });
-    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 47, overCapacity: false });
+    expect(writeBudgetFor(60, 100)).toBe(120);
+    expect(writeBudgetFor(60, 10), 'fits').toBe(47);
   });
 
   it('the planner carries the held count and the budget', () => {
@@ -299,6 +291,54 @@ describe('the D1 reads, on the real schema', () => {
   });
 });
 
+describe('measureShortfall — what a tick left undone, from the post-tick read (#2497 r16, r18, r19)', () => {
+  const status = (owner: string, o: Partial<OwnerSanctionsStatus>): OwnerSanctionsStatus => ({
+    owner: owner as OwnerSanctionsStatus['owner'],
+    decision: DECISION_HOLD,
+    flaggedAt: NOW - 10_000,
+    lastSeenAt: NOW - 10_000,
+    forfeitableAt: 0,
+    observeBy: 0,
+    stored: false,
+    ...o,
+  });
+  const C = '0x00000000000000000000000000000000000000cc';
+  const D = '0x00000000000000000000000000000000000000dd';
+  const plan = {
+    dueObservations: [
+      { owner: A as OwnerSanctionsStatus['owner'], confirmed: false },
+      { owner: B as OwnerSanctionsStatus['owner'], confirmed: true },
+      { owner: C as OwnerSanctionsStatus['owner'], confirmed: false },
+    ],
+    commitClean: [D as OwnerSanctionsStatus['owner'], A as OwnerSanctionsStatus['owner']],
+  };
+
+  it('a due observation counts as done only when the chain now shows it landed', () => {
+    const after = [
+      status(A, { lastSeenAt: NOW }), // landed: observed this tick
+      status(B, { decision: DECISION_CONFIRMED, lastSeenAt: NOW - OBSERVE_AFTER_SEC }), // sent, reverted: still due
+      // C: its fresh read failed — absent — counts as not done
+      status(D, { decision: DECISION_DELIVER, stored: false }), // committed
+    ];
+    expect(measureShortfall(plan, after, NOW)).toEqual({ due: 2, clean: 0 });
+  });
+
+  it('a clean result counts as committed only when nothing is stored any more, and not at all once the owner is re-flagged', () => {
+    const after = [
+      status(A, { decision: DECISION_DELIVER, stored: true, lastSeenAt: NOW }), // still stored: uncommitted
+      status(B, { decision: DECISION_CONFIRMED, lastSeenAt: NOW }),
+      status(C, { lastSeenAt: NOW }),
+      status(D, { decision: DECISION_HOLD, stored: true }), // re-flagged: no clean result to commit
+    ];
+    expect(measureShortfall(plan, after, NOW)).toEqual({ due: 0, clean: 1 });
+  });
+
+  it('nothing due and nothing stored: no shortfall; every owner unread: everything', () => {
+    expect(measureShortfall({ dueObservations: [], commitClean: [] }, [], NOW)).toEqual({ due: 0, clean: 0 });
+    expect(measureShortfall(plan, [], NOW)).toEqual({ due: 3, clean: 2 });
+  });
+});
+
 describe('raiseAlerts', () => {
   it('clears only an alert that is actually open: a quiet candidate costs no write', async () => {
     const h = createKeeperD1();
@@ -316,7 +356,7 @@ describe('raiseAlerts', () => {
     };
     const quiet = {
       observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 25, overCapacity: false, heldCount: 2,
+      writes: 25, heldCount: 2,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
@@ -332,7 +372,7 @@ describe('raiseAlerts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
     const quiet = {
       observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 25, overCapacity: false, heldCount: 0,
+      writes: 25, heldCount: 0,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     try {
@@ -350,11 +390,11 @@ describe('raiseAlerts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
     const plan = {
       observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 25, overCapacity: false, heldCount: 0,
+      writes: 25, heldCount: 0,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     try {
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 5, unreached: 5, clean: 0 }, Date.now() - 1);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 5, clean: 0 }, Date.now() - 1);
       expect(warned.some((w) => /due observation/.test(w)), 'nothing sent past the window').toBe(false);
       expect(warned.some((w) => /the alert window closed — \d+ alert update\(s\) wait for the next run/.test(w))).toBe(true);
     } finally {
@@ -369,23 +409,23 @@ describe('raiseAlerts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
     const plan = {
       observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 120, overCapacity: true, heldCount: 1,
+      writes: 120, heldCount: 1,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     try {
       // The finding's case: the predicted cap binds on clean-commit demand, but
       // every due observation was sent — no evidence-chain alert, only the backlog.
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 100 });
-      expect(warned.some((w) => /due observation\(s\) did NOT land/.test(w)), 'no false chain-lapse alert').toBe(false);
-      expect(warned.some((w) => /100 clean result\(s\) were NOT committed this tick; every due observation was sent first/.test(w))).toBe(true);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 100 });
+      expect(warned.some((w) => /due observation\(s\) are STILL due/.test(w)), 'no false chain-lapse alert').toBe(false);
+      expect(warned.some((w) => /100 clean result\(s\) are STILL uncommitted after this tick; every due observation is served first/.test(w))).toBe(true);
       warned.length = 0;
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, unreached: 3, clean: 0 });
-      expect(warned.some((w) => /3 due observation\(s\) did NOT land this tick \(3 unreached/.test(w))).toBe(true);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, clean: 0 });
+      expect(warned.some((w) => /3 due observation\(s\) are STILL due after this tick/.test(w))).toBe(true);
       // Seed both open, then a tick with no shortfall clears them.
       for (const k of [`sanctions-capacity:${CHAIN}:all`, `sanctions-clean-backlog:${CHAIN}:all`]) {
         h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
       }
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 0 });
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 0 });
       expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
       // Not measured (no key): both are left as they are.
       h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);

@@ -57,6 +57,7 @@ import {
   LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
 import { getChainConfigs } from './env';
 import {
@@ -385,6 +386,7 @@ async function hydrateOffers(
         args: [id] as const,
       })),
       `matcher chain=${ctx.chainId} getOffer ${i}/${ids.length}`,
+      { deadlineMs: ctx.deadlineMs },
     );
     for (const r of results) {
       if (r.status !== 'success') continue;
@@ -1337,13 +1339,13 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
  * chain runs in its own try/catch so a transient RPC hiccup on one
  * can't wedge the rest.
  */
-export async function runMatcher(env: Env): Promise<void> {
+export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
   for (const chain of chains) {
     try {
       const publicClient = createPublicClient({ transport: http(chain.rpc) });
-      const ctx = buildKeeperContext(env, chain, publicClient);
+      const ctx = buildKeeperContext(env, chain, publicClient, tick.deadlineMs);
       if (!ctx) continue;
       await runOfferMatcherTickForChain(ctx);
     } catch (err) {

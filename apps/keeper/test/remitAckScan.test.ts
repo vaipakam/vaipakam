@@ -18,6 +18,7 @@
  * That is the regression this file exists to prevent.
  */
 import { describe, expect, it, vi } from 'vitest';
+import { farTick } from './helpers/tick';
 import {
   decodeFunctionData,
   encodeFunctionResult,
@@ -232,7 +233,7 @@ async function run(shared: unknown, keeper: unknown): Promise<void> {
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-  } as never);
+  } as never, farTick());
 }
 
 /** Did the pass persist its scan progress? */

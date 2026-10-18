@@ -166,7 +166,11 @@ started, so a re-run after an interrupted one still does it.
 ## 4. Configure
 
 Fill in `/etc/vaipakam/keeper.env` on the machine (`sudo -e
-/etc/vaipakam/keeper.env`). Never paste a value from it into chat, a ticket or
+/etc/vaipakam/keeper.env`). Every setting the keeper itself reads is described
+once, in [`apps/keeper/README.md`](../../apps/keeper/README.md) § Configuration;
+the template lists each one, and a test (`apps/keeper/test/runbookCoverage.test.ts`)
+holds the two to the code's own list of settings. What follows is only what is
+particular to the machine. Never paste a value from it into chat, a ticket or
 a commit. The template documents each line. In short:
 
 - **Database:** `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_D1_API_TOKEN`, a token

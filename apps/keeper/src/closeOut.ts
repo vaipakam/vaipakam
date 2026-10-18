@@ -102,6 +102,8 @@ export interface GraceDefaultDeps {
   wallet: WalletClient;
   diamond: Address;
   chainId: number;
+  /** The run's deadline: the send is refused past it (#2497 r19). */
+  deadlineMs: number;
   /** Builds the try-list for a sale of the loan's whole collateral. The
    *  `in-kind` role never calls it: it sends an empty list by definition. */
   buildRoute: (loan: GraceLoan) => Promise<ServerOrchestrationResult>;
@@ -204,6 +206,7 @@ export async function attemptCloseOut(
     deps.chainId,
     diamond,
     encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
+    deps.deadlineMs,
   );
   return sent.kind === 'submitted'
     ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length }

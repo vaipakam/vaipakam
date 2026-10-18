@@ -56,7 +56,8 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | Secret | Purpose |
 |---|---|
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
-| `RPC_*` | Per-chain RPC URLs (carry API keys). |
+| `RPC_BASE`, `RPC_ETH`, `RPC_ARB`, `RPC_OP`, `RPC_BNB` | Mainnet RPC URLs, one per chain (carry API keys). A chain whose URL is unset is skipped by every pass. |
+| `RPC_BASE_SEPOLIA`, `RPC_SEPOLIA`, `RPC_ARB_SEPOLIA`, `RPC_OP_SEPOLIA`, `RPC_BNB_TESTNET` | Testnet RPC URLs, likewise. |
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery — and, since #1461, for a RELEASED reservation whose delivery landed after all and carries no classification stamp yet, so Base resolves the share it counted as stranded when the mirror credited it). **Apply the keeper's own D1 migration `0001_keeper_state.sql` to `vaipakam-keeper-db` before enabling** (`run migrate`; the remit-ack tables moved there from shared migration 0044 in #2450). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
@@ -83,7 +84,11 @@ by `keep_vars: true` because this config declares no value for any of them:
 | `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
 | `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). |
 | `REWARD_COMMIT_LOOKBACK_DAYS` | Recent-day window the commitment pass re-scans for un-reported armed days each tick (default `14`). |
-| `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` | Liquidation tuning (see `src/env.ts`) — all optional, sensible defaults. |
+| `LIQ_CONFIDENCE_MIN_CHECKS` / `LIQ_CONFIDENCE_MIN_WINDOW_DAYS` | The liquidity-confidence relay's promotion rule: how many consecutive ticks (default `5`) spanning at least how many days (default `3`) an asset must hold a tier before it is submitted. |
+| `LIQ_TIER3_MIN_TVL_USD` / `LIQ_TIER3_DISABLE_DEFI_LISTING` | Tier-3 "battle-tested elsewhere" evidence: the DeFi-listing TVL floor (default `$10M`), and `1`/`true` to drop that source. |
+| `LIQ_TIER3_MIN_MCAP_USD` / `LIQ_TIER3_MIN_VOL_USD` | Tier-3 market evidence: market-cap floor (default `$1B`) and daily-volume floor (default `$50M`). |
+| `SPLIT_MIN_IMPROVEMENT_BPS` | How much better (bps, default `100`) a split route must quote than the whole-size route before the liquidator prefers it. |
+| `PARTIAL_LIQ_MIN_HF_BPS` | The health factor (bps, default `9500`) below which the liquidator sizes a partial liquidation rather than a full one. |
 | `FRONTEND_ORIGIN` | Connected-app origin for notification deep links. **Optional but without a usable default** — unset, the consumers fall back to the empty string and a "View this loan" link renders as the relative `/loans/{id}`, which is not clickable from Telegram or Push. Set it (e.g. `https://app.vaipakam.com`) on any deploy whose notifications are meant to be followed. |
 
 The first three tune the passes the arming flags gate, but are not themselves

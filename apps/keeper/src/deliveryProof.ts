@@ -47,7 +47,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { boundedRead } from './batchRead';
+import { batchedRead } from './batchRead';
+import { isRunDeadlinePassed } from './runDeadline';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -209,14 +210,15 @@ export function deliveryComplete(args: {
   return args.flatAllLanded;
 }
 
-export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void> {
+export async function runDeliveryProof(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'deliveryProof', 'REWARD_DELIVERY_PROOF_ENABLED')) return;
   const chains = getChainConfigs(env);
   const byId = new Map(chains.map((c) => [c.id, c]));
   // Inside this run's own cadence (#2497 r18): mirrors CONCURRENTLY (each chain
-  // has its own nonce lane in the submission queue), and no new send past the
-  // run's deadline — the rest stays queued for the next run, five minutes on.
-  const deadline = tick?.deadlineMs ?? Date.now() + 5 * 60_000;
+  // has its own nonce lane in the submission queue), and no read or send past
+  // the run's deadline — the rest stays queued for the next run, five minutes
+  // on. The bound is the reads' and the sends' own (`runDeadline.ts`).
+  const deadline = tick.deadlineMs;
   await Promise.all(
     chains.map(async (chain) => {
       try {
@@ -228,7 +230,7 @@ export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void>
   );
 }
 
-async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number = Number.POSITIVE_INFINITY): Promise<void> {
+async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number): Promise<void> {
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
   const cfg = (await client.readContract({
@@ -258,7 +260,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // The chain each rooted packet was REMITTED from, by the packet's own
   // record (#2497 r6) — never the canonical chain as configured today.
   const sources = sourceReader(byId);
-  const ctx = buildKeeperContext(env, chain, client as never);
+  const ctx = buildKeeperContext(env, chain, client as never, deadline);
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
   const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
@@ -269,7 +271,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
-      if (canSend && (budget.writes <= 0 || Date.now() >= deadline)) break; // the rest keep their turn
+      if (canSend && budget.writes <= 0) break; // the rest keep their turn
       examined.add(key);
       const packet = packets.get(key);
       if (!packet) continue; // unread, or not arrived: read again in its turn
@@ -292,7 +294,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
         continue;
       }
       for (const a of plan.actions) {
-        if (budget.writes <= 0 || Date.now() >= deadline) break;
+        if (budget.writes <= 0) break;
         // eslint-disable-next-line no-await-in-loop
         await send(ctx!, budget, a);
       }
@@ -333,7 +335,7 @@ export async function actionsFor(
   row: BudgetDeliveryRow,
   packet: PacketState,
   sources: (chainId: number) => PublicClient | null,
-  deadline: number = Number.POSITIVE_INFINITY,
+  deadline: number,
 ): Promise<DeliveryPlan> {
   const packetHash = row.packetHash as Hex;
   let batch: BatchProgress | null = null;
@@ -449,11 +451,11 @@ async function allLanded(client: PublicClient, diamond: Address, days: bigint[],
   for (let i = 0; i < days.length; i += READ_CHUNK) {
     const chunk = days.slice(i, i + READ_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const res = await boundedRead(
+    const res = await batchedRead(
       client as never,
       chunk.map((d) => ({ address: diamond, abi: ABI, functionName: 'getDayDeliveryState' as const, args: [d] as const })),
       'deliveryProof landed',
-      deadline,
+      { deadlineMs: deadline, onAggregateFailure: 'unread' },
     );
     for (const r of res) {
       if (!r || r.status !== 'success') return false;
@@ -471,11 +473,11 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
     // Bounded by the run's deadline (#2497 r19): an unread packet is simply
     // read again in its turn.
     // eslint-disable-next-line no-await-in-loop
-    const res = await boundedRead(
+    const res = await batchedRead(
       client as never,
       chunk.map((h) => ({ address: diamond, abi: ABI, functionName: 'getIngressPacket' as const, args: [h] as const })),
       'deliveryProof packets',
-      deadline,
+      { deadlineMs: deadline, onAggregateFailure: 'unread' },
     );
     res.forEach((r, j) => {
       if (!r || r.status !== 'success') return;
@@ -638,7 +640,10 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
       console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
     }
   } catch (err) {
-    console.error(`[keeper] deliveryProof ${call.functionName} send failed: ${shortErr(err)}`);
+    // The run's deadline refused it unsigned (`runDeadline.ts`): not a
+    // failure, the rest waits for the next run.
+    if (isRunDeadlinePassed(err)) console.log(`[keeper] deliveryProof chain=${ctx.chainId}: ${shortErr(err)}`);
+    else console.error(`[keeper] deliveryProof ${call.functionName} send failed: ${shortErr(err)}`);
     budget.writes = 0;
   }
 }

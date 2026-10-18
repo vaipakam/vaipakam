@@ -61,7 +61,9 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { boundedRead } from './batchRead';
+import { batchedRead } from './batchRead';
+import { rotate } from './workQueue';
+import { isRunDeadlinePassed } from './runDeadline';
 import {
   deploymentFloor,
   countLoanParties,
@@ -96,7 +98,9 @@ export const DECISION_CONFIRMED = 2;
  *  the contract's one-day maximum gap, so three more passes run before the
  *  chain could break. */
 export const OBSERVE_AFTER_SEC = 6 * 3600;
-/** This pass's cadence in seconds (passSchedule). Alert margins are one cadence. */
+/** This pass's cadence in seconds — the pass table (`passSchedule.ts`) reads
+ *  it from here, so the alert and observation margins (one cadence each) can
+ *  never disagree with the schedule (#2497 r19). */
 export const PASS_CADENCE_SEC = 60 * 60;
 
 /** `LibVaipakam.StagingPhase.Resolving` / `DomainPhase.Resolving`. */
@@ -108,8 +112,9 @@ const STATUS_CHUNK = 100;
 const MAX_WRITES_PER_TICK = 25;
 /** The hard ceiling of one tick's transactions per chain (#2497 r7). Each send
  *  waits for its receipt, so this bounds a tick's wall time. Past it, the
- *  six-hour observation bound cannot be kept, and the pass SAYS so (an ops
- *  alert) rather than silently letting chains lapse. */
+ *  six-hour observation bound cannot be kept — which the pass SAYS, from what
+ *  the tick actually left undone ({@link raiseAlerts}'s shortfall), never
+ *  from a prediction. */
 const WRITE_CEILING_PER_TICK = 120;
 /** Ticks inside one observation bound: each held owner must be observed once
  *  in this many ticks. */
@@ -124,23 +129,16 @@ const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor((OBSERVE_AFTER_SEC - PASS
  * and the observation rate the six-hour bound needs (`ceil(held /
  * ticks-per-bound)`). The observations are protected by ORDER, not by a
  * reserve (#2497 r9): the pass serves every due observation before any other
- * write. Capped at {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when
- * that cap binds. Pure; pinned by the tests.
+ * write. Capped at {@link WRITE_CEILING_PER_TICK}. Whether the cap bound this
+ * tick is not predicted here: it is MEASURED after the tick, from what is
+ * still due (#2497 r16, r19). Pure; pinned by the tests.
  */
-export function writeBudgetFor(heldCount: number, cleanCount = 0): { writes: number; overCapacity: boolean } {
-  const need = MAX_WRITES_PER_TICK + cleanCount + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
-  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), overCapacity: need > WRITE_CEILING_PER_TICK };
+export function writeBudgetFor(heldCount: number, cleanCount = 0): number {
+  return Math.min(WRITE_CEILING_PER_TICK, MAX_WRITES_PER_TICK + cleanCount + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND));
 }
 /** Staging pages one owner may resolve per run (#2497 r18): the rest resume
  *  next run, after the other owners have had a turn. */
 const MAX_RESOLVE_WRITES_PER_OWNER = 4;
-/** `xs` started at `turn mod length` — a stateless rotation keyed by the run.
- *  Pure; pinned by the tests. */
-export function rotate<T>(xs: readonly T[], turn: number): T[] {
-  if (xs.length === 0) return [];
-  const k = ((turn % xs.length) + xs.length) % xs.length;
-  return [...xs.slice(k), ...xs.slice(0, k)];
-}
 /** Settlement calls per owner per tick; each settles what one claim would
  *  (a bounded window of days), and the rest resumes next tick. */
 const MAX_SETTLE_CALLS_PER_OWNER = 4;
@@ -187,9 +185,8 @@ export interface SanctionsHoldPlan {
    *  uncommitted, a re-flag inside the gap would read the old chain as
    *  continuous and forfeit reward earned while the owner was clean. */
   commitClean: Address[];
-  /** This tick's write budget and whether the cap binds ({@link writeBudgetFor}). */
+  /** This tick's write budget ({@link writeBudgetFor}). */
   writes: number;
-  overCapacity: boolean;
   /** Held or confirmed owners this tick, the demand the budget is sized for. */
   heldCount: number;
   /** Held owners whose chain breaks within one cadence. */
@@ -243,7 +240,6 @@ export function planSanctionsHold(
     resolveOnly: [],
     commitClean: [],
     writes: 0,
-    overCapacity: false,
     heldCount: 0,
     deadlineAtRisk: [],
     overdue: [],
@@ -280,10 +276,7 @@ export function planSanctionsHold(
     if (st.forfeitableAt !== 0 && gap > 0 && nowSec > st.forfeitableAt + gap) plan.overdue.push(st);
   }
   plan.heldCount = statuses.filter((st) => st.decision === DECISION_HOLD || st.decision === DECISION_CONFIRMED).length;
-  ({ writes: plan.writes, overCapacity: plan.overCapacity } = writeBudgetFor(
-    plan.heldCount,
-    plan.commitClean.length,
-  ));
+  plan.writes = writeBudgetFor(plan.heldCount, plan.commitClean.length);
   return plan;
 }
 
@@ -299,13 +292,14 @@ export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
 /** The tail of a run reserved for its alerts (#2497 r17, r18): reads and sends
  *  stop this long before the run's deadline ({@link PassTick.deadlineMs}), and
  *  an alert not delivered by the deadline is not recorded, so the next run
- *  raises it. Everything a run does is therefore inside its own cadence. */
+ *  raises it. Everything a run does is therefore inside its own cadence. The
+ *  bound is the reads' and the sends' own (`runDeadline.ts`, #2497 r19): no
+ *  loop here checks the clock. */
 export const PASS_ALERT_WINDOW_MS = 10 * 60_000;
 
-export async function runRewardSanctionsHold(env: Env, tick?: PassTick): Promise<void> {
+export async function runRewardSanctionsHold(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardSanctionsHold', 'REWARD_SANCTIONS_KEEPER_ENABLED')) return;
-  const runDeadlineMs = tick?.deadlineMs ?? Date.now() + 60 * 60_000;
-  const deadline = runDeadlineMs - PASS_ALERT_WINDOW_MS;
+  const deadline = tick.deadlineMs - PASS_ALERT_WINDOW_MS;
   // Chains run CONCURRENTLY (#2497 r16): each has its own nonce lane in the
   // per-key submission queue, so one chain's receipt waits never spend another
   // chain's window.
@@ -320,7 +314,7 @@ export async function runRewardSanctionsHold(env: Env, tick?: PassTick): Promise
   );
 }
 
-async function observeChain(env: Env, chain: ChainConfig, deadline: number = Date.now() + 50 * 60_000): Promise<void> {
+async function observeChain(env: Env, chain: ChainConfig, deadline: number): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
   // Owners of open staging work join the open chains: a claimant held with NO
   // chain (the oracle was unavailable when its page ran, a flag marker set)
@@ -372,18 +366,12 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     diamondAddr,
     statuses.filter((st) => watchedSet.has(st.owner.toLowerCase()) && st.decision === DECISION_DELIVER && !st.stored).map((st) => st.owner),
   );
-  const ctx = buildKeeperContext(env, chain, client as never);
-  const budget = { writes: plan.writes, touched: new Set<string>(), deadline };
-  /** MEASURED, not predicted (#2497 r16): the due observations and clean
-   *  commits this tick never reached, because the write budget or the time
-   *  window ran out. Null when there is no key to send with. */
-  let shortfall: { due: number; unreached: number; clean: number } | null = null;
-  if (ctx?.wallet.account) {
-    let dueReached = 0;
-    /** Due observations that LANDED — counted on the write's own success
-     *  (#2497 r18), never on the attempt. */
-    let dueLanded = 0;
-    let cleanLanded = 0;
+  const ctx = buildKeeperContext(env, chain, client as never, deadline);
+  const budget = { writes: plan.writes, touched: new Set<string>() };
+  // The tick SENDS only with a key; what it left undone is measured below,
+  // from a fresh read, whether or not it could send (#2497 r16, r19).
+  const sender = ctx?.wallet.account ? ctx : null;
+  if (sender !== null) {
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
     // call. A Confirmed owner gets ONE settlement call (its observation is part
@@ -394,18 +382,15 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     const settleCallsUsed = new Map<string, number>();
     for (const due of plan.dueObservations) {
       const owner = due.owner;
-      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
-      dueReached += 1;
+      if (budget.writes <= 0) break;
       if (due.confirmed) {
         // eslint-disable-next-line no-await-in-loop
-        const settled = await runOwnerSettlement(ctx, budget, owner, 1);
+        const settled = await runOwnerSettlement(sender, budget, owner, 1);
         settleCallsUsed.set(owner, settled ? 1 : 0);
-        let landed = settled;
         if (!settled && budget.writes > 0) {
           // eslint-disable-next-line no-await-in-loop
-          landed = await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+          await sendIfEffective(sender, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
         }
-        if (landed) dueLanded += 1;
         continue;
       }
       // A held owner with no chain is observed only while the oracle answers:
@@ -414,25 +399,19 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       // eslint-disable-next-line no-await-in-loop
       if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueLanded += 1;
+      await sendIfEffective(sender, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
     // PHASE 2 — the clean results (#2497 r7): until committed, a re-flag inside
     // the gap would continue the old chain. Sent only on the oracle's own clean
     // answer, so a Deliver that is not an authoritative Clean read (an outage,
     // a foreign-oracle chain) costs one read and no transaction.
     for (const owner of plan.commitClean) {
-      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
+      if (budget.writes <= 0) break;
       // eslint-disable-next-line no-await-in-loop
       if (!(await oracleSaysClean(client, diamond, owner))) continue;
-      // Counted on the write's own success (#2497 r19), as the observations are.
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) cleanLanded += 1;
+      await sendIfEffective(sender, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
-    shortfall = {
-      due: plan.dueObservations.length - dueLanded,
-      unreached: plan.dueObservations.length - dueReached,
-      clean: plan.commitClean.length - cleanLanded,
-    };
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
     // then the staging pages, with whatever budget is left. The same rotation
     // rule as every other queue (#2497 r18): each owner's pages are capped per
@@ -440,15 +419,15 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // deep backlog cannot take the whole phase run after run.
     const hourIndex = Math.floor(nowSec / 3600);
     const resolveCapped = async (owner: Address) => {
-      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline };
+      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched };
       const before = share.writes;
-      await resolveOwnerRecords(env, ctx, share, owner);
+      await resolveOwnerRecords(env, sender, share, owner);
       budget.writes -= before - share.writes;
     };
     for (const owner of rotate(plan.settle, hourIndex)) {
       const used = settleCallsUsed.get(owner) ?? 0;
       // eslint-disable-next-line no-await-in-loop
-      if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
+      if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(sender, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
       // eslint-disable-next-line no-await-in-loop
       await resolveCapped(owner);
     }
@@ -468,6 +447,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // this tick's alerts entirely — neither raised from stale state nor cleared.
   let alertStatuses = statuses;
   let alertPlan = plan;
+  const afterSec = Math.floor(Date.now() / 1000);
   if (budget.touched.size > 0) {
     const touched = [...budget.touched];
     const fresh = await readStatuses(client as never, diamond, touched, deadline + PASS_ALERT_WINDOW_MS);
@@ -475,9 +455,41 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       ...statuses.filter((st) => !budget.touched.has(st.owner.toLowerCase())),
       ...fresh.filter((st): st is OwnerSanctionsStatus => st !== null),
     ];
-    alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
+    alertPlan = planSanctionsHold(alertStatuses, afterSec);
   }
+  // What this tick LEFT UNDONE, measured from that same post-tick view rather
+  // than counted on the way (#2497 r16, r18, r19): a due observation is still
+  // due unless the chain now shows it landed, and a clean result is still
+  // uncommitted unless the chain now shows nothing stored — so a refused send,
+  // a reverted receipt, a budget or window that ran out, and a fresh read that
+  // failed all count the same way, as not done. Null when the tick could not
+  // send at all (no key): nothing was measured.
+  const shortfall = sender !== null ? measureShortfall(plan, alertStatuses, afterSec) : null;
   await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall, deadline + PASS_ALERT_WINDOW_MS);
+}
+
+/** What a tick left undone, from the post-tick statuses (`after`): the due
+ *  observations still due, and the clean results still stored uncommitted.
+ *  An owner missing from `after` (its fresh read failed) counts as not done.
+ *  Pure; pinned by the tests. */
+export function measureShortfall(
+  plan: Pick<SanctionsHoldPlan, 'dueObservations' | 'commitClean'>,
+  after: readonly OwnerSanctionsStatus[],
+  nowSec: number,
+): { due: number; clean: number } {
+  const byOwner = new Map(after.map((st) => [st.owner.toLowerCase(), st]));
+  const stillDue = (owner: string) => {
+    const st = byOwner.get(owner.toLowerCase());
+    return st === undefined || observeDue(st, nowSec);
+  };
+  const stillStored = (owner: string) => {
+    const st = byOwner.get(owner.toLowerCase());
+    return st === undefined || (st.decision === DECISION_DELIVER && st.stored);
+  };
+  return {
+    due: plan.dueObservations.filter((d) => stillDue(d.owner)).length,
+    clean: plan.commitClean.filter(stillStored).length,
+  };
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -508,13 +520,13 @@ async function readStatuses(
   diamond: Address,
   owners: readonly string[],
   /** Past this, the rest read as unread (null), for the next run (#2497 r18). */
-  deadline: number = Number.POSITIVE_INFINITY,
+  deadline: number,
 ): Promise<(OwnerSanctionsStatus | null)[]> {
   const out: (OwnerSanctionsStatus | null)[] = [];
   for (let i = 0; i < owners.length; i += STATUS_CHUNK) {
     const chunk = owners.slice(i, i + STATUS_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const res = await boundedRead(
+    const res = await batchedRead(
       client as never,
       chunk.map((owner) => ({
         address: diamond,
@@ -526,7 +538,7 @@ async function readStatuses(
       // BOUNDED (#2497 r18, r19): past the deadline nothing is issued, and a
       // rejected aggregate costs one request and reads as unread — classified
       // next run — never one serial request per owner.
-      deadline,
+      { deadlineMs: deadline, onAggregateFailure: 'unread' },
     );
     chunk.forEach((owner, j) => {
       const r = res[j];
@@ -591,7 +603,7 @@ async function screenLoanParties(
   client: PublicClient,
   diamond: Address,
   known: ReadonlySet<string>,
-  deadline: number = Number.POSITIVE_INFINITY,
+  deadline: number,
 ): Promise<ScreenOutcome> {
   const total = await countLoanParties(env.DB, chainId);
   if (total === 0) return { found: [], overCapacity: null };
@@ -698,19 +710,19 @@ async function oracleAnswers(client: PublicClient, diamond: Address, owner: Addr
 async function resolveOwnerRecords(
   env: Env,
   ctx: KeeperContext,
-  budget: { writes: number; deadline?: number },
+  budget: { writes: number },
   owner: Address,
 ): Promise<void> {
   if (budget.writes <= 0) return;
-  // Every read here is bounded by the run's deadline too (#2497 r19).
-  const deadline = budget.deadline ?? Number.POSITIVE_INFINITY;
   // The owner's OPEN records only, however old (Codex #2489 r1); read in
   // bounded chunks, each record's own phase deciding whether a page is due.
+  // Every read is bounded by the run's deadline (#2497 r19): past it a chunk
+  // reads as unread, and the loop ends on the first such chunk.
   const keys = await listOpenStagingRecordKeysForUser(env.DB, ctx.chainId, owner, deploymentFloor(ctx.chainId));
-  for (let c = 0; c < keys.length && budget.writes > 0 && Date.now() < deadline; c += STATUS_CHUNK) {
+  for (let c = 0; c < keys.length && budget.writes > 0; c += STATUS_CHUNK) {
     const chunk = keys.slice(c, c + STATUS_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const reads = await boundedRead(
+    const reads = await batchedRead(
       ctx.client as never,
       chunk.map((key) => ({
         address: ctx.diamond,
@@ -719,8 +731,9 @@ async function resolveOwnerRecords(
         args: [key as Hex] as const,
       })),
       `rewardSanctionsHold records ${owner} ${c}/${keys.length}`,
-      deadline,
+      { deadlineMs: ctx.deadlineMs, onAggregateFailure: 'unread' },
     );
+    if (reads.every((r) => r?.status !== 'success' && isRunDeadlinePassed(r?.error))) break;
     for (let i = 0; i < chunk.length && budget.writes > 0; i++) {
       const r = reads[i];
       if (r?.status !== 'success') continue;
@@ -731,7 +744,7 @@ async function resolveOwnerRecords(
     }
   }
   if (budget.writes <= 0) return;
-  const domains = await boundedRead(
+  const domains = await batchedRead(
     ctx.client as never,
     [0, 1].map((side) => ({
       address: ctx.diamond,
@@ -740,7 +753,7 @@ async function resolveOwnerRecords(
       args: [owner, side] as const,
     })),
     `rewardSanctionsHold domains ${owner}`,
-    deadline,
+    { deadlineMs: ctx.deadlineMs, onAggregateFailure: 'unread' },
   );
   for (let side = 0; side < 2 && budget.writes > 0; side++) {
     const r = domains[side];
@@ -780,13 +793,11 @@ async function sendIfEffective(
 
 async function send(
   ctx: KeeperContext,
-  budget: { writes: number; touched?: Set<string>; deadline?: number },
+  budget: { writes: number; touched?: Set<string> },
   fn: string,
   args: readonly unknown[],
   owner: Address,
 ): Promise<boolean> {
-  // Past the run's send window, nothing more is sent this run (#2497 r16).
-  if (budget.deadline !== undefined && Date.now() >= budget.deadline) budget.writes = 0;
   if (budget.writes <= 0) return false;
   try {
     const hash = await ctx.wallet.writeContract({
@@ -815,7 +826,10 @@ async function send(
     }
     return true;
   } catch (err) {
-    console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
+    // The run's send window refused it unsigned (`runDeadline.ts`, #2497
+    // r16, r19): not a failure — the rest waits for the next run.
+    if (isRunDeadlinePassed(err)) console.log(`[keeper] rewardSanctionsHold chain=${ctx.chainId}: ${shortErr(err)}`);
+    else console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
     budget.writes = 0;
     return false;
   }
@@ -829,8 +843,8 @@ export async function raiseAlerts(
   plan: SanctionsHoldPlan,
   nowSec: number,
   screenOverCapacity: { total: number; ticks: number } | null = null,
-  /** What this tick left undone, measured ({@link observeChain}); null = not measured. */
-  shortfall: { due: number; unreached: number; clean: number } | null = null,
+  /** What this tick left undone, measured ({@link measureShortfall}); null = not measured. */
+  shortfall: { due: number; clean: number } | null = null,
   /** Past this, alerts wait for the next run (#2497 r17); none by default. */
   alertDeadline: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
@@ -862,16 +876,17 @@ export async function raiseAlerts(
   await toggle(`sanctions-screen-capacity:${chainId}:all`, screenOverCapacity !== null, () =>
     `[chain ${chainId}] reward sanctions screen: ${screenOverCapacity?.total} loan parties take ${screenOverCapacity?.ticks} hourly ticks to screen, more than a day — a wallet flagged while holding only ordinary reward can go undiscovered that long. Raise the slice cap or the cadence.`,
   );
-  // Capacity, MEASURED and stated per kind of work (#2497 r7, r16). An
-  // observation left unsent this tick is what threatens a chain's bound; an
-  // unsent clean commit is a separate backlog, said as such. A tick that could
-  // not measure (no key) leaves both as they are.
+  // Capacity, MEASURED after the tick and stated per kind of work (#2497 r7,
+  // r16, r19). An observation still due after the tick is what threatens a
+  // chain's bound; a clean result still uncommitted is a separate backlog,
+  // said as such. A tick that could not measure (no key) leaves both as they
+  // are.
   if (shortfall !== null) {
     await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0, () =>
-      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) did NOT land this tick (${shortfall.unreached} unreached — the write budget or the run's time window ran out — and ${shortfall.due - shortfall.unreached} attempted but not recorded) — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`,
+      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) are STILL due after this tick — the write budget or the run's window ran out, or the sends did not land — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`,
     );
     await toggle(`sanctions-clean-backlog:${chainId}:all`, shortfall.clean > 0, () =>
-      `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) were NOT committed this tick; every due observation was sent first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
+      `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) are STILL uncommitted after this tick; every due observation is served first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
     );
   }
   for (const st of statuses) {
