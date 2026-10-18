@@ -264,12 +264,15 @@ test('tokenizer: malformed attributes are refused; a quoted ">" or "<Feature" in
 // ---- Codex #2543 r4: namespace-aware extraction, every record resolves ----
 const NS = 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML';
 
-test('namespaces: a foreign-namespace <Feature> is opaque; a prefixed OFAC root is accepted', () => {
-  const foreign = parseSdnAdvanced(withInProfile(`<x:Feature xmlns:x="https://evil.example/" FeatureTypeID="345"><x:FeatureVersion ReliabilityID="1"><x:VersionDetail>${E}</x:VersionDetail></x:FeatureVersion></x:Feature>`));
-  assert.ok(!foreign.addresses.includes(E), 'a foreign-namespace Feature is not consumed');
+test('namespaces: any element outside OFAC\'s namespace refuses the file; a prefixed OFAC root is accepted', () => {
+  // Codex #2543 r15: skipping a foreign subtree could drop a real record and
+  // delist its address, so an element outside OFAC's namespace is refused.
+  const foreignRe = /unexpected element <.*> in namespace/;
+  assert.throws(() => parseSdnAdvanced(withInProfile(`<x:Feature xmlns:x="https://evil.example/" FeatureTypeID="345"><x:FeatureVersion ReliabilityID="1"><x:VersionDetail>${E}</x:VersionDetail></x:FeatureVersion></x:Feature>`)), foreignRe);
   // A default-namespace switch on a wrapper puts unprefixed children outside OFAC's namespace too.
-  const wrapped = parseSdnAdvanced(withInProfile(`<Wrap xmlns="https://evil.example/">${feature(E)}</Wrap>`));
-  assert.ok(!wrapped.addresses.includes(E), 'nothing inside a foreign element is consumed');
+  assert.throws(() => parseSdnAdvanced(withInProfile(`<Wrap xmlns="https://evil.example/">${feature(E)}</Wrap>`)), foreignRe);
+  // A record node at its documented path, moved out of the namespace, is refused, not skipped.
+  assert.throws(() => parseSdnAdvanced(withInProfile(feature(E).replace('<Feature ', '<Feature xmlns="" '))), foreignRe);
   // The same document with OFAC's namespace bound to a prefix is still OFAC's document.
   const prefixed = FIXTURE.toString('utf8')
     .replace(`xmlns="${NS}"`, `xmlns:o="${NS}"`)

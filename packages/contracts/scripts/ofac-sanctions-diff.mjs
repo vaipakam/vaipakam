@@ -489,7 +489,6 @@ export function parseSdnAdvanced(xml) {
   let reading = null; // the full path `buf` belongs to
   let refId = null;
   let detailTypeId = null; // DetailTypeID of the <VersionDetail> being read
-  let foreignDepth = 0; // >0 while inside an element outside OFAC's namespace
 
   scanXml(xml, {
     open(name, attrs, depth, ns) {
@@ -509,10 +508,12 @@ export function parseSdnAdvanced(xml) {
           `unsupported OFAC SDN Advanced schema version ${JSON.stringify(attrs.get('Version') ?? null)} (this tool reads version ${OFAC_SDN_ADVANCED_SCHEMA_VERSION})`,
         );
       }
-      if (foreignDepth > 0 || ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
-        if (reading) throw new Error(`unexpected foreign-namespace <${name}> inside <${reading}>`);
-        foreignDepth++;
-        return;
+      if (ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
+        // OFAC's document carries no element outside its own namespace. One
+        // that does is not the schema these paths were checked against, and
+        // treating its subtree as absent could silently drop a record and
+        // delist its address (Codex #2543 r15). Refuse rather than skip.
+        throw new Error(`unexpected element <${name}> in namespace ${JSON.stringify(ns)} — an OFAC SDN Advanced document carries only elements in ${OFAC_SDN_ADVANCED_NAMESPACE}`);
       }
       path.push(name);
       const at = path.join('/');
@@ -554,13 +555,9 @@ export function parseSdnAdvanced(xml) {
       }
     },
     text(value) {
-      if (reading && foreignDepth === 0) buf += value;
+      if (reading) buf += value;
     },
     close() {
-      if (foreignDepth > 0) {
-        foreignDepth--;
-        return;
-      }
       const at = path.join('/');
       path.pop();
       if (reading === at) {
