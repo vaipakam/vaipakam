@@ -6,7 +6,7 @@
  * ways to come apart quietly, and each cell below closes one:
  *
  *   1. The private schema drifts from the stated set — a table added to the
- *      keeper's migrations that something else reads, or one of the seven left
+ *      keeper's migrations that something else reads, or one of the eight left
  *      behind. The set is stated HERE, once, and compared to what the keeper's
  *      migrations actually create.
  *   2. A NEW shared (indexer) migration creates, alters or writes one of these
@@ -41,6 +41,7 @@ const EXPECTED_PRIVATE = [
   'keeper_commitment_day',
   'keeper_commitment_scan',
   'keeper_cutover',
+  'keeper_cutover_row',
   'keeper_deployment',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
@@ -58,7 +59,7 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
 ]);
 
 describe("the keeper's private database", () => {
-  it('its migrations create exactly the seven keeper-private tables', () => {
+  it('its migrations create exactly the eight keeper-private tables', () => {
     expect([...KEEPER_PRIVATE_TABLES].sort()).toEqual(EXPECTED_PRIVATE);
   });
 
@@ -259,7 +260,8 @@ describe('keeper-cutover — records nothing unless every table copied whole', (
 
   it('the script records only after the verify, and never exits from inside the copy', () => {
     const src = readFileSync(new URL('../scripts/keeper-cutover.mjs', import.meta.url), 'utf8');
-    const insert = src.indexOf('INSERT INTO keeper_cutover');
+    // The record is written as one SQL file (recordSql), executed here.
+    const insert = src.indexOf('recordSql(after');
     expect(insert, 'it records a marker').toBeGreaterThan(0);
     expect(src.indexOf('copyVerdict(after, priv)'), 'the verify precedes the record').toBeLessThan(insert);
     expect(src.indexOf('copyVerdict(before, after)'), 'so does the unchanged-source check').toBeLessThan(insert);

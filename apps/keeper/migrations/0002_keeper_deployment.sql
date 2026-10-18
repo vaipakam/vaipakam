@@ -15,9 +15,9 @@
 -- record moves last, so a reset cut off anywhere is redone whole next tick.
 -- It also waits for the indexer to adopt the same Diamond first (#2497 r12).
 --
--- Disposable: an empty table adopts the Diamond the indexer has adopted for
--- the chain (what the shared rows the cutover copied belong to), so a fresh
--- environment, and the first tick after the cutover, reset nothing.
+-- Seeded by the one-time copy with the Diamond the indexer had adopted for
+-- each chain at copy time, which is the Diamond the copied rows belong to. A
+-- chain with no row has no copied rows, and adopts its configured Diamond.
 CREATE TABLE IF NOT EXISTS keeper_deployment (
   chain_id   INTEGER PRIMARY KEY,
   diamond    TEXT    NOT NULL,   -- lowercased

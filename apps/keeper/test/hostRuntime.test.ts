@@ -281,7 +281,7 @@ describe('host tick schema check', () => {
     [HOST_SETTINGS.databaseId]: DATABASE,
     [HOST_SETTINGS.apiToken]: TOKEN,
   };
-  function setup(applied: string[] | Error) {
+  function setup(applied: string[] | Error, privateVerdict: { ok: true } | { ok: false; line: string } = { ok: true }) {
     const lines: string[] = [];
     const ran: number[] = [];
     const fetchFn = (async () => {
@@ -296,7 +296,7 @@ describe('host tick schema check', () => {
       gate: createSchemaGate(['0001_a.sql', '0002_b.sql']),
       // The private-database gate has its own suite (hostPrivateDb.test.ts);
       // here it passes, so these cells isolate the SHARED schema gate.
-      privateGate: { check: async () => ({ ok: true }) },
+      privateGate: { check: async () => privateVerdict },
       runTick: async (_env, t) => {
         ran.push(t);
       },
@@ -304,6 +304,13 @@ describe('host tick schema check', () => {
     });
     return { tick, lines, ran };
   }
+
+  it('declines with the private gate\'s own line when the cutover check fails, and runs nothing (#2497 re-cut)', async () => {
+    const h = setup(['0001_a.sql', '0002_b.sql'], { ok: false, line: '[keeper-host] tick declined: hf_band_state no longer matches the cutover copy' });
+    await h.tick(60_000, () => {});
+    expect(h.ran, 'the shared schema is current, but the private gate holds the tick').toEqual([]);
+    expect(h.lines.at(-1)).toMatch(/no longer matches the cutover copy/);
+  });
 
   it('runs the tick once every migration this build carries is recorded', async () => {
     const h = setup(['0001_a.sql', '0002_b.sql']);

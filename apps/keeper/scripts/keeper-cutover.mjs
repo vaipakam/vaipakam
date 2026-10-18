@@ -15,17 +15,20 @@
  *      deliberate re-run (after a rollback to the shared copies) deletes the
  *      marker first — DeploymentRunbook, "Keeper private D1 — one-time
  *      cutover".
- *   2. FINGERPRINT the shared copies (row count and latest write time per
- *      table). Nothing to move — no table holds a row — ends here: the deploy
+ *   2. FINGERPRINT the shared copies: per table, row count, latest write
+ *      time, a digest over every row and one digest per row. Nothing to move — no table holds a row — ends here: the deploy
  *      passes a fresh environment without a marker.
  *   3. EXPORT each table from the shared database (data only), EMPTY the five
  *      private tables, and IMPORT each export. Emptying first makes a re-run
  *      after a partial import exact rather than a duplicate-key failure.
  *   4. VERIFY: every table's fingerprint is the same on both sides, and the
  *      shared side's is unchanged since step 2. A partial import has the wrong
- *      count; a keeper still writing the old copies moves its time. Either
+ *      count; a keeper still writing the old copies changes the digests. Either
  *      fails here, with no marker written.
- *   5. RECORD the marker (the shared fingerprints) and read it back.
+ *   5. RECORD, through one SQL file of small statements: the per-row digests
+ *      (`keeper_cutover_row`), the keeper's deployment epoch seeded from the
+ *      indexer's adopted Diamonds, and LAST the marker. Then read it all back;
+ *      a record that is not complete is removed again.
  *
  * The export files hold keeper operational state; they are written to a
  * private temporary directory and removed however the run ends.
@@ -34,7 +37,7 @@
  * change which database it writes.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,6 +49,7 @@ import {
   query,
   readFingerprints,
   readMarker,
+  recordSql,
 } from './lib/keeper-cutover.mjs';
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
@@ -141,15 +145,32 @@ function run() {
     const copied = copyVerdict(after, priv);
     if (!copied.ok) fail(`the copy is not complete (${copied.why}) — no record written; re-run the cutover.`);
 
-    // 5. Record, and read the record back.
+    // 5. Record, through ONE SQL FILE of small statements (never a single
+    // --command string, whose size would grow with the copy): the per-row
+    // digests, the keeper's deployment epoch seeded from the indexer's adopted
+    // Diamonds (the copied rows belong to those), and LAST the marker.
+    const deployments = query(SHARED_DB, 'SELECT chain_id, diamond FROM indexer_deployment');
+    if (deployments === null) fail(`could not read the indexer's adopted Diamonds in ${SHARED_DB} — no record written; re-run the cutover.`);
     const now = Math.floor(Date.now() / 1000);
-    const fingerprint = JSON.stringify(Object.fromEntries(CUTOVER_TABLES.map(({ table }) => [table, after[table]])));
-    if (query(PRIVATE_DB, `INSERT INTO keeper_cutover (id, completed_at, fingerprint) VALUES (1, ${now}, '${fingerprint}')`) === null) {
-      fail(`writing the cutover record to ${PRIVATE_DB} failed — the copy is complete; re-run to record it.`);
-    }
+    const recordFile = join(dir, 'record.sql');
+    writeFileSync(recordFile, recordSql(after, deployments, now), { mode: 0o600 });
+    const rec = wrangler(['d1', 'execute', PRIVATE_DB, '--remote', `--file=${recordFile}`]);
+    // Read the whole record back. Anything short of a complete record is
+    // removed again, so a failed write never leaves a marker the gate would
+    // refuse for good — the cutover is simply re-run.
     const written = readMarker();
-    if (written === null || written === 'none' || JSON.stringify(written.fingerprint) !== fingerprint) {
-      fail(`the cutover record in ${PRIVATE_DB} did not read back as written.`);
+    const intact =
+      rec.status === 0 &&
+      written !== null &&
+      written !== 'none' &&
+      CUTOVER_TABLES.every(({ table }) => {
+        const w = written.fingerprint?.[table];
+        const a = after[table];
+        return w && w.n === a.n && w.at === a.at && w.digest === a.digest && JSON.stringify(w.rows) === JSON.stringify(a.rows);
+      });
+    if (!intact) {
+      query(PRIVATE_DB, 'DELETE FROM keeper_cutover; DELETE FROM keeper_cutover_row');
+      fail(`the cutover record in ${PRIVATE_DB} did not read back complete — removed; the copy is intact, re-run the cutover to record it.`);
     }
     for (const { table } of CUTOVER_TABLES) console.log(`[cutover] ${table}: ${after[table].n} row(s) — OK`);
     console.log('[cutover] recorded. Deploy the keeper now: `pnpm --filter @vaipakam/keeper run deploy`.');

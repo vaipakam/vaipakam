@@ -23,10 +23,12 @@
  *      acknowledgements it has already paid for. The copy is
  *      `scripts/keeper-cutover.mjs` (DeploymentRunbook, "Keeper private D1 —
  *      one-time cutover"), which records a marker only after EVERY table has
- *      the same fingerprint (row count, latest write time) on both sides. The
- *      deploy requires that marker whenever the shared copies hold a row, and
- *      requires every shared table to still match it — a keeper that wrote the
- *      old copies after the copy left the private side behind. With no shared
+ *      the same fingerprint (row count, latest write time, a digest over every
+ *      row and one per row) on both sides. The deploy requires that marker
+ *      whenever the shared copies hold a row, and requires every row a shared
+ *      table still holds to be one the copy took — a keeper that wrote the old
+ *      copies after the copy left the private side behind. Rows that have only
+ *      gone pass: the indexer's redeploy reset deletes a chain's rows. With no shared
  *      rows (a fresh environment, or the old copies retired) there is nothing
  *      to move and it passes. Anything unread refuses; it is never read as
  *      "no rows". (The earlier check looked at two of the five tables and

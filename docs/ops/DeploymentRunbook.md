@@ -1055,10 +1055,12 @@ idempotently), verifies them, and hands the shared schema to
 schema and the publish, so the deploy checks for it rather than running past
 it. While any of the five moved tables holds rows in the shared copy, it
 REFUSES to publish unless `keeper_cutover` records a completed copy AND every
-shared table still has the fingerprint that record holds (row count and
-latest write time). A missing record means the copy has not run; a changed
-fingerprint means a keeper wrote the old copy after the copy, so the private
-side is behind. Either way the refusal names the table. With no shared rows at
+row a shared table still holds is one that copy took (it keeps one digest per
+row, in `keeper_cutover_row`). A missing record means the copy has not run; a
+row the copy did not take means a keeper wrote the old copy afterwards, so the
+private side is behind. Rows that have only gone pass, because the indexer's
+redeploy reset deletes a chain's rows. The machine runs the same check before
+every tick. Either way the refusal names the table. With no shared rows at
 all (a fresh environment, or the old copies retired) there is nothing to move
 and it passes. Step 2 itself is one command, run by hand because it needs the
 keeper stopped. The refusal is what makes skipping it loud instead of a
@@ -1106,9 +1108,9 @@ keeper tick in between.
    refuses if a cutover is already recorded. It exports each of the five
    tables from `vaipakam-warm` (data only), empties the five private tables,
    and imports each export — emptying first makes a re-run after a partial
-   import exact. It then compares every table's fingerprint (row count and
-   latest write time) on both sides, and checks that the shared side has not
-   changed since it started. Only when all five match does it write the
+   import exact. It then compares every table's fingerprint (row count, latest write time,
+   a digest over every row and one per row) on both sides, and checks that the
+   shared side has not changed since it started. Only when all five match does it write the
    `keeper_cutover` record, which it reads back. Any mismatch, or anything it
    could not read, ends the run with no record and names the table: fix the
    cause (usually a keeper still running) and run it again. The export files
@@ -1118,27 +1120,24 @@ keeper tick in between.
    **A deliberate re-run** (for example after rolling back to the shared
    copies and forward again) first copies any private rows worth keeping
    back to the shared side, then deletes the record —
-   `( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM keeper_cutover" )`
+   `( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM keeper_cutover; DELETE FROM keeper_cutover_row" )`
    — and runs the cutover again.
 
-3. **Deploy the keeper — immediately.**
-   `pnpm --filter @vaipakam/keeper run deploy`. Nothing may tick between
-   step 2 and this.
+3. **Resume the machine — immediately.** `docs/ops/KeeperMachine.md` §4a
+   step 5: re-enable its update timer. The next update run installs the
+   build that reads `KEEPER_DB` and starts the keeper on it. Nothing may tick
+   between step 2 and this. (The Worker needs no deploy for this: it runs no
+   ticks. Its own `run deploy`, which applies the private schema, may run
+   whenever it is due.)
 
 4. **Verify.**
-   - The SERVING version binds both databases:
-     `node apps/indexer/scripts/check-live-d1-bindings.mjs` (needs
-     `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`) must show
-     `DB=e5e927cf…` and `KEEPER_DB=f809ca7a…` for `vaipakam-keeper`.
-   - One tick ran on the private database. Under the #1896 hold that is
-     the first tick after the schedule is restored by its own procedure —
-     do not add a schedule just to verify. In `wrangler tail
-     vaipakam-keeper` there must be no `no such table` and no
-     `D1 is not available`, and a keeper-private write must land in
-     `vaipakam-keeper-db`: for an armed remit pass,
-     `SELECT MAX(updated_at) FROM keeper_remit_ack_frontier` there moves
-     past the deploy time. Prefer an observable write; where none can be
-     provoked, the binding check above is the configuration evidence.
+   - The machine's journal (`journalctl -u vaipakam-keeper -f`) shows ticks
+     running with no `tick declined` line, no `no such table` and no
+     `D1 is not available`.
+   - A keeper-private write lands in `vaipakam-keeper-db`: for an armed
+     remit pass, `SELECT MAX(updated_at) FROM keeper_remit_ack_frontier`
+     there moves past the resume time. Prefer an observable write; where
+     none can be provoked, the clean tick lines are the evidence.
    - The OLD copies stopped changing: the same `MAX(updated_at)` read
      against `vaipakam-warm` stays at its pre-cutover value. A later value
      there means a keeper version that still reads the shared tables is

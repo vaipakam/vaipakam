@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { checkPrivateDb, createPrivateDbGate } from '../host/privateDbGate';
-import { CUTOVER_TABLES, PRIVATE_DB_ID, fingerprintFromReads, fingerprintSql, rowsSql } from '../scripts/lib/keeper-cutover.mjs';
+import { CUTOVER_TABLES, PRIVATE_DB_ID, fingerprintFromReads, fingerprintSql, recordSql, rowsSql } from '../scripts/lib/keeper-cutover.mjs';
 import { buildHostEnv } from '../host/hostEnv';
 import REQUIRED from '../src/requiredKeeperMigrations.json';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -63,7 +63,7 @@ describe('checkPrivateDb', () => {
       ]),
     );
     const priv = privateDb();
-    priv.db.prepare('INSERT INTO keeper_cutover (id, completed_at, fingerprint) VALUES (1, 200, ?)').run(JSON.stringify(fingerprint));
+    priv.db.exec(recordSql(fingerprint, [], 200)); // what the copy writes
     expect(await checkPrivateDb(d1(shared), d1(priv))).toEqual({ ok: true });
     shared.db.prepare('UPDATE hf_band_state SET updated_at = 300').run();
     const r = await checkPrivateDb(d1(shared), d1(priv));
@@ -98,7 +98,7 @@ describe('createPrivateDbGate — the full check on every tick, never cached (#2
       CUTOVER_TABLES.map((t) => [t.table, fingerprintFromReads(shared.db.prepare(fingerprintSql(t)).all(), shared.db.prepare(rowsSql(t)).all())]),
     );
     const priv = privateDb();
-    priv.db.prepare('INSERT INTO keeper_cutover (id, completed_at, fingerprint) VALUES (1, 200, ?)').run(JSON.stringify(fingerprint));
+    priv.db.exec(recordSql(fingerprint, [], 200)); // what the copy writes
     const gate = createPrivateDbGate();
     expect((await gate.check(d1(shared), d1(priv))).ok).toBe(true);
     shared.db.prepare("UPDATE hf_band_state SET last_band = 'critical'").run(); // updated_at stays 100
@@ -150,3 +150,40 @@ describe('buildHostEnv — the private database', () => {
     expect(refusedD1).toMatch(/private database/);
   });
 });
+
+describe('the cutover record — no size ceiling, read back whole (#2497 re-cut)', () => {
+  it('writes thousands of rows as small statements, and the gate reads them back', async () => {
+    const shared = sharedDb();
+    const ins = shared.db.prepare('INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (1, ?, ?, 1000, ?, 100)');
+    for (let i = 0; i < 5_000; i++) ins.run(i, 'warn', '0xabc');
+    const fingerprint = Object.fromEntries(
+      CUTOVER_TABLES.map((t) => [t.table, fingerprintFromReads(shared.db.prepare(fingerprintSql(t)).all(), shared.db.prepare(rowsSql(t)).all())]),
+    );
+    const sql = recordSql(fingerprint, [{ chain_id: 84532, diamond: '0xABC' }], 200);
+    const longest = Math.max(...sql.split('\n').map((l) => l.length));
+    expect(longest, 'every statement far under D1\'s 100 KB cap').toBeLessThan(20_000);
+    const priv = privateDb();
+    priv.db.exec(sql);
+    expect(priv.db.prepare('SELECT COUNT(*) AS n FROM keeper_cutover_row').get()).toEqual({ n: 5_000 });
+    expect(priv.db.prepare('SELECT diamond FROM keeper_deployment WHERE chain_id = 84532').get(), 'the epoch is seeded').toEqual({ diamond: '0xabc' });
+    expect(await checkPrivateDb(d1(shared), d1(priv))).toEqual({ ok: true });
+    // A deletion (the indexer's redeploy reset) passes; a new row does not.
+    shared.db.prepare('DELETE FROM hf_band_state WHERE loan_id < 10').run();
+    expect(await checkPrivateDb(d1(shared), d1(priv))).toEqual({ ok: true });
+    ins.run(99_999, 'warn', '0xabc');
+    expect((await checkPrivateDb(d1(shared), d1(priv))).ok).toBe(false);
+  });
+
+  it('a record whose digests do not account for every copied row is unreadable, never a smaller copy', async () => {
+    const shared = sharedDb();
+    shared.db.prepare('INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (1, 1, ?, 1000, ?, 100)').run('warn', '0xabc');
+    const fingerprint = Object.fromEntries(
+      CUTOVER_TABLES.map((t) => [t.table, fingerprintFromReads(shared.db.prepare(fingerprintSql(t)).all(), shared.db.prepare(rowsSql(t)).all())]),
+    );
+    const priv = privateDb();
+    priv.db.exec(recordSql(fingerprint, [], 200));
+    priv.db.prepare('DELETE FROM keeper_cutover_row').run(); // a partial record
+    expect((await checkPrivateDb(d1(shared), d1(priv))).ok).toBe(false);
+  });
+});
+

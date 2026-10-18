@@ -1,9 +1,9 @@
 /**
  * #2497 r10 — the keeper's own deployment epochs. A chain's Diamond changing
  * clears that chain's rows from every PRIVATE table keyed by chain and not by
- * Diamond, as the indexer does for its own tables; the first adoption records
- * the Diamond the indexer had adopted, so the copied rows are judged against
- * the Diamond they belong to. Real SQL on the real migrations.
+ * Diamond, as the indexer does for its own tables. The one-time copy seeds the
+ * record with the Diamond the copied rows belong to, so a later change resets
+ * them. Real SQL on the real migrations.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { adoptKeeperDeployments, listResetOnDiamondChange } from '../src/keeperEpoch';
@@ -51,13 +51,15 @@ describe('listResetOnDiamondChange — schema-aware, pinned to the real schema',
 });
 
 describe('adoptKeeperDeployments', () => {
-  it("first adoption takes the indexer's adopted Diamond, waits for the indexer to adopt the new one, then resets (#2497 r12)", async () => {
-    const { env, band, bands, indexerAdopts } = setup();
+  it('a copy seeded with OLD resets once the configured NEW is the indexer\'s too, never before (#2497 r12, re-cut)', async () => {
+    const { keeper, env, band, bands, indexerAdopts } = setup();
     indexerAdopts(OLD);
+    // What the cutover records: the copied rows belong to OLD.
+    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
     band(84532, 7);
     band(97, 7); // another chain: never touched
-    // The cutover copied rows that belong to OLD; the bundle now names NEW, but
-    // the indexer has not adopted it yet: the tick declines and nothing moves.
+    // The bundle now names NEW, but the indexer has not adopted it yet: the
+    // tick declines and nothing moves.
     await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/not yet the indexer's/);
     expect(bands(84532), 'nothing reset ahead of the indexer').toBe(1);
     indexerAdopts(NEW);
@@ -99,14 +101,17 @@ describe('adoptKeeperDeployments', () => {
 
 
 
-  it("fails closed on an UNREAD indexer record: the first adoption throws instead of guessing (#2497 r11)", async () => {
+  it("fails closed on an UNREAD indexer record when a change is due: the tick declines, nothing moves (#2497 r11)", async () => {
     const { keeper, band } = setup();
+    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
     band(84532, 7);
     const brokenShared = { prepare: () => { throw new Error('D1 down'); } };
     const env = { DB: brokenShared, KEEPER_DB: keeper.d1 } as unknown as Env;
     await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/D1 down/);
-    expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_deployment').get(), 'nothing adopted').toEqual({ n: 0 });
+    expect(keeper.db.prepare('SELECT diamond FROM keeper_deployment').get(), 'record unchanged').toEqual({ diamond: OLD });
+    expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM hf_band_state').get()).toEqual({ n: 1 });
   });
+
 
   it('records the new Diamond only after every table reads empty — a failed delete leaves the old record, so the reset is redone (#2497 r11)', async () => {
     const { keeper, env, band, indexerAdopts } = setup();

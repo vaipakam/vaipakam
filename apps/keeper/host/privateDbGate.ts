@@ -29,6 +29,9 @@ import {
   cutoverVerdict,
   fingerprintFromReads,
   fingerprintSql,
+  MARKER_ROWS_SQL,
+  MARKER_SQL,
+  markerFromReads,
   rowsSql,
   type FingerprintRead,
   type Marker,
@@ -59,14 +62,9 @@ async function sharedFingerprints(shared: D1Database): Promise<Record<string, Fi
 }
 
 async function marker(priv: D1Database): Promise<Marker> {
-  const r = await rows(priv, 'SELECT completed_at, fingerprint FROM keeper_cutover WHERE id = 1');
-  if (r === null) return null;
-  if (r.length === 0) return 'none';
-  try {
-    return { completedAt: Number(r[0].completed_at), fingerprint: JSON.parse(String(r[0].fingerprint)) };
-  } catch {
-    return null;
-  }
+  const m = await rows(priv, MARKER_SQL);
+  if (m === null || m.length === 0) return markerFromReads(m, []);
+  return markerFromReads(m, await rows(priv, MARKER_ROWS_SQL));
 }
 
 export async function checkPrivateDb(

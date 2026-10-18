@@ -21,13 +21,12 @@
  * tick declines, since the shared rows the passes read still belong to the old
  * one (#2497 r12).
  *
- * WHICH DIAMOND, the first time. With no record for a chain, the rows here are
- * the ones the cutover copied from the shared database, and those belong to the
- * Diamond the INDEXER had adopted (its `indexer_deployment` record). So that is
- * what is recorded first; if it is not the configured Diamond, the very next
- * comparison resets. When the indexer has recorded NO Diamond for the chain,
- * the configured one is adopted (a fresh environment, nothing to reset); when
- * its record cannot be READ, the tick declines instead.
+ * WHICH DIAMOND, the first time. The one-time copy (`scripts/keeper-cutover.mjs`)
+ * SEEDS this record with the Diamond the indexer had adopted for each chain
+ * when it copied, since the copied rows belong to that one. So a later
+ * Diamond change resets them, however long the keeper waited before its first
+ * tick. A chain with no record at all has no copied rows (a fresh environment),
+ * and the configured Diamond is adopted, resetting nothing.
  */
 import type { ChainConfig, Env } from './env';
 
@@ -74,8 +73,9 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
       .first<{ diamond: string }>();
     let have = rec?.diamond?.toLowerCase() ?? null;
     if (have === null) {
-      // eslint-disable-next-line no-await-in-loop
-      have = (await indexerAdopted(env, chain.id)) ?? want;
+      // No record: no copied rows for this chain (the copy seeds one), so the
+      // configured Diamond is adopted and nothing is reset.
+      have = want;
       // eslint-disable-next-line no-await-in-loop
       await env.KEEPER_DB.prepare('INSERT OR IGNORE INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)')
         .bind(chain.id, have, now)

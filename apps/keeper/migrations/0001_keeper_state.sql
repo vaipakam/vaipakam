@@ -10,10 +10,8 @@
 -- `vaipakam-warm` D1:
 --
 --   - TRUST BOUNDARY. CLAUDE.md ("Cloudflare D1 schema discipline") keeps
---     internal ops-alert state out of the shared, user-facing database — the
---     rule ops/mesh-watcher already follows with its own D1.
---     The keeper's operator-alert state, when a pass adds it, is exactly that
---     kind.
+--     internal operational state out of the shared, user-facing database —
+--     the rule ops/mesh-watcher already follows with its own D1.
 --   - A D1 binding is database-scoped, not table-scoped (#1722). On the shared
 --     database the indexer and the agent can write any keeper table; here they
 --     have no binding at all. That matters most for the completion records:
@@ -164,4 +162,15 @@ CREATE TABLE IF NOT EXISTS keeper_cutover (
   id           INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
   completed_at INTEGER NOT NULL,  -- unix seconds
   fingerprint  TEXT    NOT NULL
+);
+
+-- The per-row digests the copy took, one row each (#2497 re-cut). Kept here,
+-- not in `keeper_cutover.fingerprint`, so the record has no size ceiling: the
+-- copy writes them through a file of small statements, and the verdict reads
+-- them back to accept deletions (the indexer's redeploy reset) while refusing
+-- any row the copy did not take. Written only by the copy, with the marker.
+CREATE TABLE IF NOT EXISTS keeper_cutover_row (
+  tbl    TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  PRIMARY KEY (tbl, digest)
 );

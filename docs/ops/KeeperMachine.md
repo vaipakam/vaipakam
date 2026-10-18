@@ -180,8 +180,8 @@ a commit. The template documents each line. In short:
   never give two machines the same one.
 - **Arming:** leave `KEEPER_ENABLED=false` and every per-pass flag empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
-  `TG_BOT_TOKEN` (the USER bot, for HF-band alerts), `PUSH_CHANNEL_PK` and the
-  aggregator keys.
+  `TG_BOT_TOKEN` (the USER bot, for HF-band alerts — never `TG_OPS_BOT_TOKEN`,
+  CLAUDE.md "Two Telegram bots"), `PUSH_CHANNEL_PK` and the aggregator keys.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
@@ -190,8 +190,8 @@ line (§5).
 
 ## 4a. The keeper's private database (#2450): migrations and the one-time cutover
 
-From #2497 the keeper keeps its own operational state (scan cursors,
-completion markers, the remit-ack log, HF-band edge state, alert de-dup) in a
+From #2496 the keeper keeps its own operational state (scan cursors,
+completion markers, the remit-ack log, HF-band edge state, its redeploy epoch) in a
 private database, `vaipakam-keeper-db`, instead of the shared one. Five of those
 tables already hold rows in the shared database, written by the keeper running
 today, and they move ONCE, with the keeper stopped.
