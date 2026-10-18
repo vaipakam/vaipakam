@@ -1,11 +1,16 @@
 # VPFI service bonds — work-token sink (S-4 / R-3)
 
-**Status:** legal glance DISCHARGED **for the no-yield
-refundable-deposit shape** (§owner decisions) — which covers fork A in
-full and C's deposit half; **C's NON-REFUNDABLE arming-fee purchase is a
-separate legal shape the recorded sign-off does not reach**, so
-selecting C additionally requires its own bounded legal glance (or an
-explicit recorded owner approval of the fee shape).
+**Status:** legal glance DISCHARGED for **both** halves of fork C. The
+no-yield refundable-deposit shape was discharged earlier (§owner decisions),
+and **the non-refundable arming-fee shape was discharged by the owner's
+recorded approval on 2026-10-18** (#1219: a one-time percentage of newly
+armed principal in VPFI, fixed code bounds of 0.5%–10%, recycled; see the
+note below). Arming is therefore no longer legally gated. What remains is
+sequencing: deploy the fixed-bounds facet, then set the rate and enable
+service capacity per chain as admin steps in the M7 sequence.
+*(Superseded wording, kept for readers of older revisions: C's fee shape was
+"a separate legal shape the recorded sign-off does not reach", requiring its
+own glance or a recorded owner approval — that approval is now recorded.)*
 
 > **THE AUTHORITATIVE GATE — build vs. arm.** The glance gates **ARMING the
 > fee**, not building the mechanism. C's mechanism may be built, reviewed,
@@ -16,15 +21,36 @@ explicit recorded owner approval of the fee shape).
 > predates the 2026-09-07 ratification of the fee as a SHAPE rather than a
 > figure. It is left in place below because the reasoning around it is still
 > sound; only the gate it names has moved.
+> **Fee bounds fixed (owner direction, 2026-10-18, #1219):** the arming fee is a
+> percentage of the newly armed principal, paid in VPFI beside it, with **fixed
+> bounds in code of 0.5% to 10%** (intended start 2%) and zero kept only as the
+> dark switch. This replaces the mutable raise-only floor and the 100% ceiling
+> the build first shipped: the same "never silently configured away" guarantee,
+> readable in the contract with no admin state to reason about. Wherever this
+> note says "a positive floor enforced in code", read the fixed 0.5% bound.
+> Considered and rejected: a flat fee per arming (regressive, and the fee would
+> stop tracking the capacity granted), a USD- or stablecoin-pegged fee (needs an
+> oracle and reads as a published price), burning the fee (deflation framing,
+> banned by RL-6), and no fee (loses the permanent sink).
+>
+> **Fee-shape glance DISCHARGED by owner sign-off, 2026-10-18** (#1219: "the fee
+> shape is fine now, we can go ahead on it"). Arming is no longer legally gated;
+> what remains is sequencing — deploy the fixed-bounds facet, then set the rate
+> and enable service capacity per chain as admin actions in the M7 sequence,
+> under the activation runbook's economic precondition (VPFI distributed widely
+> enough that the gated roles stay contestable).
+
 **All four owner decisions are RATIFIED (2026-09-07)** — see §owner
 decisions: **fork C**; the **capacity terms as proposed** (4× ceiling per
 `(role, address)`, no minimum bond, clamp on any capacity reduction);
 **unbond option (i)**, immediate withdrawal; and C's **fee parameters as a
 SHAPE** — a governance-set figure with a positive floor enforced in code,
-armed only after the fee-shape glance, never a number frozen here. The
-build is unblocked to the extent the glance allows: C's mechanism may be
-built and shipped dark; **the fee may not be armed until the fee-shape
-glance is recorded.** Retained for readers of older revisions: selecting
+armed only after the fee-shape glance, never a number frozen here. **That
+glance is now recorded (owner approval, 2026-10-18), and the floor became a
+fixed 0.5% bound with a 10% ceiling** — see the Status banner above. As
+ratified on 2026-09-07 the build was unblocked to the extent the glance
+allowed: C's mechanism could be built and shipped dark, and the fee could
+not be armed until the glance was recorded. Retained for readers of older revisions: selecting
 the fork alone did not
 unblock the build. Card:
 #1219. Umbrella: #1221. Legal frame: #694. Part of the VPFI circular-flow

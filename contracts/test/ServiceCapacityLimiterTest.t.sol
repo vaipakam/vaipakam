@@ -50,7 +50,6 @@ contract ServiceCapacityLimiterTest is SetupTest {
         vpfi.mint(op2, 1_000e18);
         _f().bindServiceCapacityEscrow();
         _f().setServiceCapacityEnabled(true);
-        _f().setArmingFeeFloor(1e15); // slice 3: posting needs a lit arming channel
         _f().setArmingFeeRate(1e16); // 1% of newly armed principal
         // The backstop vault, whose fill the free-tier route charges to its initiator (#2459 r4).
         vm.startPrank(owner);

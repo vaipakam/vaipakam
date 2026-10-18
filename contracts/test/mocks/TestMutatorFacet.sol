@@ -290,6 +290,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().protocolCfg.rentalBufferBps = bps;
     }
 
+    /// @notice #1219 (Codex #2556 r1) — plant a stored arming fee rate the bounded
+    ///         setter would refuse, the state a Diamond refreshed in place can
+    ///         carry from the earlier facet (whose ceiling was 100%).
+    function setArmingFeeRateRaw(uint256 rate) external {
+        LibVaipakam.storageSlot().armingFeeRate = rate;
+    }
+
     // ─── Reward-pool mutators (for interaction coverage tests) ───────────────
     // #687-B: setStakingPoolPaidOut removed with the 5% VPFI staking yield.
 

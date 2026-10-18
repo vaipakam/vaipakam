@@ -1900,15 +1900,24 @@ interface IVaipakamErrors {
     error ServiceCapacityCallFailed();
     /// @notice Arming is dark for `role`: no positive arming fee rate is set, or the role's curve is unset — posting is refused (withdrawals stand).
     error ServiceCapacityArmingDark(uint8 role);
-    /// @notice The arming fee `rate` sits under the `floor` (or no positive floor is set yet).
+    /// @notice #1219 — a positive arming fee `rate` outside the fixed bounds [`min`, `max`] (0.5%–10% of the newly armed principal; 0 is the dark switch).
+    error ServiceCapacityArmingFeeOutOfBounds(uint256 rate, uint256 min, uint256 max);
+    /// @notice RETIRED by #1219's fixed bounds — never thrown by this version. Declared
+    ///         only so the rolling ABI still decodes reverts from a facet not yet
+    ///         refreshed in place, whose setters throw it (Codex #2556 r8). Delete once
+    ///         every live deployment runs the fixed-bounds facet.
     error ServiceCapacityArmingFeeBelowFloor(uint256 rate, uint256 floor);
-    /// @notice The arming fee floor is raise-only: `proposed` does not exceed `current`.
+    /// @notice RETIRED by #1219's fixed bounds — never thrown by this version; kept for
+    ///         the rolling ABI exactly as {ServiceCapacityArmingFeeBelowFloor} is.
+    error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
+    /// @notice RETIRED with the floor setter by #1219's fixed bounds — never thrown by
+    ///         this version; the old `setArmingFeeFloor` stays routed on an
+    ///         un-refreshed facet (until the refresh's stale-route sweep removes
+    ///         it) and throws this, so the rolling ABI keeps it (Codex #2556 r9).
     error ServiceCapacityArmingFloorNotRaised(uint256 current, uint256 proposed);
     /// @notice #2459 r6 — the VPFI token cannot rotate while `held` of provisional compensation awaits its
     ///         day's broadcast: the hold is in the old token and its record names no asset.
     error RewardTokenRotationBlockedByProvisional(uint256 held);
-    /// @notice An arming fee rate or floor of `value` sits above the knob's ceiling `cap` (the whole newly-armed principal).
-    error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
     /// @notice A term the payer bound moved between the quote and the post: `which` names it (0 fee, 1 capacity after, 2 rotation epoch, 3 curve epoch), `bound` what they bound, `actual` what stands.
     error ServiceCapacityTermsMoved(uint8 which, uint256 bound, uint256 actual);
     /// @notice `operator` still holds principal for `role` in RETIRED rotation epoch `epoch`: drain it before posting under the new token.

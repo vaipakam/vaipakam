@@ -67,7 +67,6 @@ contract ServiceCapacityDepositTest is SetupTest {
     ///      positive floor, and a curve for the role. 1% of newly armed principal; the
     ///      knee sits far above every amount these cells post, so the fee is 1% of the post.
     function _arm() internal {
-        _f().setArmingFeeFloor(1e15);
         _f().setArmingFeeRate(1e16);
         _f().setCapacityCurve(SOLVER, 1e18, 1e16, 1_000e18, 1e18);
         _f().setCapacityCurve(KEEPER, 1e18, 1e16, 1_000e18, 1e18);
