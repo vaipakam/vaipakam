@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   applyAcceptancePinFrame,
   applyAcceptanceReadHint,
@@ -29,10 +30,15 @@ import {
 
 const HASH = `0x${'ab'.repeat(32)}` as `0x${string}`;
 const ADDRESS = '0xAbCd000000000000000000000000000000000001';
-// The REAL Base Sepolia Diamond from deployments.json — the receiver
-// drops any frame not mined against the deployment this build reads,
-// so the tests must speak with the configuration's own voice.
-const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
+// The REAL Base Sepolia Diamond, READ from deployments.json — the receiver
+// drops any frame not mined against the deployment this build reads, so
+// the tests must speak with the configuration's own voice. Read rather
+// than copied: a copy is a second statement of a fact the bundle already
+// states, and it went stale on the 2026-10-17 fresh redeploy (every cell
+// here failed on the address alone).
+const BASE_SEPOLIA = getDeployment(84532);
+if (!BASE_SEPOLIA) throw new Error('deployments.json carries no Base Sepolia (84532) entry');
+const DIAMOND = BASE_SEPOLIA.diamond;
 // The default chain position frames carry — mined block and
 // transaction index. Frame-vs-frame pin ordering runs on these
 // (#2004 rounds 14–15).

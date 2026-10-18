@@ -707,6 +707,26 @@ handler — reads and the POST writes (signed offers, prepay match-source, the
 chain-event webhook) — must tolerate the previous schema. Keeper and agent
 have no runtime gate yet (#2410).
 
+**A fresh Diamond on a chain is a new indexer EPOCH, and the indexer owns
+it** (#1566, Codex #2545 r1). `indexer_deployment` records, per chain, the
+Diamond and deploy block the indexer has adopted; `src/deploymentEpoch.ts`
+compares the bundle's Diamond with that row at the top of every pass and, on
+a change, resets the chain's chain-scoped rows — every table carrying
+`chain_id`, discovered from the schema, minus the user-owned tables
+`src/diamondEpochKeep.json` names — atomically with its own completion mark,
+so the cursor reseeds from the new deploy block. The deploy scripts no
+longer purge D1 themselves; the record of a retired Diamond IS the
+committed `contracts/deployments/archive-manifest.json` (written by every
+`--fresh` redeploy BEFORE the artifact moves); the indexer's deploy
+(`deploy-shared-d1.mjs apply`) derives the retired Diamonds from the manifest
+and the live bundle and SEEDS them between the migration apply and the
+publish, so a deploy from a clean checkout seeds what the repository records,
+and the indexer's next pass does the rest. The seed statement and the
+derivation live in ONE place, `apps/indexer/scripts/lib/retiredDeploymentSeed.mjs`. A record a pass wrote
+on its own resets nothing and is marked `adopted_blind`; a later seed may
+replace it, never an epoch earned by a reset. `/health/ingest` states the
+adopted Diamond per chain (and a chain with a deployment but no cursor).
+
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into
 `pnpm --filter @vaipakam/indexer typecheck`). D1 keys its applied record

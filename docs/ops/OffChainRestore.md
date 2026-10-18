@@ -1450,7 +1450,7 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 
 For the re-derivable tables (`offers`, `loans`, `activity_events`,
 `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
-`prenotify_scan_cursor`),
+`prenotify_scan_cursor`, `indexer_deployment`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
@@ -1481,8 +1481,16 @@ DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
 DELETE FROM prenotify_scan_cursor; \
+DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
+
+`indexer_deployment` (#1566, Codex #2545 r1) records, per chain, the Diamond
+the rows were indexed from; the replay's first pass re-adopts the bundle's
+Diamond and — with the row gone — resets nothing, which is right: the tables
+above are already empty. Leaving it would be wrong only in the other
+direction (a row naming a Diamond the bundle no longer does would trigger a
+reset of tables the replay is already filling).
 
 `prenotify_scan_cursor` (#2219) is a watermark like `indexer_cursor`,
 not data: it records the DEADLINE at which the pre-notify scan resumes.

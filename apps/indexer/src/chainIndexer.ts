@@ -139,6 +139,7 @@ import {
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
+import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentEpoch';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -487,6 +488,10 @@ export interface ChainIndexerResult {
    *  cron tick. Absent on paths that never learned the head. */
   headBlock?: bigint;
   skipped?: string;
+  /** This pass began a new deployment epoch: the chain's client-visible rows
+   *  were deleted before it scanned (deploymentEpoch.ts). The DO broadcasts
+   *  the full recovery set on it, since the counters cannot say so. */
+  epochReset?: boolean;
 }
 
 /**
@@ -849,6 +854,15 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
  *  ingest DO stops its loop rather than rearming (#2409 r2). */
 export function isSchemaDeclinedSkip(skipped: string | undefined): boolean {
   return skipped === 'schema-pending' || skipped === 'schema-unknown';
+}
+
+/** The pass's bundle is not the adopted deployment epoch for the chain
+ *  (deploymentEpoch.ts: a stale build refused, or a claim lost to a
+ *  different Diamond). Declined like a schema decline — no retry within an
+ *  alarm's budget can change the bundle a build carries — so the ingest DO
+ *  stops its loop rather than rearming (Codex #2545 r2 P1). */
+export function isEpochDeclinedSkip(skipped: string | undefined): boolean {
+  return skipped === 'epoch-not-adopted';
 }
 
 /**
@@ -1984,6 +1998,48 @@ export async function runChainIndexerForChain(
       console.warn(schemaDeclineNotice(`chain ${chain.id} pass`, schema));
       return {
         ...emptyResult(schema.state === 'pending' ? 'schema-pending' : 'schema-unknown'),
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
+    // DEPLOYMENT EPOCH (#1566, Codex #2545 r1–r4) — after the schema gate (the
+    // record table is part of the schema) and before the pass touches
+    // anything. A bundle naming a different, newer Diamond than the one this
+    // chain's rows were indexed from is a new epoch: the chain's chain-scoped
+    // rows are reset (cursor included, so the pass reseeds from
+    // `deployBlock - 1`). Only the adopted epoch scans: a pass refused as a
+    // stale build, or out-raced by a different Diamond, returns here —
+    // declined like a schema decline, since no retry can change the bundle a
+    // build carries — so a retired or losing Diamond never repopulates rows
+    // or moves the shared cursor. Steady state is one SELECT.
+    const deployBlock = BigInt(getDeployBlock(chain.id) ?? 0);
+    const adoption = await adoptDeployment(meterD1(rawEnv.DB, budget), {
+      chainId: chain.id,
+      diamond: chain.diamond,
+      deployBlock,
+    });
+    const adoptionLine = describeAdoption(chain.id, chain.diamond, deployBlock, adoption);
+    if (adoptionLine !== null) console.warn(adoptionLine);
+    if (!isAdoptedEpoch(adoption)) {
+      return {
+        ...emptyResult('epoch-not-adopted'),
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
+    // A reset just deleted client-visible rows (offers, loans, activity,
+    // notifications) in a batch of one query per chain-scoped table — most of
+    // this invocation's 50-query D1 budget (Codex #2545 r5 P1). The scan does
+    // NOT follow in the same invocation: this pass returns `epoch-reset`
+    // carrying `epochReset`, the DO broadcasts the full invalidation on it
+    // (its counters cannot say rows were deleted, Codex r4 P2) and, being
+    // neither declined nor a failure, rearms a FRESH invocation whose full
+    // budget scans the new Diamond from `deployBlock - 1`; the cron path's
+    // next tick does the same.
+    if (adoption.outcome === 'reset' || adoption.outcome === 'reset-resumed') {
+      return {
+        ...emptyResult('epoch-reset'),
+        epochReset: true,
         chainId: chain.id,
         invocationSubrequestsSpent: spent(budget),
       };

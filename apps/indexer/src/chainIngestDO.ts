@@ -54,6 +54,7 @@ import type { PushHints } from './pushHints';
 import {
   RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
+  isEpochDeclinedSkip,
   isRetryableScanSkip,
   isSchemaDeclinedSkip,
   runChainIndexerForChain,
@@ -206,8 +207,14 @@ export function alarmNextStep(p: {
   scannedTo: bigint | null;
   target: bigint;
   headBlock: bigint | undefined;
+  /** The pass began a deployment epoch and returned without scanning
+   *  (deploymentEpoch.ts): the fresh pass it promises must be rearmed
+   *  EXPLICITLY — on the cron path the target is 0, which the comparison
+   *  below would read as already met (Codex #2545 r6 P2). */
+  epochReset?: boolean;
 }): 'finish' | 'slow-lane' | 'rearm' {
   if (p.schemaDeclined) return 'finish';
+  if (p.epochReset) return 'rearm';
   if (!p.retryableFailure && p.scannedTo !== null && p.scannedTo >= p.target) {
     return shouldRearmForBacklog(p.headBlock, p.scannedTo, p.retryableFailure)
       ? 'slow-lane'
@@ -318,6 +325,15 @@ type PushFrame =
 export function invalidationKeysFromResult(
   result: ChainIndexerResult,
 ): InvalidationKey[] {
+  // An epoch reset deleted every client-visible row for the chain (offers,
+  // loans, activity, notifications) before the pass scanned; the counters
+  // below cannot say so — a fresh Diamond with no events yet reports zeros —
+  // so the pass carries the fact and EVERY key goes out (Codex #2545 r4 P2,
+  // r7 P2: the lost-push recovery set omits `loan.created`, the only key that
+  // reaches the desk tape and candles, and a reset invalidates those too).
+  // Clients then refetch rather than keep presenting the retired deployment's
+  // cached positions until their slow poll.
+  if (result.epochReset) return [...ALL_INVALIDATION_KEYS];
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
   // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145
@@ -369,6 +385,23 @@ export function invalidationKeysFromResult(
   if (result.activityEvents > 0) keys.push('activity.appended');
   return keys;
 }
+
+/** Every key the push channel knows — the fan-out of a deployment-epoch reset,
+ *  which invalidates every slice at once. Exhaustive BY TYPE: adding a member
+ *  to `InvalidationKey` without listing it here fails to compile, so the reset
+ *  cannot silently leave a new slice stale (Codex #2545 r7 P2). */
+const ALL_INVALIDATION_KEYS = [
+  'offer.created',
+  'offer.changed',
+  'loan.created',
+  'loan.updated',
+  'ownership.changed',
+  'notification.created',
+  'activity.appended',
+] as const satisfies readonly InvalidationKey[];
+type MissingInvalidationKey = Exclude<InvalidationKey, (typeof ALL_INVALIDATION_KEYS)[number]>;
+const _everyInvalidationKeyListed: MissingInvalidationKey extends never ? true : never = true;
+void _everyInvalidationKeyListed;
 
 /** Coarse "refetch everything" set used to recover a push that was lost when a
  *  prior post-write scan threw (its counts never reached `broadcast()`). The
@@ -568,6 +601,7 @@ export class ChainIngestDO {
       let headBlock: bigint | undefined;
       let retryableFailure = false;
       let schemaDeclined = false;
+      let epochReset = false;
       try {
         // The Secrets Store reads at the top of the alarm are counted too —
         // the scan is not the only thing that spends here.
@@ -593,6 +627,9 @@ export class ChainIngestDO {
         );
         scannedTo = result.scannedTo;
         headBlock = result.headBlock;
+        // A pass that began a deployment epoch returned without scanning; the
+        // fresh pass it promises is rearmed explicitly (Codex #2545 r6 P2).
+        epochReset = result.epochReset === true;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
         // `scannedTo` rewound to the previous cursor instead of throwing
         // (Codex #764 round 5). Treat it as retryable so the caught-up check
@@ -600,7 +637,10 @@ export class ChainIngestDO {
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
         retryableFailure = isRetryableScanSkip(result.skipped);
-        schemaDeclined = isSchemaDeclinedSkip(result.skipped);
+        // Declined passes stop the loop rather than rearm: a missing migration
+        // and a bundle that is not the adopted epoch (deploymentEpoch.ts,
+        // Codex #2545 r2) are both facts no retry within this alarm can change.
+        schemaDeclined = isSchemaDeclinedSkip(result.skipped) || isEpochDeclinedSkip(result.skipped);
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
         // slice within seconds instead of waiting for its next poll. If a PRIOR
@@ -630,7 +670,7 @@ export class ChainIngestDO {
       const target = BigInt(
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
-      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock });
+      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock, epochReset });
       if (step === 'slow-lane') {
         // #1416 — truncated backlog pass: the cron target (0 for a
         // plain tick) is met, but the safe head is still more than a

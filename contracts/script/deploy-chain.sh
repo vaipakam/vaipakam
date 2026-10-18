@@ -190,6 +190,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/retired-deployment.sh
+source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -616,19 +618,30 @@ if [ "$FRESH" = "1" ]; then
       || { echo "ERROR: could not reconcile the unrecorded sidecar $(basename "$prior") into archive-manifest.json; refusing --fresh" >&2; exit 1; }
   done
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
+    # The retired Diamond, captured BEFORE the artifact moves: the indexer's
+    # deploy seeds it between migration apply and publish so its first pass
+    # resets this chain rather than adopting the new Diamond blind (#1566,
+    # Codex #2545 r3/r4; lib/retired-deployment.sh).
+    PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+    PRIOR_DEPLOY_BLOCK=$(jq -r '.deployBlock // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
     TS="$(date +%s)"
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
     node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
+    if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
+      echo "  retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) is in archive-manifest.json for the indexer"
+      seed_retired_deployments_now "$REPO_ROOT"
+    fi
   else
-    echo "  (no prior addresses.json — already clean)"
+    echo "  (no prior addresses.json — already clean; whatever archive-manifest.json records is what the indexer seeds)"
+    seed_retired_deployments_now "$REPO_ROOT"
   fi
   # Wipe step markers so every step re-runs.
   rm -f "$MARKERS_DIR"/*.done 2>/dev/null || true
   echo "  ✓ cleared step markers in $MARKERS_DIR"
-  echo "  (indexer D1 cursor will be re-seeded in step [8d] for chainId=$CHAIN_ID)"
+  echo "  (the indexer resets this chain's rows itself on its first pass under the new bundle — deploymentEpoch.ts)"
   echo
 fi
 
@@ -673,8 +686,16 @@ fi
 if step_done "build"; then
   echo "[1] forge build (skipped — marker exists)"
 else
-  echo "[1] forge build"
-  forge build
+  echo "[1] forge build (--skip test — see #636)"
+  # `--skip test` is load-bearing (#636, mirrored from predeploy-check.sh).
+  # A deploy needs `src/` + the deploy/config `script/`s compiled; every
+  # `forge script` below compiles that same sparse closure. A bare
+  # `forge build` instead folds ALL of `test/` into one non-sparse viaIR
+  # unit — the whole-unit form this codebase has outgrown (the 2026-10-17
+  # Base Sepolia deploy sat 57 min in a 19 GB solc that swapped, then
+  # aborted). The test closure a deploy relies on is compiled where it is
+  # exercised: the deploy-sanity suite inside predeploy-check.sh.
+  forge build --skip test
   mark_done "build"
 fi
 
@@ -1439,6 +1460,9 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   # published, so a failed migration never leaves new code on an old schema.
   # The Worker carries its own schema gate as well (src/schemaGate.ts), which
   # holds scheduled ingest on any route that publishes without migrating.
+  # The retired Diamonds the committed archive manifest records are seeded by
+  # the applier between the migration apply and the publish (#1566, Codex
+  # #2545 r3/r6).
   ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then

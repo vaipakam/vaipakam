@@ -272,9 +272,15 @@ contract DeployCrosschain is Script {
 
         // ── Record to deployments/<chain>/addresses.json ─────────────────
         Deployments.writeCcipMessenger(messenger);
+        // The UUPS implementations behind the two messenger proxies, as
+        // deployed — the same keys RefreshAllFacetsInPlace rewrites on an
+        // upgrade — so the committed record names which code the live proxies
+        // run from day one, not only after the first upgrade (Codex #2545 r7).
+        Deployments.writeAddress(".ccipMessengerImpl", address(messengerImpl));
         Deployments.writeVpfiTokenPool(pool);
         Deployments.writeVpfiPoolRateGovernor(rateGovernor);
         Deployments.writeRewardMessenger(rewardMessenger);
+        Deployments.writeAddress(".rewardMessengerImpl", address(rewardImpl));
         if (canonical) {
             Deployments.writeBuybackRemittanceReceiver(buybackReceiver);
             Deployments.writeBuybackRemittanceReceiverImpl(buybackReceiverImpl);
