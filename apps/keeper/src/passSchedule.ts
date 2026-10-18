@@ -37,6 +37,7 @@ import { runLiquidator } from './liquidator';
 import { runAutoLifecycle } from './autoLifecycle';
 import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
+import { runRewardSanctionsHold } from './rewardSanctionsHold';
 import { runDeliveryProof } from './deliveryProof';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
@@ -210,6 +211,15 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'resumes a persisted frontier — the drain rate is the tick rate',
     run: runCommitmentReport,
+  },
+  {
+    name: 'rewardSanctionsHold',
+    cadenceMinutes: 60,
+    // :14, not :13 — graceDefault (#2483, 5-minute cadence from :03) took
+    // :13 when the two branches met; the stagger test pins one pass a minute.
+    offsetMinutes: 14,
+    why: 'observes a held claimant every 6 h inside a 24 h gap; hourly keeps each alert within one cadence (#2450)',
+    run: runRewardSanctionsHold,
   },
   {
     name: 'deliveryProof',

@@ -202,6 +202,18 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: "keeper-private deployment epoch per chain (#2497 r10); disposable — an empty table adopts the indexer's adopted Diamond, so it resets nothing — #1481",
   },
+  keeper_ops_alert: {
+    class: 'decision-needed',
+    reason: 'keeper ops-alert de-duplication (#2450), keeper-private; disposable — an empty table re-sends at most one line per live condition — #1481',
+  },
+  keeper_sanctions_screen: {
+    class: 'decision-needed',
+    reason: 'keeper sanctions-hold screen cursor (#2489), keeper-private; disposable — an empty table restarts the screen from the first loan party — #1481',
+  },
+  keeper_sanctions_watch: {
+    class: 'decision-needed',
+    reason: "keeper sanctions-hold watch list (#2497 r11), keeper-private; disposable — an empty table re-finds each held owner on the screen's next cycle, which is what it was before the list existed — #1481",
+  },
   keeper_work_open: {
     class: 'decision-needed',
     reason: "keeper open-work queue (#2489, #2497 r8), keeper-private; disposable ONLY together with keeper_work_cursor — clearing both re-discovers from the active Diamond's deploy block and drops each finished item after one on-chain read; clearing this one alone loses the items behind the cursor — #1481",

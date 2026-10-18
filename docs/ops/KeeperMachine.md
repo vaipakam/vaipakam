@@ -182,6 +182,13 @@ a commit. The template documents each line. In short:
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
   `TG_BOT_TOKEN` (the USER bot, for HF-band alerts — never `TG_OPS_BOT_TOKEN`,
   CLAUDE.md "Two Telegram bots"), `PUSH_CHANNEL_PK` and the aggregator keys.
+- **Operator alerts:** `TG_OPS_BOT_TOKEN` and `TG_OPS_CHAT_ID`, the OPS bot
+  and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
+  and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
+  sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
+  here. With either value unset, every such alert goes only to the journal,
+  as `ops alert NOT delivered`. So set both, and confirm that line is absent,
+  before arming `REWARD_SANCTIONS_KEEPER_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
@@ -218,8 +225,8 @@ Diamond this build does not name yet. That window lasts until the indexer's
 next run after its own deploy (or, in the last case, until the keeper's next
 update). A decline that persists means one of the two has not picked up the
 redeploy. A pass still running from an earlier tick is held to the same rule
-at every effect (`src/epochFence.ts`): a send and an alert re-read the
-indexer's adoption first and are refused with `epoch fence: … moved since
+at every effect (`src/epochFence.ts`): a send, a subscriber alert and a
+chain-scoped operator alert re-read the indexer's adoption first and are refused with `epoch fence: … moved since
 this tick launched` once it has moved, and a write to a shared table the
 indexer resets carries that condition INSIDE its own statement, so the check
 and the write are one statement (one HTTP request here) that no adoption can
@@ -290,12 +297,14 @@ journalctl -u vaipakam-keeper -f
    not armed returns at once, and its log line names the flag that held it.
 3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
    (`graceDefault`), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
-   `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`) and
-   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`). Arm one at a time and
+   `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
+   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`) and
+   `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly). Arm one at a time and
    validate that pass's own cadence: its `<pass> done in …` line on the
    minutes `src/passSchedule.ts` gives it, with no error line. A pass left
    unarmed logs that it skipped, so it is never silently off. Leaving the
-   delivery-proof pass unarmed leaves mirror-funded days gated.
+   delivery-proof pass unarmed leaves mirror-funded days gated. Leaving the
+   sanctions pass unarmed lets held owners' evidence chains lapse.
 
 Rollback at any point: set `KEEPER_ENABLED=false` and restart, or stop the
 service (§6). The Worker side needs no change, because its schedule stayed

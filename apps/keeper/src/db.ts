@@ -1063,3 +1063,266 @@ export async function pageByBlock<R extends { block_number: number }>(
   if (below.length > 0) return { rows: below, next: cut };
   return { rows: await fetch(cut, cut, null), next: cut + 1 };
 }
+
+// ─── #2450 — the sanctions-hold observer's reads, and ops-alert de-dup ──────
+
+/**
+ * The wallets whose sanctions-evidence chain is OPEN on `chainId`: those whose
+ * LATEST evidence event is a `RewardSanctionsEvidenceRecorded` (a chain start
+ * no clean read has ended since), lowercased. The indexer decodes every
+ * Diamond event into `activity_events`, so the observer reads the chain's own
+ * record of who was flagged instead of scanning logs itself.
+ *
+ * One row per wallet, decided per wallet, so nothing bounds it but the number
+ * of open chains (Codex #2489 r1). The earlier read took the newest 5,000 rows
+ * and decided from those, so a wallet whose chain started before the newest
+ * 5,000 events dropped out while its chain still stood. A wallet whose chain
+ * was CLEARED is not listed here: what it can still be owed by the pass is the
+ * resolution of a staging record or domain, and {@link listOpenStagingOwners}
+ * lists every owner of one of those, however old.
+ */
+export async function listOpenSanctionsChains(db: D1Database, chainId: number, fromBlock: number): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT who FROM (
+         SELECT lower(json_extract(args_json, '$.who')) AS who, kind,
+                ROW_NUMBER() OVER (
+                  PARTITION BY lower(json_extract(args_json, '$.who'))
+                  ORDER BY block_number DESC, log_index DESC
+                ) AS rn
+           FROM activity_events
+          WHERE chain_id = ?1 AND block_number >= ?2
+            AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
+       )
+        WHERE rn = 1 AND kind = 'RewardSanctionsEvidenceRecorded'
+        ORDER BY who`,
+    )
+    .bind(chainId, fromBlock)
+    .all<{ who: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.who)
+    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
+}
+
+/**
+ * The open staging work the indexer's event log records on `chainId`, decided
+ * per record and per domain (Codex #2489 r1): a record is open when its latest
+ * `StagingRecordOpened` has no later `StagingRecordClosed`, a domain when its
+ * latest `StagingDomainOpened` has no later `StagingDomainCleared`. Every close
+ * path emits the close event (`LibRewardStaging._close`, both domain clears);
+ * a record that is deleted without one was never announced as opened.
+ *
+ * Nothing bounds this by age or count: a Resolving record stays work until the
+ * chain closes it, however long a held claimant waits. The earlier read took
+ * the owners of records opened in the last 30 days, so a record still waiting
+ * past that dropped out of the pass with its page never run.
+ *
+ * Positions compare `(block_number, log_index)` as one integer; a block's log
+ * index is far below the multiplier.
+ */
+/** `floor` is the placeholder that binds {@link deploymentFloor}. */
+const openStagingSql = (floor: string) => `
+  WITH ev AS (
+    SELECT kind,
+           lower(json_extract(args_json, '$.user')) AS who,
+           lower(COALESCE(json_extract(args_json, '$.key'), json_extract(args_json, '$.domainKey'))) AS k,
+           block_number * 1000000 + log_index AS pos
+      FROM activity_events
+     WHERE chain_id = ?1 AND block_number >= ${floor}
+       AND kind IN ('StagingRecordOpened', 'StagingRecordClosed', 'StagingDomainOpened', 'StagingDomainCleared')
+  ),
+  opened AS (
+    SELECT CASE kind WHEN 'StagingRecordOpened' THEN 'record' ELSE 'domain' END AS what, k, who, MAX(pos) AS pos
+      FROM ev WHERE kind IN ('StagingRecordOpened', 'StagingDomainOpened')
+     GROUP BY what, k
+  ),
+  closed AS (
+    SELECT CASE kind WHEN 'StagingRecordClosed' THEN 'record' ELSE 'domain' END AS what, k, MAX(pos) AS pos
+      FROM ev WHERE kind IN ('StagingRecordClosed', 'StagingDomainCleared')
+     GROUP BY what, k
+  )
+  SELECT o.what AS what, o.k AS k, o.who AS who, o.pos AS pos
+    FROM opened o LEFT JOIN closed c ON c.what = o.what AND c.k = o.k
+   WHERE c.pos IS NULL OR c.pos < o.pos`;
+
+/** Distinct owners of an open staging record or domain on `chainId` —
+ *  candidates the sanctions-hold pass classifies even when no evidence event
+ *  names them (a claimant held with no observation chain, a cleared one). */
+export async function listOpenStagingOwners(db: D1Database, chainId: number, fromBlock: number): Promise<string[]> {
+  const rows = await db
+    .prepare(`SELECT DISTINCT who FROM (${openStagingSql('?2')}) ORDER BY who`)
+    .bind(chainId, fromBlock)
+    .all<{ who: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.who)
+    .filter((w): w is string => typeof w === 'string' && /^0x[0-9a-f]{40}$/.test(w));
+}
+
+/** The keys of `user`'s OPEN staging records on `chainId`, oldest first. A
+ *  record key is the input to the permissionless resolution page; the record's
+ *  own phase, read on chain, decides whether there is anything to resolve. */
+export async function listOpenStagingRecordKeysForUser(
+  db: D1Database,
+  chainId: number,
+  user: string,
+  fromBlock: number,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT k FROM (${openStagingSql('?3')})
+        WHERE what = 'record' AND who = ?2
+        ORDER BY pos`,
+    )
+    .bind(chainId, user.toLowerCase(), fromBlock)
+    .all<{ k: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.k)
+    .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-f]{64}$/.test(k));
+}
+
+/**
+ * The loan parties of `chainId` — every lender and borrower the indexer has
+ * recorded, original or current holder, lowercased, in address order — after
+ * `after`, at most `limit`. The universe the sanctions-hold pass SCREENS
+ * (Codex #2489 r2): interaction reward is earned by loan parties, and a party
+ * flagged while it holds only ordinary (unstaged) reward leaves no evidence
+ * event or staging record behind, so the oracle is the only signal and every
+ * party has to be read against it. Address order makes the screen a stable
+ * rotation.
+ */
+const LOAN_PARTIES_SQL = `
+  SELECT addr FROM (
+    SELECT lower(lender) AS addr FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(borrower) FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(lender_current_owner) FROM loans WHERE chain_id = ?1
+    UNION SELECT lower(borrower_current_owner) FROM loans WHERE chain_id = ?1
+    -- #2497 r5 — every holder a position EVER had, not only its first and
+    -- latest: an intermediate holder can still own closed or split reward
+    -- entries. The indexer appends each acquisition to loan_participants.
+    UNION SELECT lower(wallet) FROM loan_participants WHERE chain_id = ?1
+  )
+  WHERE addr LIKE '0x%' AND length(addr) = 42`;
+
+export async function listLoanPartiesAfter(
+  db: D1Database,
+  chainId: number,
+  after: string,
+  limit: number,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(`${LOAN_PARTIES_SQL} AND addr > ?2 ORDER BY addr LIMIT ?3`)
+    .bind(chainId, after.toLowerCase(), limit)
+    .all<{ addr: string }>();
+  return (rows.results ?? []).map((r) => r.addr);
+}
+
+/** How many loan parties {@link listLoanPartiesAfter} rotates through. */
+export async function countLoanParties(db: D1Database, chainId: number): Promise<number> {
+  const row = await db.prepare(`SELECT COUNT(*) AS n FROM (${LOAN_PARTIES_SQL})`).bind(chainId).first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+// The reads above are SHARED (the indexer's `activity_events`); the ops-alert
+// helpers below are KEEPER-PRIVATE (#2450, apps/keeper/migrations/0001) — ops
+// alert state stays out of the user-facing database — and take `KEEPER_DB`.
+
+/** The ops-alert record for `key`, or null when none was sent. */
+export async function getOpsAlert(
+  db: KeeperD1,
+  key: string,
+): Promise<{ firstSeenAt: number; lastSentAt: number } | null> {
+  const row = await db
+    .prepare(`SELECT first_seen_at, last_sent_at FROM keeper_ops_alert WHERE alert_key = ?1`)
+    .bind(key)
+    .first<{ first_seen_at: number; last_sent_at: number }>();
+  return row ? { firstSeenAt: row.first_seen_at, lastSentAt: row.last_sent_at } : null;
+}
+
+/** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`).
+ *  `chainId` scopes it to a chain, so a Diamond change on that chain clears it. */
+export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: number, chainId: number | null = null): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
+       VALUES (?1, ?2, ?2, ?3)
+       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
+    )
+    .bind(key, nowSec, chainId)
+    .run();
+}
+
+/** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
+ *  prefix), so a pass clears only the alerts that are actually open. */
+export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {
+  const rows = await db
+    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE alert_key LIKE ?1`)
+    .bind(likePattern)
+    .all<{ alert_key: string }>();
+  return (rows.results ?? []).map((r) => r.alert_key);
+}
+
+/** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
+export async function clearOpsAlert(db: KeeperD1, key: string): Promise<void> {
+  await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
+}
+
+// ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0004) ──────
+
+/** Where the sanctions-hold screen resumes on `(chainId, diamond)`: the last
+ *  address screened, or '' to start from the first. */
+export async function getSanctionsScreenCursor(db: KeeperD1, chainId: number, diamond: string): Promise<string> {
+  const row = await db
+    .prepare(`SELECT cursor FROM keeper_sanctions_screen WHERE chain_id = ?1 AND diamond = ?2`)
+    .bind(chainId, diamond.toLowerCase())
+    .first<{ cursor: string }>();
+  return row?.cursor ?? '';
+}
+
+/** Record where the screen resumes. */
+/** The owners the sanctions screen found held or confirmed (#2497 r11). */
+export async function listSanctionsWatch(db: KeeperD1, chainId: number, diamond: string): Promise<string[]> {
+  const rows = await db
+    .prepare('SELECT owner FROM keeper_sanctions_watch WHERE chain_id = ?1 AND diamond = ?2 ORDER BY owner')
+    .bind(chainId, diamond.toLowerCase())
+    .all<{ owner: string }>();
+  return (rows.results ?? []).map((r) => r.owner);
+}
+
+/** Watch `owners` (idempotent). */
+export async function watchSanctionsOwners(db: KeeperD1, chainId: number, diamond: string, owners: readonly string[]): Promise<void> {
+  if (owners.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch(
+    owners.map((o) =>
+      db
+        .prepare('INSERT OR IGNORE INTO keeper_sanctions_watch (chain_id, diamond, owner, added_at) VALUES (?1, ?2, ?3, ?4)')
+        .bind(chainId, diamond.toLowerCase(), o.toLowerCase(), now),
+    ),
+  );
+}
+
+/** Stop watching `owners` — only on a fresh read showing nothing left to do. */
+export async function unwatchSanctionsOwners(db: KeeperD1, chainId: number, diamond: string, owners: readonly string[]): Promise<void> {
+  if (owners.length === 0) return;
+  for (const c of chunkD1InList(owners.map((o) => o.toLowerCase()), { before: [chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(`DELETE FROM keeper_sanctions_watch WHERE chain_id = ? AND diamond = ? AND owner IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+export async function putSanctionsScreenCursor(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  cursor: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_sanctions_screen (chain_id, diamond, cursor, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (chain_id, diamond) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), cursor.toLowerCase(), Math.floor(Date.now() / 1000))
+    .run();
+}

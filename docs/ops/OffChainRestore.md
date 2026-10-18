@@ -533,6 +533,11 @@ then deploy.
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
+      | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
+
+      The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
+      captured the same way: while unset the observer's operator alerts reach
+      only the log.
 
       Capture their **values** in the same offline record as the
       credentials — they are operator state that nothing else preserves.
@@ -1950,6 +1955,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+<<<<<<< HEAD
    `rewardBudgetRemit`, `remitAck`, `commitmentReport` and `deliveryProof`.
    This list is the one place the set is written down; every other step here says "every
    gated pass" rather than counting them, because a count goes stale the day
@@ -2003,6 +2009,14 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    from the keeper too (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
 
 ---
+=======
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
+   `rewardSanctionsHold`. This list is the one place the set is written down; every other step here says "every gated
+   pass" rather than counting them, because a count goes stale the day a pass
+   is added (#2497 r1). If `PUSH_CHANNEL_PK` was rotated, confirm a
+   `[push] sent channel=…` line from the keeper too
+   (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
+>>>>>>> 93832521a (feat(#2450): the sanctions-hold pass — screen, watch list, phased observations, measured alerts (re-cut 3/3 of #2497))
 
 ## 7b. LAST: activate the backup writer
 
