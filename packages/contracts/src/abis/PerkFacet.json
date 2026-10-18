@@ -104,6 +104,16 @@
         "internalType": "bool"
       },
       {
+        "name": "notPaused",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "vpfiTokenSet",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "priced",
         "type": "bool",
         "internalType": "bool"

@@ -684,11 +684,14 @@ intent owner's credits instead.
   If units of perk 1 were ever sold before the effect existed, the arming write
   is refused (`PerkPriorityLegacyUnitsSold`) and perk 1 cannot be used for
   priority routing on that deployment.
-- **Reading the state.** `getPriorityRoutingStatus()` returns whether a purchase
-  would go through, then each condition on its own: a price is set (zero means
-  disarmed), the effect is armed, the counted shape, the Solver curve and both
-  intent switches. A refused purchase can be traced to the one condition that is
-  missing, and a disarmed perk never reads as for sale.
+- **Reading the state.** `getPriorityRoutingStatus()` returns whether any
+  protocol-wide condition would refuse a purchase, then each condition on its
+  own: the protocol is not paused, a VPFI token is set, a price is set (zero
+  means disarmed), the effect is armed, the counted shape, the Solver curve and
+  both intent switches. A refused purchase can be traced to the one condition
+  that is missing, and a paused or disarmed perk never reads as for sale. Checks
+  that depend on the buyer (sanctions, vault balance, the terms they bind) are
+  not part of it.
 
 **This setter stays callable while the protocol is PAUSED**, deliberately —
 a pause is when withdrawing an armed offer is most wanted, and gating the

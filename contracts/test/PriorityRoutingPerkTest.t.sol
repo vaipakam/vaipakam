@@ -643,8 +643,9 @@ contract PriorityRoutingPerkTest is SetupTest {
         _lightCurve();
         TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
         _expectNotDeliverableNoMove();
-        (bool purchasable, bool priced, bool armed, bool deliverable, bool counted, bool lit, bool live) =
+        (bool purchasable, bool notPaused, bool tokenSet, bool priced, bool armed, bool deliverable, bool counted, bool lit, bool live) =
             _perk().getPriorityRoutingStatus();
+        assertTrue(notPaused && tokenSet, "status: not paused, VPFI token set");
         assertFalse(purchasable, "status: not purchasable");
         assertFalse(armed, "status: not armed");
         assertFalse(deliverable, "status: not deliverable");
@@ -652,7 +653,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.expectEmit(false, false, false, true, address(diamond));
         emit LibPriorityRouting.PriorityRoutingPerkArmed(PRICE);
         _perk().setPerkConfig(PERK, PRICE, 0);
-        (purchasable,, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
+        (purchasable,,,, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
         assertTrue(purchasable && armed && deliverable, "status: armed, deliverable and purchasable after the arming write");
         _expectPurchaseSucceeds();
         vm.recordLogs();
@@ -661,13 +662,26 @@ contract PriorityRoutingPerkTest is SetupTest {
         // Codex #2563 r7 — a DISARMED perk is never reported for sale, though it
         // stays armed and deliverable.
         _perk().setPerkConfig(PERK, 0, 0);
-        (purchasable, priced, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
+        (purchasable,,, priced, armed, deliverable,,,) = _perk().getPriorityRoutingStatus();
         assertFalse(purchasable, "disarmed: not purchasable");
         assertFalse(priced, "disarmed: no price");
         assertTrue(armed && deliverable, "disarmed: still armed and deliverable");
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(PerkFacet.PerkNotForSale.selector, PERK));
         _perk().purchasePerk(PERK, 1, PRICE * 2, 0);
+        // Codex #2563 r8 — a PAUSE is never reported as for sale either: re-priced
+        // and otherwise purchasable, a paused protocol reads notPaused = false.
+        _perk().setPerkConfig(PERK, PRICE, 0);
+        (purchasable,,,,,,,,) = _perk().getPriorityRoutingStatus();
+        assertTrue(purchasable, "re-priced: purchasable");
+        AdminFacet(address(diamond)).pause();
+        (purchasable, notPaused,,,,,,,) = _perk().getPriorityRoutingStatus();
+        assertFalse(purchasable, "paused: not purchasable");
+        assertFalse(notPaused, "paused: named");
+        vm.prank(lender);
+        vm.expectRevert(LibPausable.EnforcedPause.selector);
+        _perk().purchasePerk(PERK, 1, PRICE, 0);
+        AdminFacet(address(diamond)).unpause();
     }
 
     /// @dev Codex #2563 r5 — perk-1 CREDITS sold before the effect existed never
