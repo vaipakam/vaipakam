@@ -1,9 +1,0 @@
-## Thread — BNB testnet gets the same fresh stack as Base and Arbitrum, as a second mirror (#1566)
-
-BNB testnet was the one active testnet still running the code from before the recycling programme's build. It had no route to the new Base Diamond and could not answer the reward-role and custody reads the rest of the mesh now relies on. It now has a fresh stack built from the same contracts as Base Sepolia and Arbitrum Sepolia, deployed without re-running the full regression because nothing in the contracts changed since that deploy.
-
-The new BNB Diamond is a reward mirror of Base, wired over CCIP in both directions. Base now lists BNB beside Arbitrum as a mirror reward deployment and an expected day-report source, and its daily reward broadcast fans out to both mirrors. Liquidations on BNB route through the chain's real PancakeSwap V3 venue, as before, rather than a mock adapter. The chain has its own sanctions test list, and the testnet range and partial-fill flags are on. The old BNB Diamond still holds two offers and two loans of test state. They stay settleable on it directly, and it is now recorded in the archive inventory as retired.
-
-When the indexer deploys with this bundle, it sees a newer Diamond for BNB testnet and resets that chain's rows once, the same way it did for the other two chains. As on those chains, nothing in the reward loop is armed: rewards are not launched, custody is not activated and the claim horizon is dark.
-
-One deploy-tooling gap surfaced during the run and is fixed separately in #2548. Forge estimated a 1-wei gas price for one BNB transaction, below the node's minimum, so the transaction sat unmined. It was replaced by hand with the identical contract creation at the same nonce, which landed at the address already recorded, and every later BNB transaction ran with an explicit price.
