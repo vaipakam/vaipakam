@@ -78,25 +78,20 @@ describe('checkPrivateDb', () => {
   });
 });
 
-describe('createPrivateDbGate — re-checked every tick, never cached blindly (#2497 r4)', () => {
-  it('passes, then declines the tick after an old keeper writes a shared copy, then re-runs the full check', async () => {
+describe('createPrivateDbGate — the full check on every tick, never cached (#2497 r4, r8)', () => {
+  it('passes, then declines the tick after an old keeper writes a shared copy', async () => {
     const shared = sharedDb();
     const priv = privateDb();
     const gate = createPrivateDbGate();
     expect((await gate.check(d1(shared), d1(priv))).ok, 'fresh: nothing to move').toBe(true);
-    expect((await gate.check(d1(shared), d1(priv))).ok, 'unchanged: still fine, cheaply').toBe(true);
     // A legacy keeper restarted after startup writes the OLD shared copy.
     shared.db.prepare('INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (1, 1, ?, 1000, ?, 100)').run('warn', '0xabc');
     const moved = await gate.check(d1(shared), d1(priv));
     expect(moved.ok).toBe(false);
-    expect(!moved.ok && moved.line).toMatch(/hf_band_state .*changed since this process checked/);
-    // The basis was dropped: the next tick runs the FULL check, which now finds no cutover.
-    const again = await gate.check(d1(shared), d1(priv));
-    expect(again.ok).toBe(false);
-    expect(!again.ok && again.line).toMatch(/cutover/);
+    expect(!moved.ok && moved.line).toMatch(/cutover/);
   });
 
-  it('a recorded cutover stays valid only while the shared copy keeps its count and latest write', async () => {
+  it('catches a same-second rewrite of an existing row: count and latest write time unchanged, content not', async () => {
     const shared = sharedDb();
     shared.db.prepare('INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (1, 1, ?, 1000, ?, 100)').run('warn', '0xabc');
     const fingerprint = Object.fromEntries(
@@ -106,8 +101,10 @@ describe('createPrivateDbGate — re-checked every tick, never cached blindly (#
     priv.db.prepare('INSERT INTO keeper_cutover (id, completed_at, fingerprint) VALUES (1, 200, ?)').run(JSON.stringify(fingerprint));
     const gate = createPrivateDbGate();
     expect((await gate.check(d1(shared), d1(priv))).ok).toBe(true);
-    shared.db.prepare('UPDATE hf_band_state SET updated_at = 300').run();
-    expect((await gate.check(d1(shared), d1(priv))).ok, 'the old copy was written after the check').toBe(false);
+    shared.db.prepare("UPDATE hf_band_state SET last_band = 'critical'").run(); // updated_at stays 100
+    const r = await gate.check(d1(shared), d1(priv));
+    expect(r.ok, 'the digest is re-read every tick').toBe(false);
+    expect(!r.ok && r.line).toMatch(/no longer matches the cutover copy/);
   });
 });
 

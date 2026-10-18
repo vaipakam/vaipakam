@@ -112,16 +112,21 @@ const WRITE_CEILING_PER_TICK = 120;
 const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor(OBSERVE_AFTER_SEC / PASS_CADENCE_SEC));
 
 /**
- * One tick's write budget, from the demand rather than a fixed count (#2497 r7):
- * every held or confirmed owner is due an observation once per
- * {@link OBSERVE_AFTER_SEC}, so a tick needs `ceil(held / ticks-per-bound)`
- * observations ON TOP of the floor for settlement and resolution. Capped at
- * {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when that cap is what
- * binds, i.e. when the bound cannot be kept. Pure; pinned by the tests.
+ * One tick's write budget, from the WHOLE demand rather than a fixed count
+ * (#2497 r7, r8) — every consumer of the tick's writes is counted here, once:
+ * the floor for settlement and resolution, the clean commits this tick found,
+ * and the observation rate the six-hour bound needs (`ceil(held /
+ * ticks-per-bound)`), which is also RESERVED so no earlier consumer can spend
+ * it. Capped at {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when that
+ * cap binds. Pure; pinned by the tests.
  */
-export function writeBudgetFor(heldCount: number): { writes: number; overCapacity: boolean } {
-  const need = MAX_WRITES_PER_TICK + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
-  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), overCapacity: need > WRITE_CEILING_PER_TICK };
+export function writeBudgetFor(
+  heldCount: number,
+  cleanCount = 0,
+): { writes: number; observeReserve: number; overCapacity: boolean } {
+  const observeReserve = Math.min(WRITE_CEILING_PER_TICK, Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND));
+  const need = MAX_WRITES_PER_TICK + cleanCount + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
+  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), observeReserve, overCapacity: need > WRITE_CEILING_PER_TICK };
 }
 /** Settlement calls per owner per tick; each settles what one claim would
  *  (a bounded window of days), and the rest resumes next tick. */
@@ -163,8 +168,10 @@ export interface SanctionsHoldPlan {
    *  uncommitted, a re-flag inside the gap would read the old chain as
    *  continuous and forfeit reward earned while the owner was clean. */
   commitClean: Address[];
-  /** This tick's write budget and whether the cap binds ({@link writeBudgetFor}). */
+  /** This tick's write budget, the share reserved for due observations, and
+   *  whether the cap binds ({@link writeBudgetFor}). */
   writes: number;
+  observeReserve: number;
   overCapacity: boolean;
   /** Held or confirmed owners this tick, the demand the budget is sized for. */
   heldCount: number;
@@ -218,6 +225,7 @@ export function planSanctionsHold(
     resolveOnly: [],
     commitClean: [],
     writes: 0,
+    observeReserve: 0,
     overCapacity: false,
     heldCount: 0,
     deadlineAtRisk: [],
@@ -249,7 +257,10 @@ export function planSanctionsHold(
     if (st.forfeitableAt !== 0 && gap > 0 && nowSec > st.forfeitableAt + gap) plan.overdue.push(st);
   }
   plan.heldCount = statuses.filter((st) => st.decision === DECISION_HOLD || st.decision === DECISION_CONFIRMED).length;
-  ({ writes: plan.writes, overCapacity: plan.overCapacity } = writeBudgetFor(plan.heldCount));
+  ({ writes: plan.writes, observeReserve: plan.observeReserve, overCapacity: plan.overCapacity } = writeBudgetFor(
+    plan.heldCount,
+    plan.commitClean.length,
+  ));
   return plan;
 }
 
@@ -318,8 +329,10 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     // inside the gap would continue the old chain. Sent only on the oracle's
     // own clean answer, so a Deliver that is not an authoritative Clean read
     // (an outage, a foreign-oracle chain) costs one read and no transaction.
+    // Never into the observations' reserved share (#2497 r8).
+    const reserve = Math.min(plan.observeReserve, plan.observe.length);
     for (const owner of plan.commitClean) {
-      if (budget.writes <= 0) {
+      if (budget.writes <= reserve) {
         unreached.add(owner);
         continue;
       }

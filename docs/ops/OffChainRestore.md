@@ -177,7 +177,10 @@ then deploy.
 
    `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
    cursors, completion markers, remit-ack log, HF-band edge state,
-   ops-alert de-dup, the passes' record of finished work (`keeper_work_done`),
+   ops-alert de-dup, the passes' open-work queue and its discovery cursor
+   (`keeper_work_open`, `keeper_work_cursor`; both empty, the passes
+   re-discover from the active Diamond's deploy block and drop each finished
+   item after one on-chain read — never empty one without the other),
    the sanctions screen's cursor (`keeper_sanctions_screen`; empty, the screen
    simply starts over)
    and the cutover's completion record, which nothing else reads. **The archive does not carry

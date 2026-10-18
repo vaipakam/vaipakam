@@ -118,14 +118,20 @@ describe('planSanctionsHold — a clean result is committed, not only acted on (
 
 describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#2497 r7)', () => {
   it('adds one observation per held owner per bound on top of the floor', () => {
-    expect(writeBudgetFor(0)).toEqual({ writes: 25, overCapacity: false });
-    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more').toEqual({ writes: 50, overCapacity: false });
+    expect(writeBudgetFor(0)).toEqual({ writes: 25, observeReserve: 0, overCapacity: false });
+    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more, reserved').toEqual({ writes: 50, observeReserve: 25, overCapacity: false });
     expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits a seventh tick').toBe(51);
   });
 
   it('caps at the ceiling and says the cap binds (straddle)', () => {
-    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
-    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
+    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, observeReserve: 95, overCapacity: false });
+    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, observeReserve: 96, overCapacity: true });
+  });
+
+  it('counts the clean commits as demand too, so they cannot crowd out observations (#2497 r8)', () => {
+    // The finding's case: 100 clean commits + 60 held owners.
+    expect(writeBudgetFor(60, 100)).toEqual({ writes: 120, observeReserve: 10, overCapacity: true });
+    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 45, observeReserve: 10, overCapacity: false });
   });
 
   it('the planner carries the held count and the budget', () => {
@@ -282,7 +288,7 @@ describe('raiseAlerts', () => {
     };
     const quiet = {
       observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 25, overCapacity: false, heldCount: 2,
+      writes: 25, observeReserve: 0, overCapacity: false, heldCount: 2,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
@@ -297,7 +303,7 @@ describe('raiseAlerts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const plan = (over: boolean) => ({
       observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 120, overCapacity: over, heldCount: 700,
+      writes: 120, observeReserve: 117, overCapacity: over, heldCount: 700,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     });
     const warned: string[] = [];

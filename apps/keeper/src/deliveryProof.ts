@@ -48,7 +48,8 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { deploymentFloor, getWorkFrontier, indexedThrough, listBudgetDeliveries, listWorkDone, nextFrontier, pruneWorkDoneBelow, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
+import { discoverWork } from './workQueue';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -66,8 +67,10 @@ const RECEIPT_TIMEOUT_MS = 30_000;
 const READ_CHUNK = 100;
 /** Days one flat page links (`LibRewardCustody.TRANSPORT_INDEX_PAGE`). */
 const TRANSPORT_INDEX_PAGE = 32;
-/** This pass's done-set kind (`keeper_work_done.kind`). */
-const DONE_KIND = 'delivery_proof' as const;
+/** This pass's open-work kind (`keeper_work_open.kind`). */
+const WORK_KIND = 'delivery_proof' as const;
+/** Open deliveries one tick works on (the rest wait their turn in rotation). */
+const OPEN_SLICE = 200;
 
 /** What a packet's ingress recorded, as the pass reads it. */
 export interface PacketState {
@@ -229,29 +232,20 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const baseChainId = canonicalChainOf(cfg);
   if (baseChainId === null) return; // the canonical chain funds itself: nothing is delivered to it
 
-  // Read from the DONE frontier (#2497 r4): every delivery below it is
-  // confirmed finished, so the ledger read is bounded by the open backlog,
-  // never by history. Floored at the active Diamond's first block.
-  const frontier = await getWorkFrontier(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
-  await pruneDoneBehind(env, chain.id, diamond, frontier);
-  // The indexer's watermark is taken BEFORE the ledger read (#2497 r6), so
-  // everything at or below it is already in the snapshot `all` reads; a
-  // window completed after the read can only raise the cursor past rows this
-  // tick never saw, and the frontier must not follow it there.
-  const watermark = await indexedThrough(env.DB, chain.id);
-  const from = Math.max(deploymentFloor(chain.id), frontier);
-  // Every delivery the log holds, less the ones already seen finished: work is
-  // dropped only on the chain's word, never by its age.
-  const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND, from);
-  const all = await listBudgetDeliveries(env.DB, chain.id, from);
-  const rows = all.filter((r) => !done.has(r.packetHash.toLowerCase()));
-  if (rows.length === 0) {
-    await advanceFrontier(env, chain.id, diamond, all, done, new Set(), frontier, watermark);
-    return;
-  }
+  // DISCOVER new deliveries into the open-work queue, then WORK a bounded
+  // slice of what is open (#2497 r8, `workQueue.ts`). A delivery leaves the
+  // queue only when the chain shows it whole; one that never completes holds
+  // only its own slot and pins no read.
+  await discoverWork<BudgetDeliveryRow>(env, chain.id, diamond, WORK_KIND, deploymentFloor(chain.id), async (from, through, limit) => {
+    const page = await discoverBudgetDeliveries(env.DB, chain.id, from, through, limit);
+    return { items: page.rows.map((r) => ({ item: r.packetHash.toLowerCase(), block: r.block, payload: r })), next: page.next };
+  });
+  const open = await listOpenWork<BudgetDeliveryRow>(env.KEEPER_DB, chain.id, diamond, WORK_KIND, OPEN_SLICE);
+  if (open.length === 0) return;
+  const rows = open.map((o) => o.payload);
 
   const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex));
-  // Packets read as finished are recorded however the tick ends (a failed
+  // Packets read as finished are retired however the tick ends (a failed
   // send, no key to send with), so they are never read again.
   const finished = new Set<string>();
   // The chain each rooted packet was REMITTED from, by the packet's own
@@ -261,14 +255,11 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
   const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
-  const seen = new Set<string>();
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
-      if (seen.has(key)) continue; // one pass per packet, whatever the join returned
-      seen.add(key);
       const packet = packets.get(key);
-      if (!packet) continue; // unread, or not arrived: read again next tick
+      if (!packet) continue; // unread, or not arrived: read again in its turn
       if (!packetMayNeedWork(packet)) {
         finished.add(key);
         continue;
@@ -295,60 +286,9 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
       }
     }
   } finally {
-    const blockOf = new Map<string, number>();
-    for (const r of all) {
-      const k = r.packetHash.toLowerCase();
-      if (!blockOf.has(k)) blockOf.set(k, r.block);
-    }
-    await markWorkDone(
-      env.KEEPER_DB,
-      chain.id,
-      diamond,
-      DONE_KIND,
-      [...finished].map((item) => ({ item, block: blockOf.get(item) ?? 0 })),
-    );
-    await advanceFrontier(env, chain.id, diamond, all, done, finished, frontier, watermark);
-  }
-}
-
-/** Move the done frontier past every delivery now confirmed finished — only
- *  on the done set's word, never past an open one (`nextFrontier`). */
-async function advanceFrontier(
-  env: Env,
-  chainId: number,
-  diamond: Address,
-  all: readonly BudgetDeliveryRow[],
-  done: ReadonlySet<string>,
-  finished: ReadonlySet<string>,
-  current: number,
-  /** The indexer's watermark, read BEFORE `all` (#2497 r5/r6). */
-  watermark: number | null,
-): Promise<void> {
-  const next = nextFrontier(
-    all.map((r) => {
-      const k = r.packetHash.toLowerCase();
-      return { block: r.block, done: done.has(k) || finished.has(k) };
-    }),
-    current,
-    watermark,
-  );
-  if (next === current) return;
-  try {
-    await putWorkFrontier(env.KEEPER_DB, chainId, diamond, DONE_KIND, next);
-  } catch (err) {
-    console.warn(`[keeper] deliveryProof chain=${chainId}: frontier not saved (${shortErr(err)}); the next tick rereads from ${current}`);
-    return;
-  }
-  await pruneDoneBehind(env, chainId, diamond, next);
-}
-
-/** Drop the done rows behind `frontier` — best effort: the prune is keyed on
- *  the frontier alone, so one that fails is redone by the next tick. */
-async function pruneDoneBehind(env: Env, chainId: number, diamond: Address, frontier: number): Promise<void> {
-  try {
-    await pruneWorkDoneBelow(env.KEEPER_DB, chainId, diamond, DONE_KIND, frontier);
-  } catch (err) {
-    console.warn(`[keeper] deliveryProof chain=${chainId}: done rows not pruned (${shortErr(err)}); retried next tick`);
+    await finishWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...finished]);
+    // The rest of the slice goes to the back of the rotation.
+    await touchOpenWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, open.map((o) => o.item).filter((k) => !finished.has(k)));
   }
 }
 

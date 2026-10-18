@@ -38,22 +38,18 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead } from './batchRead';
 import {
-  indexedThrough,
-  pruneWorkDoneBelow,
-  getWorkFrontier,
-  listReleasedRemits,
-  nextFrontier,
-  putWorkFrontier,
+  discoverReleasedRemits,
+  finishWork,
+  listOpenWork,
+  touchOpenWork,
   deploymentFloor,
   getRemitAckScanState,
   putRemitAckScanState,
   getRemitAckAttempts,
   recordRemitAckAttempt,
   markRemitAcked,
-  listReleasedRemitIds,
-  listWorkDone,
-  markWorkDone,
 } from './db';
+import { discoverWork } from './workQueue';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
 // headroom on the mutating facet; viem resolves functions from the
@@ -317,8 +313,10 @@ async function sendAckFromMirror(
 
 /** Reservation reads per `aggregate3` (#1946). */
 const LATE_READ_CHUNK = 100;
-/** The late-ack pass's done-set kind (`keeper_work_done.kind`). */
-const LATE_DONE_KIND = 'late_ack' as const;
+/** The late-ack pass's open-work kind (`keeper_work_open.kind`). */
+const LATE_KIND = 'late_ack' as const;
+/** Open releases one tick reads (the rest wait their turn in rotation). */
+const LATE_OPEN_SLICE = 300;
 
 /**
  * #1461 — a RELEASED reservation whose delivery executed after all still
@@ -390,45 +388,16 @@ async function ackLateDeliveries(
   mirrorClients: Map<number, PublicClient>,
   ackBudget: { remaining: number },
 ): Promise<void> {
-  // Read from the DONE frontier (#2497 r4), floored at the active Diamond.
-  const frontier = await getWorkFrontier(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND);
-  const pruneBehind = async (at: number) => {
-    // Keyed on the frontier alone, so a failed prune is redone next tick (#2497 r6).
-    try {
-      await pruneWorkDoneBelow(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, at);
-    } catch (err) {
-      console.warn(`[keeper] remitAck late: done rows not pruned (${(err as Error).message}); retried next tick`);
-    }
-  };
-  await pruneBehind(frontier);
-  // The watermark BEFORE the ledger read (#2497 r6): the frontier may follow
-  // it only as far as the snapshot `all` was read from.
-  const watermark = await indexedThrough(env.DB, baseChainId);
-  const from = Math.max(deploymentFloor(baseChainId), frontier);
-  const done = await listWorkDone(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, from);
-  const all = await listReleasedRemits(env.DB, baseChainId, from);
-  const ids = all.map((r) => r.remitId).filter((id) => !done.has(String(id)));
-  const blockOf = new Map(all.map((r) => [r.remitId, r.block]));
-  const advance = async (finishedNow: readonly number[]) => {
-    const fin = new Set(finishedNow.map(String));
-    const next = nextFrontier(
-      all.map((r) => ({ block: r.block, done: done.has(String(r.remitId)) || fin.has(String(r.remitId)) })),
-      frontier,
-      watermark, // never past a block still being ingested (#2497 r5)
-    );
-    if (next === frontier) return;
-    try {
-      await putWorkFrontier(env.KEEPER_DB, baseChainId, diamond, LATE_DONE_KIND, next);
-    } catch (err) {
-      console.warn(`[keeper] remitAck late: frontier not saved (${(err as Error).message}); the next tick rereads from ${frontier}`);
-      return;
-    }
-    await pruneBehind(next);
-  };
-  if (ids.length === 0) {
-    await advance([]);
-    return;
-  }
+  // DISCOVER new releases into the open-work queue, then WORK a bounded slice
+  // of what is open (#2497 r8, `workQueue.ts`): a release leaves only when the
+  // chain shows it finished, and one that never does pins no read.
+  await discoverWork<{ remitId: number }>(env, baseChainId, diamond, LATE_KIND, deploymentFloor(baseChainId), async (from, through, limit) => {
+    const page = await discoverReleasedRemits(env.DB, baseChainId, from, through, limit);
+    return { items: page.rows.map((r) => ({ item: String(r.remitId), block: r.block, payload: { remitId: r.remitId } })), next: page.next };
+  });
+  const open = await listOpenWork<{ remitId: number }>(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, LATE_OPEN_SLICE);
+  if (open.length === 0) return;
+  const ids = open.map((o) => o.payload.remitId);
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
@@ -444,19 +413,15 @@ async function ackLateDeliveries(
     );
     res.push(...part);
   }
-  // Recorded before any send, so a failed send cannot lose them.
+  // Retired before any send, so a failed send cannot lose them; the rest of
+  // the slice goes to the back of the rotation.
   const finished = ids.filter((id, i) => {
     const r = res[i];
     return r?.status === 'success' && lateAckDone(r.result as RemitReservationView);
   });
-  await markWorkDone(
-    env.KEEPER_DB,
-    baseChainId,
-    diamond,
-    LATE_DONE_KIND,
-    finished.map((id) => ({ item: String(id), block: blockOf.get(id) ?? 0 })),
-  );
-  await advance(finished);
+  const fin = new Set(finished);
+  await finishWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, finished.map(String));
+  await touchOpenWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, ids.filter((id) => !fin.has(id)).map(String));
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
   for (let i = 0; i < ids.length && ackBudget.remaining > 0; i++) {

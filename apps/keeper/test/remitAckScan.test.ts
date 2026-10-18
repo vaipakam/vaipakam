@@ -248,7 +248,10 @@ describe('remitAck — the late path is contained (#2497 r5)', () => {
       ...(base.handle as object),
       prepare: (q: string) => {
         if (q.includes('RemitReservationReleased')) throw new Error('D1 unavailable');
-        return (base.handle as { prepare: (q: string) => unknown }).prepare(q);
+        const stmt = (base.handle as { prepare: (q: string) => Record<string, unknown> }).prepare(q);
+        // The indexer has recorded blocks, so discovery does read the ledger.
+        if (q.includes('FROM indexer_cursor')) stmt.first = async () => ({ last_block: 90_000_000 });
+        return stmt;
       },
     };
     const { handle, sql } = db();
@@ -364,14 +367,20 @@ function answeringDb(answers: [string, unknown[]][]): { handle: unknown; bound: 
   return { handle, bound };
 }
 
-describe('remitAck late deliveries — every release until the chain shows it finished (Codex #2489 r1)', () => {
-  it('reads every open release however many are newer, skips the done set, and records the finished ones', async () => {
+describe('remitAck late deliveries — every release until the chain shows it finished (Codex #2489 r1, #2497 r8)', () => {
+  it('discovers every release into the queue, works the open ones however many are newer, and retires the finished', async () => {
     const { seen, restore } = install();
     // 60 releases: the old read took the newest 50, so ids 1..10 never got a look.
-    const released = Array.from({ length: 60 }, (_, i) => ({ remit_id: i + 1 }));
-    const shared = answeringDb([['RemitReservationReleased', released]]);
-    // id 7 was recorded done on an earlier tick.
-    const keeper = answeringDb([['FROM keeper_work_done', [{ item: '7' }]]]);
+    const released = Array.from({ length: 60 }, (_, i) => ({ remit_id: i + 1, block_number: 100 + i }));
+    const shared = answeringDb([
+      ['RemitReservationReleased', released],
+      ['FROM indexer_cursor', [{ last_block: 90_000_000 }]],
+    ]);
+    // The queue holds every release but 7, which finished on an earlier tick.
+    const open = released
+      .filter((r) => r.remit_id !== 7)
+      .map((r) => ({ item: String(r.remit_id), block: r.block_number, payload: JSON.stringify({ remitId: r.remit_id }) }));
+    const keeper = answeringDb([['FROM keeper_work_open', open]]);
     const quiet = ['error', 'warn', 'log'].map((m) => vi.spyOn(console, m as 'log').mockImplementation(() => {}));
     try {
       await run(shared.handle, keeper.handle);
@@ -379,20 +388,22 @@ describe('remitAck late deliveries — every release until the chain shows it fi
       restore();
       quiet.forEach((s) => s.mockRestore());
     }
-    // Past the main scan's window (ids 1..6), every release is read once — the
-    // oldest included — except the one already done.
+    // Discovery queued every release once, into the keeper's own database, and
+    // moved its cursor past what the indexer has completely recorded.
+    const queued = keeper.bound.filter((b) => b.sql.includes('INSERT OR IGNORE INTO keeper_work_open')).map((b) => b.binds[3]);
+    expect(queued).toHaveLength(60);
+    const cursor = keeper.bound.find((b) => b.sql.includes('INSERT INTO keeper_work_cursor'));
+    expect(cursor?.binds[3], 'past the indexed watermark').toBe(90_000_001);
+    // Every OPEN release is read once — the oldest included — and the finished one never.
     expect(seen.reads.get(8), 'an old release, outside the newest 50').toBe(1);
     expect(seen.reads.get(60), 'the newest').toBe(1);
-    expect(seen.reads.get(7) ?? 0, 'done: never read again').toBe(0);
-    // Each one read as released with nothing stranded is recorded done, in the
-    // keeper's own database.
-    const recorded = keeper.bound
-      .filter((b) => b.sql.includes('INSERT OR IGNORE INTO keeper_work_done'))
-      .map((b) => b.binds[3]);
-    expect(recorded).toHaveLength(59);
-    expect(recorded).toContain('8');
-    expect(recorded).not.toContain('7');
-    expect(keeper.bound.every((b) => !b.sql.includes('keeper_work_done') || b.binds[2] === 'late_ack')).toBe(true);
-    expect(shared.bound.filter((b) => b.sql.includes('keeper_work_done')), 'never the shared database').toEqual([]);
+    expect(seen.reads.get(7) ?? 0, 'finished: not in the queue, never read').toBe(0);
+    // Each one read as released with nothing stranded is retired.
+    const retired = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_work_open')).flatMap((b) => b.binds.slice(3));
+    expect(retired).toHaveLength(59);
+    expect(retired).toContain('8');
+    expect(keeper.bound.every((b) => !b.sql.includes('keeper_work_') || b.binds.includes('late_ack'))).toBe(true);
+    expect(shared.bound.filter((b) => b.sql.includes('keeper_work_')), 'never the shared database').toEqual([]);
   });
 });
+

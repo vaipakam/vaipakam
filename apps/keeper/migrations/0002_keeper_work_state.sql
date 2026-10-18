@@ -3,30 +3,35 @@
 -- Keeper-private state added in #2489 (Codex rounds 1 and 2). Additive, like
 -- every keeper migration: it lands while the previous keeper is still serving.
 
--- The keeper's DONE set. A pass that finds its work in the shared event log
--- (the delivery-proof pass: budget deliveries; the remit-ack pass: released
--- reservations whose delivery may still land) reads EVERY candidate the log
--- holds and skips the ones recorded here. An item is recorded only when an
--- on-chain read shows it finished, so it stays a candidate until the chain
--- says it is done, never until it ages out of a window or a row count. The
--- earlier passes read the last 45 days, or the newest 50 releases, and a
--- delivery still waiting on its proof past either bound dropped out for good.
+-- The keeper's OPEN-WORK queue (#2489, restructured in #2497 r8). A pass
+-- that finds its work in the shared event log (the delivery-proof pass: budget
+-- deliveries; the remit-ack pass: released reservations whose delivery may
+-- still land) DISCOVERS each item once, into this table, with a cursor that
+-- only moves forward (migration 0003). An item leaves only when an on-chain
+-- read shows it finished, so it stays work until the chain says it is done,
+-- never until it ages out of a window or a row count. Neither the discovery
+-- read nor the work read grows with history: the first is a page past the
+-- cursor, the second a bounded slice of what is still open — and no item that
+-- can never finish holds anything else back.
 --
 -- Keyed by the Diamond as well as the chain: a fresh redeploy restarts the ids
 -- a pass records (remit ids count from 1 again). `item` is the pass's own id:
--- a packet hash (lowercase hex) or a remit id (decimal). `block` is the
--- ledger block the item was read at (#2497 r6): a row behind the pass's done
--- frontier (migration 0003) is never read again, so the frontier alone
--- decides what is pruned — a prune that fails is simply redone next tick.
-CREATE TABLE IF NOT EXISTS keeper_work_done (
-  chain_id INTEGER NOT NULL,
-  diamond  TEXT    NOT NULL,
-  kind     TEXT    NOT NULL,  -- 'delivery_proof' | 'late_ack'
-  item     TEXT    NOT NULL,
-  block    INTEGER NOT NULL,  -- the item's ledger block
-  done_at  INTEGER NOT NULL,  -- unix seconds
+-- a packet hash (lowercase hex) or a remit id (decimal). `payload` is what the
+-- pass needs to work the item without re-reading the ledger (JSON).
+-- `checked_at` rotates the work slice: the least recently checked first.
+CREATE TABLE IF NOT EXISTS keeper_work_open (
+  chain_id   INTEGER NOT NULL,
+  diamond    TEXT    NOT NULL,
+  kind       TEXT    NOT NULL,  -- 'delivery_proof' | 'late_ack'
+  item       TEXT    NOT NULL,
+  block      INTEGER NOT NULL,  -- the ledger block it was discovered at
+  payload    TEXT    NOT NULL,
+  checked_at INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = never
+  added_at   INTEGER NOT NULL,            -- unix seconds
   PRIMARY KEY (chain_id, diamond, kind, item)
 );
+CREATE INDEX IF NOT EXISTS idx_keeper_work_open_rotation
+  ON keeper_work_open (chain_id, diamond, kind, checked_at, block);
 
 -- The sanctions-hold pass's SCREEN cursor (Codex #2489 r2). A wallet flagged
 -- while it holds ordinary (unstaged) reward leaves no trace the pass could

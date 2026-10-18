@@ -9,8 +9,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
-import { listReleasedRemitIds, listWorkDone, markWorkDone } from '../src/db';
-import { createKeeperD1 } from './helpers/schemas';
+import { enqueueWork, finishWork, listOpenWork, listReleasedRemitIds, pageByBlock, touchOpenWork } from '../src/db';
+import { discoverWork } from '../src/workQueue';
+import { createKeeperD1, createSharedD1 } from './helpers/schemas';
+import type { Env } from '../src/env';
 import type { KeeperD1 } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -100,52 +102,117 @@ describe('lateAckDone — the done set takes only what the chain shows finished'
     expect(lateAckDone({ status: 1, strandedRecycled: 0n }), 'not released: never taken as finished').toBe(false);
   });
 
-  it('records into the keeper-private done set, per Diamond, idempotently', async () => {
-    const h = createKeeperD1();
-    const db = h.d1 as KeeperD1;
-    const at = (item: string, block = 10) => ({ item, block });
-    await markWorkDone(db, 84532, '0xAB', 'late_ack', [at('4'), at('9')]);
-    await markWorkDone(db, 84532, '0xab', 'late_ack', [at('4')]);
-    expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack'))].sort()).toEqual(['4', '9']);
-    expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond: a redeploy starts empty').toBe(0);
-    expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass').toBe(0);
+});
+
+describe('the open-work queue (#2497 r8) — keeper-private, per Diamond and pass', () => {
+  const db = () => createKeeperD1().d1 as KeeperD1;
+  const w = (item: string, block: number) => ({ item, block, payload: { remitId: Number(item) } });
+
+  it('queues idempotently, per Diamond and pass, and lists the least recently checked first', async () => {
+    const k = db();
+    await enqueueWork(k, 84532, '0xAB', 'late_ack', [w('4', 10), w('9', 12)]);
+    await enqueueWork(k, 84532, '0xab', 'late_ack', [w('4', 10)]); // re-discovered: no-op
+    await enqueueWork(k, 84532, '0xcd', 'late_ack', [w('4', 10)]);
+    await enqueueWork(k, 84532, '0xab', 'delivery_proof', [w('4', 10)]);
+    expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['4', '9']);
+    await touchOpenWork(k, 84532, '0xab', 'late_ack', ['4']);
+    expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item), 'a checked item rotates to the back').toEqual(['9', '4']);
+    expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 1)).map((o) => o.payload), 'bounded, payload intact').toEqual([{ remitId: 9 }]);
   });
 
-  it('prunes by the frontier alone — idempotent, one Diamond and pass only — and reads only from it (#2497 r6)', async () => {
-    const { pruneWorkDoneBelow } = await import('../src/db');
-    const h = createKeeperD1();
-    const db = h.d1 as KeeperD1;
-    await markWorkDone(db, 84532, '0xab', 'late_ack', [{ item: '4', block: 10 }, { item: '9', block: 19 }, { item: '12', block: 20 }]);
-    await markWorkDone(db, 84532, '0xab', 'delivery_proof', [{ item: '4', block: 10 }]);
-    await markWorkDone(db, 84532, '0xcd', 'late_ack', [{ item: '4', block: 10 }]);
-    expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack', 20))], 'the read starts at the frontier, before any prune').toEqual(['12']);
-    await pruneWorkDoneBelow(db, 84532, '0xAB', 'late_ack', 20);
-    await pruneWorkDoneBelow(db, 84532, '0xAB', 'late_ack', 20); // a retry is harmless
-    expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack'))]).toEqual(['12']);
-    expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass untouched').toBe(1);
-    expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond untouched').toBe(1);
+  it('retires only the named items of one Diamond and pass', async () => {
+    const k = db();
+    await enqueueWork(k, 84532, '0xab', 'late_ack', [w('4', 10), w('9', 12)]);
+    await enqueueWork(k, 84532, '0xcd', 'late_ack', [w('4', 10)]);
+    await enqueueWork(k, 84532, '0xab', 'delivery_proof', [w('4', 10)]);
+    await finishWork(k, 84532, '0xAB', 'late_ack', ['4']);
+    expect((await listOpenWork(k, 84532, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['9']);
+    expect((await listOpenWork(k, 84532, '0xcd', 'late_ack', 10)).length, 'another Diamond').toBe(1);
+    expect((await listOpenWork(k, 84532, '0xab', 'delivery_proof', 10)).length, 'another pass').toBe(1);
+  });
+
+  it('an item that never finishes holds back nothing: the rotation reaches every other one', async () => {
+    const k = db();
+    await enqueueWork(k, 1, '0xab', 'late_ack', [w('1', 1), w('2', 2), w('3', 3)]);
+    const seen: string[] = [];
+    for (let t = 0; t < 3; t++) {
+      const slice = await listOpenWork(k, 1, '0xab', 'late_ack', 1);
+      seen.push(slice[0].item);
+      await touchOpenWork(k, 1, '0xab', 'late_ack', slice.map((o) => o.item)); // never finishes
+      await new Promise((r) => setTimeout(r, 1_010)); // checked_at is whole seconds
+    }
+    expect(seen.sort()).toEqual(['1', '2', '3']);
+  }, 10_000);
+});
+
+describe('pageByBlock — a discovery page never splits a block (#2497 r8)', () => {
+  const rows = (...blocks: number[]) => blocks.map((b, i) => ({ block_number: b, i }));
+  const fetchOver = (all: { block_number: number; i: number }[]) => async (from: number, through: number, limit: number | null) => {
+    const hit = all.filter((r) => r.block_number >= from && r.block_number <= through);
+    return limit === null ? hit : hit.slice(0, limit);
+  };
+
+  it('a short read ends past `through`', async () => {
+    const r = await pageByBlock(fetchOver(rows(5, 6)), 0, 100, 3);
+    expect(r).toEqual({ rows: rows(5, 6), next: 101 });
+  });
+
+  it('an overflowing page leaves its last block whole for the next page', async () => {
+    const all = rows(5, 6, 7, 7, 8);
+    const r = await pageByBlock(fetchOver(all), 0, 100, 3); // reads 5,6,7,7: the 4th row is block 7
+    expect(r.rows.map((x) => x.block_number)).toEqual([5, 6]);
+    expect(r.next).toBe(7);
+    const r2 = await pageByBlock(fetchOver(all), r.next, 100, 3);
+    expect(r2.rows.map((x) => x.block_number), 'block 7 together').toEqual([7, 7, 8]);
+  });
+
+  it('a single block bigger than a page is read whole, and the page moves past it', async () => {
+    const r = await pageByBlock(fetchOver(rows(9, 9, 9, 9, 9, 10)), 0, 100, 2);
+    expect(r.rows.map((x) => x.block_number)).toEqual([9, 9, 9, 9, 9]);
+    expect(r.next).toBe(10);
   });
 });
 
-describe('nextFrontier — the done frontier moves only past confirmed-done items (#2497 r4)', () => {
-  it('stops at the first open item, passes the last when all are done, and never moves back', async () => {
-    const { nextFrontier } = await import('../src/db');
-    expect(nextFrontier([{ block: 10, done: true }, { block: 12, done: false }, { block: 15, done: true }], 0, 100), 'first open').toBe(12);
-    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0, 15), 'all done: past the last indexed block').toBe(16);
-    expect(nextFrontier([], 40, 39), 'nothing read, nothing newly indexed: unchanged').toBe(40);
-    expect(nextFrontier([{ block: 30, done: false }], 40, 100), 'never backwards').toBe(40);
+describe('discoverWork — the cursor stops at the indexed watermark read BEFORE the page (#2497 r5, r6, r8)', () => {
+  function setup(lastBlock: number | null) {
+    const shared = createSharedD1();
+    if (lastBlock !== null) {
+      shared.db.prepare(`INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (1, 'diamond', ?, 0)`).run(lastBlock);
+    }
+    const keeper = createKeeperD1();
+    return { env: { DB: shared.d1, KEEPER_DB: keeper.d1 } as unknown as Env, keeper };
+  }
+  const reader = (blocks: number[]) => async (from: number, through: number) => ({
+    items: blocks.filter((b) => b >= from && b <= through).map((b) => ({ item: String(b), block: b, payload: {} })),
+    next: through + 1,
   });
 
-  it('never passes what the indexer has completely recorded (#2497 r5)', async () => {
-    const { nextFrontier } = await import('../src/db');
-    // Every read item done, but the indexer is only through block 20: a delivery
-    // still landing in block 21+ must be read next tick.
-    expect(nextFrontier([{ block: 10, done: true }, { block: 15, done: true }], 0, 20)).toBe(21);
-    // An item above the watermark (a partially written window) settles nothing.
-    expect(nextFrontier([{ block: 10, done: true }, { block: 25, done: true }], 0, 20)).toBe(21);
-    // An empty read moves to the watermark, so the next read starts there.
-    expect(nextFrontier([], 5, 50)).toBe(51);
-    // The watermark unreadable: the frontier does not move.
-    expect(nextFrontier([{ block: 10, done: true }], 5, null)).toBe(5);
+  it('queues only what is completely recorded and moves the cursor just past it', async () => {
+    const { env, keeper } = setup(20);
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 20, 25]))).toBe(2);
+    expect((await listOpenWork(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['10', '20']);
+    const row = keeper.db.prepare('SELECT next_block FROM keeper_work_cursor').get() as { next_block: number };
+    expect(row.next_block).toBe(21);
+  });
+
+  it('reads nothing while the watermark is unreadable, and never moves the cursor back', async () => {
+    const { env, keeper } = setup(null);
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10]))).toBe(0);
+    expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_work_cursor').get()).toEqual({ n: 0 });
+    const { putWorkCursor } = await import('../src/db');
+    await putWorkCursor(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 50);
+    await putWorkCursor(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 30);
+    expect(keeper.db.prepare('SELECT next_block FROM keeper_work_cursor').get()).toEqual({ next_block: 50 });
+  });
+
+  it('a permanently open item does not pin discovery: later items are still found', async () => {
+    const { env, keeper } = setup(100);
+    await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10]));
+    // Item 10 is never finished. More is recorded later.
+    keeper.db.prepare('UPDATE keeper_work_open SET checked_at = 1').run();
+    (env.DB as unknown as { prepare: (q: string) => { bind: (...a: unknown[]) => { run: () => Promise<unknown> } } })
+      .prepare(`UPDATE indexer_cursor SET last_block = 200 WHERE chain_id = 1 AND kind = 'diamond'`).bind().run();
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 150]))).toBe(1);
+    expect((await listOpenWork(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 10)).map((o) => o.item).sort()).toEqual(['10', '150']);
   });
 });

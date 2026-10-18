@@ -196,9 +196,11 @@ The machine never moves them and never applies the private migrations itself:
 the keeper's deploy is the one applier of that database. Instead, every tick
 checks, and declines naming the reason, until all of this holds: the private
 database, at its pinned id, records every keeper migration, and the cutover
-verdict passes. After that first pass it re-reads the old shared copies' count
-and latest write time every tick, so a keeper that writes them later stops the
-machine on its next tick. That verdict is the same rule the
+verdict passes. It runs that full check, content digest included, on every
+tick, so a keeper that writes the old copies later stops the machine on its
+next tick, even one that rewrites a row within the same second. Once the
+cutover is recorded the old copies no longer grow, so the check costs the
+same every tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
 match. So a machine that picks up the new build early stops; it does not start
 from empty state.

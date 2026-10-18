@@ -206,13 +206,13 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: 'keeper sanctions-hold screen cursor (#2489), keeper-private; disposable — an empty table restarts the screen from the first loan party — #1481',
   },
-  keeper_work_done: {
+  keeper_work_open: {
     class: 'decision-needed',
-    reason: 'keeper done set (#2489), keeper-private; disposable — recorded only from an on-chain read, so an empty table costs one more read per finished item and never drops an open one — #1481',
+    reason: "keeper open-work queue (#2489, #2497 r8), keeper-private; disposable ONLY together with keeper_work_cursor — clearing both re-discovers from the active Diamond's deploy block and drops each finished item after one on-chain read; clearing this one alone loses the items behind the cursor — #1481",
   },
-  keeper_work_frontier: {
+  keeper_work_cursor: {
     class: 'decision-needed',
-    reason: "keeper done-set frontier (#2497), keeper-private; disposable — an empty table reads from the active Diamond's deploy block, and it only ever moves past items the done set confirms — #1481",
+    reason: "keeper open-work discovery cursor (#2497 r8), keeper-private; disposable — an empty table re-discovers from the active Diamond's deploy block, and re-queuing an item is a no-op — #1481",
   },
   keeper_runner_lease: {
     class: 'decision-needed',

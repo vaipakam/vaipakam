@@ -925,26 +925,53 @@ const PACKET_KIND_BUDGET = 1;
  * transaction can no longer swap lists, and a packet with no verified match is
  * left out (a pre-3a packet with no commitment is not provable anyway).
  *
- * No age and no count bound (Codex #2489 r1): a delivery is work until the
- * chain shows it whole. What keeps a tick's chain work bounded is the keeper's
- * DONE set ({@link listWorkDone}), and `fromBlock` — the active Diamond's first
- * block ({@link deploymentFloor}) — keeps a redeploy's old history out.
+ * No age and no count bound on what is WORK (Codex #2489 r1): a delivery is
+ * work until the chain shows it whole. The READ is bounded instead (#2497 r8):
+ * the pass discovers deliveries a page at a time past its cursor
+ * ({@link discoverBudgetDeliveries}) into its open-work queue, and the active
+ * Diamond's first block ({@link deploymentFloor}) keeps a redeploy's history out.
  */
 export async function listBudgetDeliveries(db: D1Database, chainId: number, fromBlock: number): Promise<BudgetDeliveryRow[]> {
+  return pairBudgetDeliveries(await budgetEvents(db, chainId, fromBlock, Number.MAX_SAFE_INTEGER, null));
+}
+
+/** One discovery page of {@link listBudgetDeliveries}: the deliveries in
+ *  `[from, through]`, read `limit` events at a time and cut at a block
+ *  boundary ({@link pageByBlock}), so a packet's events — one transaction —
+ *  are always paired together. */
+export async function discoverBudgetDeliveries(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: BudgetDeliveryRow[]; next: number }> {
+  const page = await pageByBlock((f, t, l) => budgetEvents(db, chainId, f, t, l), from, through, limit);
+  return { rows: pairBudgetDeliveries(page.rows), next: page.next };
+}
+
+type BudgetEventRow = { kind: string; tx_hash: string; args_json: string; block_at: number; block_number: number };
+
+async function budgetEvents(db: D1Database, chainId: number, from: number, through: number, limit: number | null): Promise<BudgetEventRow[]> {
   const rows = await db
     .prepare(
       `SELECT kind, tx_hash, args_json, block_at, block_number
          FROM activity_events
-        WHERE chain_id = ?1 AND block_number >= ?2
+        WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
           AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRecorded', 'IngressPacketDayListRooted',
                        'RewardBudgetReceived', 'RewardBudgetRootReceived')
-        ORDER BY block_number ASC, log_index ASC`,
+        ORDER BY block_number ASC, log_index ASC
+        LIMIT ?4`,
     )
-    .bind(chainId, fromBlock)
-    .all<{ kind: string; tx_hash: string; args_json: string; block_at: number; block_number: number }>();
+    .bind(chainId, from, through, limit ?? -1)
+    .all<BudgetEventRow>();
+  return rows.results ?? [];
+}
+
+function pairBudgetDeliveries(eventRows: readonly BudgetEventRow[]): BudgetDeliveryRow[] {
   type Ev = { kind: string; tx: string; args: Record<string, unknown>; block_at: number; block: number };
   const evs: Ev[] = [];
-  for (const r of rows.results ?? []) {
+  for (const r of eventRows) {
     try {
       evs.push({
         kind: r.kind,
@@ -1022,81 +1049,67 @@ export function flatDayListHash(dayIds: readonly string[]): string {
  *  treats a released reservation as terminal, so a delivery that executes after
  *  its release is found here instead.
  *
- *  No count bound (Codex #2489 r1): the earlier newest-50 read let a release
- *  still awaiting its late acknowledgement drop out behind 50 newer ones. The
- *  pass skips every release in the keeper's DONE set ({@link listWorkDone}), so
- *  only open ones are read on chain. */
+ *  No count bound on what is work (Codex #2489 r1): the earlier newest-50 read
+ *  let a release still awaiting its late acknowledgement drop out behind 50
+ *  newer ones. The pass discovers releases a page at a time
+ *  ({@link discoverReleasedRemits}) into its open-work queue (#2497 r8). */
 export async function listReleasedRemitIds(db: D1Database, chainId: number, fromBlock: number): Promise<number[]> {
   return (await listReleasedRemits(db, chainId, fromBlock)).map((r) => r.remitId);
 }
 
-/** {@link listReleasedRemitIds} with each release's first block, for the
- *  late-ack pass's done frontier (#2497 r4). */
+/** {@link listReleasedRemitIds} with each release's first block. */
 export async function listReleasedRemits(
   db: D1Database,
   chainId: number,
   fromBlock: number,
 ): Promise<{ remitId: number; block: number }[]> {
+  return firstReleases(await releaseEvents(db, chainId, fromBlock, Number.MAX_SAFE_INTEGER, null));
+}
+
+/** One discovery page of {@link listReleasedRemits} in `[from, through]`, cut
+ *  at a block boundary ({@link pageByBlock}). A remit released twice is listed
+ *  once per page; the queue's insert is idempotent across pages. */
+export async function discoverReleasedRemits(
+  db: D1Database,
+  chainId: number,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: { remitId: number; block: number }[]; next: number }> {
+  const page = await pageByBlock((f, t, l) => releaseEvents(db, chainId, f, t, l), from, through, limit);
+  return { rows: firstReleases(page.rows), next: page.next };
+}
+
+type ReleaseEventRow = { remit_id: number | null; block_number: number };
+
+async function releaseEvents(db: D1Database, chainId: number, from: number, through: number, limit: number | null): Promise<ReleaseEventRow[]> {
   const rows = await db
     .prepare(
-      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id, MIN(block_number) AS block
+      `SELECT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id, block_number
          FROM activity_events
-        WHERE chain_id = ?1 AND block_number >= ?2 AND kind = 'RemitReservationReleased'
-        GROUP BY remit_id
-        ORDER BY MIN(block_number)`,
+        WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3 AND kind = 'RemitReservationReleased'
+        ORDER BY block_number ASC, log_index ASC
+        LIMIT ?4`,
     )
-    .bind(chainId, fromBlock)
-    .all<{ remit_id: number | null; block: number }>();
-  return (rows.results ?? [])
-    .filter((r): r is { remit_id: number; block: number } => typeof r.remit_id === 'number' && Number.isSafeInteger(r.remit_id) && r.remit_id > 0)
-    .map((r) => ({ remitId: r.remit_id, block: Number(r.block) }));
+    .bind(chainId, from, through, limit ?? -1)
+    .all<ReleaseEventRow>();
+  return rows.results ?? [];
 }
 
-// ─── #2497 r4 — the DONE frontier of a done-set pass (keeper-private, 0003) ──
-
-/** Where a done-set pass starts reading the ledger: the first block that may
- *  hold an item not yet confirmed done; 0 when none is recorded. */
-export async function getWorkFrontier(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind): Promise<number> {
-  const row = await db
-    .prepare('SELECT from_block FROM keeper_work_frontier WHERE chain_id = ? AND diamond = ? AND kind = ?')
-    .bind(chainId, diamond.toLowerCase(), kind)
-    .first<{ from_block: number }>();
-  const b = Number(row?.from_block ?? 0);
-  return Number.isSafeInteger(b) && b > 0 ? b : 0;
-}
-
-export async function putWorkFrontier(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, fromBlock: number): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO keeper_work_frontier (chain_id, diamond, kind, from_block, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (chain_id, diamond, kind) DO UPDATE SET from_block = excluded.from_block, updated_at = excluded.updated_at`,
-    )
-    .bind(chainId, diamond.toLowerCase(), kind, fromBlock, Math.floor(Date.now() / 1000))
-    .run();
-}
-
-/**
- * The next frontier, from this tick's items in ledger order: the block of the
- * first item NOT confirmed done; past the last item when every one is; and the
- * current frontier when there were no items. Never moves backwards, never past
- * an open item. Pure; pinned by the tests.
- */
-export function nextFrontier(
-  items: readonly { block: number; done: boolean }[],
-  current: number,
-  /** The last block the indexer has COMPLETELY recorded (#2497 r5), or null
-   *  when it could not be read — then the frontier does not move. A block above
-   *  it may still be gaining rows, so nothing there or beyond is settled. */
-  indexedThrough: number | null,
-): number {
-  if (indexedThrough === null) return current;
-  const cap = indexedThrough + 1;
-  for (const it of items) {
-    if (it.block >= cap) break;
-    if (!it.done) return Math.max(current, Math.min(it.block, cap));
+function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; block: number }[] {
+  const seen = new Map<number, number>();
+  for (const r of rows) {
+    const id = r.remit_id;
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) continue;
+    if (!seen.has(id)) seen.set(id, Number(r.block_number));
   }
-  return Math.max(current, cap);
+  return [...seen].map(([remitId, block]) => ({ remitId, block }));
 }
+
+// ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migrations 0002 + 0003) ─
+
+/** The passes that keep an open-work queue, by the `kind` each records under. */
+export type WorkKind = 'delivery_proof' | 'late_ack';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or
@@ -1114,67 +1127,130 @@ export async function indexedThrough(db: D1Database, chainId: number): Promise<n
   }
 }
 
-/** Drop the done rows behind the frontier (#2497 r5/r6): the ledger read
- *  starts at the frontier, so those items are never read again. Keyed on the
- *  frontier ALONE, not on a list of items, so it is idempotent and a pass runs
- *  it every tick: one that failed, or ran before the frontier was saved, is
- *  redone by the next. */
-export async function pruneWorkDoneBelow(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, frontier: number): Promise<void> {
+/** The first ledger block the pass has not yet discovered work in; 0 when none
+ *  is recorded (the caller floors it at the active Diamond's deploy block). */
+export async function getWorkCursor(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind): Promise<number> {
+  const row = await db
+    .prepare('SELECT next_block FROM keeper_work_cursor WHERE chain_id = ? AND diamond = ? AND kind = ?')
+    .bind(chainId, diamond.toLowerCase(), kind)
+    .first<{ next_block: number }>();
+  const b = Number(row?.next_block ?? 0);
+  return Number.isSafeInteger(b) && b > 0 ? b : 0;
+}
+
+/** Move the discovery cursor forward — never back (`MAX`). */
+export async function putWorkCursor(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, nextBlock: number): Promise<void> {
   await db
-    .prepare(`DELETE FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block < ?4`)
-    .bind(chainId, diamond.toLowerCase(), kind, frontier)
+    .prepare(
+      `INSERT INTO keeper_work_cursor (chain_id, diamond, kind, next_block, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (chain_id, diamond, kind) DO UPDATE SET next_block = MAX(next_block, excluded.next_block), updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, nextBlock, Math.floor(Date.now() / 1000))
     .run();
 }
 
-// ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────
-
-/** The passes that keep a done set, by the `kind` each records under. */
-export type WorkKind = 'delivery_proof' | 'late_ack';
-
-/**
- * The items `kind` has CONFIRMED DONE on chain for `(chainId, diamond)`. A pass
- * reads every candidate the shared event log holds and skips these, so an item
- * stays a candidate until the chain shows it finished, never until it ages out
- * of a window. Keyed by the Diamond too: a fresh redeploy restarts the ids a
- * pass records (remit ids count from 1 again).
- */
-export async function listWorkDone(
-  db: KeeperD1,
-  chainId: number,
-  diamond: string,
-  kind: WorkKind,
-  /** The pass's done frontier: rows behind it are never needed (#2497 r6), so
-   *  the read stays bounded even while a prune lags. */
-  fromBlock = 0,
-): Promise<Set<string>> {
-  const rows = await db
-    .prepare(`SELECT item FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block >= ?4`)
-    .bind(chainId, diamond.toLowerCase(), kind, fromBlock)
-    .all<{ item: string }>();
-  return new Set((rows.results ?? []).map((r) => r.item));
+/** One discovered item: its id, ledger block and what the pass needs to work it. */
+export interface WorkItem<T> {
+  item: string;
+  block: number;
+  payload: T;
 }
 
-/** Record `items` as done — only on an on-chain read that shows them finished
- *  — each with the ledger block it was read at. Idempotent; one statement per
- *  item, all in one batch. */
-export async function markWorkDone(
+/** Queue `items` as open. Idempotent: an item already queued keeps its row,
+ *  so re-discovering a block is harmless. */
+export async function enqueueWork<T>(
   db: KeeperD1,
   chainId: number,
   diamond: string,
   kind: WorkKind,
-  items: readonly { item: string; block: number }[],
+  items: readonly WorkItem<T>[],
 ): Promise<void> {
   if (items.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
   await db.batch(
-    items.map(({ item, block }) =>
+    items.map((w) =>
       db
         .prepare(
-          `INSERT OR IGNORE INTO keeper_work_done (chain_id, diamond, kind, item, block, done_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+          `INSERT OR IGNORE INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)`,
         )
-        .bind(chainId, diamond.toLowerCase(), kind, item, block, now),
+        .bind(chainId, diamond.toLowerCase(), kind, w.item, w.block, JSON.stringify(w.payload), now),
     ),
   );
+}
+
+/** A bounded slice of the open items, the least recently checked first (then
+ *  the oldest), so every open item is reached in turn however many there are,
+ *  and one that never finishes holds back nothing but its own slot. */
+export async function listOpenWork<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  limit: number,
+): Promise<WorkItem<T>[]> {
+  const rows = await db
+    .prepare(
+      `SELECT item, block, payload FROM keeper_work_open
+        WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3
+        ORDER BY checked_at ASC, block ASC, item ASC LIMIT ?4`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, limit)
+    .all<{ item: string; block: number; payload: string }>();
+  const out: WorkItem<T>[] = [];
+  for (const r of rows.results ?? []) {
+    try {
+      out.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+    } catch {
+      console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
+    }
+  }
+  return out;
+}
+
+/** Stamp `items` as checked now, moving them to the back of the rotation. */
+export async function touchOpenWork(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
+  if (items.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const c of chunkD1InList(items, { before: [now, chainId, diamond.toLowerCase(), kind] })) {
+    await db
+      .prepare(`UPDATE keeper_work_open SET checked_at = ? WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/** Retire `items` — only on an on-chain read that shows them finished. */
+export async function finishWork(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
+  if (items.length === 0) return;
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    await db
+      .prepare(`DELETE FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/**
+ * One discovery PAGE of ledger rows in `[from, through]`, cut at a block
+ * boundary so no block — and so no transaction — is split across pages:
+ * `limit + 1` rows are read, and when the page overflows, the rows of its last
+ * block are left for the next page. A single block holding more than a page is
+ * read whole. `next` is the first block the next page starts at. Pure over
+ * `fetch`; pinned by the tests.
+ */
+export async function pageByBlock<R extends { block_number: number }>(
+  fetch: (from: number, through: number, limit: number | null) => Promise<R[]>,
+  from: number,
+  through: number,
+  limit: number,
+): Promise<{ rows: R[]; next: number }> {
+  const rows = await fetch(from, through, limit + 1);
+  if (rows.length <= limit) return { rows, next: through + 1 };
+  const cut = Number(rows[limit].block_number);
+  const below = rows.filter((r) => Number(r.block_number) < cut);
+  if (below.length > 0) return { rows: below, next: cut };
+  return { rows: await fetch(cut, cut, null), next: cut + 1 };
 }
 
 // ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0002) ──────
