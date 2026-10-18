@@ -78,8 +78,11 @@ library LibPriorityRouting {
         return s.lenderIntentPriority[owner][lendingAsset][collateralAsset] && s.perkCredits[owner][PERK_ID] != 0;
     }
 
-    /// @notice Write an intent's opt-in, emitting only on an actual change, so the
-    ///         event history is exactly the consent history.
+    /// @notice Write an intent's opt-in and emit on EVERY write — an explicit
+    ///         opt-in, a repeated one, the reset every `setLenderIntent` performs
+    ///         and the clear on cancellation (Codex #2563 r1): each is a consent
+    ///         action the owner or the protocol took, so the logs record all of
+    ///         them, not only the changes.
     function writeFlag(
         LibVaipakam.Storage storage s,
         address owner,
@@ -87,7 +90,6 @@ library LibPriorityRouting {
         address collateralAsset,
         bool enabled
     ) internal {
-        if (s.lenderIntentPriority[owner][lendingAsset][collateralAsset] == enabled) return;
         s.lenderIntentPriority[owner][lendingAsset][collateralAsset] = enabled;
         emit LenderIntentPrioritySet(owner, lendingAsset, collateralAsset, enabled);
     }

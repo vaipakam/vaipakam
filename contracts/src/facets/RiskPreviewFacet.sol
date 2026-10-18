@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
+import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -416,7 +417,15 @@ contract RiskPreviewFacet {
         // #1219 review — the fill's capacity charge is its LAST step (after the
         // match), so it is this preview's last check, for the actor the fill's route
         // names for `solver` and `initiator` (`LibServiceCapacity.routeActor`).
-        if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
+        // #2559 (Codex #2563 r1) — the SAME capacity-or-credit rule the fill applies
+        // (`LibPriorityRouting.chargeFill`): a capacity refusal on an opted-in intent
+        // whose owner holds a priority credit is lifted, so the preview stays Ok
+        // exactly when the fill would succeed, and a keeper reading it does not
+        // stop at a fill a credit would carry.
+        if (
+            res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)
+                && !LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)
+        ) {
             res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
             res.ok = false;
         }

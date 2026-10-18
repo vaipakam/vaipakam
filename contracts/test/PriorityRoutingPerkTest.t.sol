@@ -22,6 +22,8 @@ import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPriorityRouting} from "../src/libraries/LibPriorityRouting.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -419,9 +421,10 @@ contract PriorityRoutingPerkTest is SetupTest {
 
     // ─── 5. opt-in lifecycle + events ───────────────────────────────────────
 
-    /// @dev Opt-in needs an ACTIVE intent; every change emits exactly one event; a
-    ///      repeated write with the same value emits nothing.
-    function test_OptIn_RequiresActiveIntent_AndEmitsOnlyOnChange() public {
+    /// @dev Opt-in needs an ACTIVE intent; EVERY write emits exactly one event — a
+    ///      repeated write with the same value included (Codex #2563 r1: each is a
+    ///      consent action the logs must record, not only the changes).
+    function test_OptIn_RequiresActiveIntent_AndEmitsOnEveryWrite() public {
         // No intent at all: refused.
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentNotActive.selector);
@@ -434,24 +437,24 @@ contract PriorityRoutingPerkTest is SetupTest {
         _setPriority(true);
         assertTrue(_priority(), "opted in");
 
-        // The same value again: no event.
+        // The same value again: one event, the repeated consent recorded.
         vm.recordLogs();
         _setPriority(true);
-        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 0, "a repeated true emits nothing");
+        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 1, "a repeated true is recorded");
         assertTrue(_priority(), "still opted in");
 
-        // Opt out: one event; again: none.
+        // Opt out: one event; again: one more.
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
         _setPriority(false);
         vm.recordLogs();
         _setPriority(false);
-        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 0, "a repeated false emits nothing");
+        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 1, "a repeated false is recorded");
         assertFalse(_priority(), "opted out");
     }
 
     /// @dev Re-writing the intent resets the opt-in (one event); a re-write while it
-    ///      is already off emits nothing.
+    ///      is already off records the reset too (one event).
     function test_SetLenderIntent_ResetsTheOptIn() public {
         _setIntent();
         _setPriority(true);
@@ -464,7 +467,7 @@ contract PriorityRoutingPerkTest is SetupTest {
 
         vm.recordLogs();
         _setIntent();
-        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 0, "a re-write while off emits nothing");
+        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 1, "every re-write records its reset");
     }
 
     /// @dev The reset bites on the fill: a re-written intent with credits held is
@@ -480,7 +483,7 @@ contract PriorityRoutingPerkTest is SetupTest {
     }
 
     /// @dev Cancellation clears the opt-in (one event); opting in on the now-inactive
-    ///      intent is refused, opting OUT is allowed (and emits nothing, it is off).
+    ///      intent is refused, opting OUT is allowed (and is recorded).
     function test_Cancel_ClearsTheOptIn_OptOutAlwaysAllowed() public {
         _setIntent();
         _setPriority(true);
@@ -497,7 +500,7 @@ contract PriorityRoutingPerkTest is SetupTest {
 
         vm.recordLogs();
         _setPriority(false); // inactive intent: allowed
-        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 0, "already off: no event");
+        assertEq(_count(vm.getRecordedLogs(), T_PRIORITY_SET), 1, "the opt-out is recorded");
 
         // Opting out of a pair that never had an intent is allowed too.
         vm.prank(lender);
@@ -656,6 +659,37 @@ contract PriorityRoutingPerkTest is SetupTest {
 
     /// @dev One trajectory through the three states of cells 1–3, the view read
     ///      before each fill and the fill's outcome asserted against it.
+    /// @dev Codex #2563 r1 — `previewIntent`, the solver's own pre-check that the
+    ///      shipped keeper treats a capacity refusal from as pass-terminal, applies
+    ///      the SAME capacity-or-credit rule as the fill: with the solver exhausted,
+    ///      an opted-in intent whose owner holds a credit previews Ok (and the fill
+    ///      then succeeds on the credit); opted out, the same state previews
+    ///      CapacityExhausted (and the fill reverts). Ok exactly when the fill succeeds.
+    function test_PreviewIntent_AppliesTheCreditRule_LikeTheFill() public {
+        _optedInFixture(1);
+        uint256 cp = _postBorrower("b-preview");
+        _exhaustSolver();
+        LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
+            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertTrue(r.ok, "exhausted + opted in + credit: the preview is Ok");
+        _setPriority(false);
+        r = RiskPreviewFacet(address(diamond)).previewIntent(
+            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertFalse(r.ok, "opted out: refused");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "for capacity");
+        _expectExhausted();
+        _fill(cp);
+        _setPriority(true);
+        r = RiskPreviewFacet(address(diamond)).previewIntent(
+            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertTrue(r.ok, "opted back in: Ok again");
+        _fill(cp);
+        assertEq(_credits(), 0, "and the fill it previewed spent the credit");
+    }
+
     function test_View_AgreesWithTheFill() public {
         _optedInFixture(1);
         uint256 cp1 = _postBorrower("b-view-1");
