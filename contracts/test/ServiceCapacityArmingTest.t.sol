@@ -75,32 +75,28 @@ contract ServiceCapacityArmingTest is SetupTest {
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
 
-    /// @dev Codex #2556 r2 — at the 10% CEILING, where rounding mattered most: a
-    ///      grant owing under one unit (9 units) arms nothing and pays nothing (the
-    ///      principal still lands, buying no capacity); 10 units arm and pay 1;
-    ///      19 units pay 1, never above 10%. A zero-principal post that would arm
-    ///      only such a sliver is still refused by name.
-    function test_SubUnitGrant_ArmsNothing_TheFeeNeverExceedsTheCeiling() public {
+    /// @dev Codex #2556 r3 — no sub-unit gap is ever stranded. At the 10% ceiling,
+    ///      the deposit is armed to one unit below the knee, then a post arms the
+    ///      last unit: it ARMS (the knee is reached), paying whatever whole units
+    ///      the carried fraction now makes — never above 10% of what is armed. The
+    ///      grant-suppression rule this replaces left that last unit unarmable for
+    ///      good, since adding principal cannot raise a grant capped at the knee.
+    function test_TheLastUnitBelowTheKnee_StillArms_AtTheCeiling() public {
         _ready();
         _f().setArmingFeeRate(LibServiceCapacity.MAX_ARMING_FEE_RATE);
-        (uint8 r, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 9);
-        assertEq(r, LibServiceCapacity.POST_OK, "a post that adds principal is still accepted");
-        assertEq(granted, 0, "9 units owe 0.9 at 10%: nothing armed");
-        assertEq(fee, 0, "nothing paid");
         uint256 bucketBefore = _bucket();
-        assertEq(_post(SOLVER, 9), LibServiceCapacity.STATUS_OK);
-        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).amount, 9, "the principal lands");
-        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).eligibleAmount, 0, "but buys no capacity");
-        assertEq(_bucket(), bucketBefore, "and nothing reaches the bucket");
-        // one more unit brings the grant to 10, which owes exactly 1
-        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 1);
-        assertEq(granted, 10, "the earlier sliver arms with it");
-        assertEq(fee, 1, "exactly 10%");
-        assertEq(_post(SOLVER, 1), LibServiceCapacity.STATUS_OK);
-        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).eligibleAmount, 10);
-        assertEq(_bucket(), bucketBefore + 1, "the fee is recycled");
-        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 9);
-        assertEq(granted, 0, "a further 9 units again owe under one unit: nothing armed");
+        assertEq(_post(SOLVER, AT4X - 1), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), AT4X - 1, "armed to one unit below the knee");
+        uint256 paidSoFar = _bucket() - bucketBefore;
+        assertLe(paidSoFar * 10, AT4X - 1, "never above 10% of what is armed");
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 5);
+        assertEq(granted, 1, "only the last unit below the knee is left to arm");
+        assertEq(_post(SOLVER, 5), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), AT4X, "the last unit ARMS: the knee is reached, nothing stranded");
+        uint256 paid = _bucket() - bucketBefore;
+        assertEq(paid, paidSoFar + fee, "the post paid what it quoted");
+        assertLe(paid * 10, AT4X, "the total never exceeds 10% of everything armed");
+        assertGe(paid * 10 + 10, AT4X, "and is within one unit of it");
     }
 
     /// @dev Codex #2556 r1 — the bounds are enforced where the rate is USED. A
@@ -577,21 +573,30 @@ contract ServiceCapacityArmingTest is SetupTest {
         assertEq(_eligible(), AT4X - 2, "the armed balance follows the principal down");
     }
 
-    /// @dev Codex #2556 r2 — the fee rounds DOWN (never above the rate), and a grant
-    ///      too small to carry one unit of fee arms nothing, so no armed principal
-    ///      is free. At 1%: 99 units would owe 0.99 and arm nothing; 100 units owe
-    ///      exactly 1; 199 units owe 1 (rounded down, under the rate), never 2.
-    function test_Fee_RoundsDown_AndAGrantThatOwesNothing_ArmsNothing() public {
+    /// @dev Codex #2556 r2/r3 — every grant arms; the fee rounds DOWN and the
+    ///      fraction CARRIES on the deposit record to its next post. At 1%: a
+    ///      99-unit post arms 99 and pays 0 (0.99 owed carries); the next 1-unit
+    ///      post arms 1 and pays exactly 1 (0.99 + 0.01); so the record paid 1 for
+    ///      100 armed — never above the rate, and nothing armed goes unpaid
+    ///      beyond one unit. A fresh 199-unit quote pays 1, never 2.
+    function test_Fee_RoundsDown_TheFractionCarriesToTheNextPost() public {
         _ready(); // FEE = 1%
-        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 99);
-        assertEq(granted, 0, "a grant that owes under one unit arms nothing");
-        assertEq(fee, 0, "and pays nothing");
-        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 100);
-        assertEq(granted, 100);
-        assertEq(fee, 1, "1% of 100 units is exactly 1");
-        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 199);
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 199);
         assertEq(granted, 199);
-        assertEq(fee, 1, "rounded down: never above the rate");
+        assertEq(fee, 1, "rounded down: 1.99 owes 1, never 2");
+        uint256 bucketBefore = _bucket();
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 99);
+        assertEq(granted, 99, "every grant arms");
+        assertEq(fee, 0, "0.99 owed: nothing whole yet");
+        assertEq(_post(SOLVER, 99), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), 99, "armed");
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 1);
+        assertEq(granted, 1);
+        assertEq(fee, 1, "the carried 0.99 plus 0.01: exactly one unit");
+        assertEq(_post(SOLVER, 1), LibServiceCapacity.STATUS_OK);
+        assertEq(_bucket(), bucketBefore + 1, "the record paid 1 for 100 armed: exactly 1%");
+        (, fee, , , ) = _f().previewArming(SOLVER, op, 100);
+        assertEq(fee, 1, "the carry was spent: the next 100 owe exactly 1 again");
     }
 
     /// @dev The preview names the post's arming refusals: nothing to arm, then OK.
