@@ -387,6 +387,45 @@ describe('raiseAlerts — a failed screen is unmeasured, never clean (Codex #257
   });
 });
 
+describe('raiseAlerts — final-verdict work that does not get done is said (Codex #2573 r3)', () => {
+  const plan = {
+    observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+    writes: 0, overCapacity: false, heldCount: 0, deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+  };
+  it('raises the backlog alert when owners were not reached, and a settlement failure by name; clears each only on a measurement', async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const quiet = { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 0 };
+    const keys = () => (h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+    const seed = (k: string) => h.db.prepare(`INSERT OR IGNORE INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
+    try {
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { ...quiet, backlogUnreached: 4 }, Number.POSITIVE_INFINITY, {
+        stuck: new Map(), clear: new Set(), settleFailed: new Map([[A, 'InteractionRewardBackingShort']]),
+      });
+      expect(warned.some((w) => /4 owner\(s\) with a final verdict were not reached this run/.test(w))).toBe(true);
+      expect(warned.some((w) => new RegExp(`settlement of confirmed owner ${A} reverted this run \\(InteractionRewardBackingShort\\)`).test(w))).toBe(true);
+      // The alerts are open (the ops channel is unset here, so seed them as a delivered run would).
+      seed(`sanctions-backlog:${CHAIN}:all`);
+      seed(`sanctions-settle-failed:${CHAIN}:${A}`);
+      seed(`sanctions-settle-failed:${CHAIN}:${B}`);
+      // Unmeasured for A (not reached), B now reads Deliver; the backlog was reached whole.
+      await raiseAlerts(env, CHAIN, [held({ owner: B, decision: DECISION_DELIVER })], plan, NOW, null, { ...quiet, backlogUnreached: 0 }, Number.POSITIVE_INFINITY, {
+        stuck: new Map(), clear: new Set(), settleFailed: new Map(), settleOk: new Set(),
+      });
+      expect(keys()).toEqual([`sanctions-settle-failed:${CHAIN}:${A}`]);
+      // A settles cleanly: cleared.
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, quiet, Number.POSITIVE_INFINITY, {
+        stuck: new Map(), clear: new Set(), settleFailed: new Map(), settleOk: new Set([A]),
+      });
+      expect(keys()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe('raiseAlerts', () => {
   it('clears only an alert that is actually open: a quiet candidate costs no write', async () => {
     const h = createKeeperD1();

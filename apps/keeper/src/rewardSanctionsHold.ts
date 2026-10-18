@@ -425,6 +425,12 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
    *  and those read whole with nothing wedged (whose alert may clear). */
   const stagingStuck = new Map<string, number>();
   const stagingClear = new Set<string>();
+  /** Confirmed owners whose settlement reverted unexpectedly, with the reason. */
+  const settleFailed = new Map<string, string>();
+  const settleOk = new Set<string>();
+  /** Final-verdict owners the backlog never reached this run (budget or
+   *  deadline), MEASURED — the ceiling binding, said rather than predicted. */
+  let backlogUnreached = 0;
   const cleanSent = new Set<string>();
   let reached = 0;
   let skippedOracleDown = 0;
@@ -444,7 +450,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       dueReached += 1;
       if (due.confirmed) {
         // eslint-disable-next-line no-await-in-loop
-        const settled = await runOwnerSettlement(ctx, budget, owner, 1);
+        const settled = await runOwnerSettlement(ctx, budget, owner, 1, settleFailed, settleOk);
         settleCallsUsed.set(owner, settled ? 1 : 0);
         let sent = settled;
         if (!settled && budget.writes > 0) {
@@ -502,12 +508,16 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // would let the first take every write, run after run. It stops at the
     // send deadline or an empty budget, before another owner's reads.
     const confirmed = new Set(plan.settle);
-    for (const owner of rotate([...plan.settle, ...plan.resolveOnly], hourIndex)) {
-      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
+    const backlog = rotate([...plan.settle, ...plan.resolveOnly], hourIndex);
+    for (const [i, owner] of backlog.entries()) {
+      if (budget.writes <= 0 || Date.now() >= budget.deadline) {
+        backlogUnreached = backlog.length - i;
+        break;
+      }
       if (confirmed.has(owner)) {
         const used = settleCallsUsed.get(owner) ?? 0;
         // eslint-disable-next-line no-await-in-loop
-        if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
+        if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used, settleFailed, settleOk);
       }
       // eslint-disable-next-line no-await-in-loop
       await resolveCapped(owner);
@@ -548,9 +558,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       clean: plan.commitClean.length - cleaned.yes,
       unread: unread + landed.unread + cleaned.unread,
       screenFailed: !screenMeasured,
+      backlogUnreached,
     };
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
 }
 
 /** What a run left undone, MEASURED. `screenFailed` is optional so a caller
@@ -562,6 +573,8 @@ export interface Shortfall {
   clean: number;
   unread: number;
   screenFailed?: boolean;
+  /** Final-verdict owners whose settlement or staging the run never reached. */
+  backlogUnreached?: number;
 }
 
 /** Whether an observation moved the owner's evidence: its chain started,
@@ -759,6 +772,12 @@ async function runOwnerSettlement(
   budget: { writes: number },
   owner: Address,
   maxCalls: number = MAX_SETTLE_CALLS_PER_OWNER,
+  /** Records a settlement that reverted for any reason OTHER than having
+   *  nothing left to settle (Codex #2573 r3): named, so it is alerted. */
+  failed?: Map<string, string>,
+  /** Records an owner whose settlement simulated cleanly, or reported having
+   *  nothing to settle: its failure alert may clear. */
+  ok?: Set<string>,
 ): Promise<boolean> {
   let sentAny = false;
   for (let call = 0; call < maxCalls && budget.writes > 0; call++) {
@@ -775,8 +794,15 @@ async function runOwnerSettlement(
       decision = Number((sim.result as readonly [number, bigint, bigint, bigint])[0]);
     } catch (err) {
       console.log(`[keeper] rewardSanctionsHold settle ${owner} would revert: ${shortErr(err)}`);
+      const name = revertName(err);
+      if (failed && !(err instanceof PastRunDeadline) && name !== 'NoInteractionRewardsToClaim') {
+        failed.set(owner.toLowerCase(), name ?? shortErr(err));
+      } else if (name === 'NoInteractionRewardsToClaim') {
+        ok?.add(owner.toLowerCase());
+      }
       return sentAny;
     }
+    ok?.add(owner.toLowerCase());
     if (decision !== DECISION_CONFIRMED) return sentAny;
     // eslint-disable-next-line no-await-in-loop
     const sent = await send(ctx, budget, 'settleSanctionedInteractionRewards', [owner], owner);
@@ -981,7 +1007,13 @@ export async function raiseAlerts(
   alertDeadline: number = Number.POSITIVE_INFINITY,
   /** Staging resolution measured this run: owners whose page reverted, and
    *  owners read whole with nothing wedged. Others are left as they are. */
-  staging: { stuck: ReadonlyMap<string, number>; clear: ReadonlySet<string>; openOwners?: ReadonlySet<string> } = { stuck: new Map(), clear: new Set() },
+  staging: {
+    stuck: ReadonlyMap<string, number>;
+    clear: ReadonlySet<string>;
+    settleFailed?: ReadonlyMap<string, string>;
+    settleOk?: ReadonlySet<string>;
+    openOwners?: ReadonlySet<string>;
+  } = { stuck: new Map(), clear: new Set() },
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -1029,6 +1061,13 @@ export async function raiseAlerts(
       if (shortfall.unread > 0) parts.push(`${shortfall.unread} candidate(s) could not be classified at all (their status read failed), so whether they were due is unknown`);
       return `[chain ${chainId}] reward sanctions hold: ${parts.join('; ')} — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`;
     });
+    // The write ceiling binding on the final-verdict backlog, MEASURED (Codex
+    // #2573 r3): due observations can all land while settlement and staging
+    // are never reached — and a staging record blocks custody while it stands.
+    const unreachedBacklog = shortfall.backlogUnreached ?? 0;
+    await toggle(`sanctions-backlog:${chainId}:all`, unreachedBacklog > 0, () =>
+      `[chain ${chainId}] reward sanctions hold: ${unreachedBacklog} owner(s) with a final verdict were not reached this run (the write budget or the run's time window ran out after every due observation). Their settlement and staging resolution wait; an unresolved staging record blocks custody activation and reward-role changes while it stands.`,
+    );
     await toggle(`sanctions-clean-backlog:${chainId}:all`, shortfall.clean > 0, () =>
       `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) were NOT committed this tick; every due observation was sent first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
     );
@@ -1051,6 +1090,27 @@ export async function raiseAlerts(
   // A final verdict whose staging work will not resolve (Codex #2573 r1):
   // measured from this run's reverted resolution pages, cleared only for an
   // owner whose records and domains were all read and none reverted.
+  // A Confirmed owner's settlement that reverted for a reason other than
+  // having nothing to settle, by name (Codex #2573 r3): its reward is
+  // neither forfeited nor set apart while it stands.
+  const settleFailed = staging.settleFailed ?? new Map<string, string>();
+  for (const [owner, why] of settleFailed) {
+    // eslint-disable-next-line no-await-in-loop
+    await toggle(`sanctions-settle-failed:${chainId}:${owner}`, true, () =>
+      `[chain ${chainId}] reward sanctions hold: the settlement of confirmed owner ${owner} reverted this run (${why}). Its reward is neither forfeited nor set apart until it succeeds.`,
+    );
+  }
+  // Cleared on a measurement only: a settlement that simulated cleanly or had
+  // nothing to settle, or a fresh read of the owner that is no longer Confirmed.
+  const failPrefix = `sanctions-settle-failed:${chainId}:`;
+  const notConfirmed = new Set(statuses.filter((st) => st.decision !== DECISION_CONFIRMED).map((st) => st.owner.toLowerCase()));
+  for (const key of open) {
+    if (!key.startsWith(failPrefix)) continue;
+    const owner = key.slice(failPrefix.length).toLowerCase();
+    if (settleFailed.has(owner)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (staging.settleOk?.has(owner) || notConfirmed.has(owner)) await toggle(key, false, () => '');
+  }
   for (const [owner, n] of staging.stuck) {
     // eslint-disable-next-line no-await-in-loop
     await toggle(`sanctions-staging-stuck:${chainId}:${owner}`, true, () =>
