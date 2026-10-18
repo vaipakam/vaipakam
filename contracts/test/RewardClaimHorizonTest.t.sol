@@ -936,6 +936,99 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    // ─── #1499 acceptance: predicate AND claim, both sides ───────────────────
+    //
+    // The cells above pin the CLOCK on one side of each refusal cause. The
+    // cells below add the claim's outcome on BOTH sides of the same variable,
+    // so a predicate looser than the claim (the #1499 failure mode: a clock
+    // running while the claim reverts) and a predicate stuck closed both fail.
+
+    /// @dev Pre-advance the claimant's side cursors (what the claim and the
+    ///      sweep do first); the predicate is a view and cannot.
+    function _readyAlice() internal {
+        _mut().userClaimFundingNeedRaw(alice);
+    }
+
+    /// @notice #1499 — refusal cause: the 69M pool is exhausted. Variable:
+    ///         `interactionPoolPaidOut` at the cap vs at zero.
+    /// @dev    Exhausted: the predicate reads false (nothing pool-capped is
+    ///         payable) and the claim reverts `InteractionPoolExhausted`.
+    ///         Restored: predicate true and the claim pays. Kills dropping
+    ///         `_poolCappedPayable(toUser) == 0` from the predicate (the
+    ///         exhausted side reads true while the claim reverts).
+    function testPoolExhaustion_PredicateAndClaimAgree_BothSides() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        uint256 id = _seedClaimableEntry();
+        _readyAlice();
+
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        assertFalse(_mut().entryExecutableNowRaw(id), "exhausted: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(InteractionPoolExhausted.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        _mut().setInteractionPoolPaidOut(0);
+        assertTrue(_mut().entryExecutableNowRaw(id), "headroom: executable");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertGt(paid, 0, "headroom: the claim pays");
+    }
+
+    /// @notice #1499 — refusal cause: the entry's day is not finalized (no
+    ///         global denominator). Variable: day 2's known-global flag.
+    /// @dev    Unfinalized: the predicate reads false and the claim refuses
+    ///         naming the wait. Finalized: predicate true and the claim pays.
+    ///         The unfinalized day prices nothing, so it is the predicate's
+    ///         zero-payable refusal that fires: dropping
+    ///         `_poolCappedPayable(toUser) == 0` reads the unfinalized side
+    ///         executable while the claim refuses, and fails this cell.
+    function testDayFinalisation_PredicateAndClaimAgree_BothSides() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Alice's ONLY entry is over day 2, which is not finalized.
+        uint256 id = _mut().pushRewardEntry(alice, 43, LibVaipakam.RewardSide.Lender, 1e18, 2);
+        _mut().closeRewardEntryRaw(id, 3);
+        _readyAlice();
+
+        assertFalse(_mut().entryExecutableNowRaw(id), "unfinalized: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        _mut().setKnownGlobalDailyInterest(2, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(2, type(uint256).max);
+        _readyAlice();
+        assertTrue(_mut().entryExecutableNowRaw(id), "finalized: executable");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertGt(paid, 0, "finalized: the claim pays");
+    }
+
+    /// @notice #1499 — refusal cause: the owner is sanctions-flagged (oracle
+    ///         up). Variable: the oracle's flag on alice.
+    /// @dev    Flagged: predicate false and the claim reverts
+    ///         `SanctionedAddress(alice)`. Delisted: predicate true and the
+    ///         claim pays. Kills dropping `isRecipientBarred` from the
+    ///         predicate (the flagged side reads true while the claim reverts).
+    function testSanctionsToggle_PredicateAndClaimAgree_BothSides() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        MockSanctionsList oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        uint256 id = _seedClaimableEntry();
+        _readyAlice();
+
+        oracle.setFlagged(alice, true);
+        assertFalse(_mut().entryExecutableNowRaw(id), "flagged: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        oracle.setFlagged(alice, false);
+        assertTrue(_mut().entryExecutableNowRaw(id), "delisted: executable");
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertGt(paid, 0, "delisted: the claim pays");
+    }
+
     function testHorizonKnobBounds() public {
         vm.expectRevert();
         _cfg().setRewardClaimHorizonDays(179);

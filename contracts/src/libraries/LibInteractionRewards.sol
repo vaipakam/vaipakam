@@ -3138,14 +3138,24 @@ library LibInteractionRewards {
         ///      claim settles first (#1566 closure 2).
         uint256 legacyFresh;
         /// @dev The chunk's draw on the recycle bucket: the user's recycled
-        ///      legs net of the share the epochs pay, a day the walk would
-        ///      defer included. Exceeds the live bucket exactly when the claim
-        ///      would defer a day on it.
+        ///      legs net of the share the epochs pay, summed over the days the
+        ///      walk ADVANCES. A day the walk would defer contributes nothing
+        ///      here — it sets {capHit} instead (#1499: an earlier revision of
+        ///      this note said deferred days were included and that this
+        ///      figure exceeds the live bucket exactly when the claim would
+        ///      defer, which the walk below does not do).
         uint256 bucketRecycled;
-        /// @dev A day the walk would defer for a reason no figure above
-        ///      carries — the transport scan window, a staging reservation of
-        ///      its loan side, or a standing staging record of the day itself
-        ///      (3b-ii-A2; {_dayRefusedWithoutFigure}).
+        /// @dev Some day in the chunk would not advance in the claim's walk,
+        ///      so the predicate must read not-executable. It is set for EVERY
+        ///      deferral, not only those no figure carries: a standing staging
+        ///      record of the day, a transport scan-window refusal, a staging
+        ///      reservation of its loan side, and any day the dry-run
+        ///      `processUserSideDay` does not advance (recycled bucket short,
+        ///      a reserved live-fresh room, the delivered bound). Because a
+        ///      deferred day carries no figure, those boundaries are refused
+        ///      HERE rather than by the drought, row or room comparisons, which
+        ///      only see the advanced days (3b-ii-A2; {_dayRefusedWithoutFigure};
+        ///      pinned by the #1499 straddle cells).
         bool capHit;
         /// @dev The part of `armed` the LIVE delivery must fund — net of the
         ///      epoch-paid fresh — which the delivered bound and the backing

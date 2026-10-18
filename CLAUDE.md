@@ -1257,10 +1257,12 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > OR-composed with RedStone's Sanctions Oracle where RedStone has deployed it
 > (an immutable constructor input, empty by default — never hard-coded). The
 > update is computed offline by
-> `packages/contracts/scripts/ofac-sanctions-diff.mjs`. **Where the adder
-> runs is still open**, so `ConfigureSanctionsOracle.s.sol` still
-> refuses every mainnet; testnets screen against the admin's
-> `TestnetSanctionsOverlay` alone (#2439). Both lists share
+> `packages/contracts/scripts/ofac-sanctions-diff.mjs`, and applied unattended
+> by the adder service in `ops/sanctions-adder/` (its own key, units and memory
+> cap beside the keeper, on testnets against a rehearsal list the Diamond does
+> not screen). **The mainnet adder host is still open**, so the service and
+> `ConfigureSanctionsOracle.s.sol` both refuse every mainnet; testnets screen
+> against the admin's `TestnetSanctionsOverlay` alone (#2439). Both lists share
 > `ComposedSanctionsList` — the OR rule and "a secondary revert propagates for
 > an address the own record does not flag" live there once. Keep it that way:
 > swallowing the revert in a list would silently turn the Diamond's

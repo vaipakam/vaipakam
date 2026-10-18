@@ -1226,6 +1226,40 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     }
 
     /**
+     * @notice #1499 acceptance -- AWAITING DELIVERY on both readers. Refusal
+     *         cause: the day owes fresh value on this mirror and no delivery
+     *         proven to list it has landed (rung A). Variable: the proof of
+     *         the delivery's day list. Held: the expiry predicate reads false
+     *         AND the claim refuses `InteractionDayAwaitingDelivery(1)`.
+     *         Proven: predicate true AND the claim pays the day.
+     * @dev    Cell 11a pins the predicate and the previews across the same
+     *         variable; this cell adds the CLAIM on both sides. The proven
+     *         side delivers EXACTLY the need, so it also sits on the delivered
+     *         bound's boundary: `>` → `>=` in the predicate's bound test reads
+     *         it non-executable while the claim pays, and fails this cell. The
+     *         held side is refused twice over (the day prices nothing AND the
+     *         read reports it deferred): dropping either the zero-payable or
+     *         the `capHit` refusal alone leaves the other refusing, so neither
+     *         single mutation fails it.
+     */
+    function test_1499_AwaitingDelivery_PredicateAndClaimAgree_BothSides() public {
+        _armGate(1);
+        uint256 id = _owedDay1();
+        bytes32 h = _liveOf(NEED, _one(1), 149, keccak256("gate-1499"));
+        _mut().userClaimFundingNeedRaw(alice);
+
+        assertFalse(_mut().entryExecutableNowRaw(id), "held: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InteractionDayAwaitingDelivery.selector, 1));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        _prove(h, _one(1));
+        _mut().userClaimFundingNeedRaw(alice);
+        assertTrue(_mut().entryExecutableNowRaw(id), "proven: executable");
+        assertEq(_claim(), NEED, "proven: the claim pays the day");
+    }
+
+    /**
      * @notice Cell 11b -- the FORFEIT sweep shares the rung: held, it credits
      *         nothing and moves nothing; proven, it settles the forfeited
      *         share into the bucket.
