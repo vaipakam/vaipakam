@@ -193,6 +193,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/sentinel-reads.sh
+source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# shellcheck source=lib/ccip-lanes.sh
+source "$SCRIPT_DIR/lib/ccip-lanes.sh"
+# shellcheck source=lib/artifact-code-check.sh
+source "$SCRIPT_DIR/lib/artifact-code-check.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -670,6 +676,9 @@ archive_chain_state() {
   # Nothing is moved unless both succeed.
   reconcile_unrecorded_archives "$chain_slug" \
     || { echo "ERROR: unrecorded local archives could not be reconciled; refusing to archive" >&2; exit 1; }
+  # #2548 — a phantom artifact (written by a killed simulation, no code
+  # behind its Diamond) must never be recorded as a retired deployment.
+  require_artifact_diamond_has_code "$deploy_dir/addresses.json" "$RPC" "$chain_slug" || exit 1
   append_archive_manifest "$chain_slug" "$stamp" "$deploy_dir/addresses.json" \
     || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
@@ -1175,9 +1184,14 @@ EOF
 
 phase_ccip_wire() {
   _preflight_gate
+  # The lane list is per chain (lib/ccip-lanes.sh, #2548): prefer
+  # CCIP_LANE_CHAIN_IDS_<SLUG> from .env, refuse when it disagrees with a
+  # bare CCIP_LANE_CHAIN_IDS given for this run.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
   if [ -z "${CCIP_LANE_CHAIN_IDS:-}" ]; then
     cat >&2 <<EOF
-Refusing --phase ccip-wire: CCIP_LANE_CHAIN_IDS unset in .env.
+Refusing --phase ccip-wire: neither CCIP_LANE_CHAIN_IDS_${CCIP_SLUG} (in .env)
+nor CCIP_LANE_CHAIN_IDS (for this run) is set.
 
 ConfigureCcip.s.sol wires a CCIP TokenPool lane to every REMOTE chain
 in the topology. Set CCIP_LANE_CHAIN_IDS to a comma-separated list of
@@ -1951,10 +1965,15 @@ phase_verify() {
 
   echo
   echo "[1] Sentinel reads"
-  echo "  paused()         = $(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  getTreasury()    = $(cast call "$DIAMOND" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  nextOfferId()    = $(cast call "$DIAMOND" 'nextOfferId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  nextLoanId()     = $(cast call "$DIAMOND" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  # One shared list (lib/sentinel-reads.sh, #2548). An unreadable sentinel
+  # fails the phase: the old per-script copies printed `?` for two retired
+  # selectors and passed, so the check had silently stopped checking.
+  SENTINEL_FAILED=0
+  sentinel_reads "$DIAMOND" "$RPC" || SENTINEL_FAILED=$?
+  if [ "$SENTINEL_FAILED" -ne 0 ]; then
+    echo "  FAIL: $SENTINEL_FAILED sentinel read(s) unreadable on $DIAMOND — a Diamond that is not cut, not deployed, or not on this RPC's chain." >&2
+    exit 1
+  fi
 
   echo
   echo "[2] Facet-count verification (DiamondLoupe)"
@@ -1973,8 +1992,12 @@ phase_verify() {
     echo "  FAIL: .facetCount missing from $DEPLOY_DIR/addresses.json — re-run --phase contracts." >&2
     exit 1
   fi
-  FACET_COUNT_RAW=$(cast call "$DIAMOND" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
-    | tr ',' '\n' | grep -c '0x' || echo 0)
+  # One shared count (lib/sentinel-reads.sh, #2548): a failed loupe read is a
+  # refusal, never a "0" that the comparison below could not evaluate.
+  if ! FACET_COUNT_RAW=$(diamond_facet_count "$DIAMOND" "$RPC"); then
+    echo "  FAIL: could not read the loupe (facetAddresses) on $DIAMOND=${DIAMOND} — a Diamond that is not deployed, not cut, or not on this RPC's chain." >&2
+    exit 1
+  fi
   if [ "$FACET_COUNT_RAW" -ne "$EXPECTED_FACETS" ]; then
     echo "  FAIL: $FACET_COUNT_RAW facets registered, expected exactly $EXPECTED_FACETS (stale / half-cut diamond)." >&2
     echo "        Run --phase contracts again before any other phase." >&2

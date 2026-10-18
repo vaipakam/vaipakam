@@ -192,6 +192,10 @@ CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/load-env.sh"
 # shellcheck source=lib/retired-deployment.sh
 source "$SCRIPT_DIR/lib/retired-deployment.sh"
+# shellcheck source=lib/sentinel-reads.sh
+source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# shellcheck source=lib/artifact-code-check.sh
+source "$SCRIPT_DIR/lib/artifact-code-check.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -626,6 +630,9 @@ if [ "$FRESH" = "1" ]; then
     PRIOR_DEPLOY_BLOCK=$(jq -r '.deployBlock // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
     TS="$(date +%s)"
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
+    # #2548 — never record a phantom artifact (killed simulation, no code) as
+    # a retired deployment; lib/artifact-code-check.sh prints the recovery.
+    require_artifact_diamond_has_code "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$RPC" "$CHAIN_SLUG" || exit 1
     node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
@@ -803,8 +810,12 @@ if [ -z "$EXPECTED_FACETS" ]; then
   echo "      DeployDiamond.s.sol records it — re-run step [2]." >&2
   exit 1
 fi
-FACET_COUNT_RAW=$(cast call "$DIAMOND_ADDR" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
-  | tr ',' '\n' | grep -c '0x' || echo 0)
+# One shared count (lib/sentinel-reads.sh, #2548): a failed loupe read is a
+# refusal, never a "0" that the comparison below could not evaluate.
+if ! FACET_COUNT_RAW=$(diamond_facet_count "$DIAMOND_ADDR" "$RPC"); then
+  echo "FAIL: could not read the loupe (facetAddresses) on $DIAMOND_ADDR — not deployed, not cut, or not on this RPC's chain." >&2
+  exit 1
+fi
 if [ "$FACET_COUNT_RAW" -ne "$EXPECTED_FACETS" ]; then
   echo "FAIL: diamond at $DIAMOND_ADDR has $FACET_COUNT_RAW facets, expected exactly $EXPECTED_FACETS." >&2
   echo "      The diamond is incomplete / stale (a half cut, or a facet missing)." >&2
@@ -1031,11 +1042,10 @@ else
     echo "  diamond:  $DIAMOND_FOR_HEALTH"
     echo "  ts:       $(date +%Y-%m-%dT%H:%M:%S%z)"
     echo
-    echo "  paused()         = $(cast call "$DIAMOND_FOR_HEALTH" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-    echo "  getTreasury()    = $(cast call "$DIAMOND_FOR_HEALTH" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-    echo "  nextOfferId()    = $(cast call "$DIAMOND_FOR_HEALTH" 'nextOfferId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-    echo "  nextLoanId()     = $(cast call "$DIAMOND_FOR_HEALTH" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-    echo "  facetCount       = $(cast call "$DIAMOND_FOR_HEALTH" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null | tr ',' '\n' | grep -c '0x' || echo '?')"
+    # One shared list (lib/sentinel-reads.sh, #2548); its UNREADABLE lines are
+    # turned into a failure after the log is written, below.
+    sentinel_reads "$DIAMOND_FOR_HEALTH" "$RPC" || true
+    echo "  facetCount       = $(diamond_facet_count "$DIAMOND_FOR_HEALTH" "$RPC" || echo UNREADABLE)"
     echo "  getMasterFlags() = $(cast call "$DIAMOND_FOR_HEALTH" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
     POOL_FOR_HEALTH=$(jq -r '.vpfiTokenPool // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
     if [ -n "$POOL_FOR_HEALTH" ]; then
@@ -1050,6 +1060,13 @@ else
     fi
   } | tee "$HEALTH_LOG"
   echo "  ✓ health log → $(basename "$HEALTH_LOG")"
+  # The reads ran inside the piped group, so their status cannot reach this
+  # shell; the log they wrote is the record. An unreadable sentinel fails the
+  # deploy here instead of shipping a `?` (#2548).
+  if grep -q '= UNREADABLE$' "$HEALTH_LOG"; then
+    echo "  FAIL: sentinel read(s) unreadable on $DIAMOND_FOR_HEALTH — see $(basename "$HEALTH_LOG")" >&2
+    exit 1
+  fi
 fi
 
 # ── 5e. Deployment-source marker ──────────────────────────────────────
