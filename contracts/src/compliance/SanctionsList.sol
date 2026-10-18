@@ -89,6 +89,20 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            remover then applies the delistings against the SAME
  *            publication, which note 1a accepts because it adds nothing.
  *
+ *         4a. **The window between the two transactions is stated, not
+ *            hidden** (Codex #2543 r7). The adder's update records the new
+ *            publication as soon as its additions land, while that
+ *            publication's delistings still wait for the multisig. Each update
+ *            therefore declares how many of the recorded publication's
+ *            delistings remain outstanding after it, held in
+ *            `pendingDelistings`, evented, and returned by `freshness()`. A
+ *            non-zero value means "this publication is only partly applied:
+ *            N addresses it removed are still listed". The remover's
+ *            completing update declares 0. The value is the updater's
+ *            declaration, computed by the diff tool from the same diff; the
+ *            contract cannot verify it, and an adder that understates it can
+ *            hide only a delay it could equally cause by not submitting.
+ *
  *         5. **Attribution.** `sanctionSource` says which source flags an
  *            address, so a surface that tells a flagged user whom to contact
  *            can name OFAC's list or RedStone's oracle truthfully.
@@ -131,6 +145,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
 
     /// @notice Block timestamp of the last applied update; 0 before the first.
     uint64 public lastUpdatedAt;
+
+    /// @notice Delistings the recorded publication calls for that have NOT
+    ///         been applied yet, as declared by the last update (note 4a).
+    ///         Non-zero between an adder's additions and the remover's
+    ///         delistings for the same publication; a reader must not treat
+    ///         the recorded publication as fully applied while it is.
+    uint32 public pendingDelistings;
 
     /// @notice SHA-256 of the OFAC source file the last update was built
     ///         from; zero before the first update.
@@ -190,6 +211,11 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         cleared it unused (the state it was granted against is gone).
     /// @custom:event-category informational/config
     event PublicationRollbackCleared(uint64 indexed version, uint32 authorizedDate, bytes32 authorizedHash);
+    /// @notice Update `version` left `count` of its publication's delistings
+    ///         outstanding (note 4a). Emitted on every update, so a return to
+    ///         0 is visible too.
+    /// @custom:event-category informational/config
+    event DelistingsPending(uint64 indexed version, uint32 count);
     /// @notice An update consumed that authorization.
     /// @custom:event-category informational/config
     event PublicationRollbackApplied(
@@ -313,12 +339,16 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @param toRemove             Addresses to delist; each must be listed.
     /// @param sourceHash_          SHA-256 of the OFAC file.
     /// @param publicationDate      That file's publication date, `YYYYMMDD`.
+    /// @param delistingsLeft       How many of this publication's delistings
+    ///                             remain to be applied AFTER this update
+    ///                             (note 4a); 0 when it is fully applied.
     function applyUpdate(
         uint64 expectedVersion,
         address[] calldata toAdd,
         address[] calldata toRemove,
         bytes32 sourceHash_,
-        uint32 publicationDate
+        uint32 publicationDate,
+        uint32 delistingsLeft
     ) external {
         if (toRemove.length != 0) {
             if (!isRemover[msg.sender]) revert NotRemover(msg.sender);
@@ -354,6 +384,8 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         lastUpdatedAt = uint64(block.timestamp);
         sourceHash = sourceHash_;
         sourcePublicationDate = publicationDate;
+        pendingDelistings = delistingsLeft;
+        emit DelistingsPending(version, delistingsLeft);
         emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
     }
 
@@ -464,6 +496,9 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @return ownLastUpdatedAt        When the own record was last updated.
     /// @return ownSourceHash           SHA-256 of the OFAC file behind it.
     /// @return ownSourcePublicationDate That file's publication date, `YYYYMMDD`.
+    /// @return ownPendingDelistings    That publication's delistings not yet
+    ///                                 applied; non-zero means it is only
+    ///                                 partly applied (note 4a).
     /// @return hasSecondary            A secondary is configured.
     /// @return secondaryTimestampKnown The secondary reported its freshness.
     /// @return secondaryLastUpdatedAt  That report; 0 when unknown.
@@ -475,6 +510,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             uint64 ownLastUpdatedAt,
             bytes32 ownSourceHash,
             uint32 ownSourcePublicationDate,
+            uint32 ownPendingDelistings,
             bool hasSecondary,
             bool secondaryTimestampKnown,
             uint256 secondaryLastUpdatedAt
@@ -486,6 +522,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
             lastUpdatedAt,
             sourceHash,
             sourcePublicationDate,
+            pendingDelistings,
             address(_secondary) != address(0),
             secondaryTimestampKnown,
             secondaryLastUpdatedAt

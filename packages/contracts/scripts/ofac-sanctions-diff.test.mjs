@@ -92,9 +92,9 @@ test('buildUpdate: additions go to the adder, delistings to the remover at the n
   assert.deepEqual(u.calls.map((c) => [c.signer, c.expectedVersion]), [['adder', 4n], ['remover', 5n]]);
   const first = decodeFunctionData({ abi, data: u.calls[0].calldata });
   assert.equal(first.functionName, 'applyUpdate');
-  assert.deepEqual(first.args, [4n, parsed.addresses, [], hash, 20260307]);
+  assert.deepEqual(first.args, [4n, parsed.addresses, [], hash, 20260307, 1], 'the adder declares the delisting it leaves outstanding');
   const second = decodeFunctionData({ abi, data: u.calls[1].calldata });
-  assert.deepEqual(second.args, [5n, [], [C], hash, 20260307], 'the remover repeats the publication with delistings only');
+  assert.deepEqual(second.args, [5n, [], [C], hash, 20260307, 0], 'the remover repeats the publication with delistings only, completing it');
   assert.equal(u.order, 'newer');
   assert.equal(u.authorizeCalldata, null);
 });
@@ -304,4 +304,13 @@ test('paths: a repeated <DateOfIssue> or date part is refused, never last-wins',
   const later = block.replace(/<Year>\d{4}<\/Year>/, '<Year>2099</Year>');
   assert.throws(() => parseSdnAdvanced(xml.replace('</Sanctions>', `${later}</Sanctions>`)), /more than once/);
   assert.throws(() => parseSdnAdvanced(xml.replace('</DateOfIssue>', '<Year>2099</Year></DateOfIssue>')), /more than once/);
+});
+
+// ---- Codex #2543 r7: the zero address never reaches an update ----
+test('zero address: refused in a current list, surfaced as malformed in OFAC data', () => {
+  const ZERO_ADDR = `0x${'0'.repeat(40)}`;
+  assert.throws(() => normaliseAddresses([A, ZERO_ADDR]), /zero address/);
+  const p = parseSdnAdvanced(withInProfile(feature(ZERO_ADDR)));
+  assert.ok(!p.addresses.includes(ZERO_ADDR));
+  assert.ok(p.malformed.some((m) => m.value === ZERO_ADDR));
 });

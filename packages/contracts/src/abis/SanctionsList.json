@@ -50,6 +50,11 @@
         "name": "publicationDate",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "delistingsLeft",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -100,6 +105,11 @@
       },
       {
         "name": "ownSourcePublicationDate",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "ownPendingDelistings",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -288,6 +298,19 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingDelistings",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -521,6 +544,25 @@
         "type": "uint64",
         "indexed": true,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DelistingsPending",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "count",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

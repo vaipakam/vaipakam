@@ -123,6 +123,8 @@ export const DEFAULT_MAX_REMOVE = 10;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
+/** The zero address: EVM-shaped, but the contract refuses to list or delist it. */
+const ZERO_RE = /^0x0{40}$/i;
 const HEX_PREFIX_RE = /^0x/i;
 
 /** The compiled `SanctionsList` ABI — never hand-typed. */
@@ -522,7 +524,11 @@ export function parseSdnAdvanced(xml) {
     }
     const asset = dcaTypes.get(typeId);
     if (asset === undefined) continue;
-    if (EVM_RE.test(value)) {
+    if (EVM_RE.test(value) && ZERO_RE.test(value)) {
+      // The contract reverts ZeroAddress on it, so it can never reach a
+      // ready update; surface it for review instead (Codex #2543 r7).
+      malformed.push({ value, asset });
+    } else if (EVM_RE.test(value)) {
       const address = getAddress(value.toLowerCase());
       if (falseIds.has(rel)) {
         excludedFalse.push({ address, asset });
@@ -552,6 +558,7 @@ export function normaliseAddresses(list, label = 'address list') {
   for (const raw of list) {
     const s = String(raw).trim();
     if (!EVM_RE.test(s)) throw new Error(`${label}: not an EVM address: ${s}`);
+    if (ZERO_RE.test(s)) throw new Error(`${label}: the zero address cannot be listed or delisted`);
     const a = getAddress(s.toLowerCase());
     seen.set(a.toLowerCase(), a);
   }
@@ -646,18 +653,26 @@ export function buildUpdate({
     );
   }
   const version = BigInt(currentVersion);
-  const call = (signer, expectedVersion, toAdd, toRemove) => ({
+  // `delistingsLeft` is what the contract publishes as `pendingDelistings`:
+  // the adder's call leaves the remover's delistings outstanding, and the
+  // remover's call completes the publication (Codex #2543 r7).
+  const call = (signer, expectedVersion, toAdd, toRemove, delistingsLeft) => ({
     signer,
     expectedVersion,
     add: toAdd,
     remove: toRemove,
-    calldata: encodeFunctionData({ abi, functionName: 'applyUpdate', args: [expectedVersion, toAdd, toRemove, hash, parsed.publicationDate] }),
+    delistingsLeft,
+    calldata: encodeFunctionData({
+      abi,
+      functionName: 'applyUpdate',
+      args: [expectedVersion, toAdd, toRemove, hash, parsed.publicationDate, delistingsLeft],
+    }),
   });
   const calls = [];
   // A delisting-only update of a NEWER publication still goes to the remover
   // alone; otherwise the adder records the publication (and its additions).
-  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, []));
-  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove));
+  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, [], remove.length));
+  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove, 0));
   return {
     add,
     remove,
