@@ -64,13 +64,37 @@ export function rowDigest(rows) {
   return createHash('sha256').update(canon.join('\n')).digest('hex');
 }
 
+/** One digest PER ROW, in the same canonical form, sorted (#2497 r10). The
+ *  cutover record keeps them so the verdict can tell a deletion from a write:
+ *  see {@link cutoverVerdict}. */
+export function rowDigests(rows) {
+  return rows
+    .map((r) => createHash('sha256').update(JSON.stringify(Object.keys(r).sort().map((k) => [k, r[k]]))).digest('hex'))
+    .sort();
+}
+
 /** A table's whole fingerprint from its two reads, or `null` when either
  *  failed (never a partial fingerprint). */
 export function fingerprintFromReads(countRows, rows) {
   const base = parseFingerprint(countRows);
   if (base === null || !Array.isArray(rows) || rows.length !== base.n) return null;
-  return { ...base, digest: rowDigest(rows) };
+  return { ...base, digest: rowDigest(rows), rows: rowDigests(rows) };
 }
+
+/** Whether every row the shared copy holds NOW was in the copy (#2497 r10).
+ *  A keeper INSERTS and UPDATES its tables; nothing but a reset or a
+ *  retirement removes rows — the indexer's deployment-epoch reset deletes a
+ *  redeployed chain's rows, legitimately, after the cutover. So the question
+ *  "did a keeper write the old copy since?" is "is any current row not one the
+ *  copy took?", and a deletion is not a write. */
+const covered = (now, copied) =>
+  now !== null &&
+  copied !== null &&
+  typeof now === 'object' &&
+  typeof copied === 'object' &&
+  Array.isArray(now.rows) &&
+  Array.isArray(copied.rows) &&
+  now.rows.every((d) => copied.rows.includes(d));
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
 
@@ -149,8 +173,10 @@ const same = (a, b) =>
  * {@link readFingerprints} of the shared database; `marker` is
  * {@link readMarker}. Refuses on anything unread; passes with no marker only
  * when the shared copies hold no rows at all (a fresh environment, or the old
- * copies retired); otherwise the marker must exist and match EVERY table the
- * shared side still has.
+ * copies retired); otherwise the marker must exist, and every row each shared
+ * table still holds must be one the copy took. Rows may only have gone — the
+ * indexer's deployment-epoch reset deletes a redeployed chain's rows — never
+ * arrived or changed (#2497 r10).
  */
 export function cutoverVerdict(shared, marker) {
   for (const { table } of CUTOVER_TABLES) {
@@ -172,12 +198,14 @@ export function cutoverVerdict(shared, marker) {
   }
   for (const { table } of CUTOVER_TABLES) {
     if (shared[table] === 'absent') continue; // retired since: nothing to compare
-    if (!same(shared[table], marker.fingerprint?.[table] ?? null)) {
+    if (!covered(shared[table], marker.fingerprint?.[table] ?? null)) {
+      const now = shared[table];
+      const copied = marker.fingerprint?.[table];
       return {
         ok: false,
         why:
           `${table} in ${SHARED_DB} no longer matches the cutover copy ` +
-          `(now ${JSON.stringify(shared[table])}, copied ${JSON.stringify(marker.fingerprint?.[table] ?? null)}): ` +
+          `(now n=${now.n}, copied n=${copied?.n ?? '?'}; a row is not one the copy took): ` +
           'a keeper wrote the old copy after the cutover, so the private one is behind. Stop it and re-run the cutover.',
       };
     }

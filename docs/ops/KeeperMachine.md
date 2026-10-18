@@ -198,7 +198,11 @@ checks, and declines naming the reason, until all of this holds: the private
 database, at its pinned id, records every keeper migration, and the cutover
 verdict passes. It runs that full check, content digest included, on every
 tick, so a keeper that writes the old copies later stops the machine on its
-next tick, even one that rewrites a row within the same second. Once the
+next tick, even one that rewrites a row within the same second. Rows that
+have only gone are accepted: the indexer's reset after a Diamond redeploy
+deletes a chain's rows, and that is not a keeper write. The keeper applies the
+same reset to its own private records when a chain's Diamond changes, logging
+`Diamond changed … reset private …` once. Once the
 cutover is recorded the old copies no longer grow, so the check costs the
 same every tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still

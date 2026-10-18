@@ -1,5 +1,6 @@
 [
   "0001_keeper_state.sql",
   "0002_keeper_work_state.sql",
-  "0003_keeper_work_cursor.sql"
+  "0003_keeper_work_cursor.sql",
+  "0004_keeper_deployment.sql"
 ]

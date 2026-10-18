@@ -41,6 +41,7 @@ const EXPECTED_PRIVATE = [
   'keeper_commitment_day',
   'keeper_commitment_scan',
   'keeper_cutover',
+  'keeper_deployment',
   'keeper_ops_alert',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
@@ -170,9 +171,10 @@ import {
 
 /** The five tables that began in the shared database (the grandfathered set). */
 const MOVED = [...GRANDFATHERED_SHARED.values()].flat().sort();
-type Fp = { n: number; at: number; digest: string } | 'absent' | null;
+type Fp = { n: number; at: number; digest: string; rows: string[] } | 'absent' | null;
 const D = 'd'.repeat(64);
-const fps = (over: Record<string, Fp> = {}, base: Fp = { n: 3, at: 100, digest: D }): Record<string, Fp> =>
+const R3 = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+const fps = (over: Record<string, Fp> = {}, base: Fp = { n: 3, at: 100, digest: D, rows: R3 }): Record<string, Fp> =>
   Object.fromEntries(MOVED.map((t) => [t, t in over ? over[t] : base]));
 const markerOf = (fp: Record<string, Fp>) => ({ completedAt: 1, fingerprint: fp });
 
@@ -220,16 +222,22 @@ describe('deploy-keeper — refuses to publish unless the cutover is recorded an
     expect(cutoverVerdict(fps(), markerOf(fps())).ok, 'copy recorded').toBe(true);
   });
 
-  it('ONE table out of step refuses — whichever it is, by count or by time', () => {
+  it('ONE table with a row the copy did not take refuses — whichever table, inserted or rewritten (#2497 r10)', () => {
     for (const t of MOVED) {
-      expect(cutoverVerdict(fps({ [t]: { n: 4, at: 100, digest: D } }), markerOf(fps())).ok, `${t} count`).toBe(false);
-      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 101, digest: D } }), markerOf(fps())).ok, `${t} written since`).toBe(false);
-      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 100, digest: 'e'.repeat(64) } }), markerOf(fps())).ok, `${t} same count and second, different rows`).toBe(false);
+      expect(cutoverVerdict(fps({ [t]: { n: 4, at: 101, digest: D, rows: [...R3, 'e'.repeat(64)] } }), markerOf(fps())).ok, `${t} row inserted`).toBe(false);
+      expect(cutoverVerdict(fps({ [t]: { n: 3, at: 100, digest: D, rows: [R3[0], R3[1], 'e'.repeat(64)] } }), markerOf(fps())).ok, `${t} row rewritten in the same second`).toBe(false);
+    }
+  });
+
+  it("a DELETION is not a keeper write: the indexer's deployment-epoch reset passes (#2497 r10)", () => {
+    for (const t of MOVED) {
+      expect(cutoverVerdict(fps({ [t]: { n: 1, at: 100, digest: 'f'.repeat(64), rows: [R3[2]] } }), markerOf(fps())).ok, `${t} rows removed`).toBe(true);
+      expect(cutoverVerdict(fps({ [t]: { n: 0, at: 0, digest: 'f'.repeat(64), rows: [] } }), markerOf(fps())).ok, `${t} emptied`).toBe(true);
     }
   });
 
   it('nothing to move passes with no record: no shared rows, or the shared copies retired', () => {
-    expect(cutoverVerdict(fps({}, { n: 0, at: 0, digest: D }), 'none').ok).toBe(true);
+    expect(cutoverVerdict(fps({}, { n: 0, at: 0, digest: D, rows: [] }), 'none').ok).toBe(true);
     expect(cutoverVerdict(fps({}, 'absent'), 'none').ok).toBe(true);
     // One copy retired, the others matching the record: still fine.
     expect(cutoverVerdict(fps({ [MOVED[0]]: 'absent' }), markerOf(fps())).ok).toBe(true);

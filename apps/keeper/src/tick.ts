@@ -20,6 +20,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
+import { adoptKeeperDeployments } from './keeperEpoch';
 /**
  * Run one pass and report what it cost.
  *
@@ -129,6 +130,18 @@ export async function runKeeperTick(
       chains.map((c) => `${c.name}(${c.id})`).join(', ') || 'NONE'
     }`,
   );
+
+  // #2497 r10 — the keeper's own deployment epochs, before any pass reads its
+  // private state: a chain whose Diamond changed has its keyed-by-chain rows
+  // cleared, as the indexer clears its own. Fail closed — a pass must never act
+  // on another Diamond's rows — so a failure declines the tick.
+  try {
+    await adoptKeeperDeployments(resolved, chains);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[keeper] tick declined: could not reconcile the private state with each chain's Diamond (${String(err)})`);
+    return;
+  }
 
   // ONE loop over the declared table (#1896), rather than ten
   // hand-written blocks. Each pass still gets its own `launch` and
