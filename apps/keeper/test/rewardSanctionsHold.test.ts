@@ -21,6 +21,7 @@ import {
   candidateOwners,
   nextScreenCursor,
   screenSettled,
+  writeBudgetFor,
   planSanctionsHold,
   SCREEN_MAX_PER_TICK,
   SCREEN_MIN_PER_TICK,
@@ -65,6 +66,7 @@ function held(over: Partial<OwnerSanctionsStatus> = {}): OwnerSanctionsStatus {
     lastSeenAt,
     forfeitableAt: NOW - DAY + 3 * DAY,
     observeBy: lastSeenAt + DAY,
+    stored: false,
     ...over,
   };
 }
@@ -92,6 +94,44 @@ describe('planSanctionsHold — urgency order, never address order (#2497 r4)', 
     // A never-observed owner outranks every observed one.
     const fresh = planSanctionsHold([...statuses, held({ owner: own(999), lastSeenAt: 0, flaggedAt: 0, observeBy: 0 })], NOW);
     expect(fresh.observe[0]).toBe(own(999));
+  });
+});
+
+describe('planSanctionsHold — a clean result is committed, not only acted on (#2497 r7)', () => {
+  it('lists a Deliver owner the contract still stores a chain or marker for, and no other', () => {
+    const p = planSanctionsHold(
+      [
+        held({ owner: A, decision: DECISION_DELIVER, stored: true }),
+        held({ owner: B, decision: DECISION_DELIVER, stored: false }),
+      ],
+      NOW,
+    );
+    expect(p.commitClean).toEqual([A]);
+    expect(p.resolveOnly.sort()).toEqual([A, B].sort());
+  });
+
+  it('never commits clean for a held or confirmed owner', () => {
+    const p = planSanctionsHold([held({ owner: A, stored: true }), held({ owner: B, decision: DECISION_CONFIRMED, stored: true })], NOW);
+    expect(p.commitClean).toEqual([]);
+  });
+});
+
+describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#2497 r7)', () => {
+  it('adds one observation per held owner per bound on top of the floor', () => {
+    expect(writeBudgetFor(0)).toEqual({ writes: 25, overCapacity: false });
+    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more').toEqual({ writes: 50, overCapacity: false });
+    expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits a seventh tick').toBe(51);
+  });
+
+  it('caps at the ceiling and says the cap binds (straddle)', () => {
+    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
+    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
+  });
+
+  it('the planner carries the held count and the budget', () => {
+    const p = planSanctionsHold([held({ owner: A }), held({ owner: B, decision: DECISION_DELIVER })], NOW);
+    expect(p.heldCount).toBe(1);
+    expect(p.writes).toBe(26);
   });
 });
 
@@ -241,13 +281,37 @@ describe('raiseAlerts', () => {
       return real(sql);
     };
     const quiet = {
-      observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
+      observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 25, overCapacity: false, heldCount: 2,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
     expect(prepared.filter((s) => s.startsWith('DELETE')), 'one clear: the alert that was open').toHaveLength(1);
     const left = h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[];
     expect(left.map((r) => r.alert_key), "another chain's alert is not this pass's to clear").toEqual([otherChain]);
+  });
+
+  it('raises the capacity alert while the write ceiling binds, and clears it after (#2497 r7)', async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const plan = (over: boolean) => ({
+      observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 120, overCapacity: over, heldCount: 700,
+      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    });
+    const warned: string[] = [];
+    warn.mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    try {
+      await raiseAlerts(env, CHAIN, [], plan(true), NOW);
+      expect(warned.some((w) => /700 held owners need more than 120 transactions a tick/.test(w)), 'stated, not silent').toBe(true);
+      // An unconfigured ops channel records nothing; seed the open alert to see it clear.
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);
+      await raiseAlerts(env, CHAIN, [], plan(false), NOW);
+      expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

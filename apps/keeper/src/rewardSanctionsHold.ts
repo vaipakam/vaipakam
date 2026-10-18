@@ -99,8 +99,30 @@ export const PASS_CADENCE_SEC = 60 * 60;
 const PHASE_RESOLVING = 3;
 /** Status reads per `aggregate3` (the other passes' bound, #1946). */
 const STATUS_CHUNK = 100;
-/** Transactions this pass may send per chain per tick. */
+/** The floor of one tick's transactions per chain: settlement, resolution and
+ *  a small observation load. */
 const MAX_WRITES_PER_TICK = 25;
+/** The hard ceiling of one tick's transactions per chain (#2497 r7). Each send
+ *  waits for its receipt, so this bounds a tick's wall time. Past it, the
+ *  six-hour observation bound cannot be kept, and the pass SAYS so (an ops
+ *  alert) rather than silently letting chains lapse. */
+const WRITE_CEILING_PER_TICK = 120;
+/** Ticks inside one observation bound: each held owner must be observed once
+ *  in this many ticks. */
+const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor(OBSERVE_AFTER_SEC / PASS_CADENCE_SEC));
+
+/**
+ * One tick's write budget, from the demand rather than a fixed count (#2497 r7):
+ * every held or confirmed owner is due an observation once per
+ * {@link OBSERVE_AFTER_SEC}, so a tick needs `ceil(held / ticks-per-bound)`
+ * observations ON TOP of the floor for settlement and resolution. Capped at
+ * {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when that cap is what
+ * binds, i.e. when the bound cannot be kept. Pure; pinned by the tests.
+ */
+export function writeBudgetFor(heldCount: number): { writes: number; overCapacity: boolean } {
+  const need = MAX_WRITES_PER_TICK + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
+  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), overCapacity: need > WRITE_CEILING_PER_TICK };
+}
 /** Settlement calls per owner per tick; each settles what one claim would
  *  (a bounded window of days), and the rest resumes next tick. */
 const MAX_SETTLE_CALLS_PER_OWNER = 4;
@@ -118,6 +140,9 @@ export interface OwnerSanctionsStatus {
   lastSeenAt: number;
   forfeitableAt: number;
   observeBy: number;
+  /** The contract still STORES sanctions state for this owner: an evidence
+   *  chain (its oracle is set) or the confirmed-flag marker. */
+  stored: boolean;
 }
 
 export interface SanctionsHoldPlan {
@@ -132,6 +157,17 @@ export interface SanctionsHoldPlan {
   settle: Address[];
   /** Owners whose Resolving records to resolve without a settlement (Deliver). */
   resolveOnly: Address[];
+  /** Deliver owners the contract still stores a chain or marker for (#2497
+   *  r7): an observation commits the clean result — clears the marker, ends
+   *  the chain and records its window — once the oracle answers clean. Left
+   *  uncommitted, a re-flag inside the gap would read the old chain as
+   *  continuous and forfeit reward earned while the owner was clean. */
+  commitClean: Address[];
+  /** This tick's write budget and whether the cap binds ({@link writeBudgetFor}). */
+  writes: number;
+  overCapacity: boolean;
+  /** Held or confirmed owners this tick, the demand the budget is sized for. */
+  heldCount: number;
   /** Held owners whose chain breaks within one cadence. */
   deadlineAtRisk: OwnerSanctionsStatus[];
   /** Held owners past confirmation by more than the maximum gap. */
@@ -180,6 +216,10 @@ export function planSanctionsHold(
     settleObserveDue: [],
     settle: [],
     resolveOnly: [],
+    commitClean: [],
+    writes: 0,
+    overCapacity: false,
+    heldCount: 0,
     deadlineAtRisk: [],
     overdue: [],
     heldWithoutChain: [],
@@ -191,6 +231,7 @@ export function planSanctionsHold(
       continue;
     }
     if (st.decision === DECISION_DELIVER) {
+      if (st.stored) plan.commitClean.push(st.owner);
       plan.resolveOnly.push(st.owner);
       continue;
     }
@@ -207,6 +248,8 @@ export function planSanctionsHold(
     const gap = st.observeBy !== 0 && st.lastSeenAt !== 0 ? st.observeBy - st.lastSeenAt : 0;
     if (st.forfeitableAt !== 0 && gap > 0 && nowSec > st.forfeitableAt + gap) plan.overdue.push(st);
   }
+  plan.heldCount = statuses.filter((st) => st.decision === DECISION_HOLD || st.decision === DECISION_CONFIRMED).length;
+  ({ writes: plan.writes, overCapacity: plan.overCapacity } = writeBudgetFor(plan.heldCount));
   return plan;
 }
 
@@ -267,10 +310,24 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
 
   const plan = planSanctionsHold(statuses, nowSec);
   const ctx = buildKeeperContext(env, chain, client as never);
-  const budget = { writes: MAX_WRITES_PER_TICK, touched: new Set<string>() };
+  const budget = { writes: plan.writes, touched: new Set<string>() };
   /** Observations this tick never reached because the write budget ran out. */
   const unreached = new Set<string>();
   if (ctx?.wallet.account) {
+    // The clean result first (#2497 r7): until it is committed, a re-flag
+    // inside the gap would continue the old chain. Sent only on the oracle's
+    // own clean answer, so a Deliver that is not an authoritative Clean read
+    // (an outage, a foreign-oracle chain) costs one read and no transaction.
+    for (const owner of plan.commitClean) {
+      if (budget.writes <= 0) {
+        unreached.add(owner);
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await oracleSaysClean(client, diamond, owner))) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+    }
     const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
     for (const owner of plan.observe) {
       if (budget.writes <= 0) {
@@ -383,6 +440,7 @@ async function readStatuses(
         lastSeenAt: Number(t[2]),
         forfeitableAt: Number(t[3]),
         observeBy: Number(t[4]),
+        stored: !/^0x0{40}$/i.test(String(t[5] ?? '0x0000000000000000000000000000000000000000')) || t[6] === true,
       });
     });
   }
@@ -509,6 +567,18 @@ async function runOwnerSettlement(ctx: KeeperContext, budget: { writes: number }
 /** Whether the chain's sanctions oracle answers for `owner` right now — a view
  *  read off chain, so a no-chain held owner is observed only when an
  *  observation can record something. No oracle, or a failing read: false. */
+/** Whether the configured oracle answers that `owner` is NOT sanctioned — the
+ *  authoritative Clean read an observation commits. False on any failure. */
+async function oracleSaysClean(client: PublicClient, diamond: Address, owner: Address): Promise<boolean> {
+  try {
+    const oracle = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
+    if (!oracle || /^0x0{40}$/i.test(oracle)) return false;
+    return (await client.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [owner] })) === false;
+  } catch {
+    return false;
+  }
+}
+
 async function oracleAnswers(client: PublicClient, diamond: Address, owner: Address): Promise<boolean> {
   try {
     const oracle = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getSanctionsOracle' })) as Address;
@@ -669,6 +739,11 @@ export async function raiseAlerts(
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
+  // Capacity, stated (#2497 r7): past the write ceiling the six-hour bound
+  // cannot be kept for every held owner, and chains will lapse.
+  await toggle(`sanctions-capacity:${chainId}:all`, plan.overCapacity, () =>
+    `[chain ${chainId}] reward sanctions hold: ${plan.heldCount} held owners need more than ${WRITE_CEILING_PER_TICK} transactions a tick to observe each within ${OBSERVE_AFTER_SEC / 3600}h — some evidence chains will lapse. Raise the ceiling or the cadence.`,
+  );
   for (const st of statuses) {
     const k = (what: string) => `sanctions-${what}:${chainId}:${st.owner}`;
     // eslint-disable-next-line no-await-in-loop
