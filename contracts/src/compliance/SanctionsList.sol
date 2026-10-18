@@ -43,8 +43,9 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *              accepted again only to finish what its first update declared
  *              outstanding (note 4a): a refresh with no changes, the adder's
  *              next batch of that publication's additions, or the remover
- *              completing its delistings. It may add no more than the
- *              additions still declared outstanding.
+ *              completing its delistings. It may add and delist no more than
+ *              is still declared outstanding, so a completed publication
+ *              cannot be cited for a further change.
  *              A DIFFERENT file on the same date is not accepted, because the
  *              date alone cannot order two files issued on one day, and an
  *              update that changes the list must be orderable;
@@ -89,7 +90,8 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            version, but never unlist anyone. When one OFAC publication
  *            both adds and delists, the adder applies the additions and the
  *            remover then applies the delistings against the SAME
- *            publication, which note 1a accepts because it adds nothing.
+ *            publication, which note 1a accepts because the first update
+ *            declared them outstanding (note 4a).
  *
  *         4a. **A publication may land over several transactions, and how
  *            much of it is still outstanding is stated, not hidden** (Codex
@@ -107,8 +109,8 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            diff; the contract cannot verify them, and an updater that
  *            understates them can hide only a delay it could equally cause by
  *            not submitting. A REPEAT of the recorded publication cannot
- *            declare freely: it may add at most the additions still
- *            outstanding, each count falls only by the changes it actually
+ *            declare freely: it may add and delist at most what is
+ *            still outstanding, each count falls only by the changes it actually
  *            applies, and the declared values must equal the result. So a
  *            no-change refresh leaves both counts as they were, and a batch
  *            cannot add beyond what the publication's first update declared.
@@ -388,12 +390,12 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
 
         uint64 version = current + 1;
         // Read before the update overwrites the recorded publication.
-        // A REPEAT finishes the recorded publication: same file, adding no
-        // more than it declared outstanding. Anything else is a new
+        // A REPEAT finishes the recorded publication: same file, adding and
+        // delisting no more than it declared outstanding (Codex #2543 r11). Anything else is a new
         // publication, even the same file re-applied under an owner
         // authorization, and declares its counts afresh (note 4a).
         bool repeat = publicationDate == sourcePublicationDate && sourceHash_ == sourceHash
-            && toAdd.length <= pendingAdditions;
+            && toAdd.length <= pendingAdditions && toRemove.length <= pendingDelistings;
         _checkPublicationOrder(version, publicationDate, sourceHash_, repeat);
         uint256 nAdd = toAdd.length;
         for (uint256 i; i < nAdd; ++i) {
@@ -429,8 +431,8 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///      so a no-change refresh cannot report a partly applied publication
     ///      as complete (Codex #2543 r8); the declared values must equal that
     ///      result, so a caller cannot believe it set something it did not.
-    ///      A repeat adds at most `pendingAdditions` by definition, so the
-    ///      subtraction cannot underflow.
+    ///      A repeat applies at most the outstanding counts by definition,
+    ///      so neither subtraction can underflow.
     function _setPendingCounts(
         bool repeat,
         uint256 nAdded,
@@ -440,8 +442,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ) private {
         if (repeat) {
             uint32 additions = pendingAdditions - uint32(nAdded);
-            uint32 pendingDel = pendingDelistings;
-            uint32 delistings = nRemoved >= pendingDel ? 0 : pendingDel - uint32(nRemoved);
+            uint32 delistings = pendingDelistings - uint32(nRemoved);
             if (declaredAdditions != additions || declaredDelistings != delistings) {
                 revert PendingCountMismatch(declaredAdditions, additions, declaredDelistings, delistings);
             }
@@ -451,14 +452,14 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     }
 
     /// @dev Accepts a newer publication, or the same publication again
-    ///      (identical date and hash) when it adds no more than its declared
-    ///      outstanding additions; otherwise consumes a matching owner
+    ///      (identical date and hash) when it applies no more than its declared
+    ///      outstanding additions and delistings; otherwise consumes a matching owner
     ///      authorization or reverts. Note 1a on the contract says why.
     ///      Whatever path is taken, a successful update leaves NO pending
     ///      authorization: one it did not use is cleared and evented.
     /// @param repeatWithinDeclared The update repeats the recorded
-    ///                             publication and adds no more than
-    ///                             `pendingAdditions`.
+    ///                             publication and applies no more than
+    ///                             `pendingAdditions` / `pendingDelistings`.
     function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool repeatWithinDeclared) private {
         uint32 recordedDate = sourcePublicationDate;
         bytes32 recordedHash = sourceHash;

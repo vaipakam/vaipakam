@@ -54,6 +54,10 @@
  *     well-formedness check, not a full XML 1.0 validator: character-class and
  *     encoding rules would need a parser dependency, and they are not what a
  *     truncated, spliced or commented file breaks.
+ *   - A schema version other than the one whose paths it reads (the root
+ *     `Version`, today 3), and bytes that are not valid UTF-8 (Codex #2543
+ *     r10, r11): a revised layout or a corrupted byte would otherwise read
+ *     as a smaller list and delist the difference.
  *   - A file in which it finds NO EVM address, no `DateOfIssue`, or no
  *     digital-currency feature types. A parser that silently finds nothing
  *     would emit a diff that delists everyone.
@@ -121,6 +125,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** The root namespace OFAC's SDN Advanced export declares. */
 export const OFAC_SDN_ADVANCED_NAMESPACE =
   'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML';
+/**
+ * The root `Version` of the SDN Advanced schema whose paths {@link SDN_PATHS}
+ * names. Any other version is refused.
+ */
+export const OFAC_SDN_ADVANCED_SCHEMA_VERSION = '3';
 export const OFAC_SDN_ADVANCED_URL =
   'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN_ADVANCED.XML';
 export const DEFAULT_MAX_REMOVE = 10;
@@ -386,15 +395,27 @@ export function decodeSource(bytes) {
  * The contract's publication-order rule, applied before calldata is built:
  * a newer date passes; the same publication (identical date and hash) passes
  * again only to finish what it declared outstanding — adding no more than
- * `pendingAdditions` (a refresh, the adder's next batch, or the remover
- * completing its delistings); anything else is refused unless
+ * `pendingAdditions` and delisting no more than `pendingDelistings` (a
+ * refresh, the adder's next batch, or the remover completing its
+ * delistings); anything else is refused unless
  * `allowRollback`, in which case the owner must authorize it on-chain first.
  */
-export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, additions, pendingAdditions = 0, allowRollback = false }) {
+export function checkPublicationOrder({
+  recordedDate,
+  recordedHash,
+  date,
+  hash,
+  additions,
+  removals = 0,
+  pendingAdditions = 0,
+  pendingDelistings = 0,
+  allowRollback = false,
+}) {
   if (date > recordedDate) return 'newer';
-  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase() && additions <= pendingAdditions) return 'same-publication';
+  const sameFile = date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase();
+  if (sameFile && additions <= pendingAdditions && removals <= pendingDelistings) return 'same-publication';
   if (allowRollback) return 'rollback';
-  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase()) {
+  if (sameFile) {
     throw new Error(`the list already records this exact file (${date}) yet differs from it — investigate before updating`);
   }
   throw new Error(
@@ -465,6 +486,16 @@ export function parseSdnAdvanced(xml) {
         // CONTAINS the OFAC host is not OFAC's document. If OFAC ever
         // changes its namespace the tool refuses loudly instead of guessing.
         throw new Error(`not an OFAC SDN Advanced XML document (root namespace ${JSON.stringify(ns)}, expected ${OFAC_SDN_ADVANCED_NAMESPACE})`);
+      }
+      if (depth === 0 && attrs.get('Version') !== OFAC_SDN_ADVANCED_SCHEMA_VERSION) {
+        // The paths read below are those of this schema version. A revision
+        // may move or redefine part of the record structure while keeping
+        // the namespace and enough old paths to parse, and a partial read
+        // would delist whatever moved (Codex #2543 r11). Refuse rather than
+        // guess; a new version needs the paths re-checked first.
+        throw new Error(
+          `unsupported OFAC SDN Advanced schema version ${JSON.stringify(attrs.get('Version') ?? null)} (this tool reads version ${OFAC_SDN_ADVANCED_SCHEMA_VERSION})`,
+        );
       }
       if (foreignDepth > 0 || ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
         if (reading) throw new Error(`unexpected foreign-namespace <${name}> inside <${reading}>`);
@@ -710,7 +741,9 @@ export function buildUpdate({
     date: parsed.publicationDate,
     hash,
     additions: add.length,
+    removals: remove.length,
     pendingAdditions: pendingAdd,
+    pendingDelistings: pendingDel,
     allowRollback,
   });
   if (remove.length > maxRemove) {
@@ -755,7 +788,7 @@ export function buildUpdate({
     } while (i < add.length);
   }
   if (remove.length > 0) {
-    delsLeft = Math.max(0, delsLeft - remove.length);
+    delsLeft -= remove.length;
     push('remover', [], remove, addsLeft, delsLeft);
   }
   return {

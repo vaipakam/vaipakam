@@ -713,6 +713,27 @@ contract SanctionsListTest is Test {
         assertEq(list.pendingDelistings(), 0);
     }
 
+    /// @notice A completed publication cannot be cited for a further
+    ///         delisting: a repeat may delist only what its first update
+    ///         declared outstanding (Codex #2543 r11).
+    function test_Batches_ARepeatCannotDelistBeyondTheDeclared() public {
+        _update(_arr(a, b, c), _none(), H1, 20261015);
+        vm.prank(bot);
+        list.applyUpdate(1, _none(), _none(), H2, 20261016, 0, 1);
+        vm.prank(safe);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261016), H2, uint32(20261016), H2)
+        );
+        list.applyUpdate(2, _none(), _arr(a, b), H2, 20261016, 0, 0);
+        vm.prank(safe);
+        list.applyUpdate(2, _none(), _arr(a), H2, 20261016, 0, 0);
+        vm.prank(safe);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261016), H2, uint32(20261016), H2)
+        );
+        list.applyUpdate(3, _none(), _arr(b), H2, 20261016, 0, 0);
+    }
+
     /// @notice The same file re-applied under an owner authorization is a new
     ///         publication: it declares its counts afresh instead of being
     ///         held to the old ones.

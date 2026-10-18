@@ -406,3 +406,29 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
     /pendingAdditions and pendingDelistings are required/,
   );
 });
+
+// ---- Codex #2543 r11: only the schema version whose paths the tool reads ----
+test('parseSdnAdvanced: an unsupported or missing schema Version is refused', () => {
+  const xml = FIXTURE.toString('utf8');
+  assert.ok(parseSdnAdvanced(xml).addresses.length > 0);
+  assert.throws(() => parseSdnAdvanced(xml.replace(' Version="3"', ' Version="4"')), /unsupported OFAC SDN Advanced schema version "4"/);
+  assert.throws(() => parseSdnAdvanced(xml.replace(' Version="3"', '')), /unsupported OFAC SDN Advanced schema version null/);
+});
+
+// ---- Codex #2543 r11: a repeat may delist only what was declared outstanding ----
+test('buildUpdate: a completed publication cannot be cited for further delistings', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const done = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0, recordedPendingDelistings: 0 };
+  assert.throws(
+    () => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...done }),
+    /already records this exact file/,
+  );
+  const one = { ...done, recordedPendingDelistings: 1 };
+  assert.throws(
+    () => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C, D], currentVersion: 4, ...one }),
+    /already records this exact file/,
+  );
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...one });
+  assert.deepEqual([u.calls.length, u.calls[0].signer, u.calls[0].delistingsLeft], [1, 'remover', 0]);
+});
