@@ -9,6 +9,12 @@ solver routing), and then setting each perk's price as the last step of
 shipping it. Prices are an arming action, and a non-zero one is only safe once
 that perk's effect is deployed and verified — the deploy default of zero means
 "not for sale". Referral is deferred for Phase 1. Card: #1204.
+
+> **Priority solver routing — effect decided 2026-10-18 (#2550):** a priority fill
+> spends the intent owner's perk credit instead of the solver's service capacity
+> (one credit = one fill). Nobody is reordered and nobody pays more, which keeps the
+> "change what its buyer gets, never what others see" rule. Mechanism:
+> [`VpfiPriorityRoutingPerkDesign.md`](VpfiPriorityRoutingPerkDesign.md).
 Umbrella: #1221. Legal frame: #694.
 
 ## Objective
