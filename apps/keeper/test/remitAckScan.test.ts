@@ -81,6 +81,7 @@ const SEL = {
   nonce: toFunctionSelector(F.nonce).toLowerCase(),
   reservation: toFunctionSelector(F.reservation).toLowerCase(),
   agg: toFunctionSelector(AGGREGATE3).toLowerCase(),
+  gate: toFunctionSelector('function getCompensationOutstanding(uint32) view returns (uint256)').toLowerCase(),
 };
 
 const CHAIN_ID = 84532;
@@ -137,6 +138,8 @@ function install(failId?: number): { seen: Seen; restore: () => void } {
       ]);
     }
     if (sel === SEL.nonce) return enc(F.nonce, BigInt(NONCE));
+    // #2571 r2 — no destination's compensation gate is held in this ledger.
+    if (sel === SEL.gate) return `0x${'0'.repeat(64)}`;
     if (sel === SEL.reservation) {
       const { args } = decodeFunctionData({
         abi: [F.reservation] as Abi,

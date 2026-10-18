@@ -240,3 +240,14 @@ describe('an acknowledgement stamp ends the late path, stamped history or not (#
   });
 });
 
+describe('a released COMPENSATION remit stays a late-ack candidate while it holds its destination gate (#2571 r2)', () => {
+  it('fresh-only (stranded 0, stamped) but holding the gate: a candidate, not done — until acked', () => {
+    const v = { status: 3, strandedRecycled: 0n, strandedStamped: true };
+    expect(isLateDeliveryCandidate(v, true)).toBe(true);
+    expect(lateAckDone(v, true)).toBe(false);
+    expect(lateAckDone(v, false), 'no gate held: done, as before').toBe(true);
+    expect(lateAckDone({ ...v, consumedAcked: true }, true), 'acked: done even with the gate').toBe(true);
+    expect(isLateDeliveryCandidate({ ...v, consumedAcked: true }, true)).toBe(false);
+  });
+});
+

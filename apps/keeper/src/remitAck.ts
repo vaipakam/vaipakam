@@ -447,9 +447,28 @@ async function ackLateDeliveries(
   // Retired before any send, so a failed send cannot lose them. Only a release
   // actually READ rotates to the back; an unread one keeps its place and is
   // read first next run.
+  // Which reservation holds each destination's COMPENSATION gate (#2571 r2):
+  // a released compensation remit carries no stranded recycled share, yet its
+  // late ack is what clears that gate on Base. One read per destination, not
+  // per id; an unread gate counts as held (never retire on an unread value).
+  const dsts = [...new Set(res.flatMap((r) => (r?.status === 'success' ? [Number((r.result as RemitReservationView).dstChainId)] : [])))];
+  const gates = await boundedRead(
+    publicClient as never,
+    dsts.map((d) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getCompensationOutstanding' as const, args: [d] as const })),
+    'remitAck compensation gates',
+    ackBudget.deadline,
+  );
+  const gateOf = new Map(dsts.map((d, i) => [d, gates[i]?.status === 'success' ? BigInt(gates[i].result as bigint) : null]));
+  /** `unreadIsHeld`: for RETIREMENT an unread gate counts as held (never
+   *  retire on an unread value); for SENDING only a positive read does (never
+   *  pay for an ack on an unread value). */
+  const holdsGate = (id: number, v: RemitReservationView, unreadIsHeld: boolean): boolean => {
+    const g = gateOf.get(Number(v.dstChainId));
+    return g === null || g === undefined ? unreadIsHeld : g === BigInt(id);
+  };
   const finished = ids.filter((id, i) => {
     const r = res[i];
-    return r?.status === 'success' && lateAckDone(r.result as RemitReservationView);
+    return r?.status === 'success' && lateAckDone(r.result as RemitReservationView, holdsGate(id, r.result as RemitReservationView, true));
   });
   const fin = new Set(finished);
   await finishWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, finished.map(String));
@@ -472,7 +491,7 @@ async function ackLateDeliveries(
     const r = res[i];
     if (!r || r.status !== 'success') continue;
     const v = r.result as RemitReservationView;
-    if (!isLateDeliveryCandidate(v)) continue;
+    if (!isLateDeliveryCandidate(v, holdsGate(id, v, false))) continue;
     const prior = attempts.get(ids[i]);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
     const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), ids[i], 'late');
@@ -507,19 +526,25 @@ export function lateAckUseful(classification: number | bigint): boolean {
  *  its stranded share resolved, or its classification stamped. Neither undoes
  *  itself on a released reservation, so the pass never needs to read it again.
  *  Any other status is not taken as finished: read again next tick. */
-export function lateAckDone(v: {
-  status: number | bigint;
-  strandedRecycled?: bigint;
-  consumedAcked?: boolean;
-  quarantineAcked?: boolean;
-  strandedStamped?: boolean;
-}): boolean {
+export function lateAckDone(
+  v: {
+    status: number | bigint;
+    strandedRecycled?: bigint;
+    consumedAcked?: boolean;
+    quarantineAcked?: boolean;
+    strandedStamped?: boolean;
+  },
+  /** This reservation still holds its destination's compensation gate
+   *  (#2571 r2), whose clearing is the late ack's work too. */
+  holdsCompensationGate = false,
+): boolean {
   if (Number(v.status) !== 3) return false;
   // An acknowledgement stamp is positive evidence the ack did its work
   // (#2571 r1) — whether or not the stranded-share history was stamped, which a
   // QUARANTINED delivery never triggers (Base's settle returns before the
   // history stamp when the consumption is not trusted).
   if (v.consumedAcked === true || v.quarantineAcked === true) return true;
+  if (holdsCompensationGate) return false;
   return v.strandedStamped === true && (v.strandedRecycled ?? 0n) === 0n;
 }
 
@@ -529,18 +554,25 @@ export function lateAckDone(v: {
  *  by default, which is not the same as "nothing stranded". It stays a
  *  candidate, so the acknowledgement can perform that stamp, and it is never
  *  entered into the permanent done set on a default-decoded field. */
-export function isLateDeliveryCandidate(v: {
-  status: number | bigint;
-  strandedRecycled?: bigint;
-  consumedAcked?: boolean;
-  quarantineAcked?: boolean;
-  strandedStamped?: boolean;
-}): boolean {
+export function isLateDeliveryCandidate(
+  v: {
+    status: number | bigint;
+    strandedRecycled?: bigint;
+    consumedAcked?: boolean;
+    quarantineAcked?: boolean;
+    strandedStamped?: boolean;
+  },
+  /** See {@link lateAckDone}: a held compensation gate is work for the ack. */
+  holdsCompensationGate = false,
+): boolean {
   if (Number(v.status) !== 3) return false;
   // Acked already (consumed OR quarantined): nothing an ack can change, even
   // with the history unstamped — re-sending would pay the CCIP fee every
   // backoff window forever (#2571 r1).
   if (v.consumedAcked === true || v.quarantineAcked === true) return false;
+  // A released COMPENSATION remit is fresh-only, so its stranded share is 0 —
+  // but the ack still clears the gate it holds (#2571 r2).
+  if (holdsCompensationGate) return true;
   if (v.strandedStamped !== true) return true;
   return (v.strandedRecycled ?? 0n) > 0n;
 }
