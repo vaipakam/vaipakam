@@ -8111,6 +8111,17 @@ library LibVaipakam {
         ///      the FallbackPending clause of `LibTierExclusion`.
         ///      Appended — the Storage struct is append-only.
         mapping(uint256 => uint256) fallbackVaultCustody;
+        /// @dev #1219 (Codex #2556 r3/r5) — per capacity deposit record
+        ///      (`role → operator → rotation epoch`), the FRACTIONAL arming fee
+        ///      still owed, in 1e18ths of one token unit (always < 1e18). Each post
+        ///      pays `floor((granted × rate + carry) / 1e18)` and carries the
+        ///      remainder, so over a record's life the fees total exactly
+        ///      `floor(rate × total principal armed)` however the posts are split
+        ///      (no split arms anything fee-free), and no sub-unit gap is ever
+        ///      stranded unarmed. See `LibServiceCapacity.armingFeeAndCarry`.
+        ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
+        ///      that struct's getter ABI is unchanged. Appended — append-only.
+        mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeeCarry;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

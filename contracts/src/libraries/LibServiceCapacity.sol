@@ -485,9 +485,11 @@ library LibServiceCapacity {
     ///         itself — principal deposited above the old knee stays unarmed until a
     ///         post arms it and pays for it). A post arms up to the live knee:
     ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
-    ///         `granted` is what that newly arms; `fee = floor(granted × rate /
-    ///         1e18)` ({armingFee}: never above the rate on any post, every grant
-    ///         arms); `ceilingAfter` is
+    ///         `granted` is what that newly arms; `fee = floor((granted × rate +
+    ///         carry) / 1e18)` with the remainder carried to the record's next post
+    ///         ({armingFeeAndCarry}: the record's lifetime total is exactly
+    ///         `floor(rate × everything armed)`, however the posts are split, and
+    ///         each post pays its own share rounded down or up); `ceilingAfter` is
     ///         the capacity the armed balance buys. A zero-principal post therefore
     ///         arms already-deposited excess. `dark` (no positive rate, or the role's
     ///         curve unset) ⇒ zeros.
@@ -505,26 +507,44 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        fee = armingFee(granted, rate);
+        (fee, ) = armingFeeAndCarry(s, role, operator, s.vpfiRotationEpoch, granted, rate);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 
-    /// @notice The fee a post owes for `granted` newly armed principal at `rate` —
-    ///         the ONE computation the quote and the post share. ROUNDED DOWN, and
-    ///         every grant arms (Codex #2556 r2–r4, the third rounding finding, so
-    ///         restructured to the simplest rule that satisfies all three):
-    ///         - a post never pays more than `rate × what it arms` (r2: round-up
-    ///           over-charged dust; r4: a carried fraction over-charged a later post);
-    ///         - no sub-unit gap is ever stranded unarmed (r3: suppressing zero-fee
-    ///           grants left the last sliver below the knee unarmable);
-    ///         - independent of the token's decimals.
-    ///         The price of that simplicity, stated rather than hidden: a post may
-    ///         leave UNDER ONE smallest unit of fee unpaid (at most `1/rate − 1`
-    ///         units of principal arm for nothing per post) — under one wei of VPFI,
-    ///         far below the gas of any post. The product cannot overflow:
-    ///         `granted` ≤ `bondAt4x` ≤ 2^128 and `rate` ≤ 1e17 < 2^57.
-    function armingFee(uint256 granted, uint256 rate) internal pure returns (uint256) {
-        return granted * rate / 1e18;
+    /// @notice The fee a post owes for `granted` newly armed principal at `rate`,
+    ///         and the fraction it leaves owed — the ONE computation the quote and
+    ///         the post share. Every grant arms; the fee is the whole units of
+    ///         `granted × rate + carry`, rounded DOWN, and the remainder (always
+    ///         under one unit) is carried on the deposit record to its next post.
+    /// @dev    THE BOUND IS CUMULATIVE, BY DESIGN (Codex #2556 r2–r5). Two rules
+    ///         cannot both hold per post once the token's smallest unit is coarse:
+    ///         "no post pays above `rate × what it arms`" forces a 1-unit post at
+    ///         10% to pay 0, and then splitting a deposit into small posts arms
+    ///         any principal fee-free (r5: a 0-decimal token, eleven 9-unit posts
+    ///         and a 1-unit post arm 100 units for nothing). So the guarantee is
+    ///         stated over the deposit record, where it is exact:
+    ///         - over a record's life the fees paid total EXACTLY
+    ///           `floor(rate × total principal armed)` (at one rate; across a
+    ///           rate change, the sum of each post's exact share, floored), so
+    ///           splitting saves nothing and nothing is ever paid above the rate;
+    ///         - each post pays its own exact share rounded DOWN or UP — never more
+    ///           than one smallest unit above `rate × what it arms`, because the
+    ///           carry is always under one unit (r4: on an 18-decimal VPFI that is
+    ///           one wei; on a coarse token it is the token's own granularity);
+    ///         - no sub-unit gap is ever stranded unarmed (r3).
+    ///         The product cannot overflow: `granted` ≤ `bondAt4x` ≤ 2^128,
+    ///         `rate` ≤ 1e17 < 2^57, carry < 1e18.
+    function armingFeeAndCarry(
+        LibVaipakam.Storage storage s,
+        uint8 role,
+        address operator,
+        uint64 epoch,
+        uint256 granted,
+        uint256 rate
+    ) internal view returns (uint256 fee, uint256 carryAfter) {
+        uint256 owed = granted * rate + s.armingFeeCarry[role][operator][epoch];
+        fee = owed / 1e18;
+        carryAfter = owed % 1e18;
     }
 
     /// @notice The post's own checks, in the post's order, without moving anything
@@ -748,6 +768,12 @@ library LibServiceCapacity {
         if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = eligibleAfter;
+        // #1219 (Codex #2556 r3) — the fraction this post leaves owed, through the
+        // SAME computation the quote charged (same transaction, same state).
+        {
+            (, uint256 carryAfter) = armingFeeAndCarry(s, role, operator, epoch, granted, armingFeeRateInForce(s));
+            s.armingFeeCarry[role][operator][epoch] = carryAfter;
+        }
         s.serviceDepositEscrowByEpoch[epoch] += amount;
         if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
         else if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
