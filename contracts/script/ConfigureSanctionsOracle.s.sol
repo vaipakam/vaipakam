@@ -28,8 +28,9 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  *           a list that no longer grows as live screening. The mainnet source
  *           is now decided (#2443, 2026-10-17): Vaipakam's own `SanctionsList`,
  *           OR-composed with RedStone's Sanctions Oracle where deployed.
- *           Configuring it still waits on the open question of who runs and
- *           signs that list's updater — a mainnet pointed at a list nobody
+ *           The signers are decided (2026-10-18: an automated adder lists,
+ *           the multisig alone delists); configuring it still waits on where
+ *           the adder runs — a mainnet pointed at a list nobody
  *           keeps current would be the frozen list again under a new address
  *           — so this script still refuses every mainnet, and it never
  *           configures Chainalysis's oracle.
@@ -59,7 +60,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         // A mainnet is refused before anything else is read or collected.
         require(
             TestnetChains.isTestnet(block.chainid),
-            "ConfigureSanctionsOracle: mainnet refused - the SanctionsList updater (host and signer) is undecided (#2443); Chainalysis's retired oracle is never configured"
+            "ConfigureSanctionsOracle: mainnet refused - the SanctionsList adder host is undecided (#2443); Chainalysis's retired oracle is never configured"
         );
         // Resolved next: on a live broadcast carrying `DEPLOY_SKIP_ARTIFACTS`
         // it reverts here, before any transaction is collected.

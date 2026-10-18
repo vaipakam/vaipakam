@@ -18,7 +18,8 @@ import {MockTimestampedSanctionsOracle, MockSilentFallbackOracle} from "../mocks
  */
 contract SanctionsListTest is Test {
     address internal admin = makeAddr("admin");
-    address internal updater = makeAddr("updater");
+    address internal safe = makeAddr("safe"); // remover
+    address internal bot = makeAddr("bot"); // adder
     address internal stranger = makeAddr("stranger");
     address internal a = makeAddr("a");
     address internal b = makeAddr("b");
@@ -30,7 +31,8 @@ contract SanctionsListTest is Test {
     MockTimestampedSanctionsOracle internal redstone;
     SanctionsList internal list;
 
-    event UpdaterSet(address indexed account, bool enabled);
+    event AdderSet(address indexed account, bool enabled);
+    event RemoverSet(address indexed account, bool enabled);
     event AddressListed(address indexed who, uint64 indexed version);
     event AddressDelisted(address indexed who, uint64 indexed version);
     event ListUpdated(
@@ -40,7 +42,7 @@ contract SanctionsListTest is Test {
         uint256 added,
         uint256 removed,
         uint256 listedCount,
-        address indexed updater
+        address indexed safe
     );
 
     function setUp() public {
@@ -49,8 +51,10 @@ contract SanctionsListTest is Test {
         vm.chainId(1);
         redstone = new MockTimestampedSanctionsOracle();
         list = new SanctionsList(admin, address(redstone));
-        vm.prank(admin);
-        list.setUpdater(updater, true);
+        vm.startPrank(admin);
+        list.setRemover(safe, true);
+        list.setAdder(bot, true);
+        vm.stopPrank();
     }
 
     // ── helpers ───────────────────────────────────────────────────────
@@ -72,7 +76,7 @@ contract SanctionsListTest is Test {
 
     function _update(address[] memory add, address[] memory remove, bytes32 h, uint32 pub) internal {
         uint64 v = list.listVersion();
-        vm.prank(updater);
+        vm.prank(safe);
         list.applyUpdate(v, add, remove, h, pub);
     }
 
@@ -108,30 +112,91 @@ contract SanctionsListTest is Test {
 
     // ── Roles ─────────────────────────────────────────────────────────
 
-    function test_SetUpdater_IsOwnerOnly() public {
-        vm.prank(stranger);
+    function test_SetRoles_AreOwnerOnly() public {
+        vm.startPrank(stranger);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
-        list.setUpdater(stranger, true);
+        list.setAdder(stranger, true);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        list.setRemover(stranger, true);
+        vm.stopPrank();
     }
 
-    function test_SetUpdater_EmitsAndToggles() public {
+    function test_SetRoles_EmitAndToggle() public {
+        vm.startPrank(admin);
         vm.expectEmit(true, false, false, true, address(list));
-        emit UpdaterSet(stranger, true);
-        vm.prank(admin);
-        list.setUpdater(stranger, true);
-        assertTrue(list.isUpdater(stranger));
-        vm.prank(admin);
-        list.setUpdater(stranger, false);
-        assertFalse(list.isUpdater(stranger));
+        emit AdderSet(stranger, true);
+        list.setAdder(stranger, true);
+        assertTrue(list.isAdder(stranger));
+        assertFalse(list.isRemover(stranger), "adder and remover are separate rights");
+        vm.expectEmit(true, false, false, true, address(list));
+        emit RemoverSet(stranger, true);
+        list.setRemover(stranger, true);
+        assertTrue(list.isRemover(stranger));
+        list.setAdder(stranger, false);
+        list.setRemover(stranger, false);
+        vm.stopPrank();
+        assertFalse(list.isAdder(stranger));
+        assertFalse(list.isRemover(stranger));
     }
 
-    function test_SetUpdater_RefusesZero() public {
-        vm.prank(admin);
+    function test_SetRoles_RefuseZero() public {
+        vm.startPrank(admin);
         vm.expectRevert(SanctionsList.ZeroAddress.selector);
-        list.setUpdater(address(0), true);
+        list.setAdder(address(0), true);
+        vm.expectRevert(SanctionsList.ZeroAddress.selector);
+        list.setRemover(address(0), true);
+        vm.stopPrank();
     }
 
-    /// @notice The owner decides who updates, but is not itself an updater.
+    /// @notice The adder lists addresses and records refreshes, but can never
+    ///         delist — not even one address alongside additions (#2443,
+    ///         owner decision 2026-10-18).
+    function test_Adder_ListsButCannotDelist() public {
+        vm.prank(bot);
+        list.applyUpdate(0, _arr(a, b), _none(), H1, 20261015);
+        assertTrue(list.listedByOwnList(a));
+        vm.prank(bot);
+        list.applyUpdate(1, _none(), _none(), H1, 20261015); // a refresh
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotRemover.selector, bot));
+        list.applyUpdate(2, _arr(c), _arr(a), H2, 20261016);
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotRemover.selector, bot));
+        list.applyUpdate(2, _none(), _arr(a), H2, 20261016);
+        assertTrue(list.listedByOwnList(a));
+    }
+
+    /// @notice One publication that both adds and delists: the adder applies
+    ///         the additions, then the remover applies the delistings against
+    ///         the SAME publication. Repeating a publication with additions
+    ///         stays refused.
+    function test_SplitPublication_AdderAddsThenRemoverDelists() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(bot);
+        list.applyUpdate(1, _arr(b), _none(), H2, 20261016);
+        vm.expectEmit(true, true, false, true, address(list));
+        emit ListUpdated(3, H2, 20261016, 0, 1, 1, safe);
+        vm.prank(safe);
+        list.applyUpdate(2, _none(), _arr(a), H2, 20261016);
+        assertFalse(list.listedByOwnList(a));
+        assertTrue(list.listedByOwnList(b));
+        vm.prank(safe);
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261016), H2, uint32(20261016), H2)
+        );
+        list.applyUpdate(3, _arr(c), _none(), H2, 20261016);
+    }
+
+    /// @notice A remover may apply a whole update, additions included.
+    function test_Remover_AppliesAWholeUpdate() public {
+        _update(_arr(a), _none(), H1, 20261015);
+        vm.prank(safe);
+        list.applyUpdate(1, _arr(b), _arr(a), H2, 20261016);
+        assertFalse(list.listedByOwnList(a));
+        assertTrue(list.listedByOwnList(b));
+    }
+
+    /// @notice The owner decides who updates, but is not itself an safe.
     function test_ApplyUpdate_RefusesTheOwnerUnlessAppointed() public {
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, admin));
@@ -144,11 +209,11 @@ contract SanctionsListTest is Test {
         list.applyUpdate(0, _arr(a), _none(), H1, 20261015);
     }
 
-    function test_ApplyUpdate_RefusesARemovedUpdater() public {
+    function test_ApplyUpdate_RefusesARemovedRemover() public {
         vm.prank(admin);
-        list.setUpdater(updater, false);
-        vm.prank(updater);
-        vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, updater));
+        list.setRemover(safe, false);
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotUpdater.selector, safe));
         list.applyUpdate(0, _arr(a), _none(), H1, 20261015);
     }
 
@@ -177,7 +242,7 @@ contract SanctionsListTest is Test {
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressListed(b, 1);
         vm.expectEmit(true, true, true, true, address(list));
-        emit ListUpdated(1, H1, 20261015, 2, 0, 2, updater);
+        emit ListUpdated(1, H1, 20261015, 2, 0, 2, safe);
         _update(_arr(a, b), _none(), H1, 20261015);
 
         assertEq(list.listVersion(), 1);
@@ -198,7 +263,7 @@ contract SanctionsListTest is Test {
         vm.expectEmit(true, true, false, true, address(list));
         emit AddressDelisted(a, 2);
         vm.expectEmit(true, true, true, true, address(list));
-        emit ListUpdated(2, H2, 20261016, 1, 1, 2, updater);
+        emit ListUpdated(2, H2, 20261016, 1, 1, 2, safe);
         _update(_arr(c), _arr(a), H2, 20261016);
 
         assertFalse(list.isSanctioned(a));
@@ -223,38 +288,38 @@ contract SanctionsListTest is Test {
 
     function test_ApplyUpdate_RefusesAStaleVersion() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.StaleListVersion.selector, 0, 1));
         list.applyUpdate(0, _arr(b), _none(), H2, 20261016);
     }
 
     function test_ApplyUpdate_RefusesAddingAListedAddress() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AlreadyListed.selector, a));
         list.applyUpdate(1, _arr(a), _none(), H2, 20261016);
     }
 
     function test_ApplyUpdate_RefusesADuplicateAddition() public {
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AlreadyListed.selector, a));
         list.applyUpdate(0, _arr(a, a), _none(), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesRemovingAnUnlistedAddress() public {
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotListed.selector, a));
         list.applyUpdate(0, _none(), _arr(a), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesAddAndRemoveOfTheSameAddress() public {
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.AddedAndRemovedInOneUpdate.selector, a));
         list.applyUpdate(0, _arr(a), _arr(a), H1, 20261015);
     }
 
     function test_ApplyUpdate_RefusesTheZeroAddress() public {
-        vm.startPrank(updater);
+        vm.startPrank(safe);
         vm.expectRevert(SanctionsList.ZeroAddress.selector);
         list.applyUpdate(0, _arr(address(0)), _none(), H1, 20261015);
         vm.expectRevert(SanctionsList.ZeroAddress.selector);
@@ -263,7 +328,7 @@ contract SanctionsListTest is Test {
     }
 
     function test_ApplyUpdate_RequiresProvenance() public {
-        vm.startPrank(updater);
+        vm.startPrank(safe);
         vm.expectRevert(SanctionsList.MissingSourceHash.selector);
         list.applyUpdate(0, _arr(a), _none(), bytes32(0), 20261015);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, uint32(0)));
@@ -275,7 +340,7 @@ contract SanctionsListTest is Test {
     ///         version bump, no provenance overwrite.
     function test_ApplyUpdate_IsAllOrNothing() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(abi.encodeWithSelector(SanctionsList.NotListed.selector, c));
         list.applyUpdate(1, _arr(b), _arr(c), H2, 20261016);
         assertFalse(list.listedByOwnList(b));
@@ -298,7 +363,7 @@ contract SanctionsListTest is Test {
     ///         diff that applies cleanly to the current state.
     function test_Order_RefusesAnOlderPublication() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H0, uint32(20261015), H1)
         );
@@ -318,7 +383,7 @@ contract SanctionsListTest is Test {
     /// @notice The same file cannot carry changes a second time.
     function test_Order_SameDateSameHashWithChangesIsRefused() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261015), H1, uint32(20261015), H1)
         );
@@ -329,7 +394,7 @@ contract SanctionsListTest is Test {
     ///         date alone, so it needs the owner's sign-off.
     function test_Order_SameDateDifferentHashIsRefused() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261015), H1B, uint32(20261015), H1)
         );
@@ -347,7 +412,7 @@ contract SanctionsListTest is Test {
         assertEq(list.rollbackAuthorizedDate(), 20261014);
 
         // A different hash on the authorized date is still refused.
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H1B, uint32(20261015), H1)
         );
@@ -355,7 +420,7 @@ contract SanctionsListTest is Test {
 
         vm.expectEmit(true, false, false, true, address(list));
         emit PublicationRollbackApplied(2, 20261015, H1, 20261014, H0);
-        vm.prank(updater);
+        vm.prank(safe);
         list.applyUpdate(1, _none(), _arr(a), H0, 20261014);
         assertFalse(list.listedByOwnList(a));
         assertEq(list.sourcePublicationDate(), 20261014);
@@ -363,7 +428,7 @@ contract SanctionsListTest is Test {
         assertEq(list.rollbackAuthorizedHash(), bytes32(0));
 
         // Consumed: a further older file is refused again.
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261013), H0, uint32(20261014), H0)
         );
@@ -372,8 +437,8 @@ contract SanctionsListTest is Test {
 
     function test_Order_AuthorizationIsOwnerOnlyAndClearable() public {
         _update(_arr(a), _none(), H1, 20261015);
-        vm.prank(updater);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, updater));
+        vm.prank(safe);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, safe));
         list.authorizePublicationRollback(1, 20261014, H0);
         vm.startPrank(admin);
         list.authorizePublicationRollback(1, 20261014, H0);
@@ -418,7 +483,7 @@ contract SanctionsListTest is Test {
         _update(_arr(b), _none(), H2, 20261016);
         assertEq(list.rollbackAuthorizedDate(), 0);
         assertEq(list.rollbackAuthorizedHash(), bytes32(0));
-        vm.prank(updater);
+        vm.prank(safe);
         vm.expectRevert(
             abi.encodeWithSelector(SanctionsList.PublicationNotNewer.selector, uint32(20261014), H0, uint32(20261016), H2)
         );
@@ -457,7 +522,7 @@ contract SanctionsListTest is Test {
     function test_Order_RefusesMalformedDates() public {
         uint32[6] memory bad = [uint32(261015), 1760000000, 20261301, 20260015, 20261032, 20261000];
         for (uint256 i; i < bad.length; ++i) {
-            vm.prank(updater);
+            vm.prank(safe);
             vm.expectRevert(abi.encodeWithSelector(SanctionsList.InvalidPublicationDate.selector, bad[i]));
             list.applyUpdate(0, _arr(a), _none(), H1, bad[i]);
         }
@@ -513,9 +578,9 @@ contract SanctionsListTest is Test {
     function test_NoSecondary_TheOwnRecordIsTheWholeList() public {
         SanctionsList solo = new SanctionsList(admin, address(0));
         vm.prank(admin);
-        solo.setUpdater(updater, true);
+        solo.setRemover(safe, true);
         assertFalse(solo.isSanctioned(a));
-        vm.prank(updater);
+        vm.prank(safe);
         solo.applyUpdate(0, _arr(a), _none(), H1, 20261015);
         assertTrue(solo.isSanctioned(a));
         (bool own, bool sec) = solo.sanctionSource(a);

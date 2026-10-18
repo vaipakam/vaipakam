@@ -39,10 +39,13 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            state, so it applies cleanly. The ordering is therefore enforced
  *            here, not only in the tool:
  *            - a publication date later than the recorded one is accepted;
- *            - the SAME date is accepted only as a refresh — identical source
- *              hash and no changes — because the date alone cannot order two
- *              different files issued on one day, and an update that changes
- *              the list must be orderable;
+ *            - the SAME publication (identical date AND source hash) is
+ *              accepted again only when it adds nothing: a refresh with no
+ *              changes, or the remover completing that publication's
+ *              delistings after an adder applied its additions (note 4).
+ *              A DIFFERENT file on the same date is not accepted, because the
+ *              date alone cannot order two files issued on one day, and an
+ *              update that changes the list must be orderable;
  *            - anything else (an earlier date, or a different file on the
  *              same date) needs a one-shot owner authorization naming that
  *              exact date and hash, granted against the list version the
@@ -69,10 +72,22 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *            diff therefore fails loudly instead of leaving a list that
  *            matches no OFAC publication.
  *
- *         4. **Roles are split.** The owner (the chain's admin, two-step
- *            transfer, renouncing disabled) decides WHO may update; updaters
- *            change the list's CONTENT and nothing else. The owner is not an
- *            updater unless it appoints itself.
+ *         4. **Roles are split, and removing is the stronger right** (owner
+ *            decision 2026-10-18, #2443). The owner (the chain's admin,
+ *            two-step transfer, renouncing disabled) decides WHO may update
+ *            and does not update the list unless it appoints itself.
+ *            - An ADDER (the automated updater) may apply updates that only
+ *              list addresses, or change nothing. It cannot delist.
+ *            - A REMOVER (the multisig) may apply any update, including
+ *              delistings.
+ *            Delisting lets a sanctioned wallet back in, so it takes the
+ *            multisig's signature; listing errs toward safety and can be
+ *            automated. A compromised adder can therefore list wrongly
+ *            (reversible by the remover) or delay an update by spending the
+ *            version, but never unlist anyone. When one OFAC publication
+ *            both adds and delists, the adder applies the additions and the
+ *            remover then applies the delistings against the SAME
+ *            publication, which note 1a accepts because it adds nothing.
  *
  *         5. **Attribution.** `sanctionSource` says which source flags an
  *            address, so a surface that tells a flagged user whom to contact
@@ -90,7 +105,7 @@ import {ComposedSanctionsList} from "./ComposedSanctionsList.sol";
  *         currency label is the same key on every EVM chain. EU, UK and UN
  *         lists are not in it; on a chain where RedStone's oracle is
  *         configured as the secondary, that oracle's own coverage applies on
- *         top. A designation reaches the record only when an updater applies
+ *         top. A designation reaches the record only when an adder applies
  *         it, which is why the freshness views exist.
  */
 contract SanctionsList is ComposedSanctionsList, Ownable2Step {
@@ -103,8 +118,13 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         not listed. Versions start at 1.
     mapping(address who => uint64 version) public listedSinceVersion;
 
-    /// @notice Addresses allowed to apply updates.
-    mapping(address account => bool enabled) public isUpdater;
+    /// @notice Addresses allowed to apply updates that list addresses or
+    ///         change nothing, but never delist (note 4).
+    mapping(address account => bool enabled) public isAdder;
+
+    /// @notice Addresses allowed to apply any update, delistings included
+    ///         (note 4). The multisig.
+    mapping(address account => bool enabled) public isRemover;
 
     /// @notice The number of updates applied so far; 0 before the first.
     uint64 public listVersion;
@@ -128,9 +148,12 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @notice The source hash that pending authorization names.
     bytes32 public rollbackAuthorizedHash;
 
-    /// @notice An updater was appointed or removed.
+    /// @notice An adder was appointed or removed.
     /// @custom:event-category informational/admin
-    event UpdaterSet(address indexed account, bool enabled);
+    event AdderSet(address indexed account, bool enabled);
+    /// @notice A remover was appointed or removed.
+    /// @custom:event-category informational/admin
+    event RemoverSet(address indexed account, bool enabled);
     /// @notice `who` was added to the own record by update `version`.
     /// @custom:event-category informational/config
     event AddressListed(address indexed who, uint64 indexed version);
@@ -173,8 +196,10 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         uint64 indexed version, uint32 fromDate, bytes32 fromHash, uint32 toDate, bytes32 toHash
     );
 
-    /// @notice The caller is not an updater.
+    /// @notice The caller is neither an adder nor a remover.
     error NotUpdater(address caller);
+    /// @notice The update delists addresses and the caller is not a remover.
+    error NotRemover(address caller);
     /// @notice A non-zero secondary was given with no code behind it.
     error SecondaryHasNoCode(address secondary);
     /// @notice The diff was computed against a different list version.
@@ -198,8 +223,8 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     /// @notice A rollback authorization named a publication newer than the
     ///         recorded one, which needs no authorization.
     error RollbackNotNeeded(uint32 publicationDate, uint32 recordedDate);
-    /// @notice Renouncing ownership is disabled: it would leave the updater
-    ///         set impossible to rotate.
+    /// @notice Renouncing ownership is disabled: it would leave the adder
+    ///         and remover sets impossible to rotate.
     error RenounceDisabled();
 
     /// @param owner_      The chain's admin. Two-step ownership applies to
@@ -208,18 +233,20 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///                    `address(0)` where it is not deployed. Immutable.
     constructor(address owner_, address secondary_) Ownable(owner_) ComposedSanctionsList(secondary_) {}
 
-    modifier onlyUpdater() {
-        if (!isUpdater[msg.sender]) revert NotUpdater(msg.sender);
-        _;
-    }
-
     // ── Roles ─────────────────────────────────────────────────────────
 
-    /// @notice Appoint or remove an updater.
-    function setUpdater(address account, bool enabled) external onlyOwner {
+    /// @notice Appoint or remove an adder (note 4).
+    function setAdder(address account, bool enabled) external onlyOwner {
         if (account == address(0)) revert ZeroAddress();
-        isUpdater[account] = enabled;
-        emit UpdaterSet(account, enabled);
+        isAdder[account] = enabled;
+        emit AdderSet(account, enabled);
+    }
+
+    /// @notice Appoint or remove a remover (note 4).
+    function setRemover(address account, bool enabled) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        isRemover[account] = enabled;
+        emit RemoverSet(account, enabled);
     }
 
     /// @notice Disabled — see {RenounceDisabled}.
@@ -244,7 +271,7 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         clear-on-update rule only covers an update that lands AFTER
     ///         the grant. A clear `(0, 0)` needs no binding and ignores it.
     /// @dev    The owner authorizes the ORDERING exception only; the content
-    ///         is still applied by an updater through {applyUpdate}, with its
+    ///         is still applied through {applyUpdate}, with its role,
     ///         usual version, duplicate and provenance checks.
     /// @param expectedVersion   The `listVersion` the owner reviewed.
     /// @param publicationDate   The publication to let through, `YYYYMMDD`.
@@ -278,6 +305,8 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         address in both lists is caught by its `listedSinceVersion`
     ///         stamp rather than silently netting to no change. Publication
     ///         ordering is enforced first — see note 1a on the contract.
+    ///         Callable by an adder when `toRemove` is empty, and by a
+    ///         remover always (note 4).
     /// @param expectedVersion      The `listVersion` the diff was computed
     ///                             against.
     /// @param toAdd                Addresses to list; none may be listed.
@@ -290,14 +319,19 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         address[] calldata toRemove,
         bytes32 sourceHash_,
         uint32 publicationDate
-    ) external onlyUpdater {
+    ) external {
+        if (toRemove.length != 0) {
+            if (!isRemover[msg.sender]) revert NotRemover(msg.sender);
+        } else if (!isAdder[msg.sender] && !isRemover[msg.sender]) {
+            revert NotUpdater(msg.sender);
+        }
         uint64 current = listVersion;
         if (expectedVersion != current) revert StaleListVersion(expectedVersion, current);
         if (sourceHash_ == bytes32(0)) revert MissingSourceHash();
         _checkPublicationDate(publicationDate);
 
         uint64 version = current + 1;
-        _checkPublicationOrder(version, publicationDate, sourceHash_, toAdd.length + toRemove.length == 0);
+        _checkPublicationOrder(version, publicationDate, sourceHash_, toAdd.length == 0);
         uint256 nAdd = toAdd.length;
         for (uint256 i; i < nAdd; ++i) {
             address who = toAdd[i];
@@ -323,17 +357,18 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
         emit ListUpdated(version, sourceHash_, publicationDate, nAdd, nRemove, _listed.length(), msg.sender);
     }
 
-    /// @dev Accepts a newer publication, or a same-date refresh (identical
-    ///      hash, no changes); otherwise consumes a matching owner
+    /// @dev Accepts a newer publication, or the same publication again
+    ///      (identical date and hash) when it adds nothing; otherwise consumes
+    ///      a matching owner
     ///      authorization or reverts. Note 1a on the contract says why.
     ///      Whatever path is taken, a successful update leaves NO pending
     ///      authorization: one it did not use is cleared and evented.
-    function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool noChanges) private {
+    function _checkPublicationOrder(uint64 version, uint32 date, bytes32 hash, bool noAdditions) private {
         uint32 recordedDate = sourcePublicationDate;
         bytes32 recordedHash = sourceHash;
         uint32 pendingDate = rollbackAuthorizedDate;
         bytes32 pendingHash = rollbackAuthorizedHash;
-        bool ordered = date > recordedDate || (date == recordedDate && hash == recordedHash && noChanges);
+        bool ordered = date > recordedDate || (date == recordedDate && hash == recordedHash && noAdditions);
         if (!ordered) {
             if (pendingDate == 0 || date != pendingDate || hash != pendingHash) {
                 revert PublicationNotNewer(date, hash, recordedDate, recordedHash);

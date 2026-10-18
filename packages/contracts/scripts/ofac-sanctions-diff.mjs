@@ -4,8 +4,8 @@
  * nothing).
  *
  * The mainnet sanctions source is Vaipakam's own on-chain `SanctionsList`
- * (OR-composed with RedStone's oracle where deployed). Its updater applies
- * ONE update per OFAC publication. This tool computes that update:
+ * (OR-composed with RedStone's oracle where deployed). Each OFAC publication
+ * reaches it as one update, split by signer (step 4). This tool computes that update:
  *
  *   1. Reads Treasury's SDN Advanced XML (`sdn_advanced.xml`) from a local
  *      file (`--xml`) or downloads it (`--fetch`, optionally `--save-xml` so
@@ -24,9 +24,13 @@
  *      with `requireCanonical`, using the census tooling's helper), or from a file (`--current` + `--current-version`
  *      + `--current-publication` [+ `--current-source-hash`]).
  *   4. Prints the add / remove sets, the source SHA-256 and publication date
- *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calldata
- *      (which carries the list version it was computed against, so it cannot
- *      apply to any other state).
+ *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calls, each
+ *      carrying the list version it applies to, so it cannot apply to any
+ *      other state. Additions and delistings are SEPARATE calls with separate
+ *      signers (owner decision 2026-10-18): the adder (the automated
+ *      updater) sends the additions, then the remover (the multisig) sends
+ *      the delistings against the same publication. The contract refuses a
+ *      delisting from anyone but a remover.
  *
  * WHAT IT REFUSES, AND WHY:
  *   - An INCOMPLETE or malformed document (Codex #2543 r1/r2). ONE tokenizer
@@ -96,8 +100,9 @@
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
  *
- * Where the updater runs and who signs on mainnet is an OPEN owner question
- * (#2443); this tool deliberately stops at calldata.
+ * The signers are decided (owner, 2026-10-18): the adder lists, the multisig
+ * remover delists. Where the adder runs is still OPEN (#2443); this tool
+ * deliberately stops at calldata.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -344,13 +349,14 @@ export function isPublicationDate(d) {
 
 /**
  * The contract's publication-order rule, applied before calldata is built:
- * a newer date passes; the same date passes only as a refresh (identical
- * hash, empty diff); anything else is refused unless `allowRollback`, in
- * which case the owner must authorize it on-chain first.
+ * a newer date passes; the same publication (identical date and hash) passes
+ * again only when it adds nothing — a refresh, or the remover completing that
+ * publication's delistings; anything else is refused unless `allowRollback`,
+ * in which case the owner must authorize it on-chain first.
  */
-export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, diffEmpty, allowRollback = false }) {
+export function checkPublicationOrder({ recordedDate, recordedHash, date, hash, noAdditions, allowRollback = false }) {
   if (date > recordedDate) return 'newer';
-  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase() && diffEmpty) return 'refresh';
+  if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase() && noAdditions) return 'same-publication';
   if (allowRollback) return 'rollback';
   if (date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase()) {
     throw new Error(`the list already records this exact file (${date}) yet differs from it — investigate before updating`);
@@ -605,6 +611,12 @@ export function replayChainalysisLogs(logs) {
  * recorded one (see {@link checkPublicationOrder}) and a removal set above
  * `maxRemove`. For an allowed rollback it also returns the owner's
  * `authorizePublicationRollback` calldata, which must execute first.
+ *
+ * `calls` is the ordered list of `applyUpdate` transactions, each naming its
+ * signer: one `adder` call with the additions (or with nothing, as a
+ * refresh), then one `remover` call with the delistings when there are any.
+ * The second is computed against the version the first produces, and the
+ * contract accepts it because it repeats the publication without adding.
  */
 export function buildUpdate({
   parsed,
@@ -625,7 +637,7 @@ export function buildUpdate({
     recordedHash,
     date: parsed.publicationDate,
     hash,
-    diffEmpty: add.length + remove.length === 0,
+    noAdditions: add.length === 0,
     allowRollback,
   });
   if (remove.length > maxRemove) {
@@ -634,6 +646,18 @@ export function buildUpdate({
     );
   }
   const version = BigInt(currentVersion);
+  const call = (signer, expectedVersion, toAdd, toRemove) => ({
+    signer,
+    expectedVersion,
+    add: toAdd,
+    remove: toRemove,
+    calldata: encodeFunctionData({ abi, functionName: 'applyUpdate', args: [expectedVersion, toAdd, toRemove, hash, parsed.publicationDate] }),
+  });
+  const calls = [];
+  // A delisting-only update of a NEWER publication still goes to the remover
+  // alone; otherwise the adder records the publication (and its additions).
+  if (add.length > 0 || remove.length === 0) calls.push(call('adder', version, add, []));
+  if (remove.length > 0) calls.push(call('remover', version + BigInt(calls.length), [], remove));
   return {
     add,
     remove,
@@ -642,7 +666,7 @@ export function buildUpdate({
       order === 'rollback'
         ? encodeFunctionData({ abi, functionName: 'authorizePublicationRollback', args: [version, parsed.publicationDate, hash] })
         : null,
-    calldata: encodeFunctionData({ abi, functionName: 'applyUpdate', args: [version, add, remove, hash, parsed.publicationDate] }),
+    calls,
   };
 }
 
@@ -808,7 +832,7 @@ async function main() {
       sourceHash: hash,
       sourcePublicationDate: parsed.publicationDate,
       publicationOrder: update.order,
-      calldata: update.calldata,
+      calls: update.calls.map((c) => ({ ...c, expectedVersion: c.expectedVersion.toString() })),
       ...(update.authorizeCalldata
         ? { ownerMustFirstCall: { function: 'authorizePublicationRollback', args: [current.version.toString(), parsed.publicationDate, hash], calldata: update.authorizeCalldata } }
         : {}),
@@ -830,6 +854,9 @@ async function main() {
   console.error(
     `OFAC ${parsed.publicationId} sha256 ${hash}: ${parsed.addresses.length} EVM addresses; +${update.add.length} -${update.remove.length} against list version ${current.version}.`,
   );
+  for (const c of update.calls) {
+    console.error(`applyUpdate at version ${c.expectedVersion}: +${c.add.length} -${c.remove.length}, signed by the ${c.signer === 'remover' ? 'REMOVER (the multisig)' : 'adder'}.`);
+  }
   if (current.blockHash) console.error(`Current list read at block ${current.blockNumber} (${current.blockHash}, ${current.blockTag}).`);
   if (update.order === 'rollback') {
     console.error(`ROLLBACK: the owner must first call authorizePublicationRollback(${current.version}, ${parsed.publicationDate}, ${hash}); see ownerMustFirstCall.`);

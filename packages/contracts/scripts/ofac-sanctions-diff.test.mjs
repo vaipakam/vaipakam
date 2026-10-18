@@ -84,20 +84,34 @@ test('diff: case-insensitive add and remove sets', () => {
   assert.deepEqual(d.remove, [C]);
 });
 
-test('buildUpdate: calldata carries version, sets, hash and publication id', () => {
+test('buildUpdate: additions go to the adder, delistings to the remover at the next version', () => {
   const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
   const hash = sourceHash(FIXTURE);
   const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 4, ...FRESH });
   const abi = sanctionsListAbi();
-  const { functionName, args } = decodeFunctionData({ abi, data: u.calldata });
-  assert.equal(functionName, 'applyUpdate');
-  assert.equal(args[0], 4n);
-  assert.deepEqual(args[1], parsed.addresses);
-  assert.deepEqual(args[2], [C]);
-  assert.equal(args[3], hash);
-  assert.equal(args[4], 20260307);
+  assert.deepEqual(u.calls.map((c) => [c.signer, c.expectedVersion]), [['adder', 4n], ['remover', 5n]]);
+  const first = decodeFunctionData({ abi, data: u.calls[0].calldata });
+  assert.equal(first.functionName, 'applyUpdate');
+  assert.deepEqual(first.args, [4n, parsed.addresses, [], hash, 20260307]);
+  const second = decodeFunctionData({ abi, data: u.calls[1].calldata });
+  assert.deepEqual(second.args, [5n, [], [C], hash, 20260307], 'the remover repeats the publication with delistings only');
   assert.equal(u.order, 'newer');
   assert.equal(u.authorizeCalldata, null);
+});
+
+test('buildUpdate: adds-only, delist-only and empty diffs each make exactly one call', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const signers = (current, rec = FRESH) =>
+    buildUpdate({ parsed, sourceHash: hash, current, currentVersion: 2, ...rec }).calls.map((c) => [c.signer, c.expectedVersion]);
+  assert.deepEqual(signers([]), [['adder', 2n]]);
+  assert.deepEqual(signers([...parsed.addresses, C]), [['remover', 2n]]);
+  assert.deepEqual(signers(parsed.addresses), [['adder', 2n]], 'a refresh needs no multisig');
+  // The remover completing the recorded publication's delistings.
+  const same = { recordedDate: 20260307, recordedHash: hash };
+  assert.deepEqual(signers([...parsed.addresses, C], same), [['remover', 2n]]);
+  assert.equal(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 2, ...same }).order, 'same-publication');
+  assert.throws(() => signers([], same), /already records this exact file/);
 });
 
 test('buildUpdate: a large removal set is refused unless the bound is raised', () => {
@@ -181,12 +195,12 @@ test('numeric flags: one parser refuses everything but plain non-negative intege
 test('publication order: newer passes; older and same-day reissues are refused', () => {
   const H = (c) => `0x${c.repeat(64)}`;
   const base = { recordedDate: 20261015, recordedHash: H('a') };
-  assert.equal(checkPublicationOrder({ ...base, date: 20261016, hash: H('b'), diffEmpty: false }), 'newer');
-  assert.equal(checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), diffEmpty: true }), 'refresh');
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), diffEmpty: false }), /not newer/);
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('b'), diffEmpty: true }), /not newer/);
-  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), diffEmpty: false }), /already records this exact file/);
-  assert.equal(checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), diffEmpty: false, allowRollback: true }), 'rollback');
+  assert.equal(checkPublicationOrder({ ...base, date: 20261016, hash: H('b'), noAdditions: false }), 'newer');
+  assert.equal(checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), noAdditions: true }), 'same-publication');
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), noAdditions: false }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('b'), noAdditions: true }), /not newer/);
+  assert.throws(() => checkPublicationOrder({ ...base, date: 20261015, hash: H('a'), noAdditions: false }), /already records this exact file/);
+  assert.equal(checkPublicationOrder({ ...base, date: 20261014, hash: H('c'), noAdditions: false, allowRollback: true }), 'rollback');
 });
 
 test('buildUpdate: an older publication is refused; an allowed rollback carries the owner call', () => {

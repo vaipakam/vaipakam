@@ -53,11 +53,11 @@ Specifically:
    still answers reads, so nothing on-chain shows it is frozen, and it
    must not be configured anywhere. *Amended 2026-10-17 (#2443, owner
    decision):* mainnets screen against Vaipakam's own `SanctionsList` —
-   the OFAC SDN digital-currency addresses, kept on-chain by an updater
-   role with each update's source-file hash and publication date
+   the OFAC SDN digital-currency addresses, kept on-chain under split roles (an automated adder may only list;
+   the multisig alone may delist, owner decision 2026-10-18) with each update's source-file hash and publication date
    recorded — OR-composed with RedStone's Sanctions Oracle where it is
-   deployed; a wallet is flagged if either flags it. Who runs and signs
-   the updater is still open, so no mainnet is configured yet. Testnets
+   deployed; a wallet is flagged if either flags it. Where the adder
+   runs is still open, so no mainnet is configured yet. Testnets
    screen against the admin's `TestnetSanctionsOverlay` alone. The requirement itself is
    unchanged. Tier-1 entry points
    (`createOffer`, `acceptOffer`, vault create, VPFI deposit /

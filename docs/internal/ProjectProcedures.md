@@ -1439,11 +1439,11 @@ to a decision. Listed by category.
   be called before the deploy routes real value. Chainalysis retired its
   on-chain oracle (last updated 2026-03-18) and it must NOT be configured
   anywhere. Mainnets are meant to screen against Vaipakam's own
-  `SanctionsList` (OFAC SDN digital-currency addresses, updater-kept,
+  `SanctionsList` (OFAC SDN digital-currency addresses, listed by an automated adder, delisted only by the multisig,
   provenance on-chain), OR-composed with RedStone's Sanctions Oracle where
   it is deployed (owner decision on #2443, 2026-10-17). The update is
   computed offline by `packages/contracts/scripts/ofac-sanctions-diff.mjs`.
-  Who runs and signs the updater is still open, so
+  Where the adder runs is still open, so
   `ConfigureSanctionsOracle.s.sol` still refuses every mainnet.
   On a testnet that script installs the admin's `TestnetSanctionsOverlay`
   as the whole screen. It is a SEPARATE step: `deploy-testnet.sh` does not

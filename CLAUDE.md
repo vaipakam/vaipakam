@@ -1194,14 +1194,15 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > say so. Do NOT configure it anywhere — the offline diff tool may READ its
 > logs once for a human-review cross-check, nothing more. The mainnet source is
 > **`contracts/src/compliance/SanctionsList.sol`**: Vaipakam's own on-chain
-> record of OFAC SDN EVM digital-currency addresses, applied by an
-> updater role (owner = admin, Ownable2Step; updaters separate) with each
+> record of OFAC SDN EVM digital-currency addresses, applied under
+> split roles (owner = admin, Ownable2Step; an automated ADDER may only list,
+> the multisig REMOVER alone may delist — owner decision 2026-10-18) with each
 > update's source SHA-256, publication date and time recorded on-chain,
 > OR-composed with RedStone's Sanctions Oracle where RedStone has deployed it
 > (an immutable constructor input, empty by default — never hard-coded). The
 > update is computed offline by
-> `packages/contracts/scripts/ofac-sanctions-diff.mjs`. **Who runs and signs
-> the updater is still open**, so `ConfigureSanctionsOracle.s.sol` still
+> `packages/contracts/scripts/ofac-sanctions-diff.mjs`. **Where the adder
+> runs is still open**, so `ConfigureSanctionsOracle.s.sol` still
 > refuses every mainnet; testnets screen against the admin's
 > `TestnetSanctionsOverlay` alone (#2439). Both lists share
 > `ComposedSanctionsList` — the OR rule and "a secondary revert propagates for
