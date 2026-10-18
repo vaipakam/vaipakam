@@ -87,6 +87,35 @@ export interface PacketState {
   /** Bit `i` set = chunk `i` landed (indexed or proven). */
   chunksIndexed: bigint;
   disposed: bigint;
+  /** What `LibRewardCustody.rolloutAdmissionStatus` reads besides the above
+   *  (#2571 r1): the day-list length and the typed and untyped value. */
+  dayCount: number;
+  freshShare: bigint;
+  recycledShare: bigint;
+  unclassified: bigint;
+}
+
+/**
+ * Whether the ROLLOUT admission can still open an epoch over a flat packet
+ * that has none (#2571 r1) — a packet that landed while custody was not yet
+ * active, or between the 3a commitment and the 3b ledger. The contract's own
+ * rule, clause for clause (`LibRewardCustody.rolloutAdmissionStatus`, the ONE
+ * definition its admission and its classification gate both use): a known
+ * packet, no batch yet, a day list, nothing typed on the wire, and untyped
+ * value left. Such a packet's value is unavailable to claims until its epoch
+ * is admitted and indexed, so it must never take the batchless proof route
+ * and be retired. The admission call itself is simulated before it is sent,
+ * so the contract stays the arbiter. Pure; pinned by the tests.
+ */
+export function rolloutAdmissible(p: PacketState): boolean {
+  return (
+    p.batchId === ZERO32 &&
+    p.dayListHash !== ZERO32 &&
+    p.dayCount > 0 &&
+    p.freshShare === 0n &&
+    p.recycledShare === 0n &&
+    p.unclassified > 0n
+  );
 }
 
 /** A batch's index progress. */
@@ -99,7 +128,8 @@ export type ProofAction =
   | { kind: 'indexPage'; batchId: Hex; dayIds: bigint[] }
   | { kind: 'indexChunk'; batchId: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
   | { kind: 'proveChunk'; packetHash: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
-  | { kind: 'proveList'; packetHash: Hex; dayIds: bigint[] };
+  | { kind: 'proveList'; packetHash: Hex; dayIds: bigint[] }
+  | { kind: 'admitBatch'; packetHash: Hex; dayIds: bigint[] };
 
 const ZERO32 = `0x${'0'.repeat(64)}` as Hex;
 
@@ -150,6 +180,9 @@ export function planDelivery(args: {
         ? [{ kind: 'indexPage', batchId: packet.batchId, dayIds: days }]
         : [];
     }
+    // An epoch the rollout can still open comes first (#2571 r1): the next
+    // run then finds the batch and indexes it page by page.
+    if (rolloutAdmissible(packet)) return [{ kind: 'admitBatch', packetHash, dayIds: days }];
     return args.flatAllLanded ? [] : [{ kind: 'proveList', packetHash, dayIds: days }];
   }
   return []; // a pre-3a packet carries no provable list
@@ -206,6 +239,9 @@ export function deliveryComplete(args: {
   if (!packetMayNeedWork(packet)) return true;
   if (packet.dayListRoot !== ZERO32) return false; // a rooted chunk is still out
   if (packet.batchId !== ZERO32) return batch !== null && batch.dayCount > 0 && batch.indexedDays >= batch.dayCount;
+  // Never finished while its epoch can still be admitted (#2571 r1): its value
+  // reaches claims only through that epoch.
+  if (rolloutAdmissible(packet)) return false;
   return args.flatAllLanded;
 }
 
@@ -259,7 +295,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // The chain each rooted packet was REMITTED from, by the packet's own
   // record (#2497 r6) — never the canonical chain as configured today.
   const sources = sourceReader(byId, deadline);
-  const ctx = buildKeeperContext(env, chain, client as never);
+  const ctx = buildKeeperContext(env, chain, client as never, undefined, deadline);
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
   const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
@@ -495,6 +531,10 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
         chunksIndexed: bigint;
         disposed: bigint;
         arrivedAt: bigint;
+        dayCount: bigint;
+        freshShare: bigint;
+        recycledShare: bigint;
+        unclassified: bigint;
       };
       if (!p.arrivedAt) return;
       out.set(chunk[j].toLowerCase(), {
@@ -508,6 +548,10 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
         chunkCount: Number(p.chunkCount),
         chunksIndexed: BigInt(p.chunksIndexed),
         disposed: BigInt(p.disposed),
+        dayCount: Number(p.dayCount),
+        freshShare: BigInt(p.freshShare),
+        recycledShare: BigInt(p.recycledShare),
+        unclassified: BigInt(p.unclassified),
       });
     });
   }
@@ -528,7 +572,9 @@ function callFor(a: ProofAction): Call {
       ? { functionName: 'materializeTransportBatchChunk', args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, [], []] }
       : a.kind === 'proveChunk'
         ? { functionName: 'proveDeliveryDayChunk', args: [a.packetHash, BigInt(a.chunkIndex), a.dayIds, a.proof] }
-        : { functionName: 'proveDeliveryDayList', args: [a.packetHash, a.dayIds] };
+        : a.kind === 'admitBatch'
+          ? { functionName: 'admitLegacyTransportBatch', args: [a.packetHash, a.dayIds] }
+          : { functionName: 'proveDeliveryDayList', args: [a.packetHash, a.dayIds] };
 }
 
 /** Whether `err` is the contract refusing an unhinted link past its bounded

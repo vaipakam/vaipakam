@@ -227,3 +227,16 @@ describe('ackOrder — the Pending acks rotate, so no id waits behind ever-retri
     expect(ackOrder([1, 2, 3, 76, 77], at)).toEqual([76, 77, 2, 1, 3]);
   });
 });
+
+describe('an acknowledgement stamp ends the late path, stamped history or not (#2571 r1)', () => {
+  it('a quarantined, history-unstamped release is done, never re-acked every backoff window', () => {
+    const v = { status: 3, strandedRecycled: 0n, quarantineAcked: true, strandedStamped: false };
+    expect(isLateDeliveryCandidate(v)).toBe(false);
+    expect(lateAckDone(v)).toBe(true);
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n, consumedAcked: true, strandedStamped: false })).toBe(true);
+    // Unstamped and NOT acked: still a candidate, never done (positive evidence only).
+    expect(isLateDeliveryCandidate({ status: 3, strandedRecycled: 0n, strandedStamped: false })).toBe(true);
+    expect(lateAckDone({ status: 3, strandedRecycled: 0n, strandedStamped: false })).toBe(false);
+  });
+});
+

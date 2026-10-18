@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import {
   actionsFor,
+  rolloutAdmissible,
   canonicalChainOf,
   deliveryComplete,
   fundedDaysFromBits,
@@ -50,6 +51,10 @@ function packet(over: Partial<PacketState> = {}): PacketState {
     chunkCount: 0,
     chunksIndexed: 0n,
     disposed: 0n,
+    dayCount: 0,
+    freshShare: 0n,
+    recycledShare: 0n,
+    unclassified: 0n,
     ...over,
   };
 }
@@ -366,3 +371,28 @@ describe("a rooted packet's list is rebuilt from the packet's OWN remitter (#249
     }
   });
 });
+
+describe('a flat packet the rollout can still admit takes the admission, never the batchless proof (#2571 r1)', () => {
+  const days = [4n, 5n];
+  const flat = (over: Partial<PacketState> = {}) =>
+    packet({ dayListHash: H, dayCount: 2, unclassified: 10n, ...over });
+  it('admits first, and is never finished while admissible', () => {
+    expect(rolloutAdmissible(flat())).toBe(true);
+    expect(planDelivery({ packetHash: H, packet: flat(), batch: null, flatDays: days, rootedDays: null, flatAllLanded: true })).toEqual([
+      { kind: 'admitBatch', packetHash: H, dayIds: days },
+    ]);
+    expect(deliveryComplete({ packet: flat(), batch: null, flatAllLanded: true }), 'not retired on landed days').toBe(false);
+  });
+  it('follows the contract clause for clause: typed wire, nothing untyped, or a batch already — not admissible', () => {
+    expect(rolloutAdmissible(flat({ freshShare: 1n }))).toBe(false);
+    expect(rolloutAdmissible(flat({ recycledShare: 1n }))).toBe(false);
+    expect(rolloutAdmissible(flat({ unclassified: 0n }))).toBe(false);
+    expect(rolloutAdmissible(flat({ dayCount: 0 }))).toBe(false);
+    expect(rolloutAdmissible(flat({ batchId: BATCH }))).toBe(false);
+    // Not admissible: the batchless proof route, as before.
+    expect(planDelivery({ packetHash: H, packet: flat({ unclassified: 0n }), batch: null, flatDays: days, rootedDays: null, flatAllLanded: false })).toEqual([
+      { kind: 'proveList', packetHash: H, dayIds: days },
+    ]);
+  });
+});
+

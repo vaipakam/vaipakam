@@ -308,7 +308,7 @@ async function sendAckFromMirror(
     return false;
   }
 
-  const ctx = buildKeeperContext(env, mirrorCfg, client);
+  const ctx = buildKeeperContext(env, mirrorCfg, client, undefined, ackBudget.deadline);
   if (!ctx || !ctx.wallet.account) return false;
 
   const fee = (await client.readContract({
@@ -514,7 +514,13 @@ export function lateAckDone(v: {
   quarantineAcked?: boolean;
   strandedStamped?: boolean;
 }): boolean {
-  return Number(v.status) === 3 && v.strandedStamped === true && !isLateDeliveryCandidate(v);
+  if (Number(v.status) !== 3) return false;
+  // An acknowledgement stamp is positive evidence the ack did its work
+  // (#2571 r1) — whether or not the stranded-share history was stamped, which a
+  // QUARANTINED delivery never triggers (Base's settle returns before the
+  // history stamp when the consumption is not trusted).
+  if (v.consumedAcked === true || v.quarantineAcked === true) return true;
+  return v.strandedStamped === true && (v.strandedRecycled ?? 0n) === 0n;
 }
 
 /** #2497 r1 — POSITIVE evidence only. A released reservation whose stranded
@@ -531,7 +537,11 @@ export function isLateDeliveryCandidate(v: {
   strandedStamped?: boolean;
 }): boolean {
   if (Number(v.status) !== 3) return false;
+  // Acked already (consumed OR quarantined): nothing an ack can change, even
+  // with the history unstamped — re-sending would pay the CCIP fee every
+  // backoff window forever (#2571 r1).
+  if (v.consumedAcked === true || v.quarantineAcked === true) return false;
   if (v.strandedStamped !== true) return true;
-  return (v.strandedRecycled ?? 0n) > 0n && v.consumedAcked !== true && v.quarantineAcked !== true;
+  return (v.strandedRecycled ?? 0n) > 0n;
 }
 

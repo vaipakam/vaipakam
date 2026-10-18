@@ -59,3 +59,24 @@ describe('deadlineClient — every read of a deadline-bound pass, one guard (#24
     expect(await closed.getChainId(), 'an unguarded method is untouched').toBe(1);
   });
 });
+
+describe('the submission queue honours a run deadline at the send\'s turn (#2571 r1)', () => {
+  it('refuses inside the slot, before signing, once the deadline has passed', async () => {
+    const { queuedWallet, SendPastDeadline } = await import('../src/submissionQueue');
+    const { createWalletClient, custom } = await import('viem');
+    const { privateKeyToAccount } = await import('viem/accounts');
+    const account = privateKeyToAccount('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+    const calls: string[] = [];
+    const transport = custom({
+      request: async ({ method }: { method: string }) => {
+        calls.push(method);
+        if (method === 'eth_getTransactionCount') return '0x0';
+        if (method === 'eth_chainId') return '0x14a34';
+        throw new Error(`unexpected ${method}`);
+      },
+    });
+    const wallet = queuedWallet(createWalletClient({ account, transport }), 84532, Date.now() - 1);
+    await expect(wallet.sendTransaction({ to: account.address, value: 0n, chain: null } as never)).rejects.toBeInstanceOf(SendPastDeadline);
+    expect(calls.filter((m) => m.startsWith('eth_send')), 'nothing broadcast').toEqual([]);
+  });
+});
