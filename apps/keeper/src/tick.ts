@@ -8,7 +8,9 @@
  *
  * What differs is only how a launched pass is kept alive, so the host passes
  * that in as `launch`: the Worker hands each one to `ctx.waitUntil`, the
- * machine runtime tracks and awaits them.
+ * machine runtime tracks and awaits them. A pass reaches `launch` NOT yet
+ * started (a thunk), so a host can decline to start a pass whose previous run
+ * is still in flight without holding back the others (#2497 r9).
  */
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
@@ -18,6 +20,8 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
+import { adoptKeeperDeployments } from './keeperEpoch';
+import { armEpochFence } from './epochFence';
 /**
  * Run one pass and report what it cost.
  *
@@ -57,14 +61,14 @@ async function timedPass(name: string, run: () => Promise<void>): Promise<void> 
 /**
  * Run one tick. `scheduledTimeMs` is the tick's SCHEDULED epoch, not the
  * moment it ran, so a late delivery cannot make a `% n` cadence skip its
- * minute. `launch` receives every pass that is due, already wrapped so it
- * never rejects; this function returns once they are all launched, not
- * once they finish.
+ * minute. `launch` receives every pass that is due, as a thunk already
+ * wrapped so it never rejects; this function returns once they are all
+ * launched, not once they finish.
  */
 export async function runKeeperTick(
   env: WorkerEnv,
   scheduledTimeMs: number | undefined,
-  launch: (passName: string, run: Promise<void>) => void,
+  launch: (passName: string, run: () => Promise<void>) => void,
 ): Promise<void> {
   // #2239 — decline the whole tick when this build has no D1 binding.
   //
@@ -74,9 +78,18 @@ export async function runKeeperTick(
   // that can see the whole tick, is what an operator can actually read —
   // and declining before `resolveEnv` also means a maintenance build stops
   // fetching secrets it has no use for.
-  if (env.DB === undefined || !hasD1Binding(env.DB)) {
+  //
+  // #2450 — BOTH bindings, not just `DB`. A maintenance build omits every
+  // `d1_databases` entry, so it lacks both; one present without the other is
+  // the barrier half-applied (a CI check refuses that config), and running on
+  // it would leave the keeper-private passes each discovering a refusal while
+  // the rest act on half the state. Declining costs this tick's liquidations
+  // too, exactly as a maintenance build already does — the fail-closed shape,
+  // said once. The machine host supplies both the same way (host/hostEnv.ts).
+  const unbound = (['DB', 'KEEPER_DB'] as const).filter((b) => !hasD1Binding(env[b]));
+  if (unbound.length > 0 || env.DB === undefined) {
     // eslint-disable-next-line no-console
-    console.warn(maintenanceSkipNotice(WORKER_NAME, 'this tick'));
+    console.warn(maintenanceSkipNotice(WORKER_NAME, `this tick (unbound: ${unbound.join(', ')})`));
     return;
   }
 
@@ -119,6 +132,25 @@ export async function runKeeperTick(
     }`,
   );
 
+  // #2497 r10 — the keeper's own deployment epochs, before any pass reads its
+  // private state: a chain whose Diamond changed has its keyed-by-chain rows
+  // cleared, as the indexer clears its own. Fail closed — a pass must never act
+  // on another Diamond's rows — so a failure declines the tick.
+  try {
+    await adoptKeeperDeployments(resolved, chains);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[keeper] tick declined: could not reconcile the private state with each chain's Diamond (${String(err)})`);
+    return;
+  }
+
+  // #2569 r4 — the epoch fence, armed for the process with the chains just
+  // reconciled. A pass launched now, or still running from an earlier tick,
+  // acts only while the indexer's epoch it was launched under holds: every
+  // send and alert asserts it, and every shared write carries it inside its
+  // statement; see epochFence.ts.
+  armEpochFence(resolved.DB, chains);
+
   // ONE loop over the declared table (#1896), rather than ten
   // hand-written blocks. Each pass still gets its own `launch` and
   // its own `.catch`, so a transient failure in one cannot wedge the
@@ -135,6 +167,6 @@ export async function runKeeperTick(
       console.log(`[keeper] ${pass.name} skipped: ${skip}`);
       continue;
     }
-    launch(pass.name, timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
+    launch(pass.name, () => timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
   }
 }

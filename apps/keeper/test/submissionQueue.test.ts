@@ -4,6 +4,7 @@
  * a broadcast is accepted only at the next nonce in sequence.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
+import { armHeldFence } from './helpers/epochFence';
 import {
   createWalletClient,
   custom,
@@ -90,7 +91,10 @@ function nodeWallet(node: Node): WalletClient {
   });
 }
 
-beforeEach(() => resetSubmissionQueues());
+beforeEach(() => {
+  resetSubmissionQueues();
+  armHeldFence(); // every send asserts the epoch fence (#2569 r4)
+});
 
 describe('submission queue (#2486)', () => {
   it('the mock catches a collision when sends are NOT queued', async () => {

@@ -9,6 +9,13 @@ solver routing), and then setting each perk's price as the last step of
 shipping it. Prices are an arming action, and a non-zero one is only safe once
 that perk's effect is deployed and verified — the deploy default of zero means
 "not for sale". Referral is deferred for Phase 1. Card: #1204.
+
+> **Priority solver routing — effect decided 2026-10-18 (#2550):** a fill the
+> solver's service capacity would refuse goes through when the intent's owner opted
+> in and holds a credit, spending one credit instead (one credit = one fill; a fill
+> the solver can afford is charged normally and spends no credit). Nobody is reordered and nobody pays more, which keeps the
+> "change what its buyer gets, never what others see" rule. Mechanism:
+> [`VpfiPriorityRoutingPerkDesign.md`](VpfiPriorityRoutingPerkDesign.md).
 Umbrella: #1221. Legal frame: #694.
 
 ## Objective
@@ -21,7 +28,7 @@ price-schedule shapes — never returns.
 | Perk | Gate shape | Absorption |
 | --- | --- | --- |
 | Reduced notification fees | Hold-gated (tier) | indirect (higher tier demand) |
-| Priority solver routing for intents | **Spend-gated**: flat VPFI fee per priority window | permanent (→ recycle bucket) |
+| Priority solver routing for intents | **Spend-gated**: one counted credit per capacity-free fill (decided 2026-10-18, #2550 — see [`VpfiPriorityRoutingPerkDesign.md`](VpfiPriorityRoutingPerkDesign.md); the earlier "fee per priority window" is superseded) | permanent (→ recycle bucket) |
 | Higher auto-lifecycle limits (auto-lend caps, intent batch sizes) | Hold-gated (tier) | indirect |
 | ~~Offer listing visibility boost (book sort weight, badge)~~ | ~~**Spend-gated**: per-listing VPFI fee~~ | **DROPPED — owner decision 2026-08-31** |
 

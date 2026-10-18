@@ -672,18 +672,49 @@ database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by
 `apps/indexer/migrations/`** — that's the single source of truth for
-every table the live db holds. `apps/keeper` and `apps/agent`
-intentionally have no `migrations/` directory of their own; they
-read and write a subset of the shared tables via the same binding
-(see the per-Worker READMEs for the exact write/read split).
+every table the live db holds. `apps/agent` intentionally has no
+`migrations/` directory of its own; it reads and writes a subset of the
+shared tables via the same binding (see the per-Worker READMEs for the
+exact write/read split).
 
-**Rule**: every schema change — even for a table only `keeper` or
-`agent` writes — lands as a new file under
-`apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
+**`apps/keeper` also owns a PRIVATE database** (#2450) —
+`vaipakam-keeper-db` (database_id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`,
+binding `KEEPER_DB`, alongside its shared `DB`), with its own
+`apps/keeper/migrations/`, for keeper-only operational state: its scan
+cursors, completion markers, remit-ack log, HF-band edge state, its own
+redeploy epoch and the cutover's record. Separate by trust boundary, like
+`ops/mesh-watcher` below: the indexer and agent have no binding through
+which to write the keeper's completion records. Apply with
+`wrangler d1 migrations apply vaipakam-keeper-db --remote` from inside
+`apps/keeper/` (or `pnpm --filter @vaipakam/keeper run migrate`). **The
+keeper's `deploy` applies these itself** (`apps/keeper/scripts/deploy-keeper.mjs`
+— one applier per database: the keeper is the private one's only writer),
+verifies them in the database, and then hands the shared schema to
+`deploy-shared-d1.mjs verify` exactly as before; keep a keeper migration
+additive like any other (the old keeper is still serving when it lands).
+The one-time move of the live rows is `pnpm --filter @vaipakam/keeper run
+cutover` (`docs/ops/DeploymentRunbook.md`, "Keeper private D1 — one-time
+cutover"). It records completion only when all five moved tables match on
+both sides (count, latest write, a digest of every row), and the deploy and
+the machine both REFUSE while the shared copies hold rows and that record is
+missing, or a shared copy holds a row the copy did not take (deletions, which
+the indexer's redeploy reset makes, are allowed). The keeper runs only on the
+always-on machine (`docs/ops/KeeperMachine.md`); the Worker's `scheduled`
+handler declines every invocation.
+
+**Rule**: a table any other Worker, the app or the nightly backup reads
+stays in the SHARED database, and every schema change to it — even for a
+table only `keeper` or `agent` writes — lands as a new file under
+`apps/indexer/migrations/NNNN_<slug>.sql`. Only state nothing outside the
+keeper reads goes in `apps/keeper/migrations/`. Apply the shared schema with
 `wrangler d1 migrations apply vaipakam-warm --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
-directly on the deployed db: that diverges the migrations record from
-the live schema and breaks fresh-environment bootstrap.
+directly on a deployed db: that diverges the migrations record from
+the live schema and breaks fresh-environment bootstrap. Five of the
+keeper-private tables were first created by shared migrations `0041`,
+`0043` and `0044`, which are applied — never edit or renumber them; the old
+shared copies are retired later by a NEW indexer migration that only drops
+them (`apps/keeper/test/keeperPrivateD1.test.ts` refuses anything else).
 
 **Migrations apply BEFORE code ships, ONE applier, and every migration is
 additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
@@ -801,15 +832,16 @@ artifacts and stay in their respective env / config:
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`,
-  `ZEROEX_API_KEY`, `ONEINCH_API_KEY`. All four arming flags are
-  `secret_text`, not entries in `wrangler.jsonc`'s `vars` — the two
-  `REWARD_*` ones are **absent** on the live Worker, which leaves THREE
-  scheduled passes dark — `rewardBudgetRemit` and `remitAck` both gate on
-  `REWARD_REMIT_ENABLED`, `commitmentReport` on
-  `REWARD_COMMIT_ENABLED` — and are
-  provisioned the same way when armed. `GRACE_DEFAULT_ENABLED` (#2483)
-  arms `graceDefault`, which submits `triggerDefault` for past-grace loans;
-  it ships unset, so that pass is dark until an owner arms it. Their `*_LOOKBACK_DAYS` /
+  `ZEROEX_API_KEY`, `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
+  entry in `wrangler.jsonc`'s `vars`. At the 2026-07-30 readback the two
+  `REWARD_*` flags then existing were **absent** on the live Worker,
+  which left THREE scheduled passes dark — `rewardBudgetRemit` and
+  `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
+  `REWARD_COMMIT_ENABLED`; `graceDefault` (#2483), added after it, gates
+  on `GRACE_DEFAULT_ENABLED`. `graceDefault` submits
+  `triggerDefault` for past-grace loans; it ships unset, so that pass is
+  dark until an owner arms it. All are provisioned the same way when
+  armed. Their `*_LOOKBACK_DAYS` /
   `*_LANE_CAP` knobs are plain vars, not secrets.
 - apps/indexer Cloudflare secrets: `RPC_*` only (no signing keys).
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
@@ -1215,16 +1247,23 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > logs once for a human-review cross-check, nothing more. The mainnet source is
 > **`contracts/src/compliance/SanctionsList.sol`**: Vaipakam's own on-chain
 > record of OFAC SDN EVM digital-currency addresses, applied under
-> split roles (owner = admin, Ownable2Step; an automated ADDER may only list,
-> the multisig REMOVER alone may delist — owner decision 2026-10-18) with each
+> split roles (owner = admin, Ownable2Step; an automated ADDER may only list;
+> a delisting is the multisig REMOVER's, directly, or a delister bot's
+> PROPOSAL through `SanctionsDelistingTimelock`, which the Safe may veto and
+> which executes only while RedStone clears the address — owner decisions
+> 2026-10-18) with each
 > update's source SHA-256, publication date and time recorded on-chain,
 > OR-composed with RedStone's Sanctions Oracle where RedStone has deployed it
 > (an immutable constructor input, empty by default — never hard-coded). The
 > update is computed offline by
-> `packages/contracts/scripts/ofac-sanctions-diff.mjs`. **Where the adder
-> runs is still open**, so `ConfigureSanctionsOracle.s.sol` still
-> refuses every mainnet; testnets screen against the admin's
-> `TestnetSanctionsOverlay` alone (#2439). Both lists share
+> `packages/contracts/scripts/ofac-sanctions-diff.mjs`, and applied unattended
+> by the two sanctions services in `ops/sanctions/` — the adder lists, the
+> delister proposes delistings — each with its own key, units and memory cap
+> beside the keeper, from one release, on testnets against a rehearsal list the
+> Diamond does not screen. **The mainnet adder host is still open**, so the
+> services and
+> `ConfigureSanctionsOracle.s.sol` all refuse every mainnet; testnets screen
+> against the admin's `TestnetSanctionsOverlay` alone (#2439). Both lists share
 > `ComposedSanctionsList` — the OR rule and "a secondary revert propagates for
 > an address the own record does not flag" live there once. Keep it that way:
 > swallowing the revert in a list would silently turn the Diamond's

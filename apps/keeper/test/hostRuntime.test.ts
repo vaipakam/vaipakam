@@ -147,13 +147,13 @@ describe('host env', () => {
     const raw = new Proxy({} as Record<string, unknown>, {
       get: (_t, key) => {
         if (typeof key !== 'string') return undefined;
-        if (key === 'DB') return { prepare: () => null };
+        if (key === 'DB' || key === 'KEEPER_DB') return { prepare: () => null };
         return listed.has(key) ? { get: async () => `v:${key}` } : `v:${key}`;
       },
     }) as unknown as WorkerEnv;
     const resolved = (await resolveEnv(raw)) as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(resolved)) {
-      if (key === 'DB') continue;
+      if (key === 'DB' || key === 'KEEPER_DB') continue;
       expect(value, key).toBe(`v:${key}`);
     }
   });
@@ -168,27 +168,95 @@ describe('minute clock', () => {
     expect(msUntilNextMinute(minuteFloor(t))).toBe(MINUTE_MS);
   });
 
-  it('skips a tick while the previous one still has a pass running, naming it', async () => {
+  it('a slow pass never holds back the others: only that pass waits for its own run (#2497 r9)', async () => {
     const lines: string[] = [];
     let release!: () => void;
     const slow = new Promise<void>((r) => (release = r));
-    const ticks: number[] = [];
+    const started: string[] = [];
     const runner = createTickRunner({
       runTick: async (t, launch) => {
-        ticks.push(t);
-        if (ticks.length === 1) launch('matcher', slow);
+        launch('slowPass', async () => {
+          started.push(`slowPass@${t}`);
+          await slow;
+        });
+        launch('liquidator', async () => {
+          started.push(`liquidator@${t}`);
+        });
       },
       log: (l) => lines.push(l),
     });
     expect(runner.fire(0)).toBe(true);
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    // The next minute: the liquidator runs again; the still-running slow pass is not relaunched.
+    expect(runner.fire(MINUTE_MS)).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(['slowPass@0', 'liquidator@0', `liquidator@${MINUTE_MS}`]);
+    expect(lines.some((l) => /slowPass not launched at .*: its previous run is still in flight/.test(l))).toBe(true);
+    expect(runner.inFlight()).toEqual(['slowPass']);
+    release();
+    await runner.idle();
+    expect(runner.inFlight()).toEqual([]);
+    expect(runner.fire(2 * MINUTE_MS)).toBe(true);
+    await runner.idle();
+    expect(started.at(-2)).toBe(`slowPass@${2 * MINUTE_MS}`);
+  });
+
+  it('renews the lease on every minute a pass is still in flight, whatever the new tick does (#2497 r13)', async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    const renewed: number[] = [];
+    let first = true;
+    const runner = createTickRunner({
+      // The first tick launches a long pass; every later tick is DECLINED by
+      // a gate (launches nothing, and so would renew nothing itself).
+      runTick: async (_t, launch) => {
+        if (first) {
+          first = false;
+          launch('slowPass', () => slow);
+        }
+      },
+      log: () => {},
+      onSkip: async (t) => {
+        renewed.push(t);
+      },
+    });
+    runner.fire(0);
+    await new Promise((r) => setTimeout(r, 0));
+    for (let m = 1; m <= 3; m++) {
+      runner.fire(m * MINUTE_MS);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(renewed).toEqual([MINUTE_MS, 2 * MINUTE_MS, 3 * MINUTE_MS]);
+    release();
+    await runner.idle();
+    runner.fire(4 * MINUTE_MS);
+    await runner.idle();
+    expect(renewed, 'nothing in flight: the tick renews for itself').toHaveLength(3);
+  });
+
+  it('skips a minute, and renews the lease, only while the previous tick is still LAUNCHING', async () => {
+    const lines: string[] = [];
+    let release!: () => void;
+    const slowLaunch = new Promise<void>((r) => (release = r));
+    const skipped: number[] = [];
+    const runner = createTickRunner({
+      runTick: async () => {
+        await slowLaunch;
+      },
+      log: (l) => lines.push(l),
+      onSkip: async (t) => {
+        skipped.push(t);
+      },
+    });
+    expect(runner.fire(0)).toBe(true);
     expect(runner.fire(MINUTE_MS)).toBe(false);
-    expect(lines.at(-1)).toMatch(/skipped: the previous tick is still running \(matcher\)/);
+    expect(skipped).toEqual([MINUTE_MS]);
+    expect(lines.at(-1)).toMatch(/skipped: the previous tick is still launching/);
     release();
     await runner.idle();
     expect(runner.fire(2 * MINUTE_MS)).toBe(true);
     await runner.idle();
-    expect(ticks).toEqual([0, 2 * MINUTE_MS]);
   });
 
   it('a tick that throws is logged and does not wedge the clock', async () => {
@@ -213,7 +281,7 @@ describe('host tick schema check', () => {
     [HOST_SETTINGS.databaseId]: DATABASE,
     [HOST_SETTINGS.apiToken]: TOKEN,
   };
-  function setup(applied: string[] | Error) {
+  function setup(applied: string[] | Error, privateVerdict: { ok: true } | { ok: false; line: string } = { ok: true }) {
     const lines: string[] = [];
     const ran: number[] = [];
     const fetchFn = (async () => {
@@ -226,6 +294,9 @@ describe('host tick schema check', () => {
       vars: () => vars,
       log: (l) => lines.push(l),
       gate: createSchemaGate(['0001_a.sql', '0002_b.sql']),
+      // The private-database gate has its own suite (hostPrivateDb.test.ts);
+      // here it passes, so these cells isolate the SHARED schema gate.
+      privateGate: { check: async () => privateVerdict },
       runTick: async (_env, t) => {
         ran.push(t);
       },
@@ -233,6 +304,13 @@ describe('host tick schema check', () => {
     });
     return { tick, lines, ran };
   }
+
+  it('declines with the private gate\'s own line when the cutover check fails, and runs nothing (#2497 re-cut)', async () => {
+    const h = setup(['0001_a.sql', '0002_b.sql'], { ok: false, line: '[keeper-host] tick declined: hf_band_state no longer matches the cutover copy' });
+    await h.tick(60_000, () => {});
+    expect(h.ran, 'the shared schema is current, but the private gate holds the tick').toEqual([]);
+    expect(h.lines.at(-1)).toMatch(/no longer matches the cutover copy/);
+  });
 
   it('runs the tick once every migration this build carries is recorded', async () => {
     const h = setup(['0001_a.sql', '0002_b.sql']);

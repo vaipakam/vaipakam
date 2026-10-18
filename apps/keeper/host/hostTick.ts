@@ -16,8 +16,9 @@ import type { WorkerEnv } from '../src/env';
 import { claimRunnerLease } from '../src/runnerLease';
 import { runKeeperTick } from '../src/tick';
 import { buildHostEnv } from './hostEnv';
+import { createPrivateDbGate, type PrivateDbCheck } from './privateDbGate';
 
-type Launch = (passName: string, run: Promise<void>) => void;
+type Launch = (passName: string, run: () => Promise<void>) => void;
 
 export interface HostTickDeps {
   /** The process environment, read on every tick. */
@@ -25,6 +26,8 @@ export interface HostTickDeps {
   log: (line: string) => void;
   /** Injected for tests; defaults to a gate over the indexer's list. */
   gate?: { check(db: D1Database): Promise<SchemaCheck> };
+  /** Injected for tests; defaults to the keeper-private schema + cutover gate. */
+  privateGate?: { check(shared: D1Database, priv: D1Database): Promise<PrivateDbCheck> };
   /** Injected for tests; defaults to the shared tick. */
   runTick?: (env: WorkerEnv, scheduledTimeMs: number, launch: Launch) => Promise<void>;
   /** Injected for tests; defaults to the global `fetch`. */
@@ -40,6 +43,7 @@ export function schemaDeclineLine(check: Exclude<SchemaCheck, { state: 'current'
 
 export function createHostTick(deps: HostTickDeps) {
   const gate = deps.gate ?? createSchemaGate();
+  const privateGate = deps.privateGate ?? createPrivateDbGate();
   const runTick = deps.runTick ?? runKeeperTick;
   return async (scheduledTimeMs: number, launch: Launch): Promise<void> => {
     // Rebuilt per tick, as a Worker resolves its bindings per invocation.
@@ -50,6 +54,16 @@ export function createHostTick(deps: HostTickDeps) {
       if (schema.state !== 'current') {
         deps.log(schemaDeclineLine(schema));
         return;
+      }
+      // #2450 — the keeper's private database: its migrations and the one-time
+      // cutover (host/privateDbGate.ts). Without `KEEPER_DB` the shared tick
+      // declines by itself, naming the unbound database.
+      if (env.KEEPER_DB !== undefined) {
+        const priv = await privateGate.check(env.DB, env.KEEPER_DB);
+        if (!priv.ok) {
+          deps.log(priv.line);
+          return;
+        }
       }
     }
     await runTick(env, scheduledTimeMs, launch);

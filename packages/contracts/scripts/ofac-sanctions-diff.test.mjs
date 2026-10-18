@@ -3,7 +3,8 @@
 // pinned against a committed fixture.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData } from 'viem';
@@ -24,6 +25,11 @@ import {
   decodeXmlText,
   decodeSource,
   isPublicationDate,
+  parseSdnAdvancedStream,
+  createSdnParser,
+  createXmlScanner,
+  createHexRunCollector,
+  downloadToFile,
 } from './ofac-sanctions-diff.mjs';
 import { toEventSelector, getAddress } from 'viem';
 
@@ -546,8 +552,27 @@ test('buildUpdate: a delisting is refused while the address still appears in the
   const encoded = withInProfile(`<Other>&#x30;x${'1'.repeat(40)}</Other>`);
   const parsedEnc = parseSdnAdvanced(encoded);
   assert.throws(() => buildConfirmed({ parsed: parsedEnc, sourceHash: sourceHash(Buffer.from(encoded)), current: [...parsedEnc.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  // A mention split across decoded pieces — text then CDATA, or around a
+  // comment — is one run of the decoded text, so it still counts (#2567 r1).
+  for (const split of [`${E.slice(0, 22)}<![CDATA[${E.slice(22)}]]>`, `${E.slice(0, 22)}<!-- x -->${E.slice(22)}`]) {
+    const t = withInProfile(`<Other>${split}</Other>`);
+    const p = parseSdnAdvanced(t);
+    assert.throws(() => buildConfirmed({ parsed: p, sourceHash: sourceHash(Buffer.from(t)), current: [...p.addresses, E], currentVersion: 1, ...FRESH }), /still appears in the source file/, split);
+  }
   // A hand-built parsed object without the witness is refused, never skipped.
   assert.throws(() => buildConfirmed({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
+});
+
+test('createHexRunCollector: runs carry across raw pieces and across decoded-text calls, never split', () => {
+  const body = 'ab'.repeat(20);
+  const c = createHexRunCollector();
+  c.raw(`x${body.slice(0, 7)}`);
+  c.raw(`${body.slice(7)}<`);
+  c.text(body.slice(0, 30));
+  c.text(body.slice(30));
+  c.text(' ');
+  c.text(body.slice(0, 39));
+  assert.deepEqual(c.end(), { raw: [body], text: [body] });
 });
 
 // ---- Codex #2543 r21: delistings need a second source; reliability is a closed vocabulary ----
@@ -575,3 +600,110 @@ test('references: reliability must be one of OFAC\'s four values, with False def
   assert.throws(() => parseSdnAdvanced(xml.replace('<Reliability ID="1561">False</Reliability>', '')), /does not define|which no <Reliability> defines|defined as False/);
 });
 
+
+// ── #2443 adder host: the parser reads in pieces ─────────────────────
+
+test('stream: any cut of the bytes parses to exactly the whole-string result', async () => {
+  const whole = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  for (const size of [1, 2, 3, 7, 64, 1000, FIXTURE.length]) {
+    const pieces = [];
+    for (let i = 0; i < FIXTURE.length; i += size) pieces.push(FIXTURE.subarray(i, i + size));
+    const r = await parseSdnAdvancedStream(pieces);
+    assert.deepEqual(r.parsed, whole, `pieces of ${size} bytes`);
+    assert.equal(r.sourceHash, sourceHash(FIXTURE));
+    assert.equal(r.byteLength, FIXTURE.length);
+  }
+});
+
+test('stream: a hex run cut between pieces is still one run', () => {
+  const text = FIXTURE.toString('utf8');
+  const at = text.indexOf('1CAb8177') + 4; // inside an address
+  const p = createSdnParser();
+  p.write(text.slice(0, at));
+  p.write(text.slice(at));
+  assert.deepEqual(p.end().hexRuns, parseSdnAdvanced(text).hexRuns);
+});
+
+test('stream: a multi-byte character or surrogate pair cut between pieces is one character', async () => {
+  const xml = FIXTURE.toString('utf8').replace('</Sanctions>', '<!-- é 𝄞 --></Sanctions>');
+  const bytes = Buffer.from(xml);
+  const at = bytes.indexOf(Buffer.from('𝄞')) + 2; // inside the 4-byte sequence
+  const r = await parseSdnAdvancedStream([bytes.subarray(0, at), bytes.subarray(at)]);
+  assert.deepEqual(r.parsed.addresses, parseSdnAdvanced(xml).addresses);
+  // Text pieces cut between the two halves of a surrogate pair.
+  const s = createXmlScanner();
+  const i = xml.indexOf('𝄞') + 1;
+  s.write(xml.slice(0, i));
+  s.write(xml.slice(i));
+  s.end();
+});
+
+test('stream: corrupted bytes, a lone surrogate and truncation are refused as before', async () => {
+  await assert.rejects(parseSdnAdvancedStream([FIXTURE.subarray(0, 100), Buffer.from([0xff]), FIXTURE.subarray(100)]), /not valid UTF-8/);
+  await assert.rejects(parseSdnAdvancedStream([FIXTURE.subarray(0, FIXTURE.length - 20)]), /never closed|incomplete XML/);
+  const s = createXmlScanner();
+  s.write('<Sanctions>\uD800');
+  assert.throws(() => s.end(), /not an XML character/);
+});
+
+test('stream: a construct is not judged until it is complete', () => {
+  const seen = [];
+  const s = createXmlScanner({ open: (n) => seen.push(`<${n}`), text: (t) => seen.push(t) });
+  for (const piece of ['<Sanc', 'tions><!', '[CDA', 'TA[a]]', '>b<!-', '- c --', '><A x="1', '>2"/></Sanctions>']) s.write(piece);
+  s.end();
+  assert.deepEqual(seen, ['<Sanctions', 'a', 'b', '<A']);
+});
+
+test('downloadToFile: streams to disk, renames only when complete, refuses an oversized body', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ofac-dl-'));
+  const body = (parts) => ({ ok: true, status: 200, body: (async function* () { for (const p of parts) yield Buffer.from(p); })() });
+  const path = join(dir, 'sdn.xml');
+  assert.equal(await downloadToFile('u', path, { fetchImpl: async () => body(['ab', 'cd']) }), 4);
+  assert.equal(readFileSync(path, 'utf8'), 'abcd');
+  const big = join(dir, 'big.xml');
+  await assert.rejects(downloadToFile('u', big, { maxBytes: 3, fetchImpl: async () => body(['ab', 'cd']) }), /exceeds 3 bytes/);
+  assert.ok(!existsSync(big) && !existsSync(`${big}.part`), 'nothing is left behind');
+  await assert.rejects(downloadToFile('u', big, { fetchImpl: async () => ({ ok: false, status: 503 }) }), /HTTP 503/);
+  // A web stream, as `fetch` returns, is read the same way.
+  const web = join(dir, 'web.xml');
+  assert.equal(await downloadToFile('u', web, { fetchImpl: async () => new Response('hello') }), 5);
+  assert.equal(readFileSync(web, 'utf8'), 'hello');
+  // A file that cannot be written REJECTS the call, rather than crashing the
+  // process with an unhandled stream error before its caller can report.
+  await assert.rejects(downloadToFile('u', join(dir, 'missing-dir', 'x.xml'), { fetchImpl: async () => body(['ab']) }), /ENOENT/);
+});
+
+// ── #2443 adder host: adder-only updates ─────────────────────────────
+
+test('adder-only: additions are sent, delistings declared and withheld, no confirmation needed', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 4, ...FRESH, signers: 'adder' });
+  assert.deepEqual(u.calls.map((c) => c.signer), ['adder']);
+  assert.deepEqual(u.withheldRemovals, [C]);
+  const args = decodeFunctionData({ abi: sanctionsListAbi(), data: u.calls[0].calldata }).args;
+  assert.deepEqual(args, [4n, parsed.addresses, [], hash, 20260307, 0, 1], 'the delisting is declared outstanding');
+});
+
+test('adder-only: a new delist-only publication is still recorded; a finished repeat sends nothing', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 2, ...FRESH, signers: 'adder' });
+  assert.equal(u.calls.length, 1);
+  assert.deepEqual(decodeFunctionData({ abi: sanctionsListAbi(), data: u.calls[0].calldata }).args.slice(1, 3), [[], []]);
+  const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: 0, recordedPendingDelistings: 1 };
+  const again = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 3, ...same, signers: 'adder' });
+  assert.deepEqual(again.calls, []);
+  assert.deepEqual(again.withheldRemovals, [C], 'the outstanding delisting is still reported');
+});
+
+test('adder-only: the witness and the removal cap still hold; rollback is refused', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  // A listed address still in the file is not a delisting the adder may declare.
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [A], currentVersion: 1, ...FRESH, signers: 'adder', parsed: { ...parsed, addresses: [B] } }), /still appears in the source file/);
+  const current = Array.from({ length: 11 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current, currentVersion: 1, ...FRESH, signers: 'adder' }), /refusing to delist 11/);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, signers: 'adder', allowRollback: true }), /never rolls back/);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, signers: 'remover' }), /signers must be/);
+});

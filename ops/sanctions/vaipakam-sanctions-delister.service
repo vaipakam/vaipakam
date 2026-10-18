@@ -1,0 +1,54 @@
+# One run of the sanctions delister (ops/sanctions/README.md).
+#
+# A oneshot: it reads every configured chain's delisting timelock, moves each
+# pending proposal on (discard, withdraw, reconfirm, the cross-chain RedStone
+# clearance, execute), proposes the delistings both OFAC files support,
+# reports, and exits. It downloads OFAC's files only when a chain has
+# publication work. The timer starts it every hour; `systemctl start` runs it
+# now. Logs: journalctl -u vaipakam-sanctions-delister
+#
+# The env file stays root-only (0600). LoadCredential hands a copy to this
+# run's dynamic user alone, so no long-lived account owns the proposer key,
+# and `env -i` starts Node with an EMPTY environment so the file is the only
+# source of settings. The adder's and the keeper's keys and env files are
+# never readable here.
+
+[Unit]
+Description=Vaipakam sanctions delister
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/ops/sanctions/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=vaipakam-sanctions-delister
+StateDirectoryMode=0700
+LoadCredential=sanctions-delister.env:/etc/vaipakam/sanctions-delister.env
+ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-delister /usr/local/bin/node --max-old-space-size=192 --env-file=%d/sanctions-delister.env /opt/vaipakam-sanctions/current/packages/contracts/scripts/sanctions-delister.mjs
+# A run that downloads parses both OFAC files in pieces, one after the other
+# (about 150 MB resident at the peak). The cap makes an unexpected growth fail
+# THIS run, never the keeper beside it, and the weights below give the keeper
+# the machine whenever both want it.
+MemoryMax=384M
+CPUWeight=20
+IOWeight=20
+Nice=10
+# A download and parse when there is publication work, then a few
+# transactions per chain, each waited on until included (at most 5 minutes
+# each). Nothing waits for finality: the next run reads the chain again.
+TimeoutStartSec=45min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute is deliberately NOT set: V8's JIT needs W+X pages.
+SystemCallArchitectures=native

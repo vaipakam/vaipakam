@@ -28,6 +28,14 @@
  *
  * When the predecessor is finally deleted, this module and the tools that
  * read it go together.
+ *
+ * WORKER-PRIVATE DATABASES ARE DELIBERATELY NOT HERE (#2450). The keeper's
+ * `vaipakam-keeper-db` is not an end of this move — a cutover of the shared
+ * database neither copies it nor rebinds it — so `knownDatabase` must keep
+ * answering `null` for it: `--expect vaipakam-keeper-db` on the live probe, or
+ * the carry tool pointed at it, is a mistake to refuse by name. Private
+ * databases are registered, with their owning binding, in `d1-workers.mjs`'s
+ * `PRIVATE_DATABASES`.
  */
 
 /** The database being moved to — the shared one, after the cutover. */

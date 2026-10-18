@@ -5,17 +5,31 @@
  * scheduled time, which is what the cron delivers as `scheduledTime`, so every
  * pass's `% n` cadence lands on the same minutes it would on a Worker.
  *
- * One rule a Worker does not need: ticks never overlap. Every pass signs with
- * the same keeper key, and passes keep per-tick state in memory (the
- * liquidator's attempted set is cleared at the start of each tick), so a tick
- * that started while the previous one was still running could attempt the
- * same loan twice. A minute whose previous tick is still running is skipped,
- * and the skip is logged with the passes still in flight, so a pass that has
- * stopped finishing is visible rather than silently starving the rest.
+ * One rule a Worker does not need: a PASS never overlaps ITSELF. Passes keep
+ * per-run state in memory (the liquidator's attempted set is cleared at the
+ * start of each run), so a second run started while the first is still going
+ * could attempt the same loan twice. A due pass whose previous run is still in
+ * flight is therefore not launched, and that is logged by name, so a pass that
+ * has stopped finishing is visible.
  *
- * A skipped minute still calls `onSkip`, which the host uses to renew the
- * one-runner lease (#2503): a tick that runs long must not let the lease
- * lapse to another runner while its passes are still sending.
+ * Every OTHER due pass launches on time (#2497 r9). This used to skip the whole
+ * minute while any pass of the previous tick was running, so one slow pass —
+ * a long pass waiting on receipts, say — held back the
+ * minute-cadence liquidator and acknowledgement passes for as long as it ran.
+ * Overlapping DIFFERENT passes is safe for the nonce: every send goes through
+ * the per-key submission queue (`src/submissionQueue.ts`), which orders sends
+ * across passes and across ticks in this process.
+ *
+ * A minute is skipped outright only while the previous tick is still
+ * LAUNCHING (the lease claim, the gates, secret resolution).
+ *
+ * THE LEASE IS RENEWED BY THE HOST, NOT BY A TICK GETTING THROUGH (#2497 r13).
+ * Every minute on which a pass is still in flight, or the previous tick is
+ * still launching, calls `onSkip` (the host's one-runner lease renewal,
+ * #2503), whatever the new tick then does. A tick renews only once it passes
+ * the gates, so a run of declined ticks would otherwise let the lease lapse
+ * while a long pass is still sending, and another runner could take it and
+ * sign alongside.
  */
 
 export const MINUTE_MS = 60_000;
@@ -31,59 +45,61 @@ export function msUntilNextMinute(nowMs: number): number {
 }
 
 export interface TickRunnerDeps {
-  /** Runs one tick, launching each due pass through `launch`. */
+  /** Runs one tick, handing each due pass to `launch` as a thunk. */
   runTick(
     scheduledTimeMs: number,
-    launch: (passName: string, run: Promise<void>) => void,
+    launch: (passName: string, run: () => Promise<void>) => void,
   ): Promise<void>;
   log(line: string): void;
-  /** Called for a minute skipped because the previous tick is still running. Must not reject. */
+  /** Called every minute on which a pass is still in flight or the previous
+   *  tick is still launching — the host renews the one-runner lease here.
+   *  Must not reject. */
   onSkip?(scheduledTimeMs: number): Promise<void>;
 }
 
 export interface TickRunner {
-  /** Starts the tick for `scheduledTimeMs`; false when one is still running. */
+  /** Starts the tick for `scheduledTimeMs`; false when the previous one is still launching. */
   fire(scheduledTimeMs: number): boolean;
-  /** Resolves when no tick is running. */
+  /** Resolves when no tick is launching and no pass is running. */
   idle(): Promise<void>;
-  /** Pass names still running, for the skip line and shutdown. */
+  /** Pass names still running, for the log and shutdown. */
   inFlight(): string[];
 }
 
 export function createTickRunner(deps: TickRunnerDeps): TickRunner {
-  let current: Promise<void> | null = null;
-  const running = new Map<string, number>();
+  let launching: Promise<void> | null = null;
+  const running = new Map<string, Promise<void>>();
 
   const fire = (scheduledTimeMs: number): boolean => {
-    if (current !== null) {
-      const names = [...running.keys()];
-      deps.log(
-        `[keeper-host] tick ${new Date(scheduledTimeMs).toISOString()} skipped: the previous tick is still running (${names.join(', ') || 'launching'})`,
-      );
-      void deps.onSkip?.(scheduledTimeMs);
+    const at = new Date(scheduledTimeMs).toISOString();
+    // Anything still running: keep the lease, whatever this minute's tick does.
+    if (launching !== null || running.size > 0) void deps.onSkip?.(scheduledTimeMs);
+    if (launching !== null) {
+      deps.log(`[keeper-host] tick ${at} skipped: the previous tick is still launching its passes`);
       return false;
     }
-    const launched: Promise<void>[] = [];
-    const launch = (passName: string, run: Promise<void>) => {
-      running.set(passName, (running.get(passName) ?? 0) + 1);
-      launched.push(
-        run.finally(() => {
-          const n = (running.get(passName) ?? 1) - 1;
-          if (n <= 0) running.delete(passName);
-          else running.set(passName, n);
-        }),
-      );
+    const launch = (passName: string, run: () => Promise<void>) => {
+      if (running.has(passName)) {
+        deps.log(`[keeper-host] ${passName} not launched at ${at}: its previous run is still in flight`);
+        return;
+      }
+      // Passes are wrapped so they never reject; the catch is belt and braces.
+      const p = Promise.resolve()
+        .then(run)
+        .catch((err) => deps.log(`[keeper-host] ${passName} failed: ${String(err)}`))
+        .finally(() => {
+          if (running.get(passName) === p) running.delete(passName);
+        });
+      running.set(passName, p);
     };
-    current = (async () => {
+    launching = (async () => {
       try {
         await deps.runTick(scheduledTimeMs, launch);
       } catch (err) {
-        deps.log(`[keeper-host] tick ${new Date(scheduledTimeMs).toISOString()} failed: ${String(err)}`);
+        deps.log(`[keeper-host] tick ${at} failed: ${String(err)}`);
       }
-      // Passes are wrapped so they never reject; allSettled is belt and braces.
-      await Promise.allSettled(launched);
     })().finally(() => {
-      current = null;
+      launching = null;
     });
     return true;
   };
@@ -91,7 +107,9 @@ export function createTickRunner(deps: TickRunnerDeps): TickRunner {
   return {
     fire,
     idle: async () => {
-      while (current !== null) await current;
+      while (launching !== null || running.size > 0) {
+        await Promise.allSettled([launching, ...running.values()]);
+      }
     },
     inFlight: () => [...running.keys()],
   };

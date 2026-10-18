@@ -21,13 +21,26 @@
  *   - `DB` is the D1 HTTP adapter, pointed at the same database the Worker
  *     binds (`D1_DATABASE_ID`), with the account id and an API token.
  *
- * Without the three D1 settings `DB` is left absent, which the tick already
- * treats as a maintenance build: it declines the whole tick, by name, rather
- * than running passes against no database.
+ *   - `KEEPER_DB` is a second adapter, pointed at the keeper's PRIVATE
+ *     database (#2450) with the same account and token — the Worker binds
+ *     both, so the machine supplies both. Its id is the PINNED one from the
+ *     D1 registry (`PRIVATE_DB_ID`), never host config (#2497 r4): a wrong
+ *     id could point the keeper at an empty or unrelated ledger whose
+ *     cutover check passes vacuously.
+ *
+ * A private id equal to the shared one is refused: that would be a second
+ * handle onto the shared data under the private name, which the registry
+ * (`PRIVATE_DATABASES`) forbids. `KEEPER_DB` is then left absent, and the tick
+ * declines naming it.
+ *
+ * A database whose settings are missing is left absent, which the tick
+ * already treats as a maintenance build: it declines the whole tick, naming
+ * the unbound database, rather than running passes against half the state.
  */
 
 import { hostname as osHostname } from 'node:os';
 import { SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
+import { PRIVATE_DB_ID } from '../scripts/lib/keeper-cutover.mjs';
 import { createD1HttpDatabase } from './d1Http';
 
 /** The settings the machine host reads that a Worker never sees. */
@@ -44,6 +57,8 @@ export interface HostEnvResult {
   env: WorkerEnv;
   /** The D1 settings that are missing; empty when the database is wired. */
   missingD1: string[];
+  /** Why a set D1 setting was refused, or null. */
+  refusedD1: string | null;
 }
 
 export function buildHostEnv(
@@ -75,5 +90,14 @@ export function buildHostEnv(
   if (accountId && databaseId && apiToken) {
     out.DB = createD1HttpDatabase({ accountId, databaseId, apiToken, fetchFn });
   }
-  return { env: out as WorkerEnv, missingD1 };
+  let refusedD1: string | null = null;
+  if (databaseId && databaseId.toLowerCase() === PRIVATE_DB_ID.toLowerCase()) {
+    // The shared setting names the keeper's private database: both handles
+    // would be one database, the barrier gone. Neither is bound.
+    refusedD1 = `${HOST_SETTINGS.databaseId} names the keeper's private database; no database is bound`;
+    delete out.DB;
+  } else if (accountId && apiToken) {
+    out.KEEPER_DB = createD1HttpDatabase({ accountId, databaseId: PRIVATE_DB_ID, apiToken, fetchFn });
+  }
+  return { env: out as WorkerEnv, missingD1, refusedD1 };
 }
