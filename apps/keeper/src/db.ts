@@ -14,6 +14,7 @@
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import { encodeAbiParameters, keccak256, type Hex } from 'viem';
 import type { KeeperD1 } from './env';
+import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
@@ -165,11 +166,14 @@ export async function putNotifyState(
   db: D1Database,
   s: NotifyState,
 ): Promise<void> {
-  await db
+  // Guarded in the statement (epochFence.ts): written only while the
+  // indexer's epoch for the chain is the one this process runs under.
+  const guard = epochWriteGuard(s.chain_id);
+  const result = await db
     .prepare(
       `INSERT INTO notify_state
          (wallet, chain_id, loan_id, last_band, last_hf_milli, last_sent_ts)
-       VALUES (?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ? WHERE ${guard.where}
        ON CONFLICT(wallet, chain_id, loan_id) DO UPDATE SET
          last_band = excluded.last_band,
          last_hf_milli = excluded.last_hf_milli,
@@ -182,8 +186,10 @@ export async function putNotifyState(
       s.last_band,
       s.last_hf_milli,
       s.last_sent_ts,
+      ...guard.binds,
     )
     .run();
+  assertGuardedWriteLanded(result, `notify_state for chain ${s.chain_id} loan ${s.loan_id}`);
 }
 
 /** T-092-C (#532) — read the last pre-grace warning timestamp for
@@ -215,16 +221,18 @@ export async function putPreGraceNotifyState(
   loanId: number,
   lastSentTs: number,
 ): Promise<void> {
-  await db
+  const guard = epochWriteGuard(chainId); // epochFence.ts: atomic with the write
+  const result = await db
     .prepare(
       `INSERT INTO pre_grace_notify_state
          (wallet, chain_id, loan_id, last_sent_ts)
-       VALUES (?, ?, ?, ?)
+       SELECT ?, ?, ?, ? WHERE ${guard.where}
        ON CONFLICT(wallet, chain_id, loan_id) DO UPDATE SET
          last_sent_ts = excluded.last_sent_ts`,
     )
-    .bind(wallet, chainId, loanId, lastSentTs)
+    .bind(wallet, chainId, loanId, lastSentTs, ...guard.binds)
     .run();
+  assertGuardedWriteLanded(result, `pre_grace_notify_state for chain ${chainId} loan ${loanId}`);
 }
 
 /** 6-digit numeric Telegram handshake code with a 10-minute expiry.
@@ -358,11 +366,12 @@ export async function upsertLiquidityConfidence(
   db: D1Database,
   row: LiquidityConfidenceRow,
 ): Promise<void> {
-  await db
+  const guard = epochWriteGuard(row.chain_id); // epochFence.ts: atomic with the write
+  const result = await db
     .prepare(
       `INSERT INTO liquidity_confidence
          (chain_id, asset, agg_tier, on_chain_tier, healthy_streak, first_eligible_ts, last_check_ts)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${guard.where}
        ON CONFLICT(chain_id, asset) DO UPDATE SET
          agg_tier = excluded.agg_tier,
          on_chain_tier = excluded.on_chain_tier,
@@ -378,8 +387,10 @@ export async function upsertLiquidityConfidence(
       row.healthy_streak,
       row.first_eligible_ts,
       row.last_check_ts,
+      ...guard.binds,
     )
     .run();
+  assertGuardedWriteLanded(result, `liquidity_confidence for chain ${row.chain_id} asset ${row.asset}`);
 }
 
 // ─── #1222 M3 B2-d1 — commitment-report scan state (Codex #1425 r2) ────────

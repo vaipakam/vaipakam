@@ -29,6 +29,7 @@ import {
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
+import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
 const CAPTURE_ABI = [
   {
@@ -104,13 +105,15 @@ async function getLastCaptureDay(env: Env, chainId: number): Promise<number | nu
 }
 
 async function setLastCaptureDay(env: Env, chainId: number, dayIndex: number): Promise<void> {
-  await env.DB.prepare(
+  const guard = epochWriteGuard(chainId); // epochFence.ts: atomic with the write
+  const result = await env.DB.prepare(
     `INSERT INTO oracle_snapshot_state (chain_id, day_index, updated_at)
-       VALUES (?1, ?2, ?3)
+       SELECT ?, ?, ? WHERE ${guard.where}
        ON CONFLICT(chain_id) DO UPDATE SET day_index = excluded.day_index, updated_at = excluded.updated_at`,
   )
-    .bind(chainId, dayIndex, Date.now())
+    .bind(chainId, dayIndex, Date.now(), ...guard.binds)
     .run();
+  assertGuardedWriteLanded(result, `oracle_snapshot_state for chain ${chainId}`);
 }
 
 async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {

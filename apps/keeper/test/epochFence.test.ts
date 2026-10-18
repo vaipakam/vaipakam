@@ -3,16 +3,17 @@
  * epoch it was launched under still holds, enforced at the three effect
  * seams (a send, an alert, a database write), re-read every time.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createWalletClient, custom } from 'viem';
 import { deliverAlert } from '../src/alertDelivery';
 import type { ChainConfig, Env } from '../src/env';
-import { EpochFenceRefusal, assertEpochsHold, disarmEpochFence, fencedD1 } from '../src/epochFence';
+import { EpochFenceRefusal, assertEpochsHold, disarmEpochFence } from '../src/epochFence';
+import { putNotifyState } from '../src/db';
 import { resetSubmissionQueues, withSubmissionSlot } from '../src/submissionQueue';
-import { createKeeperD1 } from './helpers/schemas';
-import { armFenceReading, armHeldFence } from './helpers/epochFence';
+import { createSharedD1 } from './helpers/schemas';
+import { armFenceReading, armHeldFence, settleIndexer } from './helpers/epochFence';
 
 const OLD = '0x' + '1'.repeat(40);
 const NEW = '0x' + '2'.repeat(40);
@@ -102,43 +103,70 @@ describe('the alert seam', () => {
   });
 });
 
-describe('the write seam — fencedD1', () => {
-  it('asserts the fence on a write, a batch and exec, whichever method runs them; reads pass unfenced', async () => {
-    const { d1, db } = createKeeperD1();
-    const fenced = fencedD1(d1 as D1Database);
-    armFenceReading([{ chain_id: 84532, diamond: NEW, reset_pending: 0 }], [CHAIN]);
-    // Reads: no fence.
-    expect((await fenced.prepare('SELECT COUNT(*) AS n FROM hf_band_state').first<{ n: number }>())?.n).toBe(0);
-    expect((await fenced.prepare('SELECT COUNT(*) AS n FROM hf_band_state').all<{ n: number }>()).results[0]?.n).toBe(0);
-    // Writes, by every method.
-    const ins = 'INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at) VALUES (?, ?, ?, 1000, ?, 1)';
-    await expect(fenced.prepare(ins).bind(84532, 1, 'warn', '0xabc').run()).rejects.toBeInstanceOf(EpochFenceRefusal);
-    await expect(fenced.prepare(ins).bind(84532, 1, 'warn', '0xabc').all()).rejects.toBeInstanceOf(EpochFenceRefusal);
-    await expect(fenced.prepare(ins).bind(84532, 1, 'warn', '0xabc').first()).rejects.toBeInstanceOf(EpochFenceRefusal);
-    await expect(fenced.prepare('  delete from hf_band_state').run(), 'case and leading space do not matter').rejects.toBeInstanceOf(EpochFenceRefusal);
-    await expect(fenced.batch([fenced.prepare('SELECT 1')]), 'every batch').rejects.toBeInstanceOf(EpochFenceRefusal);
-    expect((db.prepare('SELECT COUNT(*) AS n FROM hf_band_state').get() as { n: number }).n, 'nothing written').toBe(0);
-    // Holding: the write lands, and a batch of fenced statements reaches the binding unwrapped.
+describe('the write seam — the guard inside the statement', () => {
+  it('a shared write is one statement with its guard: it lands only while the indexer has settled on the configured Diamond, and reports a refusal', async () => {
+    const shared = createSharedD1();
+    const db = shared.d1 as D1Database;
+    const row = { wallet: '0xabc', chain_id: 84532, loan_id: 7, last_band: 'warn', last_hf_milli: 1200, last_sent_ts: 1 };
+    const count = () => (shared.db.prepare('SELECT COUNT(*) AS n FROM notify_state').get() as { n: number }).n;
+    // notify_state references the subscriber's thresholds row.
+    shared.db.prepare('INSERT INTO user_thresholds (wallet, chain_id, warn_hf, alert_hf, critical_hf, created_at, updated_at) VALUES (?, ?, 1.5, 1.2, 1.05, 1, 1)').run('0xabc', 84532);
+    // Unarmed: no epoch to hold to.
+    await expect(putNotifyState(db, row)).rejects.toBeInstanceOf(EpochFenceRefusal);
+    // Armed for OLD, but the indexer has moved to NEW (settled): the statement writes nothing and the refusal is thrown.
+    settleIndexer(shared, 84532, NEW);
     armHeldFence([CHAIN]);
-    await fenced.prepare(ins).bind(84532, 1, 'warn', '0xabc').run();
-    await fenced.batch([fenced.prepare(ins).bind(84532, 2, 'warn', '0xabc'), fenced.prepare('DELETE FROM hf_band_state WHERE loan_id = ?').bind(1)]);
-    expect((db.prepare('SELECT loan_id FROM hf_band_state').all() as { loan_id: number }[]).map((r) => r.loan_id)).toEqual([2]);
+    await expect(putNotifyState(db, row)).rejects.toThrow(/notify_state for chain 84532 loan 7 was refused by its statement's guard/);
+    expect(count()).toBe(0);
+    // Mid-reset on OLD: not settled, refused.
+    settleIndexer(shared, 84532, OLD, 1);
+    await expect(putNotifyState(db, row)).rejects.toBeInstanceOf(EpochFenceRefusal);
+    expect(count()).toBe(0);
+    // Settled on OLD: lands; the upsert reports its change, so a second write is not a refusal.
+    settleIndexer(shared, 84532, OLD);
+    await putNotifyState(db, row);
+    await putNotifyState(db, { ...row, last_band: 'alert' });
+    expect(shared.db.prepare('SELECT last_band FROM notify_state').get()).toEqual({ last_band: 'alert' });
+    // A chain this process is not configured for has no epoch to hold to.
+    await expect(putNotifyState(db, { ...row, chain_id: 97 })).rejects.toThrow(/chain 97 is not one this process is configured for/);
+  });
+
+  it('every write in src/ to a shared table the indexer resets carries the guard — derived from the schema, so a new one cannot be added bare', () => {
+    // The tables the indexer's epoch reset clears: shared, chain-scoped, not user-owned.
+    const shared = createSharedD1();
+    const keep = Object.keys((JSON.parse(readFileSync(new URL('../../indexer/src/diamondEpochKeep.json', import.meta.url), 'utf8')) as { keep: Record<string, string> }).keep);
+    const resetTables = (shared.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+      .map((t) => t.name)
+      .filter((t) => !t.startsWith('sqlite_') && t !== 'd1_migrations' && !keep.includes(t))
+      .filter((t) => (shared.db.prepare(`SELECT name FROM pragma_table_info('${t}')`).all() as { name: string }[]).some((c) => c.name === 'chain_id'));
+    expect(resetTables).toContain('notify_state');
+    const srcDir = new URL('../src/', import.meta.url);
+    const bare: string[] = [];
+    const written = new Set<string>();
+    for (const f of readdirSync(srcDir).filter((f) => f.endsWith('.ts'))) {
+      const text = readFileSync(new URL(f, srcDir), 'utf8');
+      for (const literal of text.match(/`[^`]*`/g) ?? []) {
+        const m = literal.match(/\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"?(\w+)"?/i);
+        if (!m || !resetTables.includes(m[1]!)) continue;
+        written.add(m[1]!);
+        if (!literal.includes('${guard.where}')) bare.push(`${f}: ${m[0]}`);
+      }
+    }
+    expect(bare, 'a write to a table the indexer resets, without the epoch guard in its statement').toEqual([]);
+    // The seam is exercised, not vacuous: the keeper does write such tables.
+    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state']);
   });
 });
 
-describe('the tick arms the fence and hands the passes fenced handles', () => {
-  it('arms after the epoch reconciliation and before any launch; passes run with the fenced env', () => {
+describe('the tick arms the fence for the process', () => {
+  it('arms after the epoch reconciliation and before any launch', () => {
     const src = readFileSync(new URL('../src/tick.ts', import.meta.url), 'utf8');
     const adopt = src.indexOf('await adoptKeeperDeployments(resolved, chains)');
     const arm = src.indexOf('armEpochFence(resolved.DB, chains)');
-    const fencedEnv = src.indexOf('DB: fencedD1(resolved.DB), KEEPER_DB: fencedD1(resolved.KEEPER_DB)');
     const launchLoop = src.indexOf('for (const pass of KEEPER_PASSES)');
     expect(adopt).toBeGreaterThan(0);
     expect(arm).toBeGreaterThan(adopt);
-    expect(fencedEnv).toBeGreaterThan(arm);
-    expect(launchLoop).toBeGreaterThan(fencedEnv);
-    expect(src).toContain('pass.run(fenced, { scheduledTimeMs })');
-    expect(src, 'no pass gets the raw env').not.toContain('pass.run(resolved');
+    expect(launchLoop).toBeGreaterThan(arm);
   });
 
   it('every send goes through the fenced slot, and every alert through the fenced delivery', () => {

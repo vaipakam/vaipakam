@@ -22,6 +22,7 @@ import {
 } from '../src/hfBandNotifications';
 import type { SqliteD1 } from './helpers/sqliteD1';
 import { bindings, createKeeperD1, createSharedD1 } from './helpers/schemas';
+import { settleIndexer } from './helpers/epochFence';
 import type { Env } from '../src/env';
 
 const CHAIN = 84532;
@@ -57,6 +58,9 @@ function harness(watermarkAt: number | null = NOW): Harness {
       )
       .run(CHAIN, HEAD, watermarkAt);
   }
+  // The indexer has settled on this chain's Diamond, and the fence holds for
+  // it: what a tick establishes before the pass writes (#2569 r5).
+  settleIndexer(shared, CHAIN, '0x' + 'd'.repeat(40));
   return { shared, keeper, dbs: bindings(shared, keeper) };
 }
 

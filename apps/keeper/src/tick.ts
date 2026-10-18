@@ -21,7 +21,7 @@ import {
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
 import { adoptKeeperDeployments } from './keeperEpoch';
-import { armEpochFence, fencedD1 } from './epochFence';
+import { armEpochFence } from './epochFence';
 /**
  * Run one pass and report what it cost.
  *
@@ -145,12 +145,11 @@ export async function runKeeperTick(
   }
 
   // #2569 r4 — the epoch fence, armed for the process with the chains just
-  // reconciled, and the passes handed database handles that assert it on
-  // every write (sends and alerts assert it at their own seams). A pass
-  // launched now, or still running from an earlier tick, acts only while the
-  // indexer's epoch it was launched under holds; see epochFence.ts.
+  // reconciled. A pass launched now, or still running from an earlier tick,
+  // acts only while the indexer's epoch it was launched under holds: every
+  // send and alert asserts it, and every shared write carries it inside its
+  // statement; see epochFence.ts.
   armEpochFence(resolved.DB, chains);
-  const fenced: typeof resolved = { ...resolved, DB: fencedD1(resolved.DB), KEEPER_DB: fencedD1(resolved.KEEPER_DB) };
 
   // ONE loop over the declared table (#1896), rather than ten
   // hand-written blocks. Each pass still gets its own `launch` and
@@ -168,6 +167,6 @@ export async function runKeeperTick(
       console.log(`[keeper] ${pass.name} skipped: ${skip}`);
       continue;
     }
-    launch(pass.name, () => timedPass(pass.name, () => pass.run(fenced, { scheduledTimeMs })));
+    launch(pass.name, () => timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
   }
 }

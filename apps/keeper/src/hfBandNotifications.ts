@@ -61,6 +61,7 @@
 
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import type { Env } from './env';
+import { assertEpochsHold, epochWriteGuard } from './epochFence';
 
 export type HfBand = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -337,6 +338,13 @@ export async function recordHfBandNotifications(
       }
     }
 
+    // Each insert carries the epoch guard in its own statement (epochFence.ts):
+    // a row lands only while the indexer's epoch for this chain is the one
+    // this process runs under. An `INSERT OR IGNORE` cannot report a refusal
+    // by its change count — a duplicate changes nothing too — so when a
+    // non-empty batch inserted nothing the fence is asked, and a moved epoch
+    // is thrown as the refusal it was rather than logged as "0 inserted".
+    const guard = epochWriteGuard(chainId);
     let inserted = 0;
     for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
       const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
@@ -345,7 +353,7 @@ export async function recordHfBandNotifications(
             `INSERT OR IGNORE INTO notifications
                (chain_id, recipient, kind, loan_id, event_kind,
                 block_number, log_index, created_at, dedup_key)
-             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ? WHERE ${guard.where}`,
           )
           .bind(
             chainId,
@@ -356,6 +364,7 @@ export async function recordHfBandNotifications(
             CRON_LOG_INDEX,
             nowSec,
             r.dedupKey,
+            ...guard.binds,
           ),
       );
       const results = await db.batch(batch);
@@ -363,6 +372,7 @@ export async function recordHfBandNotifications(
         inserted += (res as { meta?: { changes?: number } }).meta?.changes ?? 0;
       }
     }
+    if (rows.length > 0 && inserted === 0) await assertEpochsHold();
 
     // Commit the observed (band, recipient) for every edge; deferred
     // loans never reached `commits`, so they retry next tick.

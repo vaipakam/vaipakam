@@ -13,23 +13,42 @@
  * stored notification meant for another borrower's loan. Checking once at
  * launch does not hold that invariant for the pass's lifetime.
  *
- * So the invariant is enforced where a pass has an EFFECT, re-reading the
- * indexer's adoptions each time, at three seams and nowhere else:
+ * So the invariant is enforced where a pass has an EFFECT, at three seams and
+ * nowhere else:
  *
  *   - a transaction: `withSubmissionSlot` (`submissionQueue.ts`), which every
  *     send passes through, asserts the fence before the signature;
- *   - an alert to a subscriber: `deliverAlert` (`alertDelivery.ts`);
- *   - a database write: the `DB` / `KEEPER_DB` handles a pass receives are
- *     wrapped by {@link fencedD1}, which asserts the fence before any
- *     statement that writes, and before every batch.
+ *   - an alert to a subscriber: `deliverAlert` (`alertDelivery.ts`) asserts
+ *     it before either channel;
+ *   - a write to a SHARED table the indexer resets on a Diamond change: the
+ *     statement itself carries the guard ({@link epochWriteGuard}), so the
+ *     check and the write are ONE statement, atomic on any transport.
+ *     `test/epochFence.test.ts` pins that every such write in `src/` carries
+ *     it, from the schema, so a new one cannot be added bare.
  *
- * A read is not fenced: a read that leads to no effect changes nothing, and
- * the keeper's own private rows for a chain are cleared by its epoch reset
- * on the first tick of the build that names the new Diamond. A refused
- * effect throws {@link EpochFenceRefusal}, which the pass reports as any
- * other failure; the tick keeps declining until the keeper's build names the
- * Diamond the indexer has settled on, and the next launched pass starts from
- * the new epoch.
+ * WHY THE TWO KINDS OF SEAM DIFFER (#2569 r5). A row outlives the epoch: a
+ * `notify_state` or `notifications` row written for loan 7 after the
+ * indexer's reset is read, in the new epoch, as the NEW Diamond's loan 7, and
+ * is never cleared again. So a check followed by the write — two calls, with
+ * the indexer's adoption able to land between them — is not enough; the
+ * write must be conditional in the same statement. A send or an alert is
+ * consumed in the moment and read back by nothing: the check at that seam
+ * sits after every read the effect was computed from and before the effect,
+ * so an adoption BEFORE the check is seen and refuses it, and an adoption
+ * AFTER the check leaves an effect computed entirely from the old epoch,
+ * about the old Diamond, which is what it says it is.
+ *
+ * A read is not fenced: a read that leads to no effect changes nothing. A
+ * write to the keeper's PRIVATE database is not fenced either: its chain-
+ * keyed rows are cleared by the keeper's own epoch reset (`keeperEpoch.ts`)
+ * on the first tick of the build that names the new Diamond, and no pass
+ * runs under the new Diamond before that reset — the build change that names
+ * it restarts the process, so no pass of the old build straddles it. A row
+ * written under the old epoch is therefore gone before the first read under
+ * the new one. A refused effect throws {@link EpochFenceRefusal}, which the
+ * pass reports as any other failure; the tick keeps declining until the
+ * keeper's build names the Diamond the indexer has settled on, and the next
+ * launched pass starts from the new epoch.
  *
  * ARMED BY THE TICK, FOR THE PROCESS. The fence is module state, like the
  * submission queues: `runKeeperTick` arms it with the chains it just
@@ -38,9 +57,9 @@
  * an effect from a path no tick established the epochs for is exactly what
  * the fence exists to stop. Tests arm it with {@link armEpochFenceWith}.
  *
- * COST. One read of `indexer_deployment` (a row per chain) per effect. Sends
- * and alerts are rare; writes come in batches. Reads, the bulk of a pass, pay
- * nothing.
+ * COST. A send or an alert pays one read of `indexer_deployment` (a row per
+ * chain); a guarded write pays an EXISTS over that table inside its own
+ * statement. Reads, the bulk of a pass, pay nothing.
  */
 import { INDEXER_DEPLOYMENTS_SQL, indexerAdopted } from '../scripts/lib/indexer-adoption.mjs';
 import type { ChainConfig } from './env';
@@ -119,65 +138,44 @@ export async function assertEpochsHold(): Promise<void> {
   }
 }
 
-/** A statement that writes, by its leading keyword. `WITH` counts as one:
- *  a CTE may feed an INSERT, and an extra check on a read costs one read. */
-const WRITES = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|WITH)\b/i;
-
-const INNER = Symbol('epochFence.inner');
-
-type Statement = D1PreparedStatement & { [INNER]?: D1PreparedStatement };
-
-function fencedStatement(inner: D1PreparedStatement, sql: string): D1PreparedStatement {
-  const gate = async () => {
-    if (WRITES.test(sql)) await assertEpochsHold();
+/**
+ * The guard a SHARED write carries INSIDE its statement, so the check and
+ * the write are one SQLite statement — atomic whatever the transport (the
+ * machine reaches D1 one HTTP request per statement, and a batch's atomicity
+ * over that API is not established, KeeperMachine.md). The statement writes
+ * only while the indexer's settled adoption for `chainId` is the Diamond this
+ * process is configured with, read by the same statement:
+ *
+ *   INSERT INTO t (a, b) SELECT ?, ? WHERE <where> ON CONFLICT ... DO UPDATE ...
+ *   bind(a, b, ...binds)
+ *
+ * `where` is `EXISTS (...)` over `indexer_deployment`, the same rule as
+ * `assertEpochsHold` (`indexer-adoption.mjs`: recorded, reset done), and
+ * `binds` are its two parameters, placed AFTER the statement's own. Throws
+ * {@link EpochFenceRefusal} while unarmed, or for a chain this process is not
+ * configured for — a write for such a chain has no epoch to hold to.
+ */
+export function epochWriteGuard(chainId: number): { where: string; binds: [number, string] } {
+  if (armed === null) {
+    throw new EpochFenceRefusal('not armed — no tick has established the indexer epochs this process acts under');
+  }
+  const want = armed.want.get(chainId);
+  if (want === undefined) throw new EpochFenceRefusal(`chain ${chainId} is not one this process is configured for`);
+  return {
+    where: 'EXISTS (SELECT 1 FROM indexer_deployment WHERE chain_id = ? AND lower(diamond) = ? AND reset_pending = 0)',
+    binds: [chainId, want],
   };
-  const wrapped: Statement = {
-    [INNER]: inner,
-    bind: (...values: unknown[]) => fencedStatement(inner.bind(...values), sql),
-    first: (async (column?: string) => {
-      await gate();
-      return column === undefined ? inner.first() : inner.first(column);
-    }) as D1PreparedStatement['first'],
-    all: (async () => {
-      await gate();
-      return inner.all();
-    }) as D1PreparedStatement['all'],
-    raw: (async (options?: { columnNames?: boolean }) => {
-      await gate();
-      return options === undefined ? inner.raw() : inner.raw(options as never);
-    }) as D1PreparedStatement['raw'],
-    run: (async () => {
-      await gate();
-      return inner.run();
-    }) as D1PreparedStatement['run'],
-  } as Statement;
-  return wrapped;
-}
-
-/** The statement `batch` must hand the binding: the one it was built from. */
-function unwrap(statement: D1PreparedStatement): D1PreparedStatement {
-  return (statement as Statement)[INNER] ?? statement;
 }
 
 /**
- * `db`, with every write fenced: a statement whose SQL writes asserts the
- * fence before it runs, whichever method runs it, and so does every batch
- * and `exec`. Reads pass through. Statements it prepares can be handed to
- * its own `batch`, which unwraps them for the binding.
+ * What a guarded write that ALWAYS changes a row when it runs (an upsert
+ * with `DO UPDATE`) reports: zero changes means the guard refused it, and
+ * the refusal is thrown so the pass reports it like any other failure. An
+ * `INSERT OR IGNORE` cannot be judged this way — a duplicate also changes
+ * nothing — and its caller says so where it reads the count.
  */
-export function fencedD1<T extends D1Database>(db: T): T {
-  const fenced = {
-    prepare: (sql: string) => fencedStatement(db.prepare(sql), sql),
-    batch: async (statements: D1PreparedStatement[]) => {
-      await assertEpochsHold();
-      return db.batch(statements.map(unwrap));
-    },
-    exec: async (sql: string) => {
-      await assertEpochsHold();
-      return db.exec(sql);
-    },
-    dump: () => db.dump(),
-    withSession: (constraint?: unknown) => (db as unknown as { withSession: (c?: unknown) => unknown }).withSession(constraint),
-  };
-  return fenced as unknown as T;
+export function assertGuardedWriteLanded(result: { meta?: { changes?: number } } | undefined, what: string): void {
+  if (Number(result?.meta?.changes ?? 0) === 0) {
+    throw new EpochFenceRefusal(`${what} was refused by its statement's guard: the indexer's epoch moved since this tick launched`);
+  }
 }
