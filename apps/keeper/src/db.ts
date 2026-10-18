@@ -861,15 +861,16 @@ export async function getOpsAlert(
   return row ? { firstSeenAt: row.first_seen_at, lastSentAt: row.last_sent_at } : null;
 }
 
-/** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`). */
-export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: number): Promise<void> {
+/** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`).
+ *  `chainId` scopes it to a chain, so a Diamond change on that chain clears it. */
+export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: number, chainId: number | null = null): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at)
-       VALUES (?1, ?2, ?2)
-       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at`,
+      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
+       VALUES (?1, ?2, ?2, ?3)
+       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
     )
-    .bind(key, nowSec)
+    .bind(key, nowSec, chainId)
     .run();
 }
 
@@ -1266,6 +1267,39 @@ export async function getSanctionsScreenCursor(db: KeeperD1, chainId: number, di
 }
 
 /** Record where the screen resumes. */
+/** The owners the sanctions screen found held or confirmed (#2497 r11). */
+export async function listSanctionsWatch(db: KeeperD1, chainId: number, diamond: string): Promise<string[]> {
+  const rows = await db
+    .prepare('SELECT owner FROM keeper_sanctions_watch WHERE chain_id = ?1 AND diamond = ?2 ORDER BY owner')
+    .bind(chainId, diamond.toLowerCase())
+    .all<{ owner: string }>();
+  return (rows.results ?? []).map((r) => r.owner);
+}
+
+/** Watch `owners` (idempotent). */
+export async function watchSanctionsOwners(db: KeeperD1, chainId: number, diamond: string, owners: readonly string[]): Promise<void> {
+  if (owners.length === 0) return;
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch(
+    owners.map((o) =>
+      db
+        .prepare('INSERT OR IGNORE INTO keeper_sanctions_watch (chain_id, diamond, owner, added_at) VALUES (?1, ?2, ?3, ?4)')
+        .bind(chainId, diamond.toLowerCase(), o.toLowerCase(), now),
+    ),
+  );
+}
+
+/** Stop watching `owners` — only on a fresh read showing nothing left to do. */
+export async function unwatchSanctionsOwners(db: KeeperD1, chainId: number, diamond: string, owners: readonly string[]): Promise<void> {
+  if (owners.length === 0) return;
+  for (const c of chunkD1InList(owners.map((o) => o.toLowerCase()), { before: [chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(`DELETE FROM keeper_sanctions_watch WHERE chain_id = ? AND diamond = ? AND owner IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
 export async function putSanctionsScreenCursor(
   db: KeeperD1,
   chainId: number,

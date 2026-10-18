@@ -20,7 +20,6 @@ import {
   PASS_CADENCE_SEC,
   candidateOwners,
   nextScreenCursor,
-  screenSettled,
   writeBudgetFor,
   planSanctionsHold,
   SCREEN_MAX_PER_TICK,
@@ -396,12 +395,16 @@ describe('the loan-party screen (Codex #2489 r2)', () => {
     expect(nextScreenCursor('0x00', s, [true, false, true], true), 'a failure on the last page still holds the cursor').toBe('0x01');
   });
 
-  it('never moves past a party whose observation the write budget left unsent (#2497 r5)', () => {
-    const s = ['0x01', '0x02', '0x03'];
-    const settled = screenSettled(s, [true, true, true], new Set(['0x02']));
-    expect(settled).toEqual([true, false, true]);
-    expect(nextScreenCursor('0x00', s, settled, true), 'held just before it, even on the last page').toBe('0x01');
-    expect(nextScreenCursor('0x00', s, screenSettled(s, [true, true, true], new Set(['0x99'])), false), 'an unreached owner outside the slice changes nothing').toBe('0x03');
+  it('watches what the screen finds, and forgets an owner only on a fresh Deliver with nothing stored (#2497 r11)', async () => {
+    const { listSanctionsWatch, watchSanctionsOwners, unwatchSanctionsOwners } = await import('../src/db');
+    const k = createKeeperD1().d1 as KeeperD1;
+    await watchSanctionsOwners(k, CHAIN, '0xAB', [A, B]);
+    await watchSanctionsOwners(k, CHAIN, '0xab', [A]); // idempotent
+    await watchSanctionsOwners(k, CHAIN, '0xcd', [A]); // another Diamond
+    expect(await listSanctionsWatch(k, CHAIN, '0xab')).toEqual([A, B]);
+    await unwatchSanctionsOwners(k, CHAIN, '0xab', [A]);
+    expect(await listSanctionsWatch(k, CHAIN, '0xab')).toEqual([B]);
+    expect(await listSanctionsWatch(k, CHAIN, '0xcd'), 'namespaced by Diamond').toEqual([A]);
   });
 
   it('reads every original and current lender and borrower once, in address order, from the cursor', async () => {

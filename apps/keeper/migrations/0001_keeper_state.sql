@@ -166,5 +166,10 @@ CREATE TABLE IF NOT EXISTS keeper_remit_ack (
 CREATE TABLE IF NOT EXISTS keeper_ops_alert (
   alert_key     TEXT    NOT NULL PRIMARY KEY,
   first_seen_at INTEGER NOT NULL,
-  last_sent_at  INTEGER NOT NULL
+  last_sent_at  INTEGER NOT NULL,
+  -- The chain an alert is about, or NULL for one that is not chain-scoped
+  -- (#2497 r10). A column, not a key convention, so the keeper's deployment-
+  -- epoch reset (src/keeperEpoch.ts) finds it by the same schema rule as every
+  -- other keyed-by-chain table: a redeploy forgets the retired Diamond's de-dup.
+  chain_id      INTEGER
 );

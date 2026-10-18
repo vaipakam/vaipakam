@@ -38,7 +38,7 @@ describe('listResetOnDiamondChange — schema-aware, pinned to the real schema',
         return cols.includes('chain_id') && !cols.includes('diamond');
       });
     expect(await listResetOnDiamondChange(keeper.d1 as KeeperD1)).toEqual(oracle);
-    expect(oracle).toEqual(['hf_band_state', 'keeper_commitment_day', 'keeper_commitment_scan']);
+    expect(oracle).toEqual(['hf_band_state', 'keeper_commitment_day', 'keeper_commitment_scan', 'keeper_ops_alert']);
   });
 });
 
@@ -82,5 +82,53 @@ describe('adoptKeeperDeployments', () => {
       log.mockRestore();
     }
     expect(bands(84532)).toBe(0);
+  });
+
+  it("clears the chain's alert de-dup with it, and leaves a global alert alone (#2497 r11)", async () => {
+    const { keeper, env } = setup();
+    await adoptKeeperDeployments(env, [chain(OLD)]);
+    const { recordOpsAlertSent } = await import('../src/db');
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:84532:all`, 100, 84532);
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:97:all`, 100, 97);
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, 'global-thing', 100);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await adoptKeeperDeployments(env, [chain(NEW)]);
+    } finally {
+      log.mockRestore();
+    }
+    const keys = (keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+    expect(keys).toEqual(['global-thing', 'sanctions-capacity:97:all']);
+  });
+
+  it("fails closed on an UNREAD indexer record: the first adoption throws instead of guessing (#2497 r11)", async () => {
+    const { keeper, band } = setup();
+    band(84532, 7);
+    const brokenShared = { prepare: () => { throw new Error('D1 down'); } };
+    const env = { DB: brokenShared, KEEPER_DB: keeper.d1 } as unknown as Env;
+    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/D1 down/);
+    expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_deployment').get(), 'nothing adopted').toEqual({ n: 0 });
+  });
+
+  it('records the new Diamond only after every table reads empty — a failed delete leaves the old record, so the reset is redone (#2497 r11)', async () => {
+    const { keeper, env, band } = setup();
+    await adoptKeeperDeployments(env, [chain(OLD)]);
+    band(84532, 1);
+    // A KEEPER_DB whose DELETE on hf_band_state silently does nothing.
+    const real = keeper.d1 as unknown as { prepare: (q: string) => unknown };
+    const flaky = {
+      ...real,
+      prepare: (q: string) => (q.startsWith('DELETE FROM "hf_band_state"') ? real.prepare('SELECT 1 WHERE ? = ?') : real.prepare(q)),
+      batch: (keeper.d1 as unknown as { batch: unknown }).batch,
+    };
+    const bad = { DB: (env as unknown as { DB: unknown }).DB, KEEPER_DB: flaky } as unknown as Env;
+    await expect(adoptKeeperDeployments(bad, [chain(NEW)])).rejects.toThrow(/left 1 row/);
+    expect(keeper.db.prepare('SELECT diamond FROM keeper_deployment').get()).toEqual({ diamond: OLD });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await adoptKeeperDeployments(env, [chain(NEW)]), 'the next tick redoes it whole').toEqual([84532]);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

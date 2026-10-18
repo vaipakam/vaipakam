@@ -427,8 +427,10 @@
   //     indexer and agent have no binding to it, so neither can write the
   //     keeper's completion records. Separate by trust boundary, the rule
   //     ops/mesh-watcher already follows (CLAUDE.md, "Cloudflare D1 schema
-  //     discipline"). Schema in apps/keeper/migrations/, applied by hand —
-  //     no deploy script applies it.
+  //     discipline"). Schema in apps/keeper/migrations/, applied by the keeper's own
+  //     `deploy` (scripts/deploy-keeper.mjs runs `run migrate` first, then
+  //     verifies) — the keeper is that database's one applier — or alone with
+  //     `pnpm --filter @vaipakam/keeper run migrate`.
   //
   // A maintenance build (#2239) omits BOTH entries: the barrier is an empty
   // `d1_databases`, and the tick declines while either binding is absent.

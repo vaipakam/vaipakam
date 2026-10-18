@@ -214,6 +214,10 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: "keeper open-work queue (#2489, #2497 r8), keeper-private; disposable ONLY together with keeper_work_cursor — clearing both re-discovers from the active Diamond's deploy block and drops each finished item after one on-chain read; clearing this one alone loses the items behind the cursor — #1481",
   },
+  keeper_sanctions_watch: {
+    class: 'decision-needed',
+    reason: "keeper sanctions-hold watch list (#2497 r11), keeper-private; disposable — an empty table re-finds each held owner on the screen's next cycle, which is what it was before the list existed — #1481",
+  },
   keeper_work_cursor: {
     class: 'decision-needed',
     reason: "keeper open-work discovery cursor (#2497 r8), keeper-private; disposable — an empty table re-discovers from the active Diamond's deploy block, and re-queuing an item is a no-op — #1481",

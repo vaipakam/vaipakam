@@ -41,6 +41,8 @@ export async function sendOpsAlert(
   text: string,
   minIntervalSec: number,
   nowSec: number = Math.floor(Date.now() / 1000),
+  /** The chain the alert is about, when it is chain-scoped (#2497 r10). */
+  chainId: number | null = null,
 ): Promise<OpsAlertOutcome> {
   const token = env.TG_OPS_BOT_TOKEN;
   const chatId = env.TG_OPS_CHAT_ID;
@@ -55,7 +57,7 @@ export async function sendOpsAlert(
     if (prior && nowSec - prior.lastSentAt < minIntervalSec) return 'suppressed';
     const ok = await postToTelegram(token, chatId, text);
     if (!ok) return 'failed';
-    await recordOpsAlertSent(env.KEEPER_DB, key, nowSec);
+    await recordOpsAlertSent(env.KEEPER_DB, key, nowSec, chainId);
     return 'sent';
   } catch (err) {
     console.error(`[keeper] ops alert ${key} failed: ${redact(String(err), token)}`);

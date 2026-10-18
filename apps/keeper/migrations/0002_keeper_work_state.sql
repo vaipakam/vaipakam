@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS keeper_sanctions_screen (
   PRIMARY KEY (chain_id, diamond)
 );
 
+-- The sanctions-hold pass's WATCH list (#2497 r11). An owner the screen finds
+-- held or confirmed may leave no other trace yet — no evidence event, no
+-- staging record — until its first observation lands. So the screen records it
+-- here, and it stays a candidate every tick until a fresh read shows nothing
+-- left to do (Deliver, with no chain or marker stored). The screen's cursor is
+-- then free to move on whatever the tick's sends did: discovery is separate
+-- from completion, as in keeper_work_open. Namespaced by Diamond.
+CREATE TABLE IF NOT EXISTS keeper_sanctions_watch (
+  chain_id   INTEGER NOT NULL,
+  diamond    TEXT    NOT NULL,
+  owner      TEXT    NOT NULL,  -- lowercase
+  added_at   INTEGER NOT NULL,  -- unix seconds
+  PRIMARY KEY (chain_id, diamond, owner)
+);
+
 -- The one-time cutover copy's completion record (DeploymentRunbook, "Keeper
 -- private D1 — one-time cutover"). `scripts/keeper-cutover.mjs` writes it, and
 -- only after every one of the five moved tables has the same fingerprint (row

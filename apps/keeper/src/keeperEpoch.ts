@@ -10,7 +10,9 @@
  * same rule there, once per tick, before any pass runs.
  *
  * WHICH TABLES. Schema-aware, like the indexer's: every private table whose DDL
- * declares a `chain_id` column and NO `diamond` column. A table carrying
+ * declares a `chain_id` column and NO `diamond` column. A table that is
+ * chain-scoped carries the column even where its key alone would say so —
+ * `keeper_ops_alert` does (#2497 r11) — so this one rule finds every one. A table carrying
  * `diamond` is already namespaced by it and needs no reset; a new keyed-by-
  * chain table joins the rule by existing, not by being listed.
  *
@@ -18,8 +20,9 @@
  * the ones the cutover copied from the shared database, and those belong to the
  * Diamond the INDEXER had adopted (its `indexer_deployment` record). So that is
  * what is recorded first; if it is not the configured Diamond, the very next
- * comparison resets. When the indexer's record cannot be read either, the
- * configured Diamond is adopted (a fresh environment, nothing to reset).
+ * comparison resets. When the indexer has recorded NO Diamond for the chain,
+ * the configured one is adopted (a fresh environment, nothing to reset); when
+ * its record cannot be READ, the tick declines instead.
  */
 import type { ChainConfig, Env } from './env';
 
@@ -40,13 +43,13 @@ export async function listResetOnDiamondChange(db: Env['KEEPER_DB']): Promise<st
   return (r.results ?? []).map((t) => t.name);
 }
 
+/** The Diamond the indexer has adopted for `chainId`, or null when it has
+ *  recorded NONE. A failed read THROWS (#2497 r11): an unread record is not an
+ *  absent one, and adopting the configured Diamond on a read error could
+ *  accept another Diamond's rows for good. */
 async function indexerAdopted(env: Env, chainId: number): Promise<string | null> {
-  try {
-    const row = await env.DB.prepare('SELECT diamond FROM indexer_deployment WHERE chain_id = ?').bind(chainId).first<{ diamond: string }>();
-    return typeof row?.diamond === 'string' ? row.diamond.toLowerCase() : null;
-  } catch {
-    return null;
-  }
+  const row = await env.DB.prepare('SELECT diamond FROM indexer_deployment WHERE chain_id = ?').bind(chainId).first<{ diamond: string }>();
+  return typeof row?.diamond === 'string' ? row.diamond.toLowerCase() : null;
 }
 
 /**
@@ -76,16 +79,27 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
     if (have === want) continue;
     // eslint-disable-next-line no-await-in-loop
     tables ??= await listResetOnDiamondChange(env.KEEPER_DB);
-    // One batch: the rows go and the new Diamond is recorded together, so an
-    // interrupted reset is simply redone next tick.
+    // Delete, VERIFY, and only then record (#2497 r11) — never a batch: the
+    // machine reaches D1 over HTTP, whose batch atomicity is not established
+    // (KeeperMachine.md). Each step is idempotent, and the record moves only
+    // once every table reads empty for the chain, so a reset cut off anywhere
+    // is redone whole by the next tick.
+    for (const t of tables) {
+      // eslint-disable-next-line no-await-in-loop
+      await env.KEEPER_DB.prepare(`DELETE FROM "${t}" WHERE chain_id = ?`).bind(chain.id).run();
+    }
+    for (const t of tables) {
+      // eslint-disable-next-line no-await-in-loop
+      const left = await env.KEEPER_DB.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE chain_id = ?`).bind(chain.id).first<{ n: number }>();
+      if (Number(left?.n) !== 0) throw new Error(`reset of ${t} for chain ${chain.id} left ${String(left?.n)} row(s)`);
+    }
     // eslint-disable-next-line no-await-in-loop
-    await env.KEEPER_DB.batch([
-      ...tables.map((t) => env.KEEPER_DB.prepare(`DELETE FROM "${t}" WHERE chain_id = ?`).bind(chain.id)),
-      env.KEEPER_DB.prepare(
-        `INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)
-         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, adopted_at = excluded.adopted_at`,
-      ).bind(chain.id, want, now),
-    ]);
+    await env.KEEPER_DB.prepare(
+      `INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)
+       ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, adopted_at = excluded.adopted_at`,
+    )
+      .bind(chain.id, want, now)
+      .run();
     console.log(`[keeper] chain ${chain.id}: Diamond changed ${have} → ${want}; reset private ${tables.join(' ') || '(none)'}`);
     reset.push(chain.id);
   }
