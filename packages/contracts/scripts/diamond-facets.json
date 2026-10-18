@@ -105,6 +105,7 @@
     "BackstopVaultImplementation",
     "FlashLoanLiquidator",
     "RiskPremiumRateModel",
-    "TestnetSanctionsOverlay"
+    "TestnetSanctionsOverlay",
+    "SanctionsList"
   ]
 }

@@ -382,6 +382,11 @@ FACETS=(
   # optionally layered over another list). NOT a diamond facet; the connected app reads
   # its `sanctionSource` to say which list flagged a wallet.
   "TestnetSanctionsOverlay"
+  # #2443 — the mainnet sanctions list (Vaipakam's own OFAC SDN record,
+  # optionally OR-composed with RedStone's oracle). NOT a diamond facet; the
+  # offline OFAC diff tool (packages/contracts/scripts/ofac-sanctions-diff.mjs)
+  # encodes its `applyUpdate` from this ABI and reads its enumeration.
+  "SanctionsList"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

@@ -279,7 +279,9 @@ export function revertErrorLikeViem(err, abi, functionName) {
   e.cause = err;
   return e;
 }
-async function callAtHash(client, block, { address, abi, functionName, args = [] }) {
+/** A contract read pinned to `block`'s HASH (EIP-1898, requireCanonical).
+ *  Exported so other read-only tools pin snapshots the same way (#2543). */
+export async function callAtHash(client, block, { address, abi, functionName, args = [] }) {
   const data = encodeFunctionData({ abi, functionName, args });
   let raw;
   try {

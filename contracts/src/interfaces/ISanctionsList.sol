@@ -10,9 +10,11 @@ pragma solidity ^0.8.29;
  * @dev This is the interface Chainalysis's on-chain oracle exposed, but
  *      Chainalysis retired that oracle (last updated 2026-03-18, "no
  *      longer supported or maintained") and it must not be configured:
- *      it still answers, so nothing on-chain shows it is frozen. Which
- *      source mainnets use is open (#2443); testnets use the admin's
- *      `TestnetSanctionsOverlay`.
+ *      it still answers, so nothing on-chain shows it is frozen. Mainnets
+ *      are meant to use Vaipakam's own `SanctionsList` (OFAC SDN addresses,
+ *      optionally OR-composed with RedStone's Sanctions Oracle, #2443);
+ *      testnets use the admin's `TestnetSanctionsOverlay`. Both implement
+ *      this interface through `ComposedSanctionsList`.
  *
  *      Where no oracle is configured, `sanctionsOracle = address(0)`
  *      disables the check entirely (see `LibVaipakam.isSanctionedAddress`).

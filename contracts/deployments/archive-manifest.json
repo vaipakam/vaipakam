@@ -1,6 +1,6 @@
 {
   "purpose": "Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.",
-  "generatedAt": "2026-10-17T18:03:24.204Z",
+  "generatedAt": "2026-10-18T02:55:58.144Z",
   "entries": [
     {
       "slug": "arb-sepolia",
@@ -115,6 +115,14 @@
       "vpfiToken": "0x771248712d35c54261C2A9441f3cAc7f9ad57839"
     },
     {
+      "slug": "bnb-testnet",
+      "stamp": "2026-10-18T02-55-58Z",
+      "chainId": 97,
+      "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
+      "deployBlock": 116504621,
+      "vpfiToken": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d"
+    },
+    {
       "slug": "op-sepolia",
       "stamp": "prior-rehearsal-1778076638",
       "chainId": 11155420,
@@ -140,10 +148,10 @@
     }
   ],
   "livePublicationsInProgress": {},
-  "liveGeneration": 3,
+  "liveGeneration": 4,
   "lastLivePublished": {
-    "slug": "arb-sepolia",
-    "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
-    "at": "2026-10-17T18:26:44.030Z"
+    "slug": "bnb-testnet",
+    "diamond": "0xfa7685Eb0160f8998f70F196d64Be223ce120bC2",
+    "at": "2026-10-18T03:28:38.353Z"
   }
 }

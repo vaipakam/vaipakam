@@ -119,6 +119,13 @@ const NOT_FOUND = /doesn.t exist|not found|404/i;
 const EN = JSON.parse(
   readFileSync(new URL('../../src/i18n/locales/en.json', import.meta.url), 'utf8'),
 );
+/** The consolidated deployments bundle the app itself reads, so a scenario's
+ *  expectation can follow what the chain under review actually carries (a
+ *  chain with no faucet mocks, say) rather than restating it. */
+const DEPLOYMENTS = JSON.parse(
+  readFileSync(new URL('../../../../packages/contracts/src/deployments.json', import.meta.url), 'utf8'),
+);
+
 const EXPECTED = {
   offersTitle: EN.copy.offers.title,
   vaultTitle: EN.copy.vault.title,
@@ -644,8 +651,26 @@ const SCENARIOS = [
     route: '/faucet',
     desired:
       'The faucet page itself renders AND offers mint controls. One ' +
-      'button on some other page satisfied the old predicate.',
+      'button on some other page satisfied the old predicate. On a testnet ' +
+      'whose deployment carries NO faucet mocks (BNB Testnet uses the real ' +
+      'PancakeSwap venue), the honest answer is instead: the no-test-assets ' +
+      'state, no mint rows, and a one-click switch to a testnet that has them.',
     async check(page) {
+      // Read from the deployments bundle the app reads, so this follows the
+      // chain under review instead of assuming every testnet has mocks.
+      if (!DEPLOYMENTS[String(JOURNEY_CHAIN)]?.testnetMocks) {
+        const r = await rendersPage(page, EXPECTED.faucetTitle);
+        const st = await waitSettled(page);
+        const txt = await bodyText(page);
+        const titled = txt.includes(EN.copy.faucet.notTestnetTitle);
+        const switchPrefix = EN.copy.wallet.switchToChain.split('{{')[0];
+        const switches = await page.getByRole('button', { name: new RegExp(`^${switchPrefix}`) }).count();
+        return {
+          ok: r.ok && !st.loading && st.rows === 0 && titled && switches >= 1,
+          actual: `${r.actual}, no-mocks state=${titled}, mintRows=${st.rows}, switch button(s)=${switches}`,
+          note: `chain ${JOURNEY_CHAIN} carries no testnetMocks in the deployments bundle, so mint controls are not expected here`,
+        };
+      }
       // MINT ROWS, NOT ANY BUTTON (review round 19 P2). On a chain with
       // no mocks the faucet renders this very heading plus a
       // switch-network button and a "back home" link, so `h1` + at least

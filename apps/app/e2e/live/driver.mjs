@@ -44,7 +44,7 @@ import {
   numberToHex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia, arbitrumSepolia } from 'viem/chains';
+import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -540,6 +540,10 @@ export const CHAINS = {
   421614: {
     chain: arbitrumSepolia,
     rpc: process.env.ARB_SEPOLIA_RPC ?? 'https://sepolia-rollup.arbitrum.io/rpc',
+  },
+  97: {
+    chain: bscTestnet,
+    rpc: process.env.BNB_TESTNET_RPC ?? bscTestnet.rpcUrls.default.http[0],
   },
 };
 
