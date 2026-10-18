@@ -280,18 +280,29 @@ export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
   return st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC;
 }
 
+/** One run's wall-clock budget for SENDING (#2497 r16): inside the pass's own
+ *  hourly cadence, so the host's per-pass guard never has to skip the next run.
+ *  What is left unsent is measured and stated, not predicted. */
+export const PASS_SEND_WINDOW_MS = 45 * 60_000;
+
 export async function runRewardSanctionsHold(env: Env): Promise<void> {
   if (!passIsArmed(env, 'rewardSanctionsHold', 'REWARD_SANCTIONS_KEEPER_ENABLED')) return;
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await observeChain(env, chain);
-    } catch (err) {
-      console.error(`[keeper] rewardSanctionsHold chain=${chain.id} failed:`, err);
-    }
-  }
+  const deadline = Date.now() + PASS_SEND_WINDOW_MS;
+  // Chains run CONCURRENTLY (#2497 r16): each has its own nonce lane in the
+  // per-key submission queue, so one chain's receipt waits never spend another
+  // chain's window.
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await observeChain(env, chain, deadline);
+      } catch (err) {
+        console.error(`[keeper] rewardSanctionsHold chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
-async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
+async function observeChain(env: Env, chain: ChainConfig, deadline: number = Date.now() + PASS_SEND_WINDOW_MS): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
   // Owners of open staging work join the open chains: a claimant held with NO
   // chain (the oracle was unavailable when its page ran, a flag marker set)
@@ -344,8 +355,14 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     statuses.filter((st) => watchedSet.has(st.owner.toLowerCase()) && st.decision === DECISION_DELIVER && !st.stored).map((st) => st.owner),
   );
   const ctx = buildKeeperContext(env, chain, client as never);
-  const budget = { writes: plan.writes, touched: new Set<string>() };
+  const budget = { writes: plan.writes, touched: new Set<string>(), deadline };
+  /** MEASURED, not predicted (#2497 r16): the due observations and clean
+   *  commits this tick never reached, because the write budget or the time
+   *  window ran out. Null when there is no key to send with. */
+  let shortfall: { due: number; clean: number } | null = null;
   if (ctx?.wallet.account) {
+    let dueReached = 0;
+    let cleanReached = 0;
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
     // call. A Confirmed owner gets ONE settlement call (its observation is part
@@ -356,7 +373,8 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     const settleCallsUsed = new Map<string, number>();
     for (const due of plan.dueObservations) {
       const owner = due.owner;
-      if (budget.writes <= 0) break;
+      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
+      dueReached += 1;
       if (due.confirmed) {
         // eslint-disable-next-line no-await-in-loop
         const settled = await runOwnerSettlement(ctx, budget, owner, 1);
@@ -380,12 +398,14 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     // answer, so a Deliver that is not an authoritative Clean read (an outage,
     // a foreign-oracle chain) costs one read and no transaction.
     for (const owner of plan.commitClean) {
-      if (budget.writes <= 0) break;
+      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
+      cleanReached += 1;
       // eslint-disable-next-line no-await-in-loop
       if (!(await oracleSaysClean(client, diamond, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
+    shortfall = { due: plan.dueObservations.length - dueReached, clean: plan.commitClean.length - cleanReached };
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
     // then the staging pages, with whatever budget is left.
     for (const owner of plan.settle) {
@@ -420,7 +440,7 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     ];
     alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity);
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall);
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -712,11 +732,13 @@ async function sendIfEffective(
 
 async function send(
   ctx: KeeperContext,
-  budget: { writes: number; touched?: Set<string> },
+  budget: { writes: number; touched?: Set<string>; deadline?: number },
   fn: string,
   args: readonly unknown[],
   owner: Address,
 ): Promise<boolean> {
+  // Past the run's send window, nothing more is sent this run (#2497 r16).
+  if (budget.deadline !== undefined && Date.now() >= budget.deadline) budget.writes = 0;
   if (budget.writes <= 0) return false;
   try {
     const hash = await ctx.wallet.writeContract({
@@ -759,6 +781,8 @@ export async function raiseAlerts(
   plan: SanctionsHoldPlan,
   nowSec: number,
   screenOverCapacity: { total: number; ticks: number } | null = null,
+  /** What this tick left unsent, measured ({@link observeChain}); null = not measured. */
+  shortfall: { due: number; clean: number } | null = null,
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -781,11 +805,18 @@ export async function raiseAlerts(
   await toggle(`sanctions-screen-capacity:${chainId}:all`, screenOverCapacity !== null, () =>
     `[chain ${chainId}] reward sanctions screen: ${screenOverCapacity?.total} loan parties take ${screenOverCapacity?.ticks} hourly ticks to screen, more than a day — a wallet flagged while holding only ordinary reward can go undiscovered that long. Raise the slice cap or the cadence.`,
   );
-  // Capacity, stated (#2497 r7): past the write ceiling the six-hour bound
-  // cannot be kept for every held owner, and chains will lapse.
-  await toggle(`sanctions-capacity:${chainId}:all`, plan.overCapacity, () =>
-    `[chain ${chainId}] reward sanctions hold: ${plan.heldCount} held owners need more than ${WRITE_CEILING_PER_TICK} transactions a tick to observe each within ${OBSERVE_AFTER_SEC / 3600}h — some evidence chains will lapse. Raise the ceiling or the cadence.`,
-  );
+  // Capacity, MEASURED and stated per kind of work (#2497 r7, r16). An
+  // observation left unsent this tick is what threatens a chain's bound; an
+  // unsent clean commit is a separate backlog, said as such. A tick that could
+  // not measure (no key) leaves both as they are.
+  if (shortfall !== null) {
+    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0, () =>
+      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) were NOT sent this tick (write budget or the ${PASS_SEND_WINDOW_MS / 60_000}-minute window ran out) — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound. Raise the ceiling or the cadence.`,
+    );
+    await toggle(`sanctions-clean-backlog:${chainId}:all`, shortfall.clean > 0, () =>
+      `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) were NOT committed this tick; every due observation was sent first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
+    );
+  }
   for (const st of statuses) {
     const k = (what: string) => `sanctions-${what}:${chainId}:${st.owner}`;
     // eslint-disable-next-line no-await-in-loop

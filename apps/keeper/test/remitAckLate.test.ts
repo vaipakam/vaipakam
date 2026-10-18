@@ -8,7 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
+import { ackOrder, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
 import { enqueueWork, finishWork, listOpenWork, listReleasedRemitIds, pageByBlock, touchOpenWork } from '../src/db';
 import { discoverWork } from '../src/workQueue';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -214,5 +214,16 @@ describe('discoverWork — the cursor stops at the indexed watermark read BEFORE
       .prepare(`UPDATE indexer_cursor SET last_block = 200 WHERE chain_id = 1 AND kind = 'diamond'`).bind().run();
     expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 150]))).toBe(1);
     expect((await listOpenWork(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 10)).map((o) => o.item).sort()).toEqual(['10', '150']);
+  });
+});
+
+describe('ackOrder — the Pending acks rotate, so no id waits behind ever-retried earlier ones (#2497 r16)', () => {
+  it('never-attempted first, then least recently attempted, then by id', () => {
+    const at = new Map([
+      [1, { lastAttemptAt: 900 }],
+      [2, { lastAttemptAt: 100 }],
+      [3, { lastAttemptAt: 900 }],
+    ]);
+    expect(ackOrder([1, 2, 3, 76, 77], at)).toEqual([76, 77, 2, 1, 3]);
   });
 });

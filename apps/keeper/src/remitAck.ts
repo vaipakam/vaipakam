@@ -225,6 +225,12 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
 }
 
+/** The rotation order for acknowledgements: never attempted first, then the
+ *  least recently attempted, then by id. Pure; pinned by the tests. */
+export function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, { lastAttemptAt: number }>): number[] {
+  return [...ids].sort((a, b) => (attempts.get(a)?.lastAttemptAt ?? 0) - (attempts.get(b)?.lastAttemptAt ?? 0) || a - b);
+}
+
 async function ackPending(
   env: Env,
   baseChainId: number,
@@ -238,7 +244,11 @@ async function ackPending(
   if (pendingIds.length === 0) return;
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
   const now = Math.floor(Date.now() / 1000);
-  for (const remitId of pendingIds) {
+  // Least recently attempted first, never-attempted first of all (#2497 r16):
+  // the same rotation rule as the open-work queues. Ascending id order let the
+  // first ids re-take the budget every backoff window while later ones waited
+  // indefinitely.
+  for (const remitId of ackOrder(pendingIds, attempts)) {
     if (ackBudget.remaining <= 0) break;
     const r = reservations.get(remitId);
     if (!r) continue;

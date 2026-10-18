@@ -333,24 +333,35 @@ describe('raiseAlerts', () => {
     }
   });
 
-  it('raises the capacity alert while the write ceiling binds, and clears it after (#2497 r7)', async () => {
+  it('alerts on MEASURED shortfall, per kind of work, and clears when it is gone (#2497 r7, r16)', async () => {
     const h = createKeeperD1();
     const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const plan = (over: boolean) => ({
-      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 120, overCapacity: over, heldCount: 700,
-      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
-    });
     const warned: string[] = [];
-    warn.mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const plan = {
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 120, overCapacity: true, heldCount: 1,
+      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    };
     try {
-      await raiseAlerts(env, CHAIN, [], plan(true), NOW);
-      expect(warned.some((w) => /700 held owners need more than 120 transactions a tick/.test(w)), 'stated, not silent').toBe(true);
-      // An unconfigured ops channel records nothing; seed the open alert to see it clear.
-      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);
-      await raiseAlerts(env, CHAIN, [], plan(false), NOW);
+      // The finding's case: the predicted cap binds on clean-commit demand, but
+      // every due observation was sent — no evidence-chain alert, only the backlog.
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 100 });
+      expect(warned.some((w) => /due observation\(s\) were NOT sent/.test(w)), 'no false chain-lapse alert').toBe(false);
+      expect(warned.some((w) => /100 clean result\(s\) were NOT committed this tick; every due observation was sent first/.test(w))).toBe(true);
+      warned.length = 0;
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, clean: 0 });
+      expect(warned.some((w) => /3 due observation\(s\) were NOT sent this tick/.test(w))).toBe(true);
+      // Seed both open, then a tick with no shortfall clears them.
+      for (const k of [`sanctions-capacity:${CHAIN}:all`, `sanctions-clean-backlog:${CHAIN}:all`]) {
+        h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
+      }
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 0 });
       expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
+      // Not measured (no key): both are left as they are.
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, null);
+      expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 1 });
     } finally {
       warn.mockRestore();
     }

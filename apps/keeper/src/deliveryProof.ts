@@ -255,16 +255,21 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
   const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
+  /** The rows this tick actually EXAMINED (#2497 r16): only these rotate to the
+   *  back. A row the budget never reached keeps its place, so the rotation
+   *  moves through the whole queue instead of re-serving the slice's head. */
+  const examined = new Set<string>();
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
+      if (budget.writes <= 0 && canSend) break; // the rest keep their turn
+      examined.add(key);
       const packet = packets.get(key);
       if (!packet) continue; // unread, or not arrived: read again in its turn
       if (!packetMayNeedWork(packet)) {
         finished.add(key);
         continue;
       }
-      if (budget.writes <= 0) continue; // the rest wait for a tick with budget
       // One row's failed read (a canonical RPC outage, say) skips that row, never
       // the chain's whole pass.
       let plan: DeliveryPlan;
@@ -288,7 +293,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   } finally {
     await finishWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...finished]);
     // The rest of the slice goes to the back of the rotation.
-    await touchOpenWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, open.map((o) => o.item).filter((k) => !finished.has(k)));
+    await touchOpenWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...examined].filter((k) => !finished.has(k)));
   }
 }
 

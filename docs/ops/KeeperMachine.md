@@ -265,9 +265,16 @@ journalctl -u vaipakam-keeper -f
    `sudo systemctl restart vaipakam-keeper`. Cover at least one full 5-minute
    cycle. A pass's `done in Nms` line does not prove it acted: a pass that is
    not armed returns at once, and its log line names the flag that held it.
-3. **Per-pass flags** (`GRACE_DEFAULT_ENABLED`, `REWARD_REMIT_ENABLED`,
-   `REWARD_COMMIT_ENABLED`) are each the owner's decision. Arm one at a time
-   and validate that pass's own cadence.
+3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
+   (`graceDefault`), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
+   `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
+   `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
+   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`). Arm one at a time and
+   validate that pass's own cadence: its `<pass> done in …` line on the
+   minutes `src/passSchedule.ts` gives it, with no error line. A pass left
+   unarmed logs that it skipped, so it is never silently off. Leaving the
+   sanctions pass unarmed lets held owners' evidence chains lapse. Leaving the
+   delivery-proof pass unarmed leaves mirror-funded days gated.
 
 Rollback at any point: set `KEEPER_ENABLED=false` and restart, or stop the
 service (§6). The Worker side needs no change, because its schedule stayed

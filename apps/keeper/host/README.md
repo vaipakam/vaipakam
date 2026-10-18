@@ -87,12 +87,18 @@ the place of `wrangler tail`.
 
 ## Behaviour that differs from the Worker
 
-- **Ticks never overlap.** If a minute arrives while any pass from the
-  previous tick is still running, that minute is skipped and the skip is
-  logged with the passes still running. On a Worker, overlapping invocations
-  are separate isolates. In one process they would share in-memory per-tick
-  state, such as the liquidator's attempted-loan set, and could attempt one
-  loan twice.
+- **A pass never overlaps itself; different passes may (#2497 r9).** If a
+  pass is due while its previous run is still going, that pass is not
+  started again, and `<pass> not launched at … its previous run is still in
+  flight` is logged. Every other due pass still runs that minute, so a slow
+  pass cannot hold back the liquidator. A pass keeps per-run state in memory
+  (the liquidator's attempted-loan set), so it must not run twice at once.
+  Different passes are safe together: every send goes through the per-key
+  submission queue (`src/submissionQueue.ts`), which orders nonces across
+  passes. A minute is skipped outright only while the previous tick is still
+  launching its passes. On every minute that a pass is still in flight, the
+  host renews the one-runner lease, whatever that minute's tick does (#2497
+  r13).
 - **Each tick checks the database schema first.** On Cloudflare the keeper's
   deploy refuses to publish until the shared database records every migration
   the build carries. A machine has no deploy step, because pulling new code
