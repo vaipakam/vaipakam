@@ -140,9 +140,12 @@ library LibServiceCapacity {
     /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
     /// @custom:event-category informational/config
     event AdapterOperatorBound(address indexed adapter, address indexed operator);
-    /// @notice The arming fee rate changed: `rate` (1e18 = the whole newly-armed principal; 0 = arming dark; otherwise within the fixed bounds).
+    /// @notice The arming fee rate changed: `rate` (1e18 = the whole newly-armed principal; 0 = arming dark;
+    ///         otherwise within the fixed bounds) over `floor`, now the FIXED lower bound. The two-field
+    ///         signature is kept on purpose (Codex #2556 r4): it is the earlier facet's, so a watcher built
+    ///         against either ABI reads the same topic during and after a rolling refresh.
     /// @custom:event-category informational/config
-    event ArmingFeeSet(uint256 rate);
+    event ArmingFeeSet(uint256 rate, uint256 floor);
     /// @notice `operator` paid `fee` of the live VPFI into Diamond custody (recycled, never escrowed) for `capacityGranted` of principal newly armed for `role`; the deposit now buys `ceilingAfter`.
     /// @custom:event-category state-change/service-capacity
     event ArmingFeePaid(
@@ -457,7 +460,7 @@ library LibServiceCapacity {
             revert IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds(rate, MIN_ARMING_FEE_RATE, MAX_ARMING_FEE_RATE);
         }
         s.armingFeeRate = rate;
-        emit ArmingFeeSet(rate);
+        emit ArmingFeeSet(rate, MIN_ARMING_FEE_RATE);
     }
 
     /// @notice The arming fee rate IN FORCE: the stored rate when it is zero or
@@ -482,10 +485,9 @@ library LibServiceCapacity {
     ///         itself — principal deposited above the old knee stays unarmed until a
     ///         post arms it and pays for it). A post arms up to the live knee:
     ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
-    ///         `granted` is what that newly arms; `fee = floor((granted × rate +
-    ///         carry) / 1e18)` with the remainder carried to the record's next post
-    ///         ({armingFeeAndCarry}: never above the rate, and the total over a
-    ///         record's life within one unit of `rate × armed`); `ceilingAfter` is
+    ///         `granted` is what that newly arms; `fee = floor(granted × rate /
+    ///         1e18)` ({armingFee}: never above the rate on any post, every grant
+    ///         arms); `ceilingAfter` is
     ///         the capacity the armed balance buys. A zero-principal post therefore
     ///         arms already-deposited excess. `dark` (no positive rate, or the role's
     ///         curve unset) ⇒ zeros.
@@ -503,33 +505,26 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        (fee, ) = armingFeeAndCarry(s, role, operator, s.vpfiRotationEpoch, granted, rate);
+        fee = armingFee(granted, rate);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 
-    /// @notice The fee a post owes for `granted` newly armed principal at `rate`,
-    ///         and the fraction it leaves owed — the ONE computation the quote and
-    ///         the post share (Codex #2556 r2/r3). Every grant arms; the fee is the
-    ///         whole units of `granted × rate + carry`, rounded DOWN, and the
-    ///         remainder is carried on the deposit record to its next post. So the
-    ///         fee never exceeds the rate (never above 10%, on any grant, in any
-    ///         token's decimals); over a record's life the total equals
-    ///         `rate × total principal armed` to within one smallest unit, so no
-    ///         armed principal goes unpaid beyond that unit; and no sub-unit gap is
-    ///         ever stranded unarmed (r3: a grant-suppression rule left the last
-    ///         sliver below the knee unarmable for good). The product cannot
-    ///         overflow: `granted` ≤ `bondAt4x` ≤ 2^128, `rate` ≤ 1e17 < 2^57.
-    function armingFeeAndCarry(
-        LibVaipakam.Storage storage s,
-        uint8 role,
-        address operator,
-        uint64 epoch,
-        uint256 granted,
-        uint256 rate
-    ) internal view returns (uint256 fee, uint256 carryAfter) {
-        uint256 owed = granted * rate + s.armingFeeCarry[role][operator][epoch];
-        fee = owed / 1e18;
-        carryAfter = owed % 1e18;
+    /// @notice The fee a post owes for `granted` newly armed principal at `rate` —
+    ///         the ONE computation the quote and the post share. ROUNDED DOWN, and
+    ///         every grant arms (Codex #2556 r2–r4, the third rounding finding, so
+    ///         restructured to the simplest rule that satisfies all three):
+    ///         - a post never pays more than `rate × what it arms` (r2: round-up
+    ///           over-charged dust; r4: a carried fraction over-charged a later post);
+    ///         - no sub-unit gap is ever stranded unarmed (r3: suppressing zero-fee
+    ///           grants left the last sliver below the knee unarmable);
+    ///         - independent of the token's decimals.
+    ///         The price of that simplicity, stated rather than hidden: a post may
+    ///         leave UNDER ONE smallest unit of fee unpaid (at most `1/rate − 1`
+    ///         units of principal arm for nothing per post) — under one wei of VPFI,
+    ///         far below the gas of any post. The product cannot overflow:
+    ///         `granted` ≤ `bondAt4x` ≤ 2^128 and `rate` ≤ 1e17 < 2^57.
+    function armingFee(uint256 granted, uint256 rate) internal pure returns (uint256) {
+        return granted * rate / 1e18;
     }
 
     /// @notice The post's own checks, in the post's order, without moving anything
@@ -753,12 +748,6 @@ library LibServiceCapacity {
         if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = eligibleAfter;
-        // #1219 (Codex #2556 r3) — the fraction this post leaves owed, through the
-        // SAME computation the quote charged (same transaction, same state).
-        {
-            (, uint256 carryAfter) = armingFeeAndCarry(s, role, operator, epoch, granted, armingFeeRateInForce(s));
-            s.armingFeeCarry[role][operator][epoch] = carryAfter;
-        }
         s.serviceDepositEscrowByEpoch[epoch] += amount;
         if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
         else if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
