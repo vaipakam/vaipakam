@@ -63,6 +63,9 @@ describe('deadlineClient — every read of a deadline-bound pass, one guard (#24
 describe('the submission queue honours a run deadline at the send\'s turn (#2571 r1)', () => {
   it('refuses inside the slot, before signing, once the deadline has passed', async () => {
     const { queuedWallet, SendPastDeadline } = await import('../src/submissionQueue');
+    // The epoch fence holds (as a tick arms it), so the refusal is the DEADLINE's.
+    const { armHeldFence } = await import('./helpers/epochFence');
+    armHeldFence([{ id: 84532, diamond: `0x${'1'.repeat(40)}` }]);
     const { createWalletClient, custom } = await import('viem');
     const { privateKeyToAccount } = await import('viem/accounts');
     const account = privateKeyToAccount('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
