@@ -29,10 +29,10 @@
  *      carrying the list version it applies to, so it cannot apply to any
  *      other state. Additions and delistings are SEPARATE calls with separate
  *      signers (owner decision 2026-10-18): the adder (the automated
- *      updater) sends the additions, in batches of `--max-adds-per-call`
- *      (default 200) so a large publication fits each transaction's gas,
- *      then the remover (the multisig) sends the delistings against the same
- *      publication. The contract refuses a delisting from anyone but a
+ *      updater) sends the additions, then the remover (the multisig) sends
+ *      the delistings against the same publication, both in batches of
+ *      `--max-changes-per-call` (default 200) so a large publication fits
+ *      each transaction's gas. The contract refuses a delisting from anyone but a
  *      remover. Each call states how many of the publication's additions and
  *      delistings remain after it; the list publishes those counts.
  *
@@ -103,7 +103,7 @@
  *   node scripts/ofac-sanctions-diff.mjs --xml sdn_advanced.xml \
  *     --rpc "$RPC" --list 0xList [--block N] [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
- *     --rpc "$RPC" --list 0xList [--max-adds-per-call 200]
+ *     --rpc "$RPC" --list 0xList [--max-changes-per-call 200]
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
@@ -134,12 +134,13 @@ export const OFAC_SDN_ADVANCED_URL =
   'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN_ADVANCED.XML';
 export const DEFAULT_MAX_REMOVE = 10;
 /**
- * Additions per `applyUpdate` call. Listing one address costs roughly 70k gas
- * (two set slots, the version stamp, an event), so 200 stays near 14M gas —
- * under the 2^24 per-transaction cap (EIP-7825) and every target chain's
- * block limit. `--max-adds-per-call` changes it.
+ * Addresses per `applyUpdate` call, additions and delistings alike. Listing
+ * one address costs roughly 70k gas (two set slots, the version stamp, an
+ * event) and delisting one less, so 200 stays near 14M gas — under the 2^24
+ * per-transaction cap (EIP-7825) and every target chain's block limit.
+ * `--max-changes-per-call` changes it.
  */
-export const DEFAULT_MAX_ADDS_PER_CALL = 200;
+export const DEFAULT_MAX_CHANGES_PER_CALL = 200;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -701,9 +702,9 @@ export function replayChainalysisLogs(logs) {
  *
  * `calls` is the ordered list of `applyUpdate` transactions, each naming its
  * signer and computed against the version the one before it produces: the
- * additions in `adder` batches of at most `maxAddsPerCall` (one call with
- * nothing, as a refresh, when there are none), then one `remover` call with
- * the delistings when there are any. A publication can need several
+ * additions in `adder` batches (one call with nothing, as a refresh, when
+ * there is nothing to add or delist), then the delistings in `remover`
+ * batches, each batch at most `maxChangesPerCall` addresses. A publication can need several
  * transactions — a first population will not fit one block's gas — so the
  * first call of a NEW publication declares how many additions and delistings
  * remain after it, and every later call repeats that publication and lowers
@@ -721,11 +722,11 @@ export function buildUpdate({
   recordedPendingDelistings,
   allowRollback = false,
   maxRemove = DEFAULT_MAX_REMOVE,
-  maxAddsPerCall = DEFAULT_MAX_ADDS_PER_CALL,
+  maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL,
   abi = sanctionsListAbi(),
 }) {
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
-  if (!Number.isSafeInteger(maxAddsPerCall) || maxAddsPerCall < 1) throw new Error(`maxAddsPerCall must be a positive integer, got ${maxAddsPerCall}`);
+  if (!Number.isSafeInteger(maxChangesPerCall) || maxChangesPerCall < 1) throw new Error(`maxChangesPerCall must be a positive integer, got ${maxChangesPerCall}`);
   if (recordedDate === undefined || recordedHash === undefined) throw new Error('the recorded publication date and hash are required');
   // No defaults: a guessed count would build calls the contract refuses, or
   // hide a partly applied publication from the reviewer (Codex #2543 r9).
@@ -776,20 +777,24 @@ export function buildUpdate({
   // the contract lowers those only by what is applied.
   let addsLeft = order === 'same-publication' ? pendingAdd : add.length;
   let delsLeft = order === 'same-publication' ? pendingDel : remove.length;
-  // A delisting-only update of a NEWER publication still goes to the remover
-  // alone; otherwise the adder records the publication (and its additions).
-  if (add.length > 0 || remove.length === 0) {
-    let i = 0;
-    do {
-      const batch = add.slice(i, i + maxAddsPerCall);
-      i += batch.length;
-      addsLeft -= batch.length;
-      push('adder', batch, [], addsLeft, delsLeft);
-    } while (i < add.length);
+  // One batching rule for both sides (Codex #2543 r10, r12): every call
+  // carries at most `maxChangesPerCall` addresses, whichever list they come
+  // from, so no call is built that cannot fit a transaction.
+  const batches = (list) => {
+    const out = [];
+    for (let i = 0; i < list.length; i += maxChangesPerCall) out.push(list.slice(i, i + maxChangesPerCall));
+    return out;
+  };
+  // An empty diff is still one adder call: the refresh that records the
+  // publication. A delisting-only update goes to the remover alone.
+  const addBatches = add.length > 0 ? batches(add) : remove.length > 0 ? [] : [[]];
+  for (const batch of addBatches) {
+    addsLeft -= batch.length;
+    push('adder', batch, [], addsLeft, delsLeft);
   }
-  if (remove.length > 0) {
-    delsLeft -= remove.length;
-    push('remover', [], remove, addsLeft, delsLeft);
+  for (const batch of batches(remove)) {
+    delsLeft -= batch.length;
+    push('remover', [], batch, addsLeft, delsLeft);
   }
   return {
     add,
@@ -914,7 +919,7 @@ async function main() {
     recordedPendingDelistings: current.recordedPendingDelistings,
     allowRollback: args['allow-rollback'] === true,
     maxRemove,
-    maxAddsPerCall: args['max-adds-per-call'] !== undefined ? Number(parseUintArg('--max-adds-per-call', args['max-adds-per-call'], { min: 1n, max: 100_000n })) : DEFAULT_MAX_ADDS_PER_CALL,
+    maxChangesPerCall: args['max-changes-per-call'] !== undefined ? Number(parseUintArg('--max-changes-per-call', args['max-changes-per-call'], { min: 1n, max: 100_000n })) : DEFAULT_MAX_CHANGES_PER_CALL,
     abi,
   });
 

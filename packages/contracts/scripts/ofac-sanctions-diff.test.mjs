@@ -376,7 +376,7 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
   const abi = sanctionsListAbi();
   const n = parsed.addresses.length;
   assert.ok(n >= 2, 'fixture needs at least two addresses');
-  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 7, ...FRESH, maxAddsPerCall: 1 });
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 7, ...FRESH, maxChangesPerCall: 1 });
   const decoded = u.calls.map((c) => decodeFunctionData({ abi, data: c.calldata }).args);
   assert.equal(u.calls.length, n + 1);
   decoded.slice(0, n).forEach((args, i) => {
@@ -391,7 +391,7 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
   assert.deepEqual(u.calls.map((c) => c.signer), [...Array(n).fill('adder'), 'remover']);
   // Resuming a partly applied publication continues from the recorded counts.
   const same = { recordedDate: 20260307, recordedHash: hash, recordedPendingAdditions: n - 1, recordedPendingDelistings: 1 };
-  const resumed = buildUpdate({ parsed, sourceHash: hash, current: [parsed.addresses[0], C], currentVersion: 8, ...same, maxAddsPerCall: 100 });
+  const resumed = buildUpdate({ parsed, sourceHash: hash, current: [parsed.addresses[0], C], currentVersion: 8, ...same, maxChangesPerCall: 100 });
   assert.equal(resumed.order, 'same-publication');
   const r0 = decodeFunctionData({ abi, data: resumed.calls[0].calldata }).args;
   assert.deepEqual([r0[5], r0[6]], [0, 1]);
@@ -400,7 +400,7 @@ test('buildUpdate: additions are batched, each call declaring what remains', () 
     () => buildUpdate({ parsed, sourceHash: hash, current: [C], currentVersion: 8, ...same }),
     /already records this exact file/,
   );
-  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, maxAddsPerCall: 0 }), /maxAddsPerCall/);
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, ...FRESH, maxChangesPerCall: 0 }), /maxChangesPerCall/);
   assert.throws(
     () => buildUpdate({ parsed, sourceHash: hash, current: [], currentVersion: 1, recordedDate: 0, recordedHash: ZERO_HASH }),
     /pendingAdditions and pendingDelistings are required/,
@@ -431,4 +431,15 @@ test('buildUpdate: a completed publication cannot be cited for further delisting
   );
   const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 4, ...one });
   assert.deepEqual([u.calls.length, u.calls[0].signer, u.calls[0].delistingsLeft], [1, 'remover', 0]);
+});
+
+// ---- Codex #2543 r12: delistings are batched by the same rule ----
+test('buildUpdate: delistings are batched too, each call declaring what remains', () => {
+  const parsed = parseSdnAdvanced(FIXTURE.toString('utf8'));
+  const hash = sourceHash(FIXTURE);
+  const abi = sanctionsListAbi();
+  const extra = Array.from({ length: 5 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
+  const u = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, ...extra], currentVersion: 2, ...FRESH, maxChangesPerCall: 2 });
+  assert.deepEqual(u.calls.map((c) => [c.signer, c.remove.length, c.delistingsLeft]), [['remover', 2, 3], ['remover', 2, 1], ['remover', 1, 0]]);
+  u.calls.forEach((c, i) => assert.equal(decodeFunctionData({ abi, data: c.calldata }).args[0], 2n + BigInt(i)));
 });
