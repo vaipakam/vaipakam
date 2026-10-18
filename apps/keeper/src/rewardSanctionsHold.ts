@@ -48,7 +48,7 @@
 //
 // Gated by KEEPER_ENABLED + REWARD_SANCTIONS_KEEPER_ENABLED.
 
-import { createPublicClient, http, parseAbi, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseAbi, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import {
   InteractionRewardsLensFacetABI,
   ProfileFacetABI,
@@ -368,9 +368,13 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // re-cut 3/3 pre-review): a screen that cannot run this time leaves the
   // known candidates to be served, and says so.
   let screen: ScreenOutcome = { found: [], overCapacity: null, unread: 0 };
+  /** False when the screen itself failed: its capacity is then UNKNOWN, and
+   *  nothing it would have measured may be cleared (Codex #2573 r2). */
+  let screenMeasured = true;
   try {
     screen = await screenLoanParties(env, chain.id, plainClient as never, diamond, new Set(known), deadline);
   } catch (err) {
+    screenMeasured = false;
     console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: screen failed this run (known candidates are still served): ${shortErr(err)}`);
   }
   const screened = screen.found;
@@ -412,7 +416,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
-  let shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null;
+  let shortfall: Shortfall | null = null;
   /** Owners a due observation or a clean commit was SENT for; whether it
    *  LANDED is decided below from a fresh read of the chain, never from the
    *  transaction's success (Codex #2573 r1). */
@@ -493,14 +497,18 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       if (r.stuck > 0) stagingStuck.set(owner.toLowerCase(), r.stuck);
       else if (r.complete) stagingClear.add(owner.toLowerCase());
     };
-    for (const owner of rotate(plan.settle, hourIndex)) {
-      const used = settleCallsUsed.get(owner) ?? 0;
-      // eslint-disable-next-line no-await-in-loop
-      if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
-      // eslint-disable-next-line no-await-in-loop
-      await resolveCapped(owner);
-    }
-    for (const owner of rotate(plan.resolveOnly, hourIndex)) {
+    // ONE backlog of every final verdict, Confirmed and Deliver together,
+    // rotated as one (Codex #2573 r2): two groups run one after the other
+    // would let the first take every write, run after run. It stops at the
+    // send deadline or an empty budget, before another owner's reads.
+    const confirmed = new Set(plan.settle);
+    for (const owner of rotate([...plan.settle, ...plan.resolveOnly], hourIndex)) {
+      if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
+      if (confirmed.has(owner)) {
+        const used = settleCallsUsed.get(owner) ?? 0;
+        // eslint-disable-next-line no-await-in-loop
+        if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
+      }
       // eslint-disable-next-line no-await-in-loop
       await resolveCapped(owner);
     }
@@ -539,9 +547,21 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       skippedOracleDown,
       clean: plan.commitClean.length - cleaned.yes,
       unread: unread + landed.unread + cleaned.unread,
+      screenFailed: !screenMeasured,
     };
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
+}
+
+/** What a run left undone, MEASURED. `screenFailed` is optional so a caller
+ *  that ran no screen need not state it. */
+export interface Shortfall {
+  due: number;
+  unreached: number;
+  skippedOracleDown: number;
+  clean: number;
+  unread: number;
+  screenFailed?: boolean;
 }
 
 /** Whether an observation moved the owner's evidence: its chain started,
@@ -806,6 +826,10 @@ async function resolveOwnerRecords(
    *  measured, so a wedged record is said (Codex #2573 r1). */
   const reverted = { n: 0 };
   if (budget.writes <= 0) return { stuck: 0, complete: false };
+  /** Every record of the owner READ this run — an unread one is unknown,
+   *  so the owner cannot be reported clear (Codex #2573 r2). */
+  let allRead = true;
+  let readN = 0;
   // Every read here is bounded by the run's deadline too (#2497 r19).
   const deadline = budget.deadline ?? Number.POSITIVE_INFINITY;
   // The owner's OPEN records only, however old (Codex #2489 r1); read in
@@ -827,14 +851,21 @@ async function resolveOwnerRecords(
     );
     for (let i = 0; i < chunk.length && budget.writes > 0; i++) {
       const r = reads[i];
-      if (r?.status !== 'success') continue;
+      if (r?.status !== 'success') {
+        allRead = false;
+        continue;
+      }
+      readN += 1;
       const view = r.result as { phase: number };
       if (Number(view.phase) !== PHASE_RESOLVING) continue;
       // eslint-disable-next-line no-await-in-loop
-      await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [chunk[i] as Hex], () => true, owner, reverted);
+      // A record that belongs to a domain resolves through the domain's page
+      // below; the standalone entry refuses it by name (`StagingRecordInDomain`),
+      // which is the chain saying so, never a wedge (Codex #2573 r2).
+      await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [chunk[i] as Hex], () => true, owner, reverted, ['StagingRecordInDomain']);
     }
   }
-  if (budget.writes <= 0) return { stuck: reverted.n, complete: false };
+  if (budget.writes <= 0 || !allRead || readN < keys.length) return { stuck: reverted.n, complete: false };
   const domains = await boundedRead(
     ctx.client as never,
     [0, 1].map((side) => ({
@@ -871,6 +902,9 @@ async function sendIfEffective(
   owner: Address,
   /** Counts a simulation that REVERTED (as opposed to one not worth sending). */
   reverted?: { n: number },
+  /** Revert reasons that are the contract routing the call elsewhere, not a
+   *  failure: not counted in `reverted`. */
+  expected: readonly string[] = [],
 ): Promise<boolean> {
   try {
     const sim = await ctx.client.simulateContract({
@@ -883,7 +917,7 @@ async function sendIfEffective(
     if (!effective(sim.result)) return false;
   } catch (err) {
     console.log(`[keeper] rewardSanctionsHold ${fn} ${owner} would revert: ${shortErr(err)}`);
-    if (reverted && !(err instanceof PastRunDeadline)) reverted.n += 1;
+    if (reverted && !(err instanceof PastRunDeadline) && !expected.includes(revertName(err) ?? '')) reverted.n += 1;
     return false;
   }
   return send(ctx, budget, fn, args, owner);
@@ -939,9 +973,10 @@ export async function raiseAlerts(
   statuses: readonly OwnerSanctionsStatus[],
   plan: SanctionsHoldPlan,
   nowSec: number,
-  screenOverCapacity: { total: number; ticks: number } | null = null,
+  /** `'unmeasured'` = the screen did not run to a measurement: its alert stands. */
+  screenOverCapacity: { total: number; ticks: number } | null | 'unmeasured' = null,
   /** What this tick left undone, measured ({@link observeChain}); null = not measured. */
-  shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null,
+  shortfall: Shortfall | null = null,
   /** Past this, alerts wait for the next run (#2497 r17); none by default. */
   alertDeadline: number = Number.POSITIVE_INFINITY,
   /** Staging resolution measured this run: owners whose page reverted, and
@@ -972,8 +1007,9 @@ export async function raiseAlerts(
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec, chainId);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
-  // The screen's daily bound, stated (#2497 r12).
-  await toggle(`sanctions-screen-capacity:${chainId}:all`, screenOverCapacity !== null, () =>
+  // The screen's daily bound, stated (#2497 r12) — and left as it is when the
+  // screen did not measure it this run.
+  if (screenOverCapacity !== 'unmeasured') await toggle(`sanctions-screen-capacity:${chainId}:all`, screenOverCapacity !== null, () =>
     `[chain ${chainId}] reward sanctions screen: ${screenOverCapacity?.total} loan parties take ${screenOverCapacity?.ticks} hourly ticks to screen, more than a day — a wallet flagged while holding only ordinary reward can go undiscovered that long. Raise the slice cap or the cadence.`,
   );
   // Capacity, MEASURED and stated per kind of work (#2497 r7, r16). An
@@ -984,11 +1020,12 @@ export async function raiseAlerts(
     // A run that could not READ a candidate cannot say whether it was due, so
     // an unread candidate keeps this alert raised — it is never cleared by a
     // run that did not look.
-    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0 || shortfall.unread > 0, () => {
+    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0 || shortfall.unread > 0 || shortfall.screenFailed === true, () => {
       const attempted = shortfall.due - shortfall.unreached - shortfall.skippedOracleDown;
       const parts = [
         `${shortfall.due} due observation(s) did NOT land this tick: ${shortfall.unreached} unreached (the write budget or the run's time window ran out), ${shortfall.skippedOracleDown} not sent because the sanctions oracle is not answering, ${attempted} attempted but not recorded`,
       ];
+      if (shortfall.screenFailed) parts.push('the daily screen of loan parties failed this run, so newly flagged wallets were not looked for');
       if (shortfall.unread > 0) parts.push(`${shortfall.unread} candidate(s) could not be classified at all (their status read failed), so whether they were due is unknown`);
       return `[chain ${chainId}] reward sanctions hold: ${parts.join('; ')} — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`;
     });
@@ -1042,6 +1079,13 @@ export async function raiseAlerts(
 
 function iso(sec: number): string {
   return sec > 0 ? new Date(sec * 1000).toISOString() : 'unknown';
+}
+
+/** The decoded custom error a simulation reverted with, when the ABI names it. */
+function revertName(err: unknown): string | undefined {
+  if (!(err instanceof BaseError)) return undefined;
+  const r = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  return r instanceof ContractFunctionRevertedError ? r.data?.errorName : undefined;
 }
 
 function shortErr(err: unknown): string {

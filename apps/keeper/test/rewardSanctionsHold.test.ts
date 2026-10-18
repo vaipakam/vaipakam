@@ -366,6 +366,27 @@ describe('raiseAlerts — a final verdict whose staging will not resolve (Codex 
   });
 });
 
+describe('raiseAlerts — a failed screen is unmeasured, never clean (Codex #2573 r2)', () => {
+  it('keeps the screen-capacity alert as it is and holds the capacity alert raised, saying the screen failed', async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const plan = {
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 0, overCapacity: false, heldCount: 0, deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    };
+    h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-screen-capacity:${CHAIN}:all`, NOW, NOW);
+    try {
+      await raiseAlerts(env, CHAIN, [], plan, NOW, 'unmeasured', { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 0, screenFailed: true });
+      expect(warned.some((w) => /the daily screen of loan parties failed this run/.test(w))).toBe(true);
+      expect(await getOpsAlert(h.d1 as KeeperD1, `sanctions-screen-capacity:${CHAIN}:all`), 'not cleared by a screen that did not run').not.toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe('raiseAlerts', () => {
   it('clears only an alert that is actually open: a quiet candidate costs no write', async () => {
     const h = createKeeperD1();
