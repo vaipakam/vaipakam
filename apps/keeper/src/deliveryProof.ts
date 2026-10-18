@@ -47,7 +47,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { batchedRead } from './batchRead';
+import { boundedRead } from './batchRead';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -251,7 +251,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   if (open.length === 0) return;
   const rows = open.map((o) => o.payload);
 
-  const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex));
+  const packets = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex), deadline);
   // Packets read as finished are retired however the tick ends (a failed
   // send, no key to send with), so they are never read again.
   const finished = new Set<string>();
@@ -282,7 +282,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
       let plan: DeliveryPlan;
       try {
         // eslint-disable-next-line no-await-in-loop
-        plan = await actionsFor(client, diamond, chain.id, row, packet, sources);
+        plan = await actionsFor(client, diamond, chain.id, row, packet, sources, deadline);
       } catch (err) {
         console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
         continue;
@@ -333,6 +333,7 @@ export async function actionsFor(
   row: BudgetDeliveryRow,
   packet: PacketState,
   sources: (chainId: number) => PublicClient | null,
+  deadline: number = Number.POSITIVE_INFINITY,
 ): Promise<DeliveryPlan> {
   const packetHash = row.packetHash as Hex;
   let batch: BatchProgress | null = null;
@@ -364,7 +365,7 @@ export async function actionsFor(
   const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
   let flatAllLanded = false;
   if (flatDays && packet.batchId === ZERO32 && packet.dayListRoot === ZERO32) {
-    flatAllLanded = await allLanded(client, diamond, flatDays);
+    flatAllLanded = await allLanded(client, diamond, flatDays, deadline);
   }
   if (deliveryComplete({ packet, batch, flatAllLanded })) return { actions: [], complete: true };
   return { actions: planDelivery({ packetHash, packet, batch, flatDays, rootedDays, flatAllLanded }), complete: false };
@@ -444,14 +445,15 @@ function checkedRoot(funded: bigint[], reservationRoot: Hex, packetRoot: Hex, re
   return funded;
 }
 
-async function allLanded(client: PublicClient, diamond: Address, days: bigint[]): Promise<boolean> {
+async function allLanded(client: PublicClient, diamond: Address, days: bigint[], deadline: number): Promise<boolean> {
   for (let i = 0; i < days.length; i += READ_CHUNK) {
     const chunk = days.slice(i, i + READ_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const res = await batchedRead(
+    const res = await boundedRead(
       client as never,
       chunk.map((d) => ({ address: diamond, abi: ABI, functionName: 'getDayDeliveryState' as const, args: [d] as const })),
       'deliveryProof landed',
+      deadline,
     );
     for (const r of res) {
       if (!r || r.status !== 'success') return false;
@@ -462,15 +464,18 @@ async function allLanded(client: PublicClient, diamond: Address, days: bigint[])
   return true;
 }
 
-async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]): Promise<Map<string, PacketState>> {
+async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[], deadline: number): Promise<Map<string, PacketState>> {
   const out = new Map<string, PacketState>();
   for (let i = 0; i < hashes.length; i += READ_CHUNK) {
     const chunk = hashes.slice(i, i + READ_CHUNK);
+    // Bounded by the run's deadline (#2497 r19): an unread packet is simply
+    // read again in its turn.
     // eslint-disable-next-line no-await-in-loop
-    const res = await batchedRead(
+    const res = await boundedRead(
       client as never,
       chunk.map((h) => ({ address: diamond, abi: ABI, functionName: 'getIngressPacket' as const, args: [h] as const })),
       'deliveryProof packets',
+      deadline,
     );
     res.forEach((r, j) => {
       if (!r || r.status !== 'success') return;

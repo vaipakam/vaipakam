@@ -61,7 +61,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { batchedRead } from './batchRead';
+import { boundedRead } from './batchRead';
 import {
   deploymentFloor,
   countLoanParties,
@@ -383,7 +383,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     /** Due observations that LANDED — counted on the write's own success
      *  (#2497 r18), never on the attempt. */
     let dueLanded = 0;
-    let cleanReached = 0;
+    let cleanLanded = 0;
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
     // call. A Confirmed owner gets ONE settlement call (its observation is part
@@ -422,16 +422,16 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // a foreign-oracle chain) costs one read and no transaction.
     for (const owner of plan.commitClean) {
       if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
-      cleanReached += 1;
       // eslint-disable-next-line no-await-in-loop
       if (!(await oracleSaysClean(client, diamond, owner))) continue;
+      // Counted on the write's own success (#2497 r19), as the observations are.
       // eslint-disable-next-line no-await-in-loop
-      await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) cleanLanded += 1;
     }
     shortfall = {
       due: plan.dueObservations.length - dueLanded,
       unreached: plan.dueObservations.length - dueReached,
-      clean: plan.commitClean.length - cleanReached,
+      clean: plan.commitClean.length - cleanLanded,
     };
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
     // then the staging pages, with whatever budget is left. The same rotation
@@ -513,12 +513,8 @@ async function readStatuses(
   const out: (OwnerSanctionsStatus | null)[] = [];
   for (let i = 0; i < owners.length; i += STATUS_CHUNK) {
     const chunk = owners.slice(i, i + STATUS_CHUNK);
-    if (Date.now() >= deadline) {
-      out.push(...chunk.map(() => null));
-      continue;
-    }
     // eslint-disable-next-line no-await-in-loop
-    const res = await batchedRead(
+    const res = await boundedRead(
       client as never,
       chunk.map((owner) => ({
         address: diamond,
@@ -527,11 +523,10 @@ async function readStatuses(
         args: [owner] as const,
       })),
       `rewardSanctionsHold getRewardSanctionsStatus ${i}/${owners.length}`,
-      undefined,
-      // BOUNDED (#2497 r18): a rejected aggregate costs one request and reads
-      // as unread — classified next run — instead of one serial request per
-      // owner, which a degraded RPC would turn into an unbounded read phase.
-      'unread',
+      // BOUNDED (#2497 r18, r19): past the deadline nothing is issued, and a
+      // rejected aggregate costs one request and reads as unread — classified
+      // next run — never one serial request per owner.
+      deadline,
     );
     chunk.forEach((owner, j) => {
       const r = res[j];
@@ -703,17 +698,19 @@ async function oracleAnswers(client: PublicClient, diamond: Address, owner: Addr
 async function resolveOwnerRecords(
   env: Env,
   ctx: KeeperContext,
-  budget: { writes: number },
+  budget: { writes: number; deadline?: number },
   owner: Address,
 ): Promise<void> {
   if (budget.writes <= 0) return;
+  // Every read here is bounded by the run's deadline too (#2497 r19).
+  const deadline = budget.deadline ?? Number.POSITIVE_INFINITY;
   // The owner's OPEN records only, however old (Codex #2489 r1); read in
   // bounded chunks, each record's own phase deciding whether a page is due.
   const keys = await listOpenStagingRecordKeysForUser(env.DB, ctx.chainId, owner, deploymentFloor(ctx.chainId));
-  for (let c = 0; c < keys.length && budget.writes > 0; c += STATUS_CHUNK) {
+  for (let c = 0; c < keys.length && budget.writes > 0 && Date.now() < deadline; c += STATUS_CHUNK) {
     const chunk = keys.slice(c, c + STATUS_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const reads = await batchedRead(
+    const reads = await boundedRead(
       ctx.client as never,
       chunk.map((key) => ({
         address: ctx.diamond,
@@ -722,6 +719,7 @@ async function resolveOwnerRecords(
         args: [key as Hex] as const,
       })),
       `rewardSanctionsHold records ${owner} ${c}/${keys.length}`,
+      deadline,
     );
     for (let i = 0; i < chunk.length && budget.writes > 0; i++) {
       const r = reads[i];
@@ -733,7 +731,7 @@ async function resolveOwnerRecords(
     }
   }
   if (budget.writes <= 0) return;
-  const domains = await batchedRead(
+  const domains = await boundedRead(
     ctx.client as never,
     [0, 1].map((side) => ({
       address: ctx.diamond,
@@ -742,6 +740,7 @@ async function resolveOwnerRecords(
       args: [owner, side] as const,
     })),
     `rewardSanctionsHold domains ${owner}`,
+    deadline,
   );
   for (let side = 0; side < 2 && budget.writes > 0; side++) {
     const r = domains[side];

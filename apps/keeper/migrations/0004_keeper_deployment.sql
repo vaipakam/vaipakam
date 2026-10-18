@@ -8,8 +8,12 @@
 -- chain's Diamond with the one recorded here, and on a change clears that
 -- chain's rows from every private table keyed by chain but NOT by Diamond
 -- (today hf_band_state and the keeper_commitment_* pair; the tables that carry
--- a `diamond` column are already namespaced and need nothing), then records
--- the new Diamond — in one batch.
+-- a `diamond` column are already namespaced and need nothing), VERIFIES each
+-- of those tables reads empty for the chain, and only then records the new
+-- Diamond. Not a batch: the machine reaches D1 over HTTP, whose batch atomicity
+-- is not established (KeeperMachine.md). Each step is idempotent and the
+-- record moves last, so a reset cut off anywhere is redone whole next tick.
+-- It also waits for the indexer to adopt the same Diamond first (#2497 r12).
 --
 -- Disposable: an empty table adopts the Diamond the indexer has adopted for
 -- the chain (what the shared rows the cutover copied belong to), so a fresh

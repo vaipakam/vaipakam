@@ -105,3 +105,24 @@ async function serialRead(
   }
   return out;
 }
+
+/**
+ * {@link batchedRead} for a pass whose run has a DEADLINE (#2497 r18, r19): the
+ * one read helper every chain read in such a pass goes through, so no read can
+ * outlast the run. Past the deadline it issues nothing; a rejected aggregate
+ * degrades to `'unread'` (one request, whatever happens) rather than to one
+ * serial request per entry. Either way the entries read as failures, which
+ * every caller already treats as "not read — try next run".
+ */
+export async function boundedRead(
+  client: ReturnType<typeof createPublicClient>,
+  contracts: readonly unknown[],
+  label: string,
+  deadline: number,
+): Promise<BatchResult[]> {
+  if (Date.now() >= deadline) {
+    const error = new Error(`${label}: past the run deadline — read next run`);
+    return contracts.map(() => ({ status: 'failure' as const, error }));
+  }
+  return batchedRead(client, contracts, label, undefined, 'unread');
+}
