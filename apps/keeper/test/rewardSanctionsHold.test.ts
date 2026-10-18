@@ -27,6 +27,8 @@ import {
   SCREEN_MIN_PER_TICK,
   screenSliceSize,
   raiseAlerts,
+  evidenceAdvanced,
+  landedOn,
   type OwnerSanctionsStatus,
 } from '../src/rewardSanctionsHold';
 import {
@@ -314,6 +316,53 @@ describe('the D1 reads, on the real schema', () => {
     seed('StagingRecordOpened', 15, { key: k(2), user: B });
     expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN, 0)).toEqual([A, B, C]);
     expect(await listOpenStagingOwners(h.d1 as D1Database, CHAIN + 1, 0), 'another chain').toEqual([]);
+  });
+});
+
+describe('landedOn — an observation counts only when the chain shows it (Codex #2573 r1)', () => {
+  it('a sent observation that moved nothing is not landed; an unread re-read is unknown, never landed', () => {
+    const pre = held({ owner: A, lastSeenAt: NOW - 5 * 3600 });
+    const before = new Map([[A, pre], [B, held({ owner: B })], ['0xc', held({ owner: '0x00000000000000000000000000000000000000cc' })]]);
+    const fresh = new Map<string, OwnerSanctionsStatus | null>([
+      [A, { ...pre }], // the oracle was down: the call succeeded and wrote nothing
+      [B, held({ owner: B, lastSeenAt: NOW })], // refreshed
+      ['0xc', null], // the re-read failed
+    ]);
+    expect(landedOn(new Set([A, B, '0xc']), before, fresh, evidenceAdvanced)).toEqual({ yes: 1, unread: 1 });
+  });
+  it('a chain start, a clear and a verdict change all count as moved', () => {
+    const pre = held({ owner: A, flaggedAt: 0, lastSeenAt: 0 });
+    expect(evidenceAdvanced(pre, { ...pre, flaggedAt: NOW, lastSeenAt: NOW })).toBe(true);
+    expect(evidenceAdvanced(held({ owner: A }), held({ owner: A, decision: DECISION_DELIVER }))).toBe(true);
+    expect(evidenceAdvanced(held({ owner: A }), held({ owner: A }))).toBe(false);
+  });
+});
+
+describe('raiseAlerts — a final verdict whose staging will not resolve (Codex #2573 r1)', () => {
+  const quietPlan = {
+    observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+    writes: 0, overCapacity: false, heldCount: 0, deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+  };
+  it('raises on a measured revert, keeps it while unmeasured, clears on a whole clean read or when no staging work remains', async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '-1' } as unknown as Env;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    armHeldFence();
+    const key = (o: string) => `sanctions-staging-stuck:${CHAIN}:${o}`;
+    const keys = () => (h.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+    try {
+      await raiseAlerts(env, CHAIN, [], quietPlan, NOW, null, null, Number.POSITIVE_INFINITY, { stuck: new Map([[A, 2], [B, 1]]), clear: new Set(), openOwners: new Set([A, B]) });
+      expect(keys()).toEqual([key(A), key(B)].sort());
+      // Not resolved this run (budget): left as they are.
+      await raiseAlerts(env, CHAIN, [], quietPlan, NOW, null, null, Number.POSITIVE_INFINITY, { stuck: new Map(), clear: new Set(), openOwners: new Set([A, B]) });
+      expect(keys()).toEqual([key(A), key(B)].sort());
+      // A read whole with nothing wedged; B has no open staging work at all.
+      await raiseAlerts(env, CHAIN, [], quietPlan, NOW, null, null, Number.POSITIVE_INFINITY, { stuck: new Map(), clear: new Set([A]), openOwners: new Set([A]) });
+      expect(keys()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      disarmEpochFence();
+    }
   });
 });
 

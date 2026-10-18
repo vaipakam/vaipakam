@@ -1955,8 +1955,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
-<<<<<<< HEAD
-   `rewardBudgetRemit`, `remitAck`, `commitmentReport` and `deliveryProof`.
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
+   `rewardSanctionsHold`.
    This list is the one place the set is written down; every other step here says "every
    gated pass" rather than counting them, because a count goes stale the day
    a pass is added (#2497 r1). `watcher`, `dailyOracleSnapshot` and
@@ -2009,14 +2009,6 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    from the keeper too (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
 
 ---
-=======
-   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
-   `rewardSanctionsHold`. This list is the one place the set is written down; every other step here says "every gated
-   pass" rather than counting them, because a count goes stale the day a pass
-   is added (#2497 r1). If `PUSH_CHANNEL_PK` was rotated, confirm a
-   `[push] sent channel=…` line from the keeper too
-   (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
->>>>>>> 93832521a (feat(#2450): the sanctions-hold pass — screen, watch list, phased observations, measured alerts (re-cut 3/3 of #2497))
 
 ## 7b. LAST: activate the backup writer
 

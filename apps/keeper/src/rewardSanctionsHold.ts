@@ -61,7 +61,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import type { PassTick } from './passSchedule';
-import { boundedRead, deadlineClient } from './batchRead';
+import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import {
   deploymentFloor,
   countLoanParties,
@@ -341,9 +341,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // The owners the screen found earlier stay candidates until a fresh read
   // shows nothing left to do (#2497 r11): they may have no other trace yet.
   const watched = await listSanctionsWatch(env.KEEPER_DB, chain.id, diamondAddr);
+  const stagingOwners = await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id));
   const known = candidateOwners(
     [...(await listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id))), ...watched],
-    await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id)),
+    stagingOwners,
   );
   // Every single read and simulation is refused past the run's deadline
   // (`deadlineClient`); the batched status reads carry it themselves. The
@@ -366,13 +367,14 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // Discovery failures cost discovery, never the due observations (#2497
   // re-cut 3/3 pre-review): a screen that cannot run this time leaves the
   // known candidates to be served, and says so.
-  let screen: ScreenOutcome = { found: [], overCapacity: null };
+  let screen: ScreenOutcome = { found: [], overCapacity: null, unread: 0 };
   try {
     screen = await screenLoanParties(env, chain.id, plainClient as never, diamond, new Set(known), deadline);
   } catch (err) {
     console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: screen failed this run (known candidates are still served): ${shortErr(err)}`);
   }
   const screened = screen.found;
+  unread += screen.unread;
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
   // An owner with an OPEN alert who is not a candidate this tick (a screen
@@ -411,22 +413,26 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
   let shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null;
+  /** Owners a due observation or a clean commit was SENT for; whether it
+   *  LANDED is decided below from a fresh read of the chain, never from the
+   *  transaction's success (Codex #2573 r1). */
+  const dueSent = new Set<string>();
+  /** Owners with a final verdict whose staging resolution reverted this run,
+   *  and those read whole with nothing wedged (whose alert may clear). */
+  const stagingStuck = new Map<string, number>();
+  const stagingClear = new Set<string>();
+  const cleanSent = new Set<string>();
+  let reached = 0;
+  let skippedOracleDown = 0;
+  const measured = Boolean(ctx?.wallet.account);
   if (ctx?.wallet.account) {
     let dueReached = 0;
-    /** Due observations that LANDED — counted on the write's own success
-     *  (#2497 r18), never on the attempt. */
-    let dueLanded = 0;
-    let cleanLanded = 0;
-    /** Held-without-chain owners not sent this run because the oracle is not
-     *  answering — stated apart from attempts that failed. */
-    let skippedOracleDown = 0;
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
     // call. A Confirmed owner gets ONE settlement call (its observation is part
     // of the call) when that makes progress, else the evidence call — so its
     // chain is kept alive however large its backlog, and the backlog waits for
     // phase 3.
-    const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
     const settleCallsUsed = new Map<string, number>();
     for (const due of plan.dueObservations) {
       const owner = due.owner;
@@ -436,24 +442,30 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
         // eslint-disable-next-line no-await-in-loop
         const settled = await runOwnerSettlement(ctx, budget, owner, 1);
         settleCallsUsed.set(owner, settled ? 1 : 0);
-        let landed = settled;
+        let sent = settled;
         if (!settled && budget.writes > 0) {
           // eslint-disable-next-line no-await-in-loop
-          landed = await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+          if (!(await oracleAnswers(client, diamond, owner))) {
+            skippedOracleDown += 1;
+            continue;
+          }
+          // eslint-disable-next-line no-await-in-loop
+          sent = await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
         }
-        if (landed) dueLanded += 1;
+        if (sent) dueSent.add(owner.toLowerCase());
         continue;
       }
-      // A held owner with no chain is observed only while the oracle answers:
-      // during an outage the observation records nothing, and an hourly
-      // transaction would buy nothing until it recovers.
+      // Every held observation waits for the oracle to answer (Codex #2573
+      // r1): while it does not, the classifier writes no evidence — chain or
+      // no chain — so the transaction would succeed, record nothing and spend
+      // a write.
       // eslint-disable-next-line no-await-in-loop
-      if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) {
+      if (!(await oracleAnswers(client, diamond, owner))) {
         skippedOracleDown += 1;
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueLanded += 1;
+      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueSent.add(owner.toLowerCase());
     }
     // PHASE 2 — the clean results (#2497 r7): until committed, a re-flag inside
     // the gap would continue the old chain. Sent only on the oracle's own clean
@@ -463,17 +475,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       if (budget.writes <= 0 || Date.now() >= budget.deadline) break;
       // eslint-disable-next-line no-await-in-loop
       if (!(await oracleSaysClean(client, diamond, owner))) continue;
-      // Counted on the write's own success (#2497 r19), as the observations are.
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) cleanLanded += 1;
+      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) cleanSent.add(owner.toLowerCase());
     }
-    shortfall = {
-      due: plan.dueObservations.length - dueLanded,
-      unreached: plan.dueObservations.length - dueReached,
-      skippedOracleDown,
-      clean: plan.commitClean.length - cleanLanded,
-      unread,
-    };
+    reached = dueReached;
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
     // then the staging pages, with whatever budget is left. The same rotation
     // rule as every other queue (#2497 r18): each owner's pages are capped per
@@ -483,8 +488,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     const resolveCapped = async (owner: Address) => {
       const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline };
       const before = share.writes;
-      await resolveOwnerRecords(env, ctx, share, owner);
+      const r = await resolveOwnerRecords(env, ctx, share, owner);
       budget.writes -= before - share.writes;
+      if (r.stuck > 0) stagingStuck.set(owner.toLowerCase(), r.stuck);
+      else if (r.complete) stagingClear.add(owner.toLowerCase());
     };
     for (const owner of rotate(plan.settle, hourIndex)) {
       const used = settleCallsUsed.get(owner) ?? 0;
@@ -509,16 +516,60 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // this tick's alerts entirely — neither raised from stale state nor cleared.
   let alertStatuses = statuses;
   let alertPlan = plan;
+  const freshBy = new Map<string, OwnerSanctionsStatus | null>();
   if (budget.touched.size > 0) {
     const touched = [...budget.touched];
-    const fresh = await readStatuses(client as never, diamond, touched, deadline + PASS_ALERT_WINDOW_MS);
+    // The PLAIN client (Codex #2573 r1): this read belongs to the alert
+    // window, past the send deadline the proxied client is bound to.
+    const fresh = await readStatuses(plainClient as never, diamond, touched, deadline + PASS_ALERT_WINDOW_MS);
+    touched.forEach((o, i) => freshBy.set(o.toLowerCase(), fresh[i]));
     alertStatuses = [
       ...statuses.filter((st) => !budget.touched.has(st.owner.toLowerCase())),
       ...fresh.filter((st): st is OwnerSanctionsStatus => st !== null),
     ];
     alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall, deadline + PASS_ALERT_WINDOW_MS);
+  if (measured) {
+    const before = new Map(statuses.map((st) => [st.owner.toLowerCase(), st]));
+    const landed = landedOn(dueSent, before, freshBy, evidenceAdvanced);
+    const cleaned = landedOn(cleanSent, before, freshBy, (_pre, post) => !post.stored);
+    shortfall = {
+      due: plan.dueObservations.length - landed.yes,
+      unreached: plan.dueObservations.length - reached,
+      skippedOracleDown,
+      clean: plan.commitClean.length - cleaned.yes,
+      unread: unread + landed.unread + cleaned.unread,
+    };
+  }
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
+}
+
+/** Whether an observation moved the owner's evidence: its chain started,
+ *  restarted, was refreshed or cleared, or its verdict changed. Pure. */
+export function evidenceAdvanced(pre: OwnerSanctionsStatus, post: OwnerSanctionsStatus): boolean {
+  return post.lastSeenAt > pre.lastSeenAt || post.flaggedAt !== pre.flaggedAt || post.decision !== pre.decision;
+}
+
+/** Of the owners `sent`, how many the fresh read shows `moved`, and how many
+ *  could not be re-read (unknown, never counted as landed). Pure. */
+export function landedOn(
+  sent: ReadonlySet<string>,
+  before: ReadonlyMap<string, OwnerSanctionsStatus>,
+  fresh: ReadonlyMap<string, OwnerSanctionsStatus | null>,
+  moved: (pre: OwnerSanctionsStatus, post: OwnerSanctionsStatus) => boolean,
+): { yes: number; unread: number } {
+  let yes = 0;
+  let unreadN = 0;
+  for (const o of sent) {
+    const pre = before.get(o);
+    const post = fresh.get(o);
+    if (!pre || post === undefined || post === null) {
+      unreadN += 1;
+      continue;
+    }
+    if (moved(pre, post)) yes += 1;
+  }
+  return { yes, unread: unreadN };
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -635,7 +686,7 @@ async function screenLoanParties(
   deadline: number = Number.POSITIVE_INFINITY,
 ): Promise<ScreenOutcome> {
   const total = await countLoanParties(env.DB, chainId);
-  if (total === 0) return { found: [], overCapacity: null };
+  if (total === 0) return { found: [], overCapacity: null, unread: 0 };
   const size = screenSliceSize(total);
   // Past the slice cap a cycle takes longer than a day, and a wallet flagged
   // while it holds only ordinary reward goes undiscovered for that long. That
@@ -655,17 +706,26 @@ async function screenLoanParties(
   const read = await readStatuses(client, diamond, toRead, deadline);
   const byOwner = new Map(toRead.map((a, i) => [a, read[i]]));
   const ok = slice.map((a) => known.has(a) || byOwner.get(a) !== null);
-  const found = read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER);
+  // Held, Confirmed, and a CLEAN owner the contract still stores state for
+  // (a chain, or the confirmed-flag marker another sanctions gate set): the
+  // last stays watched until its clean result is committed (Codex #2573 r1).
+  const found = read.filter(
+    (st): st is OwnerSanctionsStatus => st !== null && (st.decision !== DECISION_DELIVER || st.stored),
+  );
+  const unread = read.filter((st) => st === null).length;
   // Watch first, cursor second: a failure between them re-reads the slice.
   await watchSanctionsOwners(env.KEEPER_DB, chainId, diamond, found.map((st) => st.owner));
   await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, terminal));
-  return { found, overCapacity };
+  return { found, overCapacity, unread };
 }
 
-/** One screen tick: the owners found, and whether a cycle overruns a day. */
+/** One screen tick: the owners found, whether a cycle overruns a day, and how
+ *  many parties of the slice could not be read (the cursor waits at the first
+ *  of them, so a persistent one is SAID, never a silent stall). */
 interface ScreenOutcome {
   found: OwnerSanctionsStatus[];
   overCapacity: { total: number; ticks: number } | null;
+  unread: number;
 }
 
 /** The owner settlement, repeated while it makes progress: each call is
@@ -741,8 +801,11 @@ async function resolveOwnerRecords(
   ctx: KeeperContext,
   budget: { writes: number; deadline?: number },
   owner: Address,
-): Promise<void> {
-  if (budget.writes <= 0) return;
+): Promise<{ stuck: number; complete: boolean }> {
+  /** Resolving records or domains whose resolution page REVERTED this run:
+   *  measured, so a wedged record is said (Codex #2573 r1). */
+  const reverted = { n: 0 };
+  if (budget.writes <= 0) return { stuck: 0, complete: false };
   // Every read here is bounded by the run's deadline too (#2497 r19).
   const deadline = budget.deadline ?? Number.POSITIVE_INFINITY;
   // The owner's OPEN records only, however old (Codex #2489 r1); read in
@@ -768,10 +831,10 @@ async function resolveOwnerRecords(
       const view = r.result as { phase: number };
       if (Number(view.phase) !== PHASE_RESOLVING) continue;
       // eslint-disable-next-line no-await-in-loop
-      await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [chunk[i] as Hex], () => true, owner);
+      await sendIfEffective(ctx, budget, 'resolveStagedDayPage', [chunk[i] as Hex], () => true, owner, reverted);
     }
   }
-  if (budget.writes <= 0) return;
+  if (budget.writes <= 0) return { stuck: reverted.n, complete: false };
   const domains = await boundedRead(
     ctx.client as never,
     [0, 1].map((side) => ({
@@ -789,8 +852,12 @@ async function resolveOwnerRecords(
     const t = r.result as readonly [Hex, number];
     if (Number(t[1]) !== PHASE_RESOLVING) continue;
     // eslint-disable-next-line no-await-in-loop
-    await sendIfEffective(ctx, budget, 'resolveDomainPage', [t[0]], () => true, owner);
+    await sendIfEffective(ctx, budget, 'resolveDomainPage', [t[0]], () => true, owner, reverted);
   }
+  // Complete: every record and both domains were read and offered a page this
+  // run, so a zero count is a measurement, not an absence.
+  const complete = Date.now() < deadline && domains.every((r) => r?.status === 'success');
+  return { stuck: reverted.n, complete };
 }
 
 /** Simulate `fn`; send it only when the simulation succeeds and `effective`
@@ -802,6 +869,8 @@ async function sendIfEffective(
   args: readonly unknown[],
   effective: (result: unknown) => boolean,
   owner: Address,
+  /** Counts a simulation that REVERTED (as opposed to one not worth sending). */
+  reverted?: { n: number },
 ): Promise<boolean> {
   try {
     const sim = await ctx.client.simulateContract({
@@ -814,6 +883,7 @@ async function sendIfEffective(
     if (!effective(sim.result)) return false;
   } catch (err) {
     console.log(`[keeper] rewardSanctionsHold ${fn} ${owner} would revert: ${shortErr(err)}`);
+    if (reverted && !(err instanceof PastRunDeadline)) reverted.n += 1;
     return false;
   }
   return send(ctx, budget, fn, args, owner);
@@ -874,6 +944,9 @@ export async function raiseAlerts(
   shortfall: { due: number; unreached: number; skippedOracleDown: number; clean: number; unread: number } | null = null,
   /** Past this, alerts wait for the next run (#2497 r17); none by default. */
   alertDeadline: number = Number.POSITIVE_INFINITY,
+  /** Staging resolution measured this run: owners whose page reverted, and
+   *  owners read whole with nothing wedged. Others are left as they are. */
+  staging: { stuck: ReadonlyMap<string, number>; clear: ReadonlySet<string>; openOwners?: ReadonlySet<string> } = { stuck: new Map(), clear: new Set() },
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -931,12 +1004,32 @@ export async function raiseAlerts(
     );
     // eslint-disable-next-line no-await-in-loop
     await toggle(k('hold-overdue'), overdue.has(st.owner), () =>
-      `[chain ${chainId}] reward sanctions hold: ${st.owner} has been held past ${iso(st.forfeitableAt)} by more than the maximum observation gap.${st.stored ? ' Its held staging record blocks custody activation and reward-role changes while it stands.' : ''}`,
+      `[chain ${chainId}] reward sanctions hold: ${st.owner} has been held past ${iso(st.forfeitableAt)} by more than the maximum observation gap.`,
     );
     // eslint-disable-next-line no-await-in-loop
     await toggle(k('hold-no-chain'), noChain.has(st.owner), () =>
       `[chain ${chainId}] reward sanctions hold: ${st.owner} is held with no observation chain — the sanctions oracle is not answering authoritatively, or it answers Flagged but the chain broke and has not restarted; the hold cannot confirm or clear until an observation lands.`,
     );
+  }
+  // A final verdict whose staging work will not resolve (Codex #2573 r1):
+  // measured from this run's reverted resolution pages, cleared only for an
+  // owner whose records and domains were all read and none reverted.
+  for (const [owner, n] of staging.stuck) {
+    // eslint-disable-next-line no-await-in-loop
+    await toggle(`sanctions-staging-stuck:${chainId}:${owner}`, true, () =>
+      `[chain ${chainId}] reward sanctions hold: ${owner} has a final verdict, but ${n} staging resolution page(s) reverted this run. An unresolved staging record blocks custody activation and reward-role changes while it stands.`,
+    );
+  }
+  // Cleared for an owner read whole with nothing wedged, and for one the
+  // ledger shows holds no open staging work at all (resolved by any path).
+  const stuckPrefix = `sanctions-staging-stuck:${chainId}:`;
+  for (const key of open) {
+    if (!key.startsWith(stuckPrefix)) continue;
+    const owner = key.slice(stuckPrefix.length).toLowerCase();
+    if (staging.stuck.has(owner)) continue;
+    const gone = staging.openOwners !== undefined && !staging.openOwners.has(owner);
+    // eslint-disable-next-line no-await-in-loop
+    if (staging.clear.has(owner) || gone) await toggle(key, false, () => '');
   }
   // An owner who LEFT the candidates is read freshly by the caller and is in
   // `statuses` here (#2497 r1), so the loop above clears its alerts on a
