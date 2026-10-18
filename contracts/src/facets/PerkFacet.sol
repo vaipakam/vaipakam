@@ -3,12 +3,13 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
@@ -155,6 +156,25 @@ contract PerkFacet is
         uint32 durationSeconds
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #2550 — the priority-routing perk is COUNTED only (one credit = one
+        // capacity-free fill). A timed configuration of it is refused HERE when it
+        // would ARM the perk, before any unit can be sold, so no buyer can pay for
+        // a timed unit the effect never reads, and no timed sale can lock the id's
+        // mode into the wrong shape. DISARMING (price zero) is accepted at any
+        // duration (Codex #2563 r2): a deployment that configured or sold id 1 as
+        // a timed perk before #2550 has its mode frozen by {PerkModeLocked}, and
+        // must still be able to take a stale price down. Such a timed id can never
+        // be bought again either way — `LibPriorityRouting.deliverable` requires
+        // the counted shape.
+        if (perkId == LibPriorityRouting.PERK_ID && durationSeconds != 0 && priceVpfi != 0) {
+            revert IVaipakamErrors.PerkPriorityMustBeCounted(durationSeconds);
+        }
+        // Codex #2563 r5 — a priced counted write of id 1 by THIS version is the
+        // explicit arming of its effect; state inherited from before #2550 (a
+        // price, or credits sold for no effect) never activates by itself.
+        if (perkId == LibPriorityRouting.PERK_ID && priceVpfi != 0) {
+            LibPriorityRouting.armOnPricedWrite(s, priceVpfi);
+        }
         // The mode is frozen once anything has been sold. Entitlements are
         // per-user records that no setter can walk, so flipping a timed perk
         // to a counted one would strand every holder on a basis the perk no
@@ -202,6 +222,14 @@ contract PerkFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 price = s.perkPriceVpfi[perkId];
         if (price == 0) revert PerkNotForSale(perkId);
+        // #2550 — never sell the priority-routing perk while it can deliver
+        // nothing: one deliverability predicate (Solver capacity lit AND both
+        // intent master gates on), read at the purchase itself, so a later curve
+        // clear (a VPFI rotation, an admin) or a gate switched off can never leave
+        // a stale price buyable.
+        if (perkId == LibPriorityRouting.PERK_ID && !LibPriorityRouting.deliverable(s)) {
+            revert IVaipakamErrors.PerkNotDeliverable(perkId);
+        }
 
         uint32 dur = s.perkDurationSeconds[perkId];
         if (dur != expectedDurationSeconds) {
@@ -284,6 +312,53 @@ contract PerkFacet is
         }
         s.perkCredits[user][perkId] = held;
         emit PerkCreditConsumed(user, perkId, held);
+    }
+
+    /// @notice #2559 (Codex #2563 r6) — why perk 1 (priority routing) does or does
+    ///         not sell RIGHT NOW, condition by condition, so an operator can tell
+    ///         the required arming write from any other refusal without replaying
+    ///         event history. `purchasable` is every PROTOCOL-WIDE condition
+    ///         `purchasePerk` checks for perk 1 — not paused, a VPFI token set, a
+    ///         price, and deliverability; the others are its parts (Codex #2563
+    ///         r7/r8: a disarmed or paused perk is never reported as for sale).
+    ///         Per-BUYER checks stay outside it by design: sanctions, the buyer's
+    ///         vault balance, and the terms the buyer binds.
+    /// @return purchasable        No protocol-wide condition would refuse a purchase now.
+    /// @return notPaused          No manual pause or active auto-pause is in force.
+    /// @return vpfiTokenSet       The VPFI token the purchase pays in is configured.
+    /// @return priced             Perk 1 has a non-zero price (zero = disarmed, not for sale).
+    /// @return armed              This version's first priced, counted write has
+    ///                            armed the effect (`PriorityRoutingPerkArmed`).
+    /// @return deliverable        Every condition but the price holds: a priced
+    ///                            purchase would not be refused `PerkNotDeliverable`.
+    /// @return counted            Perk 1 is configured counted (duration zero).
+    /// @return solverCapacityLit  The Solver service-capacity curve is set.
+    /// @return intentMatchingLive Both intent master gates are on.
+    function getPriorityRoutingStatus()
+        external
+        view
+        returns (
+            bool purchasable,
+            bool notPaused,
+            bool vpfiTokenSet,
+            bool priced,
+            bool armed,
+            bool deliverable,
+            bool counted,
+            bool solverCapacityLit,
+            bool intentMatchingLive
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        priced = s.perkPriceVpfi[LibPriorityRouting.PERK_ID] != 0;
+        armed = s.priorityRoutingPerkArmed;
+        deliverable = LibPriorityRouting.deliverable(s);
+        notPaused = !LibPausable.paused();
+        vpfiTokenSet = s.vpfiToken != address(0);
+        purchasable = notPaused && vpfiTokenSet && priced && deliverable;
+        counted = s.perkDurationSeconds[LibPriorityRouting.PERK_ID] == 0;
+        solverCapacityLit = s.capacityCurves[uint8(LibVaipakam.ServiceCapacityRole.Solver)].freeTier != 0;
+        intentMatchingLive = s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled;
     }
 
     /// @notice Price and duration of one perk. `priceVpfi == 0` ⇒ not for sale.

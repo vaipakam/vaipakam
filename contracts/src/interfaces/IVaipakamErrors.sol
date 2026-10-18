@@ -1709,6 +1709,16 @@ interface IVaipakamErrors {
     ///         simply not for sale: this one says the CHAIN is not set up,
     ///         which is an operator condition rather than a governance one.
     error PerkVpfiTokenNotSet();
+    /// @notice #2550 — the priority-routing perk's credit could not be consumed (the perk facet is not routed, or ran out of gas).
+    error PerkCreditConsumeFailed();
+    /// @notice #2550 — the priority-routing perk is COUNTED only (one credit = one fill): a timed configuration is refused before anything can be sold.
+    error PerkPriorityMustBeCounted(uint32 durationSeconds);
+    /// @notice #2550 — the priority-routing perk cannot be delivered right now (Solver capacity dark, or intent matching off), so it is not sold.
+    error PerkNotDeliverable(uint256 perkId);
+    /// @notice #2559 (Codex #2563 r5) — perk 1 was sold (`unitsSold`) before it had the priority-routing effect, so it cannot be armed for that effect: those credits were bought for something else.
+    error PerkPriorityLegacyUnitsSold(uint256 unitsSold);
+    /// @notice #2550 — priority routing is a perk for users; a protocol-run intent owner (an aggregator adapter or the backstop vault) cannot opt in.
+    error LenderIntentPriorityProtocolOwner(address owner);
 
     // ─── #1566 closure 2 — the delivered-headroom chokepoints ───────────────
 

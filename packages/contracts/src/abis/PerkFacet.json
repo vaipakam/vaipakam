@@ -95,6 +95,59 @@
   },
   {
     "type": "function",
+    "name": "getPriorityRoutingStatus",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "purchasable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "notPaused",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "vpfiTokenSet",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "priced",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "armed",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "deliverable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "counted",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "solverCapacityLit",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "intentMatchingLive",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "purchasePerk",
     "inputs": [
       {
@@ -230,6 +283,19 @@
       },
       {
         "name": "creditsAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PriorityRoutingPerkArmed",
+    "inputs": [
+      {
+        "name": "priceVpfi",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2070,6 +2136,17 @@
   },
   {
     "type": "error",
+    "name": "LenderIntentPriorityProtocolOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },
@@ -2441,6 +2518,11 @@
   },
   {
     "type": "error",
+    "name": "PerkCreditConsumeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PerkModeLocked",
     "inputs": [
       {
@@ -2459,6 +2541,17 @@
         "type": "address",
         "internalType": "address"
       },
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkNotDeliverable",
+    "inputs": [
       {
         "name": "perkId",
         "type": "uint256",
@@ -2490,6 +2583,28 @@
         "name": "maxTotalVpfi",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkPriorityLegacyUnitsSold",
+    "inputs": [
+      {
+        "name": "unitsSold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkPriorityMustBeCounted",
+    "inputs": [
+      {
+        "name": "durationSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

@@ -69,14 +69,12 @@ configuration of this perk id.
 2. **Opt-in belongs to the specific intent, not the pair** (Codex #2558 r1). The
    intent row (`lenderIntent[owner][lendingAsset][collateralAsset]`) is reused:
    `cancelLenderIntent` marks it inactive and a later `setLenderIntent` overwrites
-   it. So the flag is stored in its own appended mapping under the same key, but it
-   is **written by `setLenderIntent` from an explicit parameter every time the
-   intent is (re)written, and cleared by `cancelLenderIntent`**. A replacement
-   intent never inherits an old opt-in. A separate owner setter toggles it on a
-   live intent. Keeping it out of the `LenderIntent` struct leaves that struct and
-   its getters' ABI unchanged; `setLenderIntent` itself gains the parameter (a
-   deliberate pre-live ABI change, co-updated with its consumers). A flag with no
-   credits is inert.
+   it. So the flag is stored in its own appended mapping under the same key, and it
+   is **reset to off by every `setLenderIntent` and cleared by
+   `cancelLenderIntent`**; the owner opts a LIVE intent in with a separate setter.
+   A replacement intent never inherits an old opt-in. (As built in #2559 —
+   `setLenderIntent`'s signature is unchanged; see "Surfaces and scope".) A flag
+   with no credits is inert.
    **Contract-owned intents are out of scope in v1.** Intents owned by
    `AggregatorAdapterImplementation` or `BackstopVaultImplementation` cannot opt in:
    those are protocol-run vehicles, not perk buyers, and neither exposes a forwarding
@@ -124,7 +122,11 @@ would already have paid irreversibly. So the sale itself is guarded:
 - **The priority perk is counted-only, enforced at configuration.** `setPerkConfig`
   refuses a non-zero `durationSeconds` for `PERK_PRIORITY_ROUTING` by name. No timed
   unit can ever be sold, and no timed sale can lock the id's mode
-  (`PerkModeLocked`) into the wrong shape.
+  (`PerkModeLocked`) into the wrong shape. The refusal applies only when the
+  write would ARM the perk: a zero price (disarm) is accepted at any duration,
+  so a deployment holding a legacy timed configuration of this id can still
+  take its price down, and the deliverability predicate below requires the
+  counted shape, so such a legacy configuration is never sold (Codex #2563 r2).
 - **No sale while the perk can deliver nothing — one deliverability predicate.**
   `purchasePerk` for the priority id refuses by name unless the perk can be
   delivered RIGHT NOW, and "deliverable" is a single predicate shared with the
@@ -158,17 +160,42 @@ would already have paid irreversibly. So the sale itself is guarded:
    surface.
 
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
-chain.
+chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):
+the first priced, counted write by this version sets a one-time marker that the
+deliverability predicate and the fill's credit check both require, with an event.
+So a price or credits for id 1 inherited from before #2550 never activate by
+themselves after an upgrade, and the arming write is refused outright while
+units of id 1 sold before the effect existed are outstanding — those buyers paid
+for something else, so their credits must never acquire a capacity exemption.
 
 ## Surfaces and scope of the first PR
 
-- **Contracts:** the per-intent flag (written by `setLenderIntent`, cleared by
-  cancel, toggled by the owner, refused for contract owners), the consumer at the
-  fill, the shared predicate behind fill and preview, the two sale guards
-  (counted-only configuration; no purchase while the Solver curve is dark), the read
-  view, the event; tests that straddle each condition (flag on/off × credits 0/1 ×
-  limiter dark/lit × bucket covering/exhausted) and prove a credit is spent only when
-  the fill would otherwise have been refused.
+- **Contracts (as built, #2559):** the per-intent flag — **reset to off by every
+  `setLenderIntent`, cleared by cancel, toggled by the owner on a live intent**, and
+  refused for protocol-run owners; the consumer at the fill
+  (`LibPriorityRouting.chargeFill`); the shared predicate behind the fill and the
+  read view; the two sale guards — counted-only configuration, and **the full
+  three-condition deliverability predicate** at purchase (Solver curve lit AND
+  `partialFillEnabled` AND `lenderIntentEnabled`; #2559 item 1); a keyed
+  `LenderIntentPrioritySet` event on **every** opt-in write and `IntentPriorityFill`
+  on every credit spend (#2559 item 4); tests that straddle each condition (flag
+  on/off × credits 0/1 × limiter dark/lit × bucket covering/exhausted, and each
+  deliverability condition separately) and prove a credit is spent only when the
+  fill would otherwise have been refused.
+- **`setLenderIntent` keeps its signature** (#2559 item 2). An earlier revision of
+  this note gave it a new opt-in parameter, which would have created a new selector
+  and required a `Remove` of the old one so a stale client could not rewrite an
+  intent without assigning the flag. The built shape avoids the problem at its
+  source: every `setLenderIntent` resets the flag, whichever client calls it, and
+  the opt-in is a separate call on the live intent. No selector changes, so nothing
+  needs retiring, and the adapter, backstop, keeper and app callers are unchanged.
+- **The read view is a block-state snapshot** (#2559 item 3).
+  `getLenderIntentPriority(owner, pair, solver, initiator)` reports the opt-in, the
+  owner's credits, whether the solver's capacity covers the fill and whether a
+  credit would unlock it — as of the block read. Capacity accrues, other fills spend
+  it, and the owner may spend a credit or change the opt-in before a fill is mined;
+  the mined `IntentPriorityFill` event is the authoritative record that a credit was
+  spent.
 - **App:** none in the first PR — the app has no lender-intent or perk-purchase
   screens today. When intents get a UI, it gains the opt-in toggle, the credit
   balance and a purchase step, under the RL-6 copy rules (a convenience the buyer

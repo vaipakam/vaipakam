@@ -147,6 +147,13 @@ library LibOfferMatch {
         uint256 matchRateBps;     // midpoint rate the resulting loan would carry
         uint256 reqCollateral;    // collateral the borrower must post
         uint256 availableCapital; // un-lent funded capital this intent can still deploy
+        /// @dev #2559 (Codex #2563 r4) — WHICH clear case an Ok preview is: false =
+        ///      the solver's service capacity covers the fill (or the limiter is
+        ///      dark) and it will be charged; true = capacity would refuse it and the
+        ///      intent owner's priority credit carries it instead, so the fill will
+        ///      spend one credit and charge the solver nothing. Always false when
+        ///      `ok` is false. Appended last so readers by name are unaffected.
+        bool spendsPriorityCredit;
     }
 
     /// @notice Asset-continuity check between an existing loan and a

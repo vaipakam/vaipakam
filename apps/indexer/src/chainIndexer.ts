@@ -7331,6 +7331,15 @@ export function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
+    // #2550 / #2559 — a fill the solver's capacity would have refused went
+    // through on the intent owner's priority-routing credit. The row belongs on
+    // the loan the fill opened and on the owner's feed, whose credit it spent.
+    case 'IntentPriorityFill':
+      return {
+        actor: (args.owner as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
     // #2342 — a closed loan's owed VPFI entering or leaving a vault owner's
     // fee-tier exclusion. The row belongs on the loan's timeline, and on
     // the vault owner's feed while it charges them. `vaultOwner` is the zero

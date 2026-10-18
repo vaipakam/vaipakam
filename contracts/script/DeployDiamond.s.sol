@@ -1930,7 +1930,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](14);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -1943,6 +1943,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[9] = LenderIntentFacet.getLenderIntentCapital.selector;
         s[10] = LenderIntentFacet.rollIntentLoan.selector;
         s[11] = LenderIntentFacet.getLenderIntentsByOwner.selector;
+        // #2550 — the priority-routing opt-in and its snapshot view.
+        s[12] = LenderIntentFacet.setLenderIntentPriority.selector;
+        s[13] = LenderIntentFacet.getLenderIntentPriority.selector;
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -2598,13 +2601,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getPerkSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = PerkFacet.setPerkConfig.selector;
         s[1] = PerkFacet.purchasePerk.selector;
         s[2] = PerkFacet.consumePerkCredit.selector;
         s[3] = PerkFacet.getPerkConfig.selector;
         s[4] = PerkFacet.getPerkEntitlement.selector;
         s[5] = PerkFacet.getPerkSpendCumulative.selector;
+        s[6] = PerkFacet.getPriorityRoutingStatus.selector; // #2559 Codex #2563 r6
     }
 
     function _getRewardHorizonSweepSelectors()

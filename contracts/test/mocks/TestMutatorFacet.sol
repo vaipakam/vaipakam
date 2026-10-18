@@ -2891,4 +2891,21 @@ contract TestMutatorFacet {
     function setFreshReCreditedRaw(uint256 v) external {
         LibVaipakam.storageSlot().rewardBudgetFreshReCredited = v;
     }
+
+    /// @dev #2559 (Codex #2563 r2) test-only — write a perk's configuration and
+    ///      sold count directly, bypassing `setPerkConfig`'s guards, so a test can
+    ///      stand up LEGACY state the current setter refuses (perk 1 configured
+    ///      and sold as a timed perk before #2550).
+    function setPerkStateRaw(uint256 perkId, uint256 price, uint32 durationSeconds, uint256 unitsSold) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.perkPriceVpfi[perkId] = price;
+        s.perkDurationSeconds[perkId] = durationSeconds;
+        s.perkUnitsSold[perkId] = unitsSold;
+    }
+
+    /// @dev #2559 (Codex #2563 r5) test-only — give `user` credits of `perkId`
+    ///      directly, standing up LEGACY credits sold before the effect existed.
+    function setPerkCreditsRaw(address user, uint256 perkId, uint256 credits) external {
+        LibVaipakam.storageSlot().perkCredits[user][perkId] = credits;
+    }
 }

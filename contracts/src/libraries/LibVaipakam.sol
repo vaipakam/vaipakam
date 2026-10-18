@@ -8127,6 +8127,25 @@ library LibVaipakam {
         ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
         ///      that struct's getter ABI is unchanged. Appended — append-only.
         mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;
+        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset`,
+        ///      the `lenderIntent` key), whether its owner opted it into priority
+        ///      routing: a fill the solver's capacity would refuse may then spend
+        ///      one of the owner's priority credits instead. Written ONLY through
+        ///      `LibPriorityRouting.writeFlag` (one event per change): reset to
+        ///      false by every `setLenderIntent` (a replacement intent never
+        ///      inherits an old opt-in), cleared by `cancelLenderIntent`, toggled by
+        ///      the owner on a live intent. Appended — append-only.
+        mapping(address => mapping(address => mapping(address => bool))) lenderIntentPriority;
+        /// @dev #2559 (Codex #2563 r5) — set ONCE, by this version's
+        ///      `PerkFacet.setPerkConfig`, on the first priced counted write of the
+        ///      priority-routing perk (id 1): the explicit arming of its effect. A
+        ///      configuration or credits of id 1 inherited from before #2550 carry
+        ///      no effect until it is set (`LibPriorityRouting.deliverable` and
+        ///      `.covers` both read it), and it refuses to be set while units of
+        ///      id 1 sold before the effect existed are outstanding. Never cleared:
+        ///      disarming (a zero price) stops sales, not credits already bought.
+        ///      Appended — append-only.
+        bool priorityRoutingPerkArmed;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

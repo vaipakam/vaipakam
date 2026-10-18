@@ -650,6 +650,49 @@ settlement fails the purchase rather than silently charging more. Withdrawing
 a perk from sale stops further purchases and leaves entitlements already
 bought untouched.
 
+**Perk 1 — priority routing for lender intents — has its own rules** (#2550,
+#2559). It is the first perk with an effect: a lender-intent fill that the
+filling solver's service capacity would refuse goes through on one of the
+intent owner's credits instead.
+
+- **Counted only.** Its duration must be zero whenever it is priced; a timed
+  configuration with a price is refused by name, before anything can be sold.
+  Disarming (price zero) is accepted at any duration, so a chain that configured
+  or sold perk 1 as a timed perk before #2550 can still take a stale price down.
+  Such a chain's perk 1 stays timed (the mode is frozen once sold) and can never
+  be sold again.
+- **Never sold while it cannot deliver.** A purchase is refused unless the perk
+  is configured counted, the Solver service-capacity curve is set **and** both
+  lender-intent switches (`partialFillEnabled`, `lenderIntentEnabled`) are on. The check is made at the
+  purchase, so turning any of them off later stops sales at once.
+- **Arming sequence — all required, per chain, before a non-zero price:**
+  1. the facet change that adds this effect deployed on that chain;
+  2. the Solver capacity curve set there (service capacity, #1219);
+  3. **the keeper updated** so it keeps scanning past capacity refusals for
+     credit-backed intents — without that the perk's benefit is never delivered,
+     even though the on-chain gate would let it be sold;
+  4. the effect verified on a fork of that chain: set the price, buy a credit,
+     exhaust a solver, and confirm a flagged fill succeeds and spends exactly
+     one credit while an unflagged one is refused.
+
+  Only then set the price, as the last step. The on-chain gate covers the
+  first two; the keeper and the fork check are the operator's to confirm.
+- **The price write is the arming.** The first priced, counted
+  `setPerkConfig(1, price, 0)` made by this version arms the effect once
+  (`PriorityRoutingPerkArmed`). Until then, a price or credits for perk 1 left
+  over from before #2550 do nothing: nothing sells and no credit carries a fill.
+  If units of perk 1 were ever sold before the effect existed, the arming write
+  is refused (`PerkPriorityLegacyUnitsSold`) and perk 1 cannot be used for
+  priority routing on that deployment.
+- **Reading the state.** `getPriorityRoutingStatus()` returns whether any
+  protocol-wide condition would refuse a purchase, then each condition on its
+  own: the protocol is not paused, a VPFI token is set, a price is set (zero
+  means disarmed), the effect is armed, the counted shape, the Solver curve and
+  both intent switches. A refused purchase can be traced to the one condition
+  that is missing, and a paused or disarmed perk never reads as for sale. Checks
+  that depend on the buyer (sanctions, vault balance, the terms they bind) are
+  not part of it.
+
 **This setter stays callable while the protocol is PAUSED**, deliberately —
 a pause is when withdrawing an armed offer is most wanted, and gating the
 setter behind it would remove that lever.

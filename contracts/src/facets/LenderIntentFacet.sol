@@ -2,10 +2,11 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -256,6 +257,10 @@ contract LenderIntentFacet is
         // membership on funded capital blocks arbitrary zero-capital registrations
         // from bloating the global feed (Codex WI-2a r1).
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        // #2550 — every (re)write of the intent resets its priority-routing opt-in,
+        // so a replacement intent never inherits the old one and never spends the
+        // owner's paid credits without a fresh opt-in ({setLenderIntentPriority}).
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, false);
 
         emit LenderIntentSet(
             msg.sender,
@@ -287,7 +292,67 @@ contract LenderIntentFacet is
         intent.active = false;
         // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        // #2550 — a cancelled intent carries no priority opt-in.
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, false);
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
+    }
+
+    /// @notice #2550 — opt the caller's LIVE intent for the pair into (or out of)
+    ///         priority routing. While opted in, a fill that the solver's service
+    ///         capacity would refuse spends one of the caller's priority-routing
+    ///         perk credits instead; a fill the solver can afford is charged to it
+    ///         as usual and spends no credit. The opt-in belongs to THIS intent: any
+    ///         later {setLenderIntent} for the pair resets it, and cancellation
+    ///         clears it.
+    /// @dev    Opting in is Tier-1 sanctions-gated (it authorizes future spends of
+    ///         the caller's paid credits); opting OUT is always allowed, so a
+    ///         flagged owner can withdraw consent. Opting in is also refused
+    ///         while the protocol is paused, like every other consent-creating
+    ///         entry point (`setLenderIntent` is `whenNotPaused`); opting OUT
+    ///         stays open during a pause, since revoking consent is containment
+    ///         (Codex #2563 r3). A protocol-run owner — an
+    ///         aggregator adapter or the backstop vault — is refused by name: those
+    ///         are not perk buyers, and the flag could never be used.
+    function setLenderIntentPriority(address lendingAsset, address collateralAsset, bool enabled)
+        external
+        nonReentrant
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (enabled) {
+            LibPausable.requireNotPaused();
+            LibVaipakam._assertNotSanctioned(msg.sender);
+            if (s.isAggregatorAdapter[msg.sender] || msg.sender == s.backstopVault) {
+                revert IVaipakamErrors.LenderIntentPriorityProtocolOwner(msg.sender);
+            }
+            if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) revert LenderIntentNotActive();
+        }
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, enabled);
+    }
+
+    /// @notice #2550 — the priority-routing state of `owner`'s intent for the pair,
+    ///         and what a fill by `solver` (initiated by `initiator`) would do with
+    ///         it right now: whether the solver's capacity covers the fill, and
+    ///         whether a capacity refusal would instead be lifted by one of the
+    ///         owner's credits. A BLOCK-STATE SNAPSHOT: capacity accrues, other fills
+    ///         spend it, and the owner may spend a credit or change the opt-in before
+    ///         a fill is mined; the mined `IntentPriorityFill` event is the
+    ///         authoritative record that a credit was spent.
+    /// @return enabled         The intent is opted in.
+    /// @return credits         The owner's unspent priority credits.
+    /// @return capacityCovers  The solver's capacity covers the fill (or the limiter is dark).
+    /// @return creditUnlocks   The fill would be refused for capacity but goes through on a credit.
+    function getLenderIntentPriority(
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        address solver,
+        address initiator
+    ) external view returns (bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        enabled = s.lenderIntentPriority[owner][lendingAsset][collateralAsset];
+        credits = s.perkCredits[owner][LibPriorityRouting.PERK_ID];
+        capacityCovers = LibServiceCapacity.fillCovered(s, solver, initiator);
+        creditUnlocks = !capacityCovers && LibPriorityRouting.covers(s, owner, lendingAsset, collateralAsset);
     }
 
     /// @notice #393 v1-d — fund (or top up) the caller's standing intent with
