@@ -283,6 +283,20 @@ test('namespaces: any element outside OFAC\'s namespace refuses the file; a pref
   assert.throws(() => scanXml('<Sanctions><q:Feature/></Sanctions>'), /unbound namespace prefix q/);
 });
 
+// ---- Codex #2543 r17: record nodes appear only on their documented paths ----
+test('anchors: a record node found off its documented path refuses the file instead of being skipped', () => {
+  const moved = /but the schema places it only at/;
+  // An extra wrapper around a real Feature.
+  assert.throws(() => parseSdnAdvanced(withInProfile(`<Wrapper>${feature(E)}</Wrapper>`)), moved);
+  // A FeatureVersion one level up, directly under the Profile.
+  assert.throws(() => parseSdnAdvanced(withInProfile(`<FeatureVersion ReliabilityID="1"/>`)), moved);
+  // A reference value outside its set.
+  const fx = FIXTURE.toString('utf8').replace('<ReferenceValueSets>', '<ReferenceValueSets><Extra><FeatureType ID="7">x</FeatureType></Extra>');
+  assert.throws(() => parseSdnAdvanced(fx), moved);
+  // Year/Month/Day are shared names: elsewhere they are unrelated structure.
+  assert.ok(parseSdnAdvanced(withInProfile('<Other><Year>2020</Year></Other>')).addresses.length > 0);
+});
+
 // ---- Codex #2543 r16: names are XML qualified names, one colon at most ----
 test('names: an element or attribute name with a second colon is malformed, not a different local name', () => {
   assert.throws(() => scanXml(`<Sanctions xmlns:o="${NS}"><o:Feature:x/></Sanctions>`), /not a valid qualified name/);
@@ -306,11 +320,13 @@ test('references: a record whose FeatureTypeID or ReliabilityID resolves to noth
 });
 
 // ---- Codex #2543 r5: full-path matching, a single publication date ----
-test('paths: a <Feature> off the documented party path is never read', () => {
+test('paths: a <Feature> off the documented party path is never read — it refuses the file', () => {
+  // Codex #2543 r17 tightened "never read" to "refused": a skipped record
+  // would be a dropped address and a delisting.
   const spliced = FIXTURE.toString('utf8').replace('<DistinctParties>', `<Wrapper>${feature(E)}</Wrapper><DistinctParties>`);
-  assert.ok(!parseSdnAdvanced(spliced).addresses.includes(E), 'a root-level wrapper Feature is ignored');
+  assert.throws(() => parseSdnAdvanced(spliced), /but the schema places it only at/);
   const underParty = FIXTURE.toString('utf8').replace(PROFILE_OPEN, `<Other>${feature(E)}</Other>${PROFILE_OPEN}`);
-  assert.ok(!parseSdnAdvanced(underParty).addresses.includes(E), 'a Feature outside <Profile> is ignored');
+  assert.throws(() => parseSdnAdvanced(underParty), /but the schema places it only at/);
   assert.ok(parseSdnAdvanced(withInProfile(feature(E))).addresses.includes(E), 'the documented path is still read');
 });
 

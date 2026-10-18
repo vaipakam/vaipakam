@@ -461,6 +461,36 @@ export const SDN_PATHS = Object.freeze({
   featureVersion: `${PARTY_FEATURE}/FeatureVersion`,
   versionDetail: `${PARTY_FEATURE}/FeatureVersion/VersionDetail`,
 });
+/**
+ * Names the schema also uses on paths this tool does not read (dates of
+ * birth, document dates, entry events all carry Year/Month/Day). The
+ * publication date's own parts are mandatory singletons, so a misplaced one
+ * is already refused as missing.
+ */
+const SHARED_NAMES = new Set(['Year', 'Month', 'Day']);
+/**
+ * Every element name on a path this tool reads, mapped to the one path it
+ * may appear on (Codex #2543 r17). Derived from {@link SDN_PATHS}, so a node
+ * of the record structure found anywhere else — under an extra wrapper, one
+ * level up, in a sibling subtree — refuses the file instead of being skipped
+ * as unrelated structure, which would drop its record and delist its address.
+ * In the real 2026-10-15 publication each of these names occurs only on its
+ * path.
+ */
+const ANCHORED_PATHS = (() => {
+  const anchored = new Map();
+  for (const full of Object.values(SDN_PATHS)) {
+    const parts = full.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      if (SHARED_NAMES.has(parts[i])) continue;
+      const at = parts.slice(0, i + 1).join('/');
+      const prior = anchored.get(parts[i]);
+      if (prior !== undefined && prior !== at) throw new Error(`SDN_PATHS anchors <${parts[i]}> at two paths`);
+      anchored.set(parts[i], at);
+    }
+  }
+  return anchored;
+})();
 /** Paths that identify the publication: each must appear at most once. */
 const SDN_SINGLETON_PATHS = new Set([SDN_PATHS.dateOfIssue, SDN_PATHS.year, SDN_PATHS.month, SDN_PATHS.day]);
 
@@ -533,6 +563,10 @@ export function parseSdnAdvanced(xml) {
       path.push(name);
       const at = path.join('/');
       if (reading) throw new Error(`unexpected <${name}> inside <${reading}>`);
+      const anchor = ANCHORED_PATHS.get(name);
+      if (anchor !== undefined && anchor !== at) {
+        throw new Error(`<${name}> found at ${at}, but the schema places it only at ${anchor} — refusing a file whose records may have moved`);
+      }
       if (SDN_SINGLETON_PATHS.has(at)) {
         const count = (seen.get(at) ?? 0) + 1;
         if (count > 1) throw new Error(`<${at}> appears more than once — refusing an ambiguous publication date`);
