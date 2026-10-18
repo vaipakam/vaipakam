@@ -29,7 +29,7 @@
   <DistinctParties>
     <DistinctParty FixedRef="1">
       <Profile ID="1" PartySubTypeID="4">
-        <Feature ID="5" FeatureTypeID="345" />
+        <Feature ID="5" FeatureTypeID="25" />
         <Feature ID="10" FeatureTypeID="25">
           <FeatureVersion ID="11" ReliabilityID="1">
             <VersionDetail DetailTypeID="1432">0x0000000000000000000000000000000000000bad</VersionDetail>

@@ -347,6 +347,20 @@ test('parseSdnAdvanced: a digital-currency FeatureVersion without a VersionDetai
   assert.ok(parseSdnAdvanced(withInProfile(otherType)).addresses.length > 0);
 });
 
+// ---- Codex #2543 r14: a digital-currency feature with no version is refused ----
+test('parseSdnAdvanced: a digital-currency Feature without a FeatureVersion refuses the file', () => {
+  const empty = `<Feature ID="9200" FeatureTypeID="345"></Feature>`;
+  assert.throws(() => parseSdnAdvanced(withInProfile(empty)), /carries no <FeatureVersion>/);
+  const selfClosing = `<Feature ID="9201" FeatureTypeID="345"/>`;
+  assert.throws(() => parseSdnAdvanced(withInProfile(selfClosing)), /carries no <FeatureVersion>/);
+  // A version-less feature of another type is not ours to read.
+  const otherType = `<Feature ID="9202" FeatureTypeID="25"/>`;
+  assert.ok(parseSdnAdvanced(withInProfile(otherType)).addresses.length > 0);
+  // Its type must still resolve.
+  const unknownType = `<Feature ID="9203" FeatureTypeID="99999"/>`;
+  assert.throws(() => parseSdnAdvanced(withInProfile(unknownType)), /no <FeatureType> defines/);
+});
+
 // ---- Codex #2543 r10: the current list comes from the chain only ----
 test('CLI: a file of current addresses is refused; the list is read from the chain', async () => {
   const { spawnSync } = await import('node:child_process');

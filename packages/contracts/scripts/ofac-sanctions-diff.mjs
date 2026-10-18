@@ -483,7 +483,7 @@ export function parseSdnAdvanced(xml) {
     [SDN_PATHS.detailType, { label: 'DetailType', set: detailTypes }],
   ]);
   const records = []; // { typeId, rel, value } — value null: a version with no detail
-  let feature = null; // { typeId }
+  let feature = null; // { typeId, versions }
   let version = null; // { rel, details }
   let buf = null; // text accumulator for the element being read
   let reading = null; // the full path `buf` belongs to
@@ -542,9 +542,10 @@ export function parseSdnAdvanced(xml) {
           buf = '';
           break;
         case SDN_PATHS.feature:
-          feature = { typeId: attrs.get('FeatureTypeID') };
+          feature = { typeId: attrs.get('FeatureTypeID'), versions: 0 };
           break;
         case SDN_PATHS.featureVersion:
+          feature.versions++;
           version = { rel: attrs.get('ReliabilityID'), details: 0 };
           break;
         default:
@@ -586,7 +587,13 @@ export function parseSdnAdvanced(xml) {
         if (version.details === 0) records.push({ typeId: feature.typeId, rel: version.rel, value: null });
         version = null;
       }
-      else if (at === SDN_PATHS.feature) feature = null;
+      else if (at === SDN_PATHS.feature) {
+        // Likewise a feature with no version at all: one level up from the
+        // detail-less version, same rule (Codex #2543 r14). Its type resolves
+        // after the pass; it carries no reliability to resolve.
+        if (feature.versions === 0) records.push({ typeId: feature.typeId, noVersion: true });
+        feature = null;
+      }
     },
   });
 
@@ -605,9 +612,17 @@ export function parseSdnAdvanced(xml) {
   const excludedFalse = [];
   const malformed = [];
   const nonEvmByAsset = {};
-  for (const { typeId, rel, detailTypeId: dt, value } of records) {
+  for (const { typeId, rel, detailTypeId: dt, value, noVersion } of records) {
     if (typeId === undefined || !featureTypes.has(typeId)) {
       throw new Error(`a <Feature> names FeatureTypeID ${JSON.stringify(typeId ?? null)}, which no <FeatureType> defines — refusing a file whose records do not resolve`);
+    }
+    if (noVersion) {
+      // A digital-currency feature with no version is a record we cannot
+      // read, exactly like a version with no detail (Codex #2543 r14).
+      if (dcaTypes.has(typeId)) {
+        throw new Error(`a "${DCA_PREFIX}${dcaTypes.get(typeId)}" <Feature> carries no <FeatureVersion> — refusing a file whose digital-currency records do not resolve`);
+      }
+      continue;
     }
     if (rel === undefined || !reliability.has(rel)) {
       throw new Error(`a <FeatureVersion> names ReliabilityID ${JSON.stringify(rel ?? null)}, which no <Reliability> defines — refusing a file whose records do not resolve`);

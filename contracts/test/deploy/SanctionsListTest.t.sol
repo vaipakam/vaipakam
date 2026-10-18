@@ -782,6 +782,34 @@ contract SanctionsListTest is Test {
         assertEq(ts, 0);
     }
 
+    /// @notice A zero word (never updated, or a fallback answering with an
+    ///         empty word) is not a time, so it reads as unknown.
+    function test_Freshness_ZeroSecondaryTimestampIsUnknown() public {
+        vm.warp(1_760_000_000);
+        redstone.setLastUpdate(0);
+        (bool known, uint256 ts) = list.secondaryLastUpdate();
+        assertFalse(known);
+        assertEq(ts, 0);
+        (,,,,,, bool hasSec, bool secKnown, uint256 secAt) = list.freshness();
+        assertTrue(hasSec);
+        assertFalse(secKnown);
+        assertEq(secAt, 0);
+    }
+
+    /// @notice A timestamp after the current block is implausible and reads
+    ///         as unknown; the current block itself is accepted.
+    function test_Freshness_FutureSecondaryTimestampIsUnknown() public {
+        vm.warp(1_760_000_000);
+        redstone.setLastUpdate(1_760_000_001);
+        (bool known, uint256 ts) = list.secondaryLastUpdate();
+        assertFalse(known);
+        assertEq(ts, 0);
+        redstone.setLastUpdate(1_760_000_000);
+        (known, ts) = list.secondaryLastUpdate();
+        assertTrue(known);
+        assertEq(ts, 1_760_000_000);
+    }
+
     /// @notice A secondary without RedStone's freshness read (a plain
     ///         Chainalysis-shaped oracle) yields unknown, not a revert.
     function test_Freshness_SecondaryWithoutTheFunctionIsUnknown() public {

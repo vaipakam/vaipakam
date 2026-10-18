@@ -555,15 +555,20 @@ contract SanctionsList is ComposedSanctionsList, Ownable2Step {
     ///         the function, reverts, or answers in an unexpected shape
     ///         yields `known = false` instead of reverting this view. A
     ///         freshness that cannot be read is reported as unknown, never as
-    ///         a time.
-    /// @return known      The secondary answered with a 32-byte word.
+    ///         a time. So is a word that cannot be one: zero (never updated,
+    ///         or a fallback answering with an empty word) and any value
+    ///         after the current block are reported as unknown, so a reader
+    ///         is never shown a 1970 or future "last updated" figure.
+    /// @return known      The secondary answered with a plausible timestamp.
     /// @return timestamp  Its answer; 0 when `known` is false.
     function secondaryLastUpdate() public view returns (bool known, uint256 timestamp) {
         if (address(_secondary) == address(0)) return (false, 0);
         (bool ok, bytes memory ret) =
             address(_secondary).staticcall(abi.encodeWithSignature("getLastUpdateBlockTimestamp()"));
         if (!ok || ret.length != 32) return (false, 0);
-        return (true, abi.decode(ret, (uint256)));
+        uint256 ts = abi.decode(ret, (uint256));
+        if (ts == 0 || ts > block.timestamp) return (false, 0);
+        return (true, ts);
     }
 
     /// @notice Everything a reader needs to judge how current this list is,
