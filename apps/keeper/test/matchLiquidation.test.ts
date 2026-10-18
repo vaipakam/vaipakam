@@ -6,7 +6,8 @@
  * never while an earlier keeper send is unmined. Each refusal asserts that
  * nothing was written.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { armHeldFence } from './helpers/epochFence';
 import {
   decodeFunctionData,
   keccak256,
@@ -20,6 +21,9 @@ import { RiskFacetABI } from '@vaipakam/contracts/abis';
 import { INTERNAL_MATCH_EXECUTED_TOPIC } from '@vaipakam/lib/routeBuilder';
 import { attemptMatchLiquidation, tryMatchLiquidation } from '../src/matchLiquidation';
 import { resetSubmissionQueues } from '../src/submissionQueue';
+
+// Every send asserts the epoch fence (#2569 r4): armed here as the tick arms it.
+beforeEach(() => armHeldFence());
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const DIAMOND = A(0xd1);

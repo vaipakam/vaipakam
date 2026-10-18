@@ -35,7 +35,8 @@ function log(line: string): void {
 }
 
 function main(): void {
-  const { missingD1 } = buildHostEnv(process.env);
+  const { missingD1, refusedD1 } = buildHostEnv(process.env);
+  if (refusedD1 !== null) log(`[keeper-host] ${refusedD1}; every tick will decline`);
   if (process.argv.includes('--check')) {
     log(
       `[keeper-host] check: build loads; database ${missingD1.length > 0 ? `not configured (${missingD1.join(', ')} unset)` : 'configured'}`,

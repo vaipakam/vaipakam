@@ -43,6 +43,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { MULTICALL3_ADDRESS } from '../src/multicall3';
+import { armHeldFence } from './helpers/epochFence';
 
 const AGGREGATE3 = {
   type: 'function',
@@ -314,12 +315,15 @@ function db(): unknown {
   stmt.bind = () => stmt;
   stmt.all = async () => ({ results: [], success: true, meta: {} });
   stmt.first = async () => null;
-  stmt.run = async () => ({ results: [], success: true, meta: {} });
+  // A guarded upsert reports its change (epochFence.ts); the fake lands every write.
+  stmt.run = async () => ({ results: [], success: true, meta: { changes: 1 } });
   return { prepare: () => stmt, batch: async () => [], exec: async () => ({}) };
 }
 
 async function run(): Promise<void> {
   const { runLiquidityConfidence } = await import('../src/liquidityConfidence');
+  // The fence holds for the chain the pass resolves (#2569 r5).
+  armHeldFence([{ id: 84532, diamond: getDeployment(84532)!.diamond }]);
   await runLiquidityConfidence({
     DB: db(),
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',

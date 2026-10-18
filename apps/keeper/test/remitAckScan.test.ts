@@ -94,12 +94,15 @@ function enc(f: AbiFunction, result: unknown): string {
   return encodeFunctionResult({ abi: [f] as Abi, functionName: f.name, result: result as never });
 }
 
-/** A reservation tuple built from the compiled ABI, zeroed but for `status`. */
+/** A reservation tuple built from the compiled ABI, zeroed but for `status`
+ *  (and the stranded-share stamp, set). */
 function reservation(status: number): string {
   const out = F.reservation.outputs;
   const one = (p: { name?: string; type: string; components?: readonly unknown[] }): unknown => {
     if (p.name === 'status') return status;
     if (p.name === 'dstChainId') return CHAIN_ID;
+    // A stamped history: "nothing stranded" is a positive read, not a default (#2497 r1).
+    if (p.name === 'strandedStamped') return true;
     const t = p.type;
     if (t.endsWith('[]')) return [];
     if (t === 'tuple') return ((p.components ?? []) as { name?: string; type: string }[]).map(one);
@@ -114,11 +117,11 @@ function reservation(status: number): string {
   return enc(F.reservation, out.length === 1 ? vals[0] : vals);
 }
 
-type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[] };
+type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[]; reads: Map<number, number> };
 
 /** @param failId reservation id whose batched read comes back as a failure. */
 function install(failId?: number): { seen: Seen; restore: () => void } {
-  const seen: Seen = { serialReservations: 0, batches: [] };
+  const seen: Seen = { serialReservations: 0, batches: [], reads: new Map() };
   const real = globalThis.fetch;
 
   const answerOne = (data: string): string | null => {
@@ -140,6 +143,7 @@ function install(failId?: number): { seen: Seen; restore: () => void } {
         data: data as `0x${string}`,
       });
       const id = Number((args as readonly unknown[])[0]);
+      seen.reads.set(id, (seen.reads.get(id) ?? 0) + 1);
       if (failId !== undefined && id === failId) return null;
       return reservation(TERMINAL_STATUS);
     }
@@ -213,10 +217,16 @@ function db(): { handle: unknown; sql: string[] } {
   return { handle, sql };
 }
 
-async function run(handle: unknown): Promise<void> {
+/**
+ * Two stubs, one per database (#2450): the scan state is keeper-private, so
+ * its writes must reach `KEEPER_DB` — a pass that wrote it to the shared
+ * handle would record progress where the next tick never reads it.
+ */
+async function run(shared: unknown, keeper: unknown): Promise<void> {
   const { runRemitAck } = await import('../src/remitAck');
   await runRemitAck({
-    DB: handle,
+    DB: shared,
+    KEEPER_DB: keeper,
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
@@ -229,15 +239,17 @@ async function run(handle: unknown): Promise<void> {
 const wroteScanState = (sql: string[]): boolean =>
   sql.some((q) => q.includes('keeper_remit_ack_frontier') && q.includes('INSERT'));
 
+
 describe('remitAck reservation scan (#1896)', () => {
   it('batches the whole window, with no per-reservation read', async () => {
     const { seen, restore } = install();
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();
@@ -256,6 +268,8 @@ describe('remitAck reservation scan (#1896)', () => {
     // The scan ran to completion and persisted its progress — without this, a
     // version that read nothing would satisfy "no serial reads" trivially.
     expect(wroteScanState(sql)).toBe(true);
+    // ...and persisted it to the keeper's own database, never the shared one.
+    expect(shared.sql.filter((q) => /keeper_remit_ack/.test(q))).toEqual([]);
   });
 
   it('ABORTS the scan on a failed read rather than skipping the reservation', async () => {
@@ -264,6 +278,7 @@ describe('remitAck reservation scan (#1896)', () => {
     // the cursor past a reservation whose status was never read — dropping it
     // from the scan until the rotating window came back around.
     const { seen, restore } = install(3);
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warned: string[] = [];
@@ -272,7 +287,7 @@ describe('remitAck reservation scan (#1896)', () => {
     });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();
@@ -290,3 +305,32 @@ describe('remitAck reservation scan (#1896)', () => {
     expect(warned.join('\n')).toMatch(/scan aborted at remit=3/);
   });
 });
+
+/**
+ * A D1 stub that answers by statement text: `answers` maps a substring of the
+ * SQL to the rows that statement returns, and every bound statement is kept
+ * (with its binds) so a write can be asserted by what it wrote.
+ */
+function answeringDb(answers: [string, unknown[]][]): { handle: unknown; bound: { sql: string; binds: unknown[] }[] } {
+  const bound: { sql: string; binds: unknown[] }[] = [];
+  const handle = {
+    prepare: (q: string) => {
+      const stmt: Record<string, unknown> = { sql: q, binds: [] as unknown[] };
+      const rows = () => answers.find(([k]) => q.includes(k))?.[1] ?? [];
+      stmt.bind = (...b: unknown[]) => {
+        stmt.binds = b;
+        bound.push({ sql: q, binds: b });
+        return stmt;
+      };
+      stmt.all = async () => ({ results: rows(), success: true, meta: {} });
+      stmt.first = async () => rows()[0] ?? null;
+      stmt.run = async () => ({ results: [], success: true, meta: {} });
+      return stmt;
+    },
+    batch: async (stmts: { all?: () => Promise<unknown> }[]) => Promise.all(stmts.map((s) => s.all?.())),
+    exec: async () => ({}),
+  };
+  return { handle, bound };
+}
+
+
