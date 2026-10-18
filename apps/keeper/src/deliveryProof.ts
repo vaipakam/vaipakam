@@ -48,7 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { isRunDeadlinePassed } from './runDeadline';
+import { RunDeadlinePassed, isRunDeadlinePassed, pastDeadline } from './runDeadline';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -542,10 +542,23 @@ export function isWalkExceeded(err: unknown): boolean {
   return String((err as { message?: string })?.message ?? '').includes('TransportIndexWalkExceeded');
 }
 
-/** The chain's own day-order views, read through `client` (#2489 r2). */
-function dayOrderReader(client: PublicClient, diamond: Address): DayOrderReader {
-  const read = (functionName: string, args: readonly unknown[]) =>
-    client.readContract({ address: diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
+/** One Diamond view read, refused unissued once the run's deadline has
+ *  passed (#2497 r20). Every read the hint derivation makes goes through
+ *  this — the packet, the batch and each page of the day walk — so a
+ *  traversal that is still paging when the run runs out of time stops at
+ *  its next read and the action stays queued for the next run; nothing
+ *  here needs a check of its own. */
+function boundedViewReader(client: PublicClient, diamond: Address, deadlineMs: number) {
+  return (functionName: string, args: readonly unknown[]): Promise<unknown> => {
+    if (pastDeadline(deadlineMs)) return Promise.reject(new RunDeadlinePassed(`deliveryProof ${functionName}`));
+    return client.readContract({ address: diamond, abi: ABI, functionName, args } as never) as Promise<unknown>;
+  };
+}
+
+/** The chain's own day-order views (#2489 r2), each read bounded by the
+ *  run's deadline. Exported for its test. */
+export function dayOrderReader(client: PublicClient, diamond: Address, deadlineMs: number): DayOrderReader {
+  const read = boundedViewReader(client, diamond, deadlineMs);
   const asPage = (r: unknown): OrderPage => {
     const [page, arrivedAt, next] = r as readonly [readonly Hex[], readonly (bigint | number)[], Hex];
     return { page, arrivedAt: arrivedAt.map((x) => BigInt(x)), next };
@@ -564,14 +577,10 @@ function dayOrderReader(client: PublicClient, diamond: Address): DayOrderReader 
 async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call | null> {
   if (a.kind !== 'indexPage' && a.kind !== 'indexChunk') return null;
   const client = ctx.client as unknown as PublicClient;
-  const packet = (await client.readContract({
-    address: ctx.diamond,
-    abi: ABI,
-    functionName: 'getIngressPacket',
-    args: [a.batchId],
-  } as never)) as { arrivedAt: bigint | number };
+  const read = boundedViewReader(client, ctx.diamond, ctx.deadlineMs);
+  const packet = (await read('getIngressPacket', [a.batchId])) as { arrivedAt: bigint | number };
   const arrived = BigInt(packet.arrivedAt);
-  const reader = dayOrderReader(client, ctx.diamond);
+  const reader = dayOrderReader(client, ctx.diamond, ctx.deadlineMs);
   if (a.kind === 'indexChunk') {
     const h = await hintsForDays(reader, a.dayIds, 0, a.dayIds.length, a.batchId, arrived);
     return {
@@ -579,12 +588,7 @@ async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call |
       args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, h.hints, h.lateHints],
     };
   }
-  const b = (await client.readContract({
-    address: ctx.diamond,
-    abi: ABI,
-    functionName: 'getTransportBatch',
-    args: [a.batchId],
-  } as never)) as readonly [Hex, bigint, bigint, number, number, boolean];
+  const b = (await read('getTransportBatch', [a.batchId])) as readonly [Hex, bigint, bigint, number, number, boolean];
   const done = Number(b[4]);
   const h = await hintsForDays(reader, a.dayIds, done, done + TRANSPORT_INDEX_PAGE, a.batchId, arrived);
   return { functionName: 'materializeTransportBatchPageHinted', args: [a.batchId, a.dayIds, h.hints, h.lateHints] };
@@ -606,7 +610,21 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     // A day too crowded for the contract's bounded walk (Codex #2489 r2):
     // retry once with verified hints, rather than skipping the same action
     // on every tick and leaving the batch forever short of whole.
-    const hinted = isWalkExceeded(err) ? await hintedCallFor(ctx, a).catch(() => null) : null;
+    let hinted: Call | null = null;
+    if (isWalkExceeded(err)) {
+      try {
+        hinted = await hintedCallFor(ctx, a);
+      } catch (hintErr) {
+        // The deadline stopped the hint walk mid-traversal: the action is
+        // still queued, and the rest of this run's sends wait with it.
+        if (isRunDeadlinePassed(hintErr)) {
+          console.log(`[keeper] deliveryProof chain=${ctx.chainId}: ${shortErr(hintErr)}`);
+          budget.writes = 0;
+          return;
+        }
+        hinted = null;
+      }
+    }
     if (!hinted) {
       console.log(`[keeper] deliveryProof ${call.functionName} skipped: ${shortErr(err)}`);
       return;

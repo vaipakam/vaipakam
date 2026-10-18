@@ -7,7 +7,11 @@
  * (`submissionQueue.ts`) — both take that deadline and refuse past it, so a
  * pass needs no deadline check of its own in any read or send loop: a read past
  * the deadline returns every entry unread, and a send past it is refused before
- * anything is signed. What a run did not reach waits for the next run.
+ * anything is signed. What a run did not reach waits for the next run. A
+ * walk whose every read depends on the last one (the transport day walk in
+ * `deliveryProof.ts`, where a page names the next page) cannot be batched;
+ * its reader applies the same refusal to each read, so the walk stops at
+ * the first read past the deadline and the action stays queued.
  *
  * Until r19 each pass checked the deadline in the phases a review had named,
  * and each round found the next unbounded phase. One rule at the two seams

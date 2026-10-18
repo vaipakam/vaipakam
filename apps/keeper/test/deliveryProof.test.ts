@@ -10,11 +10,12 @@
  * migration DDL.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Hex } from 'viem';
 import {
   actionsFor,
   canonicalChainOf,
+  dayOrderReader,
   deliveryComplete,
   fundedDaysFromBits,
   isWalkExceeded,
@@ -25,6 +26,8 @@ import {
 import { BaseError, encodeAbiParameters, keccak256 } from 'viem';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
 import { flatDayListHash, listBudgetDeliveries } from '../src/db';
+import { hintsForDays } from '../src/transportHints';
+import { isRunDeadlinePassed } from '../src/runDeadline';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
@@ -290,6 +293,67 @@ describe('isWalkExceeded — the one failure a verified hint cures', () => {
     expect(isWalkExceeded(new Error('execution reverted: TransportIndexWalkExceeded'))).toBe(true);
     expect(isWalkExceeded(new BaseError('reverted: TransportIndexHintInvalid'))).toBe(false);
     expect(isWalkExceeded(new Error('timeout'))).toBe(false);
+  });
+});
+
+describe('the hint walk reads through one deadline-bound reader (#2497 r20)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A client whose day views answer from a hand-built day: a cursor, a
+   *  list page that chains to a second, and an empty late chain. Every
+   *  read is counted. */
+  function fakeClient(calls: string[], clock?: { advanceTo: number; on: number }) {
+    const node = (i: number) => `0x${i.toString(16).padStart(64, '0')}` as Hex;
+    return {
+      readContract: async ({ functionName }: { functionName: string }) => {
+        calls.push(functionName);
+        if (clock && calls.length === clock.on) vi.setSystemTime(clock.advanceTo);
+        switch (functionName) {
+          case 'getTransportDayIndex':
+            return [1n, node(1)];
+          case 'getTransportDayBatchesFrom':
+            return [[node(1)], [5n], node(2)];
+          case 'getTransportDayLateFrom':
+            return [[], [], Z];
+          default:
+            throw new Error(`unexpected read ${functionName}`);
+        }
+      },
+    } as never;
+  }
+
+  it('a reader past the deadline refuses every view unissued', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const calls: string[] = [];
+    const reader = dayOrderReader(fakeClient(calls), `0x${'d'.repeat(40)}`, 10_000);
+    const err = await reader.cursor(1n).then(() => null, (e: unknown) => e);
+    expect(isRunDeadlinePassed(err)).toBe(true);
+    await expect(reader.listFrom(1n, Z, 100)).rejects.toSatisfy(isRunDeadlinePassed);
+    await expect(reader.lateFrom(1n, Z, 100)).rejects.toSatisfy(isRunDeadlinePassed);
+    expect(calls, 'nothing reached the RPC').toEqual([]);
+  });
+
+  it('a walk still paging when the deadline passes stops at its next read, as the deadline refusal', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const calls: string[] = [];
+    // The second read (the first list page) moves the clock past the
+    // deadline: the walk may finish that page, and the next read refuses.
+    const reader = dayOrderReader(fakeClient(calls, { advanceTo: 10_000, on: 2 }), `0x${'d'.repeat(40)}`, 10_000);
+    const err = await hintsForDays(reader, [1n, 2n], 0, 2, BATCH, 7n).then(() => null, (e: unknown) => e);
+    expect(isRunDeadlinePassed(err), String(err)).toBe(true);
+    expect(calls.length, 'the reads issued before the deadline, and none after').toBe(2);
+  });
+
+  it('a reader inside its deadline answers the views as the chain shapes them', async () => {
+    const calls: string[] = [];
+    const reader = dayOrderReader(fakeClient(calls), `0x${'d'.repeat(40)}`, Number.MAX_SAFE_INTEGER);
+    expect(await reader.cursor(1n)).toBe(`0x${'1'.padStart(64, '0')}`);
+    const page = await reader.listFrom(1n, Z, 100);
+    expect(page.arrivedAt).toEqual([5n]);
+    expect(page.next).toBe(`0x${'2'.padStart(64, '0')}`);
+    expect(calls).toEqual(['getTransportDayIndex', 'getTransportDayBatchesFrom']);
   });
 });
 
