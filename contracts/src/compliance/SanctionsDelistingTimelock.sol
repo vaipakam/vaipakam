@@ -6,7 +6,11 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {ICrossChainMessenger, ICrossChainMessageRecipient} from "../crosschain/ICrossChainMessenger.sol";
 import {SanctionsList} from "./SanctionsList.sol";
-import {SANCTIONS_CLEARANCE_WIRE_VERSION} from "./SanctionsClearanceAttestor.sol";
+import {
+    SANCTIONS_CLEARANCE_WIRE_VERSION,
+    CLEARANCE_REQUEST,
+    CLEARANCE_RESPONSE
+} from "./SanctionsClearanceAttestor.sol";
 import {LibOracleFreshness} from "./LibOracleFreshness.sol";
 
 /**
@@ -24,10 +28,14 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *
  *         1. **Provenance.** A proposer (the delister bot) may propose only
  *            addresses the list records, against the OFAC publication the
- *            list itself records, and no more of them than that publication
- *            declared outstanding (`pendingDelistings`). The bot's reading
- *            of the OFAC files is off-chain; what the contract can check, it
- *            checks.
+ *            list itself records. All pending proposals together may name no
+ *            more addresses than that publication declared outstanding
+ *            (`pendingDelistings`), so a stolen proposer key cannot flood
+ *            the Safe with more proposals than OFAC's own file calls for.
+ *            Nothing executes while the publication's ADDITIONS are still
+ *            outstanding: new designations go on before old ones come off.
+ *            The bot's reading of the OFAC files is off-chain; what the
+ *            contract can check, it checks.
  *
  *         2. **A waiting window the Safe can veto.** Nothing executes until
  *            `delay` has passed (owner-set, 1 to 30 days, 48 hours by
@@ -36,10 +44,13 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *            that cancel is a VETO that sticks to each address: the bot
  *            cannot propose it again until the Safe or the owner lifts it
  *            ({setVetoed}), so a vetoed wallet does not come back every
- *            window. The Safe may also veto before any proposal. The
- *            Safe also keeps its own direct delist through
- *            `SanctionsList.applyUpdate` for emergencies; this contract
- *            changes nothing about the Safe's powers.
+ *            window. The Safe may also veto before any proposal. A proposal
+ *            executes only while its proposer is still appointed, so
+ *            removing a proposer voids all its pending proposals in one
+ *            call ({discard} then frees what they held). The Safe also
+ *            keeps its own direct delist through `SanctionsList.applyUpdate`
+ *            for emergencies; this contract changes nothing about the
+ *            Safe's powers.
  *
  *         3. **RedStone must agree, and be current.** OFAC's file is one
  *            source; RedStone's Sanctions Oracle is an independent on-chain
@@ -47,28 +58,26 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *            the oracle's own last update (`getLastUpdateBlockTimestamp()`)
  *            must be known and no older than `oracleMaxAge` — a frozen
  *            oracle still answers "not flagged" for every address it never
- *            listed, which would make this check say nothing:
+ *            listed, which would make this check say nothing. Which route
+ *            reads it is {clearanceRoute}:
  *            - where the list has RedStone as its secondary on THIS chain,
- *              read live (`GateMode.Local`); a revert propagates, so an
- *              oracle that cannot answer blocks the delisting (fail closed);
- *            - otherwise, through a CCIP answer sent from a chain where
- *              RedStone is deployed by `SanctionsClearanceAttestor`
- *              (`GateMode.CrossChain`). After the window ends anyone may
- *              {requestClearance}, which records its block; from a later
- *              block anyone may {sealClearance}, which derives the
- *              proposal's challenge from that block's hash. Nobody can know
- *              that hash before the block exists, and the block is after the
- *              window, so an answer echoing the challenge — for exactly the
- *              proposal's addresses, the only kind that counts — was read
- *              after the window, by causality rather than by comparing two
- *              chains' clocks.
- *              One flagged answer marks the challenge flagged for good,
- *              whatever else arrives, so conflicting answers fail closed.
- *              The challenge is usable for `clearanceMaxAge` after it is
- *              issued, measured on this chain's clock;
- *            - with neither configured, execution reverts
- *              {ClearanceUnavailable}: the automated route is closed and
- *              only the Safe's manual delist remains.
+ *              read live (`Route.Local`); a revert propagates, so an oracle
+ *              that cannot answer blocks the delisting (fail closed);
+ *            - otherwise, over CCIP from `SanctionsClearanceAttestor` on a
+ *              chain where RedStone runs (`Route.CrossChain`). After the
+ *              window ends anyone may {requestClearance}: this contract
+ *              SENDS the attestor a request, and the attestor reads RedStone
+ *              when the request arrives. CCIP delivers only what this chain
+ *              has finalized, so the reading is taken after the request, and
+ *              so after the window, by causality — no clock is compared and
+ *              no value needs to be unpredictable. Only the answer to the
+ *              proposal's current request, for exactly its addresses,
+ *              counts; one flagged answer marks the request flagged for good,
+ *              so conflicting answers fail closed. A request is usable for
+ *              `clearanceMaxAge` after it is made, on this chain's clock;
+ *            - with neither configured (`Route.Unavailable`), execution
+ *              reverts {ClearanceUnavailable}: the automated route is closed
+ *              and only the Safe's manual delist remains.
  *
  *         Execution itself is permissionless once all three hold, and it
  *         applies the delisting as a repeat of the recorded publication, so
@@ -84,11 +93,14 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *         given time to veto has not changed.
  *
  *         Residual risk, stated: a stolen proposer key can propose wrongful
- *         delistings. Each needs the list to record the address, the window
- *         to pass with no veto, and a current RedStone not to flag it. The owner can
- *         remove the proposer at once, and the Safe can cancel every pending
- *         proposal. A stolen proposer key cannot shorten the window or skip
- *         the RedStone check.
+ *         delistings, no more in total than the publication declared
+ *         outstanding. Each needs the list to record the address, the window
+ *         to pass with no veto, and a current RedStone not to flag it. The
+ *         owner can remove the proposer, which voids every proposal it made;
+ *         the Safe can cancel any of them. A stolen proposer key cannot
+ *         shorten the window or skip the RedStone check. The chain's own
+ *         block producer sets block times within that chain's rules, so the
+ *         window is as trustworthy as this chain's clock, like any timelock.
  */
 contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient {
     // ── Types ─────────────────────────────────────────────────────────
@@ -101,8 +113,11 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         Executed
     }
 
-    /// @notice Which RedStone check an execution passed.
-    enum GateMode {
+    /// @notice Which RedStone check applies: the list's own secondary on
+    ///         this chain, a CCIP answer from the attestor, or none (the
+    ///         automated route is closed).
+    enum Route {
+        Unavailable,
         Local,
         CrossChain
     }
@@ -122,45 +137,38 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     }
 
     /// @notice Where a proposal's cross-chain RedStone check stands.
-    ///         `None`: nothing requested. `Requested`: the request block is
-    ///         recorded, the challenge not yet sealed from its hash.
-    ///         `Issued`: sealed, no answer yet. `Cleared`: every answer so
-    ///         far said "not flagged". `Flagged`: at least one answer flagged
-    ///         an address; it stays so for this challenge whatever arrives
-    ///         later.
+    ///         `None`: nothing requested. `Requested`: sent, no answer yet.
+    ///         `Cleared`: every answer so far said "not flagged".
+    ///         `Flagged`: at least one answer flagged an address; it stays
+    ///         so for this request whatever arrives later.
     enum ClearanceState {
         None,
         Requested,
-        Issued,
         Cleared,
         Flagged
     }
 
-    /// @notice A proposal's current clearance challenge and its answer.
-    /// @param challenge       The value an answer must echo; zero until
-    ///                        sealed.
-    /// @param issuedAt        When it was sealed, on this chain's clock; it
-    ///                        is usable until `issuedAt + clearanceMaxAge`.
-    /// @param requestBlock    The block {requestClearance} ran in, whose
-    ///                        hash seals the challenge.
+    /// @notice A proposal's current clearance request and its answer.
+    /// @param requestId       The id the answer must carry.
+    /// @param requestedAt     When it was sent, on this chain's clock; it is
+    ///                        usable until `requestedAt + clearanceMaxAge`.
     /// @param oracleUpdatedAt The freshest oracle last-update time any
     ///                        "not flagged" answer reported (clamped to this
     ///                        chain's clock); 0 when none reported one.
-    /// @param epoch           The clearance-source configuration it was
-    ///                        issued under; a change of source voids it.
+    /// @param epoch           The clearance-source configuration it was sent
+    ///                        under; a change of source voids it.
     /// @param state           See {ClearanceState}.
-    struct ClearanceChallenge {
-        bytes32 challenge;
-        uint64 issuedAt;
+    struct ClearanceRequest {
+        uint64 requestId;
+        uint64 requestedAt;
         uint64 oracleUpdatedAt;
-        uint64 requestBlock;
         uint32 epoch;
         ClearanceState state;
     }
 
     /// @notice Why an inbound answer was ignored rather than recorded.
     enum IgnoreReason {
-        UnknownChallenge,
+        UnknownRequest,
         Superseded,
         ProposalClosed,
         AccountsMismatch
@@ -173,8 +181,8 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     uint32 public constant MAX_DELAY = 30 days;
     uint32 public constant DEFAULT_DELAY = 2 days;
 
-    /// @notice Bounds and default for how long a clearance challenge stays
-    ///         usable after it is issued.
+    /// @notice Bounds and default for how long a clearance request stays
+    ///         usable after it is sent.
     uint32 public constant MIN_CLEARANCE_MAX_AGE = 1 hours;
     uint32 public constant MAX_CLEARANCE_MAX_AGE = 7 days;
     uint32 public constant DEFAULT_CLEARANCE_MAX_AGE = 1 days;
@@ -192,6 +200,11 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     ///         always fits a block.
     uint256 public constant MAX_BATCH = 100;
 
+    /// @notice Gas for the attestor to read RedStone on a request's arrival:
+    ///         a base allowance plus one oracle read per address.
+    uint256 public constant REQUEST_GAS_BASE = 150_000;
+    uint256 public constant REQUEST_GAS_PER_ACCOUNT = 15_000;
+
     // ── Storage ───────────────────────────────────────────────────────
 
     /// @notice The list this contract delists from, as one of its removers.
@@ -203,13 +216,13 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice The waiting window applied to NEW proposals, in seconds.
     uint32 public delay = DEFAULT_DELAY;
 
-    /// @notice How long a clearance challenge stays usable, seconds.
+    /// @notice How long a clearance request stays usable, seconds.
     uint32 public clearanceMaxAge = DEFAULT_CLEARANCE_MAX_AGE;
 
     /// @notice The oldest RedStone's own last update may be when used.
     uint32 public oracleMaxAge = DEFAULT_ORACLE_MAX_AGE;
 
-    /// @notice The messenger allowed to deliver clearances; zero when the
+    /// @notice The messenger clearances travel through; zero when the
     ///         cross-chain route is not configured.
     address public clearanceMessenger;
 
@@ -219,18 +232,23 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice The attestor contract on that chain.
     address public clearanceAttestor;
 
-    /// @notice Bumped on every clearance-source change, so a challenge
-    ///         issued under an earlier source never counts.
+    /// @notice Bumped on every clearance-source change, so a request sent
+    ///         under an earlier source never counts.
     uint32 public clearanceEpoch;
 
-    /// @notice Each proposal's current clearance challenge.
-    mapping(uint256 id => ClearanceChallenge) public clearanceOf;
+    /// @notice Each proposal's current clearance request.
+    mapping(uint256 id => ClearanceRequest) public clearanceOf;
 
-    /// @notice The proposal a live challenge belongs to, or 0.
-    mapping(bytes32 challenge => uint256 id) public proposalOfChallenge;
+    /// @notice The proposal a live request belongs to, or 0.
+    mapping(uint64 requestId => uint256 id) public proposalOfRequest;
 
-    /// @dev Makes every challenge distinct, even two in one block.
-    uint256 private _challengeNonce;
+    /// @notice Requests sent so far; ids start at 1.
+    uint64 public requestCount;
+
+    /// @notice Addresses named by pending proposals, in total. Never more
+    ///         than the publication's `pendingDelistings` when a proposal is
+    ///         made.
+    uint32 public reservedDelistings;
 
     /// @notice Proposals issued so far; ids start at 1.
     uint256 public proposalCount;
@@ -283,25 +301,26 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     );
     /// @custom:event-category state-change/compliance
     event DelistingCancelled(uint256 indexed id, address indexed by);
+    /// @notice A proposal whose proposer was removed was cleared away.
+    /// @custom:event-category state-change/compliance
+    event DelistingDiscarded(uint256 indexed id, address indexed proposer, address indexed by);
     /// @custom:event-category state-change/compliance
     event VetoSet(address indexed account, bool vetoed, address indexed by);
     /// @custom:event-category state-change/compliance
-    event DelistingExecuted(uint256 indexed id, address indexed by, GateMode gate, uint64 listVersion);
+    event DelistingExecuted(uint256 indexed id, address indexed by, Route route, uint64 listVersion);
     /// @custom:event-category informational/compliance
-    event ClearanceRequested(uint256 indexed id, uint32 indexed epoch, uint64 requestBlock);
-    /// @custom:event-category informational/compliance
-    event ClearanceSealed(
-        uint256 indexed id, bytes32 indexed challenge, uint32 indexed epoch, uint64 expiresAt, address[] accounts
+    event ClearanceRequested(
+        uint256 indexed id, uint64 indexed requestId, uint32 indexed epoch, uint64 expiresAt, bytes32 messageId
     );
-    /// @notice An answer was recorded. `state` is the challenge's state
-    ///         after it: an answer saying "not flagged" leaves a flagged
-    ///         challenge flagged.
+    /// @notice An answer was recorded. `state` is the request's state after
+    ///         it: an answer saying "not flagged" leaves a flagged request
+    ///         flagged.
     /// @custom:event-category informational/compliance
     event ClearanceAnswered(
-        uint256 indexed id, bytes32 indexed challenge, bool[] flagged, uint64 oracleUpdatedAt, ClearanceState state
+        uint256 indexed id, uint64 indexed requestId, bool[] flagged, uint64 oracleUpdatedAt, ClearanceState state
     );
     /// @custom:event-category informational/compliance
-    event ClearanceIgnored(bytes32 indexed challenge, uint256 indexed id, IgnoreReason reason);
+    event ClearanceIgnored(uint64 indexed requestId, uint256 indexed id, IgnoreReason reason);
 
     // ── Errors ────────────────────────────────────────────────────────
 
@@ -328,7 +347,18 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice A reconfirmation must name the list's current publication,
     ///         and it must differ from the proposal's.
     error NothingToReconfirm(uint256 id);
+    /// @notice More addresses than the publication declared outstanding:
+    ///         `requested` counts every pending proposal at proposal time,
+    ///         this one alone at execution.
     error ExceedsPendingDelistings(uint256 requested, uint32 pending);
+    /// @notice The publication's additions are not all applied yet; nothing
+    ///         is delisted until they are.
+    error AdditionsOutstanding(uint32 pendingAdditions);
+    /// @notice The proposal's proposer has been removed; it can only be
+    ///         {discard}ed.
+    error ProposerRemoved(uint256 id, address proposer);
+    /// @notice Only a proposal whose proposer was removed may be discarded.
+    error ProposerStillAppointed(uint256 id, address proposer);
     error NotListedByOwnList(address account);
     error AlreadyProposed(address account, uint256 id);
     error NotPending(uint256 id, Status status);
@@ -338,34 +368,23 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     error StillSanctioned(address account);
     /// @notice RedStone reports no usable last-update time (none, zero, or
     ///         in the future), so its "not flagged" cannot be relied on.
-    error OracleFreshnessUnknown(GateMode gate);
+    error OracleFreshnessUnknown(Route route);
     /// @notice RedStone last updated longer ago than `oracleMaxAge`.
-    error OracleStale(GateMode gate, uint256 lastUpdate, uint32 maxAge);
-    /// @notice The local RedStone secondary is the gate on this chain; a
-    ///         cross-chain challenge would not be used.
-    error LocalGateInUse();
-    /// @notice The proposal's challenge is still usable; a new one may be
-    ///         issued once it expires.
-    error ClearanceOutstanding(uint256 id, bytes32 challenge, uint64 expiresAt);
-    /// @notice A request awaits sealing; it may be replaced only once its
-    ///         block hash is no longer readable (256 blocks).
-    error ClearanceRequestPending(uint256 id, uint64 requestBlock);
+    error OracleStale(Route route, uint256 lastUpdate, uint32 maxAge);
+    /// @notice The clearance route is not cross-chain (it is local, or
+    ///         unavailable); a request would not be used.
+    error NotCrossChainRoute(Route route);
+    /// @notice The proposal's request is still usable; a new one may be sent
+    ///         once it expires.
+    error ClearanceOutstanding(uint256 id, uint64 requestId, uint64 expiresAt);
     /// @notice No request under the current source: {requestClearance}.
     error ClearanceNotRequested(uint256 id);
-    /// @notice The request is not sealed yet: {sealClearance} from a later
-    ///         block.
-    error ClearanceNotSealed(uint256 id, uint64 requestBlock);
-    /// @notice Sealing needs a block after the request's.
-    error SealTooEarly(uint256 id, uint64 requestBlock);
-    /// @notice The request's block hash is no longer readable;
-    ///         {requestClearance} again.
-    error ClearanceRequestLapsed(uint256 id, uint64 requestBlock);
-    /// @notice The challenge has expired: {requestClearance} again.
+    /// @notice The request has expired: {requestClearance} again.
     error ClearanceExpired(uint256 id, uint64 expiredAt);
-    /// @notice The challenge has had no answer yet.
-    error ClearanceNotAnswered(uint256 id, bytes32 challenge);
-    /// @notice An answer to the challenge flagged at least one address.
-    error ClearanceFlagged(uint256 id, bytes32 challenge);
+    /// @notice The request has had no answer yet.
+    error ClearanceNotAnswered(uint256 id, uint64 requestId);
+    /// @notice An answer to the request flagged at least one address.
+    error ClearanceFlagged(uint256 id, uint64 requestId);
     /// @notice Neither a local RedStone secondary nor a cross-chain clearance
     ///         source is configured: only the Safe's manual delist remains.
     error ClearanceUnavailable();
@@ -373,7 +392,10 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     error UnauthorizedClearanceSender(uint256 sourceChainId, address sourceSender);
     error UnexpectedTokens();
     error UnsupportedClearanceVersion(uint16 got);
+    error UnexpectedKind(uint8 got);
     error LengthMismatch(uint256 accounts, uint256 flags);
+    error UnexpectedNative(address from);
+    error RefundFailed();
 
     // ── Construction ──────────────────────────────────────────────────
 
@@ -396,7 +418,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         revert RenounceDisabled();
     }
 
-    /// @notice Appoint or remove a proposer.
+    /// @notice Appoint or remove a proposer. Removing one voids every
+    ///         pending proposal it made: none can execute, and anyone may
+    ///         {discard} them.
     function setProposer(address account, bool enabled) external onlyOwner {
         if (account == address(0)) revert ZeroAddress();
         isProposer[account] = enabled;
@@ -411,9 +435,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         delay = newDelay;
     }
 
-    /// @notice Set how long a clearance challenge stays usable after it is
-    ///         issued. Applies to existing challenges too, since it is read
-    ///         at use.
+    /// @notice Set how long a clearance request stays usable after it is
+    ///         sent. Applies to existing requests too, since it is read at
+    ///         use.
     function setClearanceMaxAge(uint32 newMaxAge) external onlyOwner {
         if (newMaxAge < MIN_CLEARANCE_MAX_AGE || newMaxAge > MAX_CLEARANCE_MAX_AGE) {
             revert ClearanceMaxAgeOutOfRange(newMaxAge);
@@ -434,7 +458,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
 
     /// @notice Configure where RedStone clearances come from, or pass all
     ///         zeros to turn the cross-chain route off. Every call starts a
-    ///         new epoch, so a challenge issued under the old source, and any
+    ///         new epoch, so a request sent under the old source, and any
     ///         answer to it, no longer counts.
     /// @param messenger     This chain's `ICrossChainMessenger`.
     /// @param sourceChainId The chain the attestor reads RedStone on.
@@ -459,7 +483,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice Propose delisting `accounts`, as the OFAC publication the
     ///         list records calls for.
     /// @param accounts        Addresses the list records; none already in a
-    ///                        pending proposal.
+    ///                        pending proposal. With every pending proposal,
+    ///                        no more than the publication's outstanding
+    ///                        delistings.
     /// @param sourceHash      SHA-256 of the publication; must be the list's.
     /// @param publicationDate Its date, `YYYYMMDD`; must be the list's.
     /// @return id The new proposal's id.
@@ -473,7 +499,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         if (n > MAX_BATCH) revert BatchTooLarge(n, MAX_BATCH);
         _requireRecordedPublication(sourceHash, publicationDate);
         uint32 pending = list.pendingDelistings();
-        if (n > pending) revert ExceedsPendingDelistings(n, pending);
+        uint256 reserved = uint256(reservedDelistings) + n;
+        if (reserved > pending) revert ExceedsPendingDelistings(reserved, pending);
+        reservedDelistings = uint32(reserved);
 
         id = ++proposalCount;
         for (uint256 i; i < n; ++i) {
@@ -532,6 +560,20 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         }
     }
 
+    /// @notice Clear away a pending proposal whose proposer has been
+    ///         removed, freeing its addresses and its share of the
+    ///         outstanding delistings. Anyone may call it. It vetoes nothing:
+    ///         removing a key says the key is untrusted, not that every
+    ///         address it named was wrong.
+    function discard(uint256 id) external {
+        Proposal storage p = _pending(id);
+        address proposer = p.proposer;
+        if (isProposer[proposer]) revert ProposerStillAppointed(id, proposer);
+        p.status = Status.Cancelled;
+        _release(p.accounts);
+        emit DelistingDiscarded(id, proposer, msg.sender);
+    }
+
     /// @notice Veto, or lift a veto on, delisting `accounts`. The Safe (any
     ///         remover of the list) or the owner only. A veto may be set
     ///         before any proposal exists, and blocks a pending proposal
@@ -545,104 +587,103 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     }
 
     /// @notice Apply a matured proposal. Anyone may call it.
-    /// @dev    Checks, in order: pending, matured, publication unchanged,
-    ///         within the publication's outstanding delistings, not vetoed,
-    ///         a current RedStone clears every address ({checkExecutable} is
-    ///         the same sequence). Then delists through the list as a repeat
-    ///         of the recorded publication.
+    /// @dev    Runs {checkExecutable}'s sequence, then delists through the
+    ///         list as a repeat of the recorded publication.
     function execute(uint256 id) external {
-        (Proposal storage p, GateMode gate) = _checkExecutable(id);
+        (Proposal storage p, Route route) = _checkExecutable(id);
         address[] memory accounts = p.accounts;
         uint32 pending = list.pendingDelistings();
 
         p.status = Status.Executed;
         _release(accounts);
         uint64 version = list.listVersion();
+        // Additions are zero here: {_checkExecutable} refuses otherwise.
         list.applyUpdate(
             version,
             new address[](0),
             accounts,
             p.sourceHash,
             p.publicationDate,
-            list.pendingAdditions(),
+            0,
             pending - uint32(accounts.length)
         );
-        emit DelistingExecuted(id, msg.sender, gate, version + 1);
+        emit DelistingExecuted(id, msg.sender, route, version + 1);
     }
 
     // ── Clearances ────────────────────────────────────────────────────
 
-    /// @notice Step 1 of a cross-chain RedStone check: record this block
-    ///         for a matured proposal. Anyone may call it (the delister bot
-    ///         does); {sealClearance} from a later block then fixes the
-    ///         challenge the attestor must echo.
-    /// @dev    The challenge is derived from THIS block's hash, which nobody
-    ///         can know until the block exists, and this block is after the
-    ///         window. So no answer echoing it can have been read before the
-    ///         window ended — causality, not a comparison of the source
-    ///         chain's clock with ours. (The chain's own block producer is
-    ///         the one party that knows a block's hash as it builds it.)
-    ///         A request may be replaced only when the proposal has none
-    ///         under the current source, its seal has lapsed, or its
-    ///         challenge has expired, so a caller cannot keep voiding an
-    ///         answer in flight.
-    function requestClearance(uint256 id) external {
+    /// @notice Ask the attestor for RedStone's answer on a matured
+    ///         proposal. Anyone may call it (the delister bot does) and pay
+    ///         the CCIP fee as `msg.value` ({quoteClearanceRequest}); any
+    ///         overpayment is returned.
+    /// @dev    The attestor reads RedStone when this request arrives, which
+    ///         CCIP allows only after this chain finalizes it, and this
+    ///         request is after the window: the reading post-dates the
+    ///         window by causality. A new request may be sent only when the
+    ///         proposal has none under the current source or the current one
+    ///         has expired, so a caller cannot keep voiding an answer in
+    ///         flight.
+    /// @return messageId The transport's id for the request.
+    function requestClearance(uint256 id) external payable returns (bytes32 messageId) {
         Proposal storage p = _pending(id);
         if (block.timestamp < p.eta) revert TooEarly(id, p.eta);
-        if (address(list.secondary()) != address(0)) revert LocalGateInUse();
-        if (clearanceMessenger == address(0)) revert ClearanceUnavailable();
+        Route route = clearanceRoute();
+        if (route != Route.CrossChain) revert NotCrossChainRoute(route);
         uint32 epoch = clearanceEpoch;
-        ClearanceChallenge storage c = clearanceOf[id];
-        if (c.state != ClearanceState.None && c.epoch == epoch) {
-            if (c.state == ClearanceState.Requested) {
-                if (!_sealLapsed(c)) revert ClearanceRequestPending(id, c.requestBlock);
-            } else if (block.timestamp <= _expiresAt(c)) {
-                revert ClearanceOutstanding(id, c.challenge, _expiresAt(c));
-            }
+        ClearanceRequest storage c = clearanceOf[id];
+        if (c.state != ClearanceState.None && c.epoch == epoch && block.timestamp <= _expiresAt(c)) {
+            revert ClearanceOutstanding(id, c.requestId, _expiresAt(c));
         }
-        if (c.challenge != bytes32(0)) delete proposalOfChallenge[c.challenge];
-        c.challenge = bytes32(0);
-        c.issuedAt = 0;
+        if (c.requestId != 0) delete proposalOfRequest[c.requestId];
+        uint64 requestId = ++requestCount;
+        c.requestId = requestId;
+        c.requestedAt = uint64(block.timestamp);
         c.oracleUpdatedAt = 0;
-        c.requestBlock = uint64(block.number);
         c.epoch = epoch;
         c.state = ClearanceState.Requested;
-        emit ClearanceRequested(id, epoch, uint64(block.number));
+        proposalOfRequest[requestId] = id;
+
+        messageId = ICrossChainMessenger(clearanceMessenger).sendMessage{value: msg.value}(
+            clearanceSourceChainId,
+            _requestPayload(requestId, p.accounts),
+            new ICrossChainMessenger.TokenAmount[](0),
+            _requestGas(p.accounts.length)
+        );
+        emit ClearanceRequested(id, requestId, epoch, _expiresAt(c), messageId);
+        // The messenger refunds overpayment here; pass it on. This contract
+        // holds nothing between calls, so its whole balance is the refund.
+        uint256 refund = address(this).balance;
+        if (refund != 0) {
+            (bool ok,) = msg.sender.call{value: refund}("");
+            if (!ok) revert RefundFailed();
+        }
     }
 
-    /// @notice Step 2: seal the proposal's challenge from the request
-    ///         block's hash. Anyone may call it, from any block after the
-    ///         request's and within the 256 blocks the hash stays readable.
-    /// @return challenge The value the attestor's answer must echo.
-    function sealClearance(uint256 id) external returns (bytes32 challenge) {
+    /// @notice The fee {requestClearance} would need for a proposal now.
+    function quoteClearanceRequest(uint256 id) external view returns (uint256) {
         Proposal storage p = _pending(id);
-        ClearanceChallenge storage c = clearanceOf[id];
-        uint32 epoch = clearanceEpoch;
-        if (c.state != ClearanceState.Requested || c.epoch != epoch) revert ClearanceNotRequested(id);
-        uint64 requestBlock = c.requestBlock;
-        if (block.number <= requestBlock) revert SealTooEarly(id, requestBlock);
-        bytes32 h = blockhash(requestBlock);
-        if (h == bytes32(0)) revert ClearanceRequestLapsed(id, requestBlock);
-        challenge = keccak256(abi.encode(address(this), block.chainid, id, epoch, ++_challengeNonce, h));
-        c.challenge = challenge;
-        c.issuedAt = uint64(block.timestamp);
-        c.state = ClearanceState.Issued;
-        proposalOfChallenge[challenge] = id;
-        emit ClearanceSealed(id, challenge, epoch, _expiresAt(c), p.accounts);
+        Route route = clearanceRoute();
+        if (route != Route.CrossChain) revert NotCrossChainRoute(route);
+        return ICrossChainMessenger(clearanceMessenger).quoteMessageFee(
+            clearanceSourceChainId,
+            _requestPayload(requestCount + 1, p.accounts),
+            new ICrossChainMessenger.TokenAmount[](0),
+            _requestGas(p.accounts.length)
+        );
     }
 
     /// @inheritdoc ICrossChainMessageRecipient
-    /// @dev    Records RedStone's answer to a challenge. The messenger has
+    /// @dev    Records the attestor's answer to a request. The messenger has
     ///         already authenticated the CCIP lane and the channel peer; this
     ///         re-checks that the peer is the configured attestor, and
-    ///         reverts on anything malformed. The attestor is permissionless,
-    ///         so an answer to an unknown or superseded challenge, for a
-    ///         closed proposal, or for other addresses than the proposal's is
-    ///         IGNORED with {ClearanceIgnored} rather than reverted: it
-    ///         carries no evidence about any live proposal. One flagged
-    ///         answer marks the challenge {ClearanceState.Flagged} for good,
-    ///         so two answers that disagree fail closed whatever order they
-    ///         arrive in.
+    ///         reverts on anything malformed. An answer to an unknown or
+    ///         superseded request, for a closed proposal, or for other
+    ///         addresses than the proposal's is IGNORED with
+    ///         {ClearanceIgnored} rather than reverted: it carries no
+    ///         evidence about any live proposal, and reverting would only
+    ///         leave a failed message behind. One flagged answer marks the
+    ///         request {ClearanceState.Flagged} for good, so answers that
+    ///         disagree fail closed whatever order they arrive in.
     function onCrossChainMessage(
         uint256 sourceChainId,
         address sourceSender,
@@ -656,28 +697,35 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
             revert UnauthorizedClearanceSender(sourceChainId, sourceSender);
         }
         if (tokens.length != 0) revert UnexpectedTokens();
-        (uint16 version, bytes32 challenge, address[] memory accounts, bool[] memory flagged, uint64 oracleUpdatedAt) =
-            abi.decode(payload, (uint16, bytes32, address[], bool[], uint64));
+        (
+            uint16 version,
+            uint8 kind,
+            uint64 requestId,
+            address[] memory accounts,
+            bool[] memory flagged,
+            uint64 oracleUpdatedAt
+        ) = abi.decode(payload, (uint16, uint8, uint64, address[], bool[], uint64));
         if (version != SANCTIONS_CLEARANCE_WIRE_VERSION) revert UnsupportedClearanceVersion(version);
+        if (kind != CLEARANCE_RESPONSE) revert UnexpectedKind(kind);
         if (accounts.length != flagged.length) revert LengthMismatch(accounts.length, flagged.length);
 
-        uint256 id = proposalOfChallenge[challenge];
+        uint256 id = proposalOfRequest[requestId];
         if (id == 0) {
-            emit ClearanceIgnored(challenge, 0, IgnoreReason.UnknownChallenge);
+            emit ClearanceIgnored(requestId, 0, IgnoreReason.UnknownRequest);
             return;
         }
-        ClearanceChallenge storage c = clearanceOf[id];
-        if (c.challenge != challenge || c.epoch != clearanceEpoch) {
-            emit ClearanceIgnored(challenge, id, IgnoreReason.Superseded);
+        ClearanceRequest storage c = clearanceOf[id];
+        if (c.requestId != requestId || c.epoch != clearanceEpoch) {
+            emit ClearanceIgnored(requestId, id, IgnoreReason.Superseded);
             return;
         }
         Proposal storage p = _proposals[id];
         if (p.status != Status.Pending) {
-            emit ClearanceIgnored(challenge, id, IgnoreReason.ProposalClosed);
+            emit ClearanceIgnored(requestId, id, IgnoreReason.ProposalClosed);
             return;
         }
         if (keccak256(abi.encode(accounts)) != p.accountsHash) {
-            emit ClearanceIgnored(challenge, id, IgnoreReason.AccountsMismatch);
+            emit ClearanceIgnored(requestId, id, IgnoreReason.AccountsMismatch);
             return;
         }
 
@@ -697,7 +745,12 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
             c.state = ClearanceState.Cleared;
             if (oracleUpdatedAt > c.oracleUpdatedAt) c.oracleUpdatedAt = oracleUpdatedAt;
         }
-        emit ClearanceAnswered(id, challenge, flagged, oracleUpdatedAt, c.state);
+        emit ClearanceAnswered(id, requestId, flagged, oracleUpdatedAt, c.state);
+    }
+
+    /// @dev Only the messenger's fee refund is accepted.
+    receive() external payable {
+        if (msg.sender == address(0) || msg.sender != clearanceMessenger) revert UnexpectedNative(msg.sender);
     }
 
     // ── Reads ─────────────────────────────────────────────────────────
@@ -705,6 +758,16 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice A proposal in full.
     function getProposal(uint256 id) external view returns (Proposal memory) {
         return _proposals[id];
+    }
+
+    /// @notice Which RedStone check applies to executions now. The one
+    ///         answer for every reader — {execute}, bots, deploy scripts and
+    ///         surfaces — so none reports a posture the contract does not
+    ///         have. The list's local secondary wins when it has one.
+    function clearanceRoute() public view returns (Route) {
+        if (address(list.secondary()) != address(0)) return Route.Local;
+        if (clearanceMessenger != address(0)) return Route.CrossChain;
+        return Route.Unavailable;
     }
 
     /// @notice Whether {execute} would pass every check but the list's own
@@ -722,30 +785,36 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     }
 
     /// @notice Reverts with {execute}'s first failing reason, else returns
-    ///         the RedStone gate it would pass.
-    function checkExecutable(uint256 id) external view returns (GateMode gate) {
-        (, gate) = _checkExecutable(id);
+    ///         the RedStone route it would pass.
+    function checkExecutable(uint256 id) external view returns (Route route) {
+        (, route) = _checkExecutable(id);
     }
 
     // ── Internals ─────────────────────────────────────────────────────
 
-    /// @dev Every check {execute} makes before it writes, in order. One
-    ///      sequence for {execute} and {checkExecutable}, so the view cannot
-    ///      report ready on a proposal {execute} would refuse.
-    function _checkExecutable(uint256 id) private view returns (Proposal storage p, GateMode gate) {
+    /// @dev Every check {execute} makes before it writes, in order:
+    ///      pending; matured; proposer still appointed; publication
+    ///      unchanged; its additions all applied; within its outstanding
+    ///      delistings; not vetoed; a current RedStone clears every address.
+    ///      One sequence for {execute} and {checkExecutable}, so the view
+    ///      cannot report ready on a proposal {execute} would refuse.
+    function _checkExecutable(uint256 id) private view returns (Proposal storage p, Route route) {
         p = _pending(id);
         if (block.timestamp < p.eta) revert TooEarly(id, p.eta);
+        if (!isProposer[p.proposer]) revert ProposerRemoved(id, p.proposer);
         bytes32 recordedHash = list.sourceHash();
         uint32 recordedDate = list.sourcePublicationDate();
         if (recordedHash != p.sourceHash || recordedDate != p.publicationDate) {
             revert PublicationChanged(id, recordedHash, recordedDate);
         }
+        uint32 additions = list.pendingAdditions();
+        if (additions != 0) revert AdditionsOutstanding(additions);
         uint256 n = p.accounts.length;
         uint32 pending = list.pendingDelistings();
         if (n > pending) revert ExceedsPendingDelistings(n, pending);
         address[] memory accounts = p.accounts;
         _requireNotVetoed(accounts);
-        gate = _requireCleared(id, accounts);
+        route = _requireCleared(id, accounts);
     }
 
     function _pending(uint256 id) private view returns (Proposal storage p) {
@@ -753,14 +822,16 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         if (p.status != Status.Pending) revert NotPending(id, p.status);
     }
 
-    function _expiresAt(ClearanceChallenge storage c) private view returns (uint64) {
-        return c.issuedAt + clearanceMaxAge;
+    function _expiresAt(ClearanceRequest storage c) private view returns (uint64) {
+        return c.requestedAt + clearanceMaxAge;
     }
 
-    /// @dev `blockhash` reads only the last 256 blocks, so a request older
-    ///      than that can no longer be sealed.
-    function _sealLapsed(ClearanceChallenge storage c) private view returns (bool) {
-        return block.number > uint256(c.requestBlock) + 256;
+    function _requestPayload(uint64 requestId, address[] storage accounts) private view returns (bytes memory) {
+        return abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, CLEARANCE_REQUEST, requestId, accounts);
+    }
+
+    function _requestGas(uint256 n) private pure returns (uint256) {
+        return REQUEST_GAS_BASE + REQUEST_GAS_PER_ACCOUNT * n;
     }
 
     function _isVetoer(address who) private view returns (bool) {
@@ -779,10 +850,13 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         }
     }
 
+    /// @dev Frees a closing proposal's addresses and its share of the
+    ///      outstanding delistings.
     function _release(address[] memory accounts) private {
         for (uint256 i; i < accounts.length; ++i) {
             delete proposalOf[accounts[i]];
         }
+        reservedDelistings -= uint32(accounts.length);
     }
 
     function _requireRecordedPublication(bytes32 sourceHash, uint32 publicationDate) private view {
@@ -793,36 +867,33 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         }
     }
 
-    /// @dev A current RedStone must not flag any address. Local secondary
-    ///      first, read live (a revert propagates) after its own freshness;
-    ///      else the proposal's cross-chain challenge; else the automated
-    ///      route is closed.
-    function _requireCleared(uint256 id, address[] memory accounts) private view returns (GateMode) {
-        ISanctionsList secondary = list.secondary();
-        if (address(secondary) != address(0)) {
+    /// @dev A current RedStone must not flag any address, read through
+    ///      whichever {clearanceRoute} applies.
+    function _requireCleared(uint256 id, address[] memory accounts) private view returns (Route route) {
+        route = clearanceRoute();
+        if (route == Route.Unavailable) revert ClearanceUnavailable();
+        if (route == Route.Local) {
+            ISanctionsList secondary = list.secondary();
             (bool known, uint256 updatedAt) = LibOracleFreshness.lastUpdate(address(secondary));
-            _requireFresh(GateMode.Local, known, updatedAt);
+            _requireFresh(route, known, updatedAt);
             for (uint256 i; i < accounts.length; ++i) {
                 if (secondary.isSanctioned(accounts[i])) revert StillSanctioned(accounts[i]);
             }
-            return GateMode.Local;
+            return route;
         }
-        if (clearanceMessenger == address(0)) revert ClearanceUnavailable();
-        ClearanceChallenge storage c = clearanceOf[id];
+        ClearanceRequest storage c = clearanceOf[id];
         ClearanceState state = c.state;
         if (state == ClearanceState.None || c.epoch != clearanceEpoch) revert ClearanceNotRequested(id);
-        if (state == ClearanceState.Requested) revert ClearanceNotSealed(id, c.requestBlock);
         uint64 expiresAt = _expiresAt(c);
         if (block.timestamp > expiresAt) revert ClearanceExpired(id, expiresAt);
-        if (state == ClearanceState.Issued) revert ClearanceNotAnswered(id, c.challenge);
-        if (state == ClearanceState.Flagged) revert ClearanceFlagged(id, c.challenge);
-        _requireFresh(GateMode.CrossChain, c.oracleUpdatedAt != 0, c.oracleUpdatedAt);
-        return GateMode.CrossChain;
+        if (state == ClearanceState.Requested) revert ClearanceNotAnswered(id, c.requestId);
+        if (state == ClearanceState.Flagged) revert ClearanceFlagged(id, c.requestId);
+        _requireFresh(route, c.oracleUpdatedAt != 0, c.oracleUpdatedAt);
     }
 
-    function _requireFresh(GateMode gate, bool known, uint256 updatedAt) private view {
-        if (!known) revert OracleFreshnessUnknown(gate);
+    function _requireFresh(Route route, bool known, uint256 updatedAt) private view {
+        if (!known) revert OracleFreshnessUnknown(route);
         uint32 maxAge = oracleMaxAge;
-        if (block.timestamp > updatedAt + maxAge) revert OracleStale(gate, updatedAt, maxAge);
+        if (block.timestamp > updatedAt + maxAge) revert OracleStale(route, updatedAt, maxAge);
     }
 }

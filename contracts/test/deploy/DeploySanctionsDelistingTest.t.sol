@@ -61,7 +61,7 @@ contract DeploySanctionsDelistingTest is Test {
         (DeploySanctionsDelisting s, SanctionsList list) = _script(84532, "base-sepolia", true);
         s.runWith(delister);
         SanctionsDelistingTimelock tl =
-            SanctionsDelistingTimelock(vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock"));
+            SanctionsDelistingTimelock(payable(vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock")));
         assertEq(address(tl.list()), address(list));
         assertEq(tl.owner(), admin);
         assertTrue(list.isRemover(address(tl)), "appointed remover");

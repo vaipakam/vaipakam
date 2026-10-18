@@ -22,7 +22,10 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  *           on a chain where RedStone runs plus CCIP channel wiring on both
  *           messengers. Until one of the two exists the timelock refuses
  *           every execution (`ClearanceUnavailable`): proposals and vetoes
- *           work, delistings stay with the Safe's own direct delist.
+ *           work, delistings stay with the Safe's own direct delist. The
+ *           summary it prints reads the timelock's actual route
+ *           (`clearanceRoute`), so a reused timelock that has since been
+ *           given a source is reported as enabled, not as closed.
  *         - It does not touch the Safe's powers: the Safe stays a remover of
  *           the list and may veto any proposal.
  *         - It refuses every mainnet, like `DeploySanctionsList`.
@@ -82,7 +85,24 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         console.log("  owner   :", admin);
         console.log("  proposer:", proposer);
         console.log("  delay   :", uint256(tl.delay()));
-        console.log("  RedStone check: none configured - executions refuse until one is (ClearanceUnavailable).");
+        _logRoute(tl);
+    }
+
+    /// @dev Reports the RedStone check the timelock actually has, read from
+    ///      the contract rather than assumed: a reused timelock may already
+    ///      have a clearance source, or its list a local secondary.
+    function _logRoute(SanctionsDelistingTimelock tl) internal view {
+        SanctionsDelistingTimelock.Route route = tl.clearanceRoute();
+        if (route == SanctionsDelistingTimelock.Route.Local) {
+            console.log("  RedStone check: LOCAL - the list's secondary, read live:", address(tl.list().secondary()));
+            console.log("    Automated delisting is ENABLED once a proposal matures and RedStone clears it.");
+        } else if (route == SanctionsDelistingTimelock.Route.CrossChain) {
+            console.log("  RedStone check: CROSS-CHAIN via messenger", tl.clearanceMessenger());
+            console.log("    attestor", tl.clearanceAttestor(), "on chain", tl.clearanceSourceChainId());
+            console.log("    Automated delisting is ENABLED once a proposal matures and the attestor clears it.");
+        } else {
+            console.log("  RedStone check: none configured - executions refuse until one is (ClearanceUnavailable).");
+        }
     }
 
     /// @dev The recorded timelock while it serves this list under this owner;
@@ -90,7 +110,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
     function _timelockFor(SanctionsList list, address admin, bool writes) internal returns (SanctionsDelistingTimelock) {
         address recorded = Deployments.readSanctionsDelistingTimelockOptional();
         if (recorded.code.length != 0) {
-            SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(recorded);
+            SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(payable(recorded));
             try existing.list() returns (SanctionsList l) {
                 if (address(l) == address(list) && existing.owner() == admin) {
                     console.log("Reusing the recorded SanctionsDelistingTimelock");

@@ -39,9 +39,17 @@ the owner revokes the timelock's remover role.
    - name the publication the list records (`sourceHash`,
      `sourcePublicationDate`);
    - contain only addresses the list's own record holds (`listedByOwnList`);
-   - be no larger than the publication's declared outstanding delistings
-     (`pendingDelistings`), and at most 100 addresses;
-   - contain no address already in a pending proposal or vetoed.
+   - contain at most 100 addresses, none already in a pending proposal or
+     vetoed;
+   - fit, **together with every pending proposal**, within the publication's
+     declared outstanding delistings (`pendingDelistings`). The timelock
+     keeps the running total as `reservedDelistings` and frees a proposal's
+     share when it is cancelled, discarded or executed.
+
+   That last rule is what bounds a stolen proposer key: it cannot queue more
+   delistings than OFAC's file calls for, so the Safe never has to sift a
+   flood. (Codex round 3 on #2562: the earlier rule checked each batch alone,
+   so many small batches could exceed the file.)
 
    The proposal's `eta` is `now + delay`. `delay` is set by the owner,
    between 1 and 30 days, 48 hours by default, and is fixed per proposal when
@@ -50,25 +58,42 @@ the owner revokes the timelock's remover role.
    which **vetoes** every address in the proposal. `setVetoed` vetoes, or
    lifts a veto on, any address at any time, including before a proposal. A
    proposer may `cancel` too, which only withdraws and vetoes nothing.
-3. **New publication during the window.** The adder runs daily, so the list
+3. **A proposal belongs to its proposer's key.** If the owner removes that
+   proposer, its pending proposals can no longer execute
+   (`ProposerRemoved`), and anyone may `discard` them, which frees their
+   addresses and their share of the outstanding delistings. A discard vetoes
+   nothing: removing a key says the key is untrusted, not that every address
+   it named was wrong. So revoking a compromised bot is one call, and nothing
+   it queued survives it.
+4. **New publication during the window.** The adder runs daily, so the list
    can move to a newer OFAC file before `eta`. Execution then refuses
    (`PublicationChanged`). The bot re-checks the addresses against the new
    file and calls `reconfirm`, which moves the proposal to it **without
    restarting the window**: the decision the Safe was given time to veto has
    not changed.
-4. **Execute** (anyone, after `eta`). Checks run in this order:
+5. **Execute** (anyone, after `eta`). Checks run in this order, and
+   `checkExecutable` / `readiness` run the same sequence for bots and
+   surfaces:
    1. pending and matured;
-   2. publication unchanged;
-   3. within `pendingDelistings`;
-   4. not vetoed;
-   5. a current RedStone clears every address (§4).
+   2. its proposer still appointed;
+   3. publication unchanged;
+   4. **the publication's additions all applied** (`pendingAdditions` is 0);
+   5. within `pendingDelistings`;
+   6. not vetoed;
+   7. a current RedStone clears every address (§4).
 
    Then it calls `SanctionsList.applyUpdate` as a **repeat of the recorded
    publication**, delisting the batch and lowering `pendingDelistings` by its
    size. The list's own rules (version, publication order, pending counts)
    apply unchanged.
 
-## 4. The RedStone gate
+   **Additions first.** A publication can both add and remove. The adder
+   applies its additions unattended within the day, so waiting for them costs
+   nothing, and it means the list never shows a publication's delistings
+   while its new designations are still missing. It also lets the update pass
+   zero additions outstanding without asserting anything it has not checked.
+
+## 4. The RedStone check
 
 Two things must hold for every execution, whichever route reads RedStone:
 
@@ -79,97 +104,101 @@ Two things must hold for every execution, whichever route reads RedStone:
   answering, and answers "not flagged" for every address it never listed —
   the same failure that retired Chainalysis's oracle from this design. One
   reading rule, `LibOracleFreshness`, serves the list's `secondaryLastUpdate`,
-  this gate and the attestor. RedStone publishes no update cadence for this
+  this check and the attestor. RedStone publishes no update cadence for this
   oracle, so the default is generous; a quieter oracle closes the automated
   route and leaves the Safe's direct delist.
 
-| Where | How | Failure |
-| --- | --- | --- |
-| The list composes RedStone as its secondary on this chain | Freshness, then `secondary.isSanctioned(a)`, read live at execution | `OracleFreshnessUnknown` / `OracleStale`; a read revert propagates (fail closed); `true` reverts `StillSanctioned` |
-| Otherwise, a clearance source is configured | The proposal's current challenge (below), answered `Cleared` with a known, recent oracle time | `ClearanceNotRequested`, `ClearanceExpired`, `ClearanceNotAnswered`, `ClearanceFlagged`, `OracleFreshnessUnknown`, `OracleStale` |
-| Neither | none | `ClearanceUnavailable`: automated delisting is closed and only the Safe's direct delist remains |
+**Which route applies** is one view, `clearanceRoute()`, that execution, the
+bot, the deploy script and any surface all read, so none can report a posture
+the contract does not have:
 
-**The cross-chain challenge.** A designation RedStone makes during the window
-must be caught, so the reading has to be taken after the window ends. Comparing
-the attestor chain's timestamp with this chain's cannot prove that: the two
-clocks are independent, and a source clock running ahead would let a reading
-taken inside the window pass for one taken after it. So the proof is causal
-instead:
+| `clearanceRoute()` | When | How | Failure |
+| --- | --- | --- | --- |
+| `Local` | The list composes RedStone as its secondary on this chain (wins over a configured source) | Freshness, then `secondary.isSanctioned(a)`, read live at execution | `OracleFreshnessUnknown(Local)` / `OracleStale(Local, …)`; a read revert propagates (fail closed); `true` reverts `StillSanctioned` |
+| `CrossChain` | Otherwise, a clearance source is configured | The proposal's current request (below), answered `Cleared` with a known, recent oracle time | `ClearanceNotRequested`, `ClearanceExpired`, `ClearanceNotAnswered`, `ClearanceFlagged`, `OracleFreshnessUnknown(CrossChain)`, `OracleStale(CrossChain, …)` |
+| `Unavailable` | Neither | none | `ClearanceUnavailable`: automated delisting is closed and only the Safe's direct delist remains |
 
-- After `eta`, anyone may call `requestClearance(id)`, which records its
-  block. From any later block (within the 256 for which a block hash stays
-  readable), anyone may call `sealClearance(id)`, which derives the challenge
-  from the REQUEST block's hash (plus the contract, chain, proposal, epoch and
-  a nonce). That hash does not exist until the request block does, and the
-  request block is after the window, so an answer echoing the challenge was
-  read after the window. The only party that knows a block's hash as it is
-  built is the chain's own block producer.
+**The cross-chain request.** A designation RedStone makes during the window
+must be caught, so the reading has to be taken after the window ends.
+Comparing the attestor chain's timestamp with this chain's cannot prove that:
+the two clocks are independent. Nor can a value the timelock derives and the
+attestor echoes, since whatever the timelock can compute, someone can predict
+(Codex round 2 on #2562 found one such lead, round 3 another). So the proof is
+causal, and carried by the transport itself:
 
-  An earlier revision derived the challenge from the PREVIOUS block's hash in
-  a single call. Codex round 2 on #2562 pointed out that hash is public a
-  block early, so a caller who predicts its own request could attest just
-  before `eta`. The two steps remove that lead rather than bounding it.
-- A request that is not sealed within 256 blocks lapses and may be replaced.
-- The challenge is usable for `clearanceMaxAge` after it is sealed (1 hour to 7 days,
-  default 1 day), measured on this chain's clock. A new one may be issued only
+- After `eta`, anyone may call `requestClearance(id)` and pay the CCIP fee
+  (`quoteClearanceRequest`; overpayment is refunded). The timelock itself
+  sends `(version, REQUEST, requestId, accounts)` to the attestor through its
+  `ICrossChainMessenger`.
+- The attestor reads RedStone **when that request arrives**. CCIP delivers a
+  message only after the sending chain has finalized it, and the request was
+  sent after the window, so the reading post-dates the window by causality.
+  Nobody can obtain a reading for a request the timelock did not send: the
+  attestor accepts inbound messages only from its messenger, which
+  authenticates the lane and the channel peer.
+- The attestor records the hash of the reply it owes and emits the reply in
+  full (`ClearanceRead`). Anyone may then `sendReply` with that exact reply
+  and pay its fee (`quoteReply`). A caller chooses when the reply is sent,
+  never what it says. This split keeps the attestor free of any balance.
+- The request is usable for `clearanceMaxAge` after it is sent (1 hour to 7
+  days, default 1 day), on this chain's clock. A new one may be sent only
   when the proposal has none under the current source or the current one has
-  lapsed, so nobody can keep voiding an answer in flight.
+  expired, so nobody can keep voiding an answer in flight. A replaced
+  request is forgotten: an answer to it is ignored.
 - An answer counts only for the proposal's exact batch (its `accountsHash`).
-- One flagged answer marks the challenge `Flagged` for good. Two answers to
-  one challenge can disagree only if RedStone changed between them; whichever
-  arrives first, the result fails closed. A later challenge, after this one
-  lapses, is a fresh reading.
+- One flagged answer marks the request `Flagged` for good. Two answers to one
+  request can disagree only if one was forged past the transport or RedStone
+  is inconsistent; whichever arrives first, the result fails closed.
 - Among "not flagged" answers, the freshest oracle time is kept, clamped to
   this chain's clock. Clock skew between chains is seconds against an
   `oracleMaxAge` of days, so it is the one clock comparison left, and it is
   bounded.
 
-**The clearance path:**
+**The two contracts' inbound checks:**
 
-- **`SanctionsClearanceAttestor`**, deployed on a chain where RedStone runs,
-  is permissionless and ownerless.
-  - `attest(destChainId, challenge, accounts)` reads `oracle.isSanctioned`
-    for each address. A revert propagates, so an unreadable oracle never
-    yields "not flagged". It also reads the oracle's own last-update time (0
-    when unknown).
-  - It sends `(version, challenge, accounts, flagged, oracleUpdatedAt)`
-    through the chain's `ICrossChainMessenger`, and passes on the messenger's
-    fee refund.
-  - A caller chooses which addresses are read and which challenge is echoed,
-    never the answer.
-- **The timelock's `onCrossChainMessage`** reverts unless all of these hold:
-  - it comes from the configured messenger;
-  - the source chain and sender are the configured attestor (on top of the
-    messenger's own lane and peer authentication);
-  - it carries no tokens, has a known wire version and matching array lengths.
+- **`SanctionsClearanceAttestor`**, deployed where RedStone runs, has no owner
+  and no configuration beyond the oracle and messenger fixed at deploy. Its
+  `onCrossChainMessage` reverts unless the call is from its messenger and the
+  message carries no tokens, a known version, the request kind, and 1 to 100
+  non-zero addresses; each inbound message is read once. An oracle read that
+  reverts reverts the arrival (CCIP records a failed message, manually
+  re-executable), so an unreadable oracle never produces "not flagged". The
+  reply carries the oracle's own last-update time (0 when unknown).
+- **The timelock's `onCrossChainMessage`** reverts unless it comes from the
+  configured messenger, the source chain and sender are the configured
+  attestor (on top of the messenger's own authentication), and it carries no
+  tokens, a known version, the response kind and matching array lengths. A
+  well-formed answer that carries no evidence about a live proposal — an
+  unknown or superseded request, a closed proposal, other addresses — is
+  ignored with `ClearanceIgnored` and its reason rather than reverted.
+  Changing the source bumps an epoch, which voids every outstanding request.
 
-  A well-formed message that carries no evidence about a live proposal — an
-  unknown or superseded challenge, a closed proposal, other addresses — is
-  ignored with `ClearanceIgnored` and its reason, not reverted, since anyone
-  can make the attestor send one. Changing the source bumps an epoch, which
-  voids every outstanding challenge.
+Both accept native value only as their messenger's fee refund.
 
 ## 5. What each key can do if stolen
 
 | Key | Can | Cannot |
 | --- | --- | --- |
-| Proposer (delister bot) | Propose wrongful delistings, which the Safe can veto and a current RedStone must still clear; withdraw proposals | Shorten the window, skip the RedStone check, lift a veto |
+| Proposer (delister bot) | Propose wrongful delistings, up to the publication's outstanding count in total, which the Safe can veto and a current RedStone must still clear; withdraw proposals | Shorten the window, skip the RedStone check, lift a veto, exceed what OFAC's file calls for, keep anything alive once the owner removes it |
 | Adder | List addresses; record a publication | Delist |
 | Safe (remover) | Delist directly; veto; cancel | — (it is the multisig) |
-| Owner (admin) | Appoint or revoke the proposer and the timelock's remover role; set the delay, the clearance source, the challenge lifetime and the oracle's max age; veto | Delist without appointing itself |
+| Owner (admin) | Appoint or revoke the proposer and the timelock's remover role; set the delay, the clearance source, the request lifetime and the oracle's max age; veto | Delist without appointing itself |
+| Anyone | Request a clearance, send an owed reply, execute a matured proposal, discard a removed proposer's proposals | Choose what RedStone answers, send a request in the timelock's name, delist before the window ends |
 
 ## 6. Stated limits
 
 - The contract cannot read OFAC's files. That a proposed address really left
   the SDN list is the bot's off-chain check (§7). On-chain, what is enforced
   is that the address is listed, that the publication is the recorded one,
-  that the batch fits its declared delistings, the window, the veto, and
-  RedStone.
+  that all pending batches fit its declared delistings, that its additions
+  are applied, the window, the veto, and RedStone.
 - RedStone's coverage is its own. "RedStone does not flag it" is a necessary
   condition, not proof of delisting.
 - A vetoed address that OFAC's file still calls for stays counted in the
   list's `pendingDelistings`. That is deliberate: the list keeps saying the
   publication is not fully applied, rather than hiding the disagreement.
+- The window is measured on this chain's clock, which its block producer
+  sets within the chain's own rules, like any timelock.
 
 ## 7. Follow-ups
 
@@ -179,10 +208,11 @@ instead:
   absent from the plain file and passing the witness check, minus addresses
   already proposed, vetoed, or flagged by RedStone. It then:
   - proposes the candidates;
-  - after `eta`, calls `requestClearance` and, a block later,
-    `sealClearance` on the timelock's chain, then `attest` with that
-    challenge on the RedStone chain;
-  - executes matured proposals;
+  - on the cross-chain route, after `eta`, calls `requestClearance` on the
+    timelock's chain; once the request arrives, reads the reply from the
+    attestor's `ClearanceRead` event and calls `sendReply` on the RedStone
+    chain;
+  - executes matured proposals once `readiness` reports ready;
   - reconfirms after a new publication.
 
   It is configured and installed the way the adder is (#2557): one root-only
@@ -190,10 +220,11 @@ instead:
   adder's, the keeper's, the owner's or the Safe's) and one RPC per chain
   under the keeper's names; the timelock and list addresses come from the
   installed release's `deployments.json`, never from the file; one run reads
-  the OFAC files once and serves every chain.
-- **CCIP clearance wiring** (with the bot):
-  - deploy the attestor where RedStone runs;
-  - register it as the clearance channel's handler there, with the timelock
-    as peer, and the mirror image on the timelock's chain;
-  - call `setClearanceSource`.
+  the OFAC files once and serves every chain. The key needs native gas on
+  both chains of a cross-chain route, for the two CCIP fees.
+- **CCIP clearance wiring** (with the bot): deploy the attestor where RedStone
+  runs; register it as the clearance channel's handler there with the
+  timelock as peer, and the timelock as handler on its own chain with the
+  attestor as peer (both directions now carry a message); call
+  `setClearanceSource`.
 - **Mainnet:** follows the adder host decision.
