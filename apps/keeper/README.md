@@ -26,9 +26,12 @@ Also LIVE (per [`RangeOffersDesign.md`](../../docs/DesignsAndPlans/RangeOffersDe
 ```bash
 pnpm --filter @vaipakam/keeper dev      # local wrangler dev (no live txs)
 pnpm --filter @vaipakam/keeper run deploy   # verifies the shared D1 schema, then wrangler deploy; uses `wrangler login` on the operator's machine
+pnpm --filter @vaipakam/keeper run migrate  # applies apps/keeper/migrations/ to the keeper's PRIVATE D1 (vaipakam-keeper-db); `run deploy` also does it first
 ```
 
 **The deploy verifies the shared D1 schema first** (#2409). This Worker binds the shared `vaipakam-warm` database, whose schema `apps/indexer` owns, so `run deploy` runs `apps/indexer/scripts/deploy-shared-d1.mjs verify` before publishing: a read-only check that every migration the build carries is recorded. It waits up to ten minutes for the indexer's deploy to apply pending ones, then refuses to publish onto an older schema. It never applies migrations itself. So the token needs **D1 read** as well as Worker publish rights, and on a release that carries a migration, **deploy the indexer first**. `run deploy` takes no arguments; a dry run is `run deploy:dry`, which never touches the database.
+
+**It APPLIES the keeper's PRIVATE schema itself** (`vaipakam-keeper-db`, #2450 — see "D1" below): the keeper is that database's only writer, so `run deploy` applies `apps/keeper/migrations/`, verifies every file is recorded in the database, and only then verifies the shared schema and publishes. The first deploy of a keeper that reads `KEEPER_DB` also needs the one-time row copy, `run cutover`, with the keeper stopped ([`docs/ops/DeploymentRunbook.md`](../../docs/ops/DeploymentRunbook.md), "Keeper private D1 — one-time cutover"); the deploy refuses to publish until that copy is recorded and still matches the shared tables.
 
 
 **On an always-on machine instead of Cloudflare:** `pnpm --filter @vaipakam/keeper start:host` runs the same tick in one long-lived Node process, reaching the same D1 database over Cloudflare's HTTP API. Setup, configuration, the one-copy rule and the differences from the Worker are in [`host/README.md`](host/README.md).
@@ -55,13 +58,13 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
-| `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-warm --remote` from `apps/indexer/`). |
+| `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply the keeper's own D1 migration `0001_keeper_state.sql` to `vaipakam-keeper-db` before enabling** (`run migrate`; the remit-ack tables moved there from shared migration 0044 in #2450). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
 | `GRACE_DEFAULT_ENABLED` | Arms the #2483 time-based default pass (in addition to `KEEPER_ENABLED`): it submits `triggerDefault` for loans past their grace period, which sells or transfers the borrower's collateral. Needs no on-chain role (`triggerDefault` is permissionless). It skips, with a logged reason, any loan whose route would fall into the full-collateral fallback, whose lender position has an accepted sale, or whose collateral changed after quoting. |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation and time-based-default swap aggregator credentials. |
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 
-The four arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
+The arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
 `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`) are `secret_text` bindings, not entries in
 `wrangler.jsonc`'s `vars` block — see that file's `vars` comment for why they
 must not be moved there. Their values cannot be read back from the API or
@@ -311,7 +314,8 @@ goes, and one `wrangler tail` cycle resolves all of them:
 [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
 ```
 
-The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+The gated passes are every pass in `KEEPER_PASSES` (`src/passSchedule.ts`)
+whose run calls `passIsArmed`: today `matcher`, `liquidator`, `autoLifecycle`,
 `graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
 (`watcher`, `dailyOracleSnapshot`, `preGraceWatcher`) have no on/off binding
 of their own and so have nothing to report; `liquidityConfidence` always runs
@@ -360,14 +364,23 @@ Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
 do not. Use lowercase `true` everywhere and the asymmetry never arises; if it
 already has, the log now says so instead of the pass simply staying dark.
 
-### D1 — shared `vaipakam-warm` (staging)
+### D1 — two bindings: shared `DB` and private `KEEPER_DB` (#2450)
 
-The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/agent`.
+This Worker binds **two** D1 databases, split by who may read the data.
 
-Keeper writes: `user_thresholds`, `notify_state`, `telegram_links`, `liquidity_confidence`, `oracle_snapshot_state`, `hf_band_state` + `notifications` (#1213 PR 2b — the liquidator pass files HF-band inbox rows into the same feed table the indexer's event/calendar producers use; migration 0041).
-Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for HF-band rows).
+**`DB` → `vaipakam-warm`** (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. It is **shared** with `apps/indexer` and `apps/agent`, and holds every table another Worker, the app or the nightly backup also reads. Its schema is [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns it, and a schema change to a shared table lands there even when only the keeper writes it.
 
-**There is no `apps/keeper/migrations/` directory by design.** The canonical schema for every table this Worker touches lives in [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns the schema, the other two Workers share the database. Schema changes for tables only keeper writes still land as a new `apps/indexer/migrations/NNNN_*.sql` file; applying it via `wrangler d1 migrations apply vaipakam-warm --remote` from inside `apps/indexer/` updates the live staging db for all three consumers.
+- Keeper writes: `user_thresholds`, `notify_state`, `telegram_links`, `liquidity_confidence`, `oracle_snapshot_state`, `notifications` (#1213 PR 2b — the liquidator pass files HF-band inbox rows into the same feed table the indexer's event/calendar producers use), `keeper_commitment_reconciled` (marks a rediscovered day consumed; the indexer writes the rows).
+- Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for HF-band rows), `activity_events`.
+
+**`KEEPER_DB` → `vaipakam-keeper-db`** (id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`) is the keeper's **private** operational state, which nothing outside this Worker reads: `hf_band_state`, `keeper_commitment_scan`, `keeper_commitment_day`, `keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_deployment` (the Diamond each chain's private state belongs to: on a redeploy the keeper clears that chain's rows from every private table keyed by chain and not by Diamond, once the indexer has adopted the same Diamond; empty, it adopts the indexer's Diamond and resets nothing) and `keeper_cutover` (the one-time copy's completion record). Its schema is [`migrations/`](migrations/) in this directory, applied by the keeper's own `run deploy` ([`scripts/deploy-keeper.mjs`](scripts/deploy-keeper.mjs): apply, verify in the database, refuse unless the one-time cutover copy is recorded and every shared table still matches it, then the shared schema's `verify` and the publish) — or alone with `run migrate`. The copy itself is `run cutover` ([`scripts/keeper-cutover.mjs`](scripts/keeper-cutover.mjs)); both read the moved tables and their fingerprint from one module, [`scripts/lib/keeper-cutover.mjs`](scripts/lib/keeper-cutover.mjs). Why a separate database:
+
+- **Trust boundary.** CLAUDE.md keeps internal keeper state out of the shared, user-facing database — the rule `ops/mesh-watcher` already follows.
+- **Only the keeper can write its completion records.** A D1 binding is database-scoped, not table-scoped (#1722), so on the shared database the indexer and agent could write any keeper table. A row in `keeper_commitment_day` makes the commitment-report pass skip a day with zero RPC reads; here, nothing else has a binding through which to write one.
+
+The rule for what goes where: **a table anything else reads stays shared.** In code, every helper over a private table takes a `KeeperD1` (the branded `env.KEEPER_DB`), so handing it the shared `env.DB` does not compile, and no statement touches both kinds of table — D1 cannot join across databases.
+
+A maintenance build (#2239) drops **both** entries, and the tick declines while **either** binding is absent. The shared entry names its `migrations_dir` (`../indexer/migrations`) on purpose: wrangler defaults every entry to `./migrations`, so without it a `wrangler d1 migrations apply vaipakam-warm` typed here would apply this Worker's private schema to the shared database.
 
 ## Related
 

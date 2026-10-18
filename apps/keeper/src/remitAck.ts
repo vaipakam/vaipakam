@@ -112,7 +112,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   })) as bigint;
   if (nonce === 0n) return;
 
-  const { frontier, scanCursor } = await getRemitAckScanState(env.DB, baseChainId, diamond);
+  const { frontier, scanCursor } = await getRemitAckScanState(env.KEEPER_DB, baseChainId, diamond);
   if (BigInt(frontier) > nonce) return;
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
   // it is ahead of the frontier — a stuck early Pending pins the frontier,
@@ -182,7 +182,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     }
     const r = res.result as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
-      if (r.status === 2) await markRemitAcked(env.DB, baseChainId, diamond, Number(id));
+      if (r.status === 2) await markRemitAcked(env.KEEPER_DB, baseChainId, diamond, Number(id));
       if (prefixUnbroken) contiguousTerminal = Number(id) + 1;
       continue;
     }
@@ -194,10 +194,10 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // status 0 past the frontier can only be the tail beyond the nonce —
     // the loop bound already excludes it.
   }
-  await putRemitAckScanState(env.DB, baseChainId, diamond, contiguousTerminal, Number(to));
+  await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
   if (pendingIds.length === 0) return;
 
-  const attempts = await getRemitAckAttempts(env.DB, baseChainId, diamond, pendingIds);
+  const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, pendingIds);
   const now = Math.floor(Date.now() / 1000);
   let acksSent = 0;
 
@@ -218,7 +218,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     try {
       const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond);
       if (sent) {
-        await recordRemitAckAttempt(env.DB, baseChainId, diamond, remitId, r.dstChainId);
+        await recordRemitAckAttempt(env.KEEPER_DB, baseChainId, diamond, remitId, r.dstChainId);
         acksSent++;
       }
     } catch (err) {

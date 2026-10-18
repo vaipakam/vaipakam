@@ -172,7 +172,23 @@ then deploy.
 
    ```bash
    wrangler d1 create vaipakam-warm
+   wrangler d1 create vaipakam-keeper-db
    ```
+
+   `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
+   cursors, completion markers, remit-ack log, HF-band edge state, the
+   Diamond each chain's state belongs to (`keeper_deployment`; empty, it
+   adopts the indexer's Diamond and resets nothing) and the cutover's
+   completion record, which nothing else reads. **The archive does not carry
+   it** — the backup Worker binds only the shared database — so after a
+   restore it starts EMPTY, exactly as these tables always did (none was
+   ever archived; their restore treatment is #1481). Expect the keeper to
+   rescan its remit-ack and commitment frontiers from the start, re-send an
+   acknowledgement for each reservation still Pending on Base (paid CCIP
+   messages, rate-limited per reservation from then on), and re-mint one
+   HF-band inbox row per currently-degraded loan. The cutover record is not needed: the
+   restored shared copies of the moved tables are empty, and the deploy asks
+   for the record only while they hold rows.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
@@ -194,9 +210,17 @@ then deploy.
    `database_id` to the new IDs from step 3. The bound paths:
 
    - `apps/indexer/wrangler.jsonc`     → vaipakam-warm
-   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm (`DB`) **and**
+     vaipakam-keeper-db (`KEEPER_DB`)
    - `apps/agent/wrangler.jsonc`       → vaipakam-warm
    - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
+
+   The keeper's private database is pinned by id in one more place, like
+   the shared one below: `PRIVATE_DATABASES` in
+   `apps/indexer/scripts/lib/d1-workers.mjs`. Set its `id` to the new
+   `vaipakam-keeper-db` uuid too — `check-d1-name-consistency` refuses a
+   tree whose `KEEPER_DB` binding and that pin disagree, and the live-binding
+   gate checks the serving keeper against the pinned id.
 
    **And one place that is not a `wrangler.jsonc`** (#2267): the cutover
    tooling pins the database by **id** as well as name, in
@@ -501,7 +525,7 @@ then deploy.
 
       | Flag | While unset | Arms |
       |---|---|---|
-      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the three flags below as well |
+      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` and `GRACE_DEFAULT_ENABLED` flags below as well |
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
@@ -520,10 +544,14 @@ then deploy.
       §7a, after the smoke test, and is deliberately the last thing that
       happens before the backup writer.
 
-7. Apply migrations:
+7. Apply migrations — the shared schema from `apps/indexer`, and the
+   keeper's private schema from `apps/keeper` (#2450). The keeper's
+   `deploy` would apply the second itself; it is applied here so the
+   restore order stays explicit.
 
    ```bash
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-warm --remote )
+   ( cd apps/keeper     && wrangler d1 migrations apply vaipakam-keeper-db --remote )
    ```
 
 8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
@@ -1461,13 +1489,21 @@ from the archive. Why:
   restore path.
 
 ```bash
+# FIRST, the keeper's PRIVATE database (#2450): the HF-band state is
+# producer state for the inbox rows the shared command below clears, and
+# it lives in vaipakam-keeper-db now, not in the shared database. Run it
+# BEFORE the shared command — see "notifications is cleared with its
+# producer state" below for why the order matters.
+( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM hf_band_state" )
+```
+
+```bash
 # Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
-DELETE FROM hf_band_state; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
@@ -1535,7 +1571,7 @@ boundary is stated honestly** (#1450 r33). The table has THREE
 producer classes, and "the replay regenerates it" is true of only
 one: chain-event rows come back from the block-zero replay; the
 keeper's HF-band rows come back only as *current-state* rows, and
-only because `hf_band_state` is cleared in the same command — with
+only because `hf_band_state` is cleared in the same step — with
 the state emptied, every loan reads as previously-healthy and the
 keeper's first tick re-derives one fresh notification per
 currently-degraded loan (day-bucketed dedup bounds this; it is
@@ -1549,6 +1585,25 @@ attacker may have written. Clearing `notifications` while LEAVING
 `hf_band_state` would be the worst combination: the state says
 "already notified" about rows that no longer exist, and current
 degradations go silent.
+
+**Two databases, so two commands, and the ORDER is the safeguard**
+(#2450). `hf_band_state` is keeper-private now and lives in
+`vaipakam-keeper-db`; D1 cannot clear tables in two databases in one
+command, so the pair is no longer atomic. Clear the private state FIRST,
+as the fences above do. If the shared command then fails, the state is
+empty while the inbox rows remain — the keeper's next tick re-derives one
+row per degraded loan and the day-bucket dedup absorbs it, the benign
+direction. The reverse order, interrupted, leaves exactly the worst
+combination above. Re-run whichever command did not complete before
+moving on.
+
+**Before the keeper's private database is live** — the deployed keeper's
+config has no `KEEPER_DB` binding yet, because the one-time cutover in
+`docs/ops/DeploymentRunbook.md` ("Keeper private D1 — one-time cutover")
+has not run — the keeper still reads the SHARED `hf_band_state`. In that
+state skip the private command and add `DELETE FROM hf_band_state;` to the
+shared one instead; clearing the private copy would empty a table the
+deployed keeper never reads.
 
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
@@ -1704,8 +1759,8 @@ caught at the cheapest stage.
 
    **Skip step 4 entirely — it cannot be satisfied while the hold is
    active, and it is not a step to "wait out".** Step 4 confirms the flags
-   *from a tick* and holds the restore incomplete until all seven gated passes
-   emit. With `"crons": []` there is never a tick, so an operator following
+   *from a tick* and holds the restore incomplete until every gated pass
+   (the list in step 4) emits. With `"crons": []` there is never a tick, so an operator following
    the numbered order lands in a wait that cannot end. A quiet tail here is
    the expected state, not a pending check.
 
@@ -1760,7 +1815,7 @@ caught at the cheapest stage.
    restored the schedule after it — the exact inverse of the sequence kept
    beside the empty list in `apps/keeper/wrangler.jsonc`, and it skipped the
    production validation entirely. Arming before a schedule exists means the
-   seven fund-moving passes begin submitting on the FIRST tick after the
+   gated (fund-moving) passes begin submitting on the FIRST tick after the
    schedule lands, on a Worker whose CPU fix has not been observed working.
    The whole point of the canonical order is that everything provable while
    the passes are inert gets proved first.
@@ -2023,10 +2078,12 @@ caught at the cheapest stage.
    NON-compromise restore **both are normally already satisfied** — so
    VERIFY them rather than assuming they need rebuilding:
 
-   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
-     `apps/indexer/migrations/`, so §1 step 7 applied it with every other
-     migration. Confirm:
-     `wrangler d1 migrations list vaipakam-warm --remote`.
+   - **The remit-ack tables.** They are keeper-private since #2450 and
+     come from the keeper's own `apps/keeper/migrations/0001_keeper_state.sql`
+     (the shared `0044_keeper_remit_ack.sql` still exists, and still applies
+     to `vaipakam-warm`, but the keeper no longer reads that copy). §1 step 7
+     applied both. Confirm the private one from `apps/keeper/`:
+     `wrangler d1 migrations list vaipakam-keeper-db --remote`.
    - **The on-chain authority.** Two of them, and they are not the same —
      this is the part that is easy to get wrong. `remitRewardBudget`
      authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**
@@ -2154,8 +2211,12 @@ caught at the cheapest stage.
    line names all three — you are never fixing one and waiting a tick to
    discover the next.
 
-   The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-   `graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`.
+   The gated passes are every pass in `KEEPER_PASSES`
+   (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
+   that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+   `rewardBudgetRemit`, `remitAck` and `commitmentReport`. This list is the one place the set is written down;
+   every other step here says "every gated pass" rather than counting them,
+   because a count goes stale the day a pass is added (#2497 r1).
    `watcher`,
    `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
    and `liquidityConfidence` always runs and consults the gate only to decide
@@ -2164,7 +2225,7 @@ caught at the cheapest stage.
 
    > **One exception, and it is the whole point of branch B's ordering: while
    > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
-   > `false` ON PURPOSE.** All seven gated passes therefore emit
+   > `false` ON PURPOSE.** Every gated pass therefore emits
    > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
    > state, not a fault to repair — "fixing" them here arms the fund-moving
    > passes before the CPU and cadence validation has finished, which is
@@ -2250,7 +2311,7 @@ caught at the cheapest stage.
    > are now obsolete. If you are reading a stale copy, prefer this one.
 
    Do not conclude the restore is complete until one tick has produced a
-   line from **each of the seven gated passes**, and every line reads the way
+   line from **every gated pass** (the list in step 4), and every line reads the way
    you intended. The other four emit nothing by design — waiting for them
    would be waiting forever.
 
@@ -2285,7 +2346,7 @@ caught at the cheapest stage.
 
    Only reachable if you came through branch B (the #1896 hold has lifted).
    Everything above has run with `KEEPER_ENABLED` at `false`, which is what
-   made the CPU validation meaningful: the seven fund-moving passes were inert
+   made the CPU validation meaningful: the gated (fund-moving) passes were inert
    while the Worker was proved to survive a production tick.
 
    Before running this, confirm all of the following from the ticks you just
@@ -2322,9 +2383,10 @@ caught at the cheapest stage.
      wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
    ```
 
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` /
-   `GRACE_DEFAULT_ENABLED` the same way and at this same point, and only if
-   they were on before.
+   Set every per-pass flag that was on before the same way and at this same
+   point: `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` and
+   `GRACE_DEFAULT_ENABLED` (the captured table in step 1 is the record of
+   which were on).
 
    Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
@@ -2336,8 +2398,8 @@ caught at the cheapest stage.
    nothing. Past this point the fund-moving passes are genuinely armed, so
    the order matters and the schedule alone is not enough:
 
-   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the seven
-      fund-moving passes, and it takes effect without waiting for a
+   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates every
+      fund-moving pass, and it takes effect without waiting for a
       schedule change to propagate.
    2. Then restore `"crons": []`, **commit that**, and redeploy
       `( cd apps/keeper && wrangler deploy --keep-vars )` — same directory

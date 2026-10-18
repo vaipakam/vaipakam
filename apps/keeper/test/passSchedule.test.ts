@@ -106,7 +106,7 @@ describe('the stagger reduces real dispatched work', () => {
 
   it('records WHICH passes cannot be staggered — the durable finding', () => {
     // The useful output of this work is not the saving, it is the list.
-    // Seven of ten passes cannot be slowed without a correctness or
+    // Seven passes cannot be slowed without a correctness or
     // safety cost, each for a reason written in its own file, and three
     // of those seven were found only after I had already slowed them.
     // Pinning the set means a future edit that quietly re-slows one has
