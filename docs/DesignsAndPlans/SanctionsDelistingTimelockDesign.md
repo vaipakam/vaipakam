@@ -57,14 +57,20 @@ the owner revokes the timelock's remover role.
 2. **Window.** The Safe (any remover of the list) or the owner may `cancel`,
    which **vetoes** every address in the proposal. `setVetoed` vetoes, or
    lifts a veto on, any address at any time, including before a proposal. A
-   proposer may `cancel` too, which only withdraws and vetoes nothing.
+   proposer may `cancel` its own proposal too, which only withdraws and
+   vetoes nothing.
 3. **A proposal belongs to its proposer's key.** If the owner removes that
    proposer, its pending proposals can no longer execute
    (`ProposerRemoved`), and anyone may `discard` them, which frees their
    addresses and their share of the outstanding delistings. A discard vetoes
    nothing: removing a key says the key is untrusted, not that every address
    it named was wrong. So revoking a compromised bot is one call, and nothing
-   it queued survives it.
+   it queued survives it. The same rule runs the other way: only the
+   proposer that made a proposal, while still appointed, may withdraw or
+   `reconfirm` it (`NotItsProposer`). With several proposer keys, one cannot
+   withdraw another's batches and refill the freed share itself, or move
+   another's proposal to a publication it has not re-checked. (Codex round 4
+   on #2562.)
 4. **New publication during the window.** The adder runs daily, so the list
    can move to a newer OFAC file before `eta`. Execution then refuses
    (`PublicationChanged`). The bot re-checks the addresses against the new
@@ -127,7 +133,9 @@ attestor echoes, since whatever the timelock can compute, someone can predict
 causal, and carried by the transport itself:
 
 - After `eta`, anyone may call `requestClearance(id)` and pay the CCIP fee
-  (`quoteClearanceRequest`; overpayment is refunded). The timelock itself
+  (`quoteClearanceRequest`; the call's overpayment is refunded, and only
+  that: `LibFeeRefund` returns the balance growth since the call began, so
+  value the contract holds for any other reason never goes to a caller). The timelock itself
   sends `(version, REQUEST, requestId, accounts)` to the attestor through its
   `ICrossChainMessenger`.
 - The attestor reads RedStone **when that request arrives**. CCIP delivers a
@@ -179,7 +187,7 @@ Both accept native value only as their messenger's fee refund.
 
 | Key | Can | Cannot |
 | --- | --- | --- |
-| Proposer (delister bot) | Propose wrongful delistings, up to the publication's outstanding count in total, which the Safe can veto and a current RedStone must still clear; withdraw proposals | Shorten the window, skip the RedStone check, lift a veto, exceed what OFAC's file calls for, keep anything alive once the owner removes it |
+| Proposer (delister bot) | Propose wrongful delistings, up to the publication's outstanding count in total, which the Safe can veto and a current RedStone must still clear; withdraw or reconfirm its own proposals | Shorten the window, skip the RedStone check, lift a veto, exceed what OFAC's file calls for, keep anything alive once the owner removes it, touch another proposer's proposals |
 | Adder | List addresses; record a publication | Delist |
 | Safe (remover) | Delist directly; veto; cancel | — (it is the multisig) |
 | Owner (admin) | Appoint or revoke the proposer and the timelock's remover role; set the delay, the clearance source, the request lifetime and the oracle's max age; veto | Delist without appointing itself |

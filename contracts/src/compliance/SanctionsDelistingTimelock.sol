@@ -12,6 +12,7 @@ import {
     CLEARANCE_RESPONSE
 } from "./SanctionsClearanceAttestor.sol";
 import {LibOracleFreshness} from "./LibOracleFreshness.sol";
+import {LibFeeRefund} from "./LibFeeRefund.sol";
 
 /**
  * @title  SanctionsDelistingTimelock
@@ -328,7 +329,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     error NotAContract(address candidate);
     error RenounceDisabled();
     error NotProposer(address caller);
-    error NotCanceller(address caller);
+    /// @notice Only the proposer that made a proposal may withdraw or
+    ///         reconfirm it, and only while it is still appointed.
+    error NotItsProposer(uint256 id, address caller);
     /// @notice Only the Safe (any remover of the list) or the owner may veto.
     error NotVetoer(address caller);
     /// @notice The Safe or the owner has vetoed delisting this address.
@@ -395,7 +398,6 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     error UnexpectedKind(uint8 got);
     error LengthMismatch(uint256 accounts, uint256 flags);
     error UnexpectedNative(address from);
-    error RefundFailed();
 
     // ── Construction ──────────────────────────────────────────────────
 
@@ -528,10 +530,11 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
 
     /// @notice Move a pending proposal to the publication the list now
     ///         records, after the proposer has re-checked its addresses
-    ///         against that file. The eta is unchanged.
+    ///         against that file. Only the proposer that made it, while
+    ///         still appointed. The eta is unchanged.
     function reconfirm(uint256 id, bytes32 sourceHash, uint32 publicationDate) external {
-        if (!isProposer[msg.sender]) revert NotProposer(msg.sender);
         Proposal storage p = _pending(id);
+        _requireItsProposer(id, p);
         _requireRecordedPublication(sourceHash, publicationDate);
         if (sourceHash == p.sourceHash && publicationDate == p.publicationDate) revert NothingToReconfirm(id);
         emit DelistingReconfirmed(id, p.sourceHash, p.publicationDate, sourceHash, publicationDate);
@@ -542,13 +545,14 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice Cancel a pending proposal. The Safe (any remover of the
     ///         list) or the owner may cancel at any time before execution,
     ///         and their cancel is a VETO: every address in the proposal is
-    ///         marked {vetoed}, so the bot cannot bring it back. A proposer
-    ///         may also cancel, which only withdraws the proposal (it found
-    ///         a reason to stop) and vetoes nothing.
+    ///         marked {vetoed}, so the bot cannot bring it back. The
+    ///         proposer that made it may also cancel, while still appointed,
+    ///         which only withdraws the proposal (it found a reason to stop)
+    ///         and vetoes nothing; another proposer key may not.
     function cancel(uint256 id) external {
         bool vetoer = _isVetoer(msg.sender);
-        if (!vetoer && !isProposer[msg.sender]) revert NotCanceller(msg.sender);
         Proposal storage p = _pending(id);
+        if (!vetoer) _requireItsProposer(id, p);
         p.status = Status.Cancelled;
         address[] memory accounts = p.accounts;
         _release(accounts);
@@ -625,6 +629,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     ///         flight.
     /// @return messageId The transport's id for the request.
     function requestClearance(uint256 id) external payable returns (bytes32 messageId) {
+        uint256 baseline = LibFeeRefund.baseline();
         Proposal storage p = _pending(id);
         if (block.timestamp < p.eta) revert TooEarly(id, p.eta);
         Route route = clearanceRoute();
@@ -650,13 +655,8 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
             _requestGas(p.accounts.length)
         );
         emit ClearanceRequested(id, requestId, epoch, _expiresAt(c), messageId);
-        // The messenger refunds overpayment here; pass it on. This contract
-        // holds nothing between calls, so its whole balance is the refund.
-        uint256 refund = address(this).balance;
-        if (refund != 0) {
-            (bool ok,) = msg.sender.call{value: refund}("");
-            if (!ok) revert RefundFailed();
-        }
+        // The messenger refunds overpayment here; pass on exactly that.
+        LibFeeRefund.refund(baseline);
     }
 
     /// @notice The fee {requestClearance} would need for a proposal now.
@@ -832,6 +832,14 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
 
     function _requestGas(uint256 n) private pure returns (uint256) {
         return REQUEST_GAS_BASE + REQUEST_GAS_PER_ACCOUNT * n;
+    }
+
+    /// @dev A proposal belongs to the key that made it: only that proposer,
+    ///      while still appointed, may act on it as a proposer. Another
+    ///      proposer key cannot withdraw it (and refill the freed share
+    ///      itself) or move it to a new publication it has not re-checked.
+    function _requireItsProposer(uint256 id, Proposal storage p) private view {
+        if (msg.sender != p.proposer || !isProposer[msg.sender]) revert NotItsProposer(id, msg.sender);
     }
 
     function _isVetoer(address who) private view returns (bool) {

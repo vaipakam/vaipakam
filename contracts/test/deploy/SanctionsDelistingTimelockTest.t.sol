@@ -317,7 +317,7 @@ contract SanctionsDelistingTimelockTest is Test {
         uint256 id2 = _propose(tl, _arr(b));
 
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotCanceller.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id1, stranger));
         tl.cancel(id1);
 
         vm.expectEmit(address(tl));
@@ -442,6 +442,41 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.setProposer(bot2, true);
         vm.prank(bot2);
         tl.propose(_arr(a, b), H2, D2);
+    }
+
+    /// @dev With several proposer keys, each acts only on its own
+    ///      proposals: another key can neither withdraw them (and refill the
+    ///      freed share) nor move them to a publication it has not re-checked.
+    function test_AProposal_BelongsToTheKeyThatMadeIt() public {
+        (SanctionsList list, SanctionsDelistingTimelock tl) = _local();
+        address bot2 = makeAddr("bot2");
+        vm.prank(admin);
+        tl.setProposer(bot2, true);
+        uint256 id = _propose(tl, _arr(a));
+
+        vm.prank(bot2);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id, bot2));
+        tl.cancel(id);
+
+        bytes32 h3 = keccak256("sdn@20261017");
+        vm.prank(adder);
+        list.applyUpdate(2, _none(), _none(), h3, 20261017, 0, 2);
+        vm.prank(bot2);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id, bot2));
+        tl.reconfirm(id, h3, 20261017);
+
+        // Its own proposer may, until it is removed.
+        vm.prank(bot);
+        tl.reconfirm(id, h3, 20261017);
+        vm.prank(admin);
+        tl.setProposer(bot, false);
+        vm.prank(bot);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id, bot));
+        tl.cancel(id);
+        // The Safe's veto is unaffected.
+        vm.prank(safe);
+        tl.cancel(id);
+        assertTrue(tl.vetoed(a));
     }
 
     // ── Additions before removals ─────────────────────────────────────
@@ -581,7 +616,7 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.execute(id);
 
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotProposer.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotItsProposer.selector, id, stranger));
         tl.reconfirm(id, h3, 20261017);
         vm.startPrank(bot);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.PublicationMismatch.selector, H2, D2, h3, 20261017));
@@ -847,6 +882,35 @@ contract SanctionsDelistingTimelockTest is Test {
         uint64 rid2 = _request(tl, id);
         messenger.deliver(address(tl), SRC, attestor2, _payload(rid2, _arr(a), _flags(false), uint64(T0)));
         tl.execute(id);
+    }
+
+    /// @dev A caller gets back what its own call overpaid, never value the
+    ///      contract holds for another reason.
+    function test_Refunds_OnlyTheCallsOwnOverpayment() public {
+        (, SanctionsDelistingTimelock tl) = _deploy(address(0));
+        SanctionsClearanceAttestor att = _attestor(ISanctionsList(address(redstone)));
+        vm.prank(admin);
+        tl.setClearanceSource(address(messenger), SRC, address(att));
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 2 days);
+        vm.deal(address(tl), 1 ether); // as if forced in
+        vm.deal(address(att), 2 ether);
+
+        vm.deal(stranger, 1 ether);
+        vm.prank(stranger);
+        tl.requestClearance{value: 0.05 ether}(id);
+        uint64 rid = 1;
+        assertEq(stranger.balance, 1 ether - fee);
+        assertEq(address(tl).balance, 1 ether, "the forced balance stays");
+
+        bytes32 mid = messenger.lastMessageId();
+        messenger.deliver(address(att), block.chainid, address(tl), messenger.lastPayload(), mid);
+        bytes memory reply =
+            abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, CLEARANCE_RESPONSE, rid, _arr(a), _flags(false), uint64(T0));
+        vm.prank(stranger);
+        att.sendReply{value: 0.05 ether}(mid, reply);
+        assertEq(stranger.balance, 1 ether - 2 * fee);
+        assertEq(address(att).balance, 2 ether, "the forced balance stays");
     }
 
     function test_Clearance_InboundRefusals() public {

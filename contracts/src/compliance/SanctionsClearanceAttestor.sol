@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {ICrossChainMessenger, ICrossChainMessageRecipient} from "../crosschain/ICrossChainMessenger.sol";
 import {LibOracleFreshness} from "./LibOracleFreshness.sol";
+import {LibFeeRefund} from "./LibFeeRefund.sol";
 
 /// @dev The clearance wire version both ends agree on. Two messages share it:
 ///      - request (timelock → attestor):
@@ -118,7 +119,6 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
     error ReplyAlreadySent(bytes32 requestMessageId);
     error ReplyMismatch(bytes32 requestMessageId);
     error UnexpectedNative(address from);
-    error RefundFailed();
 
     constructor(ISanctionsList oracle_, ICrossChainMessenger messenger_) {
         if (address(oracle_) == address(0) || address(messenger_) == address(0)) revert ZeroAddress();
@@ -178,19 +178,15 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
         payable
         returns (bytes32 replyMessageId)
     {
+        uint256 baseline = LibFeeRefund.baseline();
         Reply storage r = _owed(requestMessageId, payload);
         r.sent = true;
         replyMessageId = messenger.sendMessage{value: msg.value}(
             r.destinationChainId, payload, new ICrossChainMessenger.TokenAmount[](0), _replyGas(r.accounts)
         );
         emit ClearanceReplySent(requestMessageId, replyMessageId, msg.sender);
-        // The messenger refunds overpayment here; pass it on. This contract
-        // holds nothing between calls, so its whole balance is the refund.
-        uint256 refund = address(this).balance;
-        if (refund != 0) {
-            (bool ok,) = msg.sender.call{value: refund}("");
-            if (!ok) revert RefundFailed();
-        }
+        // The messenger refunds overpayment here; pass on exactly that.
+        LibFeeRefund.refund(baseline);
     }
 
     /// @notice The fee {sendReply} would need for the same arguments now.
