@@ -381,6 +381,9 @@ describe('raiseAlerts — a failed screen is unmeasured, never clean (Codex #257
       await raiseAlerts(env, CHAIN, [], plan, NOW, 'unmeasured', { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 0, screenFailed: true });
       expect(warned.some((w) => /the daily screen of loan parties failed this run/.test(w))).toBe(true);
       expect(await getOpsAlert(h.d1 as KeeperD1, `sanctions-screen-capacity:${CHAIN}:all`), 'not cleared by a screen that did not run').not.toBeNull();
+      warned.length = 0;
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, skippedOracleDown: 0, clean: 0, unread: 0, sourcesFailed: ['open staging'] });
+      expect(warned.some((w) => /candidate source\(s\) unread this run \(open staging\)/.test(w)), 'an unread candidate source keeps the alert raised').toBe(true);
     } finally {
       warn.mockRestore();
     }

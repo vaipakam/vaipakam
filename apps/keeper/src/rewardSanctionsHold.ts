@@ -60,6 +60,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { SendPastDeadline } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import {
@@ -340,12 +341,24 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   const diamondAddr = String(chain.diamond);
   // The owners the screen found earlier stay candidates until a fresh read
   // shows nothing left to do (#2497 r11): they may have no other trace yet.
-  const watched = await listSanctionsWatch(env.KEEPER_DB, chain.id, diamondAddr);
-  const stagingOwners = await listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id));
-  const known = candidateOwners(
-    [...(await listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id))), ...watched],
-    stagingOwners,
-  );
+  // Each candidate SOURCE is read on its own (Codex #2573 r4): one that fails
+  // costs its own candidates, never the others' observations, and the run
+  // says discovery was incomplete rather than reporting coverage it lacks.
+  const failedSources: string[] = [];
+  const source = async (name: string, read: () => Promise<string[]>): Promise<string[] | null> => {
+    try {
+      return await read();
+    } catch (err) {
+      failedSources.push(name);
+      console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: candidate source ${name} unread this run: ${shortErr(err)}`);
+      return null;
+    }
+  };
+  const watched = (await source('watch list', () => listSanctionsWatch(env.KEEPER_DB, chain.id, diamondAddr))) ?? [];
+  const stagingRead = await source('open staging', () => listOpenStagingOwners(env.DB, chain.id, deploymentFloor(chain.id)));
+  const stagingOwners = stagingRead ?? [];
+  const chainsRead = (await source('open evidence chains', () => listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id)))) ?? [];
+  const known = candidateOwners([...chainsRead, ...watched], stagingOwners);
   // Every single read and simulation is refused past the run's deadline
   // (`deadlineClient`); the batched status reads carry it themselves. The
   // alert-phase re-read uses the plain client, bounded by the alert window.
@@ -460,7 +473,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
             continue;
           }
           // eslint-disable-next-line no-await-in-loop
-          sent = await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+          sent = (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) !== 'skipped';
         }
         if (sent) dueSent.add(owner.toLowerCase());
         continue;
@@ -475,7 +488,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueSent.add(owner.toLowerCase());
+      if ((await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) !== 'skipped') dueSent.add(owner.toLowerCase());
     }
     // PHASE 2 — the clean results (#2497 r7): until committed, a re-flag inside
     // the gap would continue the old chain. Sent only on the oracle's own clean
@@ -486,7 +499,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       // eslint-disable-next-line no-await-in-loop
       if (!(await oracleSaysClean(client, diamond, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
-      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) cleanSent.add(owner.toLowerCase());
+      if ((await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) !== 'skipped') cleanSent.add(owner.toLowerCase());
     }
     reached = dueReached;
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
@@ -558,10 +571,11 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       clean: plan.commitClean.length - cleaned.yes,
       unread: unread + landed.unread + cleaned.unread,
       screenFailed: !screenMeasured,
+      sourcesFailed: failedSources,
       backlogUnreached,
     };
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: new Set(stagingOwners.map((o) => o.toLowerCase())) });
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: stagingRead === null ? undefined : new Set(stagingOwners.map((o) => o.toLowerCase())) });
 }
 
 /** What a run left undone, MEASURED. `screenFailed` is optional so a caller
@@ -573,6 +587,8 @@ export interface Shortfall {
   clean: number;
   unread: number;
   screenFailed?: boolean;
+  /** Candidate sources that could not be read this run, by name. */
+  sourcesFailed?: readonly string[];
   /** Final-verdict owners whose settlement or staging the run never reached. */
   backlogUnreached?: number;
 }
@@ -802,12 +818,21 @@ async function runOwnerSettlement(
       }
       return sentAny;
     }
-    ok?.add(owner.toLowerCase());
-    if (decision !== DECISION_CONFIRMED) return sentAny;
+    if (decision !== DECISION_CONFIRMED) {
+      ok?.add(owner.toLowerCase());
+      return sentAny;
+    }
+    // Success is the RECEIPT's (Codex #2573 r4), never the simulation's.
     // eslint-disable-next-line no-await-in-loop
-    const sent = await send(ctx, budget, 'settleSanctionedInteractionRewards', [owner], owner);
-    if (!sent) return sentAny;
+    const out = await send(ctx, budget, 'settleSanctionedInteractionRewards', [owner], owner);
+    if (out === 'skipped') return sentAny;
     sentAny = true;
+    if (out === 'failed') {
+      failed?.set(owner.toLowerCase(), 'the settlement transaction failed');
+      return sentAny;
+    }
+    if (out === 'unknown') return sentAny;
+    ok?.add(owner.toLowerCase());
   }
   return sentAny;
 }
@@ -850,7 +875,7 @@ async function resolveOwnerRecords(
 ): Promise<{ stuck: number; complete: boolean }> {
   /** Resolving records or domains whose resolution page REVERTED this run:
    *  measured, so a wedged record is said (Codex #2573 r1). */
-  const reverted = { n: 0 };
+  const reverted: { n: number; unknown?: number } = { n: 0 };
   if (budget.writes <= 0) return { stuck: 0, complete: false };
   /** Every record of the owner READ this run — an unread one is unknown,
    *  so the owner cannot be reported clear (Codex #2573 r2). */
@@ -913,7 +938,7 @@ async function resolveOwnerRecords(
   }
   // Complete: every record and both domains were read and offered a page this
   // run, so a zero count is a measurement, not an absence.
-  const complete = Date.now() < deadline && domains.every((r) => r?.status === 'success');
+  const complete = Date.now() < deadline && domains.every((r) => r?.status === 'success') && !reverted.unknown;
   return { stuck: reverted.n, complete };
 }
 
@@ -926,12 +951,13 @@ async function sendIfEffective(
   args: readonly unknown[],
   effective: (result: unknown) => boolean,
   owner: Address,
-  /** Counts a simulation that REVERTED (as opposed to one not worth sending). */
-  reverted?: { n: number },
+  /** Counts a page that FAILED — a simulation that reverted, or a send whose
+   *  transaction failed — and a send whose outcome is unknown. */
+  reverted?: { n: number; unknown?: number },
   /** Revert reasons that are the contract routing the call elsewhere, not a
    *  failure: not counted in `reverted`. */
   expected: readonly string[] = [],
-): Promise<boolean> {
+): Promise<SendOutcome> {
   try {
     const sim = await ctx.client.simulateContract({
       address: ctx.diamond,
@@ -940,14 +966,26 @@ async function sendIfEffective(
       args: args as never,
       account: ctx.wallet.account!,
     });
-    if (!effective(sim.result)) return false;
+    if (!effective(sim.result)) return 'skipped';
   } catch (err) {
     console.log(`[keeper] rewardSanctionsHold ${fn} ${owner} would revert: ${shortErr(err)}`);
     if (reverted && !(err instanceof PastRunDeadline) && !expected.includes(revertName(err) ?? '')) reverted.n += 1;
-    return false;
+    return 'skipped';
   }
-  return send(ctx, budget, fn, args, owner);
+  const out = await send(ctx, budget, fn, args, owner);
+  if (reverted && out === 'failed') reverted.n += 1;
+  if (reverted && out === 'unknown') reverted.unknown = (reverted.unknown ?? 0) + 1;
+  return out;
 }
+
+/** What a send DID, measured (Codex #2573 r4) — one answer every caller
+ *  decides from, so a simulation that succeeded is never mistaken for an
+ *  outcome:
+ *   - `landed`: the receipt says success;
+ *   - `failed`: the receipt says reverted, or the send itself errored;
+ *   - `unknown`: broadcast, but no receipt in time — it may still land;
+ *   - `skipped`: not sent (no budget, or past the run's deadline). */
+export type SendOutcome = 'landed' | 'failed' | 'unknown' | 'skipped';
 
 async function send(
   ctx: KeeperContext,
@@ -955,19 +993,28 @@ async function send(
   fn: string,
   args: readonly unknown[],
   owner: Address,
-): Promise<boolean> {
+): Promise<SendOutcome> {
   // Past the run's send window, nothing more is sent this run (#2497 r16).
   if (budget.deadline !== undefined && Date.now() >= budget.deadline) budget.writes = 0;
-  if (budget.writes <= 0) return false;
+  if (budget.writes <= 0) return 'skipped';
+  let hash: Hex;
   try {
-    const hash = await ctx.wallet.writeContract({
+    hash = (await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: ABI,
       functionName: fn,
       args,
       chain: undefined,
       account: ctx.wallet.account ?? null,
-    } as never);
+    } as never)) as Hex;
+  } catch (err) {
+    budget.writes = 0;
+    // Refused before signing at its turn in the queue: nothing was sent.
+    if (err instanceof SendPastDeadline) return 'skipped';
+    console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
+    return 'failed';
+  }
+  try {
     budget.writes -= 1;
     // Sent: this owner's state may have changed, whatever the receipt says,
     // so its alerts are judged on a fresh read (#2497 r2).
@@ -982,13 +1029,13 @@ async function send(
     const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     if (receipt.status !== 'success') {
       console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} reverted on chain: tx=${hash}`);
-      return false;
+      return 'failed';
     }
-    return true;
+    return 'landed';
   } catch (err) {
-    console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
+    console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} receipt not seen in time: ${shortErr(err)}`);
     budget.writes = 0;
-    return false;
+    return 'unknown';
   }
 }
 
@@ -1052,11 +1099,12 @@ export async function raiseAlerts(
     // A run that could not READ a candidate cannot say whether it was due, so
     // an unread candidate keeps this alert raised — it is never cleared by a
     // run that did not look.
-    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0 || shortfall.unread > 0 || shortfall.screenFailed === true, () => {
+    await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0 || shortfall.unread > 0 || shortfall.screenFailed === true || (shortfall.sourcesFailed?.length ?? 0) > 0, () => {
       const attempted = shortfall.due - shortfall.unreached - shortfall.skippedOracleDown;
       const parts = [
         `${shortfall.due} due observation(s) did NOT land this tick: ${shortfall.unreached} unreached (the write budget or the run's time window ran out), ${shortfall.skippedOracleDown} not sent because the sanctions oracle is not answering, ${attempted} attempted but not recorded`,
       ];
+      if (shortfall.sourcesFailed?.length) parts.push(`candidate source(s) unread this run (${shortfall.sourcesFailed.join(', ')}), so the wallets only they name were not looked at`);
       if (shortfall.screenFailed) parts.push('the daily screen of loan parties failed this run, so newly flagged wallets were not looked for');
       if (shortfall.unread > 0) parts.push(`${shortfall.unread} candidate(s) could not be classified at all (their status read failed), so whether they were due is unknown`);
       return `[chain ${chainId}] reward sanctions hold: ${parts.join('; ')} — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`;
