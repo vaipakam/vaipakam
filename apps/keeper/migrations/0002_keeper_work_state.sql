@@ -14,12 +14,16 @@
 --
 -- Keyed by the Diamond as well as the chain: a fresh redeploy restarts the ids
 -- a pass records (remit ids count from 1 again). `item` is the pass's own id:
--- a packet hash (lowercase hex) or a remit id (decimal).
+-- a packet hash (lowercase hex) or a remit id (decimal). `block` is the
+-- ledger block the item was read at (#2497 r6): a row behind the pass's done
+-- frontier (migration 0003) is never read again, so the frontier alone
+-- decides what is pruned — a prune that fails is simply redone next tick.
 CREATE TABLE IF NOT EXISTS keeper_work_done (
   chain_id INTEGER NOT NULL,
   diamond  TEXT    NOT NULL,
   kind     TEXT    NOT NULL,  -- 'delivery_proof' | 'late_ack'
   item     TEXT    NOT NULL,
+  block    INTEGER NOT NULL,  -- the item's ledger block
   done_at  INTEGER NOT NULL,  -- unix seconds
   PRIMARY KEY (chain_id, diamond, kind, item)
 );

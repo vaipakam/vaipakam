@@ -1114,18 +1114,16 @@ export async function indexedThrough(db: D1Database, chainId: number): Promise<n
   }
 }
 
-/** Drop done-set rows the frontier has moved past (#2497 r5): the ledger read
- *  starts at the frontier, so those items can never be read again, and keeping
- *  them would let the done-set read grow with history. Bounded by the items
- *  this tick passed. */
-export async function pruneWorkDone(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
-  if (items.length === 0) return;
-  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
-    await db
-      .prepare(`DELETE FROM keeper_work_done WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
-      .bind(...c.binds)
-      .run();
-  }
+/** Drop the done rows behind the frontier (#2497 r5/r6): the ledger read
+ *  starts at the frontier, so those items are never read again. Keyed on the
+ *  frontier ALONE, not on a list of items, so it is idempotent and a pass runs
+ *  it every tick: one that failed, or ran before the frontier was saved, is
+ *  redone by the next. */
+export async function pruneWorkDoneBelow(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, frontier: number): Promise<void> {
+  await db
+    .prepare(`DELETE FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block < ?4`)
+    .bind(chainId, diamond.toLowerCase(), kind, frontier)
+    .run();
 }
 
 // ─── #2489 r1 — the keeper's DONE set (keeper-private, migration 0002) ───────
@@ -1145,32 +1143,36 @@ export async function listWorkDone(
   chainId: number,
   diamond: string,
   kind: WorkKind,
+  /** The pass's done frontier: rows behind it are never needed (#2497 r6), so
+   *  the read stays bounded even while a prune lags. */
+  fromBlock = 0,
 ): Promise<Set<string>> {
   const rows = await db
-    .prepare(`SELECT item FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3`)
-    .bind(chainId, diamond.toLowerCase(), kind)
+    .prepare(`SELECT item FROM keeper_work_done WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block >= ?4`)
+    .bind(chainId, diamond.toLowerCase(), kind, fromBlock)
     .all<{ item: string }>();
   return new Set((rows.results ?? []).map((r) => r.item));
 }
 
-/** Record `items` as done — only on an on-chain read that shows them finished.
- *  Idempotent; one statement per item, all in one batch. */
+/** Record `items` as done — only on an on-chain read that shows them finished
+ *  — each with the ledger block it was read at. Idempotent; one statement per
+ *  item, all in one batch. */
 export async function markWorkDone(
   db: KeeperD1,
   chainId: number,
   diamond: string,
   kind: WorkKind,
-  items: readonly string[],
+  items: readonly { item: string; block: number }[],
 ): Promise<void> {
   if (items.length === 0) return;
   const now = Math.floor(Date.now() / 1000);
   await db.batch(
-    items.map((item) =>
+    items.map(({ item, block }) =>
       db
         .prepare(
-          `INSERT OR IGNORE INTO keeper_work_done (chain_id, diamond, kind, item, done_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+          `INSERT OR IGNORE INTO keeper_work_done (chain_id, diamond, kind, item, block, done_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
         )
-        .bind(chainId, diamond.toLowerCase(), kind, item, now),
+        .bind(chainId, diamond.toLowerCase(), kind, item, block, now),
     ),
   );
 }

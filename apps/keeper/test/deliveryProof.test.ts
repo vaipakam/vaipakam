@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import {
+  actionsFor,
   canonicalChainOf,
   deliveryComplete,
   fundedDaysFromBits,
@@ -38,7 +39,19 @@ const BATCH = `0x${'b'.repeat(64)}` as Hex;
 const days = (n: number, from = 100) => Array.from({ length: n }, (_, i) => BigInt(from + i));
 
 function packet(over: Partial<PacketState> = {}): PacketState {
-  return { kind: 1, batchId: Z, dayListHash: Z, dayListRoot: Z, chunkCount: 0, chunksIndexed: 0n, disposed: 0n, ...over };
+  return {
+    sourceChainId: 84532,
+    remitter: `0x${'1'.repeat(40)}`,
+    remitId: 1n,
+    kind: 1,
+    batchId: Z,
+    dayListHash: Z,
+    dayListRoot: Z,
+    chunkCount: 0,
+    chunksIndexed: 0n,
+    disposed: 0n,
+    ...over,
+  };
 }
 
 describe('planDelivery — rooted (d6)', () => {
@@ -277,5 +290,54 @@ describe('isWalkExceeded — the one failure a verified hint cures', () => {
     expect(isWalkExceeded(new Error('execution reverted: TransportIndexWalkExceeded'))).toBe(true);
     expect(isWalkExceeded(new BaseError('reverted: TransportIndexHintInvalid'))).toBe(false);
     expect(isWalkExceeded(new Error('timeout'))).toBe(false);
+  });
+});
+
+describe("a rooted packet's list is rebuilt from the packet's OWN remitter (#2497 r6)", () => {
+  const list = days(3);
+  const root = d6Root(d6Leaves(list));
+  const OLD = `0x${'2'.repeat(40)}` as const; // a retired canonical Diamond
+  const MIRROR = 97;
+  const row = { packetHash: H, remitId: 99, block: 1, flatDayIds: null } as never; // the ledger's id is NOT used
+
+  function sourceClient() {
+    const reads: { address: string; args: readonly unknown[] }[] = [];
+    const client = {
+      readContract: async (q: { address: string; functionName: string; args: readonly unknown[] }) => {
+        reads.push({ address: q.address, args: q.args });
+        return { dayIds: list, dayListRoot: root, dstChainId: MIRROR, fundedDayBits: [0b111n] };
+      },
+    };
+    return { reads, client };
+  }
+
+  it('reads the reservation on the packet source chain, at its remitter, under its remit id', async () => {
+    const { reads, client } = sourceClient();
+    const asked: number[] = [];
+    const plan = await actionsFor(
+      {} as never,
+      `0x${'3'.repeat(40)}`,
+      MIRROR,
+      row,
+      packet({ sourceChainId: 421614, remitter: OLD, remitId: 3n, dayListRoot: root, chunkCount: 1 }),
+      (id) => {
+        asked.push(id);
+        return client as never;
+      },
+    );
+    expect(asked).toEqual([421614]);
+    expect(reads).toEqual([{ address: OLD, args: [3n] }]);
+    expect(plan.complete).toBe(false);
+    expect(plan.actions.length, 'the rebuilt list is proven').toBeGreaterThan(0);
+  });
+
+  it('declines, reading nothing, when the source chain has no RPC here', async () => {
+    const warn = (await import('vitest')).vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const plan = await actionsFor({} as never, `0x${'3'.repeat(40)}`, MIRROR, row, packet({ sourceChainId: 1, remitter: OLD, remitId: 3n, dayListRoot: root, chunkCount: 1 }), () => null);
+      expect(plan).toEqual({ actions: [], complete: false });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

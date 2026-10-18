@@ -103,21 +103,24 @@ describe('lateAckDone — the done set takes only what the chain shows finished'
   it('records into the keeper-private done set, per Diamond, idempotently', async () => {
     const h = createKeeperD1();
     const db = h.d1 as KeeperD1;
-    await markWorkDone(db, 84532, '0xAB', 'late_ack', ['4', '9']);
-    await markWorkDone(db, 84532, '0xab', 'late_ack', ['4']);
+    const at = (item: string, block = 10) => ({ item, block });
+    await markWorkDone(db, 84532, '0xAB', 'late_ack', [at('4'), at('9')]);
+    await markWorkDone(db, 84532, '0xab', 'late_ack', [at('4')]);
     expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack'))].sort()).toEqual(['4', '9']);
     expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond: a redeploy starts empty').toBe(0);
     expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass').toBe(0);
   });
 
-  it('prunes only the named items of one Diamond and pass, so the done set stays bounded (#2497 r5)', async () => {
-    const { pruneWorkDone } = await import('../src/db');
+  it('prunes by the frontier alone — idempotent, one Diamond and pass only — and reads only from it (#2497 r6)', async () => {
+    const { pruneWorkDoneBelow } = await import('../src/db');
     const h = createKeeperD1();
     const db = h.d1 as KeeperD1;
-    await markWorkDone(db, 84532, '0xab', 'late_ack', ['4', '9', '12']);
-    await markWorkDone(db, 84532, '0xab', 'delivery_proof', ['4']);
-    await markWorkDone(db, 84532, '0xcd', 'late_ack', ['4']);
-    await pruneWorkDone(db, 84532, '0xAB', 'late_ack', ['4', '9']);
+    await markWorkDone(db, 84532, '0xab', 'late_ack', [{ item: '4', block: 10 }, { item: '9', block: 19 }, { item: '12', block: 20 }]);
+    await markWorkDone(db, 84532, '0xab', 'delivery_proof', [{ item: '4', block: 10 }]);
+    await markWorkDone(db, 84532, '0xcd', 'late_ack', [{ item: '4', block: 10 }]);
+    expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack', 20))], 'the read starts at the frontier, before any prune').toEqual(['12']);
+    await pruneWorkDoneBelow(db, 84532, '0xAB', 'late_ack', 20);
+    await pruneWorkDoneBelow(db, 84532, '0xAB', 'late_ack', 20); // a retry is harmless
     expect([...(await listWorkDone(db, 84532, '0xab', 'late_ack'))]).toEqual(['12']);
     expect((await listWorkDone(db, 84532, '0xab', 'delivery_proof')).size, 'another pass untouched').toBe(1);
     expect((await listWorkDone(db, 84532, '0xcd', 'late_ack')).size, 'another Diamond untouched').toBe(1);

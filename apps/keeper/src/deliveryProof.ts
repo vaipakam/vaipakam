@@ -48,7 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
-import { deploymentFloor, getWorkFrontier, indexedThrough, listBudgetDeliveries, listWorkDone, nextFrontier, pruneWorkDone, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, getWorkFrontier, indexedThrough, listBudgetDeliveries, listWorkDone, nextFrontier, pruneWorkDoneBelow, putWorkFrontier, markWorkDone, type BudgetDeliveryRow } from './db';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -71,6 +71,10 @@ const DONE_KIND = 'delivery_proof' as const;
 
 /** What a packet's ingress recorded, as the pass reads it. */
 export interface PacketState {
+  /** Where the packet was remitted from, by the packet's own record. */
+  sourceChainId: number;
+  remitter: Address;
+  remitId: bigint;
   kind: number;
   batchId: Hex;
   dayListHash: Hex;
@@ -225,17 +229,24 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const baseChainId = canonicalChainOf(cfg);
   if (baseChainId === null) return; // the canonical chain funds itself: nothing is delivered to it
 
-  // Every delivery the log holds, less the ones already seen finished: work is
-  // dropped only on the chain's word, never by its age.
-  const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
   // Read from the DONE frontier (#2497 r4): every delivery below it is
   // confirmed finished, so the ledger read is bounded by the open backlog,
   // never by history. Floored at the active Diamond's first block.
   const frontier = await getWorkFrontier(env.KEEPER_DB, chain.id, diamond, DONE_KIND);
-  const all = await listBudgetDeliveries(env.DB, chain.id, Math.max(deploymentFloor(chain.id), frontier));
+  await pruneDoneBehind(env, chain.id, diamond, frontier);
+  // The indexer's watermark is taken BEFORE the ledger read (#2497 r6), so
+  // everything at or below it is already in the snapshot `all` reads; a
+  // window completed after the read can only raise the cursor past rows this
+  // tick never saw, and the frontier must not follow it there.
+  const watermark = await indexedThrough(env.DB, chain.id);
+  const from = Math.max(deploymentFloor(chain.id), frontier);
+  // Every delivery the log holds, less the ones already seen finished: work is
+  // dropped only on the chain's word, never by its age.
+  const done = await listWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND, from);
+  const all = await listBudgetDeliveries(env.DB, chain.id, from);
   const rows = all.filter((r) => !done.has(r.packetHash.toLowerCase()));
   if (rows.length === 0) {
-    await advanceFrontier(env, chain.id, diamond, all, done, new Set(), frontier);
+    await advanceFrontier(env, chain.id, diamond, all, done, new Set(), frontier, watermark);
     return;
   }
 
@@ -243,8 +254,9 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // Packets read as finished are recorded however the tick ends (a failed
   // send, no key to send with), so they are never read again.
   const finished = new Set<string>();
-  const base = byId.get(baseChainId);
-  const baseClient = base ? createPublicClient({ transport: http(base.rpc) }) : null;
+  // The chain each rooted packet was REMITTED from, by the packet's own
+  // record (#2497 r6) — never the canonical chain as configured today.
+  const sources = sourceReader(byId);
   const ctx = buildKeeperContext(env, chain, client as never);
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
@@ -267,7 +279,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
       let plan: DeliveryPlan;
       try {
         // eslint-disable-next-line no-await-in-loop
-        plan = await actionsFor(client, diamond, chain.id, row, packet, base, baseClient);
+        plan = await actionsFor(client, diamond, chain.id, row, packet, sources);
       } catch (err) {
         console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
         continue;
@@ -283,8 +295,19 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
       }
     }
   } finally {
-    await markWorkDone(env.KEEPER_DB, chain.id, diamond, DONE_KIND, [...finished]);
-    await advanceFrontier(env, chain.id, diamond, all, done, finished, frontier);
+    const blockOf = new Map<string, number>();
+    for (const r of all) {
+      const k = r.packetHash.toLowerCase();
+      if (!blockOf.has(k)) blockOf.set(k, r.block);
+    }
+    await markWorkDone(
+      env.KEEPER_DB,
+      chain.id,
+      diamond,
+      DONE_KIND,
+      [...finished].map((item) => ({ item, block: blockOf.get(item) ?? 0 })),
+    );
+    await advanceFrontier(env, chain.id, diamond, all, done, finished, frontier, watermark);
   }
 }
 
@@ -298,32 +321,50 @@ async function advanceFrontier(
   done: ReadonlySet<string>,
   finished: ReadonlySet<string>,
   current: number,
+  /** The indexer's watermark, read BEFORE `all` (#2497 r5/r6). */
+  watermark: number | null,
 ): Promise<void> {
-  // Never past what the indexer has COMPLETELY recorded (#2497 r5): a block
-  // still being ingested may gain a delivery after this read.
   const next = nextFrontier(
     all.map((r) => {
       const k = r.packetHash.toLowerCase();
       return { block: r.block, done: done.has(k) || finished.has(k) };
     }),
     current,
-    await indexedThrough(env.DB, chainId),
+    watermark,
   );
   if (next === current) return;
   try {
     await putWorkFrontier(env.KEEPER_DB, chainId, diamond, DONE_KIND, next);
-    // The items below the new frontier can never be read again: drop their
-    // done rows so the done-set read stays bounded too (#2497 r5).
-    await pruneWorkDone(
-      env.KEEPER_DB,
-      chainId,
-      diamond,
-      DONE_KIND,
-      all.filter((r) => r.block < next).map((r) => r.packetHash.toLowerCase()),
-    );
   } catch (err) {
     console.warn(`[keeper] deliveryProof chain=${chainId}: frontier not saved (${shortErr(err)}); the next tick rereads from ${current}`);
+    return;
   }
+  await pruneDoneBehind(env, chainId, diamond, next);
+}
+
+/** Drop the done rows behind `frontier` — best effort: the prune is keyed on
+ *  the frontier alone, so one that fails is redone by the next tick. */
+async function pruneDoneBehind(env: Env, chainId: number, diamond: Address, frontier: number): Promise<void> {
+  try {
+    await pruneWorkDoneBelow(env.KEEPER_DB, chainId, diamond, DONE_KIND, frontier);
+  } catch (err) {
+    console.warn(`[keeper] deliveryProof chain=${chainId}: done rows not pruned (${shortErr(err)}); retried next tick`);
+  }
+}
+
+/** A client per remitting chain, made on first use. */
+function sourceReader(byId: ReadonlyMap<number, ChainConfig>): (chainId: number) => PublicClient | null {
+  const made = new Map<number, PublicClient>();
+  return (chainId) => {
+    const c = byId.get(chainId);
+    if (!c) return null;
+    let cl = made.get(chainId);
+    if (!cl) {
+      cl = createPublicClient({ transport: http(c.rpc) }) as PublicClient;
+      made.set(chainId, cl);
+    }
+    return cl;
+  };
 }
 
 /** What one delivery still needs, and whether it is already finished. */
@@ -332,14 +373,14 @@ interface DeliveryPlan {
   complete: boolean;
 }
 
-async function actionsFor(
+/** Exported for the tests. */
+export async function actionsFor(
   client: PublicClient,
   diamond: Address,
   chainId: number,
   row: BudgetDeliveryRow,
   packet: PacketState,
-  base: ChainConfig | undefined,
-  baseClient: PublicClient | null,
+  sources: (chainId: number) => PublicClient | null,
 ): Promise<DeliveryPlan> {
   const packetHash = row.packetHash as Hex;
   let batch: BatchProgress | null = null;
@@ -354,11 +395,18 @@ async function actionsFor(
   }
   let rootedDays: bigint[] | null = null;
   if (packet.dayListRoot !== ZERO32) {
-    if (!base || !baseClient) {
-      console.warn(`[keeper] deliveryProof packet=${packetHash}: no RPC for the canonical chain — cannot rebuild its list`);
+    // The reservation lives where the packet says it was remitted from — its
+    // authenticated `remitter` on its `sourceChainId`, under its `remitId`
+    // (#2497 r6). The canonical Diamond configured TODAY may be a fresh deploy
+    // whose remit ids restarted, and reading there would match nothing (or the
+    // wrong reservation) and leave the packet gated forever. A wrong source
+    // cannot pass anyway: the rebuilt root must equal the packet's.
+    const sourceClient = sources(packet.sourceChainId);
+    if (!sourceClient) {
+      console.warn(`[keeper] deliveryProof packet=${packetHash}: no RPC for its source chain ${packet.sourceChainId} — cannot rebuild its list`);
       return { actions: [], complete: false };
     }
-    rootedDays = await rebuildRootedList(baseClient, base.diamond as Address, chainId, BigInt(row.remitId), packet.dayListRoot);
+    rootedDays = await rebuildRootedList(sourceClient, packet.remitter, chainId, packet.remitId, packet.dayListRoot);
     if (!rootedDays) return { actions: [], complete: false };
   }
   const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
@@ -405,15 +453,15 @@ export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly big
  * list that may have been rewritten.
  */
 async function rebuildRootedList(
-  baseClient: PublicClient,
-  baseDiamond: Address,
+  sourceClient: PublicClient,
+  remitter: Address,
   chainId: number,
   remitId: bigint,
   packetRoot: Hex,
 ): Promise<bigint[] | null> {
-  if (remitId === 0n) return null;
-  const r = (await baseClient.readContract({
-    address: baseDiamond,
+  if (remitId === 0n || /^0x0{40}$/i.test(remitter)) return null;
+  const r = (await sourceClient.readContract({
+    address: remitter,
     abi: ABI,
     functionName: 'getRemitReservation',
     args: [remitId],
@@ -475,6 +523,9 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
     res.forEach((r, j) => {
       if (!r || r.status !== 'success') return;
       const p = r.result as {
+        sourceChainId: number;
+        remitter: Address;
+        remitId: bigint;
         kind: number;
         batchId: Hex;
         dayListHash: Hex;
@@ -486,6 +537,9 @@ async function readPackets(client: PublicClient, diamond: Address, hashes: Hex[]
       };
       if (!p.arrivedAt) return;
       out.set(chunk[j].toLowerCase(), {
+        sourceChainId: Number(p.sourceChainId),
+        remitter: p.remitter,
+        remitId: BigInt(p.remitId),
         kind: Number(p.kind),
         batchId: p.batchId,
         dayListHash: p.dayListHash,
