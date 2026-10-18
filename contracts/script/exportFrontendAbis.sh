@@ -387,6 +387,11 @@ FACETS=(
   # offline OFAC diff tool (packages/contracts/scripts/ofac-sanctions-diff.mjs)
   # encodes its `applyUpdate` from this ABI and reads its enumeration.
   "SanctionsList"
+  # #2443 — the bot-proposes, Safe-vetoes delisting timelock (a remover of
+  # SanctionsList) and the attestor that carries RedStone's answer over CCIP.
+  # NOT diamond facets; the delister bot calls them by named ABI export.
+  "SanctionsDelistingTimelock"
+  "SanctionsClearanceAttestor"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined
