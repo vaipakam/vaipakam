@@ -148,5 +148,6 @@
     "kind": "testnet-overlay"
   },
   "ccipMessengerImpl": "0xa567b27f45f6d8660494ef87b3b42209613678d4",
-  "rewardMessengerImpl": "0x17a52c04cfcd922fcea955ca54c095133cda2418"
+  "rewardMessengerImpl": "0x17a52c04cfcd922fcea955ca54c095133cda2418",
+  "sanctionsList": "0x75b29Eaa25dfdaB6477892e59985d4771f5B2FC5"
 }
