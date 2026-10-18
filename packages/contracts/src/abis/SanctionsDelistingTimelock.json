@@ -16,6 +16,10 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "receive",
+    "stateMutability": "payable"
+  },
+  {
     "type": "function",
     "name": "DEFAULT_CLEARANCE_MAX_AGE",
     "inputs": [],
@@ -147,6 +151,32 @@
   },
   {
     "type": "function",
+    "name": "REQUEST_GAS_BASE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "REQUEST_GAS_PER_ACCOUNT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
     "outputs": [],
@@ -177,9 +207,9 @@
     ],
     "outputs": [
       {
-        "name": "gate",
+        "name": "route",
         "type": "uint8",
-        "internalType": "enum SanctionsDelistingTimelock.GateMode"
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       }
     ],
     "stateMutability": "view"
@@ -248,22 +278,17 @@
     ],
     "outputs": [
       {
-        "name": "challenge",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
-        "name": "issuedAt",
+        "name": "requestedAt",
         "type": "uint64",
         "internalType": "uint64"
       },
       {
         "name": "oracleUpdatedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "requestBlock",
         "type": "uint64",
         "internalType": "uint64"
       },
@@ -276,6 +301,19 @@
         "name": "state",
         "type": "uint8",
         "internalType": "enum SanctionsDelistingTimelock.ClearanceState"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "clearanceRoute",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       }
     ],
     "stateMutability": "view"
@@ -305,6 +343,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "discard",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -530,12 +581,12 @@
   },
   {
     "type": "function",
-    "name": "proposalOfChallenge",
+    "name": "proposalOfRequest",
     "inputs": [
       {
-        "name": "challenge",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -575,6 +626,25 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "quoteClearanceRequest",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -640,27 +710,40 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sealClearance",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
     "outputs": [
       {
-        "name": "challenge",
+        "name": "messageId",
         "type": "bytes32",
         "internalType": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "requestCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reservedDelistings",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -803,10 +886,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "challenge",
-        "type": "bytes32",
+        "name": "requestId",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint64"
       },
       {
         "name": "flagged",
@@ -834,10 +917,10 @@
     "name": "ClearanceIgnored",
     "inputs": [
       {
-        "name": "challenge",
-        "type": "bytes32",
+        "name": "requestId",
+        "type": "uint64",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint64"
       },
       {
         "name": "id",
@@ -884,35 +967,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "epoch",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "requestBlock",
+        "name": "requestId",
         "type": "uint64",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ClearanceSealed",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "challenge",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
       },
       {
         "name": "epoch",
@@ -927,10 +985,10 @@
         "internalType": "uint64"
       },
       {
-        "name": "accounts",
-        "type": "address[]",
+        "name": "messageId",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "address[]"
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -1006,6 +1064,31 @@
   },
   {
     "type": "event",
+    "name": "DelistingDiscarded",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "DelistingExecuted",
     "inputs": [
       {
@@ -1021,10 +1104,10 @@
         "internalType": "address"
       },
       {
-        "name": "gate",
+        "name": "route",
         "type": "uint8",
         "indexed": false,
-        "internalType": "enum SanctionsDelistingTimelock.GateMode"
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       },
       {
         "name": "listVersion",
@@ -1218,6 +1301,17 @@
   },
   {
     "type": "error",
+    "name": "AdditionsOutstanding",
+    "inputs": [
+      {
+        "name": "pendingAdditions",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AlreadyProposed",
     "inputs": [
       {
@@ -1274,9 +1368,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "challenge",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
@@ -1301,9 +1395,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "challenge",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
@@ -1320,22 +1414,6 @@
   },
   {
     "type": "error",
-    "name": "ClearanceNotSealed",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestBlock",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ClearanceOutstanding",
     "inputs": [
       {
@@ -1344,44 +1422,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "challenge",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "requestId",
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "expiresAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ClearanceRequestLapsed",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestBlock",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ClearanceRequestPending",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestBlock",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -1447,11 +1493,6 @@
   },
   {
     "type": "error",
-    "name": "LocalGateInUse",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotAContract",
     "inputs": [
       {
@@ -1469,6 +1510,17 @@
         "name": "caller",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotCrossChainRoute",
+    "inputs": [
+      {
+        "name": "route",
+        "type": "uint8",
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       }
     ]
   },
@@ -1548,9 +1600,9 @@
     "name": "OracleFreshnessUnknown",
     "inputs": [
       {
-        "name": "gate",
+        "name": "route",
         "type": "uint8",
-        "internalType": "enum SanctionsDelistingTimelock.GateMode"
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       }
     ]
   },
@@ -1570,9 +1622,9 @@
     "name": "OracleStale",
     "inputs": [
       {
-        "name": "gate",
+        "name": "route",
         "type": "uint8",
-        "internalType": "enum SanctionsDelistingTimelock.GateMode"
+        "internalType": "enum SanctionsDelistingTimelock.Route"
       },
       {
         "name": "lastUpdate",
@@ -1603,6 +1655,38 @@
     "inputs": [
       {
         "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProposerRemoved",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProposerStillAppointed",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposer",
         "type": "address",
         "internalType": "address"
       }
@@ -1657,24 +1741,13 @@
   },
   {
     "type": "error",
-    "name": "RenounceDisabled",
+    "name": "RefundFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "SealTooEarly",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestBlock",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
+    "name": "RenounceDisabled",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1714,6 +1787,28 @@
       },
       {
         "name": "sourceSender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedKind",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedNative",
+    "inputs": [
+      {
+        "name": "from",
         "type": "address",
         "internalType": "address"
       }
