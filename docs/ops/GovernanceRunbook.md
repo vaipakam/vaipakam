@@ -1814,11 +1814,12 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   (`REWARD_DELIVERY_PROOF_ENABLED`): every few minutes it indexes each epoch
   delivery's days and proves the list of each delivery that holds no epoch
   (arming the gate without it makes every funded day wait on a human). That
-  pass is the keeper track's #2516 (specified there: discovery from
-  `getDayDeliveryState` / `getPacketDeliveryProof`, the three routes, the
-  bitmap reconstruction rule below, alerts); it does NOT exist yet, so until
-  it is deployed and verified on that mirror, leave the gate dark — the arm
-  is irreversible and its precondition is that pass (Codex #2489 r13). A mirror past custody era 0 may arm:
+  pass is the keeper's `deliveryProof` (specified in #2516: discovery from
+  `getDayDeliveryState`, the three routes, the bitmap reconstruction rule
+  below, alerts; it ships with #2497 and runs only with
+  `REWARD_DELIVERY_PROOF_ENABLED` set). Until it is deployed AND verified on
+  that mirror, leave the gate dark — the arm is irreversible and its
+  precondition is that pass running there (Codex #2489 r13). A mirror past custody era 0 may arm:
   Base stamps every remittance with the destination's own reported era and a
   retired era's delivery opens its epoch (the custody-era revision), so no
   delivery is held inert. The setter refuses a `fromDay` at or

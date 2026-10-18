@@ -697,8 +697,10 @@ A fresh Diamond is a new epoch. The indexer resets the chain's rows
 (ProjectDetailsREADME, "Deployment Epochs"), and the keeper serves only the
 ACTIVE Diamond of each chain: its cursors and private state are namespaced by
 Diamond or reset on the change (#2497). So nothing in the keeper picks up
-reward-budget remittance work left on a retired Diamond, such as a Pending
-reservation still waiting for its acknowledgement. The retired Diamond stays
+reward-budget remittance work left on a retired Diamond. That covers a Pending
+reservation still waiting for its acknowledgement, and a released one whose
+late delivery has not yet been acknowledged, which leaves its stranded
+recycled share counted as in transit. The retired Diamond stays
 on-chain and its funds stay settleable there, but only by hand.
 
 So drain first, following the rule the #1566 design sets for every transition
@@ -1039,8 +1041,10 @@ keeper deployed today still reads the shared copies of these tables.
 (id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
 operational state nothing outside the keeper reads: `hf_band_state`,
 `keeper_commitment_scan`, `keeper_commitment_day`,
-`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_deployment` (the
-Diamond each chain's private state belongs to) and `keeper_cutover` (this
+`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_work_open` +
+`keeper_work_cursor` (the passes' open-work queue and where its discovery
+resumes), `keeper_deployment` (the Diamond each chain's private state belongs
+to) and `keeper_cutover` (this
 cutover's completion record).
 Its schema is `apps/keeper/migrations/`. Everything another Worker, the app
 or the backup reads stays in `vaipakam-warm` under the indexer's

@@ -177,9 +177,12 @@ then deploy.
 
    `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
    cursors, completion markers, remit-ack log, HF-band edge state, the
-   Diamond each chain's state belongs to (`keeper_deployment`; empty, it
-   adopts the indexer's Diamond and resets nothing) and the cutover's
-   completion record, which nothing else reads. **The archive does not carry
+   Diamond each chain's state belongs to (`keeper_deployment`), the passes'
+   open-work queue and its discovery cursor (`keeper_work_open`,
+   `keeper_work_cursor`; both empty, the passes re-discover from the active
+   Diamond's deploy block and drop each finished item after one on-chain read
+   — never empty one without the other) and the cutover's completion record,
+   which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
    restore it starts EMPTY, exactly as these tables always did (none was
    ever archived; their restore treatment is #1481). Expect the keeper to
@@ -529,6 +532,7 @@ then deploy.
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
+      | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
 
       Capture their **values** in the same offline record as the
       credentials — they are operator state that nothing else preserves.
@@ -1945,8 +1949,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
-   `rewardBudgetRemit`, `remitAck` and `commitmentReport`. This list is the
-   one place the set is written down; every other step here says "every
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport` and `deliveryProof`.
+   This list is the one place the set is written down; every other step here says "every
    gated pass" rather than counting them, because a count goes stale the day
    a pass is added (#2497 r1). `watcher`, `dailyOracleSnapshot` and
    `preGraceWatcher` have no binding of their own, and `liquidityConfidence`
