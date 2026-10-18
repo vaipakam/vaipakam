@@ -60,6 +60,19 @@
         "internalType": "uint256"
       },
       {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getArmingFeeBounds",
+    "inputs": [],
+    "outputs": [
+      {
         "name": "minRate",
         "type": "uint256",
         "internalType": "uint256"
@@ -70,7 +83,7 @@
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",

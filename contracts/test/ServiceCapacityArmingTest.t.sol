@@ -75,6 +75,34 @@ contract ServiceCapacityArmingTest is SetupTest {
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
 
+    /// @dev Codex #2556 r2 — at the 10% CEILING, where rounding mattered most: a
+    ///      grant owing under one unit (9 units) arms nothing and pays nothing (the
+    ///      principal still lands, buying no capacity); 10 units arm and pay 1;
+    ///      19 units pay 1, never above 10%. A zero-principal post that would arm
+    ///      only such a sliver is still refused by name.
+    function test_SubUnitGrant_ArmsNothing_TheFeeNeverExceedsTheCeiling() public {
+        _ready();
+        _f().setArmingFeeRate(LibServiceCapacity.MAX_ARMING_FEE_RATE);
+        (uint8 r, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 9);
+        assertEq(r, LibServiceCapacity.POST_OK, "a post that adds principal is still accepted");
+        assertEq(granted, 0, "9 units owe 0.9 at 10%: nothing armed");
+        assertEq(fee, 0, "nothing paid");
+        uint256 bucketBefore = _bucket();
+        assertEq(_post(SOLVER, 9), LibServiceCapacity.STATUS_OK);
+        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).amount, 9, "the principal lands");
+        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).eligibleAmount, 0, "but buys no capacity");
+        assertEq(_bucket(), bucketBefore, "and nothing reaches the bucket");
+        // one more unit brings the grant to 10, which owes exactly 1
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 1);
+        assertEq(granted, 10, "the earlier sliver arms with it");
+        assertEq(fee, 1, "exactly 10%");
+        assertEq(_post(SOLVER, 1), LibServiceCapacity.STATUS_OK);
+        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).eligibleAmount, 10);
+        assertEq(_bucket(), bucketBefore + 1, "the fee is recycled");
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 9);
+        assertEq(granted, 0, "a further 9 units again owe under one unit: nothing armed");
+    }
+
     /// @dev Codex #2556 r1 — the bounds are enforced where the rate is USED. A
     ///      Diamond refreshed in place keeps the rate the earlier facet accepted
     ///      (its ceiling was 100%), so a stored rate outside [0.5%, 10%] must read
@@ -92,7 +120,7 @@ contract ServiceCapacityArmingTest is SetupTest {
             (uint8 refusal, uint256 fee, , , ) = _f().previewArming(SOLVER, op, 10e18);
             assertEq(refusal, LibServiceCapacity.POST_ARMING_DARK, "an out-of-bounds stored rate previews as dark");
             assertEq(fee, 0, "and quotes no fee");
-            (uint256 rate, , ) = _f().getArmingFee();
+            (uint256 rate, ) = _f().getArmingFee();
             assertEq(rate, 0, "the getter reports the rate in force: none");
             LibServiceCapacity.ArmingBind memory b = _bind(SOLVER); // before the prank (a view call would consume it)
             vm.prank(op);
@@ -103,10 +131,10 @@ contract ServiceCapacityArmingTest is SetupTest {
         TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(lo);
         (uint8 r1, uint256 feeLo, , , ) = _f().previewArming(SOLVER, op, 10e18);
         assertEq(r1, LibServiceCapacity.POST_OK);
-        assertEq(feeLo, Math.mulDiv(10e18, lo, 1e18, Math.Rounding.Ceil), "0.5% of the armed principal");
+        assertEq(feeLo, Math.mulDiv(10e18, lo, 1e18), "0.5% of the armed principal");
         TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(hi);
         (, uint256 feeHi, , , ) = _f().previewArming(SOLVER, op, 10e18);
-        assertEq(feeHi, Math.mulDiv(10e18, hi, 1e18, Math.Rounding.Ceil), "10% of the armed principal");
+        assertEq(feeHi, Math.mulDiv(10e18, hi, 1e18), "10% of the armed principal");
         // an admin re-lights arming from a dark legacy rate with an in-bounds one
         TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(0.5e18);
         _f().setArmingFeeRate(2e16);
@@ -125,7 +153,7 @@ contract ServiceCapacityArmingTest is SetupTest {
         uint256 most = type(uint128).max;
         (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, most);
         assertEq(granted, most, "fixture-live: the post arms the whole knee");
-        assertEq(fee, Math.mulDiv(granted, cap, 1e18, Math.Rounding.Ceil), "10% of the grant, rounded up");
+        assertEq(fee, Math.mulDiv(granted, cap, 1e18), "10% of the grant, rounded down");
         assertLt(fee, granted, "under the ceiling the fee is a fraction of the grant");
     }
     function _ready() internal {
@@ -182,9 +210,11 @@ contract ServiceCapacityArmingTest is SetupTest {
         (refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
         assertEq(refusal, LibServiceCapacity.POST_OK);
         assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit: posts");
-        (uint256 rate, uint256 minRate, uint256 maxRate) = _f().getArmingFee();
+        (uint256 rate, uint256 floor) = _f().getArmingFee();
         assertEq(rate, FEE);
-        assertEq(minRate, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the getter reports the fixed floor");
+        assertEq(floor, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the two-word getter keeps its shape; its floor is the fixed one");
+        (uint256 minRate, uint256 maxRate) = _f().getArmingFeeBounds();
+        assertEq(minRate, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the bounds getter reports the fixed floor");
         assertEq(maxRate, LibServiceCapacity.MAX_ARMING_FEE_RATE, "and the fixed ceiling");
     }
 
@@ -202,27 +232,27 @@ contract ServiceCapacityArmingTest is SetupTest {
         // under the floor: refused by name, nothing written
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, lo - 1, lo, hi));
         _f().setArmingFeeRate(lo - 1);
-        (uint256 rate, , ) = _f().getArmingFee();
+        (uint256 rate, ) = _f().getArmingFee();
         assertEq(rate, 0, "a refused rate writes nothing");
         // the floor itself
         vm.expectEmit(false, false, false, true, address(diamond));
         emit ArmingFeeSet(lo);
         _f().setArmingFeeRate(lo);
-        (rate, , ) = _f().getArmingFee();
+        (rate, ) = _f().getArmingFee();
         assertEq(rate, lo);
         // the ceiling itself, and one over it
         _f().setArmingFeeRate(hi);
-        (rate, , ) = _f().getArmingFee();
+        (rate, ) = _f().getArmingFee();
         assertEq(rate, hi);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, hi + 1, lo, hi));
         _f().setArmingFeeRate(hi + 1);
-        (rate, , ) = _f().getArmingFee();
+        (rate, ) = _f().getArmingFee();
         assertEq(rate, hi, "a refused rate leaves the live one standing");
         // zero is the dark switch, always accepted
         vm.expectEmit(false, false, false, true, address(diamond));
         emit ArmingFeeSet(0);
         _f().setArmingFeeRate(0);
-        (rate, , ) = _f().getArmingFee();
+        (rate, ) = _f().getArmingFee();
         assertEq(rate, 0);
         // admin only
         vm.prank(op);
@@ -547,12 +577,21 @@ contract ServiceCapacityArmingTest is SetupTest {
         assertEq(_eligible(), AT4X - 2, "the armed balance follows the principal down");
     }
 
-    /// @dev The fee rounds UP: no armed principal is ever free.
-    function test_Fee_RoundsUp() public {
-        _ready();
-        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 1);
-        assertEq(granted, 1);
-        assertEq(fee, 1, "1 wei armed at 1% owes 1 wei, not zero");
+    /// @dev Codex #2556 r2 — the fee rounds DOWN (never above the rate), and a grant
+    ///      too small to carry one unit of fee arms nothing, so no armed principal
+    ///      is free. At 1%: 99 units would owe 0.99 and arm nothing; 100 units owe
+    ///      exactly 1; 199 units owe 1 (rounded down, under the rate), never 2.
+    function test_Fee_RoundsDown_AndAGrantThatOwesNothing_ArmsNothing() public {
+        _ready(); // FEE = 1%
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 99);
+        assertEq(granted, 0, "a grant that owes under one unit arms nothing");
+        assertEq(fee, 0, "and pays nothing");
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 100);
+        assertEq(granted, 100);
+        assertEq(fee, 1, "1% of 100 units is exactly 1");
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 199);
+        assertEq(granted, 199);
+        assertEq(fee, 1, "rounded down: never above the rate");
     }
 
     /// @dev The preview names the post's arming refusals: nothing to arm, then OK.

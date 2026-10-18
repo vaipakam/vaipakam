@@ -108,14 +108,22 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
 
     /// @notice The arming fee: the `rate` IN FORCE (0 = arming dark — including a
     ///         stored rate outside the bounds, which posting treats as dark) and
-    ///         the fixed bounds a positive rate must sit inside, so a reader needs
-    ///         no knowledge of the code to see the permitted range.
-    function getArmingFee() external view returns (uint256 rate, uint256 minRate, uint256 maxRate) {
+    ///         the `floor` a positive rate may not sit under. The two-word shape
+    ///         is kept on purpose (Codex #2556 r2): it is the shape the earlier
+    ///         facet returned, so a reader built against either ABI decodes either
+    ///         facet during a rolling refresh. `floor` is now the fixed lower
+    ///         bound; {getArmingFeeBounds} reports both bounds.
+    function getArmingFee() external view returns (uint256 rate, uint256 floor) {
         return (
             LibServiceCapacity.armingFeeRateInForce(LibVaipakam.storageSlot()),
-            LibServiceCapacity.MIN_ARMING_FEE_RATE,
-            LibServiceCapacity.MAX_ARMING_FEE_RATE
+            LibServiceCapacity.MIN_ARMING_FEE_RATE
         );
+    }
+
+    /// @notice The arming fee's fixed bounds: a positive rate sits in
+    ///         [`minRate`, `maxRate`] (0.5%–10% of the newly armed principal).
+    function getArmingFeeBounds() external pure returns (uint256 minRate, uint256 maxRate) {
+        return (LibServiceCapacity.MIN_ARMING_FEE_RATE, LibServiceCapacity.MAX_ARMING_FEE_RATE);
     }
 
     /// @notice The quote for posting `amount` into `operator`'s `role` deposit

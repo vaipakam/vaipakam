@@ -483,7 +483,8 @@ library LibServiceCapacity {
     ///         post arms it and pays for it). A post arms up to the live knee:
     ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
     ///         `granted` is what that newly arms; `fee = ceil(granted × rate / 1e18)`
-    ///         (rounded up, so no armed principal is ever free); `ceilingAfter` is
+    ///         (rounded DOWN, never above the rate; a grant too small to carry one
+    ///         unit of fee arms nothing, so no armed principal is free); `ceilingAfter` is
     ///         the capacity the armed balance buys. A zero-principal post therefore
     ///         arms already-deposited excess. `dark` (no positive rate, or the role's
     ///         curve unset) ⇒ zeros.
@@ -501,11 +502,22 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        // Rounded up, so no armed principal is ever free. The rate in force is
-        // at most {MAX_ARMING_FEE_RATE} and `setCurve` bounds the knee by 2^128,
-        // so the fee is at most a tenth of the grant and the product cannot
-        // overflow.
-        fee = granted == 0 ? 0 : Math.mulDiv(granted, rate, 1e18, Math.Rounding.Ceil);
+        // Rounded DOWN, so the fee never exceeds `rate x grant` — and so never
+        // exceeds the 10% ceiling, on any grant and in any token's decimals
+        // (Codex #2556 r2: round-up made a dust grant pay far above the rate,
+        // a 1-unit grant at 10% paying 100%). "No armed principal is ever free"
+        // is kept by the second rule: a grant too small to carry one unit of
+        // fee at the rate in force arms NOTHING and pays nothing — the principal
+        // still lands, unarmed, buying no capacity, until a later post arms
+        // enough. The threshold is rate-relative (1 / rate units), so it does
+        // not depend on the token's decimals. The rate in force is at most
+        // {MAX_ARMING_FEE_RATE} and `setCurve` bounds the knee by 2^128, so the
+        // product cannot overflow.
+        fee = granted == 0 ? 0 : Math.mulDiv(granted, rate, 1e18);
+        if (fee == 0) {
+            eligibleAfter = before;
+            granted = 0;
+        }
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 

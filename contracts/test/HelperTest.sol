@@ -2691,7 +2691,7 @@ contract HelperTest {
 
     /// #1219 (S-4) — service capacity deposits. Mirrors `DeployDiamond._getServiceCapacitySelectors`.
     function getServiceCapacityFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         selectors[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         selectors[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         selectors[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -2713,6 +2713,7 @@ contract HelperTest {
         selectors[18] = ServiceCapacityFacet.isRotationEpochArchived.selector;
         selectors[19] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
         selectors[20] = ServiceCapacityFacet.previewFreeTierCapacity.selector; // #1219 review
+        selectors[21] = ServiceCapacityFacet.getArmingFeeBounds.selector; // #1219 Codex #2556 r2
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet. Mirrors `DeployDiamond._getOfferMatchIntentSelectors`.
