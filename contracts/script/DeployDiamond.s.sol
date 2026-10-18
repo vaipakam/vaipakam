@@ -3282,7 +3282,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
     function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -3301,13 +3301,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // slice 3 — the arming fee and the rotation epochs.
         s[14] = ServiceCapacityFacet.withdrawArchivedCapacityDeposit.selector;
         s[15] = ServiceCapacityFacet.setArmingFeeRate.selector;
-        s[16] = ServiceCapacityFacet.setArmingFeeFloor.selector;
-        s[17] = ServiceCapacityFacet.getArmingFee.selector;
-        s[18] = ServiceCapacityFacet.previewArming.selector;
-        s[19] = ServiceCapacityFacet.isRotationEpochArchived.selector;
-        s[20] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
+        s[16] = ServiceCapacityFacet.getArmingFee.selector;
+        s[17] = ServiceCapacityFacet.previewArming.selector;
+        s[18] = ServiceCapacityFacet.isRotationEpochArchived.selector;
+        s[19] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
         // #1219 review — the free-tier bucket the backstop and unbound routes charge.
-        s[21] = ServiceCapacityFacet.previewFreeTierCapacity.selector;
+        s[20] = ServiceCapacityFacet.previewFreeTierCapacity.selector;
+        s[21] = ServiceCapacityFacet.getArmingFeeBounds.selector; // #1219 Codex #2556 r2
+        s[22] = ServiceCapacityFacet.getArmingFeeCredit.selector; // #1219 Codex #2556 r7
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170 host split).

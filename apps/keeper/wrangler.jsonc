@@ -111,233 +111,14 @@
   //     and still writes its D1 counter, so unscheduling stops the
   //     confidence state advancing at all.
   //
-  // TO RE-ENABLE, once the CPU work in #1896 is done:
-  //   1. DISARM FIRST — `( cd apps/keeper && wrangler secret put
-  //      KEEPER_ENABLED )`, entering `false` (Codex #1924 r4). Do this
-  //      BEFORE restoring the schedule, and do not assume the hold left
-  //      it off: the binding still exists on the live Worker (verified
-  //      2026-08-24, `secret_text`), a deploy never deletes a secret, and
-  //      a secret's VALUE cannot be read back — so "it should be false"
-  //      is unverifiable, not a check. If it is in fact `true`, the six
-  //      gated passes begin submitting transactions the moment the
-  //      restored schedule propagates, which is one step before step 8
-  //      would have observed anything.
-  //   2. Restore the schedule below (`"crons": ["* * * * *"]`) AND
-  //      COMMIT IT (Codex #1924 r8). An edit that lives only in the
-  //      operator's checkout leaves this file at `[]` on the branch, so
-  //      the next clean-checkout or automated deploy — including the
-  //      `cf-keeper` phase of `deploy-{chain,testnet,mainnet}.sh` —
-  //      re-publishes the empty list and silently unschedules the keeper
-  //      again, AFTER the runbook has declared re-enable successful.
-  //      That is the same inversion the README describes: since #1896 a
-  //      deploy from a clean checkout KEEPS it stopped. The commit is
-  //      what makes the restoration durable, so it belongs with the CPU
-  //      fix rather than being left to whoever ran the procedure.
-  //   3. Confirm a cron trigger is free — the cap is five per account,
-  //      and `docs/ops/CloudflareCronSlots.md` is the one place that
-  //      says what is using them. Confirm it against the ACCOUNT
-  //      (`node .github/scripts/check-cron-slots.mjs --live`), not
-  //      against a comment.
-  //
-  //      This slot is meant to be waiting, and an earlier revision of
-  //      this step cited three other capacity notes as evidence that it
-  //      was (Codex #1924 r9). All three were wrong together: none of
-  //      them could see `vaipakam-offchain-data-archive`, a Worker with
-  //      no source in this repository that has been holding a trigger
-  //      the whole time (#1977). If this step fails, that is the
-  //      likeliest reason, and #1977 carries the sequence to free the
-  //      trigger. Read the outcome from the live check rather than from
-  //      this comment, which cannot know when the cleanup has happened.
-  //
-  //      That is a real problem to resolve here — not something to work
-  //      around by leaving the keeper stopped, and not something to
-  //      settle by reading another comment.
-  //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
-  //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
-  //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare
-  //      `wrangler deploy` at the repo root picks up the ROOT
-  //      `wrangler.jsonc`, which is a different Worker entirely
-  //      (`vaipakam-alpha`) — so the keeper's schedule would be
-  //      untouched while something unrelated got redeployed, and on the
-  //      rollback branches that silently leaves the CPU-exhausting
-  //      schedule live (Codex #1924 r7). The flag is NOT optional
-  //      (Codex #1924 r2 P1). Editing this file changes nothing on its
-  //      own; a schedule reaches Cloudflare only via a deploy. But a
-  //      BARE deploy "will delete all vars before setting those found in
-  //      the Wrangler configuration", and this config declares only
-  //      `TG_BOT_USERNAME`. Every dashboard-managed tuning override —
-  //      `HF_SCALE`, the `LIQ_*` confidence and Tier-3 thresholds,
-  //      `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
-  //      `env.ts`) — would be wiped HERE, at step 4, and step 9 is
-  //      what arms the fund-moving passes. That is liquidation
-  //      behaviour silently reverting to defaults several steps before
-  //      it starts mattering, which is worse than it sounds: nothing
-  //      between the two steps reads those overrides, so the loss is
-  //      invisible until the passes that depend on them are live.
-  //      (This sentence said "one step before step 6" through several
-  //      revisions. Step 6 did not arm anything under that numbering
-  //      either — the reference was stale, and renumbering for the new
-  //      step 6 is what surfaced it. Codex #1978 r15.)
-  //      Capture the live vars first if you have any doubt they are all
-  //      recoverable.
-  //   5. Read the schedule back TRIGGER-AWARE — Settings → Trigger
-  //      Events, or query the Worker's `/schedules` endpoint. A
-  //      mistyped or wrongly-nested key leaves the previous state in
-  //      place, and a quiet `wrangler tail` only proves no tick has
-  //      fired YET.
-  //   6. UPDATE THE AUTHORITY, IN THE SAME SITTING (Codex #1978 r15).
-  //      Arming the keeper converts its reservation into a live
-  //      trigger, and `docs/ops/CloudflareCronSlots.md` still describes
-  //      the state before that. Move the keeper's row to `live` with
-  //      its schedule, change "Live right now" to match, switch the
-  //      label from `**Committed, live plus the keeper's reserve:**` to
-  //      `**Committed, live only:**` — the checker recognises exactly
-  //      those two forms and requires the one matching the table —
-  //      refresh the `Verified:` stamp, re-run
-  //      `node .github/scripts/check-cron-slots.mjs --live` to confirm
-  //      the file and the account agree, and COMMIT those edits. A
-  //      working-tree change that passes `--live` and is never
-  //      committed leaves the branch carrying the pre-re-arm inventory,
-  //      so the next clean checkout restores exactly the staleness this
-  //      step prevents.
-  //
-  //      This step is easy to skip and hard to notice skipped: the
-  //      conversion leaves committed and spare UNCHANGED, so the
-  //      offline gate keeps passing on a file that is now wrong about
-  //      which Workers are live. Only `--live` sees it, and nothing
-  //      runs `--live` on a schedule.
-  //
-  //      `docs/ops/OffChainRestore.md` carries the same step for the
-  //      operator who arrives via that runbook. Both procedures are
-  //      canonical for their own entry point, so this one needed it
-  //      too — adding it there alone left whoever followed THIS file
-  //      leaving the authority stale, which is one procedure fixed and
-  //      its sibling missed.
-  //
-  //      AND ON EVERY ROLLBACK BELOW: if you restore `"crons": []`,
-  //      roll this edit back with it. A rollback that leaves the keeper
-  //      reading `live` puts the authority into precisely the stale
-  //      state this step exists to prevent, with the offline gate still
-  //      green.
-  //   7. Allow the propagation window: Cloudflare documents cron
-  //      updates taking up to 15 minutes to reach every location.
-  //   8. VALIDATE THE UNARMED PASSES FIRST, ACROSS EVERY CADENCE THEY
-  //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
-  //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
-  //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
-  //      before observing a live tick means the seven gated passes can
-  //      submit transactions on an invocation that still dies — the CPU
-  //      fix being incomplete or regressed is exactly the case this
-  //      sequence exists for, so it must be ruled out while the passes
-  //      that move funds are still inert.
-  //      ONE TICK IS NOT ENOUGH HERE. Two of the ungated passes are not
-  //      due every minute: `preGraceWatcher` runs every 15 minutes at
-  //      offset 4, and `dailyOracleSnapshot` only inside the 00:00–00:09
-  //      UTC window. Neither consults `KEEPER_ENABLED` — verified: no
-  //      `passIsArmed` / `isKeeperEnabled` reference in either module,
-  //      and for the snapshot that is deliberate (#1466, declined) — so
-  //      both can and MUST be exercised while still disarmed. Cover a
-  //      full 15-minute cycle, and the daily window, BEFORE step 9.
-  //      Skipping that leaves the worst ordering available: arm at step
-  //      9, then first reach the missed cadence at step 10 up to a day
-  //      later, having let the fund-moving passes submit for that whole
-  //      period on a Worker that then turns out to still die.
-  //      ALSO CHECK THE CHAIN SET, on every tick you accept as evidence
-  //      (Codex #1924 r13). Each tick logs `chains resolved: N — …`.
-  //      Confirm N and the names match the chains this deployment is
-  //      meant to serve. A chain drops out SILENTLY: `readSecret`
-  //      collapses an absent binding or a failing Secrets Store fetch to
-  //      `undefined` (deliberately, so one bad secret cannot abort the
-  //      tick), and `getChainConfigs` then skips any chain with no RPC.
-  //      The per-chain log lines are the only other trace, so a missing
-  //      chain shows up as an ABSENCE — which is exactly what nobody
-  //      reads off a tail. A tick that ends `ok` against four of six
-  //      chains has not validated the CPU cost of six, and the work
-  //      scales with the set: when the binding recovers after step 9,
-  //      the untested load returns and can re-exhaust the budget with
-  //      the fund-moving passes already armed.
-  //      AND REJECT ANY TICK THAT LOGS AN ERROR AT ALL — not a
-  //      particular marker (Codex #1924 r16, widened in r21). Every
-  //      pass catches its own per-chain failures, continues, and still
-  //      ends `done in Nms`, but each spells the failure differently:
-  //      `runLiquidator chain=… err=…`, `liquidator chain=…
-  //      getActiveLoansCount failed`, `preGraceWatcher count failed
-  //      chain=…`, `runLiquidityConfidence chain=… failed:` — and the
-  //      list grows whenever a pass adds a failure path. Naming shapes
-  //      to reject has been incomplete every time it was tried, so the
-  //      rule here is the blanket one: **no `console.error` output from
-  //      any due pass**.
-  //      Over-rejecting is the SAFE direction for this particular
-  //      check, which is why a blanket rule works here and did not for
-  //      the liquidation stand-down in `IncidentRunbook` §3.5. There,
-  //      rejecting too much stranded manual coverage indefinitely; here
-  //      it costs one more minute of waiting for a clean tick. A tick
-  //      whose RPCs failed early did far LESS work than a healthy one,
-  //      so it looks green precisely because it did nothing — worthless
-  //      as CPU evidence in the one direction that matters.
-  //      If it still reports `exceededCpu`: set `"crons": []` again,
-  //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
-  //      active schedule a COMMITTED change, so a rollback that only
-  //      edits the operator's checkout leaves `["* * * * *"]` on the
-  //      branch, and the next clean-checkout or automated deploy
-  //      republishes the known-bad schedule and silently undoes this
-  //      rollback), then
-  //      `( cd apps/keeper && wrangler deploy --keep-vars )` — same
-  //      directory scoping and same flag as step 4, and both matter MORE
-  //      on a rollback, because a rollback is exactly when nobody is
-  //      checking whether the tuning survived or whether the right
-  //      Worker was targeted (Codex #1924 r5, r7). Leave
-  //      `KEEPER_ENABLED` at `false`. That is the rollback, and it costs
-  //      nothing because nothing was armed.
-  //   9. Only then set the `KEEPER_ENABLED` secret to `true`. The
-  //      fund-moving passes stay inert until it is, and `passIsArmed`
-  //      names any binding still blocking each pass, one line per pass
-  //      per tick.
-  //  10. Now validate the GATED passes, again across every cadence they
-  //      run at (Codex #1924 r5 P1). Step 8 has already cleared the
-  //      ungated set; what step 9 newly switched on is the seven gated
-  //      passes, and one armed tick exercises only the
-  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` (5 min,
-  //      offset 2) and `graceDefault` (5 min, offset 3) are gated AND
-  //      staggered, so cover at least one full 5-minute cycle before
-  //      declaring re-enable complete — or profile those passes in
-  //      production by other means.
-  //      A `done in Nms` LINE IS NOT PROOF THE PASS RAN (Codex #1924
-  //      r7). `timedPass` logs it whenever `run()` returns, and a gated
-  //      pass returns immediately from `passIsArmed`. That matters most
-  //      for `rewardBudgetRemit` and `remitAck`, which are gated TWICE —
-  //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — for
-  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`), and for
-  //      `graceDefault` (plus `GRACE_DEFAULT_ENABLED`, which ships UNSET —
-  //      so on a fresh restore this pass is dark by default). Step 9 flips
-  //      only the master gate, so with those flags off, waiting out the
-  //      5-minute cycle produces a reassuring line from a pass that did
-  //      nothing. Read the accompanying `passIsArmed` skip line, which
-  //      NAMES the blocking binding: for each double-gated pass whose flag
-  //      is off in this deployment, record its CPU validation as DEFERRED
-  //      until that flag is armed — do not count the skip as coverage.
-  //      `graceDefault` is the one that sells or transfers collateral, so
-  //      arming it is its own owner decision, never a step of this
-  //      procedure; when it is armed later, validate one full 5-minute
-  //      cycle then, reading its per-loan `submitted` / `skipped` lines.
-  //      Otherwise confirm each tick ends `ok` and that every due pass
-  //      emits its `done in Nms` line — an absent line means the pass
-  //      was still in flight when the invocation ended. If any of it
-  //      fails, roll back BOTH halves: `KEEPER_ENABLED` to `false` first
-  //      (it is now genuinely armed), then `"crons": []` — reverted and
-  //      COMMITTED, per the same reasoning as step 8's rollback — and
-  //      `( cd apps/keeper && wrangler deploy --keep-vars )`.
-  //      Why the split rather than one big validation at the end: every
-  //      pass that CAN be cleared before arming SHOULD be, because the
-  //      cost of discovering the CPU fix is incomplete rises the moment
-  //      the fund-moving passes start submitting.
-  //  11. Clear any checks DEFERRED during the hold. Specifically: if
-  //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
-  //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only
-  //      be satisfied against the agent — the keeper had no invocation
-  //      from which to send. Confirm a `[push] sent channel=…` line from
-  //      THIS Worker now, because an incompatible signer would have
-  //      stayed invisible for the whole hold.
+  // THERE IS NO WORKER RE-ENABLE ANY MORE (#2496; owner decision
+  // 2026-10-15). All keeper runs moved to the always-on machine
+  // (docs/ops/KeeperMachine.md), and this Worker's `scheduled` handler
+  // declines every invocation by name (`src/index.ts`), so restoring a cron
+  // here runs nothing. Keep `"crons": []`. The Worker stays deployed only as
+  // the private database's migration applier (`run deploy`). The procedure
+  // that used to stand here re-scheduled the Worker; it is retired with it,
+  // and its history is in git (#1896, #1924, #1978).
   //
   // The original cadence note, still true and still the target to
   // restore: the watcher is internally tick-rate-aware — each tick
@@ -366,8 +147,7 @@
   //                          which DELETEs expired rows (`db.ts:303`).
   //                          "agent writes" alone read as though the keeper
   //                          only consumed this table)
-  //   - `notify_state`,
-  //     `hf_band_state`     (per-user notify + HF-band dedupe)
+  //   - `notify_state`      (per-user notify dedupe)
   //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and
   //                          written by the scheduled `runPreGraceWatcher`)
   //   - `indexer_cursor`    (READ ONLY — `recordHfBandNotifications`
@@ -383,10 +163,16 @@
   //   - `offers`            (read by dailyOracleSnapshot; NOT by the
   //                          matcher, whose discovery is on-chain)
   //   - `oracle_snapshot_state` (daily snapshot dedupe)
-  //   - `keeper_commitment_*`, `keeper_remit_ack*`, `liquidity_confidence`
-  //                         (commitment scan, remit ack, liquidity probe)
+  //   - `liquidity_confidence` (liquidity probe)
+  //   - `keeper_commitment_reconciled` (reconciled-day rediscovery; the
+  //                          indexer writes it, so it stays shared)
   //
-  // Names verified against apps/indexer/migrations/. `thresholds`,
+  // The keeper's OWN operational tables — `hf_band_state`,
+  // `keeper_commitment_scan`, `keeper_commitment_day`,
+  // `keeper_remit_ack_frontier`, `keeper_remit_ack` — are NOT here any more: they live behind `KEEPER_DB` below (#2450).
+  //
+  // Names verified against apps/indexer/migrations/ (and, for the KEEPER_DB
+  // tables, apps/keeper/migrations/). `thresholds`,
   // `link_codes` and `loan_index_*` were named here and exist under no
   // migration. The three entries above them were verified the other way
   // round — from the live call graph rather than from this list — because
@@ -404,11 +190,42 @@
   // is intentionally untouched until staging is fully validated.
   // See docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3
   // for the staging-vs-primary D1 split.
+  //
+  // TWO databases since #2450, split by who may read the data:
+  //
+  //   - `DB` — the SHARED `vaipakam-warm`, for every table another Worker,
+  //     the app or the nightly backup also reads. Its schema is
+  //     apps/indexer's, which is why its `migrations_dir` names that
+  //     directory explicitly: wrangler defaults every entry to `./migrations`,
+  //     so without it a `wrangler d1 migrations apply vaipakam-warm` typed in
+  //     THIS directory would apply the keeper's private DDL to the shared
+  //     database. Named, the same command applies the indexer's own files —
+  //     the ones that database already records.
+  //   - `KEEPER_DB` — `vaipakam-keeper-db`, the keeper's PRIVATE operational
+  //     state (scan cursors, completion markers, ack log, HF-band edge state,
+  //     its redeploy epoch). Nothing outside this Worker reads it, and the
+  //     indexer and agent have no binding to it, so neither can write the
+  //     keeper's completion records. Separate by trust boundary, the rule
+  //     ops/mesh-watcher already follows (CLAUDE.md, "Cloudflare D1 schema
+  //     discipline"). Schema in apps/keeper/migrations/, applied by the keeper's own
+  //     `deploy` (scripts/deploy-keeper.mjs runs `run migrate` first, then
+  //     verifies) — the keeper is that database's one applier — or alone with
+  //     `pnpm --filter @vaipakam/keeper run migrate`.
+  //
+  // A maintenance build (#2239) omits BOTH entries: the barrier is an empty
+  // `d1_databases`, and the tick declines while either binding is absent.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "vaipakam-warm",
       "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
+      "migrations_dir": "../indexer/migrations",
+    },
+    {
+      "binding": "KEEPER_DB",
+      "database_name": "vaipakam-keeper-db",
+      "database_id": "f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095",
+      "migrations_dir": "migrations",
     },
   ],
 
@@ -444,7 +261,7 @@
 
   // Operator-managed config. TWO CLASSES, and this block used to state
   // only one — it described all of the below as "non-secret config — plain
-  // `vars`", which is wrong for the three arming flags and is the wording
+  // `vars`", which is wrong for the arming flags and is the wording
   // `docs/ops/OffChainRestore.md` names as the incorrect description (§1
   // step 6f for capture, revisited in §7a when re-arming — NOT §6, which is
   // the indexer re-bootstrap).
@@ -492,14 +309,20 @@
   //
   //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
   //                        matcher / liquidity-confidence submit paths,
-  //                        and gates the three flags below as well.
+  //                        and gates the REWARD_* and GRACE_DEFAULT flags
+  //                        below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
   //     (only after the keeper EOA is authorized on-chain) AND the #1222
-  //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
-  //     migration 0044 applied first).
+  //     B2-d2 remit-ACK pass (delivered-backing reservations; its ack tables
+  //     moved from shared migration 0044 to the keeper's private
+  //     `vaipakam-keeper-db`, #2450, whose schema the keeper's deploy applies).
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
+  //   - REWARD_DELIVERY_PROOF_ENABLED — 'true' arms the #1944 / transport-epoch
+  //     delivery pass (mirrors: index epoch days, prove no-epoch day lists).
+  //     Added after the 2026-07-30 readback above, so that readback says
+  //     nothing about it.
   //   - GRACE_DEFAULT_ENABLED — 'true' arms the #2483 time-based default
   //     pass, which submits the permissionless `triggerDefault` for
   //     past-grace loans and so sells or transfers the borrower's

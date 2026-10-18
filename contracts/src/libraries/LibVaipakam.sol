@@ -7943,11 +7943,15 @@ library LibVaipakam {
         ///      rule 2): written by the adapter factory at creation (the keeper it
         ///      names), overridable by the admin for adapters created before this.
         mapping(address => address) adapterOperator;
-        /// @dev Slice 3 — the ARMING FEE's shape: a rate (1e18 = the whole newly-armed
+        /// @dev Slice 3 — the ARMING FEE rate (1e18 = the whole newly-armed
         ///      principal) charged on the principal a post or raise ACTUALLY arms
-        ///      (the part landing below `bondAt4x`), and the floor it may never sit
-        ///      under. `armingFeeRate == 0` ⇒ arming is dark: posting is refused.
+        ///      (the part landing below `bondAt4x`). `armingFeeRate == 0` ⇒ arming
+        ///      is dark: posting is refused. A positive rate sits inside the fixed
+        ///      bounds in `LibServiceCapacity` (0.5%–10%).
         uint256 armingFeeRate;
+        /// @dev RETIRED (#1219, 2026-10-18) — the former mutable arming-fee floor,
+        ///      replaced by the fixed bounds. Never read or written; the slot stays
+        ///      so the Storage layout remains append-only.
         uint256 armingFeeFloor;
         /// @dev Slice 3 — rotation epochs RETIRED by a VPFI token rotation, and the
         ///      token each epoch's principal is denominated in (the live epoch's is
@@ -8107,6 +8111,22 @@ library LibVaipakam {
         ///      the FallbackPending clause of `LibTierExclusion`.
         ///      Appended — the Storage struct is append-only.
         mapping(uint256 => uint256) fallbackVaultCustody;
+        /// @dev #1219 (Codex #2556 r3–r6) — per capacity deposit record
+        ///      (`role → operator → rotation epoch`), the arming fee PREPAID beyond
+        ///      what the record has armed so far, in 1e18ths of one token unit
+        ///      (always < 1e18). Each post charges its share less this credit,
+        ///      rounded UP, and keeps the overpayment here, so no record ever pays
+        ///      below `rate × everything it armed` (no split post and no fresh
+        ///      operator arms anything fee-free) nor more than one smallest unit
+        ///      above it. See `LibServiceCapacity.armingFeeAndCredit`.
+        ///      Keyed by rotation epoch like the record itself: a VPFI token
+        ///      rotation retires the epoch, and with it any credit left there
+        ///      (under one smallest unit of the OLD token, which no post under the
+        ///      new token can use). That sub-unit remainder is forfeited, not
+        ///      refunded — disclosed in the spec (Codex #2556 r8).
+        ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
+        ///      that struct's getter ABI is unchanged. Appended — append-only.
+        mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;
         /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset`,
         ///      the `lenderIntent` key), whether its owner opted it into priority
         ///      routing: a fill the solver's capacity would refuse may then spend

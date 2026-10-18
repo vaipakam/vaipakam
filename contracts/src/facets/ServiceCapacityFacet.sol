@@ -98,23 +98,32 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         return LibServiceCapacity.withdrawArchived(LibVaipakam.storageSlot(), role, msg.sender, epoch);
     }
 
-    /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
-    ///         newly-armed principal; zero keeps arming DARK (posting refused); a
-    ///         positive rate must sit at or above the positive floor.
+    /// @notice Set the arming fee rate (ADMIN; governance later), where 1e18 is the
+    ///         whole newly-armed principal. Zero keeps arming DARK (posting
+    ///         refused); a positive rate must sit inside the fixed bounds of 0.5%
+    ///         to 10% (`ServiceCapacityArmingFeeOutOfBounds` otherwise).
     function setArmingFeeRate(uint256 rate) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibServiceCapacity.setArmingFeeRate(LibVaipakam.storageSlot(), rate);
     }
 
-    /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero,
-    ///         never above the live rate — lift the rate first).
-    function setArmingFeeFloor(uint256 floor) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibServiceCapacity.setArmingFeeFloor(LibVaipakam.storageSlot(), floor);
+    /// @notice The arming fee: the `rate` IN FORCE (0 = arming dark — including a
+    ///         stored rate outside the bounds, which posting treats as dark) and
+    ///         the `floor` a positive rate may not sit under. The two-word shape
+    ///         is kept on purpose (Codex #2556 r2): it is the shape the earlier
+    ///         facet returned, so a reader built against either ABI decodes either
+    ///         facet during a rolling refresh. `floor` is now the fixed lower
+    ///         bound; {getArmingFeeBounds} reports both bounds.
+    function getArmingFee() external view returns (uint256 rate, uint256 floor) {
+        return (
+            LibServiceCapacity.armingFeeRateInForce(LibVaipakam.storageSlot()),
+            LibServiceCapacity.MIN_ARMING_FEE_RATE
+        );
     }
 
-    /// @notice The arming fee's shape: `rate` (0 = arming dark) over `floor`.
-    function getArmingFee() external view returns (uint256 rate, uint256 floor) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.armingFeeRate, s.armingFeeFloor);
+    /// @notice The arming fee's fixed bounds: a positive rate sits in
+    ///         [`minRate`, `maxRate`] (0.5%–10% of the newly armed principal).
+    function getArmingFeeBounds() external pure returns (uint256 minRate, uint256 maxRate) {
+        return (LibServiceCapacity.MIN_ARMING_FEE_RATE, LibServiceCapacity.MAX_ARMING_FEE_RATE);
     }
 
     /// @notice The quote for posting `amount` into `operator`'s `role` deposit
@@ -232,6 +241,17 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         returns (LibVaipakam.ServiceCapacityDeposit memory)
     {
         return LibVaipakam.storageSlot().serviceDeposits[role][operator][rotationEpoch];
+    }
+
+    /// @notice The arming fee one deposit record has PREPAID beyond what it has
+    ///         armed so far, in 1e18ths of one token unit (always under one unit,
+    ///         i.e. < 1e18). A post spends this credit against its own share before
+    ///         charging the rest rounded up, so it is why a later post can quote a
+    ///         smaller fee, or none ({LibServiceCapacity.armingFeeAndCredit}).
+    ///         Kept beside the record, so {getCapacityDeposit}'s shape is unchanged
+    ///         (Codex #2556 r7).
+    function getArmingFeeCredit(uint8 role, address operator, uint64 rotationEpoch) external view returns (uint256) {
+        return LibVaipakam.storageSlot().armingFeePrepaid[role][operator][rotationEpoch];
     }
 
     /// @notice The escrow holder, the live rotation epoch, and the principal the

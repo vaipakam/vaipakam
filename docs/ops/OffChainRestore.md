@@ -172,7 +172,26 @@ then deploy.
 
    ```bash
    wrangler d1 create vaipakam-warm
+   wrangler d1 create vaipakam-keeper-db
    ```
+
+   `vaipakam-keeper-db` is the keeper's PRIVATE database (#2450): its scan
+   cursors, completion markers, remit-ack log, HF-band edge state, the
+   Diamond each chain's state belongs to (`keeper_deployment`), the passes'
+   open-work queue and its discovery cursor (`keeper_work_open`,
+   `keeper_work_cursor`; both empty, the passes re-discover from the active
+   Diamond's deploy block and drop each finished item after one on-chain read
+   — never empty one without the other) and the cutover's completion record,
+   which nothing else reads. **The archive does not carry
+   it** — the backup Worker binds only the shared database — so after a
+   restore it starts EMPTY, exactly as these tables always did (none was
+   ever archived; their restore treatment is #1481). Expect the keeper to
+   rescan its remit-ack and commitment frontiers from the start, re-send an
+   acknowledgement for each reservation still Pending on Base (paid CCIP
+   messages, rate-limited per reservation from then on), and re-mint one
+   HF-band inbox row per currently-degraded loan. The cutover record is not needed: the
+   restored shared copies of the moved tables are empty, and the deploy asks
+   for the record only while they hold rows.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
@@ -194,9 +213,17 @@ then deploy.
    `database_id` to the new IDs from step 3. The bound paths:
 
    - `apps/indexer/wrangler.jsonc`     → vaipakam-warm
-   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm (`DB`) **and**
+     vaipakam-keeper-db (`KEEPER_DB`)
    - `apps/agent/wrangler.jsonc`       → vaipakam-warm
    - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
+
+   The keeper's private database is pinned by id in one more place, like
+   the shared one below: `PRIVATE_DATABASES` in
+   `apps/indexer/scripts/lib/d1-workers.mjs`. Set its `id` to the new
+   `vaipakam-keeper-db` uuid too — `check-d1-name-consistency` refuses a
+   tree whose `KEEPER_DB` binding and that pin disagree, and the live-binding
+   gate checks the serving keeper against the pinned id.
 
    **And one place that is not a `wrangler.jsonc`** (#2267): the cutover
    tooling pins the database by **id** as well as name, in
@@ -501,10 +528,11 @@ then deploy.
 
       | Flag | While unset | Arms |
       |---|---|---|
-      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the three flags below as well |
+      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` and `GRACE_DEFAULT_ENABLED` flags below as well |
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
+      | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
 
       Capture their **values** in the same offline record as the
       credentials — they are operator state that nothing else preserves.
@@ -520,10 +548,14 @@ then deploy.
       §7a, after the smoke test, and is deliberately the last thing that
       happens before the backup writer.
 
-7. Apply migrations:
+7. Apply migrations — the shared schema from `apps/indexer`, and the
+   keeper's private schema from `apps/keeper` (#2450). The keeper's
+   `deploy` would apply the second itself; it is applied here so the
+   restore order stays explicit.
 
    ```bash
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-warm --remote )
+   ( cd apps/keeper     && wrangler d1 migrations apply vaipakam-keeper-db --remote )
    ```
 
 8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
@@ -637,8 +669,9 @@ then deploy.
    > `apps/agent` declare `"crons": ["* * * * *"]`, so a
    > plain `wrangler deploy` here arms every-minute scheduled work against a
    > database that §§4–6 have not restored or verified yet. **The keeper is
-   > the exception and needs no action:** it commits `"crons": []` under
-   > #1896, so deploying it arms nothing — do not "fix" that empty list
+   > the exception and needs no action:** it commits `"crons": []` — first
+   > under #1896, and for good since #2569 moved the keeper onto its own
+   > machine — so deploying it arms nothing; do not "fix" that empty list
    > here, and do not read the resulting quiet as a successful restore.
    > Concretely: the
    > indexer starts writing before §6 resets its cursor; the keeper's alert
@@ -652,8 +685,8 @@ then deploy.
    >
    > Same hazard the archive Worker gets its own warning for below, and the
    > same remedy: do not let a cron run before the data it reads is real.
-   > For the **indexer and the agent** — not the keeper, which already
-   > commits an empty list under #1896 and must stay that way — set the
+   > For the **indexer and the agent** — not the keeper, whose empty list
+   > is permanent (#2569) — set the
    > trigger list empty for this deploy —
    >
    > ```jsonc
@@ -709,13 +742,15 @@ then deploy.
    > is that the schedules stay off until each one's data is verified.
    >
    > **The keeper is NOT in that restore, and this is the sentence most
-   > likely to be skimmed.** Its schedule is not "off for the restore" and
-   > waiting to come back — it is off permanently until #1896's CPU work
-   > lands, because the Worker was being terminated for exceeding CPU on
-   > nearly every invocation. Restoring it here would re-arm an
-   > every-minute pass on the one Worker holding a transaction-signing
-   > key. Route it through §7a branch A, which covers this deliberately;
-   > do not treat it like the agent.
+   > likely to be skimmed.** Its Worker has no schedule to put back: since
+   > #2569 the keeper runs only on the always-on machine
+   > (`docs/ops/KeeperMachine.md`), its `wrangler.jsonc` keeps
+   > `"crons": []` for good, and the Worker's `scheduled` handler declines
+   > every tick it is given. Re-arming a Worker schedule here would spend a
+   > trigger slot on a runner that does nothing — or, on an older build,
+   > start an every-minute pass on a Worker holding a transaction-signing
+   > key. The keeper comes back on its machine in §7a step 3, which covers
+   > this deliberately; do not treat it like the agent.
 
    > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
@@ -1461,13 +1496,21 @@ from the archive. Why:
   restore path.
 
 ```bash
+# FIRST, the keeper's PRIVATE database (#2450): the HF-band state is
+# producer state for the inbox rows the shared command below clears, and
+# it lives in vaipakam-keeper-db now, not in the shared database. Run it
+# BEFORE the shared command — see "notifications is cleared with its
+# producer state" below for why the order matters.
+( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM hf_band_state" )
+```
+
+```bash
 # Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
-DELETE FROM hf_band_state; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
@@ -1535,7 +1578,7 @@ boundary is stated honestly** (#1450 r33). The table has THREE
 producer classes, and "the replay regenerates it" is true of only
 one: chain-event rows come back from the block-zero replay; the
 keeper's HF-band rows come back only as *current-state* rows, and
-only because `hf_band_state` is cleared in the same command — with
+only because `hf_band_state` is cleared in the same step — with
 the state emptied, every loan reads as previously-healthy and the
 keeper's first tick re-derives one fresh notification per
 currently-degraded loan (day-bucketed dedup bounds this; it is
@@ -1549,6 +1592,25 @@ attacker may have written. Clearing `notifications` while LEAVING
 `hf_band_state` would be the worst combination: the state says
 "already notified" about rows that no longer exist, and current
 degradations go silent.
+
+**Two databases, so two commands, and the ORDER is the safeguard**
+(#2450). `hf_band_state` is keeper-private now and lives in
+`vaipakam-keeper-db`; D1 cannot clear tables in two databases in one
+command, so the pair is no longer atomic. Clear the private state FIRST,
+as the fences above do. If the shared command then fails, the state is
+empty while the inbox rows remain — the keeper's next tick re-derives one
+row per degraded loan and the day-bucket dedup absorbs it, the benign
+direction. The reverse order, interrupted, leaves exactly the worst
+combination above. Re-run whichever command did not complete before
+moving on.
+
+**Before the keeper's private database is live** — the deployed keeper's
+config has no `KEEPER_DB` binding yet, because the one-time cutover in
+`docs/ops/DeploymentRunbook.md` ("Keeper private D1 — one-time cutover")
+has not run — the keeper still reads the SHARED `hf_band_state`. In that
+state skip the private command and add `DELETE FROM hf_band_state;` to the
+shared one instead; clearing the private copy would empty a table the
+deployed keeper never reads.
 
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
@@ -1625,11 +1687,13 @@ there.)
 
 ## 7a. Re-arm the keeper and agent — schedules first, then the flags
 
-Everything up to here has run with `apps/keeper` and `apps/agent` deployed
-but never scheduled (§1 step 9). This is where that ends. The order below is
-the point of the section: it moves from passes that only read, to passes
-that message users, to passes that sign transactions — so a mistake is
-caught at the cheapest stage.
+Everything up to here has run with `apps/agent` deployed but never
+scheduled (§1 step 9), and with no keeper running anywhere. This is where
+that ends. The order below is the point of the section: it moves from passes
+that only read, to passes that message users, to passes that sign
+transactions — so a mistake is caught at the cheapest stage. The keeper is
+restored on its machine in step 3; its Worker keeps `"crons": []` for good
+(#2569).
 
 1. **Restore the AGENT's schedule and redeploy** — not the keeper's; see the
    note below, and step 3 for the keeper. (This step said "both schedules"
@@ -1639,25 +1703,26 @@ caught at the cheapest stage.
    and retention passes read and message only. Expect the first tick within
    a minute.
 
-   > **The keeper's schedule is NOT read-only, so it is not restored here.**
-   > `runDailyOracleSnapshot` checks only that `KEEPER_PRIVATE_KEY` is
-   > present and then calls `writeContract` — it does **not** consult
-   > `KEEPER_ENABLED`. Restoring the keeper cron therefore arms a
+   > **The keeper's tick is NOT read-only, so the keeper is not started
+   > here.** `runDailyOracleSnapshot` checks only that `KEEPER_PRIVATE_KEY`
+   > is present and then calls `writeContract` — it does **not** consult
+   > `KEEPER_ENABLED`. Starting the keeper therefore arms a
    > transaction-signing pass immediately, from a key this restore has just
-   > re-uploaded, before anything has verified the signing configuration.
-   > If the schedule is restored during 00:00–00:09 UTC with no
-   > current-day `oracle_snapshot_state` row, it broadcasts on the first
-   > tick. Treating the keeper tick as "reads and alerts only" was wrong —
-   > that is true of its *other* passes, not of this one. Its schedule goes
-   > back in step 3, together with the signing configuration it implies.
-   > Gating that pass behind `isKeeperEnabled` like every other signing
-   > pass was tracked as #1466 and has been **declined** (owner decision
-   > 2026-08-03): the snapshot is a public good rather than an autonomous
-   > risk-taking action — anyone may call `captureDailyPriceSnapshot`
-   > permissionlessly — and gating it would leave holes in the price series
-   > whenever the keeper is disabled for an unrelated reason. So the
-   > behaviour above is permanent, not pending a fix. To make a window
-   > genuinely write-free, empty the Worker's cron list.
+   > put back, before anything has verified the signing configuration. If
+   > it starts during 00:00–00:09 UTC with no current-day
+   > `oracle_snapshot_state` row, it broadcasts on the first tick. Treating
+   > the keeper tick as "reads and alerts only" was wrong — that is true of
+   > its *other* passes, not of this one. The keeper is started in step 3,
+   > on its machine, together with the signing configuration that implies;
+   > its Worker has no schedule to restore (#2569). Gating that pass behind
+   > `isKeeperEnabled` like every other signing pass was tracked as #1466
+   > and has been **declined** (owner decision 2026-08-03): the snapshot is
+   > a public good rather than an autonomous risk-taking action — anyone may
+   > call `captureDailyPriceSnapshot` permissionlessly — and gating it would
+   > leave holes in the price series whenever the keeper is disabled for an
+   > unrelated reason. So the behaviour above is permanent, not pending a
+   > fix. To make a window genuinely write-free, stop the machine's service
+   > (`KeeperMachine.md` §6).
 
 2. **Watch one full agent tick before going further.**
 
@@ -1671,362 +1736,148 @@ caught at the cheapest stage.
    this moment — if the restore is long enough that state has gone stale,
    expect a burst.
 
-3. **Only then restore the keeper — schedule and flags together**, from
-   the offline record captured in §1 step 6f. Both arm signing from a real
-   key (the schedule via `runDailyOracleSnapshot`, the flags via everything
-   else), so they belong at the same, last step rather than being split
-   across a "safe" and an "arming" half that does not exist.
+3. **Only then restore the keeper — on the machine, disarmed first, armed
+   last**, from the offline record captured in §1 step 6f.
 
-   > **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-   > `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-   > was terminated for exceeding CPU on ~100% of invocations.
-   >
-   > **This step is therefore SPLIT.** Branch **A** is the whole of it while
-   > the hold is active; branch **B** — arming `KEEPER_ENABLED` and restoring
-   > the schedule — is **deferred until #1896's CPU work has landed**. Do not
-   > read on past A and carry out B because it is the next thing on the page:
-   > that re-arms a Worker known to exhaust its CPU, and with it every
-   > fund-moving pass.
+   > **Since #2569 the keeper's ticks run on the always-on machine**
+   > ([`KeeperMachine.md`](KeeperMachine.md)), and the Worker's `scheduled`
+   > handler declines every invocation it gets. So NOTHING in this restore
+   > restores a keeper cron: `"crons": []` stays committed and deployed, and
+   > the Worker is deployed at all only because its deploy is the private
+   > database's one migration applier (`apps/keeper/scripts/deploy-keeper.mjs`).
+   > Earlier revisions of this step carried a two-branch procedure (a #1896
+   > hold, then a schedule restore with cron-slot bookkeeping, a propagation
+   > window and `wrangler tail`); every one of those actions would now either
+   > do nothing or spend a trigger slot on a Worker that declines the tick.
+   > `CloudflareCronSlots.md` keeps the keeper row exactly as it is.
 
-   Before deploying: confirm the keeper EOA is the address you expect and
-   is funded on every chain it submits from.
+   Before anything: confirm the keeper EOA is the address you expect and is
+   funded on every chain it submits from.
 
-   #### A. During the hold — the only keeper actions in this step
-
-   Deploy so the script and bindings are current. Nothing else.
+   **A. Deploy the Worker — as the applier, nothing more.**
 
    ```bash
-   ( cd apps/keeper && wrangler deploy --keep-vars )
+   ( cd apps/keeper && pnpm run deploy )
    ```
 
-   Then **stop here** and record the hold in the restore log. Do not arm
-   `KEEPER_ENABLED`, and do not put a schedule back.
-
-   **Skip step 4 entirely — it cannot be satisfied while the hold is
-   active, and it is not a step to "wait out".** Step 4 confirms the flags
-   *from a tick* and holds the restore incomplete until all seven gated passes
-   emit. With `"crons": []` there is never a tick, so an operator following
-   the numbered order lands in a wait that cannot end. A quiet tail here is
-   the expected state, not a pending check.
-
-   **Completion criterion for branch A** — the keeper part of this restore is
-   DONE when all three hold:
-
-   1. The deploy above succeeded, confirmed **in keeper scope**:
-
-      ```bash
-      ( cd apps/keeper && wrangler deployments list | head )
-      ```
-
-      The `cd` is load-bearing and the subshell above does not carry over —
-      it exits, leaving you at the repository root. There is NO wrangler
-      config there any more: the root `wrangler.jsonc` named
-      `vaipakam-alpha` and was deleted with that Worker's source in #1854.
-      So the old failure mode — silently reading another Worker's history —
-      is gone; run bare from the root now and wrangler simply has no config
-      to act on. Supply the context explicitly: `--cwd apps/keeper` or
-      `--name vaipakam-keeper` do the same job as the `cd`.
-   2. A trigger-aware readback shows **no** schedule — the `/schedules`
-      query later in this step, expected to return an **empty
-      `result.schedules` ARRAY**, not an empty `result`. That endpoint
-      always returns `result` as an object, `{"schedules": []}` when
-      nothing is armed, so "empty `result`" describes a response shape the
-      API does not produce — an operator checking for it during a recovery
-      would read the correct held state as a broken deployment and go
-      looking for a fault that is not there. An empty array is the pass
-      condition here; a non-empty one is what branch B requires instead.
-
-      Branch B's step 5 already said this, and said that an earlier
-      revision of ITS line had the same error. The correction was made once
-      and applied to one of the two branches that carry the same readback —
-      which is the shape #1977 is about, in the runbook rather than in a
-      count.
-   3. The hold is recorded in the restore log, naming #1896, together with
-      the checks deferred by it: every step-4 flag confirmation, and the
-      Push-rotation check in `docs/ops/IncidentRunbook.md` step 6 if
-      `PUSH_CHANNEL_PK` was rotated (the keeper has no invocation from which
-      to send while unscheduled).
-
-   Then continue at the step AFTER 4. Those deferred checks are cleared by
-   branch B's final step, not forgotten.
-
-   #### B. After the hold lifts — #1896's CPU work landed, not before
-
-   Everything from here to the end of this step is branch B. Run it only once
-   the hold is over.
-
-   **Follow the ORDER below; it is not the order this document used to
-   give.** An earlier revision of branch B armed `KEEPER_ENABLED` first and
-   restored the schedule after it — the exact inverse of the sequence kept
-   beside the empty list in `apps/keeper/wrangler.jsonc`, and it skipped the
-   production validation entirely. Arming before a schedule exists means the
-   seven fund-moving passes begin submitting on the FIRST tick after the
-   schedule lands, on a Worker whose CPU fix has not been observed working.
-   The whole point of the canonical order is that everything provable while
-   the passes are inert gets proved first.
-
-   That sequence in `wrangler.jsonc` is the authority and carries the
-   reasoning for each step; this is its order, with the restore-specific
-   detail attached:
-
-   1. **Confirm `KEEPER_ENABLED` is `false` — by SETTING it false, not by
-      assuming.** It is a `secret_text` binding (see below): a deploy never
-      deletes a secret and its value cannot be read back, so "it should be
-      false" is unverifiable. `( cd apps/keeper && wrangler secret put
-      KEEPER_ENABLED )`, enter `false`.
-   2. Restore `"crons": ["* * * * *"]` in `apps/keeper/wrangler.jsonc` **and
-      commit it** — an edit living only in your checkout leaves `[]` on the
-      branch, and the next clean-checkout deploy re-unschedules the keeper
-      after this procedure has declared success.
-   3. Confirm a cron trigger is free on the FRESH account — cap is five per
-      account. Check the ACCOUNT, not a comment.
-
-      **Do NOT run `check-cron-slots.mjs --live` here.** That compares an
-      account against `CloudflareCronSlots.md`, and the authority describes
-      the OLD account. On the fresh account the comparison cannot pass and
-      says nothing about capacity: `vaipakam-offchain-data-archive` has no
-      source in this repository and is never deployed here at all, and
-      `vaipakam-offchain-data-warm` is deliberately deferred to §7b. Both
-      would be reported `INVENTORY ONLY` and the command would exit non-zero
-      however much room the account has — so branch B could never clear its
-      own prerequisite. Reconciling the authority is a §7b-or-later job, once
-      the fresh account is the real one.
-
-      What this step needs is the raw count, so ask for that directly:
-
-      **Re-read the token first.** The prerequisites `unset CF_API_TOKEN`
-      after their account check, so following branch B in order arrives here
-      with the variable gone: under the `set -u` this block enables, the very
-      first `cf` call aborts. That is a failure of the *procedure*, not of the
-      account, and an operator reads it as the latter. Codex #1978 r41 found
-      the same defect at §7b and the re-prompt was added there; this is the
-      earlier of the two uses and it was missed — the sweep fixed the instance
-      it was shown rather than every site the `unset` governs.
-
-      ```bash
-      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
-      ```
-
-      ```bash
-      ( set -euo pipefail
-        # Token on STDIN, never in argv (Codex #1978 r40) — the rule this
-        # runbook already states for its other Cloudflare reads. `-H` puts the
-        # restore-scoped token in `/proc/<pid>/cmdline`, which is world-readable,
-        # for the lifetime of every request in the loop below; `-K -` puts it in
-        # the config curl reads from stdin. `fail`, `silent` and `show-error`
-        # are the config spellings of `-f`, `-s` and `-S`, so the fail-closed
-        # behaviour described under this block is unchanged.
-        cf() {
-          printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nfail\nsilent\nshow-error\n' \
-            "$1" "$CF_API_TOKEN" | curl -K -
-        }
-        api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
-        ok() { jq -e 'if .success then . else error("Cloudflare reported failure") end'; }
-
-        # CAPTURE FIRST. `for x in $(...)` swallows the substitution's status
-        # even under `set -e`, so a failed read would fall through the loop and
-        # print a count of zero.
-        scripts=$(cf "$api/workers/scripts?per_page=100" | ok | jq -r '.result[].id') \
-          || { echo "FAILED to read the account's Workers - do NOT treat this as capacity" >&2; exit 1; }
-
-        used=0
-        for s in $scripts; do
-          n=$(cf "$api/workers/scripts/$s/schedules" | ok | jq -r '(.result.schedules // []) | length') \
-            || { echo "FAILED to read schedules for $s" >&2; exit 1; }
-          [ "$n" -gt 0 ] && echo "$s: $n" >&2
-          used=$(( used + n ))
-        done
-        echo "triggers in use: $used of 5" )
-      ```
-
-      The keeper needs one of the five. If `used` is already 5, stop and free
-      one before deploying — a deploy over the cap fails with error 10072 and
-      leaves the keeper unscheduled.
-
-      **This has to FAIL CLOSED, which is why it is not a one-liner** (Codex
-      #1978 r35). An expired token, a wrong account id, or any Cloudflare
-      error makes `.result` null; a plain `curl -sS | jq -r` then prints
-      nothing, the loop body never runs, and a count of `0` is reported —
-      telling the operator every trigger is free at precisely the moment the
-      read failed. `fail` in curl's config (the `-f` of the argv form) turns an
-      HTTP error into a non-zero exit,
-      `jq -e` on `.success` catches an API-level failure that still returned
-      200, and `set -euo pipefail` makes either abort the subshell instead of
-      falling through to a reassuring number.
-
-      **`set -e` alone is not enough, which is why the list is captured into a
-      variable first** (Codex #1978 r36). Bash does not apply `errexit` to a
-      command substitution used as a `for` word list: written as
-      `for s in $(cf ... | jq ...)`, a failed read expands to nothing, the loop
-      body never runs, and the subshell reports `triggers in use: 0 of 5` and
-      exits 0. Verified by reproducing exactly that. Assigning to `scripts`
-      first makes the failure the assignment's, where `||` can catch it.
-
-      **Keep `CF_API_TOKEN` set from the prompt above until the end of this
-      section, then `unset` it.** The schedule readback in step 5 expands the
-      same variable and made the same assumption; a re-prompt placed *after*
-      the command that needs it — which is what this parenthetical used to be
-      — cannot help an operator whose shell has already aborted.
-   4. Deploy from the keeper's directory, with the flag — the command shown
-      in branch A above.
-   5. Read the schedule back trigger-aware — the `/schedules` query below.
-      **A non-empty `result.schedules` ARRAY is the pass condition**, not a
-      non-empty `result`. That endpoint always returns `result` as an object
-      — `{"schedules": []}` when nothing is armed — so "non-empty result" is
-      true of the exact missing-trigger state this step exists to reject. An
-      earlier revision of this line said `result`, and the detailed check
-      further down was already correct.
-   6. **Update the authority, in the same sitting.** Arming the keeper
-      converts its reservation into a live trigger, and
-      [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still describes the
-      state before that. Move the keeper row to `live` with its schedule,
-      change "Live right now" to match, switch the "Committed" label from
-      `**Committed, live plus the keeper's reserve:**` to
-      `**Committed, live only:**` — the checker recognises exactly those two
-      forms and requires the one matching the table — and refresh the
-      `Verified:` stamp. **Then COMMIT those edits**, for the reason step
-      2 gives about the schedule: a working-tree change that passes `--live`
-      and is never committed leaves the branch carrying the pre-re-arm
-      inventory, so the next clean checkout restores exactly the staleness
-      this step exists to prevent.
-
-      This step is easy to skip and hard to notice skipped: the conversion
-      leaves the derived totals unchanged, so the offline CI check keeps
-      passing on a file that is now wrong about which Workers are live. Only
-      `--live` sees it, and nothing runs `--live` on a schedule.
-
-      **So run it here, on the existing-account path, before you commit the
-      stamp** (Codex #1978 r47). The paragraph above says only `--live` can
-      catch this and the step never asked anyone to run it — a stamp is a
-      claim that the file was checked against the account, and refreshing one
-      without checking is the defect this whole document is about, performed
-      by the procedure that exists to prevent it. It also catches a row that
-      went stale elsewhere while nobody was looking, which is the only
-      opportunity anything has to notice.
-
-      ```bash
-      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
-      CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
-        node .github/scripts/check-cron-slots.mjs --live
-      unset CF_API_TOKEN
-      ```
-
-      **On the fresh-account branch, do the edit here and the `--live`
-      confirmation in §7b** (Codex #1978 r35). Step 3 explains why `--live`
-      cannot pass against the fresh account before then: the authority still
-      describes the old one, and lists Workers that are not deployed here yet.
-      Requiring the confirmation at this point would make this step
-      impossible to complete rather than merely tedious — the bookkeeping is
-      still owed now, but the account-versus-file check has to wait until the
-      account is complete.
-
-   7. Allow the propagation window (Cloudflare documents up to 15 minutes).
-   8. **Validate the still-disarmed passes first**, across every cadence they
-      run at — a full 15-minute cycle for `preGraceWatcher`, the 00:00–00:09
-      UTC window for `dailyOracleSnapshot` — checking the `chains resolved:
-      N — …` line on every tick you accept, and rejecting any tick that logs
-      `console.error` at all. Roll back here if it still reports
-      `exceededCpu`; nothing is armed, so it costs nothing.
-   9. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
-      further down this step.
-  10. Validate the gated passes, again across every cadence, including one
-      full 5-minute cycle for `rewardBudgetRemit` and, if it was armed, for
-      `graceDefault` (it runs at :03 of every 5).
-  11. Clear the checks branch A deferred — step 4's flag confirmations, and
-      the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
-      hold.
-
-   The rest of this step is the restore-specific detail those numbered items
-   refer to.
-
-   **How they are actually held, verified against the live deployment
-   (2026-07-30) — because this document previously guessed, and guessed
-   wrong.** On `vaipakam-keeper`, `KEEPER_ENABLED` is a **`secret_text`**
-   binding (a per-Worker secret, set with `wrangler secret put`), NOT a var.
-   `KEEPER_PRIVATE_KEY` is a `secrets_store_secret`. `TG_BOT_USERNAME` is the
-   only genuine `plain_text` var. `REWARD_REMIT_ENABLED` and
-   `REWARD_COMMIT_ENABLED` are **absent** — which leaves THREE scheduled
-   passes dark, not two: `rewardBudgetRemit` and `remitAck` both gate on
-   `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`.
-   Reading the two flag names as two duties misses the remit-ACK one.
-   `GRACE_DEFAULT_ENABLED` (#2483) ships unset, so `graceDefault` is dark
-   too unless an owner armed it — check the offline record, not the
-   default, to know which state to restore.
-
-   `apps/keeper/wrangler.jsonc` used to describe all three flags as
-   "operator-managed vars (non-secret config — plain `vars`)", and this
-   section warned against trusting that comment. **#2223 corrected it**
-   (closing #1465): it now names them as `secret_text` and carries the
-   decision not to move them into `vars`. The readback in step 4 remains the
-   authority for what is actually set — a comment states the mechanism, never
-   the live value.
-
-   They are restored **the way they are held** — `wrangler secret put`, not
-   `--var` and not the committed `vars` block. The commands are below, at
-   **their two different points in the order**: the disarm is branch B step
-   1, the arm is branch B step 9, and the schedule restore sits between
-   them. They are printed in that order here deliberately — an earlier
-   revision printed the arm first, and reading straight down it armed the
-   Worker before any tick had been observed.
-
-   **Branch B step 1 — disarm, before anything else.**
-
-   ```bash
-   ( cd apps/keeper
-     wrangler secret put KEEPER_ENABLED )     # prompts; enter: false
-   ```
-
-   **Branch B steps 2 and 4 — restore the keeper's schedule; nothing else in
-   this document does.** §1 step 9 replaced it with `"crons": []`, §7a step 1
-   restores only the *agent's* (deliberately: the keeper's schedule signs, so
-   it is armed last), and the indexer's is restored in §6. `wrangler secret
-   put` writes a secret; it does not register trigger events. Without this a
-   post-hold restore finishes with every flag correct and every keeper tick
-   stopped — liquidation, matching, remittance, commitment reporting and the
-   daily snapshot all silently dead, with the settings readback showing green.
-
-   ```bash
-   ( cd apps/keeper
-     # put "triggers": { "crons": ["* * * * *"] } back in wrangler.jsonc
-     # — and COMMIT that edit, or the next clean-checkout deploy undoes it
-     wrangler deploy --keep-vars
-     wrangler deployments list | head )
-   ```
-
-   **Branch B step 9 — arming — is NOT here.** Its command block sits at the
-   very end of step 4, after the disarmed tail-validation, because that is
-   the earliest point at which it is safe to run. An earlier revision printed
-   it here with a warning attached and the arming happened anyway: an
-   operator working the command blocks in order reached it immediately after
-   deploying, skipping the readback below and the live-tick validation
-   entirely. Ordering the page is the control; a label is not.
-
-   Confirm the schedule is registered before believing a tick will come:
+   It applies `apps/keeper/migrations/` to `vaipakam-keeper-db` (§1 step 7
+   may already have; the apply is idempotent), verifies every file is
+   recorded, checks the cutover verdict — which PASSES on a restore without a
+   record, because the restored shared copies of the five moved tables are
+   empty (§1 step 3) — verifies the shared schema, and publishes with an
+   empty schedule. The deploy token needs D1 Edit for that apply. Confirm no
+   schedule was carried:
 
    ```bash
    # UNQUOTED heredoc delimiter — `<<'HDR'` would suppress expansion and send
    # curl the literal string `$CF_API_TOKEN` as the bearer token (#1450 r21).
-   # `-K -` keeps the token out of the process's argv either way; that is the
-   # point of the form, and quoting it defeats the request instead.
-   # `--fail-with-body` so a 401/404 is a non-zero exit rather than a
-   # success-looking empty `.result`.
+   # `-K -` keeps the token out of the process's argv either way.
+   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
    curl -sS --fail-with-body -X GET -K - <<HDR \
      "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/schedules" | jq '.result'
    header = "Authorization: Bearer $CF_API_TOKEN"
    HDR
+   unset CF_API_TOKEN
    ```
 
-   An empty `schedules` array here means the deploy did not carry the
-   trigger, and no amount of waiting will produce a tick.
+   An **empty `result.schedules` ARRAY** is the pass condition (that endpoint
+   always returns `result` as an object, `{"schedules": []}` when nothing is
+   armed). A non-empty one means a schedule was restored by hand: the Worker
+   declines each tick it gets, but a trigger slot is spent and a second
+   runner is one config edit away — remove it from *Settings → Trigger
+   Events*.
+
+   The Worker's own `KEEPER_ENABLED`, `REWARD_*`, `GRACE_DEFAULT_ENABLED`
+   and `KEEPER_PRIVATE_KEY` bindings drive NO pass any more. Leave them as §1
+   step 6 restored them; they are not what step 4 confirms.
+
+   **B. The machine, with every flag off — and pointed at the NEW account.**
+   If the machine survived (a Cloudflare-side restore), `/etc/vaipakam/keeper.env`
+   still holds the keeper's secrets, RPC URLs, knobs and flags. If it was
+   rebuilt, install it per `KeeperMachine.md` §3 and fill the env file per §4
+   from the offline record. Either way, BEFORE starting, set
+   `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
+   `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
+   `GRACE_DEFAULT_ENABLED`) empty — by editing the
+   file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
+   Never paste a value from that file anywhere.
+
+   The machine reaches BOTH databases over the D1 HTTP API, and a fresh
+   account changes every coordinate it uses, in two places that a surviving
+   machine still carries from the lost account:
+
+   - **The env file's three D1 settings** name the shared database:
+     `CLOUDFLARE_ACCOUNT_ID` (the new account), `D1_DATABASE_ID` (the new
+     `vaipakam-warm` uuid from §1 step 3) and `CLOUDFLARE_D1_API_TOKEN` (a
+     token minted in the new account with D1 Edit on both databases). Set all
+     three in the same edit as the flags. A surviving machine still holds the
+     old account's values, and the old token is dead with the account.
+   - **The private database's id is NOT in the env file.** The build pins it
+     from `PRIVATE_DATABASES` in `apps/indexer/scripts/lib/d1-workers.mjs`
+     (`apps/keeper/host/hostEnv.ts` binds `KEEPER_DB` from that pin, never
+     from a host setting), so the machine reaches the new `vaipakam-keeper-db`
+     only once it runs a build carrying §1 step 5's recovery commit — the new
+     pin, the wrangler ids and `SUCCESSOR.id`. The updater installs whatever
+     branch `/opt/vaipakam-keeper/deploy-branch` names (`main` unless
+     `KEEPER_DEPLOY_BRANCH` set another at install). Get that commit onto the
+     installed branch BEFORE the service starts: merge it to `main` and run
+     `sudo systemctl start vaipakam-keeper-update.service` once, or, while
+     it is still under review, write its branch name to
+     `/opt/vaipakam-keeper/deploy-branch` (on a rebuild, install with
+     `KEEPER_DEPLOY_BRANCH=<recovery branch>`) and run the update service once;
+     set it back to `main` after the merge. The update service reports the
+     installed commit in its log — confirm it is the recovery one.
+
+   A machine started with either place still pointing at the lost account
+   does not fail loudly: the shared reads go to an account or database that
+   no longer exists, and the private reads to a uuid that exists nowhere, so
+   every tick declines, naming an unread migration record or an unread
+   indexer record, for as long as it runs. Step C's first good tick is what
+   confirms the retarget took; a decline that names an unread record after
+   step A has applied the migrations means one of the two places above still
+   carries the old account. A build that reads `KEEPER_DB` also declines
+   every tick, naming the missing migration, until step A has applied it —
+   that is the gate working, not a fault.
+
+   **C. Start disarmed and validate** — `KeeperMachine.md` §5 step 1:
+
+   ```bash
+   sudo systemctl enable --now vaipakam-keeper
+   journalctl -u vaipakam-keeper -f
+   ```
+
+   Count a tick as good only if its `[keeper] chains resolved: …` line names
+   exactly the chains served, no pass logged an error, and there is no `tick
+   declined`, skipped-minute or `not launched … still in flight` line. The
+   first tick logs `runner "host:…" acquired the one-runner lease`; a `holds
+   the one-runner lease` decline means another runner is live — stop and find
+   it before anything else. Cover a full 15-minute cycle (`preGraceWatcher`)
+   and the 00:00–00:09 UTC window (`dailyOracleSnapshot`); neither checks
+   `KEEPER_ENABLED`, so both run disarmed — and the snapshot SIGNS, from the
+   restored key, which is why the key and funding check above comes first.
+
+   **D. Confirm the flags from a tick** — step 4 below, with
+   `KEEPER_ENABLED` at `false` ON PURPOSE.
+
+   **E. Arm — the earliest safe point, and only with the owner's OK** —
+   `KeeperMachine.md` §5 steps 2–3. Set `KEEPER_ENABLED=true` in the env
+   file, `sudo systemctl restart vaipakam-keeper`, and cover at least one
+   full 5-minute cycle of the gated passes. Then the per-pass flags that were
+   on per the offline record, ONE AT A TIME, each validated on its own
+   cadence. Rollback at any point: `KEEPER_ENABLED=false` and restart, or
+   `sudo systemctl stop vaipakam-keeper` (§6). Nothing on the Cloudflare side
+   changes in either direction.
 
    `REWARD_REMIT_ENABLED` has two further prerequisites, and on a
    NON-compromise restore **both are normally already satisfied** — so
    VERIFY them rather than assuming they need rebuilding:
 
-   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
-     `apps/indexer/migrations/`, so §1 step 7 applied it with every other
-     migration. Confirm:
-     `wrangler d1 migrations list vaipakam-warm --remote`.
+   - **The remit-ack tables.** They are keeper-private since #2450 and
+     come from the keeper's own `apps/keeper/migrations/0001_keeper_state.sql`
+     (the shared `0044_keeper_remit_ack.sql` still exists, and still applies
+     to `vaipakam-warm`, but the keeper no longer reads that copy). §1 step 7
+     and step A above apply the private one. Confirm it from `apps/keeper/`:
+     `wrangler d1 migrations list vaipakam-keeper-db --remote`.
    - **The on-chain authority.** Two of them, and they are not the same —
      this is the part that is easy to get wrong. `remitRewardBudget`
      authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**
@@ -2046,73 +1897,19 @@ caught at the cheapest stage.
    a later revision then deleted this block wholesale while correcting a
    different error in the same step.
 
-   > **Do NOT use `--var` for these, and do not "helpfully" move them into
-   > the committed `vars` block as part of a restore.** Either creates a
-   > plain var beside the existing secret, and a var IS subject to
-   > wrangler's delete-then-set behaviour (`wrangler deploy --help`: "will
-   > delete all vars before setting those found in the Wrangler
-   > configuration"). So the workaround would introduce exactly the
-   > disarm-on-next-deploy fragility that the secret form does not have.
-   >
-   > An earlier revision of this step recommended precisely that, on the
-   > strength of the config comment rather than the deployment. Whether these
-   > flags *should* be committed vars was #1465's question, and #2223
-   > answered it **no**: a committed var arms or disarms the keeper from any
-   > clean checkout, and a var of the same name does not sit beside the
-   > secret — wrangler warns it "will replace these remote secrets with the
-   > configuration values", so the commit CONVERTS the binding. That matters
-   > here specifically: removing the var later does not hand the secret back,
-   > it leaves the name unset until you set the secret again. Either way it
-   > was never a decision to take mid-restore.
-
-4. **Confirm the flags from a tick — and note what the settings readback
-   can and cannot tell you.**
-
-   > This step used to say the opposite, and the reversal is the point.
-   > Until #1475 the three reward passes returned silently at their flag
-   > guards, so a quiet tail meant "off" and "armed with nothing to do"
-   > equally, and a typo was indistinguishable from deliberately-off. That
-   > is fixed: every gated pass now emits exactly one line per tick naming
-   > its state, so **the tick is the authoritative check** — see the
-   > `wrangler tail` step below.
-
-   The settings readback below remains useful, but for a narrower purpose
-   than an earlier revision claimed: these flags are `secret_text`, so the
-   API returns each binding's NAME and TYPE and never its value. It tells
-   you a binding exists and is a secret. It cannot tell you whether it says
-   `true`, `ture`, or `True` — only the tick does that.
+4. **Confirm the flags from a tick.** Nothing can read a flag's value back
+   — on the Worker they were write-only secrets, and on the machine the env
+   file is root-only and must never be echoed — so **the tick is the
+   authoritative check**: since #1475 every gated pass emits exactly one
+   line per tick naming its state, whichever way its gate goes.
 
    ```bash
-   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
-   printf 'url = "https://api.cloudflare.com/client/v4/accounts/%s/workers/scripts/vaipakam-keeper/settings"\nheader = "Authorization: Bearer %s"\nsilent\n' \
-     "$CF_ACCOUNT_ID" "$CF_API_TOKEN" | curl -K -
-   unset CF_API_TOKEN
-   ```
-
-   Note the settings endpoint lists a `secret_text` binding by NAME with no
-   value. Only genuine `plain_text` vars show their values.
-
-   **So this readback proves the binding exists and nothing about what it
-   says, which is not enough.** `wrangler secret put` accepts whatever is
-   typed at the prompt: `ture`, `True`, a trailing space, a pasted newline.
-   Every one of those creates a perfectly healthy-looking `secret_text`
-   binding that `isKeeperEnabled()` evaluates as **false**.
-
-   A presence check cannot close this; only the running Worker can say how
-   it resolved the value — and since #1475 it does, on every tick. (Before
-   that the guards returned silently and a quiet tail could not separate a
-   typo from a deliberate "off"; if you remember that, it is the thing that
-   changed.) After the keeper's schedule is restored above, confirm from the
-   pass itself:
-
-   ```bash
-   ( cd apps/keeper && wrangler tail --format pretty ) &
+   journalctl -u vaipakam-keeper -f
    # Wait for one tick.
    ```
 
-   **One tick now resolves all four flags** (#1475). Every *gated* pass emits
-   exactly one line per tick, whichever way its gate goes, and the skip line
-   names each binding that stopped it:
+   **One tick resolves every flag.** Every *gated* pass emits exactly one
+   line per tick, and the skip line names each binding that stopped it:
 
    - Armed and running: `[keeper] <pass> start`.
    - Stopped: `[keeper] <pass> skipped: <BINDING> <what is wrong>`, one clause
@@ -2128,134 +1925,59 @@ caught at the cheapest stage.
    `empty`, `off (explicitly disabled)`, `wrong case`,
    `has surrounding whitespace`, or `unrecognised (N chars)`. The signing
    key adds `malformed (N chars, expected 66)`, `malformed (not
-   hexadecimal)` and `malformed (not a valid signing key)` — see below.
-
-   Note `off (explicitly disabled)` in that list. Setting a flag to `false`
-   is the documented way to disable a pass, so it is reported as a state
-   rather than as a fault — during a deliberate shutdown you should not be
-   reading a line that suggests you mistyped something. That is deliberate. These are `secret_text`
-   bindings, and the case this diagnostic exists for is the value being
-   *wrong* — which is exactly how a pasted credential arrives. Echoing it
-   would copy that credential into the Worker logs at the moment the binding's
-   no-readback protection matters most. The character count still tells you
+   hexadecimal)` and `malformed (not a valid signing key)` — that last one is
+   a value of the right length and alphabet that is still not a scalar on
+   the curve, which only attempting to build the account can determine.
+   Malformed is the one to expect during a restore: a key that is present
+   but unusable used to satisfy the gate, so every pass announced `start`
+   and then produced nothing. Echoing a value would copy a credential into
+   the journal at the moment it is likeliest to be wrong, which is exactly
+   how a pasted credential arrives; the character count still tells you
    whether you are looking at a four-letter typo or something long that does
    not belong there.
 
-   `KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** —
-   never echoed. Malformed is the one to expect during a restore: a key that
-   is present but unusable used to satisfy the gate, so every pass announced
-   `start` and then produced nothing. The three forms are
-   `malformed (N chars, expected 66)`, `malformed (not hexadecimal)`, and
-   `malformed (not a valid signing key)` — that last one is a value of the
-   right length and alphabet that is still not a scalar on the curve, which
-   only attempting to build the account can determine.
+   `off (explicitly disabled)` is a STATE, not a fault: setting a flag to
+   `false` is the documented way to disable a pass, and during step 3C–D
+   every gated pass reports `KEEPER_ENABLED off (explicitly disabled)` ON
+   PURPOSE. "Fixing" those lines arms the fund-moving passes before the
+   disarmed validation has finished — leave `KEEPER_ENABLED` alone until
+   step 3E. Every OTHER named blocker is worth repairing now.
 
-   **Every blocker appears on the one line.** If three bindings are wrong, one
-   line names all three — you are never fixing one and waiting a tick to
+   **Every blocker appears on the one line.** If three settings are wrong,
+   one line names all three — you are never fixing one and waiting a tick to
    discover the next.
 
-   The seven gated passes are `matcher`, `liquidator`, `autoLifecycle`,
-   `graceDefault`, `rewardBudgetRemit`, `remitAck` and `commitmentReport`.
-   `watcher`,
-   `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
-   and `liquidityConfidence` always runs and consults the gate only to decide
-   whether to submit — **absent lines from those four are normal**, not a
-   failed tick.
+   The gated passes are every pass in `KEEPER_PASSES`
+   (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
+   that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+   `rewardBudgetRemit`, `remitAck`, `commitmentReport` and `deliveryProof`.
+   This list is the one place the set is written down; every other step here says "every
+   gated pass" rather than counting them, because a count goes stale the day
+   a pass is added (#2497 r1). `watcher`, `dailyOracleSnapshot` and
+   `preGraceWatcher` have no binding of their own, and `liquidityConfidence`
+   always runs and consults the gate only to decide whether to submit —
+   **absent lines from those four are normal**, not a failed tick.
 
-   > **One exception, and it is the whole point of branch B's ordering: while
-   > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
-   > `false` ON PURPOSE.** All seven gated passes therefore emit
-   > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
-   > state, not a fault to repair — "fixing" them here arms the fund-moving
-   > passes before the CPU and cadence validation has finished, which is
-   > exactly what the branch B step 9 block at the end of this step exists to
-   > prevent. **Leave `KEEPER_ENABLED` alone until you reach that block.**
-   > Every OTHER skipped binding named below is still worth repairing now.
-
-   If you see a `skipped:` line, the named binding is the one to re-enter —
-   but **the two kinds of binding take different commands**, and using the
-   wrong one leaves the pass disarmed while appearing to succeed:
-
-   | binding | how it is bound | command |
-   |---|---|---|
-   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
-   | `KEEPER_PRIVATE_KEY` — **missing** | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
-   | `KEEPER_PRIVATE_KEY` — **present but malformed** | same store, entry already exists | list to get its id, then `wrangler secrets-store secret update <STORE_ID> --secret-id <ID> --scopes workers --remote` |
-
-   **`create` and `update` are not interchangeable, and the diagnostic tells
-   you which you need.** `create` makes a secret *within a store* under a new
-   name; it cannot replace an entry that already exists. So the newly-added
-   `KEEPER_PRIVATE_KEY malformed (…)` line — which by definition means the
-   entry IS there — is precisely the case `create` fails on. Get the id
-   first:
+   **Repairing a named setting.** On the machine every flag, secret and knob
+   is one line in `/etc/vaipakam/keeper.env`, read when the process starts:
 
    ```bash
-   wrangler secrets-store secret list <STORE_ID> --remote --per-page 100
+   sudo -e /etc/vaipakam/keeper.env        # fix the named line; never paste the value elsewhere
+   sudo systemctl restart vaipakam-keeper  # the tick in flight finishes first
    ```
 
-   `--per-page` defaults to **10** and this store holds more than twenty
-   names, so without it `KEEPER_PRIVATE_KEY` may simply not be on the page
-   you get back — and the repair stalls looking for an id that is there. The
-   Deployment and Incident runbooks use `--per-page 100` for the same reason.
-
-   Then update it:
-
-   ```bash
-   wrangler secrets-store secret update <STORE_ID> --secret-id <ID> \
-     --scopes workers --remote
-   ```
-
-   **Answer YES when it asks whether to update the secret value.** That
-   prompt defaults to **no**, and because the command also carries
-   `--scopes workers` it will exit successfully having changed only the
-   scopes — reporting success while leaving the malformed key exactly as it
-   was, and every signing pass disarmed. Accepting the defaults here is the
-   failure mode, not the safe path.
-
-   A `KEEPER_PRIVATE_KEY unset` line is the `create` case instead.
-
-   **`--config` is not optional here.** Without it, `wrangler secret put`
-   applies to the Worker named in whatever Wrangler config is active, and
-   the `( cd apps/keeper && … )` above runs in a subshell, so it does not
-   change your working directory.
-
-   Since #1854 the root `wrangler.jsonc` is gone — it named the retired
-   `vaipakam-alpha` — so this no longer misfires at another Worker; it
-   fails for want of a config instead. Do not read a config-not-found
-   error as the keeper being misconfigured: it means the command lacked
-   `--config` / `--cwd`, and the keeper's flags are untouched.
-
-   `wrangler secret put` creates a secret **for a Worker**;
-   `wrangler secrets-store secret create` creates one **within a store**.
-   `--scopes workers` is required by wrangler, and `--remote` defaults to
-   `false` — without it the secret is written to local persistence and the
-   deployed Worker never sees it. This is the same form §1 step 6 uses; note
-   that neither command takes the value as an argument, so it is prompted for
-   and never enters shell history.
-   Running the former for `KEEPER_PRIVATE_KEY` does not populate the store
-   entry the Worker actually reads — it creates a second, conflicting
-   binding of the same name, and every signing pass stays disarmed.
-
-   A `KEEPER_PRIVATE_KEY unset` line therefore has two possible causes worth
-   telling apart before acting: the store entry is genuinely missing, or the
-   binding resolved to nothing this tick because the store lookup failed. If
-   the entry exists in the store, treat it as the latter and watch a second
-   tick before re-creating anything.
-
-   Watch another tick after any change to confirm.
-
-   > Earlier versions of this step said first that a tick verified all three
-   > flags (it did not), and then that the two reward flags were **write-only**
-   > and could only be confirmed by waiting for a successful remittance. Both
-   > are now obsolete. If you are reading a stale copy, prefer this one.
+   Then watch another tick. There is no `wrangler secret put` and no
+   Secrets Store step here: those write the Worker's bindings, which drive no
+   pass since #2569, so a repair made there looks successful and changes
+   nothing a tick reports. (`KEEPER_PRIVATE_KEY unset` on the machine has one
+   cause — the line is empty or missing — unlike the Worker, where a failed
+   store lookup produced the same line for a tick.)
 
    Do not conclude the restore is complete until one tick has produced a
-   line from **each of the seven gated passes**, and every line reads the way
-   you intended. The other four emit nothing by design — waiting for them
-   would be waiting forever.
+   line from **every gated pass** (the list above), and every line reads the
+   way you intended. The other four emit nothing by design — waiting for
+   them would be waiting forever.
 
-   Confirm each flag you intended is present and, where the value is
-   visible, reads what you meant.
    **The two guards do not parse alike**, which is a trap worth knowing
    before you eyeball the output:
 
@@ -2272,92 +1994,13 @@ caught at the cheapest stage.
    from memory of the old behaviour, that is the change.) Use lowercase
    `true` for every flag and the asymmetry never arises.
 
-   Note the second half of the `KEEPER_ENABLED` row: the settings readback
-   shows *variables*, and `isKeeperEnabled` also requires the
-   `KEEPER_PRIVATE_KEY` **secret** to resolve. A green variable readback is
-   necessary, not sufficient — confirm the store binding from §1 step 6
-   too. The Worker's *Settings → Variables* pane shows the same variables.
+   Only after that is the journal useful as positive confirmation: watch for
+   a pass you expect to have work to do. Arming is step 3E, and its gate is
+   the disarmed validation in 3C and this step; nothing printed here is a
+   command to run before then.
 
-   Only after that is a tail useful, and then only as positive
-   confirmation: watch for a pass you expect to have work to do.
-
-   #### Branch B step 9 — arm. This is the earliest safe point.
-
-   Only reachable if you came through branch B (the #1896 hold has lifted).
-   Everything above has run with `KEEPER_ENABLED` at `false`, which is what
-   made the CPU validation meaningful: the seven fund-moving passes were inert
-   while the Worker was proved to survive a production tick.
-
-   Before running this, confirm all of the following from the ticks you just
-   watched — this is branch B step 8, and it is the gate on the command
-   below:
-
-   - Every tick ended `ok`, never `exceededCpu`.
-   - A full 15-minute cycle was covered, so `preGraceWatcher` ran; and the
-     00:00–00:09 UTC window, so `dailyOracleSnapshot` did.
-   - Each tick's `chains resolved: N — …` line named the chains this
-     deployment is meant to serve. A chain drops out silently, and a tick
-     that skipped chains has not validated the load of all of them.
-   - No `console.error` output from any due pass, of any shape.
-
-   If any of that fails, roll back instead: restore `"crons": []`, **commit
-   that**, and redeploy. Nothing is armed yet, so the rollback costs nothing
-   — which is precisely why it belongs before this command and not after.
-
-   **Roll the authority back with it.** Step 6 already moved the keeper row
-   to `live` and switched the summary to `Committed, live only`; a rollback
-   that leaves those in place puts
-   [`CloudflareCronSlots.md`](CloudflareCronSlots.md) back into exactly the
-   stale state step 6 was added to prevent — and the offline check stays
-   green through it, because the conversion does not move the derived totals
-   in either direction. Restore the row to `reserved`, the label to
-   `Committed, live plus the keeper's reserve`, refresh the stamp, re-run
-   `--live`, and commit — **except on the fresh-account branch, where the
-   `--live` confirmation waits for §7b for the reason step 3 gives.** The
-   file edit and the commit are owed either way; only the account-versus-file
-   check is deferred.
-
-   ```bash
-   ( cd apps/keeper
-     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
-   ```
-
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` /
-   `GRACE_DEFAULT_ENABLED` the same way and at this same point, and only if
-   they were on before.
-
-   Then do branch B step 10: validate the now-armed gated passes across every
-   cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit` (and `graceDefault` if it was armed).
-
-   **IF STEP 10 FAILS, ROLL BACK BOTH HALVES — and note this rollback is
-   NOT the one above.** That one covers the still-disarmed validation
-   *before* the arming command, where nothing is live and the rollback costs
-   nothing. Past this point the fund-moving passes are genuinely armed, so
-   the order matters and the schedule alone is not enough:
-
-   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the seven
-      fund-moving passes, and it takes effect without waiting for a
-      schedule change to propagate.
-   2. Then restore `"crons": []`, **commit that**, and redeploy
-      `( cd apps/keeper && wrangler deploy --keep-vars )` — same directory
-      scoping and same flag as before, and both matter more here, not less:
-      a bare root deploy would redeploy an unrelated Worker and leave this
-      one armed and failing.
-   3. Then roll the authority back exactly as the pre-arm rollback above
-      describes — row to `reserved`, label to `Committed, live plus the
-      keeper's reserve`, refresh the stamp, re-run `--live`, commit —
-      including its fresh-account caveat: before §7b the edit and the commit
-      still happen, the `--live` confirmation does not.
-
-   `apps/keeper/wrangler.jsonc` has carried this post-arm rollback all
-   along; this runbook did not, so an operator following the canonical
-   restore path could fail validation and leave the fund-moving passes
-   armed. Same defect as the missing authority refresh two steps up, in the
-   opposite direction — that time the runbook had it and the config did
-   not.
-
-   Finally, branch B step 11 — clear the checks branch A deferred.
+   If `PUSH_CHANNEL_PK` was rotated, confirm a `[push] sent channel=…` line
+   from the keeper too (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
 
 ---
 
@@ -2428,8 +2071,8 @@ is #1977 again by a different route.
    derivation and have to be re-done together — which is exactly what the
    authority says about itself, in the sentence explaining why the summary is
    pinned to the table.
-3. Re-read the token first. Branch B runs `unset CF_API_TOKEN` at the end of
-   its keeper-settings readback, which is far above this point, so following
+3. Re-read the token first. §7a step 3A runs `unset CF_API_TOKEN` at the end
+   of its empty-schedule readback, which is far above this point, so following
    the runbook in order arrives here with the variable GONE — under the
    `set -u` these blocks use that aborts, and without it `--live` receives an
    empty credential and reports missing credentials. Either way the operator

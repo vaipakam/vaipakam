@@ -69,6 +69,53 @@
   },
   {
     "type": "function",
+    "name": "getArmingFeeBounds",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "minRate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxRate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "getArmingFeeCredit",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "rotationEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCapacityBucket",
     "inputs": [
       {
@@ -505,19 +552,6 @@
         "name": "operator",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setArmingFeeFloor",
-    "inputs": [
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -5026,6 +5060,27 @@
       },
       {
         "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
+    "inputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }

@@ -51,7 +51,7 @@ const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
  * the under-water skip (Codex #2485 r4). The wall clock picked an odd id
  * about half the time. Re-derive this if the fixture's chain count changes.
  */
-const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000 } as const;
+const BENCH_TICK = { scheduledTimeMs: 3 * 5 * 60_000, deadlineMs: Number.MAX_SAFE_INTEGER } as const;
 
 
 /**
@@ -75,6 +75,10 @@ const RPC_KEYS = ['RPC_BASE_SEPOLIA', 'RPC_ARB_SEPOLIA', 'RPC_BNB_TESTNET'] as c
 function makeEnv(): Env {
   const env: Record<string, unknown> = {
     DB: d1Stub() as Env['DB'],
+    // The keeper's private database (#2450) — its own stub, so a pass routing
+    // a private table to the shared handle (or the reverse) still gets the
+    // seeded answer the table name selects.
+    KEEPER_DB: d1Stub() as Env['KEEPER_DB'],
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     REWARD_COMMIT_ENABLED: 'true',

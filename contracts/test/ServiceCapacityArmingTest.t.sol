@@ -16,6 +16,8 @@ import {LibServiceCapacity} from "../src/libraries/LibServiceCapacity.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title #1219 (S-4) slice 3 — the arming fee's shape and the rotation epochs.
 /// @dev   The fee is a governance-set RATE over a positive floor the code enforces, charged
@@ -35,7 +37,6 @@ contract ServiceCapacityArmingTest is SetupTest {
     uint256 internal constant RATE = 1e16;
     uint256 internal constant AT4X = 100e18;
     uint256 internal constant COST = 1e18;
-    uint256 internal constant FLOOR = 1e15; // 0.1% of newly armed principal
     uint256 internal constant FEE = 1e16; // 1%
 
     event ArmingFeeSet(uint256 rate, uint256 floor);
@@ -70,28 +71,113 @@ contract ServiceCapacityArmingTest is SetupTest {
     function _bucket() internal view returns (uint256) { return ConfigFacet(address(diamond)).getRecycleBucket(); }
     function _escrow() internal view returns (address e) { (e, , ) = _f().getServiceCapacityEscrow(); }
     function _arm() internal {
-        _f().setArmingFeeFloor(FLOOR);
         _f().setArmingFeeRate(FEE);
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
 
-    /// @dev #2459 r4 — the arming fee is a BOUNDED knob: a rate or a floor above
-    ///      the ceiling (the whole newly-armed principal) is refused by name, so no
-    ///      accepted rate can make a quote or a post unrepresentable; at the ceiling,
-    ///      on the largest knee a curve accepts, the fee is exactly the grant.
-    function test_ArmingFee_IsBoundedByTheWholeArmedPrincipal() public {
+    /// @dev Codex #2556 r5 — splitting a deposit arms NOTHING fee-free. At the 10%
+    ///      ceiling, 100 units armed as eleven 9-unit posts and one 1-unit post (the
+    ///      r5 scenario, as it reads on a 0-decimal token) pay EXACTLY the 10 units
+    ///      one 100-unit post would: each post rounds UP and its overpayment is
+    ///      credited to the next. And each post pays within one smallest unit of
+    ///      10% of what IT arms, never more than its share rounded up.
+    function test_SplitPosts_PayExactlyTheWholeDepositsFee_EachWithinOneUnitOfItsShare() public {
+        _ready();
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        _f().setArmingFeeRate(hi);
+        uint256 start = _bucket();
+        for (uint256 i; i < 12; ++i) {
+            uint256 g = i < 11 ? 9 : 1;
+            uint256 before = _bucket();
+            (, uint256 quoted, uint256 granted, , ) = _f().previewArming(SOLVER, op, g);
+            assertEq(granted, g, "every split post arms what it adds");
+            assertEq(_post(SOLVER, g), LibServiceCapacity.STATUS_OK);
+            uint256 paid = _bucket() - before;
+            assertEq(paid, quoted, "the post paid what it quoted");
+            assertLe(paid * 1e18, g * hi + 1e18 - 1, "a post pays at most its share rounded UP");
+            assertGe(paid * 1e18 + 1e18, g * hi + 1, "and under one unit below it (a prepaid credit may cover it)");
+        }
+        assertEq(_eligible(), 100, "100 units armed across twelve posts");
+        assertEq(_bucket() - start, 10, "exactly 10% of the 100 armed: the split saved nothing");
+    }
+
+    /// @dev Codex #2556 r3 — no sub-unit gap is ever stranded. At the 10% ceiling,
+    ///      the deposit is armed to one unit below the knee, then a post arms the
+    ///      last unit: it ARMS (the knee is reached), its 0.1 share covered by the
+    ///      credit the first post prepaid, so the record pays exactly 10%. The
+    ///      grant-suppression rule this replaces left that last unit unarmable for
+    ///      good, since adding principal cannot raise a grant capped at the knee.
+    function test_TheLastUnitBelowTheKnee_StillArms_AtTheCeiling() public {
+        _ready();
+        _f().setArmingFeeRate(LibServiceCapacity.MAX_ARMING_FEE_RATE);
+        uint256 bucketBefore = _bucket();
+        assertEq(_post(SOLVER, AT4X - 1), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), AT4X - 1, "armed to one unit below the knee");
+        uint256 paidSoFar = _bucket() - bucketBefore;
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        assertLe(paidSoFar * 1e18, (AT4X - 1) * hi + 1e18 - 1, "the first post pays at most its share rounded up");
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 5);
+        assertEq(granted, 1, "only the last unit below the knee is left to arm");
+        assertEq(fee, 0, "its 0.1 share is already covered by the 0.9 prepaid");
+        assertEq(_post(SOLVER, 5), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), AT4X, "the last unit ARMS: the knee is reached, nothing stranded");
+        uint256 paid = _bucket() - bucketBefore;
+        assertEq(paid, paidSoFar + fee, "the post paid what it quoted");
+        assertEq(paid, AT4X * hi / 1e18, "the total is exactly 10% of everything armed");
+    }
+
+    /// @dev Codex #2556 r1 — the bounds are enforced where the rate is USED. A
+    ///      Diamond refreshed in place keeps the rate the earlier facet accepted
+    ///      (its ceiling was 100%), so a stored rate outside [0.5%, 10%] must read
+    ///      as DARK: the preview names the dark refusal, the post reverts, and the
+    ///      getter reports 0 — never a silent clamp that re-prices a post. Each
+    ///      bound is straddled on the STORED value (bound in force, one unit out
+    ///      dark), and an admin re-lights arming by setting a rate in bounds.
+    function test_StoredRateOutOfBounds_ReadsDark_UntilAnInBoundsRateIsSet() public {
+        _ready();
+        uint256 lo = LibServiceCapacity.MIN_ARMING_FEE_RATE;
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        uint256[4] memory dark = [uint256(0.5e18), hi + 1, lo - 1, uint256(1)];
+        for (uint256 i = 0; i < dark.length; i++) {
+            TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(dark[i]);
+            (uint8 refusal, uint256 fee, , , ) = _f().previewArming(SOLVER, op, 10e18);
+            assertEq(refusal, LibServiceCapacity.POST_ARMING_DARK, "an out-of-bounds stored rate previews as dark");
+            assertEq(fee, 0, "and quotes no fee");
+            (uint256 rate, ) = _f().getArmingFee();
+            assertEq(rate, 0, "the getter reports the rate in force: none");
+            LibServiceCapacity.ArmingBind memory b = _bind(SOLVER); // before the prank (a view call would consume it)
+            vm.prank(op);
+            vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingDark.selector, SOLVER));
+            _f().postCapacityDeposit(SOLVER, 10e18, b);
+        }
+        // the bounds themselves are in force when stored directly
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(lo);
+        (uint8 r1, uint256 feeLo, , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(r1, LibServiceCapacity.POST_OK);
+        assertEq(feeLo, Math.mulDiv(10e18, lo, 1e18), "0.5% of the armed principal");
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(hi);
+        (, uint256 feeHi, , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(feeHi, Math.mulDiv(10e18, hi, 1e18), "10% of the armed principal");
+        // an admin re-lights arming from a dark legacy rate with an in-bounds one
+        TestMutatorFacet(address(diamond)).setArmingFeeRateRaw(0.5e18);
+        _f().setArmingFeeRate(2e16);
+        assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit again at 2%");
+    }
+
+    /// @dev #1219 (owner direction 2026-10-18) — at the fixed CEILING of 10%, on the
+    ///      largest knee a curve accepts, the fee is exactly ceil(grant x 10%):
+    ///      still representable, so no accepted rate can make a quote or a post
+    ///      revert (the property #2459 r4's 100% ceiling guarded).
+    function test_ArmingFee_AtTheCeiling_IsRepresentableOnTheLargestKnee() public {
         _ready();
         uint256 cap = LibServiceCapacity.MAX_ARMING_FEE_RATE;
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
-        _f().setArmingFeeRate(cap + 1);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
-        _f().setArmingFeeFloor(cap + 1);
-        _f().setArmingFeeRate(cap); // straddle: the ceiling itself is accepted
+        _f().setArmingFeeRate(cap);
         _f().setCapacityCurve(SOLVER, FREE, RATE, type(uint128).max, COST); // the largest knee
         uint256 most = type(uint128).max;
         (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, most);
         assertEq(granted, most, "fixture-live: the post arms the whole knee");
-        assertEq(fee, granted, "at the ceiling the fee is the whole grant, and representable");
+        assertEq(fee, Math.mulDiv(granted, cap, 1e18, Math.Rounding.Ceil), "10% of the grant, rounded up (a fresh record holds no credit)");
+        assertLt(fee, granted, "under the ceiling the fee is a fraction of the grant");
     }
     function _ready() internal {
         _arm();
@@ -149,40 +235,52 @@ contract ServiceCapacityArmingTest is SetupTest {
         assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit: posts");
         (uint256 rate, uint256 floor) = _f().getArmingFee();
         assertEq(rate, FEE);
-        assertEq(floor, FLOOR);
+        assertEq(floor, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the two-word getter keeps its shape; its floor is the fixed one");
+        (uint256 minRate, uint256 maxRate) = _f().getArmingFeeBounds();
+        assertEq(minRate, LibServiceCapacity.MIN_ARMING_FEE_RATE, "the bounds getter reports the fixed floor");
+        assertEq(maxRate, LibServiceCapacity.MAX_ARMING_FEE_RATE, "and the fixed ceiling");
     }
 
-    /// @dev The floors: a positive rate needs a positive floor and may not sit under
-    ///      it; the floor is raise-only and may not climb over the live rate; zero
-    ///      (dark) is always allowed; admin only.
-    function test_Fee_Floors_AdminOnly_RaiseOnly() public {
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FEE, 0));
-        _f().setArmingFeeRate(FEE); // no floor yet
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFloorNotRaised.selector, 0, 0));
-        _f().setArmingFeeFloor(0);
+    /// @dev #1219 (owner direction 2026-10-18) — the FIXED bounds. A positive rate
+    ///      must sit in [0.5%, 10%]: each bound is accepted exactly and refused one
+    ///      unit outside, so a bound that drifted (or a check that compared the wrong
+    ///      way) fails a cell on its own. Zero — the dark switch — is always
+    ///      accepted, from any rate. The bounds are constants, so they are the same
+    ///      before and after any admin call. Admin only.
+    function test_Fee_FixedBounds_StraddledBothEnds_ZeroIsDark_AdminOnly() public {
+        uint256 lo = LibServiceCapacity.MIN_ARMING_FEE_RATE;
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        assertEq(lo, 0.5e16, "0.5%");
+        assertEq(hi, 10e16, "10%");
+        // under the floor: refused by name, nothing written
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, lo - 1, lo, hi));
+        _f().setArmingFeeRate(lo - 1);
+        (uint256 rate, ) = _f().getArmingFee();
+        assertEq(rate, 0, "a refused rate writes nothing");
+        // the floor itself
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmingFeeSet(0, FLOOR);
-        _f().setArmingFeeFloor(FLOOR);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FLOOR - 1, FLOOR));
-        _f().setArmingFeeRate(FLOOR - 1);
+        emit ArmingFeeSet(lo, LibServiceCapacity.MIN_ARMING_FEE_RATE);
+        _f().setArmingFeeRate(lo);
+        (rate, ) = _f().getArmingFee();
+        assertEq(rate, lo);
+        // the ceiling itself, and one over it
+        _f().setArmingFeeRate(hi);
+        (rate, ) = _f().getArmingFee();
+        assertEq(rate, hi);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds.selector, hi + 1, lo, hi));
+        _f().setArmingFeeRate(hi + 1);
+        (rate, ) = _f().getArmingFee();
+        assertEq(rate, hi, "a refused rate leaves the live one standing");
+        // zero is the dark switch, always accepted
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit ArmingFeeSet(FEE, FLOOR);
-        _f().setArmingFeeRate(FEE);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFloorNotRaised.selector, FLOOR, FLOOR));
-        _f().setArmingFeeFloor(FLOOR); // not a raise
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor.selector, FEE, FEE + 1));
-        _f().setArmingFeeFloor(FEE + 1); // over the live rate
-        _f().setArmingFeeFloor(FEE); // may meet it
-        _f().setArmingFeeRate(0); // dark again, always allowed
-        (uint256 rate, uint256 floor) = _f().getArmingFee();
+        emit ArmingFeeSet(0, LibServiceCapacity.MIN_ARMING_FEE_RATE);
+        _f().setArmingFeeRate(0);
+        (rate, ) = _f().getArmingFee();
         assertEq(rate, 0);
-        assertEq(floor, FEE);
+        // admin only
         vm.prank(op);
         vm.expectRevert();
         _f().setArmingFeeRate(FEE);
-        vm.prank(op);
-        vm.expectRevert();
-        _f().setArmingFeeFloor(FEE + 1);
     }
 
     /// @dev The fee is 1% of the principal newly armed, paid BESIDE the principal into
@@ -502,12 +600,55 @@ contract ServiceCapacityArmingTest is SetupTest {
         assertEq(_eligible(), AT4X - 2, "the armed balance follows the principal down");
     }
 
-    /// @dev The fee rounds UP: no armed principal is ever free.
-    function test_Fee_RoundsUp() public {
-        _ready();
-        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 1);
+    /// @dev Codex #2556 r2–r6 — every grant arms; a post pays its share less the
+    ///      record's prepaid credit, rounded UP, and keeps the overpayment as credit.
+    ///      At 1%: a fresh 199-unit quote owes 1.99 → 2 (at most one unit above its
+    ///      share). A 99-unit post pays 1 (0.01 prepaid); the next 1-unit post owes
+    ///      0.01, which the credit covers, so it pays 0: the record paid exactly 1
+    ///      for 100 armed. The credit is then spent, so the next 100 owe exactly 1.
+    function test_Fee_RoundsUp_TheOverpaymentIsCreditedToTheNextPost() public {
+        _ready(); // FEE = 1%
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 199);
+        assertEq(granted, 199);
+        assertEq(fee, 2, "rounded up: 1.99 owes 2, at most one unit above the share");
+        uint256 bucketBefore = _bucket();
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 99);
+        assertEq(granted, 99, "every grant arms");
+        assertEq(fee, 1, "0.99 rounds up to 1: 0.01 prepaid");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 0, "a fresh record holds no credit");
+        assertEq(_post(SOLVER, 99), LibServiceCapacity.STATUS_OK);
+        assertEq(_eligible(), 99, "armed");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 1e16, "the 0.01 overpayment is readable as the record's credit");
+        (, fee, granted, , ) = _f().previewArming(SOLVER, op, 1);
         assertEq(granted, 1);
-        assertEq(fee, 1, "1 wei armed at 1% owes 1 wei, not zero");
+        assertEq(fee, 0, "the 0.01 share is covered by the 0.01 prepaid");
+        assertEq(_post(SOLVER, 1), LibServiceCapacity.STATUS_OK);
+        assertEq(_bucket(), bucketBefore + 1, "the record paid 1 for 100 armed: exactly 1%");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 0, "the credit is spent");
+        (, fee, , , ) = _f().previewArming(SOLVER, op, 100);
+        assertEq(fee, 1, "the credit was spent: the next 100 owe exactly 1 again");
+    }
+
+    /// @dev Codex #2556 r6 — spreading a deposit over FRESH operators arms nothing
+    ///      fee-free either. At the 10% ceiling, ten new addresses each arm 9 units
+    ///      (a 0.9 share): each pays 1 — never below its share — so the ten pay 10
+    ///      for 90 armed, at least the 9 the rate owes and one unit per identity at
+    ///      most above it.
+    function test_FreshOperators_EachPayAtLeastTheirShare() public {
+        _ready();
+        uint256 hi = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        _f().setArmingFeeRate(hi);
+        uint256 start = _bucket();
+        for (uint256 i; i < 10; ++i) {
+            op = makeAddr(string(abi.encodePacked("fresh-operator-", vm.toString(i))));
+            vpfi.mint(op, 100);
+            uint256 before = _bucket();
+            assertEq(_post(SOLVER, 9), LibServiceCapacity.STATUS_OK);
+            uint256 paid = _bucket() - before;
+            assertGe(paid * 1e18, 9 * hi, "a fresh operator never pays below its share");
+            assertLe(paid * 1e18, 9 * hi + 1e18 - 1, "nor above it rounded up");
+        }
+        assertEq(_bucket() - start, 10, "ten identities paid 10 for 90 armed: none armed for free");
     }
 
     /// @dev The preview names the post's arming refusals: nothing to arm, then OK.

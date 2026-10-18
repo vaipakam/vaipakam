@@ -405,6 +405,12 @@ legal glance before build.
 > DISJUNCTION: that fee's own bounded legal glance, **or** an explicit
 > recorded owner approval of the fee shape. Either satisfies it.
 >
+> **SATISFIED, 2026-10-18** — the owner approved the fee shape (fixed bounds
+> of 0.5%–10%, intended starting rate 2%; #1219, PR #2556), the second limb of
+> that disjunction. The fee-shape gate is therefore DISCHARGED: setting a rate
+> is an activation step in the M7 sequence, not a pending legal review. The
+> deployment prerequisite below is unaffected.
+>
 > DEPLOYMENT is a separate question and the legal gate moving does not answer
 > it. The bonds note carries a **shipping prerequisite** that is not legal at
 > all: #1566's delivered-custody holder, with reward payouts debiting that

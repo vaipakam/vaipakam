@@ -81,6 +81,7 @@ import {
 } from 'viem/actions';
 import { HttpRequestError, TimeoutError } from 'viem';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
+import { assertEpochsHold } from './epochFence';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -133,6 +134,10 @@ export async function withSubmissionSlot<T>(
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
     const nonce = fresh ? Math.max(pending, floor.next) : pending;
+    // The epoch fence (#2569 r4), before the signature: a send is made only
+    // while the indexer's epoch this process was launched under still holds.
+    // Thrown here, nothing was signed, so the nonce is simply released.
+    await assertEpochsHold();
     let wasSigned = false;
     let result: T;
     try {
@@ -202,7 +207,19 @@ export function isDefinitiveRejection(err: unknown): boolean {
  * The queued send calls viem's actions on the UNEXTENDED client, so
  * nothing re-enters the queue. Every other action is untouched.
  */
-export function queuedWallet(wallet: WalletClient, chainId: number): WalletClient {
+/** A send refused at its turn in the queue because its pass's run deadline
+ *  had passed (#2571 r1). Raised BEFORE signing, so no nonce is spent. */
+export class SendPastDeadline extends Error {}
+
+export function queuedWallet(
+  wallet: WalletClient,
+  chainId: number,
+  /** The run deadline of the pass this wallet sends for, if it has one
+   *  (#2571 r1). Checked INSIDE the submission slot, at the moment the send's
+   *  turn comes — a check before queuing cannot cover the wait behind another
+   *  pass's send, or a slow fee estimate. */
+  notAfterMs?: number,
+): WalletClient {
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
@@ -217,6 +234,9 @@ export function queuedWallet(wallet: WalletClient, chainId: number): WalletClien
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
       return withSubmissionSlot(base, chainId, account.address, async (nonce, signed) => {
+        if (notAfterMs !== undefined && Date.now() >= notAfterMs) {
+          throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
+        }
         const request = await prepareTransactionRequest(base, {
           ...(args as object),
           account,

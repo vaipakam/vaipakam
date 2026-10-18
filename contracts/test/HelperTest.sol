@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](264); // #2559 r5 +setPerkCreditsRaw (was 263); #2559 r2 +setPerkStateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](265); // #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -568,6 +568,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRemitReservationFinalizedRaw.selector; // #2489 r7
         selectors[n++] = TestMutatorFacet.setReleasedRemitHistoryRaw.selector; // #2489 r7
         selectors[n++] = TestMutatorFacet.getLoanEntryIdsRaw.selector; // #2489 r15
+        selectors[n++] = TestMutatorFacet.setArmingFeeRateRaw.selector; // #1219 Codex #2556 r1
         selectors[n++] = TestMutatorFacet.setPerkStateRaw.selector; // #2559 r2
         selectors[n++] = TestMutatorFacet.setPerkCreditsRaw.selector; // #2559 r5
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2695,7 +2696,7 @@ contract HelperTest {
 
     /// #1219 (S-4) — service capacity deposits. Mirrors `DeployDiamond._getServiceCapacitySelectors`.
     function getServiceCapacityFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](23);
         selectors[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         selectors[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         selectors[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -2712,12 +2713,13 @@ contract HelperTest {
         selectors[13] = ServiceCapacityFacet.getAdapterOperator.selector;
         selectors[14] = ServiceCapacityFacet.withdrawArchivedCapacityDeposit.selector;
         selectors[15] = ServiceCapacityFacet.setArmingFeeRate.selector;
-        selectors[16] = ServiceCapacityFacet.setArmingFeeFloor.selector;
-        selectors[17] = ServiceCapacityFacet.getArmingFee.selector;
-        selectors[18] = ServiceCapacityFacet.previewArming.selector;
-        selectors[19] = ServiceCapacityFacet.isRotationEpochArchived.selector;
-        selectors[20] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
-        selectors[21] = ServiceCapacityFacet.previewFreeTierCapacity.selector; // #1219 review
+        selectors[16] = ServiceCapacityFacet.getArmingFee.selector;
+        selectors[17] = ServiceCapacityFacet.previewArming.selector;
+        selectors[18] = ServiceCapacityFacet.isRotationEpochArchived.selector;
+        selectors[19] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
+        selectors[20] = ServiceCapacityFacet.previewFreeTierCapacity.selector; // #1219 review
+        selectors[21] = ServiceCapacityFacet.getArmingFeeBounds.selector; // #1219 Codex #2556 r2
+        selectors[22] = ServiceCapacityFacet.getArmingFeeCredit.selector; // #1219 Codex #2556 r7
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet. Mirrors `DeployDiamond._getOfferMatchIntentSelectors`.

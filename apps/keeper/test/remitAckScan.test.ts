@@ -81,6 +81,7 @@ const SEL = {
   nonce: toFunctionSelector(F.nonce).toLowerCase(),
   reservation: toFunctionSelector(F.reservation).toLowerCase(),
   agg: toFunctionSelector(AGGREGATE3).toLowerCase(),
+  gate: toFunctionSelector('function getCompensationOutstanding(uint32) view returns (uint256)').toLowerCase(),
 };
 
 const CHAIN_ID = 84532;
@@ -94,12 +95,15 @@ function enc(f: AbiFunction, result: unknown): string {
   return encodeFunctionResult({ abi: [f] as Abi, functionName: f.name, result: result as never });
 }
 
-/** A reservation tuple built from the compiled ABI, zeroed but for `status`. */
+/** A reservation tuple built from the compiled ABI, zeroed but for `status`
+ *  (and the stranded-share stamp, set). */
 function reservation(status: number): string {
   const out = F.reservation.outputs;
   const one = (p: { name?: string; type: string; components?: readonly unknown[] }): unknown => {
     if (p.name === 'status') return status;
     if (p.name === 'dstChainId') return CHAIN_ID;
+    // A stamped history: "nothing stranded" is a positive read, not a default (#2497 r1).
+    if (p.name === 'strandedStamped') return true;
     const t = p.type;
     if (t.endsWith('[]')) return [];
     if (t === 'tuple') return ((p.components ?? []) as { name?: string; type: string }[]).map(one);
@@ -114,11 +118,11 @@ function reservation(status: number): string {
   return enc(F.reservation, out.length === 1 ? vals[0] : vals);
 }
 
-type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[] };
+type Seen = { serialReservations: number; batches: { to: string; inner: string[] }[]; reads: Map<number, number> };
 
 /** @param failId reservation id whose batched read comes back as a failure. */
 function install(failId?: number): { seen: Seen; restore: () => void } {
-  const seen: Seen = { serialReservations: 0, batches: [] };
+  const seen: Seen = { serialReservations: 0, batches: [], reads: new Map() };
   const real = globalThis.fetch;
 
   const answerOne = (data: string): string | null => {
@@ -134,12 +138,15 @@ function install(failId?: number): { seen: Seen; restore: () => void } {
       ]);
     }
     if (sel === SEL.nonce) return enc(F.nonce, BigInt(NONCE));
+    // #2571 r2 — no destination's compensation gate is held in this ledger.
+    if (sel === SEL.gate) return `0x${'0'.repeat(64)}`;
     if (sel === SEL.reservation) {
       const { args } = decodeFunctionData({
         abi: [F.reservation] as Abi,
         data: data as `0x${string}`,
       });
       const id = Number((args as readonly unknown[])[0]);
+      seen.reads.set(id, (seen.reads.get(id) ?? 0) + 1);
       if (failId !== undefined && id === failId) return null;
       return reservation(TERMINAL_STATUS);
     }
@@ -213,10 +220,16 @@ function db(): { handle: unknown; sql: string[] } {
   return { handle, sql };
 }
 
-async function run(handle: unknown): Promise<void> {
+/**
+ * Two stubs, one per database (#2450): the scan state is keeper-private, so
+ * its writes must reach `KEEPER_DB` — a pass that wrote it to the shared
+ * handle would record progress where the next tick never reads it.
+ */
+async function run(shared: unknown, keeper: unknown): Promise<void> {
   const { runRemitAck } = await import('../src/remitAck');
   await runRemitAck({
-    DB: handle,
+    DB: shared,
+    KEEPER_DB: keeper,
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
@@ -229,15 +242,51 @@ async function run(handle: unknown): Promise<void> {
 const wroteScanState = (sql: string[]): boolean =>
   sql.some((q) => q.includes('keeper_remit_ack_frontier') && q.includes('INSERT'));
 
+describe('remitAck — the late path is contained (#2497 r5)', () => {
+  it('a failing release-ledger read is reported and never unwinds the tick', async () => {
+    const { restore } = install();
+    const base = db();
+    // The shared database answers everything except the late path's ledger read.
+    const shared = {
+      ...(base.handle as object),
+      prepare: (q: string) => {
+        if (q.includes('RemitReservationReleased')) throw new Error('D1 unavailable');
+        const stmt = (base.handle as { prepare: (q: string) => Record<string, unknown> }).prepare(q);
+        // The indexer has recorded blocks, so discovery does read the ledger.
+        if (q.includes('FROM indexer_cursor')) stmt.first = async () => ({ last_block: 90_000_000 });
+        return stmt;
+      },
+    };
+    const { handle, sql } = db();
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(run(shared, handle)).resolves.toBeUndefined();
+    } finally {
+      restore();
+      spy.mockRestore();
+      warn.mockRestore();
+      log.mockRestore();
+    }
+    expect(errors.some((e) => /late deliveries failed this tick \(pending acks continue\)/.test(e))).toBe(true);
+    expect(wroteScanState(sql), 'the scan still recorded its progress').toBe(true);
+  });
+});
+
 describe('remitAck reservation scan (#1896)', () => {
   it('batches the whole window, with no per-reservation read', async () => {
     const { seen, restore } = install();
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();
@@ -256,6 +305,8 @@ describe('remitAck reservation scan (#1896)', () => {
     // The scan ran to completion and persisted its progress — without this, a
     // version that read nothing would satisfy "no serial reads" trivially.
     expect(wroteScanState(sql)).toBe(true);
+    // ...and persisted it to the keeper's own database, never the shared one.
+    expect(shared.sql.filter((q) => /keeper_remit_ack/.test(q))).toEqual([]);
   });
 
   it('ABORTS the scan on a failed read rather than skipping the reservation', async () => {
@@ -264,6 +315,7 @@ describe('remitAck reservation scan (#1896)', () => {
     // the cursor past a reservation whose status was never read — dropping it
     // from the scan until the rotating window came back around.
     const { seen, restore } = install(3);
+    const shared = db();
     const { handle, sql } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warned: string[] = [];
@@ -272,7 +324,7 @@ describe('remitAck reservation scan (#1896)', () => {
     });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await run(handle);
+      await run(shared.handle, handle);
     } finally {
       restore();
       spy.mockRestore();
@@ -290,3 +342,71 @@ describe('remitAck reservation scan (#1896)', () => {
     expect(warned.join('\n')).toMatch(/scan aborted at remit=3/);
   });
 });
+
+/**
+ * A D1 stub that answers by statement text: `answers` maps a substring of the
+ * SQL to the rows that statement returns, and every bound statement is kept
+ * (with its binds) so a write can be asserted by what it wrote.
+ */
+function answeringDb(answers: [string, unknown[]][]): { handle: unknown; bound: { sql: string; binds: unknown[] }[] } {
+  const bound: { sql: string; binds: unknown[] }[] = [];
+  const handle = {
+    prepare: (q: string) => {
+      const stmt: Record<string, unknown> = { sql: q, binds: [] as unknown[] };
+      const rows = () => answers.find(([k]) => q.includes(k))?.[1] ?? [];
+      stmt.bind = (...b: unknown[]) => {
+        stmt.binds = b;
+        bound.push({ sql: q, binds: b });
+        return stmt;
+      };
+      stmt.all = async () => ({ results: rows(), success: true, meta: {} });
+      stmt.first = async () => rows()[0] ?? null;
+      stmt.run = async () => ({ results: [], success: true, meta: {} });
+      return stmt;
+    },
+    batch: async (stmts: { all?: () => Promise<unknown> }[]) => Promise.all(stmts.map((s) => s.all?.())),
+    exec: async () => ({}),
+  };
+  return { handle, bound };
+}
+
+describe('remitAck late deliveries — every release until the chain shows it finished (Codex #2489 r1, #2497 r8)', () => {
+  it('discovers every release into the queue, works the open ones however many are newer, and retires the finished', async () => {
+    const { seen, restore } = install();
+    // 60 releases: the old read took the newest 50, so ids 1..10 never got a look.
+    const released = Array.from({ length: 60 }, (_, i) => ({ remit_id: i + 1, block_number: 100 + i }));
+    const shared = answeringDb([
+      ['RemitReservationReleased', released],
+      ['FROM indexer_cursor', [{ last_block: 90_000_000 }]],
+    ]);
+    // The queue holds every release but 7, which finished on an earlier tick.
+    const open = released
+      .filter((r) => r.remit_id !== 7)
+      .map((r) => ({ item: String(r.remit_id), block: r.block_number, payload: JSON.stringify({ remitId: r.remit_id }) }));
+    const keeper = answeringDb([['FROM keeper_work_open', open]]);
+    const quiet = ['error', 'warn', 'log'].map((m) => vi.spyOn(console, m as 'log').mockImplementation(() => {}));
+    try {
+      await run(shared.handle, keeper.handle);
+    } finally {
+      restore();
+      quiet.forEach((s) => s.mockRestore());
+    }
+    // Discovery queued every release once, into the keeper's own database, and
+    // moved its cursor past what the indexer has completely recorded.
+    const queued = keeper.bound.filter((b) => b.sql.includes('INSERT OR IGNORE INTO keeper_work_open')).map((b) => b.binds[3]);
+    expect(queued).toHaveLength(60);
+    const cursor = keeper.bound.find((b) => b.sql.includes('INSERT INTO keeper_work_cursor'));
+    expect(cursor?.binds[3], 'past the indexed watermark').toBe(90_000_001);
+    // Every OPEN release is read once — the oldest included — and the finished one never.
+    expect(seen.reads.get(8), 'an old release, outside the newest 50').toBe(1);
+    expect(seen.reads.get(60), 'the newest').toBe(1);
+    expect(seen.reads.get(7) ?? 0, 'finished: not in the queue, never read').toBe(0);
+    // Each one read as released with nothing stranded is retired.
+    const retired = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_work_open')).flatMap((b) => b.binds.slice(3));
+    expect(retired).toHaveLength(59);
+    expect(retired).toContain('8');
+    expect(keeper.bound.every((b) => !b.sql.includes('keeper_work_') || b.binds.includes('late_ack'))).toBe(true);
+    expect(shared.bound.filter((b) => b.sql.includes('keeper_work_')), 'never the shared database').toEqual([]);
+  });
+});
+

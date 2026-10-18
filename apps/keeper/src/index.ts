@@ -103,16 +103,28 @@
  */
 
 import type { WorkerEnv } from './env';
-import { runKeeperTick } from './tick';
+
+/**
+ * The Worker no longer runs keeper ticks (#2497 r14; owner decision
+ * 2026-10-15: ALL keeper runs move to the always-on machine, docs/ops/
+ * KeeperMachine.md). Its schedule is already empty (`"crons": []`), and a
+ * scheduled invocation that arrives anyway — a schedule restored by hand —
+ * declines here, by name, rather than running passes that the Worker's own
+ * limits (15-minute duration, 50 external subrequests on this plan) can cut
+ * off mid-send. The Worker stays deployable: its deploy is the private
+ * database's one migration applier. The tick itself (./tick) is unchanged and
+ * is what the machine runs.
+ */
+export const WORKER_TICK_DECLINED =
+  '[keeper] tick declined: the keeper runs on the always-on machine, not as a scheduled Worker (docs/ops/KeeperMachine.md). Keep this Worker\'s "crons" empty.';
 
 export default {
   async scheduled(
-    controller: ScheduledController,
-    env: WorkerEnv,
-    ctx: ExecutionContext,
+    _controller: ScheduledController,
+    _env: WorkerEnv,
+    _ctx: ExecutionContext,
   ): Promise<void> {
-    // The tick itself lives in ./tick so the always-on machine runtime
-    // (host/main.ts) runs the same one. Each pass gets its own `waitUntil`.
-    await runKeeperTick(env, controller?.scheduledTime, (_name, run) => ctx.waitUntil(run));
+    // eslint-disable-next-line no-console
+    console.warn(WORKER_TICK_DECLINED);
   },
 } satisfies ExportedHandler<WorkerEnv>;

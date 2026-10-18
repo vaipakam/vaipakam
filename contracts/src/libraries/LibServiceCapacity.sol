@@ -69,13 +69,21 @@ library LibServiceCapacity {
     ///         of an action, so no armed principal sits in a dead zone.
     uint256 internal constant CURVE_RESOLUTION = 1e6;
 
-    /// @notice The arming fee knob's CEILING (#2459 r4): 1e18, the whole newly-armed
-    ///         principal. The design makes the fee a BOUNDED governance knob with a
-    ///         positive floor; a fee above the principal it arms is no setting the
-    ///         product needs, and under this ceiling every fee is representable for
-    ///         any grant a curve allows (`granted` ≤ `bondAt4x` ≤ 2^128), so no
-    ///         accepted rate can make a post or its preview revert.
-    uint256 internal constant MAX_ARMING_FEE_RATE = 1e18;
+    /// @notice The arming fee's FIXED bounds (#1219, owner direction 2026-10-18):
+    ///         a lit rate is 0.5%–10% of the newly armed principal (1e18 = 100%).
+    ///         They replace the mutable raise-only floor and the 100% ceiling
+    ///         (#2459 r4) with bounds anyone can read in the contract and no admin
+    ///         state to reason about: the same "never silently configured away to
+    ///         nothing" guarantee the floor gave, without a second setter. Moving
+    ///         the range later is a contract upgrade, which is intended — these
+    ///         bounds carry a legal purpose (a one-time consumptive spend of a
+    ///         bounded size), so they should not be retunable by a single call.
+    ///         Under the ceiling every fee is representable for any grant a curve
+    ///         allows (`granted` ≤ `bondAt4x` ≤ 2^128), so no accepted rate can make
+    ///         a post or its preview revert. Zero stays allowed, and only as the
+    ///         dark switch (posting refused).
+    uint256 internal constant MIN_ARMING_FEE_RATE = 0.5e16;
+    uint256 internal constant MAX_ARMING_FEE_RATE = 10e16;
 
     /// @custom:event-category informational/config
     event ServiceCapacityEnabledSet(bool enabled);
@@ -132,7 +140,10 @@ library LibServiceCapacity {
     /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
     /// @custom:event-category informational/config
     event AdapterOperatorBound(address indexed adapter, address indexed operator);
-    /// @notice The arming fee's shape changed (slice 3): `rate` (1e18 = the whole newly-armed principal; 0 = arming dark) over `floor`.
+    /// @notice The arming fee rate changed: `rate` (1e18 = the whole newly-armed principal; 0 = arming dark;
+    ///         otherwise within the fixed bounds) over `floor`, now the FIXED lower bound. The two-field
+    ///         signature is kept on purpose (Codex #2556 r4): it is the earlier facet's, so a watcher built
+    ///         against either ABI reads the same topic during and after a rolling refresh.
     /// @custom:event-category informational/config
     event ArmingFeeSet(uint256 rate, uint256 floor);
     /// @notice `operator` paid `fee` of the live VPFI into Diamond custody (recycled, never escrowed) for `capacityGranted` of principal newly armed for `role`; the deposit now buys `ceilingAfter`.
@@ -451,33 +462,33 @@ library LibServiceCapacity {
 
     // ─── slice 3 — the arming fee ───
 
-    /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
-    ///         newly-armed principal, which is also the knob's ceiling
-    ///         ({MAX_ARMING_FEE_RATE}). Zero keeps arming DARK (posting refused); a
-    ///         positive rate must sit at or above a positive floor — the floor is
-    ///         the code's guarantee that the fee is never configured away to a
-    ///         token once lit.
+    /// @notice Set the arming fee rate (ADMIN; governance later), where 1e18 is the
+    ///         whole newly-armed principal. Zero keeps arming DARK (posting
+    ///         refused). A positive rate must sit inside the fixed bounds
+    ///         [{MIN_ARMING_FEE_RATE}, {MAX_ARMING_FEE_RATE}] — 0.5% to 10%.
+    ///         Payers already mid-flight are protected by the `maxFee` they bound
+    ///         at the quote, so a retune never charges a post more than it agreed.
     function setArmingFeeRate(LibVaipakam.Storage storage s, uint256 rate) internal {
-        if (rate > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(rate, MAX_ARMING_FEE_RATE);
-        if (rate != 0 && (s.armingFeeFloor == 0 || rate < s.armingFeeFloor)) {
-            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(rate, s.armingFeeFloor);
+        if (rate != 0 && (rate < MIN_ARMING_FEE_RATE || rate > MAX_ARMING_FEE_RATE)) {
+            revert IVaipakamErrors.ServiceCapacityArmingFeeOutOfBounds(rate, MIN_ARMING_FEE_RATE, MAX_ARMING_FEE_RATE);
         }
         s.armingFeeRate = rate;
-        emit ArmingFeeSet(rate, s.armingFeeFloor);
+        emit ArmingFeeSet(rate, MIN_ARMING_FEE_RATE);
     }
 
-    /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero).
-    ///         A live rate under the new floor is refused rather than silently
-    ///         re-priced: lift the rate first. Never above the ceiling — a floor
-    ///         there would leave no rate the setter accepts.
-    function setArmingFeeFloor(LibVaipakam.Storage storage s, uint256 floor) internal {
-        if (floor <= s.armingFeeFloor) revert IVaipakamErrors.ServiceCapacityArmingFloorNotRaised(s.armingFeeFloor, floor);
-        if (floor > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(floor, MAX_ARMING_FEE_RATE);
-        if (s.armingFeeRate != 0 && s.armingFeeRate < floor) {
-            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(s.armingFeeRate, floor);
-        }
-        s.armingFeeFloor = floor;
-        emit ArmingFeeSet(s.armingFeeRate, floor);
+    /// @notice The arming fee rate IN FORCE: the stored rate when it is zero or
+    ///         inside the fixed bounds, otherwise ZERO — arming dark, posting
+    ///         refused. The bounds are enforced where the rate is USED, not only
+    ///         where it is set (Codex #2556 r1): a Diamond refreshed in place keeps
+    ///         whatever rate the earlier facet accepted (up to 100% under the
+    ///         retired ceiling), and a rate the setter would now refuse must not
+    ///         keep being charged. Out of bounds reads as dark rather than being
+    ///         clamped, because clamping would silently re-price a post; an admin
+    ///         re-lights arming by setting a rate inside the bounds.
+    function armingFeeRateInForce(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 rate = s.armingFeeRate;
+        if (rate < MIN_ARMING_FEE_RATE || rate > MAX_ARMING_FEE_RATE) return 0;
+        return rate;
     }
 
     /// @notice The arming quote for posting `amount` into `operator`'s `role`
@@ -487,8 +498,12 @@ library LibServiceCapacity {
     ///         itself — principal deposited above the old knee stays unarmed until a
     ///         post arms it and pays for it). A post arms up to the live knee:
     ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
-    ///         `granted` is what that newly arms; `fee = ceil(granted × rate / 1e18)`
-    ///         (rounded up, so no armed principal is ever free); `ceilingAfter` is
+    ///         `granted` is what that newly arms; the fee is that share less the
+    ///         record's prepaid credit, rounded UP, with the overpayment kept as the
+    ///         record's next credit ({armingFeeAndCredit}: no record ever pays less
+    ///         than `rate × everything it armed`, nor more than one smallest unit
+    ///         above it, however the posts are split or the operators chosen);
+    ///         `ceilingAfter` is
     ///         the capacity the armed balance buys. A zero-principal post therefore
     ///         arms already-deposited excess. `dark` (no positive rate, or the role's
     ///         curve unset) ⇒ zeros.
@@ -498,18 +513,66 @@ library LibServiceCapacity {
         returns (uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter, bool dark)
     {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (s.armingFeeRate == 0 || c.freeTier == 0) return (0, 0, 0, 0, true);
+        uint256 rate = armingFeeRateInForce(s);
+        if (rate == 0 || c.freeTier == 0) return (0, 0, 0, 0, true);
         LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][s.vpfiRotationEpoch];
         uint256 before = d.eligibleAmount;
         uint256 principalAfter = d.amount + amount;
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        // Rounded up, so no armed principal is ever free. The setters bound the
-        // rate by {MAX_ARMING_FEE_RATE} (#2459 r4) and `setCurve` the knee by
-        // 2^128, so the fee is at most the grant and the product cannot overflow.
-        fee = granted == 0 ? 0 : Math.mulDiv(granted, s.armingFeeRate, 1e18, Math.Rounding.Ceil);
+        (fee, ) = armingFeeAndCredit(s, role, operator, s.vpfiRotationEpoch, granted, rate);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
+    }
+
+    /// @notice The fee a post owes for `granted` newly armed principal at `rate`,
+    ///         and the prepaid credit it leaves — the ONE computation the quote and
+    ///         the post share. Every grant arms. The post's exact share is
+    ///         `granted × rate` (in 1e18ths of a token unit); the record's prepaid
+    ///         credit (always under one unit) is spent against it first, and what
+    ///         remains is charged ROUNDED UP to whole units, the overpayment
+    ///         becoming the record's new credit.
+    /// @dev    WHY ROUND UP WITH A CREDIT (Codex #2556 r2–r6). On a token whose
+    ///         smallest unit is coarse, any rule that lets a post pay LESS than its
+    ///         share leaves an exemption someone can multiply: rounding each post
+    ///         down lets small posts arm for free (r5), and carrying the unpaid
+    ///         fraction forward still lets every FRESH operator arm a sub-unit
+    ///         share for free (r6 — capacity is per address, so fresh addresses
+    ///         cost nothing). Rounding up and carrying the overpayment as credit
+    ///         closes both: no record ever pays below its share, so neither
+    ///         splitting posts nor spreading over operators saves anything. Stated
+    ///         over the deposit record, the guarantee is:
+    ///         - over a record's life the fees total at least `rate × total
+    ///           principal armed` and at most ONE smallest unit more (one wei of
+    ///           an 18-decimal VPFI; the token's own unit on a coarse token);
+    ///         - no single post pays more than its own share rounded up — again
+    ///           at most one smallest unit above `rate × what it arms` — and a
+    ///           post whose share the credit already covers pays nothing;
+    ///         - no sub-unit gap is ever stranded unarmed (r3).
+    ///         The credit is a fraction of one fee unit, so it is independent of the
+    ///         rate in force and carries across a rate change. It is spent at the
+    ///         rate IN FORCE at the post: a rate moved between quote and post can
+    ///         shift at most that credit (under one unit) beyond the fee the payer
+    ///         bound with `maxFee`, the same tolerance stated above. It does not
+    ///         survive a VPFI rotation: the retired epoch's sub-unit credit is
+    ///         forfeited (r8). The lifetime bound covers arming performed by this
+    ///         version; no chain armed principal under the earlier per-post
+    ///         rounding (arming was dark everywhere), so no history is owed. No overflow:
+    ///         `granted` ≤ `bondAt4x` ≤ 2^128, `rate` ≤ 1e17 < 2^57, credit < 1e18.
+    function armingFeeAndCredit(
+        LibVaipakam.Storage storage s,
+        uint8 role,
+        address operator,
+        uint64 epoch,
+        uint256 granted,
+        uint256 rate
+    ) internal view returns (uint256 fee, uint256 creditAfter) {
+        uint256 owed = granted * rate;
+        uint256 credit = s.armingFeePrepaid[role][operator][epoch];
+        if (owed <= credit) return (0, credit - owed);
+        uint256 need = owed - credit;
+        fee = (need + 1e18 - 1) / 1e18;
+        creditAfter = fee * 1e18 - need;
     }
 
     /// @notice The post's own checks, in the post's order, without moving anything
@@ -733,6 +796,12 @@ library LibServiceCapacity {
         if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = eligibleAfter;
+        // #1219 (Codex #2556 r6) — the prepaid credit this post leaves, through
+        // the SAME computation the quote charged (same transaction, same state).
+        {
+            (, uint256 creditAfter) = armingFeeAndCredit(s, role, operator, epoch, granted, armingFeeRateInForce(s));
+            s.armingFeePrepaid[role][operator][epoch] = creditAfter;
+        }
         s.serviceDepositEscrowByEpoch[epoch] += amount;
         if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
         else if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);

@@ -99,6 +99,16 @@
     "inputs": [],
     "outputs": [
       {
+        "name": "purchasable",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "priced",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "armed",
         "type": "bool",
         "internalType": "bool"
@@ -4127,6 +4137,27 @@
       },
       {
         "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
+    "inputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }

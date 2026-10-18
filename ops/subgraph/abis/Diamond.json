@@ -4084,23 +4084,7 @@
   },
   {
     "type": "error",
-    "name": "ServiceCapacityArmingFeeAboveCap",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFeeBelowFloor",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
     "inputs": [
       {
         "name": "rate",
@@ -4108,23 +4092,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFloorNotRaised",
-    "inputs": [
-      {
-        "name": "current",
+        "name": "min",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "proposed",
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -9754,23 +9727,7 @@
   },
   {
     "type": "error",
-    "name": "ServiceCapacityArmingFeeAboveCap",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFeeBelowFloor",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
     "inputs": [
       {
         "name": "rate",
@@ -9778,23 +9735,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFloorNotRaised",
-    "inputs": [
-      {
-        "name": "current",
+        "name": "min",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "proposed",
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -15155,23 +15101,7 @@
   },
   {
     "type": "error",
-    "name": "ServiceCapacityArmingFeeAboveCap",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFeeBelowFloor",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
     "inputs": [
       {
         "name": "rate",
@@ -15179,23 +15109,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFloorNotRaised",
-    "inputs": [
-      {
-        "name": "current",
+        "name": "min",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "proposed",
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -20839,23 +20758,7 @@
   },
   {
     "type": "error",
-    "name": "ServiceCapacityArmingFeeAboveCap",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFeeBelowFloor",
+    "name": "ServiceCapacityArmingFeeOutOfBounds",
     "inputs": [
       {
         "name": "rate",
@@ -20863,23 +20766,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ServiceCapacityArmingFloorNotRaised",
-    "inputs": [
-      {
-        "name": "current",
+        "name": "min",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "proposed",
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }
