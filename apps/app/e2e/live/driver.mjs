@@ -897,6 +897,14 @@ export async function launch({
     }
   }
   let chainId = startChainId;
+  // EVERY chain the wallet has been on, in order, starting with the launch
+  // chain. A driver sampling `chainId` at checkpoints cannot see a switch
+  // away and back between them; this history can (#2549 r1).
+  const chainHistory = [startChainId];
+  const moveTo = (id) => {
+    chainId = id;
+    if (chainHistory[chainHistory.length - 1] !== id) chainHistory.push(id);
+  };
   let authorized = preAuthorized;
 
   let profileDir = null;
@@ -1310,7 +1318,7 @@ export async function launch({
           err.code = 4902;
           throw err;
         }
-        chainId = wanted;
+        moveTo(wanted);
         return null;
       }
       case 'wallet_requestPermissions':
@@ -1484,11 +1492,16 @@ export async function launch({
     rpcLog,
     blockedRequests,
     setChain: (id) => {
-      chainId = id;
+      moveTo(id);
     },
     /** The chain the injected wallet is on NOW — after whatever switches the
-     *  page requested — so a driver can prove it ran on the chain it asked for. */
+     *  page requested. */
     activeChainId: () => chainId,
+    /** Every chain the wallet has been on since launch, in order (consecutive
+     *  repeats collapsed). A copy, so a caller cannot rewrite the record. Use
+     *  this, not `activeChainId()`, to prove a whole run stayed on one chain:
+     *  a switch away and back leaves the active chain unchanged. */
+    chainHistory: () => [...chainHistory],
     shot: async (name) => {
       const dir = path.join(HERE, 'shots');
       fs.mkdirSync(dir, { recursive: true });
