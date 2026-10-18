@@ -24,7 +24,15 @@ function setup() {
       .run(chainId, loanId, 'warn', '0xabc');
   const bands = (chainId: number) =>
     (keeper.db.prepare('SELECT COUNT(*) AS n FROM hf_band_state WHERE chain_id = ?').get(chainId) as { n: number }).n;
-  return { shared, keeper, env, band, bands };
+  /** The indexer adopts `diamond` for chain 84532 (its own epoch record). */
+  const indexerAdopts = (diamond: string) =>
+    shared.db
+      .prepare(
+        `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at) VALUES (84532, ?, 1, 1)
+         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond`,
+      )
+      .run(diamond);
+  return { shared, keeper, env, band, bands, indexerAdopts };
 }
 
 describe('listResetOnDiamondChange — schema-aware, pinned to the real schema', () => {
@@ -43,14 +51,18 @@ describe('listResetOnDiamondChange — schema-aware, pinned to the real schema',
 });
 
 describe('adoptKeeperDeployments', () => {
-  it("first adoption takes the indexer's adopted Diamond, then resets once the configured one differs", async () => {
-    const { shared, env, band, bands } = setup();
-    shared.db.prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at) VALUES (84532, ?, 1, 1)').run(OLD);
+  it("first adoption takes the indexer's adopted Diamond, waits for the indexer to adopt the new one, then resets (#2497 r12)", async () => {
+    const { env, band, bands, indexerAdopts } = setup();
+    indexerAdopts(OLD);
     band(84532, 7);
     band(97, 7); // another chain: never touched
+    // The cutover copied rows that belong to OLD; the bundle now names NEW, but
+    // the indexer has not adopted it yet: the tick declines and nothing moves.
+    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/not yet the indexer's/);
+    expect(bands(84532), 'nothing reset ahead of the indexer').toBe(1);
+    indexerAdopts(NEW);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      // The cutover copied rows that belong to OLD; the bundle now names NEW.
       expect(await adoptKeeperDeployments(env, [chain(NEW)])).toEqual([84532]);
     } finally {
       log.mockRestore();
@@ -71,9 +83,10 @@ describe('adoptKeeperDeployments', () => {
   });
 
   it('a redeploy later resets the chain once, then records it', async () => {
-    const { env, band, bands } = setup();
+    const { env, band, bands, indexerAdopts } = setup();
     await adoptKeeperDeployments(env, [chain(OLD)]);
     band(84532, 1);
+    indexerAdopts(NEW);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       expect(await adoptKeeperDeployments(env, [chain(NEW)])).toEqual([84532]);
@@ -85,8 +98,9 @@ describe('adoptKeeperDeployments', () => {
   });
 
   it("clears the chain's alert de-dup with it, and leaves a global alert alone (#2497 r11)", async () => {
-    const { keeper, env } = setup();
+    const { keeper, env, indexerAdopts } = setup();
     await adoptKeeperDeployments(env, [chain(OLD)]);
+    indexerAdopts(NEW);
     const { recordOpsAlertSent } = await import('../src/db');
     await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:84532:all`, 100, 84532);
     await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:97:all`, 100, 97);
@@ -111,9 +125,10 @@ describe('adoptKeeperDeployments', () => {
   });
 
   it('records the new Diamond only after every table reads empty — a failed delete leaves the old record, so the reset is redone (#2497 r11)', async () => {
-    const { keeper, env, band } = setup();
+    const { keeper, env, band, indexerAdopts } = setup();
     await adoptKeeperDeployments(env, [chain(OLD)]);
     band(84532, 1);
+    indexerAdopts(NEW);
     // A KEEPER_DB whose DELETE on hf_band_state silently does nothing.
     const real = keeper.d1 as unknown as { prepare: (q: string) => unknown };
     const flaky = {

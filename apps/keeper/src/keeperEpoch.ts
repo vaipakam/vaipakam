@@ -16,6 +16,11 @@
  * `diamond` is already namespaced by it and needs no reset; a new keyed-by-
  * chain table joins the rule by existing, not by being listed.
  *
+ * NEVER AHEAD OF THE INDEXER. A change is applied only once the indexer has
+ * adopted the same Diamond (its `indexer_deployment` record); until then the
+ * tick declines, since the shared rows the passes read still belong to the old
+ * one (#2497 r12).
+ *
  * WHICH DIAMOND, the first time. With no record for a chain, the rows here are
  * the ones the cutover copied from the shared database, and those belong to the
  * Diamond the INDEXER had adopted (its `indexer_deployment` record). So that is
@@ -77,6 +82,18 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
         .run();
     }
     if (have === want) continue;
+    // Not before the INDEXER has adopted the new Diamond (#2497 r12): until it
+    // does, the shared rows the passes join to (loans, events) still belong to
+    // the old one, and a loan id the new Diamond reuses would be read against
+    // the retired Diamond's row. So the tick declines until it has; the
+    // keeper's deploy can land before the indexer's.
+    // eslint-disable-next-line no-await-in-loop
+    const indexer = await indexerAdopted(env, chain.id);
+    if (indexer !== want) {
+      throw new Error(
+        `chain ${chain.id}: the configured Diamond ${want} is not yet the indexer's (${indexer ?? 'none recorded'}); waiting for it to adopt the new deployment`,
+      );
+    }
     // eslint-disable-next-line no-await-in-loop
     tables ??= await listResetOnDiamondChange(env.KEEPER_DB);
     // Delete, VERIFY, and only then record (#2497 r11) — never a batch: the

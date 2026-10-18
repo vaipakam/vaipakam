@@ -94,7 +94,8 @@ const covered = (now, copied) =>
   typeof copied === 'object' &&
   Array.isArray(now.rows) &&
   Array.isArray(copied.rows) &&
-  now.rows.every((d) => copied.rows.includes(d));
+  // A Set: the machine gate runs this every minute over the whole copy (#2497 r12).
+  ((took) => now.rows.every((d) => took.has(d)))(new Set(copied.rows));
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
 

@@ -315,7 +315,7 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   // tick, and the held or confirmed ones join. Its first observation is what
   // starts the chain the forfeit window is counted from.
   const screen = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
-  const screened = screen;
+  const screened = screen.found;
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
   // An owner with an OPEN alert who is not a candidate this tick (a screen
@@ -420,7 +420,7 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
     ];
     alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec);
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity);
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -435,6 +435,10 @@ async function departedAlertOwners(env: Env, chainId: number, candidates: Readon
   const owners = new Set<string>();
   for (const key of keys) {
     const owner = key.slice(key.lastIndexOf(':') + 1).toLowerCase();
+    // Owner-scoped keys only (#2497 r12): a chain-wide key such as
+    // `sanctions-capacity:<chain>:all` names no address, and one bad entry
+    // would make the batched status read fall back to serial reads.
+    if (!/^0x[0-9a-f]{40}$/.test(owner)) continue;
     if (!candidates.has(owner)) owners.add(owner);
   }
   return [...owners];
@@ -524,13 +528,17 @@ async function screenLoanParties(
   client: PublicClient,
   diamond: Address,
   known: ReadonlySet<string>,
-): Promise<OwnerSanctionsStatus[]> {
+): Promise<ScreenOutcome> {
   const total = await countLoanParties(env.DB, chainId);
-  if (total === 0) return [];
+  if (total === 0) return { found: [], overCapacity: null };
   const size = screenSliceSize(total);
-  if (Math.ceil(total / size) > SCREENS_PER_DAY) {
+  // Past the slice cap a cycle takes longer than a day, and a wallet flagged
+  // while it holds only ordinary reward goes undiscovered for that long. That
+  // is SAID — an ops alert (#2497 r12) — not just logged.
+  const overCapacity = Math.ceil(total / size) > SCREENS_PER_DAY ? { total, ticks: Math.ceil(total / size) } : null;
+  if (overCapacity) {
     console.warn(
-      `[keeper] rewardSanctionsHold chain=${chainId}: ${total} loan parties exceed one day's screen at ${size} a tick — a cycle takes ${Math.ceil(total / size)} ticks`,
+      `[keeper] rewardSanctionsHold chain=${chainId}: ${total} loan parties exceed one day's screen at ${size} a tick — a cycle takes ${overCapacity.ticks} ticks`,
     );
   }
   const after = await getSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond);
@@ -546,7 +554,13 @@ async function screenLoanParties(
   // Watch first, cursor second: a failure between them re-reads the slice.
   await watchSanctionsOwners(env.KEEPER_DB, chainId, diamond, found.map((st) => st.owner));
   await putSanctionsScreenCursor(env.KEEPER_DB, chainId, diamond, nextScreenCursor(after, slice, ok, terminal));
-  return found;
+  return { found, overCapacity };
+}
+
+/** One screen tick: the owners found, and whether a cycle overruns a day. */
+interface ScreenOutcome {
+  found: OwnerSanctionsStatus[];
+  overCapacity: { total: number; ticks: number } | null;
 }
 
 /** The owner settlement, repeated while it makes progress: each call is
@@ -744,6 +758,7 @@ export async function raiseAlerts(
   statuses: readonly OwnerSanctionsStatus[],
   plan: SanctionsHoldPlan,
   nowSec: number,
+  screenOverCapacity: { total: number; ticks: number } | null = null,
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -762,6 +777,10 @@ export async function raiseAlerts(
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec, chainId);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
+  // The screen's daily bound, stated (#2497 r12).
+  await toggle(`sanctions-screen-capacity:${chainId}:all`, screenOverCapacity !== null, () =>
+    `[chain ${chainId}] reward sanctions screen: ${screenOverCapacity?.total} loan parties take ${screenOverCapacity?.ticks} hourly ticks to screen, more than a day — a wallet flagged while holding only ordinary reward can go undiscovered that long. Raise the slice cap or the cadence.`,
+  );
   // Capacity, stated (#2497 r7): past the write ceiling the six-hour bound
   // cannot be kept for every held owner, and chains will lapse.
   await toggle(`sanctions-capacity:${chainId}:all`, plan.overCapacity, () =>

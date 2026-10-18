@@ -315,6 +315,24 @@ describe('raiseAlerts', () => {
     expect(left.map((r) => r.alert_key), "another chain's alert is not this pass's to clear").toEqual([otherChain]);
   });
 
+  it("states the screen's daily bound when a cycle overruns a day (#2497 r12)", async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const quiet = {
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 25, overCapacity: false, heldCount: 0,
+      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    };
+    try {
+      await raiseAlerts(env, CHAIN, [], quiet, NOW, { total: 30_000, ticks: 30 });
+      expect(warned.some((w) => /30000 loan parties take 30 hourly ticks to screen, more than a day/.test(w))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('raises the capacity alert while the write ceiling binds, and clears it after (#2497 r7)', async () => {
     const h = createKeeperD1();
     const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;

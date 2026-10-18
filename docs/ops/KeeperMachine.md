@@ -202,7 +202,12 @@ next tick, even one that rewrites a row within the same second. Rows that
 have only gone are accepted: the indexer's reset after a Diamond redeploy
 deletes a chain's rows, and that is not a keeper write. The keeper applies the
 same reset to its own private records when a chain's Diamond changes, logging
-`Diamond changed … reset private …` once. Once the
+`Diamond changed … reset private …` once. It does that only once the indexer has adopted
+the same Diamond. Until then every tick declines with `not yet the indexer's
+… waiting for it to adopt the new deployment`, for every chain, because the
+passes must not read the new Diamond's ids against the old one's shared rows.
+That window lasts until the indexer's next run after its own deploy. A decline
+that persists means the indexer has not picked up the redeploy. Once the
 cutover is recorded the old copies no longer grow, so the check costs the
 same every tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
