@@ -109,7 +109,11 @@ The lease is a guard, not the plan. It cannot tell two runners apart if they
 share a name, and a pass stuck for longer than 10 minutes could overlap a
 successor. So the procedure still holds:
 
-1. **The Worker's schedule stays EMPTY** while any machine runs.
+1. **The Worker's schedule stays EMPTY** while any machine runs. Since
+   #2497 the Worker's `scheduled` handler also declines every invocation by name
+   (`the keeper runs on the always-on machine, not as a scheduled Worker`), so a
+   schedule restored by hand runs nothing. The Worker stays deployed only as the
+   private database's migration applier.
    `apps/keeper/wrangler.jsonc` commits `"crons": []`. Confirm the live account
    agrees with `node .github/scripts/check-cron-slots.mjs --live` (read-only,
    see [`CloudflareCronSlots.md`](CloudflareCronSlots.md)). Never deploy the

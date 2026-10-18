@@ -10,8 +10,15 @@
  * losing it.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import worker from '../src/index';
+import worker, { WORKER_TICK_DECLINED } from '../src/index';
+import { runKeeperTick } from '../src/tick';
 import type { WorkerEnv } from '../src/env';
+
+/** The tick both hosts share, driven the way the Worker used to drive it. */
+const tick = {
+  scheduled: (c: ScheduledController, env: WorkerEnv, ctx: ExecutionContext & { waitUntil: (p: Promise<void>) => void }) =>
+    runKeeperTick(env, c?.scheduledTime, (_n, run) => ctx.waitUntil(run())),
+};
 
 /** An env with every binding absent — which is what a maintenance build has. */
 const NO_BINDINGS = {} as WorkerEnv;
@@ -29,7 +36,7 @@ describe('scheduled, on a build with no D1 binding', () => {
       passThroughOnException: vi.fn(),
     } as unknown as ExecutionContext & { waitUntil: ReturnType<typeof vi.fn> };
 
-    await worker.scheduled(
+    await tick.scheduled(
       { scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController,
       NO_BINDINGS,
       ctx,
@@ -55,7 +62,7 @@ describe('scheduled, on a build with no D1 binding', () => {
       passThroughOnException: vi.fn(),
     } as unknown as ExecutionContext & { waitUntil: ReturnType<typeof vi.fn> };
 
-    await worker.scheduled(
+    await tick.scheduled(
       { scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController,
       { DB: {} as D1Database } as WorkerEnv,
       ctx,
@@ -68,5 +75,15 @@ describe('scheduled, on a build with no D1 binding', () => {
     expect(line).toContain('KEEPER_DB');
     expect(line).not.toMatch(/unbound: DB\b/);
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Worker entry no longer runs ticks (#2497 r14)', () => {
+  it('declines by name and launches nothing, whatever its bindings', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext & { waitUntil: ReturnType<typeof vi.fn> };
+    await worker.scheduled({ scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController, { DB: {} as D1Database, KEEPER_DB: {} } as unknown as WorkerEnv, ctx);
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(WORKER_TICK_DECLINED);
   });
 });

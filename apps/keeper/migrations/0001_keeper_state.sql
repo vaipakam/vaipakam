@@ -40,10 +40,10 @@
 -- The DDL below is the live shape of each table (no later migration altered
 -- any of them); the comments keep each table's reason for existing.
 --
--- Apply from apps/keeper/: `wrangler d1 migrations apply vaipakam-keeper-db
--- --remote` (or `pnpm --filter @vaipakam/keeper run migrate`). No deploy
--- script applies these: the keeper's `deploy` verifies only the SHARED
--- database's migrations.
+-- Applied by the keeper's own `deploy` (scripts/deploy-keeper.mjs runs
+-- `run migrate` first and verifies the result) — the keeper is this database's
+-- one applier — or alone from apps/keeper/ with `pnpm --filter @vaipakam/keeper
+-- run migrate` (`wrangler d1 migrations apply vaipakam-keeper-db --remote`).
 
 -- ── HF-band notification state (#1213 PR 2b; was indexer 0041) ────────────
 --
