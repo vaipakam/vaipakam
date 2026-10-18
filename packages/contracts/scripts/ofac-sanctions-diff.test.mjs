@@ -531,6 +531,15 @@ test('buildUpdate: a delisting is refused while the address still appears in the
   const F = getAddress('0x1111111111111111111111111111111111111111');
   assert.ok(parsed.excludedFalse.some((e) => e.address === F));
   assert.deepEqual(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, F], currentVersion: 1, ...FRESH }).remove, [F]);
+  // A False record cannot mask another mention of the same address (r20).
+  const masked = withInProfile(`<Other>${F}</Other>`);
+  const parsedMasked = parseSdnAdvanced(masked);
+  assert.ok(parsedMasked.excludedFalse.some((e) => e.address === F));
+  assert.throws(() => buildUpdate({ parsed: parsedMasked, sourceHash: sourceHash(Buffer.from(masked)), current: [...parsedMasked.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  // An entity-encoded mention is counted in decoded text even though the raw bytes miss it.
+  const encoded = withInProfile(`<Other>&#x30;x${'1'.repeat(40)}</Other>`);
+  const parsedEnc = parseSdnAdvanced(encoded);
+  assert.throws(() => buildUpdate({ parsed: parsedEnc, sourceHash: sourceHash(Buffer.from(encoded)), current: [...parsedEnc.addresses, F], currentVersion: 1, ...FRESH }), /still appears in the source file/);
   // A hand-built parsed object without the witness is refused, never skipped.
   assert.throws(() => buildUpdate({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
 });

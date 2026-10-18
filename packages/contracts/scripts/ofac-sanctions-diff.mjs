@@ -18,8 +18,9 @@
  *      Every `0x`/`0X`-prefixed value that is not exactly an address is
  *      reported, raw, as malformed for a human — never guessed at.
  *   3. Reads the CURRENT list from the deployed contract, and only from it,
- *      at ONE pinned block (`--rpc` + `--list` [+ `--block N`, default the
- *      `finalized` block]; the block is resolved once to its HASH and every
+ *      at ONE pinned block (`--rpc` + `--list`; always the chain's
+ *      `finalized` block, Codex #2543 r20, so no reorg can replace the state
+ *      an update is computed from); the block is resolved once to its HASH and every
  *      read — version, publication, hash, outstanding counts, count, each
  *      page — is pinned to it by EIP-1898 with `requireCanonical`, using the
  *      census tooling's helper). A file of addresses is not accepted: nothing
@@ -101,7 +102,7 @@
  *
  * Usage:
  *   node scripts/ofac-sanctions-diff.mjs --xml sdn_advanced.xml \
- *     --rpc "$RPC" --list 0xList [--block N] [--out update.json]
+ *     --rpc "$RPC" --list 0xList [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
  *     --rpc "$RPC" --list 0xList [--max-changes-per-call 200]
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
@@ -529,9 +530,10 @@ const SDN_SINGLETON_PATHS = new Set([SDN_PATHS.dateOfIssue, SDN_PATHS.year, SDN_
  */
 export function parseSdnAdvanced(xml) {
   const path = []; // local names of the open OFAC-namespace elements, root first
-  // Every run of 40+ hex digits in the file, raw and decoded — the delisting
-  // witness buildUpdate checks (Codex #2543 r19).
-  const hexRuns = new Set((xml.match(HEX_RUN_RE) ?? []).map((r) => r.toLowerCase()));
+  // Every run of 40+ hex digits in the file, raw and in decoded text, kept
+  // with repeats — the delisting witness buildUpdate checks (Codex #2543
+  // r19/r20).
+  const hexRuns = { raw: (xml.match(HEX_RUN_RE) ?? []).map((r) => r.toLowerCase()), text: [] };
   const seen = new Map(); // singleton path -> count
   const date = {};
   const featureTypes = new Map();
@@ -621,7 +623,7 @@ export function parseSdnAdvanced(xml) {
     },
     text(value) {
       if (reading) buf += value;
-      for (const run of value.match(HEX_RUN_RE) ?? []) hexRuns.add(run.toLowerCase());
+      for (const run of value.match(HEX_RUN_RE) ?? []) hexRuns.text.push(run.toLowerCase());
     },
     close() {
       const at = path.join('/');
@@ -737,7 +739,7 @@ export function parseSdnAdvanced(xml) {
     .sort((x, y) => x.address.toLowerCase().localeCompare(y.address.toLowerCase()));
   // A False-reliability version of an address listed elsewhere still stands.
   const excluded = excludedFalse.filter((e) => !byAddress.has(e.address.toLowerCase()));
-  return { publicationId, publicationDate, addresses: entries.map((e) => e.address), entries, excludedFalse: excluded, malformed, nonEvmByAsset, hexRuns: [...hexRuns] };
+  return { publicationId, publicationDate, addresses: entries.map((e) => e.address), entries, excludedFalse: excluded, malformed, nonEvmByAsset, hexRuns };
 }
 
 /** Normalise an address list (checksum, dedupe, sorted); throws on a bad entry. */
@@ -825,16 +827,23 @@ export function replayChainalysisLogs(logs) {
  * true. Any parse path that DROPS a record it should have read — a moved or
  * malformed node, an unresolvable reference, a damaged character — leaves
  * the address's digits in the file, and is refused here, whichever path
- * dropped it. The one exception is an address the file still carries only as
- * OFAC-marked False, which is a real reason to delist.
+ * dropped it. The one exception is an address the file still carries ONLY as
+ * OFAC-marked False records, which is a real reason to delist: every mention
+ * must be accounted for by one of those records (Codex #2543 r20), counted
+ * both in the raw bytes and in decoded text, so a False record cannot mask
+ * another, damaged mention of the same address.
  */
 export function assertDelistingsWitnessed(parsed, remove) {
-  if (!Array.isArray(parsed.hexRuns)) throw new Error('parsed source carries no hexRuns — re-parse it with parseSdnAdvanced');
-  const markedFalse = new Set((parsed.excludedFalse ?? []).map((e) => e.address.toLowerCase()));
+  const runs = parsed.hexRuns;
+  if (!runs || !Array.isArray(runs.raw) || !Array.isArray(runs.text)) {
+    throw new Error('parsed source carries no hexRuns — re-parse it with parseSdnAdvanced');
+  }
+  const mentions = (list, body) => list.reduce((n, run) => n + run.split(body).length - 1, 0);
   const stillInFile = remove.filter((a) => {
-    if (markedFalse.has(a.toLowerCase())) return false;
-    const body = a.slice(2).toLowerCase();
-    return parsed.hexRuns.some((run) => run.includes(body));
+    const lower = a.toLowerCase();
+    const body = lower.slice(2);
+    const falseRecords = (parsed.excludedFalse ?? []).filter((e) => e.address.toLowerCase() === lower).length;
+    return mentions(runs.raw, body) !== falseRecords || mentions(runs.text, body) !== falseRecords;
   });
   if (stillInFile.length) {
     throw new Error(
@@ -966,15 +975,17 @@ function readList(path) {
 }
 
 /**
- * The current list, read as ONE snapshot. The block is resolved once — the
- * given number, or the `finalized` tag by default — to its hash, and every
+ * The current list, read as ONE snapshot. The block is resolved once — always
+ * the `finalized` tag, never a chosen height: a non-final block could be
+ * replaced by a different list state at the same `listVersion`, and the
+ * update's `expectedVersion` would still pass (Codex #2543 r20) — to its hash, and every
  * read (version, publication, hash, count, each page) is pinned to that hash
  * with `requireCanonical`, so a reorg during the reads makes them fail
  * instead of mixing two forks at one height.
  */
-async function readCurrentFromChain(rpc, list, blockNumberArg, abi) {
+async function readCurrentFromChain(rpc, list, abi) {
   const client = createPublicClient({ transport: http(rpc) });
-  const block = blockNumberArg !== undefined ? await client.getBlock({ blockNumber: blockNumberArg }) : await client.getBlock({ blockTag: 'finalized' });
+  const block = await client.getBlock({ blockTag: 'finalized' });
   const blockNumber = block.number;
   const read = (functionName, args = []) => callAtHash(client, block, { address: list, abi, functionName, args });
   const version = await read('listVersion');
@@ -987,7 +998,7 @@ async function readCurrentFromChain(rpc, list, blockNumberArg, abi) {
   const PAGE = 200n;
   for (let off = 0n; off < count; off += PAGE) addrs.push(...(await read('listedPage', [off, PAGE])));
   if (BigInt(addrs.length) !== count) throw new Error(`read ${addrs.length} addresses, listedCount says ${count}`);
-  return { version, recordedDate, recordedHash, recordedPendingAdditions, recordedPendingDelistings, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: blockNumberArg !== undefined ? 'number' : 'finalized' };
+  return { version, recordedDate, recordedHash, recordedPendingAdditions, recordedPendingDelistings, addresses: normaliseAddresses(addrs, 'on-chain list'), blockNumber, blockHash: block.hash, blockTag: 'finalized' };
 }
 
 async function readChainalysisFromChain(rpc, oracle, fromBlock, toBlockArg, chunk) {
@@ -1036,8 +1047,8 @@ async function main() {
   // designation.
   if (!args.rpc || !args.list) throw new Error('give the current list: --rpc + --list (the deployed SanctionsList)');
   if (args.current !== undefined) throw new Error('--current (a file of addresses) is no longer accepted: read the list from the chain with --rpc + --list');
-  const block = args.block !== undefined ? parseUintArg('--block', args.block) : undefined;
-  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), block, abi);
+  if (args.block !== undefined) throw new Error('--block is no longer accepted: the list is always read at the finalized block, so no reorg can replace the state an update is computed from');
+  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), abi);
   current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
 
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;
