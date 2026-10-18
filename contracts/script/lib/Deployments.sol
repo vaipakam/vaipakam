@@ -411,6 +411,12 @@ library Deployments {
     ///         `.sanctionsTestnetOverlay`, the overlay `ConfigureSanctionsOracle`
     ///         last deployed on this testnet. Zero where none was deployed.
     function readSanctionsTestnetOverlayOptional() internal view returns (address) { return _tryReadAddr(".sanctionsTestnetOverlay"); }
+    /// #2548 — one key of the faucet mock rig `DeployTestnetMocks` records
+    /// under `.testnetMocks` (e.g. "feedRegistry"); `address(0)` when the
+    /// chain carries no mock rig or the key is absent.
+    function readTestnetMockOptional(string memory key) internal view returns (address) {
+        return _tryReadAddr(string.concat(".testnetMocks.", key));
+    }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.

@@ -209,6 +209,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
+# shellcheck source=lib/sentinel-reads.sh
+source "$SCRIPT_DIR/lib/sentinel-reads.sh"
+# shellcheck source=lib/ccip-lanes.sh
+source "$SCRIPT_DIR/lib/ccip-lanes.sh"
+# shellcheck source=lib/artifact-code-check.sh
+source "$SCRIPT_DIR/lib/artifact-code-check.sh"
 # shellcheck source=lib/retired-deployment.sh
 source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
@@ -289,6 +295,9 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   swap-adapters    — Phase 7a aggregator adapters via
                      DeploySwapAdapters.s.sol. Requires
                      INITIAL_SETTLERS env var.
+  testnet-mocks    — Faucet mock rig (DeployTestnetMocks.s.sol), incl. a
+                     registered MockSwapAdapter. Run BEFORE configure on a
+                     testnet with no real swap venue (#2548).
   configure        — DiamondConfigSpell: ConfigureVPFIToken +
                      ConfigureOracle + ConfigureRewardReporter +
                      ConfigureNFTImageURIs in one operator-action.
@@ -448,6 +457,24 @@ esac
 
 
 RPC="${!RPC_VAR:-}"
+
+# #2548 — pin the gas price where the node's own estimate cannot be trusted.
+# On 2026-10-18 forge estimated a 1-wei legacy gas price on BNB testnet for
+# DeployTimelock (the node's minimum is 0.1 gwei); the transaction sat unmined
+# and the contracts phase hung until it was replaced by hand. forge and cast
+# both read ETH_GAS_PRICE, so one export covers every broadcast in this run.
+# `<SLUG>_GAS_PRICE_WEI` in .env sets it for any chain; BNB testnet defaults
+# to 1 gwei when nothing is set. An ETH_GAS_PRICE already in the environment
+# wins, so a run can still override it.
+_gas_price_var="${CCIP_SLUG}_GAS_PRICE_WEI"
+if [ -z "${ETH_GAS_PRICE:-}" ]; then
+  if [ -n "${!_gas_price_var:-}" ]; then
+    export ETH_GAS_PRICE="${!_gas_price_var}"
+  elif [ "$CHAIN_SLUG" = "bnb-testnet" ]; then
+    export ETH_GAS_PRICE=1000000000
+  fi
+fi
+if [ -n "${ETH_GAS_PRICE:-}" ]; then echo "  gas price pinned for this run: ${ETH_GAS_PRICE} wei"; fi
 if [ -z "$RPC" ]; then
   echo "Error: \$$RPC_VAR not set in .env." >&2
   exit 1
@@ -646,7 +673,9 @@ append_archive_manifest() {
   [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
   command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
   [ -f "$writer" ] || { echo "ERROR: manifest writer missing at $writer" >&2; return 1; }
-  node "$writer" append "$manifest" "$chain_slug" "$stamp" "$addr" || return 1
+  # #2548 (Codex #2552 r3) — the code check is part of the append, so no
+  # caller (top-level archive or reconcile) can record a phantom.
+  append_verified_archive_entry "$manifest" "$writer" "$chain_slug" "$stamp" "$addr" "$RPC" || return 1
 }
 
 # Every local archive that the committed inventory does not yet list is
@@ -1220,9 +1249,14 @@ EOF
 
 phase_ccip_wire() {
   _preflight_gate
+  # The lane list is per chain (lib/ccip-lanes.sh, #2548): prefer
+  # CCIP_LANE_CHAIN_IDS_<SLUG> from .env, refuse when it disagrees with a
+  # bare CCIP_LANE_CHAIN_IDS given for this run.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
   if [ -z "${CCIP_LANE_CHAIN_IDS:-}" ]; then
     cat >&2 <<EOF
-Refusing --phase ccip-wire: CCIP_LANE_CHAIN_IDS unset in .env.
+Refusing --phase ccip-wire: neither CCIP_LANE_CHAIN_IDS_${CCIP_SLUG} (in .env)
+nor CCIP_LANE_CHAIN_IDS (for this run) is set.
 
 ConfigureCcip.s.sol wires a CCIP TokenPool lane to every REMOTE chain
 in the topology. Set CCIP_LANE_CHAIN_IDS to a comma-separated list of
@@ -1357,6 +1391,39 @@ EOF
     forge script script/DeployUniV3Adapter.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
   mark_phase_done "swap-adapters"
+}
+
+# ── testnet-mocks (#2548) ─────────────────────────────────────────────
+# The faucet mock rig (DeployTestnetMocks.s.sol): the faucet's tokens and
+# NFTs, their oracle wiring, and a registered MockSwapAdapter. On a testnet
+# with no usable on-chain swap venue (Base and Arbitrum Sepolia have neither
+# a 0x Settler/AllowanceHolder pair on Base nor a v1 SwapRouter on either)
+# the rig's adapter is the liquidation route `configure` requires.
+#
+# Ordering: run it BEFORE `configure`. ConfigureOracle adopts the rig's
+# recorded oracle wiring (feed registry, factory, ETH/USD feed, WETH),
+# proven against the chain, so the two no longer overwrite each other and
+# one pass is enough. (Before #2548 configure set the chain's real feeds
+# over the rig and the mock script had to run a second time.)
+#
+# A completed run is not repeated: a second pass deploys a fresh rig and
+# orphans the first one's faucet balances. Re-running deliberately means
+# removing the phase marker and passing the FAUCET_* reuse variables.
+phase_testnet_mocks() {
+  _preflight_gate
+  if phase_already_done "testnet-mocks"; then
+    echo "testnet-mocks already ran on $CHAIN_SLUG ($MARKERS_DIR/phase-testnet-mocks.done)."
+    echo "  A second pass deploys a NEW rig. To re-run on purpose, remove that marker and"
+    echo "  export the FAUCET_* reuse variables for the assets to keep (see DeployTestnetMocks.s.sol)."
+    return 0
+  fi
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-testnet.sh — testnet-mocks  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+  snapshot_addresses "pre-testnet-mocks"
+  forge script script/DeployTestnetMocks.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  mark_phase_done "testnet-mocks"
+  echo "  ✓ mock rig recorded under .testnetMocks — run --phase configure next"
 }
 
 # ── Phase: configure ──────────────────────────────────────────────────
@@ -1965,10 +2032,15 @@ phase_verify() {
 
   echo
   echo "[1] Sentinel reads"
-  echo "  paused()         = $(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  getTreasury()    = $(cast call "$DIAMOND" 'getTreasury()(address)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  nextOfferId()    = $(cast call "$DIAMOND" 'nextOfferId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
-  echo "  nextLoanId()     = $(cast call "$DIAMOND" 'nextLoanId()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo '?')"
+  # One shared list (lib/sentinel-reads.sh, #2548). An unreadable sentinel
+  # fails the phase: the old per-script copies printed `?` for two retired
+  # selectors and passed, so the check had silently stopped checking.
+  SENTINEL_FAILED=0
+  sentinel_reads "$DIAMOND" "$RPC" || SENTINEL_FAILED=$?
+  if [ "$SENTINEL_FAILED" -ne 0 ]; then
+    echo "  FAIL: $SENTINEL_FAILED sentinel read(s) unreadable on $DIAMOND — a Diamond that is not cut, not deployed, or not on this RPC's chain." >&2
+    exit 1
+  fi
 
   echo
   echo "[2] Facet-count verification (DiamondLoupe)"
@@ -1987,8 +2059,12 @@ phase_verify() {
     echo "  FAIL: .facetCount missing from $DEPLOY_DIR/addresses.json — re-run --phase contracts." >&2
     exit 1
   fi
-  FACET_COUNT_RAW=$(cast call "$DIAMOND" 'facetAddresses()(address[])' --rpc-url "$RPC" 2>/dev/null \
-    | tr ',' '\n' | grep -c '0x' || echo 0)
+  # One shared count (lib/sentinel-reads.sh, #2548): a failed loupe read is a
+  # refusal, never a "0" that the comparison below could not evaluate.
+  if ! FACET_COUNT_RAW=$(diamond_facet_count "$DIAMOND" "$RPC"); then
+    echo "  FAIL: could not read the loupe (facetAddresses) on $DIAMOND=${DIAMOND} — a Diamond that is not deployed, not cut, or not on this RPC's chain." >&2
+    exit 1
+  fi
   if [ "$FACET_COUNT_RAW" -ne "$EXPECTED_FACETS" ]; then
     echo "  FAIL: $FACET_COUNT_RAW facets registered, expected exactly $EXPECTED_FACETS (stale / half-cut diamond)." >&2
     echo "        Run --phase contracts again before any other phase." >&2
@@ -2297,6 +2373,7 @@ case "$PHASE" in
   contracts)        phase_contracts ;;
   ccip-wire)        phase_ccip_wire ;;
   swap-adapters)    phase_swap_adapters ;;
+  testnet-mocks)    phase_testnet_mocks ;;
   configure)        phase_configure ;;
   handover)         phase_handover ;;
   abi-sync)         phase_abi_sync ;;
