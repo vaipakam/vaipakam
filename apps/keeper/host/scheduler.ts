@@ -21,9 +21,15 @@
  * across passes and across ticks in this process.
  *
  * A minute is skipped outright only while the previous tick is still
- * LAUNCHING (the lease claim, the gates, secret resolution). A skipped minute
- * still calls `onSkip`, which the host uses to renew the one-runner lease
- * (#2503), so a slow launch never lets the lease lapse to another runner.
+ * LAUNCHING (the lease claim, the gates, secret resolution).
+ *
+ * THE LEASE IS RENEWED BY THE HOST, NOT BY A TICK GETTING THROUGH (#2497 r13).
+ * Every minute on which a pass is still in flight, or the previous tick is
+ * still launching, calls `onSkip` (the host's one-runner lease renewal,
+ * #2503), whatever the new tick then does. A tick renews only once it passes
+ * the gates, so a run of declined ticks would otherwise let the lease lapse
+ * while a long pass is still sending, and another runner could take it and
+ * sign alongside.
  */
 
 export const MINUTE_MS = 60_000;
@@ -45,7 +51,9 @@ export interface TickRunnerDeps {
     launch: (passName: string, run: () => Promise<void>) => void,
   ): Promise<void>;
   log(line: string): void;
-  /** Called for a minute skipped because the previous tick is still launching. Must not reject. */
+  /** Called every minute on which a pass is still in flight or the previous
+   *  tick is still launching — the host renews the one-runner lease here.
+   *  Must not reject. */
   onSkip?(scheduledTimeMs: number): Promise<void>;
 }
 
@@ -64,9 +72,10 @@ export function createTickRunner(deps: TickRunnerDeps): TickRunner {
 
   const fire = (scheduledTimeMs: number): boolean => {
     const at = new Date(scheduledTimeMs).toISOString();
+    // Anything still running: keep the lease, whatever this minute's tick does.
+    if (launching !== null || running.size > 0) void deps.onSkip?.(scheduledTimeMs);
     if (launching !== null) {
       deps.log(`[keeper-host] tick ${at} skipped: the previous tick is still launching its passes`);
-      void deps.onSkip?.(scheduledTimeMs);
       return false;
     }
     const launch = (passName: string, run: () => Promise<void>) => {

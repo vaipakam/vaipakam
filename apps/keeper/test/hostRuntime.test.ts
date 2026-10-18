@@ -201,6 +201,40 @@ describe('minute clock', () => {
     expect(started.at(-2)).toBe(`sanctions@${2 * MINUTE_MS}`);
   });
 
+  it('renews the lease on every minute a pass is still in flight, whatever the new tick does (#2497 r13)', async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    const renewed: number[] = [];
+    let first = true;
+    const runner = createTickRunner({
+      // The first tick launches a long pass; every later tick is DECLINED by
+      // a gate (launches nothing, and so would renew nothing itself).
+      runTick: async (_t, launch) => {
+        if (first) {
+          first = false;
+          launch('sanctions', () => slow);
+        }
+      },
+      log: () => {},
+      onSkip: async (t) => {
+        renewed.push(t);
+      },
+    });
+    runner.fire(0);
+    await new Promise((r) => setTimeout(r, 0));
+    for (let m = 1; m <= 3; m++) {
+      runner.fire(m * MINUTE_MS);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(renewed).toEqual([MINUTE_MS, 2 * MINUTE_MS, 3 * MINUTE_MS]);
+    release();
+    await runner.idle();
+    runner.fire(4 * MINUTE_MS);
+    await runner.idle();
+    expect(renewed, 'nothing in flight: the tick renews for itself').toHaveLength(3);
+  });
+
   it('skips a minute, and renews the lease, only while the previous tick is still LAUNCHING', async () => {
     const lines: string[] = [];
     let release!: () => void;

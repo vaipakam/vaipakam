@@ -217,10 +217,26 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
+  // PENDING FIRST, late after (#2497 r13): the Pending acks are the ordinary
+  // work — a reservation stays reserved on Base until acked — and the late path
+  // is a backlog that can be large, so it gets only what the Pending acks left
+  // of the tick's one budget, never the other way round.
+  await ackPending(env, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, ackBudget);
   await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
-  if (pendingIds.length === 0) return;
+}
 
-  const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, pendingIds);
+async function ackPending(
+  env: Env,
+  baseChainId: number,
+  diamond: Address,
+  pendingIds: readonly number[],
+  reservations: ReadonlyMap<number, RemitReservationView>,
+  mirrorConfigs: Map<number, ChainConfig>,
+  mirrorClients: Map<number, PublicClient>,
+  ackBudget: { remaining: number },
+): Promise<void> {
+  if (pendingIds.length === 0) return;
+  const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
   const now = Math.floor(Date.now() / 1000);
   for (const remitId of pendingIds) {
     if (ackBudget.remaining <= 0) break;
