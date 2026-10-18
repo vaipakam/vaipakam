@@ -333,6 +333,25 @@ describe('raiseAlerts', () => {
     }
   });
 
+  it('defers alert work past the run\'s alert window instead of overrunning the cadence (#2497 r17)', async () => {
+    const h = createKeeperD1();
+    const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const plan = {
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 25, overCapacity: false, heldCount: 0,
+      deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
+    };
+    try {
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 5, clean: 0 }, Date.now() - 1);
+      expect(warned.some((w) => /due observation/.test(w)), 'nothing sent past the window').toBe(false);
+      expect(warned.some((w) => /the alert window closed — \d+ alert update\(s\) wait for the next run/.test(w))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('alerts on MEASURED shortfall, per kind of work, and clears when it is gone (#2497 r7, r16)', async () => {
     const h = createKeeperD1();
     const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;

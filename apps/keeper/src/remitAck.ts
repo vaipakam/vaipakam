@@ -450,7 +450,13 @@ async function ackLateDeliveries(
   await touchOpenWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, ids.filter((id) => !fin.has(id)).map(String));
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < ids.length && ackBudget.remaining > 0; i++) {
+  // The same rotation rule as the Pending acks (#2497 r17): least recently
+  // attempted first, so a candidate is never stuck behind ones re-taking the
+  // budget every backoff window.
+  const at = new Map(ids.map((id, i) => [id, i]));
+  for (const id of ackOrder(ids, attempts)) {
+    if (ackBudget.remaining <= 0) break;
+    const i = at.get(id)!;
     const r = res[i];
     if (!r || r.status !== 'success') continue;
     const v = r.result as RemitReservationView;

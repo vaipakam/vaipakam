@@ -284,6 +284,10 @@ export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
  *  hourly cadence, so the host's per-pass guard never has to skip the next run.
  *  What is left unsent is measured and stated, not predicted. */
 export const PASS_SEND_WINDOW_MS = 45 * 60_000;
+/** The run's alert window, after the send window and still inside the hourly
+ *  cadence (#2497 r17). An alert not delivered by then is not recorded, so it
+ *  is simply sent by the next run. */
+export const PASS_ALERT_WINDOW_MS = 10 * 60_000;
 
 export async function runRewardSanctionsHold(env: Env): Promise<void> {
   if (!passIsArmed(env, 'rewardSanctionsHold', 'REWARD_SANCTIONS_KEEPER_ENABLED')) return;
@@ -440,7 +444,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     ];
     alertPlan = planSanctionsHold(alertStatuses, Math.floor(Date.now() / 1000));
   }
-  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall);
+  await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screen.overCapacity, shortfall, deadline + PASS_ALERT_WINDOW_MS);
 }
 
 /** Owners with an open sanctions alert on this chain who are not candidates
@@ -783,6 +787,8 @@ export async function raiseAlerts(
   screenOverCapacity: { total: number; ticks: number } | null = null,
   /** What this tick left unsent, measured ({@link observeChain}); null = not measured. */
   shortfall: { due: number; clean: number } | null = null,
+  /** Past this, alerts wait for the next run (#2497 r17); none by default. */
+  alertDeadline: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
   const atRisk = new Set(plan.deadlineAtRisk.map((s) => s.owner));
   const overdue = new Set(plan.overdue.map((s) => s.owner));
@@ -797,7 +803,14 @@ export async function raiseAlerts(
     console.error(`[keeper] rewardSanctionsHold open-alert read failed on chain ${chainId}: ${shortErr(err)}`);
     return;
   }
+  let deferred = 0;
   const toggle = async (key: string, on: boolean, text: () => string): Promise<void> => {
+    // Bounded by the run's alert window, like its sends: an alert past it is
+    // neither sent nor recorded, so the next run raises it.
+    if (Date.now() >= alertDeadline) {
+      deferred += 1;
+      return;
+    }
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, nowSec, chainId);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
@@ -836,6 +849,9 @@ export async function raiseAlerts(
   // `statuses` here (#2497 r1), so the loop above clears its alerts on a
   // positive clean read — and only then (Codex #2489 r2's stale-row concern,
   // without treating absence as departure).
+  if (deferred > 0) {
+    console.warn(`[keeper] rewardSanctionsHold chain=${chainId}: the alert window closed — ${deferred} alert update(s) wait for the next run`);
+  }
 }
 
 function iso(sec: number): string {
