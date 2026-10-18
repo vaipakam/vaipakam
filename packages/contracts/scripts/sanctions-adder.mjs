@@ -170,6 +170,27 @@ export async function notifyOps({ token, chatId, text, fetchImpl = fetch }) {
   }
 }
 
+/**
+ * `text` with every secret in `secrets` replaced. An RPC URL carries its
+ * provider's API key, and viem puts the URL in its HTTP errors — which this
+ * runner prints to the journal and posts to the ops chat.
+ */
+export function redact(text, secrets) {
+  let out = String(text);
+  for (const secret of secrets) {
+    if (!secret) continue;
+    out = out.split(secret).join('<redacted>');
+    // The same URL may be printed without its query string or trailing slash.
+    try {
+      const u = new URL(secret);
+      for (const variant of [`${u.origin}${u.pathname}`, u.pathname.length > 1 ? u.pathname : null, u.search || null]) {
+        if (variant) out = out.split(variant).join('<redacted>');
+      }
+    } catch {}
+  }
+  return out;
+}
+
 /** Read and check the configuration; throws naming every missing setting. */
 export function readConfig(env) {
   const missing = ['SANCTIONS_ADDER_RPC_URL', 'SANCTIONS_ADDER_CHAIN_ID', 'SANCTIONS_LIST_ADDRESS', 'SANCTIONS_ADDER_PRIVATE_KEY'].filter((k) => !env[k]);
@@ -256,16 +277,18 @@ async function main() {
     console.log(text);
     if (report.status === 'applied' || report.pendingDelistings > 0 || report.malformedValues.length) await notify(text);
   } catch (e) {
-    const text = `REFUSED, nothing further sent: ${e.shortMessage ?? e.message}`;
-    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), status: 'refused', error: e.shortMessage ?? e.message }, null, 2)}\n`);
-    await notify(text);
-    throw e;
+    // The full message (viem's carries the request details), with the RPC
+    // URL and the key removed before it is written anywhere.
+    const reason = redact(e.message, [cfg.rpc, cfg.privateKey]);
+    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), status: 'refused', error: reason }, null, 2)}\n`);
+    await notify(`REFUSED, nothing further sent: ${reason}`);
+    throw new Error(reason);
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => {
-    console.error(`sanctions-adder: ${e.shortMessage ?? e.message}`);
+    console.error(`sanctions-adder: ${redact(e.message, [process.env.SANCTIONS_ADDER_RPC_URL, process.env.SANCTIONS_ADDER_PRIVATE_KEY])}`);
     process.exit(1);
   });
 }

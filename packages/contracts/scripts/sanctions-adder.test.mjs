@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
-import { keepPublication, notifyOps, readConfig, runAdder, summarize } from './sanctions-adder.mjs';
+import { keepPublication, notifyOps, readConfig, redact, runAdder, summarize } from './sanctions-adder.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, 'fixtures', 'sdn_advanced.sample.xml');
@@ -124,4 +124,13 @@ test('notifyOps: silent without a token, never throws, never puts the token in t
   assert.equal(ok, true);
   assert.ok(!body.includes('T0KEN'));
   assert.equal(await notifyOps({ token: 'T', chatId: '5', text: 'x', fetchImpl: async () => { throw new Error('down'); } }), false);
+});
+
+test('redact: an RPC URL and its key never reach a report, in any of the forms viem prints', () => {
+  const rpc = 'https://base-sepolia.g.alchemy.com/v2/SECRETKEY123?x=1';
+  const msg = `HTTP request failed.\n\nURL: ${rpc}\nRequest body: {}\nalso https://base-sepolia.g.alchemy.com/v2/SECRETKEY123 and /v2/SECRETKEY123`;
+  const out = redact(msg, [rpc, KEY]);
+  assert.ok(!out.includes('SECRETKEY123'), out);
+  assert.match(out, /<redacted>/);
+  assert.equal(redact(`key ${KEY}`, [undefined, KEY]), 'key <redacted>');
 });

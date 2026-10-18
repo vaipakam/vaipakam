@@ -89,6 +89,11 @@ main() {
     mv -T "$build" "$rel"
   fi
 
+  # The release in use before this run is kept beside the new one, so
+  # re-running with its commit is a rollback that needs no rebuild.
+  local previous
+  previous="$(basename "$(readlink "$ROOT/current" 2>/dev/null || true)")"
+
   # Units from the release itself, so they always match the code they run.
   install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder@.service" /etc/systemd/system/
   install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder@.timer" /etc/systemd/system/
@@ -96,11 +101,12 @@ main() {
   mv -T "$ROOT/current.new" "$ROOT/current"
   systemctl daemon-reload
 
-  # Keep the release in use and the one before it.
-  local keep
-  keep="$(ls -1t "$ROOT/releases" | grep -E '^[0-9a-f]{40}$' | head -2)"
-  for r in $(ls -1 "$ROOT/releases" | grep -E '^[0-9a-f]{40}$'); do
-    grep -qx "$r" <<<"$keep" || rm -rf "${ROOT:?}/releases/$r"
+  # Keep the release now in use and the one it replaced; nothing else.
+  local r
+  for r in "$ROOT"/releases/*; do
+    r="$(basename "$r")"
+    [[ "$r" =~ ^[0-9a-f]{40}$ ]] || continue
+    [ "$r" = "$commit" ] || [ "$r" = "$previous" ] || rm -rf "${ROOT:?}/releases/$r"
   done
   rm -rf "$ROOT"/releases/.build.*
 

@@ -115,10 +115,13 @@ directory and timer, so one chain's failure never stops another's run.
   the diff tool on that exact file and send its remover calls from the Safe:
 
   ```bash
-  node packages/contracts/scripts/ofac-sanctions-diff.mjs \
+  cd /opt/vaipakam-sanctions-adder/current/packages/contracts
+  sudo /usr/local/bin/node scripts/ofac-sanctions-diff.mjs \
     --xml /var/lib/vaipakam-sanctions-adder/base-sepolia/sdn-<date>-<hash>.xml \
     --rpc "$RPC" --chain-id 84532 --list 0x<list> --confirm-delist 0xA,0xB
   ```
+
+  It prints the remover's calldata; it signs nothing.
 
 - **A refused run** sends nothing and says why in the journal and the chat.
   The next run retries; a refusal that repeats needs a person.
