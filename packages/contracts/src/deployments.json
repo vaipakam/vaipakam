@@ -119,6 +119,7 @@
       "kind": "testnet-overlay",
       "oracle": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40"
     },
+    "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
     "sanctionsTestnetOverlay": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40",
     "testnetMocks": {
       "ethUsdFeed": "0x792e9e8d2A6433aD0f97e46207Bd21327AaA4e32",

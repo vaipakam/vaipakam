@@ -1215,17 +1215,22 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > logs once for a human-review cross-check, nothing more. The mainnet source is
 > **`contracts/src/compliance/SanctionsList.sol`**: Vaipakam's own on-chain
 > record of OFAC SDN EVM digital-currency addresses, applied under
-> split roles (owner = admin, Ownable2Step; an automated ADDER may only list,
-> the multisig REMOVER alone may delist — owner decision 2026-10-18) with each
+> split roles (owner = admin, Ownable2Step; an automated ADDER may only list;
+> a delisting is the multisig REMOVER's, directly, or a delister bot's
+> PROPOSAL through `SanctionsDelistingTimelock`, which the Safe may veto and
+> which executes only while RedStone clears the address — owner decisions
+> 2026-10-18) with each
 > update's source SHA-256, publication date and time recorded on-chain,
 > OR-composed with RedStone's Sanctions Oracle where RedStone has deployed it
 > (an immutable constructor input, empty by default — never hard-coded). The
 > update is computed offline by
 > `packages/contracts/scripts/ofac-sanctions-diff.mjs`, and applied unattended
-> by the adder service in `ops/sanctions-adder/` (its own key, units and memory
-> cap beside the keeper, on testnets against a rehearsal list the Diamond does
-> not screen). **The mainnet adder host is still open**, so the service and
-> `ConfigureSanctionsOracle.s.sol` both refuse every mainnet; testnets screen
+> by the two sanctions services in `ops/sanctions/` — the adder lists, the
+> delister proposes delistings — each with its own key, units and memory cap
+> beside the keeper, from one release, on testnets against a rehearsal list the
+> Diamond does not screen. **The mainnet adder host is still open**, so the
+> services and
+> `ConfigureSanctionsOracle.s.sol` all refuse every mainnet; testnets screen
 > against the admin's `TestnetSanctionsOverlay` alone (#2439). Both lists share
 > `ComposedSanctionsList` — the OR rule and "a secondary revert propagates for
 > an address the own record does not flag" live there once. Keep it that way:

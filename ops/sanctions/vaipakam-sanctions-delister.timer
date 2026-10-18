@@ -1,0 +1,17 @@
+# Runs the sanctions delister, for every configured chain, every hour. A
+# proposal moves one step per run at most once its window ends (request the
+# RedStone clearance, relay the answer, execute), and a clearance request is
+# usable for a day by default, so an hour keeps the steps well inside it.
+# OFAC's files are downloaded only when a chain has publication work.
+#   systemctl enable --now vaipakam-sanctions-delister.timer
+
+[Unit]
+Description=Vaipakam sanctions delister: hourly run
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

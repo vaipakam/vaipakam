@@ -1,7 +1,7 @@
 # Sanctions delisting — bot proposes, Safe vetoes, RedStone agrees (#2443)
 
-Status: built (contracts, tests, testnet deploy script). The delister bot and
-the CCIP clearance wiring are follow-ups, listed in §7.
+Status: built (contracts, tests, testnet deploy script, delister bot). The
+CCIP clearance wiring is the remaining follow-up, listed in §7.
 
 ## 1. Decisions this records
 
@@ -15,7 +15,16 @@ All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:
   must also be current, or "does not flag it" says nothing — §4.)
 - **D-C — Proposals come from OFAC's files.** The bot reads the advanced XML
   (the file the list records) and the plain `SDN.XML`, which a separate parser
-  reads, and proposes only what both support.
+  reads, and proposes only what both support. For the AUTOMATED route this
+  replaces the operator's confirmation against OFAC's Recent Actions notice
+  that the update tool requires of a direct removal (`--confirm-delist`,
+  #2543 r21): the card the owner answered offered "keep manual" (the Safe
+  delists after an operator confirms each address against OFAC's notice)
+  against "bot proposes, Safe vetoes" (a delister key proposes after two OFAC
+  files agree), and the owner chose the second with both files as the source.
+  The second file, the Safe's window and RedStone's agreement are what stand
+  between a damaged file and a removal on this route. A removal the Safe
+  applies directly keeps the notice confirmation.
 - **D-D — CCIP carries the RedStone check to other chains.** Where RedStone
   is not deployed, the check is made on a chain where it is and the answer is
   sent over Chainlink CCIP, per address, at the time of the delisting.
@@ -210,27 +219,70 @@ Both accept native value only as their messenger's fee refund.
 
 ## 7. Follow-ups
 
-- **Delister bot** (separate PR): it downloads both OFAC files, requires the
-  advanced file's hash to equal the list's, and requires both files to carry
-  the same publication date. Its candidates are the diff's delistings, each
-  absent from the plain file and passing the witness check, minus addresses
-  already proposed, vetoed, or flagged by RedStone. It then:
-  - proposes the candidates;
-  - on the cross-chain route, after `eta`, calls `requestClearance` on the
-    timelock's chain; once the request arrives, reads the reply from the
-    attestor's `ClearanceRead` event and calls `sendReply` on the RedStone
-    chain;
-  - executes matured proposals once `readiness` reports ready;
-  - reconfirms after a new publication.
+- **Delister bot — built** (`packages/contracts/scripts/sanctions-delister.mjs`,
+  installed with the adder from `ops/sanctions/`). An hourly oneshot with its
+  own key, which must be the timelock's proposer and nothing else (not the
+  timelock's owner, nor the adder, remover or owner of the list recorded on
+  any chain the bot has an RPC for — the attestor's chain included, checked
+  in the one client lookup every read and send goes through, before the key
+  is used there), and a timelock that serves the list the release records; a
+  chain failing either is refused. Per chain, each run:
+  - discards a removed proposer's proposals; withdraws its own proposals that
+    can no longer complete (vetoed, flagged by RedStone, already delisted
+    another way, beyond the outstanding count, or no longer called for by a
+    newer publication); reconfirms its own proposals onto a newer
+    publication after re-checking every address in them;
+  - after `eta`, requests the clearance (the CCIP fee plus a 10% margin);
+    once RedStone's chain has read it, relays the `ClearanceRead` payload with
+    `sendReply` on that chain, after checking its hash against the attestor's
+    record; executes once `readiness` reports ready;
+  - proposes the remaining delistings, in batches within the list's
+    outstanding count. A candidate must be a delisting in the diff of the
+    advanced file whose hash the list records, pass the witness check, and be
+    absent from the plain SDN.XML, read by its own parser. The two files must
+    carry the same publication date and list the same addresses (the plain
+    file may also carry addresses the advanced file marks false), neither may
+    carry a digital-currency value its parser reports as malformed (one may
+    be a damaged copy of a delisting the 40-digit witness cannot see; with
+    no person on this route, any such value stops every delisting), and the
+    diff's delistings must number exactly the list's `pendingDelistings`.
+    Addresses already proposed or vetoed by the Safe are left out (a veto is
+    the Safe's own decision, so it is only noted); those RedStone flags today,
+    or that only one file supports, are reported for the Safe; an unreadable
+    RedStone answer skips the address for that run.
 
-  It is configured and installed the way the adder is (#2557): one root-only
-  file, `/etc/vaipakam/sanctions-delister.env`, holding its own key (never the
-  adder's, the keeper's, the owner's or the Safe's) and one RPC per chain
-  under the keeper's names; the timelock and list addresses come from the
-  installed release's `deployments.json`, never from the file; one run reads
-  the OFAC files once and serves every chain. The key needs native gas on
-  both chains of a cross-chain route, for the two CCIP fees.
-- **CCIP clearance wiring** (with the bot): deploy the attestor where RedStone
+  Publication-derived steps wait while the list's latest version is not the
+  finalized one. Every step that moves a proposal toward a delisting —
+  requesting the clearance, relaying RedStone's answer, executing — is
+  taken, whoever proposed it, only on a conclusive reading of OFAC's files
+  made in that same chain state (a proposal reaching a new stage forces a new
+  reading), and only when that reading supports delisting every address the
+  proposal names. The contract checks a proposal's publication hash and date,
+  the outstanding count, vetoes and RedStone, never the addresses against
+  OFAC's files, so the bot is the only check on them: another proposer's
+  proposal naming an address the reading does not support is never moved on
+  and is reported for the Safe to veto, and the bot withdraws its own. A
+  failed, stale or newer download, files that disagree, or a same-day
+  reissue the adder will not apply by itself, and nothing moves; nor does
+  anything while the timelock is not a remover of the list (`readiness` does
+  not check the list's own authorization, so the bot does: without the role
+  every request and relay would be paid for and every execution revert).
+  Between OFAC
+  publishing and the bot's next reading anyone may still execute a matured
+  proposal, and the RedStone check is then the guard. With no RedStone check configured (every testnet today) the
+  route is unavailable, so the bot proposes nothing and reports that the
+  delistings await the Safe. The OFAC files are downloaded only when a chain
+  has publication work, and a chain whose state is unchanged is re-checked
+  daily; only a conclusive reading of a chain the run left untouched is
+  remembered, so a failed download, two files from different publications, or
+  any send (inclusion is not finality) means the next hour reads again. Every transaction is simulated, recorded by hash before broadcast,
+  and reported as included, reverted, refused by the node, failed or unknown; one failure never stops the
+  other steps, except that a transaction with an unknown outcome stops further sends on that chain
+  for the run, so a later one cannot take its nonce. An unexpected error on one chain becomes that
+  chain's report, with every send it already made, and a state file that cannot be written is
+  reported and fails the run; neither can stop the report of what was sent. The key needs native
+  gas on both chains of a cross-chain route, for the two CCIP fees.
+- **CCIP clearance wiring** (next): deploy the attestor where RedStone
   runs; register it as the clearance channel's handler there with the
   timelock as peer, and the timelock as handler on its own chain with the
   attestor as peer (both directions now carry a message); call

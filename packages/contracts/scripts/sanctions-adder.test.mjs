@@ -2,13 +2,14 @@
 // chain and network effect replaced by a fake, against the committed fixture.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
-import { ADDER_CHAINS, failureReport, keepPublication, loadDeployments, needsAlert, notifyOps, planChains, readConfig, redact, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
+import { failureReport, needsAlert, planChains, readConfig, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
+import { SERVICE_CHAINS, loadDeployments } from './sanctions-service.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, 'fixtures', 'sdn_advanced.sample.xml');
@@ -191,24 +192,27 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
   assert.match(summarizeFailure(chain), /may still land/);
 
   // Nothing broadcast: a plain refusal.
+  // Signed but refused by the node, which does not know it: nothing was broadcast.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'f'.repeat(64)}`);
+      throw Object.assign(new Error('the node refused it'), { sendOutcome: 'refused' });
+    },
+  }));
+  assert.equal(chain.status, 'refused');
+  assert.match(summarizeFailure(chain), /REFUSED, nothing sent: the node refused it/);
+  // Included and reverted: broadcast, so the chain stopped, and said as such.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'d'.repeat(64)}`);
+      throw Object.assign(new Error('applyUpdate reverted'), { sendOutcome: 'reverted' });
+    },
+  }));
+  assert.equal(chain.status, 'stopped');
+  assert.match(summarizeFailure(chain), /0xd+ — included but REVERTED/);
   const failed = failureReport('x', [{ tx: null, state: 'submitting' }]);
   assert.equal(failed.status, 'refused');
   assert.match(summarizeFailure(failed), /REFUSED, nothing sent/);
-});
-
-test('keepPublication: keeps the newest N publications', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'keep-'));
-  for (let i = 0; i < 4; i++) {
-    const f = join(dir, `sdn-2026010${i}-${'a'.repeat(11)}${i}.xml`);
-    writeFileSync(f, 'x');
-    utimesSync(f, 1000 + i, 1000 + i);
-  }
-  writeFileSync(join(dir, 'last-run.json'), '{}');
-  const dl = join(dir, 'download.xml');
-  writeFileSync(dl, 'y');
-  const kept = keepPublication(dl, dir, 20260307, `0x${'b'.repeat(64)}`, 2);
-  assert.ok(existsSync(kept));
-  assert.deepEqual(readdirSync(dir).sort(), ['last-run.json', `sdn-20260103-${'a'.repeat(11)}3.xml`, `sdn-20260307-${'b'.repeat(12)}.xml`]);
 });
 
 test('config: one file for every chain; every missing setting is named; mainnet RPCs and bad keys are refused', () => {
@@ -231,7 +235,7 @@ test('config: one file for every chain; every missing setting is named; mainnet 
 
 test('chains: testnets only, and the list address comes from deployments.json, never configuration', () => {
   const mainnets = [1, 8453, 42161, 10, 56, 137, 1101];
-  for (const c of ADDER_CHAINS) assert.ok(!mainnets.includes(c.id), `${c.name} is a testnet`);
+  for (const c of SERVICE_CHAINS) assert.ok(!mainnets.includes(c.id), `${c.name} is a testnet`);
   const plan = planChains(readConfig({ RPC_BASE_SEPOLIA: 'https://b', RPC_SEPOLIA: 'https://s', SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/x' }).chains, {
     84532: { sanctionsList: C.toLowerCase() },
     11155111: {},
@@ -244,30 +248,10 @@ test('chains: testnets only, and the list address comes from deployments.json, n
 });
 
 test('env template: names every setting the runner reads', () => {
-  const template = readFileSync(join(HERE, '..', '..', '..', 'ops', 'sanctions-adder', 'sanctions-adder.env.example'), 'utf8');
+  const template = readFileSync(join(HERE, '..', '..', '..', 'ops', 'sanctions', 'sanctions-adder.env.example'), 'utf8');
   const names = new Set([...template.matchAll(/^([A-Z0-9_]+)=/gm)].map((m) => m[1]));
-  for (const k of ['SANCTIONS_ADDER_PRIVATE_KEY', ...ADDER_CHAINS.map((c) => c.rpcEnv), 'SANCTIONS_ADDER_KEEP_FILES', 'SANCTIONS_ADDER_MAX_REMOVE', 'TG_OPS_BOT_TOKEN', 'TG_OPS_CHAT_ID']) {
+  for (const k of ['SANCTIONS_ADDER_PRIVATE_KEY', ...SERVICE_CHAINS.map((c) => c.rpcEnv), 'SANCTIONS_ADDER_KEEP_FILES', 'SANCTIONS_ADDER_MAX_REMOVE', 'TG_OPS_BOT_TOKEN', 'TG_OPS_CHAT_ID']) {
     assert.ok(names.has(k), `the template names ${k}`);
   }
 });
 
-test('notifyOps: skips without a token, never throws, reports a failed delivery, never leaks the token', async () => {
-  assert.deepEqual(await notifyOps({ token: '', chatId: '1', text: 'x' }), { skipped: true });
-  let body;
-  const ok = await notifyOps({ token: 'T0KEN', chatId: '5', text: 'hello', fetchImpl: async (url, init) => ((body = init.body), { ok: true }) });
-  assert.deepEqual(ok, { delivered: true });
-  assert.ok(!body.includes('T0KEN'));
-  assert.deepEqual(await notifyOps({ token: 'T', chatId: '5', text: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), { delivered: false, reason: 'Telegram answered HTTP 401' });
-  const down = await notifyOps({ token: 'S3CRET', chatId: '5', text: 'x', fetchImpl: async () => { throw new Error('fetch https://api.telegram.org/botS3CRET/sendMessage failed'); } });
-  assert.equal(down.delivered, false);
-  assert.ok(!down.reason.includes('S3CRET'));
-});
-
-test('redact: an RPC URL and its key never reach a report, in any of the forms viem prints', () => {
-  const rpc = 'https://base-sepolia.g.alchemy.com/v2/SECRETKEY123?x=1';
-  const msg = `HTTP request failed.\n\nURL: ${rpc}\nRequest body: {}\nalso https://base-sepolia.g.alchemy.com/v2/SECRETKEY123 and /v2/SECRETKEY123`;
-  const out = redact(msg, [rpc, KEY]);
-  assert.ok(!out.includes('SECRETKEY123'), out);
-  assert.match(out, /<redacted>/);
-  assert.equal(redact(`key ${KEY}`, [undefined, KEY]), 'key <redacted>');
-});

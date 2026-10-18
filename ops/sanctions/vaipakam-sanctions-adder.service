@@ -1,4 +1,4 @@
-# One run of the sanctions adder (ops/sanctions-adder/README.md).
+# One run of the sanctions adder (ops/sanctions/README.md).
 #
 # A oneshot: it downloads and parses OFAC's publication once, applies its
 # additions to every configured chain's SanctionsList with the adder key,
@@ -12,7 +12,7 @@
 
 [Unit]
 Description=Vaipakam sanctions adder
-Documentation=https://github.com/vaipakam/vaipakam/blob/main/ops/sanctions-adder/README.md
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/ops/sanctions/README.md
 Wants=network-online.target
 After=network-online.target
 
@@ -22,7 +22,7 @@ DynamicUser=yes
 StateDirectory=vaipakam-sanctions-adder
 StateDirectoryMode=0700
 LoadCredential=sanctions-adder.env:/etc/vaipakam/sanctions-adder.env
-ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-adder /usr/local/bin/node --max-old-space-size=192 --env-file=%d/sanctions-adder.env /opt/vaipakam-sanctions-adder/current/packages/contracts/scripts/sanctions-adder.mjs
+ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-adder /usr/local/bin/node --max-old-space-size=192 --env-file=%d/sanctions-adder.env /opt/vaipakam-sanctions/current/packages/contracts/scripts/sanctions-adder.mjs
 # A run parses the 128 MB publication in pieces (about 150 MB resident).
 # The cap makes an unexpected growth fail THIS run, never the keeper beside
 # it, and the weights below give the keeper the machine whenever both want it.

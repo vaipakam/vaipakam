@@ -1,0 +1,61 @@
+<?xml version="1.0" standalone="yes"?>
+<sdnList xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/XML">
+  <publshInformation>
+    <Publish_Date>03/07/2026</Publish_Date>
+    <Record_Count>3</Record_Count>
+  </publshInformation>
+  <sdnEntry>
+    <uid>36</uid>
+    <lastName>SAMPLE ENTITY ONE</lastName>
+    <sdnType>Entity</sdnType>
+    <programList>
+      <program>CYBER2</program>
+    </programList>
+    <idList>
+      <id>
+        <uid>196530</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber>0x252a8bd2319d8a555b872990601221b3a2053bce</idNumber>
+      </id>
+      <id>
+        <uid>196531</uid>
+        <idType>Digital Currency Address - XBT</idType>
+        <idNumber>1AjZPMsnmpdK2Rv9KQNfMurTXinscVro9V</idNumber>
+      </id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>37</uid>
+    <lastName>SAMPLE ENTITY TWO</lastName>
+    <sdnType>Entity</sdnType>
+    <idList>
+      <id>
+        <uid>196540</uid>
+        <idType>Digital Currency Address - ARB</idType>
+        <idNumber>0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB</idNumber>
+      </id>
+      <id>
+        <uid>196541</uid>
+        <idType>Digital Currency Address - TRX</idType>
+        <idNumber>TJ5usJLLwjwn7Pw3TPbdzreG7dvgKzfQ5y</idNumber>
+      </id>
+      <id>
+        <uid>196542</uid>
+        <idType>Passport</idType>
+        <idNumber>0x00AB</idNumber>
+      </id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>38</uid>
+    <lastName>SAMPLE ENTITY THREE</lastName>
+    <sdnType>Individual</sdnType>
+    <idList>
+      <id>
+        <uid>196550</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber>0x1111111111111111111111111111111111111111</idNumber>
+      </id>
+    </idList>
+  </sdnEntry>
+</sdnList>
