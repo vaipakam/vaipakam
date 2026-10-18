@@ -125,12 +125,19 @@ would already have paid irreversibly. So the sale itself is guarded:
   refuses a non-zero `durationSeconds` for `PERK_PRIORITY_ROUTING` by name. No timed
   unit can ever be sold, and no timed sale can lock the id's mode
   (`PerkModeLocked`) into the wrong shape.
-- **No sale while the perk can deliver nothing.** `purchasePerk` for the priority id
-  refuses by name while the Solver capacity curve is dark. This is checked at the
-  purchase itself, so it also covers every LATER transition that clears the curve —
-  a VPFI token rotation (`LibServiceCapacity.onTokenRotated` clears every curve) or
-  an admin clearing it — with no runbook step to remember and no stale price that
-  can be bought in the gap.
+- **No sale while the perk can deliver nothing — one deliverability predicate.**
+  `purchasePerk` for the priority id refuses by name unless the perk can be
+  delivered RIGHT NOW, and "deliverable" is a single predicate shared with the
+  fill path: the Solver capacity curve is lit (otherwise no fill is ever refused for
+  capacity, so a credit can unlock nothing) **and** intent matching is live — both
+  master gates `partialFillEnabled` and `lenderIntentEnabled` on, since
+  `matchIntent` reverts outright while either is off (Codex #2558 r2). Checking at
+  the purchase itself covers every LATER transition that breaks deliverability — a
+  VPFI token rotation (`LibServiceCapacity.onTokenRotated` clears every curve), an
+  admin clearing a curve, or either master gate being switched off — with no
+  runbook step to remember and no stale price that can be bought in the gap. Any
+  future precondition of the fill joins this one predicate rather than a second
+  check.
 
 ## Pricing and arming (owner/admin, last)
 
