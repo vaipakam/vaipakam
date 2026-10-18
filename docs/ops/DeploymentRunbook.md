@@ -1105,10 +1105,12 @@ keeper tick in between.
    ```
 
    (`apps/keeper/scripts/keeper-cutover.mjs`; it takes no arguments.) It
-   refuses if a cutover is already recorded. It exports each of the five
-   tables from `vaipakam-warm` (data only), empties the five private tables,
-   and imports each export — emptying first makes a re-run after a partial
-   import exact. It then compares every table's fingerprint (row count, latest write time,
+   refuses if a cutover is already recorded. It exports the five tables from
+   `vaipakam-warm` in ONE `wrangler d1 export` (data only) — the export holds
+   the database while it runs, and the shared database keeps serving the
+   indexer, the agent and the app, so one window, not five, and one snapshot
+   of all five tables — empties the five private tables, and imports that
+   export — emptying first makes a re-run after a partial import exact. It then compares every table's fingerprint (row count, latest write time,
    a digest over every row and one per row) on both sides, and checks that the
    shared side has not changed since it started. Only when all five match does it write the
    `keeper_cutover` record, which it reads back. Any mismatch, or anything it

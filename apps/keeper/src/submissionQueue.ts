@@ -81,6 +81,7 @@ import {
 } from 'viem/actions';
 import { HttpRequestError, TimeoutError } from 'viem';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
+import { assertEpochsHold } from './epochFence';
 
 /** How long a remembered nonce outranks the RPC's pending count. */
 export const FLOOR_TTL_MS = 60_000;
@@ -133,6 +134,10 @@ export async function withSubmissionSlot<T>(
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
     const nonce = fresh ? Math.max(pending, floor.next) : pending;
+    // The epoch fence (#2569 r4), before the signature: a send is made only
+    // while the indexer's epoch this process was launched under still holds.
+    // Thrown here, nothing was signed, so the nonce is simply released.
+    await assertEpochsHold();
     let wasSigned = false;
     let result: T;
     try {

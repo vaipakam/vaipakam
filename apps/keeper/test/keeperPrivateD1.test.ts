@@ -332,7 +332,10 @@ describe('keeper-cutover — records nothing unless every table copied whole', (
     // refuses with nothing changed — and re-read AFTER the verify, before the
     // record, refusing if they moved (#2569 r1, r2).
     const firstRead = src.indexOf('query(SHARED_DB, INDEXER_DEPLOYMENTS_SQL)');
-    const exportAt = src.indexOf("'d1', 'export'");
+    const exportAt = src.indexOf("'export',");
+    // ONE export of every table (#2569 r4): one database lock window, one snapshot.
+    expect(src.slice(exportAt), 'every table in the one export').toContain("...CUTOVER_TABLES.map(({ table }) => `--table=${table}`)");
+    expect(src.match(/'export'/g)?.length, 'exactly one export call').toBe(1);
     const secondRead = src.indexOf('query(SHARED_DB, INDEXER_DEPLOYMENTS_SQL)', firstRead + 1);
     expect(firstRead, 'adoptions read before the export').toBeGreaterThan(0);
     expect(firstRead).toBeLessThan(exportAt);

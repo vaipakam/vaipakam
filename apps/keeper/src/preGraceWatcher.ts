@@ -71,8 +71,7 @@ import {
   putPreGraceNotifyState,
 } from './db';
 import { batchedRead } from './batchRead';
-import { sendMessage as sendTelegramMessage } from './telegram';
-import { sendPush } from './push';
+import { deliverAlert } from './alertDelivery';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -549,17 +548,13 @@ async function notifyLoan(
     frontendOrigin,
   );
 
-  if (sub.tg_chat_id && env.TG_BOT_TOKEN) {
-    await sendTelegramMessage(env.TG_BOT_TOKEN, sub.tg_chat_id, text);
-  }
-  if (sub.push_channel) {
-    await sendPush(env.PUSH_CHANNEL_PK, {
-      subscriber: sub.wallet,
-      title: 'Auto-refinance: no match found yet',
-      body: text,
-      deepLinkUrl: `${frontendOrigin}/loans/${loanIdBig}`,
-    });
-  }
+  await deliverAlert(env, {
+    tgChatId: sub.tg_chat_id,
+    pushSubscriber: sub.push_channel ? sub.wallet : null,
+    text,
+    pushTitle: 'Auto-refinance: no match found yet',
+    deepLinkUrl: `${frontendOrigin}/loans/${loanIdBig}`,
+  });
 
   await putPreGraceNotifyState(
     env.DB!,

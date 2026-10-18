@@ -130,26 +130,35 @@ function run() {
 
   const dir = mkdtempSync(join(tmpdir(), 'keeper-cutover-'));
   try {
-    // 3. Export, empty, import.
-    const files = [];
-    for (const { table } of CUTOVER_TABLES) {
-      const file = join(dir, `${table}.sql`);
-      const e = wrangler(['d1', 'export', SHARED_DB, '--remote', '--no-schema', `--table=${table}`, `--output=${file}`]);
-      if (e.status !== 0) fail(`export of ${table} from ${SHARED_DB} failed — nothing was changed in ${PRIVATE_DB}.`);
-      files.push({ table, file });
+    // 3. Export, empty, import — ONE export of all the tables (#2569 r4).
+    // `wrangler d1 export` holds the database while it runs, and the shared
+    // database serves the indexer, the agent and the app, which this
+    // procedure does not stop; one export is one such window instead of one
+    // per table, and the tables are snapshotted together rather than in
+    // sequence. `--table` repeats, as wrangler documents it.
+    const file = join(dir, 'keeper-tables.sql');
+    const e = wrangler([
+      'd1',
+      'export',
+      SHARED_DB,
+      '--remote',
+      '--no-schema',
+      ...CUTOVER_TABLES.map(({ table }) => `--table=${table}`),
+      `--output=${file}`,
+    ]);
+    if (e.status !== 0) fail(`export of the keeper tables from ${SHARED_DB} failed — nothing was changed in ${PRIVATE_DB}.`);
+    let body = '';
+    try {
+      body = readFileSync(file, 'utf8');
+    } catch {
+      fail(`the export was not written.`);
     }
     const empty = CUTOVER_TABLES.map(({ table }) => `DELETE FROM ${table}`).join('; ');
     if (query(PRIVATE_DB, empty) === null) fail(`emptying the private tables in ${PRIVATE_DB} failed.`);
-    for (const { table, file } of files) {
-      let body = '';
-      try {
-        body = readFileSync(file, 'utf8');
-      } catch {
-        fail(`the export of ${table} was not written.`);
-      }
-      if (!/\bINSERT\b/i.test(body)) continue; // an empty table exports no rows: the verify decides
+    // An export with no row inserts nothing: the verify below decides.
+    if (/\bINSERT\b/i.test(body)) {
       const i = wrangler(['d1', 'execute', PRIVATE_DB, '--remote', `--file=${file}`]);
-      if (i.status !== 0) fail(`import of ${table} into ${PRIVATE_DB} failed — no record written; re-run the cutover.`);
+      if (i.status !== 0) fail(`import into ${PRIVATE_DB} failed — no record written; re-run the cutover.`);
     }
 
     // 4. Verify every table, both sides, and that nothing wrote the old copies meanwhile.

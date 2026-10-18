@@ -30,8 +30,7 @@ import {
   putNotifyState,
   sweepExpiredLinks,
 } from './db';
-import { sendMessage } from './telegram';
-import { sendPush } from './push';
+import { deliverAlert } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
@@ -230,15 +229,11 @@ async function dispatchAlert(
     frontendOrigin,
   });
 
-  if (user.tg_chat_id && env.TG_BOT_TOKEN) {
-    await sendMessage(env.TG_BOT_TOKEN, user.tg_chat_id, text);
-  }
-  if (user.push_channel) {
-    await sendPush(env.PUSH_CHANNEL_PK, {
-      subscriber: user.wallet,
-      title: pushTitle(band, user.locale),
-      body: text,
-      deepLinkUrl: `${frontendOrigin}/loans/${loanId}`,
-    });
-  }
+  await deliverAlert(env, {
+    tgChatId: user.tg_chat_id,
+    pushSubscriber: user.push_channel ? user.wallet : null,
+    text,
+    pushTitle: pushTitle(band, user.locale),
+    deepLinkUrl: `${frontendOrigin}/loans/${loanId}`,
+  });
 }

@@ -217,7 +217,12 @@ before the indexer's, or the indexer is still mid-reset, or it has moved to a
 Diamond this build does not name yet. That window lasts until the indexer's
 next run after its own deploy (or, in the last case, until the keeper's next
 update). A decline that persists means one of the two has not picked up the
-redeploy. Once the
+redeploy. A pass still running from an earlier tick is held to the same rule
+at every effect — a send, an alert, a database write re-reads the indexer's
+adoption first and is refused with `epoch fence: … moved since this tick
+launched` once it has moved (`src/epochFence.ts`) — so the minute between the
+indexer's move and the next declined tick is not a window in which an old
+pass can act. Once the
 cutover is recorded the old copies no longer grow, so the check costs the
 same every tick. That verdict is the same rule the
 Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
