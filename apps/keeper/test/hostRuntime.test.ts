@@ -168,27 +168,61 @@ describe('minute clock', () => {
     expect(msUntilNextMinute(minuteFloor(t))).toBe(MINUTE_MS);
   });
 
-  it('skips a tick while the previous one still has a pass running, naming it', async () => {
+  it('a slow pass never holds back the others: only that pass waits for its own run (#2497 r9)', async () => {
     const lines: string[] = [];
     let release!: () => void;
     const slow = new Promise<void>((r) => (release = r));
-    const ticks: number[] = [];
+    const started: string[] = [];
     const runner = createTickRunner({
       runTick: async (t, launch) => {
-        ticks.push(t);
-        if (ticks.length === 1) launch('matcher', slow);
+        launch('sanctions', async () => {
+          started.push(`sanctions@${t}`);
+          await slow;
+        });
+        launch('liquidator', async () => {
+          started.push(`liquidator@${t}`);
+        });
       },
       log: (l) => lines.push(l),
     });
     expect(runner.fire(0)).toBe(true);
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    // The next minute: the liquidator runs again; the still-running sanctions pass is not relaunched.
+    expect(runner.fire(MINUTE_MS)).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(['sanctions@0', 'liquidator@0', `liquidator@${MINUTE_MS}`]);
+    expect(lines.some((l) => /sanctions not launched at .*: its previous run is still in flight/.test(l))).toBe(true);
+    expect(runner.inFlight()).toEqual(['sanctions']);
+    release();
+    await runner.idle();
+    expect(runner.inFlight()).toEqual([]);
+    expect(runner.fire(2 * MINUTE_MS)).toBe(true);
+    await runner.idle();
+    expect(started.at(-2)).toBe(`sanctions@${2 * MINUTE_MS}`);
+  });
+
+  it('skips a minute, and renews the lease, only while the previous tick is still LAUNCHING', async () => {
+    const lines: string[] = [];
+    let release!: () => void;
+    const slowLaunch = new Promise<void>((r) => (release = r));
+    const skipped: number[] = [];
+    const runner = createTickRunner({
+      runTick: async () => {
+        await slowLaunch;
+      },
+      log: (l) => lines.push(l),
+      onSkip: async (t) => {
+        skipped.push(t);
+      },
+    });
+    expect(runner.fire(0)).toBe(true);
     expect(runner.fire(MINUTE_MS)).toBe(false);
-    expect(lines.at(-1)).toMatch(/skipped: the previous tick is still running \(matcher\)/);
+    expect(skipped).toEqual([MINUTE_MS]);
+    expect(lines.at(-1)).toMatch(/skipped: the previous tick is still launching/);
     release();
     await runner.idle();
     expect(runner.fire(2 * MINUTE_MS)).toBe(true);
     await runner.idle();
-    expect(ticks).toEqual([0, 2 * MINUTE_MS]);
   });
 
   it('a tick that throws is logged and does not wedge the clock', async () => {

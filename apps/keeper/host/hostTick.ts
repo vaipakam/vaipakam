@@ -18,7 +18,7 @@ import { runKeeperTick } from '../src/tick';
 import { buildHostEnv } from './hostEnv';
 import { createPrivateDbGate, type PrivateDbCheck } from './privateDbGate';
 
-type Launch = (passName: string, run: Promise<void>) => void;
+type Launch = (passName: string, run: () => Promise<void>) => void;
 
 export interface HostTickDeps {
   /** The process environment, read on every tick. */

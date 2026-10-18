@@ -8,7 +8,9 @@
  *
  * What differs is only how a launched pass is kept alive, so the host passes
  * that in as `launch`: the Worker hands each one to `ctx.waitUntil`, the
- * machine runtime tracks and awaits them.
+ * machine runtime tracks and awaits them. A pass reaches `launch` NOT yet
+ * started (a thunk), so a host can decline to start a pass whose previous run
+ * is still in flight without holding back the others (#2497 r9).
  */
 
 import { getChainConfigs, resolveEnv, WORKER_NAME, type WorkerEnv } from './env';
@@ -57,14 +59,14 @@ async function timedPass(name: string, run: () => Promise<void>): Promise<void> 
 /**
  * Run one tick. `scheduledTimeMs` is the tick's SCHEDULED epoch, not the
  * moment it ran, so a late delivery cannot make a `% n` cadence skip its
- * minute. `launch` receives every pass that is due, already wrapped so it
- * never rejects; this function returns once they are all launched, not
- * once they finish.
+ * minute. `launch` receives every pass that is due, as a thunk already
+ * wrapped so it never rejects; this function returns once they are all
+ * launched, not once they finish.
  */
 export async function runKeeperTick(
   env: WorkerEnv,
   scheduledTimeMs: number | undefined,
-  launch: (passName: string, run: Promise<void>) => void,
+  launch: (passName: string, run: () => Promise<void>) => void,
 ): Promise<void> {
   // #2239 — decline the whole tick when this build has no D1 binding.
   //
@@ -144,6 +146,6 @@ export async function runKeeperTick(
       console.log(`[keeper] ${pass.name} skipped: ${skip}`);
       continue;
     }
-    launch(pass.name, timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
+    launch(pass.name, () => timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
   }
 }

@@ -238,7 +238,10 @@ journalctl -u vaipakam-keeper -f
    three hold:
    - its `[keeper] chains resolved: …` line names exactly the chains served;
    - no pass logged an error, of any kind;
-   - no `tick declined` line and no skipped-minute line. The first tick logs
+   - no `tick declined` line, no skipped-minute line, and no `not launched …
+     its previous run is still in flight` line. A pass whose previous run is
+     still going is not started again, but every other due pass still runs
+     that minute, so a slow pass cannot hold back the liquidator. The first tick logs
      `runner "host:…" acquired the one-runner lease`; a `holds the one-runner
      lease` decline means another runner is live, so stop and find it.
 

@@ -116,17 +116,14 @@ const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor(OBSERVE_AFTER_SEC / PASS_
  * (#2497 r7, r8) — every consumer of the tick's writes is counted here, once:
  * the floor for settlement and resolution, the clean commits this tick found,
  * and the observation rate the six-hour bound needs (`ceil(held /
- * ticks-per-bound)`), which is also RESERVED so no earlier consumer can spend
- * it. Capped at {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when that
- * cap binds. Pure; pinned by the tests.
+ * ticks-per-bound)`). The observations are protected by ORDER, not by a
+ * reserve (#2497 r9): the pass serves every due observation before any other
+ * write. Capped at {@link WRITE_CEILING_PER_TICK}; `overCapacity` says when
+ * that cap binds. Pure; pinned by the tests.
  */
-export function writeBudgetFor(
-  heldCount: number,
-  cleanCount = 0,
-): { writes: number; observeReserve: number; overCapacity: boolean } {
-  const observeReserve = Math.min(WRITE_CEILING_PER_TICK, Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND));
+export function writeBudgetFor(heldCount: number, cleanCount = 0): { writes: number; overCapacity: boolean } {
   const need = MAX_WRITES_PER_TICK + cleanCount + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
-  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), observeReserve, overCapacity: need > WRITE_CEILING_PER_TICK };
+  return { writes: Math.min(WRITE_CEILING_PER_TICK, need), overCapacity: need > WRITE_CEILING_PER_TICK };
 }
 /** Settlement calls per owner per tick; each settles what one claim would
  *  (a bounded window of days), and the rest resumes next tick. */
@@ -153,6 +150,12 @@ export interface OwnerSanctionsStatus {
 export interface SanctionsHoldPlan {
   /** Held owners to observe now. */
   observe: Address[];
+  /** EVERY owner due an observation-bearing write this tick — Held ones due an
+   *  observation and Confirmed ones whose chain is due (#2497 r9) — in urgency
+   *  order. The pass serves this whole list before any other write, so neither
+   *  a clean commit nor one owner's settlement backlog can spend the share the
+   *  six-hour bound needs. */
+  dueObservations: { owner: Address; confirmed: boolean }[];
   /** Confirmed owners whose chain is due an observation: observed by a
    *  settlement call that makes progress, else by the evidence call (a lapsed
    *  chain stops counting the days the owner earns next). */
@@ -168,10 +171,8 @@ export interface SanctionsHoldPlan {
    *  uncommitted, a re-flag inside the gap would read the old chain as
    *  continuous and forfeit reward earned while the owner was clean. */
   commitClean: Address[];
-  /** This tick's write budget, the share reserved for due observations, and
-   *  whether the cap binds ({@link writeBudgetFor}). */
+  /** This tick's write budget and whether the cap binds ({@link writeBudgetFor}). */
   writes: number;
-  observeReserve: number;
   overCapacity: boolean;
   /** Held or confirmed owners this tick, the demand the budget is sized for. */
   heldCount: number;
@@ -220,12 +221,12 @@ export function planSanctionsHold(
   statuses = [...statuses].sort(byUrgency);
   const plan: SanctionsHoldPlan = {
     observe: [],
+    dueObservations: [],
     settleObserveDue: [],
     settle: [],
     resolveOnly: [],
     commitClean: [],
     writes: 0,
-    observeReserve: 0,
     overCapacity: false,
     heldCount: 0,
     deadlineAtRisk: [],
@@ -235,7 +236,10 @@ export function planSanctionsHold(
   for (const st of statuses) {
     if (st.decision === DECISION_CONFIRMED) {
       plan.settle.push(st.owner);
-      if (observeDue(st, nowSec)) plan.settleObserveDue.push(st.owner);
+      if (observeDue(st, nowSec)) {
+        plan.settleObserveDue.push(st.owner);
+        plan.dueObservations.push({ owner: st.owner, confirmed: true });
+      }
       continue;
     }
     if (st.decision === DECISION_DELIVER) {
@@ -246,7 +250,10 @@ export function planSanctionsHold(
     if (st.decision !== DECISION_HOLD) continue;
     // Hold. A chain that has never been observed, or whose latest observation
     // is a quarter-gap old, is observed now.
-    if (observeDue(st, nowSec)) plan.observe.push(st.owner);
+    if (observeDue(st, nowSec)) {
+      plan.observe.push(st.owner);
+      plan.dueObservations.push({ owner: st.owner, confirmed: false });
+    }
     if (st.flaggedAt === 0) {
       plan.heldWithoutChain.push(st);
       continue;
@@ -257,7 +264,7 @@ export function planSanctionsHold(
     if (st.forfeitableAt !== 0 && gap > 0 && nowSec > st.forfeitableAt + gap) plan.overdue.push(st);
   }
   plan.heldCount = statuses.filter((st) => st.decision === DECISION_HOLD || st.decision === DECISION_CONFIRMED).length;
-  ({ writes: plan.writes, observeReserve: plan.observeReserve, overCapacity: plan.overCapacity } = writeBudgetFor(
+  ({ writes: plan.writes, overCapacity: plan.overCapacity } = writeBudgetFor(
     plan.heldCount,
     plan.commitClean.length,
   ));
@@ -325,26 +332,28 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
   /** Observations this tick never reached because the write budget ran out. */
   const unreached = new Set<string>();
   if (ctx?.wallet.account) {
-    // The clean result first (#2497 r7): until it is committed, a re-flag
-    // inside the gap would continue the old chain. Sent only on the oracle's
-    // own clean answer, so a Deliver that is not an authoritative Clean read
-    // (an outage, a foreign-oracle chain) costs one read and no transaction.
-    // Never into the observations' reserved share (#2497 r8).
-    const reserve = Math.min(plan.observeReserve, plan.observe.length);
-    for (const owner of plan.commitClean) {
-      if (budget.writes <= reserve) {
+    // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
+    // first, before anything else (#2497 r9). A Held owner gets the evidence
+    // call. A Confirmed owner gets ONE settlement call (its observation is part
+    // of the call) when that makes progress, else the evidence call — so its
+    // chain is kept alive however large its backlog, and the backlog waits for
+    // phase 3.
+    const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
+    const settleCallsUsed = new Map<string, number>();
+    for (const due of plan.dueObservations) {
+      const owner = due.owner;
+      if (budget.writes <= 0) {
         unreached.add(owner);
         continue;
       }
-      // eslint-disable-next-line no-await-in-loop
-      if (!(await oracleSaysClean(client, diamond, owner))) continue;
-      // eslint-disable-next-line no-await-in-loop
-      await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
-    }
-    const noChain = new Set(plan.heldWithoutChain.map((st) => st.owner));
-    for (const owner of plan.observe) {
-      if (budget.writes <= 0) {
-        unreached.add(owner);
+      if (due.confirmed) {
+        // eslint-disable-next-line no-await-in-loop
+        const settled = await runOwnerSettlement(ctx, budget, owner, 1);
+        settleCallsUsed.set(owner, settled ? 1 : 0);
+        if (!settled && budget.writes > 0) {
+          // eslint-disable-next-line no-await-in-loop
+          await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+        }
         continue;
       }
       // A held owner with no chain is observed only while the oracle answers:
@@ -355,14 +364,26 @@ async function observeChain(env: Env, chain: ChainConfig): Promise<void> {
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
-    const settleDue = new Set(plan.settleObserveDue);
-    for (const owner of plan.settle) {
-      // eslint-disable-next-line no-await-in-loop
-      const settled = await runOwnerSettlement(ctx, budget, owner);
-      if (!settled && settleDue.has(owner) && budget.writes > 0) {
-        // eslint-disable-next-line no-await-in-loop
-        await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+    // PHASE 2 — the clean results (#2497 r7): until committed, a re-flag inside
+    // the gap would continue the old chain. Sent only on the oracle's own clean
+    // answer, so a Deliver that is not an authoritative Clean read (an outage,
+    // a foreign-oracle chain) costs one read and no transaction.
+    for (const owner of plan.commitClean) {
+      if (budget.writes <= 0) {
+        unreached.add(owner);
+        continue;
       }
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await oracleSaysClean(client, diamond, owner))) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+    }
+    // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
+    // then the staging pages, with whatever budget is left.
+    for (const owner of plan.settle) {
+      const used = settleCallsUsed.get(owner) ?? 0;
+      // eslint-disable-next-line no-await-in-loop
+      if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
       // eslint-disable-next-line no-await-in-loop
       await resolveOwnerRecords(env, ctx, budget, owner);
     }
@@ -550,9 +571,14 @@ interface ScreenResult {
  *  verdict that is not Confirmed — so an owner already settled costs one read.
  *  A sent call's on-chain observation is part of the same call, so it also
  *  keeps the chain alive. Returns whether any call was sent. */
-async function runOwnerSettlement(ctx: KeeperContext, budget: { writes: number }, owner: Address): Promise<boolean> {
+async function runOwnerSettlement(
+  ctx: KeeperContext,
+  budget: { writes: number },
+  owner: Address,
+  maxCalls: number = MAX_SETTLE_CALLS_PER_OWNER,
+): Promise<boolean> {
   let sentAny = false;
-  for (let call = 0; call < MAX_SETTLE_CALLS_PER_OWNER && budget.writes > 0; call++) {
+  for (let call = 0; call < maxCalls && budget.writes > 0; call++) {
     let decision: number;
     try {
       // eslint-disable-next-line no-await-in-loop

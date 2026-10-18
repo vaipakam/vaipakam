@@ -113,6 +113,6 @@ export default {
   ): Promise<void> {
     // The tick itself lives in ./tick so the always-on machine runtime
     // (host/main.ts) runs the same one. Each pass gets its own `waitUntil`.
-    await runKeeperTick(env, controller?.scheduledTime, (_name, run) => ctx.waitUntil(run));
+    await runKeeperTick(env, controller?.scheduledTime, (_name, run) => ctx.waitUntil(run()));
   },
 } satisfies ExportedHandler<WorkerEnv>;

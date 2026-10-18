@@ -54,6 +54,7 @@ const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
 const CHAIN = 421614;
 const A = '0x00000000000000000000000000000000000000aa' as const;
 const B = '0x00000000000000000000000000000000000000bb' as const;
+const C = '0x00000000000000000000000000000000000000cc' as const;
 const NOW = 1_800_000_000;
 const DAY = 86_400;
 
@@ -116,22 +117,40 @@ describe('planSanctionsHold — a clean result is committed, not only acted on (
   });
 });
 
+describe('planSanctionsHold — every due observation, Held AND Confirmed, in one urgency-ordered list (#2497 r9)', () => {
+  it('lists a due Confirmed owner alongside due Held ones, most stale first, so phase 1 serves them all before any backlog', () => {
+    const p = planSanctionsHold(
+      [
+        held({ owner: A, decision: DECISION_CONFIRMED, lastSeenAt: NOW - OBSERVE_AFTER_SEC - 10 }),
+        held({ owner: B, lastSeenAt: NOW - OBSERVE_AFTER_SEC - 20 }),
+        held({ owner: C, decision: DECISION_CONFIRMED, lastSeenAt: NOW - 60 }), // not due
+      ],
+      NOW,
+    );
+    expect(p.dueObservations).toEqual([
+      { owner: B, confirmed: false },
+      { owner: A, confirmed: true },
+    ]);
+    expect(p.settle.sort(), 'both Confirmed still get their backlog in phase 3').toEqual([A, C].sort());
+  });
+});
+
 describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#2497 r7)', () => {
   it('adds one observation per held owner per bound on top of the floor', () => {
-    expect(writeBudgetFor(0)).toEqual({ writes: 25, observeReserve: 0, overCapacity: false });
-    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more, reserved').toEqual({ writes: 50, observeReserve: 25, overCapacity: false });
+    expect(writeBudgetFor(0)).toEqual({ writes: 25, overCapacity: false });
+    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more').toEqual({ writes: 50, overCapacity: false });
     expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits a seventh tick').toBe(51);
   });
 
   it('caps at the ceiling and says the cap binds (straddle)', () => {
-    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, observeReserve: 95, overCapacity: false });
-    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, observeReserve: 96, overCapacity: true });
+    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
+    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
   });
 
   it('counts the clean commits as demand too, so they cannot crowd out observations (#2497 r8)', () => {
     // The finding's case: 100 clean commits + 60 held owners.
-    expect(writeBudgetFor(60, 100)).toEqual({ writes: 120, observeReserve: 10, overCapacity: true });
-    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 45, observeReserve: 10, overCapacity: false });
+    expect(writeBudgetFor(60, 100)).toEqual({ writes: 120, overCapacity: true });
+    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 45, overCapacity: false });
   });
 
   it('the planner carries the held count and the budget', () => {
@@ -287,8 +306,8 @@ describe('raiseAlerts', () => {
       return real(sql);
     };
     const quiet = {
-      observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 25, observeReserve: 0, overCapacity: false, heldCount: 2,
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 25, overCapacity: false, heldCount: 2,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     await raiseAlerts({ DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env, CHAIN, [held({ owner: A }), held({ owner: B })], quiet, NOW);
@@ -302,8 +321,8 @@ describe('raiseAlerts', () => {
     const env = { DB: createSharedD1().d1, KEEPER_DB: h.d1 } as unknown as Env;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const plan = (over: boolean) => ({
-      observe: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
-      writes: 120, observeReserve: 117, overCapacity: over, heldCount: 700,
+      observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+      writes: 120, overCapacity: over, heldCount: 700,
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     });
     const warned: string[] = [];
@@ -323,7 +342,7 @@ describe('raiseAlerts', () => {
 
 describe('raiseAlerts — alerts clear only on a fresh clean read, never on absence (#2497 r1)', () => {
   const quiet = {
-    observe: [], settleObserveDue: [], settle: [], resolveOnly: [],
+    observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [],
     deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
   };
   it('keeps the alert of an owner it did not read, and clears one it read as clean', async () => {
