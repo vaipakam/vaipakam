@@ -2,11 +2,11 @@
 // sanctions delister share.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RpcRequestError, TransactionNotFoundError } from 'viem';
-import { SERVICE_CHAINS, TELEGRAM_MAX_TEXT, checkPrivateKey, configuredChains, createSendQueues, keepPublication, notifyOps, redact, sendTransaction } from './sanctions-service.mjs';
+import { SERVICE_CHAINS, TELEGRAM_MAX_TEXT, checkPrivateKey, configuredChains, createSendQueues, keepPublication, notifyOps, redact, sendTransaction, writeStateFile } from './sanctions-service.mjs';
 
 const KEY = `0x${'1'.repeat(64)}`;
 
@@ -151,4 +151,20 @@ test('redact: an RPC URL and its key never reach a report, in any of the forms v
   assert.ok(!out.includes('SECRETKEY123'), out);
   assert.match(out, /<redacted>/);
   assert.equal(redact(`key ${KEY}`, [undefined, KEY]), 'key <redacted>');
+});
+
+test('writeStateFile: replaces the file whole, and reports a failure instead of throwing it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'state-'));
+  try {
+    assert.equal(writeStateFile(dir, 'last-run.json', { n: 1n, ok: true }), null);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'last-run.json'), 'utf8')), { n: '1', ok: true });
+    assert.equal(writeStateFile(dir, 'last-run.json', { n: 2 }), null);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'last-run.json'), 'utf8')), { n: 2 });
+    assert.deepEqual(readdirSync(dir), ['last-run.json'], 'no temporary file is left behind');
+    // A directory that cannot take the file (here, gone) is a message, not a throw.
+    const gone = join(dir, 'missing');
+    assert.match(writeStateFile(gone, 'relay.json', {}), /ENOENT/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

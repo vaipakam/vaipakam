@@ -23,9 +23,10 @@
  *      chain is re-checked against them when its state changes, and at least
  *      once a day while the work lasts, so an hourly timer does not download
  *      150 MB an hour for a delisting the Safe vetoed. Only a conclusive
- *      reading is remembered: a failed download, OFAC publishing between the
- *      two downloads, or a send built on the reading that did not land
- *      leaves the next run to read the files again;
+ *      reading of a chain this run left untouched is remembered: a failed
+ *      download, OFAC publishing between the two downloads, or any send at
+ *      all (inclusion is not finality) leaves the next run to read the files
+ *      again;
  *   3. moves every pending proposal on as far as it can go:
  *        - discards one whose proposer the owner removed (anyone may);
  *        - withdraws one of ITS OWN that can no longer execute: an address
@@ -46,22 +47,29 @@
  *      the list declares outstanding;
  *   5. reports once: the journal always, the ops Telegram chat when something
  *      was sent, failed, or needs a person (repeated once a day while it
- *      lasts), and last-run.json.
+ *      lasts), and last-run.json. A state file that cannot be written (a
+ *      full disk) is named in that report and fails the unit; it never
+ *      stops the report.
  *
  * Which chains run: every chain in `SERVICE_CHAINS` whose RPC is set
  * (`RPC_<CHAIN>`, the keeper's names) and whose `sanctionsDelistingTimelock`
  * and `sanctionsList` this release's deployments.json records. A configured
  * chain with no timelock still serves as the attestor chain of another's
- * cross-chain route. No address is ever configured by hand; the attestor and
- * its chain are read from the timelock itself.
+ * cross-chain route, and the key's roles on its recorded list are checked
+ * all the same. No address is ever configured by hand; the attestor and its
+ * chain are read from the timelock itself.
  *
- * What it refuses, and leaves for a person: a key that is not the timelock's
- * proposer ALONE (also the timelock's owner, or the list's adder, remover or
- * owner); a timelock recorded for one list that serves another; an RPC that
- * serves a different chain, whether a timelock's or an attestor's. Publication work is refused, while the rest of
- * the run goes on, for a file the list does not record, a delisting the
- * advanced file still witnesses, a count that disagrees with what the list
- * declares outstanding, and two OFAC files that disagree. An address only
+ * What it refuses, and leaves for a person: a key that is not a proposer
+ * ALONE — the timelock's owner, or the adder, remover or owner of the list
+ * recorded on ANY configured chain, a timelock chain or an attestor host
+ * alike, checked before the key is used there at all; a timelock recorded
+ * for one list that serves another; an RPC that serves a different chain,
+ * whether a timelock's or an attestor's. Publication work is refused, while
+ * the rest of the run goes on, for a file the list does not record, a
+ * delisting the advanced file still witnesses, a count that disagrees with
+ * what the list declares outstanding, two OFAC files that disagree, and a
+ * digital-currency value either file carries that is not a readable address
+ * (any may be a damaged copy of an address being delisted). An address only
  * one file supports, or that RedStone flags, is left for the Safe and named
  * in the report. It never lists, never delists by itself, never lifts a veto.
  *
@@ -72,7 +80,7 @@
  *   TG_OPS_BOT_TOKEN, TG_OPS_CHAT_ID  the ops-internal bot; optional
  *   SANCTIONS_DELISTER_STATE_DIR    defaults to $STATE_DIRECTORY (systemd)
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -100,6 +108,7 @@ import {
   notifyOps,
   redact,
   sendTransaction,
+  writeStateFile,
 } from './sanctions-service.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -160,16 +169,32 @@ export function fingerprint(snap) {
   return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, snap.proposals.map((p) => `${p.id}:${stage(snap, p)}`).join(',')].join('|');
 }
 
-/** The reasons a snapshot rules out acting at all, as a refusal message. */
+/** The reasons a snapshot rules out acting at all, as a refusal message.
+ *  The key's roles on the list are not here: they are checked on every chain
+ *  the key is used on, before any use (see {@link listRoleRefusal}). */
 export function refusal(snap) {
   if (!sameAddress(snap.timelockList, snap.list.address)) {
     return `the recorded timelock serves list ${snap.timelockList}, not the recorded list ${snap.list.address} — fix the release's deployments.json`;
   }
   const r = snap.roles;
   if (!r.proposer) return 'the signing key is not a proposer of this timelock — the owner appoints it with setProposer';
-  const extra = [r.timelockOwner && "the timelock's owner", r.listAdder && "the list's adder", r.listRemover && "the list's remover", r.listOwner && "the list's owner"].filter(Boolean);
-  if (extra.length) return `the signing key is also ${extra.join(' and ')} — an unattended key must be the proposer alone; remove the extra role before it runs again`;
+  if (r.timelockOwner) return "the signing key is also the timelock's owner — an unattended key must be the proposer alone; move ownership before it runs again";
   return null;
+}
+
+/**
+ * Why the key may not be used on a chain, given its roles on the list
+ * recorded there, or null. The key must be a proposer and nothing else, so a
+ * stolen copy can do no more than propose into a window the Safe may veto. A
+ * role on a list is a power over that chain's screening whatever this service
+ * does there, so it is checked on EVERY chain the key is used on — a timelock
+ * chain and a chain that only hosts an attestor alike — in one place, the
+ * client lookup ({@link createClientLookup}), before any read or send.
+ */
+export function listRoleRefusal({ adder, remover, owner }) {
+  const extra = [adder && "the list's adder", remover && "the list's remover", owner && "the list's owner"].filter(Boolean);
+  if (!extra.length) return null;
+  return `the signing key is also ${extra.join(' and ')} on this chain — an unattended key must be a proposer alone; remove the extra role before it runs again`;
 }
 
 /**
@@ -219,12 +244,17 @@ function stage(snap, p) {
   if (p.unlisted.length) return 'unlisted';
   if (!samePublication(snap, p)) return 'stale';
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
-  if (p.ready) return 'ready';
-  // A cross-chain request pays a CCIP fee, and its answer is relayed back
-  // from the attestor's chain. With no proven way back, a request would be
-  // paid for again at every expiry without the proposal ever moving.
-  if (NEEDS_REQUEST.has(p.reason) && snap.route === CROSS_CHAIN && !snap.relayPath?.ok) return `${p.reason}:no-relay`;
-  return p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
+  const next = p.ready ? 'ready' : p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
+  if (!ADVANCING.has(next)) return next;
+  // Two things close every step toward a delisting, whatever the proposal:
+  // a timelock that is no longer a remover can complete none (`readiness`
+  // does not check the list's own authorization, so this is the one place
+  // that does; revoking it is the owner's one-call shutdown of the route),
+  // and a cross-chain request, a paid CCIP message, with no proven way back
+  // for its answer would be paid for again at every expiry.
+  if (!snap.timelockIsRemover) return `${next}:closed`;
+  if (NEEDS_REQUEST.has(next) && snap.route === CROSS_CHAIN && !snap.relayPath?.ok) return `${next}:no-relay`;
+  return next;
 }
 
 /** The readiness reasons whose next step is a (paid) clearance request. */
@@ -315,8 +345,7 @@ export function factsWanted(snap, evaluation) {
  * read at all, which proposes nothing and changes nothing else. Every action
  * is independent of the others: a withdrawal's freed share is used by the
  * NEXT run, so a failed send never leaves a later one built on a state that
- * did not happen. An action built on this run's reading of OFAC's files
- * carries `derived`, so a failed one keeps the chain from being cached.
+ * did not happen.
  *
  * THE RULE for moving a proposal toward a delisting — requesting its
  * clearance, relaying RedStone's answer, executing it — whoever proposed it:
@@ -367,9 +396,9 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       else if (waitReason) {
         notes.push(`${tag} names an older publication; reconfirming waits: ${waitReason}`);
         waitedOnReading ||= gate;
-      } else if (unsupported.length === 0) actions.push({ kind: 'reconfirm', id: p.id, sourceHash: snap.list.sourceHash, publicationDate: date, derived: true });
+      } else if (unsupported.length === 0) actions.push({ kind: 'reconfirm', id: p.id, sourceHash: snap.list.sourceHash, publicationDate: date });
       else {
-        actions.push({ kind: 'withdraw', id: p.id, why: `OFAC's publication ${date} no longer supports delisting ${unsupported.join(', ')}`, derived: true });
+        actions.push({ kind: 'withdraw', id: p.id, why: `OFAC's publication ${date} no longer supports delisting ${unsupported.join(', ')}` });
         review.push(`${tag} was withdrawn: publication ${date} no longer supports delisting ${unsupported.join(', ')}.`);
       }
       continue;
@@ -388,7 +417,7 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       if (unsupported.length) {
         const why = `publication ${date} does not support delisting ${unsupported.join(', ')} (OFAC still lists it, or SDN.XML still mentions it)`;
         if (mine) {
-          actions.push({ kind: 'withdraw', id: p.id, why, derived: true });
+          actions.push({ kind: 'withdraw', id: p.id, why });
           review.push(`${tag} was withdrawn: ${why}.`);
         } else {
           notes.push(`${tag} (another proposer's) is not moved on: ${why}`);
@@ -396,14 +425,18 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
         }
         continue;
       }
-      if (p.ready) actions.push({ kind: 'execute', id: p.id, derived: true });
+      if (p.ready) actions.push({ kind: 'execute', id: p.id });
       else if (at === 'ClearanceNotAnswered:owed') {
         const r = p.relay;
-        actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload, derived: true });
+        actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload });
         if (r.balance !== undefined && BigInt(r.balance) < LOW_BALANCE_WEI) {
           review.push(`the delister key holds ${formatEther(r.balance)} of native gas on chain ${r.sourceChainId}, where it pays the reply's CCIP fee — top it up.`);
         }
-      } else actions.push({ kind: 'request', id: p.id, derived: true });
+      } else actions.push({ kind: 'request', id: p.id });
+      continue;
+    }
+    if (at.endsWith(':closed')) {
+      notes.push(`${tag} is not moved on: the timelock is not a remover of the list, so it cannot complete any proposal`);
       continue;
     }
     if (at.endsWith(':no-relay')) {
@@ -474,7 +507,7 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       }
       const take = candidates.slice(0, free);
       for (let i = 0; i < take.length; i += MAX_BATCH) {
-        actions.push({ kind: 'propose', accounts: take.slice(i, i + MAX_BATCH), sourceHash: snap.list.sourceHash, publicationDate: date, derived: true });
+        actions.push({ kind: 'propose', accounts: take.slice(i, i + MAX_BATCH), sourceHash: snap.list.sourceHash, publicationDate: date });
       }
     }
   } else if (gate && !ready && evaluation.status !== 'not-loaded' && free > 0) {
@@ -524,6 +557,9 @@ export function describeAction(a) {
  *     readSnapshot()                → the chain's snapshot (see chainEffects)
  *     readFacts(addresses, snap)    → Map(lowercase → { vetoed, proposalOf, flagged })
  *     send(action, { onSubmitted }) → { hash, blockNumber }
+ *   and, for a skipped chain (no timelock) that records a list, only
+ *     vetKey()                      → resolves once the key is shown to hold
+ *                                     no role on that list, rejects otherwise
  *   key: the signing address;
  *   loadPublication(): the parsed OFAC files, called at most once and only
  *     when some chain needs them;
@@ -532,14 +568,20 @@ export function describeAction(a) {
  *   nowMs: the run's clock.
  * Returns `{ report, cache }`: the report, and the cache to keep. The cache
  * only ever saves a download: a chain is cached only after a CONCLUSIVE
- * reading of the files (nothing transient, every send built on it landed),
- * and a cached entry is used only while the chain's state is unchanged.
+ * reading of the files (nothing transient) in a run that sent nothing on that
+ * chain, and a cached entry is used only while the chain's state is unchanged.
  */
 export async function runDelister({ chains, key, loadPublication, cache = {}, nowMs = Date.now(), redactError = (m) => m }) {
   const read = await Promise.all(
     chains.map(async (c) => {
-      if (c.skipped) return { c };
       try {
+        // A chain with no timelock is still checked for the key's roles on
+        // its list: the key may relay from it, and the bound on a stolen key
+        // is what it holds on every chain, not where this service acts.
+        if (c.skipped) {
+          await c.effects?.vetKey?.();
+          return { c };
+        }
         return { c, snap: await c.effects.readSnapshot() };
       } catch (e) {
         return { c, error: redactError(String(e?.message ?? e)) };
@@ -573,106 +615,150 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
     }
   }
   const nextCache = { ...cache };
+  // One timelock chain's run, after its snapshot was read. `sent` is the
+  // caller's, so whatever stops this, every send already made is reported.
+  const runChain = async (c, snap, head, sent) => {
+    const refused = refusal(snap);
+    if (refused) return [c.slug, { ...head, status: 'refused', error: refused, actions: [] }];
+    const cached = cache[c.id];
+    const fresh = freshCache(snap, cached, nowMs);
+    let evaluation = evaluatePublication(snap, publication);
+    // Unchanged since a conclusive reading: that reading already did what
+    // it allowed, and nothing it did not allow moves on without a new one.
+    if (evaluation.status === 'not-loaded' && fresh) {
+      evaluation = { ...evaluation, reason: `nothing changed since OFAC's files were last read at ${new Date(cached.at).toISOString()} (${cached.outcome})` };
+    }
+    let facts = new Map();
+    let factsError = null;
+    const wanted = factsWanted(snap, evaluation);
+    if (wanted.length) {
+      try {
+        facts = await c.effects.readFacts(wanted, snap);
+      } catch (e) {
+        factsError = redactError(String(e?.message ?? e));
+      }
+    }
+    const plan = planChain(snap, key, evaluation, facts, { factsError });
+    for (const action of plan.actions) {
+      const entry = { action: describeAction(action), kind: action.kind, id: action.id?.toString(), tx: null, state: 'submitting' };
+      sent.push(entry);
+      try {
+        const included = await c.effects.send(action, {
+          onSubmitted: (hash) => {
+            entry.tx = hash;
+            entry.state = 'submitted';
+          },
+        });
+        Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), state: 'included' });
+      } catch (e) {
+        Object.assign(entry, { state: sendState(entry, e), error: redactError(String(e?.message ?? e)) });
+      }
+    }
+    // Remember the chain's state only when this run read OFAC's files
+    // conclusively (nothing transient, the candidates' state read) AND left
+    // the chain as it found it. Any send changes the state or may have: a
+    // landed one moves the fingerprint, but inclusion is not finality, and
+    // one reorganised out would return the chain to exactly the state
+    // cached here, so it would not be retried until the cache expired. So
+    // a run that sent anything is never cached; the next run reads again.
+    if (evaluation.status !== 'not-loaded' && !evaluation.transient && !factsError && sent.length === 0) {
+      nextCache[c.id] = {
+        fingerprint: fingerprint(snap),
+        at: nowMs,
+        status: evaluation.status,
+        outcome: evaluation.status === 'ready' ? `checked publication ${snap.list.publicationDate}` : evaluation.reason,
+      };
+    }
+    const notes = [...plan.notes];
+    if (evaluation.status === 'not-loaded' && fresh) {
+      notes.push(`last checked against OFAC's files at ${new Date(cached.at).toISOString()} (${cached.outcome}); unchanged since`);
+    }
+    const failed = sent.filter((e) => e.state !== 'included');
+    // Work this chain needed that a failure put off, as opposed to work
+    // that waits by design (a window, RedStone's answer, the adder
+    // recording a newer publication: `mismatch`). Either kind is retried
+    // next run; only this kind makes the run a failure, so the unit's own
+    // status shows it. A chain that needed OFAC's files and got no
+    // conclusive reading of them (`refused`: a failed download, files that
+    // disagree, a stale copy, counts that differ) is this kind.
+    const deferred = [];
+    if (wants.get(c.id) && evaluation.status === 'refused') deferred.push(`this chain needed OFAC's files and has no conclusive reading of them: ${evaluation.reason}`);
+    if (factsError) deferred.push(`the candidates' veto and RedStone state could not be read: ${factsError}`);
+    return [
+      c.slug,
+      {
+        ...head,
+        status: failed.length || deferred.length ? 'partial' : 'ok',
+        route: plan.route,
+        list: listReport(head, snap),
+        reservedDelistings: snap.reservedDelistings,
+        publication: evaluation.status,
+        actions: sent,
+        deferred,
+        notes,
+        review: plan.review,
+      },
+    ];
+  };
   const results = await Promise.all(
     read.map(async ({ c, snap, error }) => {
       const head = { name: c.name, chainId: c.id, timelock: c.timelock ?? null, list: c.list ?? null };
       if (c.skipped) {
         const hosts = attestorFor.get(c.id);
+        if (error) {
+          const relays = hosts ? `; it hosts the clearance attestor for ${hosts.join(', ')}, and no answer is relayed from here until this is fixed` : '';
+          return [c.slug, { ...head, status: 'refused', error: `${error}${relays}`, actions: [] }];
+        }
         const reason = hosts ? `no timelock is recorded here; it hosts the clearance attestor for ${hosts.join(', ')}, whose answers are relayed from here` : c.skipped;
         return [c.slug, { ...head, status: 'skipped', reason }];
       }
       if (error) return [c.slug, { ...head, status: 'refused', error, actions: [] }];
-      const refused = refusal(snap);
-      if (refused) return [c.slug, { ...head, status: 'refused', error: refused, actions: [] }];
-      const cached = cache[c.id];
-      const fresh = freshCache(snap, cached, nowMs);
-      let evaluation = evaluatePublication(snap, publication);
-      // Unchanged since a conclusive reading: that reading already did what
-      // it allowed, and nothing it did not allow moves on without a new one.
-      if (evaluation.status === 'not-loaded' && fresh) {
-        evaluation = { ...evaluation, reason: `nothing changed since OFAC's files were last read at ${new Date(cached.at).toISOString()} (${cached.outcome})` };
-      }
-      let facts = new Map();
-      let factsError = null;
-      const wanted = factsWanted(snap, evaluation);
-      if (wanted.length) {
-        try {
-          facts = await c.effects.readFacts(wanted, snap);
-        } catch (e) {
-          factsError = redactError(String(e?.message ?? e));
-        }
-      }
-      const plan = planChain(snap, key, evaluation, facts, { factsError });
+      // Everything a chain's run sent is reported, whatever stops it: an
+      // unexpected error becomes this chain's own report, with its sends so
+      // far, never a rejection of the whole run that would lose them.
       const sent = [];
-      for (const action of plan.actions) {
-        const entry = { action: describeAction(action), kind: action.kind, id: action.id?.toString(), derived: Boolean(action.derived), tx: null, state: 'submitting' };
-        sent.push(entry);
-        try {
-          const included = await c.effects.send(action, {
-            onSubmitted: (hash) => {
-              entry.tx = hash;
-              entry.state = 'submitted';
-            },
-          });
-          Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), state: 'included' });
-        } catch (e) {
-          Object.assign(entry, { state: sendState(entry, e), error: redactError(String(e?.message ?? e)) });
-        }
+      try {
+        return await runChain(c, snap, head, sent);
+      } catch (e) {
+        const reason = redactError(String(e?.message ?? e));
+        return [
+          c.slug,
+          {
+            ...head,
+            status: 'partial',
+            // Read defensively: this report must not throw in its turn.
+            route: ROUTE[snap?.route] ?? `route ${snap?.route}`,
+            list: listReport(head, snap),
+            reservedDelistings: snap?.reservedDelistings,
+            actions: sent,
+            deferred: [`this chain's run stopped on an unexpected error${sent.length ? ' after the sends listed' : ', before sending anything'}: ${reason}`],
+            notes: [],
+            review: [],
+          },
+        ];
       }
-      // Remember the chain's state only after a conclusive reading of the
-      // files: nothing transient about it, the candidates' state read, and
-      // every send built on it landed — otherwise the next run reads again.
-      const derivedFailed = sent.some((e) => e.derived && e.state !== 'included');
-      if (evaluation.status !== 'not-loaded' && !evaluation.transient && !factsError && !derivedFailed) {
-        nextCache[c.id] = {
-          fingerprint: fingerprint(snap),
-          at: nowMs,
-          status: evaluation.status,
-          outcome: evaluation.status === 'ready' ? `checked publication ${snap.list.publicationDate}` : evaluation.reason,
-        };
-      }
-      const notes = [...plan.notes];
-      if (evaluation.status === 'not-loaded' && fresh) {
-        notes.push(`last checked against OFAC's files at ${new Date(cached.at).toISOString()} (${cached.outcome}); unchanged since`);
-      }
-      const failed = sent.filter((e) => e.state !== 'included');
-      // Work this chain needed that a failure put off, as opposed to work
-      // that waits by design (a window, RedStone's answer, the adder
-      // recording a newer publication: `mismatch`). Either kind is retried
-      // next run; only this kind makes the run a failure, so the unit's own
-      // status shows it. A chain that needed OFAC's files and got no
-      // conclusive reading of them (`refused`: a failed download, files that
-      // disagree, a stale copy, counts that differ) is this kind.
-      const deferred = [];
-      if (wants.get(c.id) && evaluation.status === 'refused') deferred.push(`this chain needed OFAC's files and has no conclusive reading of them: ${evaluation.reason}`);
-      if (factsError) deferred.push(`the candidates' veto and RedStone state could not be read: ${factsError}`);
-      return [
-        c.slug,
-        {
-          ...head,
-          status: failed.length || deferred.length ? 'partial' : 'ok',
-          route: plan.route,
-          list: { ...head.list && { address: head.list }, publicationDate: snap.list.publicationDate, pendingAdditions: snap.list.pendingAdditions, pendingDelistings: snap.list.pendingDelistings },
-          reservedDelistings: snap.reservedDelistings,
-          publication: evaluation.status,
-          actions: sent,
-          deferred,
-          notes,
-          review: plan.review,
-        },
-      ];
     }),
   );
   const byChain = Object.fromEntries(results);
   const statuses = Object.values(byChain).map((r) => r.status);
+  // With no timelock anywhere there is nothing this service can do, which
+  // is a deployment to finish, not a quiet run: the unit fails and says so.
+  const idle = chains.every((c) => c.skipped);
   return {
     report: {
-      status: statuses.some((s) => s === 'refused' || s === 'partial') ? 'failed' : 'ok',
+      status: idle ? 'refused' : statuses.some((s) => s === 'refused' || s === 'partial') ? 'failed' : 'ok',
+      ...(idle && { error: 'no configured chain has a SanctionsDelistingTimelock recorded in this release' }),
       publication: publicationReport,
       chains: byChain,
     },
     cache: nextCache,
   };
+}
+
+/** A chain report's view of its list. */
+function listReport(head, snap) {
+  const l = snap?.list;
+  return { ...(head.list && { address: head.list }), publicationDate: l?.publicationDate, pendingAdditions: l?.pendingAdditions, pendingDelistings: l?.pendingDelistings };
 }
 
 /** A failed send's report state, from what the send is known to have done
@@ -708,10 +794,12 @@ export function summarizeChain(c) {
 /** The summary a person reads, in the journal and the chat. */
 export function summarize(report) {
   const lines = [];
+  if (report.error) lines.push(`REFUSED, nothing sent: ${report.error}.`);
   const p = report.publication;
   if (p?.loaded) lines.push(`OFAC ${p.advanced.publicationId}: advanced ${p.advanced.sha256.slice(0, 18)}…, plain ${p.plain.sha256.slice(0, 18)}…`);
   else if (p?.error) lines.push(`OFAC files could not be loaded: ${p.error}`);
   for (const [slug, c] of Object.entries(report.chains)) lines.push(`${c.name ?? slug}: ${summarizeChain(c)}`);
+  for (const u of report.stateNotSaved ?? []) lines.push(`STATE NOT SAVED: ${u.file}: ${u.error} (the next run repeats work; no decision depends on it)`);
   return lines.join('\n');
 }
 
@@ -732,6 +820,7 @@ export function alertDigest(report) {
     for (const d of c.deferred ?? []) parts.push(`${slug} not done: ${d}`);
     for (const r of c.review ?? []) parts.push(`${slug} review: ${r}`);
   }
+  for (const u of report.stateNotSaved ?? []) parts.push(`state not saved: ${u.file}`);
   if (parts.length === 0) return null;
   return createHash('sha256').update(parts.join('\n')).digest('hex');
 }
@@ -765,15 +854,18 @@ export function readConfig(env) {
 
 /**
  * Each configured chain with the timelock and list this release records for
- * it, or the reason it is skipped. Addresses come only from deployments.json.
+ * it, or the reason it is skipped. A skipped chain keeps its list, so the
+ * key's roles on it are still checked. Addresses come only from
+ * deployments.json.
  */
 export function planChains(chains, deployments) {
   return chains.map((c) => {
     const d = deployments[String(c.id)] ?? {};
+    const list = d.sanctionsList ? { list: getAddress(d.sanctionsList) } : {};
     if (!d.sanctionsDelistingTimelock || !d.sanctionsList) {
-      return { ...c, skipped: `no ${d.sanctionsList ? 'SanctionsDelistingTimelock' : 'SanctionsList'} is recorded for chain ${c.id} in this release's deployments.json — deploy it, export deployments, merge, and install that commit` };
+      return { ...c, ...list, skipped: `no ${d.sanctionsList ? 'SanctionsDelistingTimelock' : 'SanctionsList'} is recorded for chain ${c.id} in this release's deployments.json — deploy it, export deployments, merge, and install that commit` };
     }
-    return { ...c, timelock: getAddress(d.sanctionsDelistingTimelock), list: getAddress(d.sanctionsList) };
+    return { ...c, ...list, timelock: getAddress(d.sanctionsDelistingTimelock) };
   });
 }
 
@@ -795,10 +887,6 @@ export function readState(stateDir, name) {
 export function readRelayCache(stateDir) {
   const r = readState(stateDir, 'relay.json');
   return { messageIds: isRecord(r.messageIds) ? r.messageIds : {}, payloads: isRecord(r.payloads) ? r.payloads : {} };
-}
-
-function writeState(stateDir, name, value) {
-  writeFileSync(join(stateDir, name), `${JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2)}\n`);
 }
 
 /** The first block number whose timestamp is >= `ts`, searching [lo, hi]. */
@@ -836,11 +924,16 @@ async function findLogs(client, params, from, to) {
 }
 
 /**
- * `clientFor(chainId)`: the clients of a configured chain, checked once per
- * run to serve that chain — the timelock's own and an attestor's alike, for
- * reads as well as sends — or null when no RPC is configured for it.
+ * `clientFor(chainId)`: the clients of a configured chain, or null when no
+ * RPC is configured for it. THE one way to reach a chain — the timelock's
+ * own and an attestor's alike, for reads as well as sends — so what it checks
+ * holds for every use. Checked once per run, before the clients are handed
+ * out: the RPC serves that chain, and `vet(chainId, clients)` finds nothing
+ * wrong (it returns a refusal message, or null; see {@link listRoleKeyVet}).
+ * A failed check is remembered for the run, so every later use of that chain
+ * fails with the same reason.
  */
-export function createClientLookup(clientsByChain) {
+export function createClientLookup(clientsByChain, vet = async () => null) {
   const checked = new Map();
   return (chainId) => {
     const id = Number(chainId);
@@ -852,11 +945,33 @@ export function createClientLookup(clientsByChain) {
           if (!cc) return null;
           const served = await cc.client.getChainId();
           if (served !== id) throw new Error(`the RPC configured for chain ${id} serves chain ${served}`);
+          const why = await vet(id, cc);
+          if (why) throw new Error(why);
           return cc;
         })(),
       );
     }
     return checked.get(id);
+  };
+}
+
+/**
+ * The lookup's vet for this service: on a chain whose list this release
+ * records, the key's adder, remover and owner roles there, judged by
+ * {@link listRoleRefusal}. A list that cannot be read refuses too — the key
+ * is not used on a chain where its roles are unknown.
+ */
+export function listRoleKeyVet({ listByChain, key, abi }) {
+  return async (chainId, { client }) => {
+    const at = listByChain.get(Number(chainId));
+    if (!at) return null;
+    try {
+      const read = (functionName, args = []) => client.readContract({ address: at, abi, functionName, args });
+      const [adder, remover, owner] = await Promise.all([read('isAdder', [key]), read('isRemover', [key]), read('owner')]);
+      return listRoleRefusal({ adder, remover, owner: sameAddress(owner, key) });
+    } catch (e) {
+      return `the key's roles on list ${at} could not be read, so the key is not used on this chain: ${e?.shortMessage ?? e?.message ?? e}`;
+    }
   };
 }
 
@@ -907,7 +1022,9 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       await src.client.readContract({ address: attestor, abi: att, functionName: 'oracle' });
       return { ok: true };
     } catch (e) {
-      return { ok: false, detail: `the attestor on chain ${sourceChainId} could not be read: ${e?.shortMessage ?? e?.message ?? e}` };
+      // An unreadable attestor, an RPC serving another chain, or a key that
+      // holds a role on that chain's list (createClientLookup) all land here.
+      return { ok: false, detail: `chain ${sourceChainId}, where its attestor runs, cannot be used from here: ${e?.shortMessage ?? e?.message ?? e}` };
     }
   }
 
@@ -939,7 +1056,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       const { client } = await own();
       const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
       const current = await readCurrentFromChain(client, c.list, list, BigInt(c.id));
-      const [latestVersion, block, tlList, owner, isProposer, route, reserved, count, sourceChainId, attestor, isAdder, isRemover, listOwner, tlIsRemover, balance] = await Promise.all([
+      const [latestVersion, block, tlList, owner, isProposer, route, reserved, count, sourceChainId, attestor, tlIsRemover, balance] = await Promise.all([
         client.readContract({ address: c.list, abi: list, functionName: 'listVersion' }),
         client.getBlock(),
         readTl('list'),
@@ -950,9 +1067,6 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         readTl('proposalCount'),
         readTl('clearanceSourceChainId'),
         readTl('clearanceAttestor'),
-        client.readContract({ address: c.list, abi: list, functionName: 'isAdder', args: [account.address] }),
-        client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [account.address] }),
-        client.readContract({ address: c.list, abi: list, functionName: 'owner' }),
         client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [c.timelock] }),
         client.getBalance({ address: account.address }),
       ]);
@@ -997,7 +1111,9 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         timelock: c.timelock,
         timelockList: getAddress(tlList),
         timelockIsRemover: tlIsRemover,
-        roles: { proposer: isProposer, timelockOwner: sameAddress(owner, account.address), listAdder: isAdder, listRemover: isRemover, listOwner: sameAddress(listOwner, account.address) },
+        // The key's roles on the list were checked before this chain's
+        // clients were handed out (createClientLookup).
+        roles: { proposer: isProposer, timelockOwner: sameAddress(owner, account.address) },
         route: Number(route),
         clearanceSourceChainId: sourceChainId,
         clearanceAttestor: attestor,
@@ -1142,40 +1258,53 @@ async function main() {
   const nowMs = Date.now();
   const lastAlert = readState(cfg.stateDir, 'last-alert.json');
 
-  // Every outcome leaves through here: the journal, the chat when it calls
-  // for a person and has not been sent recently, and last-run.json. The unit
-  // fails when any chain failed or an alert was not delivered. Everything
-  // that leaves is redacted once more here, whatever each step already did.
-  const finish = async (rawReport, rawText) => {
-    const report = JSON.parse(clean(JSON.stringify(rawReport, (k, v) => (typeof v === 'bigint' ? v.toString() : v))));
-    const text = clean(rawText);
+  // Every outcome leaves through here: the caches (`saves`), the journal,
+  // the chat when it calls for a person and has not been sent recently, and
+  // last-run.json. No state write throws (writeStateFile): one that fails is
+  // named in the report, the chat and last-run.json, and fails the unit, but
+  // never stops the report of what the run did — an unknown broadcast's hash
+  // is in that report. The unit fails when any chain failed, an alert was not
+  // delivered or a state file was not written. Everything that leaves is
+  // redacted once more here, whatever each step already did.
+  const finish = async (rawReport, saves = {}) => {
+    const stateNotSaved = [];
+    const save = (file, value) => {
+      const error = writeStateFile(cfg.stateDir, file, value);
+      if (error) stateNotSaved.push({ file, error: clean(error) });
+    };
+    for (const [file, value] of Object.entries(saves)) save(file, value);
+    const report = JSON.parse(clean(JSON.stringify({ ...rawReport, ...(stateNotSaved.length && { stateNotSaved: [...stateNotSaved] }) }, (k, v) => (typeof v === 'bigint' ? v.toString() : v))));
+    const text = clean(summarize(report));
     console.log(text);
     const digest = alertDigest(report);
     let delivery = { skipped: true, reason: digest ? 'already alerted' : 'nothing to alert' };
     if (shouldAlert(digest, lastAlert, nowMs)) {
       delivery = await notifyOps({ label: LABEL, token: cfg.tgToken, chatId: cfg.tgChatId, text });
-      if (delivery.delivered) writeState(cfg.stateDir, 'last-alert.json', { digest, at: nowMs });
+      if (delivery.delivered) save('last-alert.json', { digest, at: nowMs });
     }
-    writeState(cfg.stateDir, 'last-run.json', { at: new Date(nowMs).toISOString(), ...report, alert: delivery });
+    const before = report.stateNotSaved?.length ?? 0;
+    save('last-run.json', { at: new Date(nowMs).toISOString(), ...report, ...(stateNotSaved.length > before && { stateNotSaved }), alert: delivery });
+    // The two records written after the report reach the journal here.
+    for (const u of stateNotSaved.slice(before)) console.error(`STATE NOT SAVED: ${u.file}: ${u.error}`);
     const problems = [];
     if (report.status !== 'ok') problems.push(`the run finished as "${report.status}"`);
     if (delivery.delivered === false) problems.push(`its ops alert was not delivered: ${delivery.reason}`);
+    if (stateNotSaved.length) problems.push(`${stateNotSaved.map((u) => u.file).join(', ')} not written`);
     if (problems.length) throw new Error(problems.join('; '));
   };
 
   const plan = planChains(cfg.chains, loadDeployments());
-  if (plan.every((c) => c.skipped)) {
-    const report = { status: 'refused', error: 'no configured chain has a SanctionsDelistingTimelock recorded in this release', chains: Object.fromEntries(plan.map((c) => [c.slug, { name: c.name, chainId: c.id, status: 'skipped', reason: c.skipped }])) };
-    return finish(report, `REFUSED, nothing sent: ${report.error}.\n${plan.map((c) => `${c.name}: skipped: ${c.skipped}`).join('\n')}`);
-  }
-
   const account = privateKeyToAccount(cfg.privateKey);
   const tl = timelockAbi();
   const abis = { tl, list: sanctionsListAbi(), att: attestorAbi(), errors: errorNames(tl) };
-  const clientFor = createClientLookup(new Map(cfg.chains.map((c) => [c.id, chainClients(c, account)])));
+  const vet = listRoleKeyVet({ listByChain: new Map(plan.filter((c) => c.list).map((c) => [c.id, c.list])), key: account.address, abi: abis.list });
+  const clientFor = createClientLookup(new Map(cfg.chains.map((c) => [c.id, chainClients(c, account)])), vet);
   const queues = createSendQueues();
   const relayCache = readRelayCache(cfg.stateDir);
   const cache = readState(cfg.stateDir, 'evaluations.json');
+  // The relay cache only ever holds what the chain vouched for (a message id
+  // from the timelock's own event, a payload matching the attestor's hash),
+  // so it is kept on every path.
   let result;
   try {
     result = await runDelister({
@@ -1183,7 +1312,10 @@ async function main() {
       cache,
       nowMs,
       redactError: clean,
-      chains: plan.map((c) => (c.skipped ? c : { ...c, effects: chainEffects({ c, account, clientFor, queues, relayCache, abis }) })),
+      chains: plan.map((c) => {
+        if (!c.skipped) return { ...c, effects: chainEffects({ c, account, clientFor, queues, relayCache, abis }) };
+        return c.list ? { ...c, effects: { vetKey: () => clientFor(c.id) } } : c;
+      }),
       loadPublication: async () => {
         const adv = join(cfg.stateDir, 'download.xml');
         const plain = join(cfg.stateDir, 'download-plain.xml');
@@ -1201,11 +1333,9 @@ async function main() {
     });
   } catch (e) {
     const failed = { status: 'refused', error: clean(e.message), chains: {} };
-    return finish(failed, `REFUSED before any chain: ${failed.error}`);
+    return finish(failed, { 'relay.json': relayCache });
   }
-  writeState(cfg.stateDir, 'evaluations.json', result.cache);
-  writeState(cfg.stateDir, 'relay.json', relayCache);
-  await finish(result.report, summarize(result.report));
+  await finish(result.report, { 'evaluations.json': result.cache, 'relay.json': relayCache });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

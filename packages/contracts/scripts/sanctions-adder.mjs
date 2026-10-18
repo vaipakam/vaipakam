@@ -52,7 +52,7 @@
  *   SANCTIONS_ADDER_MAX_REMOVE   delistings a publication may declare (default 10)
  *   TG_OPS_BOT_TOKEN, TG_OPS_CHAT_ID  the ops-internal bot; optional
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAddress } from 'viem';
@@ -79,6 +79,7 @@ import {
   redact,
   sendTransaction,
   sleep,
+  writeStateFile,
 } from './sanctions-service.mjs';
 
 export const DEFAULT_KEEP_FILES = 14;
@@ -409,15 +410,18 @@ async function main() {
   // EVERY outcome leaves through here: the journal, the chat when the
   // outcome calls for it, and last-run.json — written after the chat, so it
   // records whether the alert was delivered. The unit fails when any chain
-  // failed or the alert was not delivered, so either shows in
-  // `systemctl --failed` rather than nowhere.
+  // failed, the alert was not delivered or last-run.json could not be
+  // written, so each shows in `systemctl --failed` rather than nowhere. The
+  // write never throws (writeStateFile), so a full disk cannot replace the
+  // run's own outcome with its error.
   const finish = async (report, text, alert) => {
     console.log(text);
     const delivery = alert ? await notifyOps({ label: 'sanctions adder', token: cfg.tgToken, chatId: cfg.tgChatId, text }) : { skipped: true, reason: 'nothing to alert' };
-    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), ...report, alert: delivery }, null, 2)}\n`);
+    const unsaved = writeStateFile(cfg.stateDir, 'last-run.json', { at: new Date().toISOString(), ...report, alert: delivery });
     const problems = [];
     if (report.status !== 'ok') problems.push(`the run finished as "${report.status}"`);
     if (delivery.delivered === false) problems.push(`its ops alert was not delivered: ${delivery.reason}`);
+    if (unsaved) problems.push(`last-run.json was not written: ${clean(unsaved)}`);
     if (problems.length) throw new Error(problems.join('; '));
   };
 

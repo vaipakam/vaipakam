@@ -84,7 +84,10 @@ test('refuses bytes that are not valid UTF-8', async () => {
 });
 
 test('plainWitness: checks the two files agree, then splits delistings by whether the plain file still mentions them', async () => {
-  const { parsed: advanced } = await parseSdnAdvancedFile(ADVANCED);
+  // The advanced fixture carries malformed values on purpose (its own test
+  // covers them); with them, no delisting is judged at all — see below.
+  const { parsed: fixture } = await parseSdnAdvancedFile(ADVANCED);
+  const advanced = { ...fixture, malformed: [] };
   const plain = parse(XML);
   const gone = '0x000000000000000000000000000000000000dEaD';
   // 0x1111… is a False-reliability record in the advanced file, listed in
@@ -112,4 +115,23 @@ test('plainWitness: checks the two files agree, then splits delistings by whethe
   assert.throws(() => plainWitness(missing, advanced, []), /advanced file lists 0x252A8Bd2319d8A555b872990601221B3a2053Bce, which the plain file does not/);
   const extra = parse(XML.replace('<uid>196541</uid>\n        <idType>Digital Currency Address - TRX</idType>\n        <idNumber>TJ5usJLLwjwn7Pw3TPbdzreG7dvgKzfQ5y', '<uid>196541</uid>\n        <idType>Digital Currency Address - ETH</idType>\n        <idNumber>0x3333333333333333333333333333333333333333'));
   assert.throws(() => plainWitness(extra, advanced, []), /plain file lists 0x3333333333333333333333333333333333333333, which the advanced file does not/);
+});
+
+test('plainWitness: a value either file cannot read as an address stops every unattended delisting', async () => {
+  const { parsed: fixture } = await parseSdnAdvancedFile(ADVANCED);
+  const advanced = { ...fixture, malformed: [] };
+  const gone = '0x000000000000000000000000000000000000dEaD';
+  // A damaged 39-digit copy of the address being delisted, as a currency
+  // record in the plain file: the 40-digit witness cannot see it, so the
+  // parser's own "could not read this" is what stops the delisting.
+  const damaged = parse(XML.replace('<uid>196541</uid>\n        <idType>Digital Currency Address - TRX</idType>\n        <idNumber>TJ5usJLLwjwn7Pw3TPbdzreG7dvgKzfQ5y', '<uid>196541</uid>\n        <idType>Digital Currency Address - ETH</idType>\n        <idNumber>0x000000000000000000000000000000000000dEa'));
+  assert.deepEqual(damaged.malformed, [{ value: '0x000000000000000000000000000000000000dEa', asset: 'ETH' }]);
+  assert.throws(() => plainWitness(damaged, advanced, [gone]), /refusing an unattended delisting: .*"0x000000000000000000000000000000000000dEa" \(ETH, plain file\).*a person must review/s);
+  // The advanced file's malformed values stop it just the same, named.
+  assert.throws(() => plainWitness(parse(XML), fixture, [gone]), /3 digital-currency value\(s\).*"0x123" \(ETH, advanced file\).*"0X1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB" \(ARB, advanced file\)/s);
+  // Nothing to delist: nothing to judge.
+  assert.deepEqual(plainWitness(damaged, fixture, []), { absent: [], stillMentioned: [] });
+  // A parse with no malformed list is not trusted to have none.
+  const { malformed, ...unlisted } = parse(XML);
+  assert.throws(() => plainWitness(unlisted, advanced, []), /no malformed-value list/);
 });

@@ -64,8 +64,8 @@ Every hour it, for every configured chain with a timelock recorded:
    (`packages/contracts/scripts/ofac-sdn-plain.mjs`). An unchanged chain is
    re-checked at least once a day, so a delisting the Safe vetoed does not
    cost a 150 MB download every hour; a failed download, a pair of files from
-   two different publications, or a send built on them that did not land is
-   retried the next hour;
+   two different publications, or a run that sent anything on that chain
+   (inclusion is not finality) is read again the next hour;
 3. moves every pending proposal on as far as it can go: discards one whose
    proposer the owner removed; withdraws one of its own that can no longer
    execute (an address vetoed, flagged by RedStone, already delisted another
@@ -79,7 +79,10 @@ Every hour it, for every configured chain with a timelock recorded:
    that supports delisting every address the proposal names: with a failed,
    stale or newer download, files that disagree, or the list mid-update, none
    is taken, and another proposer's proposal naming an address the files do
-   not support is named for the Safe to veto;
+   not support is named for the Safe to veto. None is taken either while the
+   timelock is not a remover of the list: revoking that role is the owner's
+   one-call shutdown of the route, and stops requests, relays and executions,
+   not only new proposals;
 4. proposes the rest: the delistings **both files** support (the advanced
    file's diff, with its witness that the address's digits are gone from the
    file, and the plain file, which must not mention the address at all),
@@ -90,12 +93,18 @@ Every hour it, for every configured chain with a timelock recorded:
    sent or failed or needs a person, repeated once a day while it lasts.
 
 It refuses, and leaves for a person: a key that is not the timelock's
-proposer alone; a recorded timelock that serves another list; publication
-work against a file the list does not record, a delisting the advanced file
-still witnesses, a count that differs from what the list declares
-outstanding, or two OFAC files that disagree. An address only one file
-supports, or that RedStone flags, is named in the report and left for the
-Safe. It **never lists, never delists by itself, never lifts a veto, and
+proposer alone — the timelock's owner, or the adder, remover or owner of the
+list recorded on ANY chain it has an RPC for, the attestor's chain included,
+checked before the key is used on that chain at all (a chain with no
+timelock whose list it holds a role on is reported refused, and fails the
+run); a recorded timelock that serves another list; publication work against
+a file the list does not record, a delisting the advanced file still
+witnesses, a count that differs from what the list declares outstanding, two
+OFAC files that disagree, or a digital-currency value in either file that is
+not a readable address (it may be a damaged copy of an address being
+delisted, so every unattended delisting waits for a person while one is
+there). An address only one file supports, or that RedStone flags, is named
+in the report and left for the Safe. It **never lists, never delists by itself, never lifts a veto, and
 never runs on a mainnet**.
 
 **Which RedStone check applies** is the timelock's own `clearanceRoute()`:
@@ -228,6 +237,11 @@ the installed release).
   every step it takes is refused on-chain if it no longer applies. Its state
   directory also holds caches only (`evaluations.json`, `relay.json`,
   `last-alert.json`); deleting them costs a download, never a wrong action.
+- **State files that cannot be written** (a full disk, a permission): both
+  services write every state file whole (a temporary file renamed over the
+  old) and never let a failed write stop the run's report. The delister
+  names the file under STATE NOT SAVED in the journal, the chat and
+  last-run.json; either service fails its unit for it.
 - **Kept publications:** each service's state directory,
   `sdn-<date>-<hash>.xml` (and, for the delister, `sdn-plain-<date>-<hash>.xml`),
   newest 14.

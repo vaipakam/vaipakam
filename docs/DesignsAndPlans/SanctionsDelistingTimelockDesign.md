@@ -222,9 +222,11 @@ Both accept native value only as their messenger's fee refund.
 - **Delister bot — built** (`packages/contracts/scripts/sanctions-delister.mjs`,
   installed with the adder from `ops/sanctions/`). An hourly oneshot with its
   own key, which must be the timelock's proposer and nothing else (not the
-  timelock's owner, nor the list's adder, remover or owner), and a timelock
-  that serves the list the release records; a chain failing either is
-  refused. Per chain, each run:
+  timelock's owner, nor the adder, remover or owner of the list recorded on
+  any chain the bot has an RPC for — the attestor's chain included, checked
+  in the one client lookup every read and send goes through, before the key
+  is used there), and a timelock that serves the list the release records; a
+  chain failing either is refused. Per chain, each run:
   - discards a removed proposer's proposals; withdraws its own proposals that
     can no longer complete (vetoed, flagged by RedStone, already delisted
     another way, beyond the outstanding count, or no longer called for by a
@@ -239,7 +241,10 @@ Both accept native value only as their messenger's fee refund.
     advanced file whose hash the list records, pass the witness check, and be
     absent from the plain SDN.XML, read by its own parser. The two files must
     carry the same publication date and list the same addresses (the plain
-    file may also carry addresses the advanced file marks false), and the
+    file may also carry addresses the advanced file marks false), neither may
+    carry a digital-currency value its parser reports as malformed (one may
+    be a damaged copy of a delisting the 40-digit witness cannot see; with
+    no person on this route, any such value stops every delisting), and the
     diff's delistings must number exactly the list's `pendingDelistings`.
     Addresses already proposed or vetoed by the Safe are left out (a veto is
     the Safe's own decision, so it is only noted); those RedStone flags today,
@@ -258,19 +263,25 @@ Both accept native value only as their messenger's fee refund.
   proposal naming an address the reading does not support is never moved on
   and is reported for the Safe to veto, and the bot withdraws its own. A
   failed, stale or newer download, files that disagree, or a same-day
-  reissue the adder will not apply by itself, and nothing moves. Between OFAC
+  reissue the adder will not apply by itself, and nothing moves; nor does
+  anything while the timelock is not a remover of the list (`readiness` does
+  not check the list's own authorization, so the bot does: without the role
+  every request and relay would be paid for and every execution revert).
+  Between OFAC
   publishing and the bot's next reading anyone may still execute a matured
   proposal, and the RedStone check is then the guard. With no RedStone check configured (every testnet today) the
   route is unavailable, so the bot proposes nothing and reports that the
   delistings await the Safe. The OFAC files are downloaded only when a chain
   has publication work, and a chain whose state is unchanged is re-checked
-  daily; only a conclusive reading is remembered, so a failed download, two
-  files from different publications, or a send that did not land is retried
-  the next hour. Every transaction is simulated, recorded by hash before broadcast,
+  daily; only a conclusive reading of a chain the run left untouched is
+  remembered, so a failed download, two files from different publications, or
+  any send (inclusion is not finality) means the next hour reads again. Every transaction is simulated, recorded by hash before broadcast,
   and reported as included, reverted, refused by the node, failed or unknown; one failure never stops the
   other steps, except that a transaction with an unknown outcome stops further sends on that chain
-  for the run, so a later one cannot take its nonce. The key needs native gas on both chains of a cross-chain
-  route, for the two CCIP fees.
+  for the run, so a later one cannot take its nonce. An unexpected error on one chain becomes that
+  chain's report, with every send it already made, and a state file that cannot be written is
+  reported and fails the run; neither can stop the report of what was sent. The key needs native
+  gas on both chains of a cross-chain route, for the two CCIP fees.
 - **CCIP clearance wiring** (next): deploy the attestor where RedStone
   runs; register it as the clearance channel's handler there with the
   timelock as peer, and the timelock as handler on its own chain with the

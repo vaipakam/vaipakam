@@ -9,12 +9,13 @@
  *   - the chains a service may sign on, and the RPC variable each reads;
  *   - this release's deployments.json, the only source of contract addresses;
  *   - the private-key check;
- *   - how a downloaded OFAC file is kept on disk;
+ *   - how a downloaded OFAC file is kept on disk, and how a state file is
+ *     written;
  *   - how one transaction is simulated, signed, recorded and sent;
  *   - the ops-chat alert and the secret redaction applied to everything a run
  *     prints or posts.
  */
-import { readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, RpcRequestError, TransactionNotFoundError, createPublicClient, createWalletClient, defineChain, http, keccak256 } from 'viem';
 
@@ -73,6 +74,32 @@ export function keepPublication(file, dir, publicationDate, hash, keep, prefix =
     .sort((a, b) => b.t - a.t);
   for (const { f } of files.slice(keep)) if (f !== name) rmSync(join(dir, f), { force: true });
   return kept;
+}
+
+/**
+ * Write one of a service's state files (its run record, its alert record, a
+ * cache) as JSON, bigints as decimal strings, replacing the file whole: the
+ * new content goes to a temporary file in the same directory, which is then
+ * renamed over the old one, so a crash mid-write never leaves a torn file.
+ * NEVER throws. Returns null when the file was written, or why it was not —
+ * a full disk, a permission — so the caller records the failure in the run's
+ * report instead of losing the report to it. Every state file is the
+ * service's own record of its own run, never a source of truth, so a file
+ * left unwritten costs work or a repeated alert, never a decision.
+ */
+export function writeStateFile(dir, name, value) {
+  const path = join(dir, name);
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2)}\n`);
+    renameSync(tmp, path);
+    return null;
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
+    return String(e?.message ?? e);
+  }
 }
 
 /** viem clients for one configured chain, signing as `account`. */

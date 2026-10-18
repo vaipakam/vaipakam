@@ -230,11 +230,24 @@ export function parseSdnPlainFile(path) {
  * A disagreement throws: two exports of one publication that differ are not
  * a basis for an unattended delisting.
  *
+ * So does a digital-currency value, in EITHER file, that starts like an EVM
+ * address but is not one (a digit missing, a non-hex digit, the zero
+ * address): each parser reports it as `malformed` rather than guess what it
+ * was, and it may be a damaged copy of an address this publication would
+ * delist — one the 40-digit witness below cannot see. An unattended
+ * delisting has no person to judge that, so while either file carries one,
+ * every delisting waits for a person (a remover's direct delisting, confirmed
+ * against OFAC's notice, is that route). With nothing to delist there is
+ * nothing to judge, and the malformed values are only the adder's to report.
+ *
  * Returns `{ absent, stillMentioned }`. An address is absent only when its 40
  * hex digits appear NOWHERE in the plain file, in the raw text or in decoded
  * text — the advanced file's witness rule, applied with no exceptions here.
  */
 export function plainWitness(plain, advanced, removals) {
+  if (!Array.isArray(plain.malformed) || !Array.isArray(advanced.malformed)) {
+    throw new Error('a parsed OFAC file carries no malformed-value list — re-parse it with its parser');
+  }
   if (plain.publicationDate !== advanced.publicationDate) {
     throw new Error(`the plain SDN file is publication ${plain.publicationDate} but the advanced file is ${advanced.publicationDate} — OFAC published between the two downloads, or one is stale`);
   }
@@ -248,6 +261,13 @@ export function plainWitness(plain, advanced, removals) {
     if (missing.length) parts.push(`the advanced file lists ${missing.join(', ')}, which the plain file does not`);
     if (extra.length) parts.push(`the plain file lists ${extra.join(', ')}, which the advanced file does not`);
     throw new Error(`the two OFAC files disagree: ${parts.join('; ')}`);
+  }
+  const unread = [...advanced.malformed.map((m) => ['advanced', m]), ...plain.malformed.map((m) => ['plain', m])];
+  if (removals.length && unread.length) {
+    const named = unread.map(([file, m]) => `${JSON.stringify(m.value.length > 100 ? `${m.value.slice(0, 100)}…` : m.value)} (${m.asset}, ${file} file)`).join(', ');
+    throw new Error(
+      `refusing an unattended delisting: the OFAC files carry ${unread.length} digital-currency value(s) that are not a readable EVM address — ${named} — and any of them may be a damaged copy of an address this publication would delist; a person must review the files, and a remover's direct delisting, confirmed against OFAC's notice, is the route for it`,
+    );
   }
   const mentioned = (body) => plain.hexRuns.raw.some((r) => r.includes(body)) || plain.hexRuns.text.some((r) => r.includes(body));
   const absent = [];

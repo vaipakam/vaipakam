@@ -17,6 +17,8 @@ import {
   createClientLookup,
   evaluatePublication,
   fingerprint,
+  listRoleKeyVet,
+  listRoleRefusal,
   planChain,
   planChains,
   readConfig,
@@ -47,8 +49,12 @@ const D5 = getAddress('0x00000000000000000000000000000000000f00d5');
 
 const adv = await parseSdnAdvancedFile(join(HERE, 'fixtures', 'sdn_advanced.sample.xml'));
 const plain = await parseSdnPlainFile(join(HERE, 'fixtures', 'sdn_plain.sample.xml'));
+// The advanced fixture carries three malformed values on purpose, for the
+// parser's own tests; any one of them stops every unattended delisting (see
+// "a value the files cannot read"), so the publication most tests use is the
+// fixture without them.
 const PUBLICATION = {
-  advanced: { parsed: adv.parsed, sourceHash: adv.sourceHash, source: { sha256: adv.sourceHash, publicationId: adv.parsed.publicationId } },
+  advanced: { parsed: { ...adv.parsed, malformed: [] }, sourceHash: adv.sourceHash, source: { sha256: adv.sourceHash, publicationId: adv.parsed.publicationId } },
   plain: { parsed: plain.parsed, sourceHash: plain.sourceHash, source: { sha256: plain.sourceHash } },
 };
 const OLD_HASH = `0x${'9'.repeat(64)}`;
@@ -63,7 +69,7 @@ function snapOf(o = {}) {
     timelock: TL,
     timelockList: LIST,
     timelockIsRemover: true,
-    roles: { proposer: true, timelockOwner: false, listAdder: false, listRemover: false, listOwner: false },
+    roles: { proposer: true, timelockOwner: false },
     route: 2,
     reservedDelistings: 0,
     proposalCount: 0,
@@ -108,7 +114,7 @@ test('proposes only what both files support, minus vetoed, proposed and RedStone
   assert.equal(ev.status, 'ready');
   assert.deepEqual(ev.stillMentioned, [FALSE_ONLY]);
   const plan = planChain(snap, KEY, ev, facts({ [D1]: {}, [D3]: { vetoed: true }, [D4]: { flagged: true }, [D5]: { proposalOf: 7n } }));
-  assert.deepEqual(plan.actions, [{ kind: 'propose', accounts: [D1], sourceHash: adv.sourceHash, publicationDate: 20260307, derived: true }]);
+  assert.deepEqual(plan.actions, [{ kind: 'propose', accounts: [D1], sourceHash: adv.sourceHash, publicationDate: 20260307 }]);
   assert.ok(plan.notes.some((n) => n.includes(`${D3} is vetoed by the Safe`)));
   assert.ok(plan.review.some((r) => r.includes(`${D4}: OFAC delisted it but RedStone flags it`)));
   assert.ok(plan.review.some((r) => r.includes(`${FALSE_ONLY}: the advanced file delists it but SDN.XML still mentions it`)));
@@ -219,13 +225,13 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   const byId = Object.fromEntries(plan.actions.map((a) => [a.id?.toString(), a]));
   assert.equal(byId['1'].kind, 'discard');
   assert.equal(byId['2'].kind, 'withdraw');
-  assert.deepEqual(byId['3'], { kind: 'reconfirm', id: 3n, sourceHash: adv.sourceHash, publicationDate: 20260307, derived: true });
+  assert.deepEqual(byId['3'], { kind: 'reconfirm', id: 3n, sourceHash: adv.sourceHash, publicationDate: 20260307 });
   assert.equal(byId['4'].kind, 'withdraw');
   assert.match(byId['4'].why, /no longer supports delisting 0x1CAb/);
-  assert.deepEqual(byId['5'], { kind: 'execute', id: 5n, derived: true });
-  assert.deepEqual(byId['6'], { kind: 'request', id: 6n, derived: true });
-  assert.deepEqual(byId['7'], { kind: 'request', id: 7n, derived: true }, "another proposer's proposal moves on when OFAC supports every address in it");
-  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234', derived: true });
+  assert.deepEqual(byId['5'], { kind: 'execute', id: 5n });
+  assert.deepEqual(byId['6'], { kind: 'request', id: 6n });
+  assert.deepEqual(byId['7'], { kind: 'request', id: 7n }, "another proposer's proposal moves on when OFAC supports every address in it");
+  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234' });
   assert.equal(byId['9'], undefined);
   assert.equal(byId['10'].kind, 'withdraw');
   assert.equal(byId['11'], undefined, "another proposer's proposal is never withdrawn");
@@ -253,7 +259,6 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   assert.equal(byId['19'], undefined);
   assert.ok(plan.review.some((r) => r.includes(`proposal 19 (another proposer's) names ${FALSE_ONLY}`)));
   assert.equal(byId['20'].kind, 'withdraw');
-  assert.equal(byId['20'].derived, true);
   assert.match(byId['20'].why, /does not support delisting 0x1111/);
 });
 
@@ -288,13 +293,12 @@ test('a stale proposal of its own waits when the files cannot be read', () => {
   assert.match(plan.notes[0], /older publication; reconfirming waits: x/);
 });
 
-test('refuses a key that holds more than the proposer role, and a timelock serving another list', async () => {
+test('refuses a key that is not the proposer alone, and a timelock serving another list', async () => {
   const chain = (snap) => ({ slug: 'base-sepolia', name: 'Base Sepolia', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async () => assert.fail('nothing may be sent') } });
   const load = async () => assert.fail('nothing may be downloaded');
   for (const [snap, re] of [
     [snapOf({ roles: { proposer: false } }), /not a proposer of this timelock/],
-    [snapOf({ roles: { proposer: true, listRemover: true } }), /also the list's remover/],
-    [snapOf({ roles: { proposer: true, timelockOwner: true, listAdder: true } }), /also the timelock's owner and the list's adder/],
+    [snapOf({ roles: { proposer: true, timelockOwner: true } }), /also the timelock's owner/],
     [snapOf({ timelockList: OTHER }), /serves list/],
   ]) {
     const { report } = await runDelister({ chains: [chain(snap)], key: KEY, loadPublication: load });
@@ -306,7 +310,9 @@ test('refuses a key that holds more than the proposer role, and a timelock servi
 test('downloads only when there is publication work, and re-checks an unchanged chain once a day', async () => {
   let loads = 0;
   const sent = [];
-  const chain = (snap) => ({
+  // `quiet`: every candidate is vetoed, so the run reads the files and sends
+  // nothing.
+  const chain = (snap, { quiet = false } = {}) => ({
     slug: 'base-sepolia',
     name: 'Base Sepolia',
     id: 84532,
@@ -314,16 +320,26 @@ test('downloads only when there is publication work, and re-checks an unchanged 
     list: LIST,
     effects: {
       readSnapshot: async () => snap,
-      readFacts: async (as) => facts(Object.fromEntries(as.map((a) => [a, a === D4 ? { flagged: true } : a === D3 ? { vetoed: true } : a === D5 ? { proposalOf: 1n } : {}]))),
+      readFacts: async (as) => facts(Object.fromEntries(as.map((a) => [a, quiet ? { vetoed: true } : a === D4 ? { flagged: true } : a === D3 ? { vetoed: true } : a === D5 ? { proposalOf: 1n } : {}]))),
       send: async (a, { onSubmitted }) => (sent.push(a), onSubmitted('0x01'), { hash: `0x${String(sent.length).padStart(64, '0')}`, blockNumber: 9n }),
     },
   });
   const loadPublication = async () => (loads++, PUBLICATION);
   const t0 = 10 * RE_EVALUATE_MS;
-  const first = await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, nowMs: t0 });
+  // A run that sent something is never cached, even when every send was
+  // included: included is not final, and a reorganised-out proposal would
+  // bring back exactly the state it was built on.
+  const proposing = await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, nowMs: t0 });
   assert.equal(loads, 1);
-  assert.equal(first.report.status, 'ok');
+  assert.equal(proposing.report.status, 'ok');
   assert.deepEqual(sent.map((a) => a.kind), ['propose']);
+  assert.equal(proposing.cache[84532], undefined);
+  await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, cache: proposing.cache, nowMs: t0 + 3_600_000 });
+  assert.equal(loads, 2, 'the same state an hour later is read again');
+  // A run that read the files and sent nothing is cached.
+  loads = 0;
+  const first = await runDelister({ chains: [chain(snapOf(), { quiet: true })], key: KEY, loadPublication, nowMs: t0 });
+  assert.equal(loads, 1);
   assert.ok(first.cache[84532]);
   // Same state an hour later: nothing new, no download.
   const second = await runDelister({ chains: [chain(snapOf())], key: KEY, loadPublication, cache: first.cache, nowMs: t0 + 3_600_000 });
@@ -590,4 +606,134 @@ test('a cross-chain clearance is requested only when its answer can come back', 
   // A local route needs no relay: nothing to prove.
   const local = snapOf({ route: 1, relayPath: null, reservedDelistings: 1, proposals: [proposal({ id: 1n, ready: true, reason: null })] });
   assert.deepEqual(planChain(local, KEY, evaluatePublication(local, PUBLICATION), facts({})).actions.map((a) => a.kind), ['execute']);
+});
+
+test('a revoked remover closes every step toward a delisting: no download, request, relay or execute', () => {
+  const owed = { status: 'owed', messageId: '0x01', payload: '0x02', sourceChainId: 421614, attestor: OTHER, balance: 10n ** 18n };
+  const closed = snapOf({
+    timelockIsRemover: false,
+    reservedDelistings: 3,
+    proposals: [
+      proposal({ id: 1n, ready: true, reason: null }),
+      proposal({ id: 2n, accounts: [D3], reason: 'ClearanceNotRequested' }),
+      proposal({ id: 3n, accounts: [D4], proposer: OTHER, reason: 'ClearanceNotAnswered', relay: owed }),
+    ],
+  });
+  assert.equal(wantsPublication(closed, KEY, undefined, 0), false, 'nothing can move, so nothing is downloaded');
+  // Even handed a conclusive reading, nothing advances.
+  const plan = planChain(closed, KEY, evaluatePublication(closed, PUBLICATION), facts({}));
+  assert.deepEqual(plan.actions, []);
+  for (const id of [1, 2, 3]) assert.ok(plan.notes.some((n) => n.startsWith(`proposal ${id} is not moved on: the timelock is not a remover`)), `proposal ${id}`);
+  // Restoring the role changes the fingerprint, so the next step waits for a
+  // fresh reading of the files.
+  assert.notEqual(fingerprint(closed), fingerprint({ ...closed, timelockIsRemover: true }));
+});
+
+test('a value the files cannot read stops every unattended delisting, and a chain that needed the files fails the run', async () => {
+  // The real fixture: its advanced file carries three malformed values.
+  const unread = { ...PUBLICATION, advanced: { ...PUBLICATION.advanced, parsed: adv.parsed } };
+  const ev = evaluatePublication(snapOf(), unread);
+  assert.equal(ev.status, 'refused');
+  assert.equal(ev.transient, undefined, 'it needs a person, so it is not retried as if it might clear');
+  assert.match(ev.reason, /refusing an unattended delisting: .*"0x123" \(ETH, advanced file\)/);
+  const ready = snapOf({ reservedDelistings: 1, proposals: [proposal({ ready: true, reason: null })] });
+  assert.deepEqual(planChain(ready, KEY, evaluatePublication(ready, unread), facts({})).actions, []);
+  const { report } = await runDelister({
+    chains: [{ slug: 'b', name: 'Base Sepolia', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snapOf(), readFacts: async () => assert.fail('nothing is proposed'), send: async () => assert.fail('nothing is sent') } }],
+    key: KEY,
+    loadPublication: async () => unread,
+    nowMs: 1,
+  });
+  assert.equal(report.status, 'failed');
+  assert.match(report.chains.b.deferred[0], /no conclusive reading of them: refusing an unattended delisting/);
+});
+
+test("the key's roles on a list are checked on every chain it is used on, before any use", async () => {
+  assert.equal(listRoleRefusal({ adder: false, remover: false, owner: false }), null);
+  assert.match(listRoleRefusal({ adder: true, remover: false, owner: true }), /also the list's adder and the list's owner on this chain/);
+  const listClient = (roles, fail = false) => ({
+    readContract: async ({ functionName, args }) => {
+      if (fail) throw new Error('rpc down');
+      if (functionName !== 'owner') assert.deepEqual(args, [KEY]);
+      return { isAdder: roles.adder ?? false, isRemover: roles.remover ?? false, owner: roles.owner ?? OTHER }[functionName];
+    },
+  });
+  const vet = listRoleKeyVet({ listByChain: new Map([[84532, LIST]]), key: KEY, abi: [] });
+  assert.equal(await vet(84532, { client: listClient({}) }), null);
+  assert.match(await vet(84532, { client: listClient({ remover: true }) }), /also the list's remover/);
+  assert.match(await vet(84532, { client: listClient({ owner: KEY }) }), /also the list's owner/);
+  assert.match(await vet(84532, { client: listClient({}, true) }), /roles on list .* could not be read, so the key is not used on this chain: rpc down/);
+  assert.equal(await vet(421614, { client: listClient({}, true) }), null, 'no list recorded there: nothing to check');
+
+  // The lookup is the one way to reach a chain: a refusing vet fails every
+  // use of it, with the same reason, and is asked once.
+  let vetted = 0;
+  const lookup = createClientLookup(new Map([[421614, { client: { getChainId: async () => 421614 } }]]), async () => (vetted++, "the signing key is also the list's adder on this chain"));
+  await assert.rejects(lookup(421614), /also the list's adder/);
+  await assert.rejects(lookup(421614n), /also the list's adder/);
+  assert.equal(vetted, 1);
+
+  // A chain with no timelock keeps its list, and is refused when the key
+  // holds a role there — naming the attestor it hosts.
+  const plan = planChains([{ id: 421614 }], { 421614: { sanctionsList: LIST } });
+  assert.equal(plan[0].list, LIST);
+  assert.ok(plan[0].skipped);
+  const snap = snapOf({ route: 2, clearanceSourceChainId: 421614n, reservedDelistings: 5 });
+  const run = (vetKey) =>
+    runDelister({
+      chains: [
+        { slug: 'b', name: 'Base Sepolia', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async () => assert.fail('no send') } },
+        { slug: 'a', name: 'Arbitrum Sepolia', id: 421614, list: LIST, skipped: 'no SanctionsDelistingTimelock is recorded', effects: { vetKey } },
+      ],
+      key: KEY,
+      loadPublication: async () => assert.fail('no download'),
+      nowMs: 1,
+    });
+  const refused = (await run(() => lookup(421614))).report;
+  assert.equal(refused.status, 'failed');
+  assert.equal(refused.chains.a.status, 'refused');
+  assert.match(refused.chains.a.error, /also the list's adder on this chain; it hosts the clearance attestor for Base Sepolia, and no answer is relayed from here until this is fixed/);
+  const fine = (await run(async () => {})).report;
+  assert.equal(fine.chains.a.status, 'skipped');
+  assert.equal(fine.status, 'ok');
+});
+
+test('with no timelock on any chain the run is refused, and the key is still checked', async () => {
+  let checked = 0;
+  const { report } = await runDelister({
+    chains: [{ slug: 'a', name: 'Arbitrum Sepolia', id: 421614, list: LIST, skipped: 'no SanctionsDelistingTimelock is recorded', effects: { vetKey: async () => void checked++ } }],
+    key: KEY,
+    loadPublication: async () => assert.fail('no download'),
+  });
+  assert.equal(checked, 1);
+  assert.equal(report.status, 'refused');
+  assert.match(summarize(report), /^REFUSED, nothing sent: no configured chain has a SanctionsDelistingTimelock recorded in this release\.\nArbitrum Sepolia: skipped: /);
+  assert.notEqual(alertDigest(report), null);
+});
+
+test('a chain that stops on an unexpected error still reports what it sent', async () => {
+  // Fail the first read of one field AFTER the send, to stand for any bug
+  // between a send and the chain's report.
+  const snap = snapOf({ reservedDelistings: 1, proposals: [proposal({ ready: true, reason: null })] });
+  let armed = false;
+  Object.defineProperty(snap, 'reservedDelistings', {
+    get() {
+      if (armed) {
+        armed = false;
+        throw new Error('boom');
+      }
+      return 1;
+    },
+  });
+  const { report } = await runDelister({
+    chains: [{ slug: 'b', name: 'Base Sepolia', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async () => ((armed = true), { hash: '0xfeed', blockNumber: 7n }) } }],
+    key: KEY,
+    loadPublication: async () => PUBLICATION,
+    nowMs: 1,
+  });
+  assert.equal(report.status, 'failed');
+  assert.equal(report.chains.b.status, 'partial');
+  assert.deepEqual(report.chains.b.actions.map((e) => [e.kind, e.state, e.tx]), [['execute', 'included', '0xfeed']]);
+  assert.match(report.chains.b.deferred[0], /stopped on an unexpected error after the sends listed: boom/);
+  assert.match(summarize(report), /execute proposal 1: 0xfeed — included/);
 });
