@@ -107,7 +107,13 @@ directory and timer, so one chain's failure never stops another's run.
 ## 4. Operating it
 
 - **Last run:** `/var/lib/vaipakam-sanctions-adder/<chain>/last-run.json`, and
-  the journal.
+  the journal. A run is `applied` only once its transactions are final and
+  still in the blocks they were included in. A run that stops part-way is
+  `stopped`, and lists each transaction it broadcast as final, included but
+  not final, or broadcast with no receipt (it may still land); check those
+  before acting. The file also records whether the ops alert was delivered,
+  and a failed delivery fails the unit, so it shows in
+  `systemctl --failed`.
 - **Kept publications:** the same directory, `sdn-<date>-<hash>.xml`, newest
   14 by default.
 - **Delistings awaiting the Safe:** the run's report names them and the file

@@ -31,8 +31,9 @@ MemoryMax=384M
 CPUWeight=20
 IOWeight=20
 Nice=10
-# A download, a parse and a few transactions with their receipts.
-TimeoutStartSec=45min
+# A download, a parse, a few transactions, and up to 40 minutes waiting for
+# the last of them to be final (FINALITY_TIMEOUT_MS in the runner).
+TimeoutStartSec=75min
 
 NoNewPrivileges=yes
 ProtectSystem=strict

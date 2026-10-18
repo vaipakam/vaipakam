@@ -644,6 +644,13 @@ test('downloadToFile: streams to disk, renames only when complete, refuses an ov
   await assert.rejects(downloadToFile('u', big, { maxBytes: 3, fetchImpl: async () => body(['ab', 'cd']) }), /exceeds 3 bytes/);
   assert.ok(!existsSync(big) && !existsSync(`${big}.part`), 'nothing is left behind');
   await assert.rejects(downloadToFile('u', big, { fetchImpl: async () => ({ ok: false, status: 503 }) }), /HTTP 503/);
+  // A web stream, as `fetch` returns, is read the same way.
+  const web = join(dir, 'web.xml');
+  assert.equal(await downloadToFile('u', web, { fetchImpl: async () => new Response('hello') }), 5);
+  assert.equal(readFileSync(web, 'utf8'), 'hello');
+  // A file that cannot be written REJECTS the call, rather than crashing the
+  // process with an unhandled stream error before its caller can report.
+  await assert.rejects(downloadToFile('u', join(dir, 'missing-dir', 'x.xml'), { fetchImpl: async () => body(['ab']) }), /ENOENT/);
 });
 
 // ── #2443 adder host: adder-only updates ─────────────────────────────

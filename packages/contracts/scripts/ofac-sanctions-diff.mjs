@@ -116,7 +116,7 @@
  * deliberately stops at calldata.
  */
 import { createReadStream, createWriteStream, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { once } from 'node:events';
+import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -568,18 +568,24 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
   if (!res.ok) throw new Error(`download of ${url} failed: HTTP ${res.status}`);
   if (!res.body) throw new Error(`download of ${url} returned no body`);
   const part = `${path}.part`;
-  const out = createWriteStream(part);
   let size = 0;
   try {
-    for await (const chunk of res.body) {
-      size += chunk.length;
-      if (size > maxBytes) throw new Error(`download of ${url} exceeds ${maxBytes} bytes — refusing it`);
-      if (!out.write(chunk)) await once(out, 'drain');
-    }
-    out.end();
-    await once(out, 'finish');
+    // `pipeline` owns the streams: an error from the response, the size cap
+    // or the file (it cannot be opened, the disk fills) rejects this call and
+    // destroys both ends, instead of surfacing as an unhandled stream event
+    // that would end the process before its caller could report.
+    await pipeline(
+      res.body,
+      async function* capped(source) {
+        for await (const chunk of source) {
+          size += chunk.length;
+          if (size > maxBytes) throw new Error(`download of ${url} exceeds ${maxBytes} bytes — refusing it`);
+          yield chunk;
+        }
+      },
+      createWriteStream(part),
+    );
   } catch (e) {
-    out.destroy();
     rmSync(part, { force: true });
     throw e;
   }

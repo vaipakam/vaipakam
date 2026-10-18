@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
-import { keepPublication, notifyOps, readConfig, redact, runAdder, summarize } from './sanctions-adder.mjs';
+import { failureReport, keepPublication, notifyOps, readConfig, redact, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, 'fixtures', 'sdn_advanced.sample.xml');
@@ -39,9 +39,11 @@ async function run(list, overrides = {}) {
     }),
     latestVersion: async () => list.latest ?? list.version,
     isAdder: async () => list.isAdder ?? true,
-    send: async (call) => {
+    send: async (call, { onSubmitted }) => {
       sent.push(call);
-      return { hash: `0x${String(sent.length).padStart(64, '0')}` };
+      const hash = `0x${String(sent.length).padStart(64, '0')}`;
+      onSubmitted(hash);
+      return { hash, blockNumber: 200n + BigInt(sent.length), blockHash: `0x${'b'.repeat(64)}` };
     },
     ...overrides,
   });
@@ -52,6 +54,7 @@ test('run: a new publication lists its additions and declares its delistings for
   const { report, sent, stateDir } = await run({ version: 7n, addresses: [C] });
   assert.equal(report.status, 'applied');
   assert.equal(sent.length, 1);
+  assert.equal(report.sent[0].state, 'final', 'applied means final');
   const args = decodeFunctionData({ abi: sanctionsListAbi(), data: sent[0].calldata }).args;
   assert.equal(args[0], 7n);
   assert.deepEqual(args[2], [], 'the adder never delists');
@@ -88,6 +91,41 @@ test('run: a tool refusal sends nothing', async () => {
   assert.equal(sent.length, 0);
 });
 
+test('run: a stop part-way keeps what was already sent, and says what may still land', async () => {
+  // Not final: the transaction is included, and the report says so.
+  const progress = [];
+  await assert.rejects(
+    run({ version: 7n, addresses: [C] }, { progress, confirmFinal: async () => { throw new Error('not final after 40 minutes'); } }),
+    /not final/,
+  );
+  assert.equal(progress.length, 1);
+  assert.equal(progress[0].state, 'included');
+  let failed = failureReport('not final after 40 minutes', progress);
+  assert.equal(failed.status, 'stopped');
+  assert.match(summarizeFailure(failed), /included, NOT yet final/);
+
+  // Broadcast, then the receipt wait timed out: the hash is known, the outcome is not.
+  const progress2 = [];
+  await assert.rejects(
+    run({ version: 7n, addresses: [C] }, {
+      progress: progress2,
+      send: async (call, { onSubmitted }) => {
+        onSubmitted(`0x${'e'.repeat(64)}`);
+        throw new Error('receipt timeout');
+      },
+    }),
+    /receipt timeout/,
+  );
+  failed = failureReport('receipt timeout', progress2);
+  assert.equal(failed.sent[0].tx, `0x${'e'.repeat(64)}`);
+  assert.match(summarizeFailure(failed), /may still land/);
+
+  // Nothing broadcast: a plain refusal.
+  failed = failureReport('x', [{ tx: null, state: 'submitting' }]);
+  assert.equal(failed.status, 'refused');
+  assert.match(summarizeFailure(failed), /REFUSED, nothing sent/);
+});
+
 test('keepPublication: keeps the newest N publications', () => {
   const dir = mkdtempSync(join(tmpdir(), 'keep-'));
   for (let i = 0; i < 4; i++) {
@@ -114,16 +152,21 @@ test('config: every missing setting is named; mainnets and bad keys are refused'
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_CHAIN_ID: '8453' }), /testnets only/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_CHAIN_ID: '1' }), /testnets only/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: '0x12' }), /32-byte hex key/);
+  assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'0'.repeat(64)}` }), /not a valid secp256k1 key/);
+  assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'f'.repeat(64)}` }), /not a valid secp256k1 key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_MAX_REMOVE: '-1' }), /non-negative decimal/);
 });
 
-test('notifyOps: silent without a token, never throws, never puts the token in the text', async () => {
-  assert.equal(await notifyOps({ token: '', chatId: '1', text: 'x' }), false);
+test('notifyOps: skips without a token, never throws, reports a failed delivery, never leaks the token', async () => {
+  assert.deepEqual(await notifyOps({ token: '', chatId: '1', text: 'x' }), { skipped: true });
   let body;
   const ok = await notifyOps({ token: 'T0KEN', chatId: '5', text: 'hello', fetchImpl: async (url, init) => ((body = init.body), { ok: true }) });
-  assert.equal(ok, true);
+  assert.deepEqual(ok, { delivered: true });
   assert.ok(!body.includes('T0KEN'));
-  assert.equal(await notifyOps({ token: 'T', chatId: '5', text: 'x', fetchImpl: async () => { throw new Error('down'); } }), false);
+  assert.deepEqual(await notifyOps({ token: 'T', chatId: '5', text: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), { delivered: false, reason: 'Telegram answered HTTP 401' });
+  const down = await notifyOps({ token: 'S3CRET', chatId: '5', text: 'x', fetchImpl: async () => { throw new Error('fetch https://api.telegram.org/botS3CRET/sendMessage failed'); } });
+  assert.equal(down.delivered, false);
+  assert.ok(!down.reason.includes('S3CRET'));
 });
 
 test('redact: an RPC URL and its key never reach a report, in any of the forms viem prints', () => {

@@ -18,8 +18,12 @@
  *      for a new publication its delistings DECLARED outstanding on-chain but
  *      not applied — the list then says which publication it follows and what
  *      of it awaits the remover;
- *   4. simulates and sends each call in order, waiting for each receipt;
- *   5. reports: the journal always, the ops Telegram chat when configured.
+ *   4. simulates and sends each call in order, waiting for each to be
+ *      included, then for the last to be final and every one still in its
+ *      block — only then is the run "applied";
+ *   5. reports: the journal always, the ops Telegram chat when configured,
+ *      and last-run.json, which also records whether the alert was
+ *      delivered. A run that stops part-way names what it already sent.
  *      Outstanding delistings are reported on every run until the remover
  *      has applied them, since each is a compliance action someone owes.
  *
@@ -66,6 +70,12 @@ export const ADDER_TESTNET_CHAIN_IDS = Object.freeze([84532n, 11155111n, 421614n
 
 export const DEFAULT_KEEP_FILES = 14;
 
+/** secp256k1's group order: a private key must be in [1, n). */
+const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+
+/** How long a run waits for its last transaction to become final. */
+export const FINALITY_TIMEOUT_MS = 40 * 60_000;
+
 /** Keep the downloaded publication under a name that says what it is, and
  *  prune the oldest so at most `keep` publications stay on disk. */
 export function keepPublication(file, dir, publicationDate, hash, keep) {
@@ -86,11 +96,24 @@ export function keepPublication(file, dir, publicationDate, hash, keep) {
  *   readCurrent()   → the list at the finalized block (readCurrentFromChain)
  *   latestVersion() → `listVersion` at the latest block
  *   isAdder()       → whether the signing key is the list's adder
- *   send(call)      → simulates, sends and awaits one call; returns { hash }
+ *   send(call, { onSubmitted })
+ *                   → simulates, sends and waits for one call to be INCLUDED;
+ *                     calls `onSubmitted(hash)` as soon as it is broadcast, and
+ *                     returns { hash, blockNumber, blockHash }
+ *   confirmFinal(entries)
+ *                   → waits until every included call is FINAL and still in
+ *                     the block it was included in; throws otherwise
+ *
+ * `progress` (an array the caller passes in and keeps) receives one entry per
+ * call as it is broadcast, and each entry's `state` moves from `submitted` to
+ * `included` to `final`. The caller reads it after a failure, so a run that
+ * stops part-way says what it already sent and what may still land, rather
+ * than reporting a refusal as if nothing had happened.
+ *
  * Returns the run's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's.
  */
-export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdder, send, stateDir, keepFiles = DEFAULT_KEEP_FILES, maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdder, send, confirmFinal = async () => {}, progress = [], stateDir, keepFiles = DEFAULT_KEEP_FILES, maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const downloaded = await fetchSource();
   const { parsed, sourceHash, byteLength } = await parseSdnAdvancedFile(downloaded);
   const file = keepPublication(downloaded, stateDir, parsed.publicationDate, sourceHash, keepFiles);
@@ -116,19 +139,29 @@ export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdde
     maxRemove,
     abi,
   });
-  const sent = [];
   for (const call of update.calls) {
-    const { hash } = await send(call);
-    sent.push({ expectedVersion: call.expectedVersion.toString(), add: call.add, additionsLeft: call.additionsLeft, delistingsLeft: call.delistingsLeft, tx: hash });
+    const entry = { expectedVersion: call.expectedVersion.toString(), add: call.add, additionsLeft: call.additionsLeft, delistingsLeft: call.delistingsLeft, tx: null, state: 'submitting' };
+    progress.push(entry);
+    const included = await send(call, {
+      onSubmitted: (hash) => {
+        entry.tx = hash;
+        entry.state = 'submitted';
+      },
+    });
+    Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
+  }
+  if (progress.length) {
+    await confirmFinal(progress);
+    for (const entry of progress) entry.state = 'final';
   }
   const last = update.calls[update.calls.length - 1];
   return {
-    status: sent.length ? 'applied' : 'up-to-date',
+    status: progress.length ? 'applied' : 'up-to-date',
     source: { file, sha256: sourceHash, bytes: byteLength, publicationId: parsed.publicationId, publicationDate: parsed.publicationDate, evmAddressCount: parsed.addresses.length },
     list: { atVersion: current.version.toString(), finalizedBlock: current.blockNumber?.toString(), count: current.addresses.length },
     publicationOrder: update.order,
     added: update.add,
-    sent,
+    sent: progress,
     // What the list will show outstanding once these calls land: the last
     // call's declaration, or — with nothing sent — what it records now.
     pendingAdditions: last ? last.additionsLeft : Number(current.recordedPendingAdditions),
@@ -138,12 +171,33 @@ export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdde
   };
 }
 
+/**
+ * The report for a run that threw, built from what it had already sent. A
+ * run that sent nothing is `refused`; one that broadcast anything is
+ * `stopped`, and says per transaction whether it is final, included but not
+ * yet final, or broadcast with no receipt seen (it may still land).
+ */
+export function failureReport(reason, progress) {
+  const sent = progress.filter((e) => e.tx);
+  return { status: sent.length ? 'stopped' : 'refused', error: reason, sent };
+}
+
+/** The text a person reads for a failed run. */
+export function summarizeFailure(report) {
+  if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
+  const word = { final: 'final', included: 'included, NOT yet final', submitted: 'broadcast, no receipt yet — it may still land' };
+  const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
+  for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
+  lines.push('Check these on-chain before the next run; it rebuilds from the finalized list either way.');
+  return lines.join('\n');
+}
+
 /** The one-paragraph summary a person reads, in the journal and the chat. */
 export function summarize(report) {
   const s = report.source;
   const lines = [`OFAC ${s.publicationId} (sha256 ${s.sha256.slice(0, 18)}…): ${s.evmAddressCount} EVM addresses.`];
   if (report.status === 'applied') {
-    lines.push(`Listed ${report.added.length} new address(es) in ${report.sent.length} transaction(s): ${report.sent.map((c) => c.tx).join(', ')}.`);
+    lines.push(`Listed ${report.added.length} new address(es) in ${report.sent.length} transaction(s), all final: ${report.sent.map((c) => c.tx).join(', ')}.`);
   } else lines.push(`The list already follows this publication; nothing sent.`);
   if (report.pendingDelistings > 0) {
     lines.push(
@@ -155,18 +209,23 @@ export function summarize(report) {
   return lines.join('\n');
 }
 
-/** Post to the ops-internal Telegram chat; never throws, never prints the token. */
+/**
+ * Post to the ops-internal Telegram chat. Never throws and never prints the
+ * token. Returns `{ skipped: true }` when the chat is not configured,
+ * `{ delivered: true }` on success, and `{ delivered: false, reason }`
+ * otherwise, so the caller can record and surface a failed delivery.
+ */
 export async function notifyOps({ token, chatId, text, fetchImpl = fetch }) {
-  if (!token || !chatId) return false;
+  if (!token || !chatId) return { skipped: true };
   try {
     const res = await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: `[sanctions adder] ${text}`, disable_web_page_preview: true }),
     });
-    return res.ok;
-  } catch {
-    return false;
+    return res.ok ? { delivered: true } : { delivered: false, reason: `Telegram answered HTTP ${res.status}` };
+  } catch (e) {
+    return { delivered: false, reason: `Telegram unreachable: ${redact(e?.message ?? e, [token])}` };
   }
 }
 
@@ -202,6 +261,8 @@ export function readConfig(env) {
     throw new Error(`chain ${chainId} refused: the adder runs on testnets only until a hardened mainnet host is decided (#2443)`);
   }
   if (!/^0x[0-9a-fA-F]{64}$/.test(env.SANCTIONS_ADDER_PRIVATE_KEY)) throw new Error('SANCTIONS_ADDER_PRIVATE_KEY is not a 32-byte hex key');
+  const scalar = BigInt(env.SANCTIONS_ADDER_PRIVATE_KEY);
+  if (scalar === 0n || scalar >= SECP256K1_ORDER) throw new Error('SANCTIONS_ADDER_PRIVATE_KEY is not a valid secp256k1 key (zero, or not below the curve order)');
   return {
     rpc: env.SANCTIONS_ADDER_RPC_URL,
     chainId,
@@ -231,28 +292,47 @@ async function check() {
   console.log(`sanctions-adder: release ok (fixture ${parsed.publicationId}, ${parsed.addresses.length} addresses)`);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function main() {
   if (process.argv.includes('--check')) return check();
+  // Settings that cannot be read leave nowhere to report but the journal:
+  // there is no state directory or chat to trust yet.
   const cfg = readConfig(process.env);
-  const notify = (text) => notifyOps({ token: cfg.tgToken, chatId: cfg.tgChatId, text });
+  const secrets = [cfg.rpc, cfg.privateKey, cfg.tgToken];
   if (!cfg.tgToken || !cfg.tgChatId) console.log('TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset: this run reports to the journal only.');
   mkdirSync(cfg.stateDir, { recursive: true });
-  const abi = sanctionsListAbi();
-  const account = privateKeyToAccount(cfg.privateKey);
-  const chain = defineChain({
-    id: Number(cfg.chainId),
-    name: `chain ${cfg.chainId}`,
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    rpcUrls: { default: { http: [cfg.rpc] } },
-  });
-  const client = createPublicClient({ chain, transport: http(cfg.rpc) });
-  const wallet = createWalletClient({ account, chain, transport: http(cfg.rpc) });
+
+  // EVERY outcome leaves through here: the journal, the chat when the
+  // outcome calls for it, and last-run.json — written after the chat, so it
+  // records whether the alert was delivered. A failed delivery also fails
+  // the unit, so it shows in `systemctl --failed` rather than nowhere.
+  const finish = async (report, text, alert) => {
+    console.log(text);
+    const delivery = alert ? await notifyOps({ token: cfg.tgToken, chatId: cfg.tgChatId, text }) : { skipped: true, reason: 'nothing to alert' };
+    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), ...report, alert: delivery }, null, 2)}\n`);
+    if (delivery.delivered === false) throw new Error(`the run finished as "${report.status}", but its ops alert was not delivered: ${delivery.reason}`);
+  };
+
+  const progress = [];
+  let report;
   try {
-    const report = await runAdder({
+    const abi = sanctionsListAbi();
+    const account = privateKeyToAccount(cfg.privateKey);
+    const chain = defineChain({
+      id: Number(cfg.chainId),
+      name: `chain ${cfg.chainId}`,
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: { default: { http: [cfg.rpc] } },
+    });
+    const client = createPublicClient({ chain, transport: http(cfg.rpc) });
+    const wallet = createWalletClient({ account, chain, transport: http(cfg.rpc) });
+    report = await runAdder({
       stateDir: cfg.stateDir,
       keepFiles: cfg.keepFiles,
       maxRemove: cfg.maxRemove,
       abi,
+      progress,
       fetchSource: async () => {
         const part = join(cfg.stateDir, 'download.xml');
         await downloadToFile(OFAC_SDN_ADVANCED_URL, part);
@@ -261,29 +341,45 @@ async function main() {
       readCurrent: () => readCurrentFromChain(client, cfg.list, abi, cfg.chainId),
       latestVersion: () => client.readContract({ address: cfg.list, abi, functionName: 'listVersion' }),
       isAdder: () => client.readContract({ address: cfg.list, abi, functionName: 'isAdder', args: [account.address] }),
-      send: async (call) => {
+      send: async (call, { onSubmitted }) => {
         // Simulated first: a call the contract would refuse is reported with
         // its revert reason instead of spending gas.
         await client.call({ account: account.address, to: cfg.list, data: call.calldata });
         const hash = await wallet.sendTransaction({ to: cfg.list, data: call.calldata });
+        onSubmitted(hash);
         const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
         if (receipt.status !== 'success') throw new Error(`applyUpdate at version ${call.expectedVersion} reverted in ${hash}`);
-        console.log(`applyUpdate at version ${call.expectedVersion}: +${call.add.length}, sent in ${hash}`);
-        return { hash };
+        console.log(`applyUpdate at version ${call.expectedVersion}: +${call.add.length}, included in ${hash} (block ${receipt.blockNumber})`);
+        return { hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash };
+      },
+      // "Applied" means final: wait for the finalized block to pass the last
+      // inclusion, then check every transaction is still in the block it was
+      // included in. A reorg that dropped one stops the run as such.
+      confirmFinal: async (entries) => {
+        const highest = entries.reduce((m, e) => (BigInt(e.blockNumber) > m ? BigInt(e.blockNumber) : m), 0n);
+        const deadline = Date.now() + FINALITY_TIMEOUT_MS;
+        for (;;) {
+          const finalized = await client.getBlock({ blockTag: 'finalized' });
+          if (finalized.number >= highest) break;
+          if (Date.now() > deadline) throw new Error(`not final after ${FINALITY_TIMEOUT_MS / 60_000} minutes (finalized block ${finalized.number}, needed ${highest})`);
+          await sleep(15_000);
+        }
+        for (const e of entries) {
+          const receipt = await client.getTransactionReceipt({ hash: e.tx }).catch(() => null);
+          if (!receipt || receipt.blockHash !== e.blockHash || receipt.status !== 'success') {
+            throw new Error(`${e.tx} is no longer in block ${e.blockNumber} at finality — it was reorganized out`);
+          }
+        }
       },
     });
-    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), ...report }, null, 2)}\n`);
-    const text = summarize(report);
-    console.log(text);
-    if (report.status === 'applied' || report.pendingDelistings > 0 || report.malformedValues.length) await notify(text);
   } catch (e) {
     // The full message (viem's carries the request details), with the RPC
-    // URL and the key removed before it is written anywhere.
-    const reason = redact(e.message, [cfg.rpc, cfg.privateKey]);
-    writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), status: 'refused', error: reason }, null, 2)}\n`);
-    await notify(`REFUSED, nothing further sent: ${reason}`);
-    throw new Error(reason);
+    // URL, the key and the bot token removed before it is written anywhere.
+    const failed = failureReport(redact(e.message, secrets), progress);
+    await finish(failed, summarizeFailure(failed), true);
+    throw new Error(failed.error);
   }
+  await finish(report, summarize(report), report.status === 'applied' || report.pendingDelistings > 0 || report.malformedValues.length > 0);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
