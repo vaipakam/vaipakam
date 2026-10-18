@@ -18,7 +18,7 @@ import {
   hasD1Binding,
   maintenanceSkipNotice,
 } from '@vaipakam/lib/d1Maintenance';
-import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
+import { KEEPER_PASSES, cadenceSkipReason, runDeadline } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
 import { adoptKeeperDeployments } from './keeperEpoch';
 /**
@@ -159,6 +159,8 @@ export async function runKeeperTick(
       console.log(`[keeper] ${pass.name} skipped: ${skip}`);
       continue;
     }
-    launch(pass.name, () => timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs })));
+    launch(pass.name, () =>
+      timedPass(pass.name, () => pass.run(resolved, { scheduledTimeMs, deadlineMs: runDeadline(pass, scheduledTimeMs) })),
+    );
   }
 }

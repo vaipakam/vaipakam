@@ -237,3 +237,11 @@ describe('a skip is never silent', () => {
     }
   });
 });
+
+describe('runDeadline — every run ends inside its own cadence (#2497 r18)', () => {
+  it('is the scheduled minute plus the cadence, less the margin', async () => {
+    const { runDeadline, RUN_DEADLINE_MARGIN_MS } = await import('../src/passSchedule');
+    expect(runDeadline({ cadenceMinutes: 60 }, 3_600_000)).toBe(3_600_000 + 3_600_000 - RUN_DEADLINE_MARGIN_MS);
+    expect(runDeadline({ cadenceMinutes: 5 }, undefined, 1_000)).toBe(1_000 + 300_000 - RUN_DEADLINE_MARGIN_MS);
+  });
+});

@@ -21,6 +21,7 @@ import {
   candidateOwners,
   nextScreenCursor,
   writeBudgetFor,
+  rotate,
   planSanctionsHold,
   SCREEN_MAX_PER_TICK,
   SCREEN_MIN_PER_TICK,
@@ -134,22 +135,30 @@ describe('planSanctionsHold — every due observation, Held AND Confirmed, in on
   });
 });
 
+describe('rotate — a stateless rotation keyed by the run (#2497 r18)', () => {
+  it('starts at turn mod length and keeps every element', () => {
+    expect(rotate(['a', 'b', 'c'], 0)).toEqual(['a', 'b', 'c']);
+    expect(rotate(['a', 'b', 'c'], 4)).toEqual(['b', 'c', 'a']);
+    expect(rotate([], 7)).toEqual([]);
+  });
+});
+
 describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#2497 r7)', () => {
   it('adds one observation per held owner per bound on top of the floor', () => {
     expect(writeBudgetFor(0)).toEqual({ writes: 25, overCapacity: false });
-    expect(writeBudgetFor(150), '150 held over 6 ticks: 25 more').toEqual({ writes: 50, overCapacity: false });
-    expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits a seventh tick').toBe(51);
+    expect(writeBudgetFor(150), '150 held over 5 runs (due one cadence early): 30 more').toEqual({ writes: 55, overCapacity: false });
+    expect(writeBudgetFor(151).writes, 'rounds up, so nobody waits an extra run').toBe(56);
   });
 
   it('caps at the ceiling and says the cap binds (straddle)', () => {
-    expect(writeBudgetFor(570), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
-    expect(writeBudgetFor(571), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
+    expect(writeBudgetFor(475), 'exactly the ceiling').toEqual({ writes: 120, overCapacity: false });
+    expect(writeBudgetFor(476), 'one owner past it').toEqual({ writes: 120, overCapacity: true });
   });
 
   it('counts the clean commits as demand too, so they cannot crowd out observations (#2497 r8)', () => {
     // The finding's case: 100 clean commits + 60 held owners.
     expect(writeBudgetFor(60, 100)).toEqual({ writes: 120, overCapacity: true });
-    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 45, overCapacity: false });
+    expect(writeBudgetFor(60, 10), 'fits').toEqual({ writes: 47, overCapacity: false });
   });
 
   it('the planner carries the held count and the budget', () => {
@@ -162,8 +171,9 @@ describe('writeBudgetFor — sized by the six-hour bound, capped and stated (#24
 describe('planSanctionsHold', () => {
   it('observes a held owner once its latest observation is OBSERVE_AFTER_SEC old (straddle)', () => {
     const at = (age: number) => planSanctionsHold([held({ lastSeenAt: NOW - age, observeBy: NOW - age + DAY })], NOW);
-    expect(at(OBSERVE_AFTER_SEC - 1).observe, 'one second early').toEqual([]);
-    expect(at(OBSERVE_AFTER_SEC).observe, 'at the bound').toEqual([A]);
+    // Due ONE CADENCE before the bound, so it lands inside it (#2497 r18).
+    expect(at(OBSERVE_AFTER_SEC - PASS_CADENCE_SEC - 1).observe, 'one second early').toEqual([]);
+    expect(at(OBSERVE_AFTER_SEC - PASS_CADENCE_SEC).observe, 'at the bound less one cadence').toEqual([A]);
   });
 
   it('observes a held owner with no observation, and reports it held without a chain', () => {
@@ -207,8 +217,8 @@ describe('planSanctionsHold', () => {
         [held({ decision: DECISION_CONFIRMED, lastSeenAt: NOW - age, observeBy: NOW - age + DAY })],
         NOW,
       );
-    expect(at(OBSERVE_AFTER_SEC - 1).settleObserveDue, 'one second early').toEqual([]);
-    expect(at(OBSERVE_AFTER_SEC).settleObserveDue, 'at the bound').toEqual([A]);
+    expect(at(OBSERVE_AFTER_SEC - PASS_CADENCE_SEC - 1).settleObserveDue, 'one second early').toEqual([]);
+    expect(at(OBSERVE_AFTER_SEC - PASS_CADENCE_SEC).settleObserveDue, 'at the bound less one cadence').toEqual([A]);
     expect(at(OBSERVE_AFTER_SEC).settle, 'still routed to the settlement').toEqual([A]);
     expect(at(OBSERVE_AFTER_SEC).observe, 'not a hold observation').toEqual([]);
   });
@@ -344,7 +354,7 @@ describe('raiseAlerts', () => {
       deadlineAtRisk: [], overdue: [], heldWithoutChain: [],
     };
     try {
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 5, clean: 0 }, Date.now() - 1);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 5, unreached: 5, clean: 0 }, Date.now() - 1);
       expect(warned.some((w) => /due observation/.test(w)), 'nothing sent past the window').toBe(false);
       expect(warned.some((w) => /the alert window closed — \d+ alert update\(s\) wait for the next run/.test(w))).toBe(true);
     } finally {
@@ -365,17 +375,17 @@ describe('raiseAlerts', () => {
     try {
       // The finding's case: the predicted cap binds on clean-commit demand, but
       // every due observation was sent — no evidence-chain alert, only the backlog.
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 100 });
-      expect(warned.some((w) => /due observation\(s\) were NOT sent/.test(w)), 'no false chain-lapse alert').toBe(false);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 100 });
+      expect(warned.some((w) => /due observation\(s\) did NOT land/.test(w)), 'no false chain-lapse alert').toBe(false);
       expect(warned.some((w) => /100 clean result\(s\) were NOT committed this tick; every due observation was sent first/.test(w))).toBe(true);
       warned.length = 0;
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, clean: 0 });
-      expect(warned.some((w) => /3 due observation\(s\) were NOT sent this tick/.test(w))).toBe(true);
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 3, unreached: 3, clean: 0 });
+      expect(warned.some((w) => /3 due observation\(s\) did NOT land this tick \(3 unreached/.test(w))).toBe(true);
       // Seed both open, then a tick with no shortfall clears them.
       for (const k of [`sanctions-capacity:${CHAIN}:all`, `sanctions-clean-backlog:${CHAIN}:all`]) {
         h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(k, NOW, NOW);
       }
-      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, clean: 0 });
+      await raiseAlerts(env, CHAIN, [], plan, NOW, null, { due: 0, unreached: 0, clean: 0 });
       expect(h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
       // Not measured (no key): both are left as they are.
       h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-capacity:${CHAIN}:all`, NOW, NOW);

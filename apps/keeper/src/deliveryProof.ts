@@ -50,6 +50,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { batchedRead } from './batchRead';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
+import type { PassTick } from './passSchedule';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
@@ -208,20 +209,26 @@ export function deliveryComplete(args: {
   return args.flatAllLanded;
 }
 
-export async function runDeliveryProof(env: Env): Promise<void> {
+export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void> {
   if (!passIsArmed(env, 'deliveryProof', 'REWARD_DELIVERY_PROOF_ENABLED')) return;
   const chains = getChainConfigs(env);
   const byId = new Map(chains.map((c) => [c.id, c]));
-  for (const chain of chains) {
-    try {
-      await proveOnMirror(env, chain, byId);
-    } catch (err) {
-      console.error(`[keeper] deliveryProof chain=${chain.id} failed:`, err);
-    }
-  }
+  // Inside this run's own cadence (#2497 r18): mirrors CONCURRENTLY (each chain
+  // has its own nonce lane in the submission queue), and no new send past the
+  // run's deadline — the rest stays queued for the next run, five minutes on.
+  const deadline = tick?.deadlineMs ?? Date.now() + 5 * 60_000;
+  await Promise.all(
+    chains.map(async (chain) => {
+      try {
+        await proveOnMirror(env, chain, byId, deadline);
+      } catch (err) {
+        console.error(`[keeper] deliveryProof chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
-async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>): Promise<void> {
+async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number = Number.POSITIVE_INFINITY): Promise<void> {
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
   const cfg = (await client.readContract({
@@ -262,7 +269,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
-      if (budget.writes <= 0 && canSend) break; // the rest keep their turn
+      if (canSend && (budget.writes <= 0 || Date.now() >= deadline)) break; // the rest keep their turn
       examined.add(key);
       const packet = packets.get(key);
       if (!packet) continue; // unread, or not arrived: read again in its turn
@@ -285,7 +292,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
         continue;
       }
       for (const a of plan.actions) {
-        if (budget.writes <= 0) break;
+        if (budget.writes <= 0 || Date.now() >= deadline) break;
         // eslint-disable-next-line no-await-in-loop
         await send(ctx!, budget, a);
       }

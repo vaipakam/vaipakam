@@ -74,6 +74,20 @@ export interface PassTick {
    *  cadence gate on which tick this is even when delivery is late.
    *  Undefined only for an invocation that is not a cron tick. */
   readonly scheduledTimeMs: number | undefined;
+  /** When this run must have finished: its scheduled minute plus its own
+   *  cadence, less a margin (#2497 r18). The host never relaunches a pass whose
+   *  previous run is still going, so a run past this costs the pass its next
+   *  run. A pass doing unbounded work checks it in its read AND send loops and
+   *  leaves the rest for the next run. */
+  readonly deadlineMs: number;
+}
+
+/** What a run leaves for its own wrap-up (logging, alert de-dup writes). */
+export const RUN_DEADLINE_MARGIN_MS = 30_000;
+
+/** The deadline of one run of `pass` launched for `scheduledTimeMs`. Pure. */
+export function runDeadline(pass: Pick<KeeperPass, 'cadenceMinutes'>, scheduledTimeMs: number | undefined, nowMs: number = Date.now()): number {
+  return (scheduledTimeMs ?? nowMs) + pass.cadenceMinutes * 60_000 - RUN_DEADLINE_MARGIN_MS;
 }
 
 export const KEEPER_PASSES: readonly KeeperPass[] = [

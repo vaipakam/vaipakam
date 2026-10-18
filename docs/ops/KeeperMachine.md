@@ -180,8 +180,15 @@ a commit. The template documents each line. In short:
   never give two machines the same one.
 - **Arming:** leave `KEEPER_ENABLED=false` and every per-pass flag empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
-  `TG_BOT_TOKEN` (the user bot, never `TG_OPS_BOT_TOKEN`), `PUSH_CHANNEL_PK`
-  and the aggregator keys.
+  `TG_BOT_TOKEN` (the USER bot, for HF-band alerts), `PUSH_CHANNEL_PK` and the
+  aggregator keys.
+- **Operator alerts:** `TG_OPS_BOT_TOKEN` and `TG_OPS_CHAT_ID`, the OPS bot
+  and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
+  and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
+  sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
+  here. With either value unset, every such alert goes only to the journal,
+  as `ops alert NOT delivered`. So set both, and confirm that line is absent,
+  before arming `REWARD_SANCTIONS_KEEPER_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or

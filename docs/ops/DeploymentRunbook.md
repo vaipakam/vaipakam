@@ -1087,12 +1087,18 @@ keeper tick in between.
    apply asks for confirmation; the `list` is the verdict — it must show
    every file in `apps/keeper/migrations/` applied and nothing pending.
 
-2. **Copy the live rows, with the keeper stopped.** Rows the deployed
-   keeper writes after the export are lost, so confirm it is not running:
-   under the #1896 hold it has no schedule (`"crons": []`) — confirm the
-   Worker's *Settings → Trigger Events* is empty. If a schedule exists,
-   remove it in the dashboard and allow for propagation first
-   (`apps/keeper/README.md`, #1466).
+2. **Copy the live rows, with the keeper stopped.** Rows the running keeper
+   writes after the export are lost, so stop EVERY runner first. Since #2497
+   the keeper runs on the always-on machine, and the Worker's `scheduled`
+   handler declines every invocation. So stopping the keeper means stopping
+   the machine, in the order `docs/ops/KeeperMachine.md` §4a gives: pause its
+   deploys (`sudo systemctl disable --now vaipakam-keeper-update.timer`, then
+   `sudo systemctl stop vaipakam-keeper-update.service`), stop the keeper
+   (`sudo systemctl stop vaipakam-keeper`), and wait until `systemctl
+   is-active vaipakam-keeper` prints `inactive`. Also confirm the Worker's
+   *Settings → Trigger Events* is still empty (`"crons": []`). After the
+   cutover, resume the machine as §4a step 5 says. There is no Worker deploy
+   step for the keeper's runtime.
 
    Then run the cutover, from the repo root:
 

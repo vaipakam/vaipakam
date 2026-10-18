@@ -60,6 +60,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
 import {
   deploymentFloor,
@@ -112,7 +113,9 @@ const MAX_WRITES_PER_TICK = 25;
 const WRITE_CEILING_PER_TICK = 120;
 /** Ticks inside one observation bound: each held owner must be observed once
  *  in this many ticks. */
-const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor(OBSERVE_AFTER_SEC / PASS_CADENCE_SEC));
+// An owner is due every (bound − one cadence), see {@link observeDue}, so that
+// is the run count the observation rate is spread over (#2497 r18).
+const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor((OBSERVE_AFTER_SEC - PASS_CADENCE_SEC) / PASS_CADENCE_SEC));
 
 /**
  * One tick's write budget, from the WHOLE demand rather than a fixed count
@@ -127,6 +130,16 @@ const TICKS_PER_OBSERVE_BOUND = Math.max(1, Math.floor(OBSERVE_AFTER_SEC / PASS_
 export function writeBudgetFor(heldCount: number, cleanCount = 0): { writes: number; overCapacity: boolean } {
   const need = MAX_WRITES_PER_TICK + cleanCount + Math.ceil(heldCount / TICKS_PER_OBSERVE_BOUND);
   return { writes: Math.min(WRITE_CEILING_PER_TICK, need), overCapacity: need > WRITE_CEILING_PER_TICK };
+}
+/** Staging pages one owner may resolve per run (#2497 r18): the rest resume
+ *  next run, after the other owners have had a turn. */
+const MAX_RESOLVE_WRITES_PER_OWNER = 4;
+/** `xs` started at `turn mod length` — a stateless rotation keyed by the run.
+ *  Pure; pinned by the tests. */
+export function rotate<T>(xs: readonly T[], turn: number): T[] {
+  if (xs.length === 0) return [];
+  const k = ((turn % xs.length) + xs.length) % xs.length;
+  return [...xs.slice(k), ...xs.slice(0, k)];
 }
 /** Settlement calls per owner per tick; each settles what one claim would
  *  (a bounded window of days), and the rest resumes next tick. */
@@ -275,23 +288,24 @@ export function planSanctionsHold(
 }
 
 /** One rule for when a chain is due an observation, for every decision: never
- *  observed, or its latest observation is a quarter of the maximum gap old. */
+ *  observed, or its latest observation is ONE CADENCE short of the six-hour
+ *  bound old (#2497 r18). An observation lands seconds or minutes into a run,
+ *  so waiting for an age of exactly six hours deferred it to the next run and
+ *  produced nearly seven-hour gaps; due one cadence early, it lands inside. */
 export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
-  return st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC;
+  return st.lastSeenAt === 0 || nowSec - st.lastSeenAt >= OBSERVE_AFTER_SEC - PASS_CADENCE_SEC;
 }
 
-/** One run's wall-clock budget for SENDING (#2497 r16): inside the pass's own
- *  hourly cadence, so the host's per-pass guard never has to skip the next run.
- *  What is left unsent is measured and stated, not predicted. */
-export const PASS_SEND_WINDOW_MS = 45 * 60_000;
-/** The run's alert window, after the send window and still inside the hourly
- *  cadence (#2497 r17). An alert not delivered by then is not recorded, so it
- *  is simply sent by the next run. */
+/** The tail of a run reserved for its alerts (#2497 r17, r18): reads and sends
+ *  stop this long before the run's deadline ({@link PassTick.deadlineMs}), and
+ *  an alert not delivered by the deadline is not recorded, so the next run
+ *  raises it. Everything a run does is therefore inside its own cadence. */
 export const PASS_ALERT_WINDOW_MS = 10 * 60_000;
 
-export async function runRewardSanctionsHold(env: Env): Promise<void> {
+export async function runRewardSanctionsHold(env: Env, tick?: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardSanctionsHold', 'REWARD_SANCTIONS_KEEPER_ENABLED')) return;
-  const deadline = Date.now() + PASS_SEND_WINDOW_MS;
+  const runDeadlineMs = tick?.deadlineMs ?? Date.now() + 60 * 60_000;
+  const deadline = runDeadlineMs - PASS_ALERT_WINDOW_MS;
   // Chains run CONCURRENTLY (#2497 r16): each has its own nonce lane in the
   // per-key submission queue, so one chain's receipt waits never spend another
   // chain's window.
@@ -306,7 +320,7 @@ export async function runRewardSanctionsHold(env: Env): Promise<void> {
   );
 }
 
-async function observeChain(env: Env, chain: ChainConfig, deadline: number = Date.now() + PASS_SEND_WINDOW_MS): Promise<void> {
+async function observeChain(env: Env, chain: ChainConfig, deadline: number = Date.now() + 50 * 60_000): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
   // Owners of open staging work join the open chains: a claimant held with NO
   // chain (the oracle was unavailable when its page ran, a flag marker set)
@@ -321,7 +335,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   );
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
-  const statuses = (await readStatuses(client as never, diamond, known)).filter(
+  const statuses = (await readStatuses(client as never, diamond, known, deadline)).filter(
     (st): st is OwnerSanctionsStatus => st !== null,
   );
   // The SCREEN (Codex #2489 r2): a wallet flagged while it holds only ordinary
@@ -329,7 +343,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // with the claim — so a bounded slice of every loan party is classified each
   // tick, and the held or confirmed ones join. Its first observation is what
   // starts the chain the forfeit window is counted from.
-  const screen = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known));
+  const screen = await screenLoanParties(env, chain.id, client as never, diamond, new Set(known), deadline);
   const screened = screen.found;
   statuses.push(...screened);
   const candidates = new Set<string>([...known, ...screened.map((st) => st.owner)]);
@@ -342,7 +356,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   const departed = await departedAlertOwners(env, chain.id, candidates);
   if (departed.length > 0) {
     statuses.push(
-      ...(await readStatuses(client as never, diamond, departed)).filter(
+      ...(await readStatuses(client as never, diamond, departed, deadline)).filter(
         (st): st is OwnerSanctionsStatus => st !== null,
       ),
     );
@@ -363,9 +377,12 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
-  let shortfall: { due: number; clean: number } | null = null;
+  let shortfall: { due: number; unreached: number; clean: number } | null = null;
   if (ctx?.wallet.account) {
     let dueReached = 0;
+    /** Due observations that LANDED — counted on the write's own success
+     *  (#2497 r18), never on the attempt. */
+    let dueLanded = 0;
     let cleanReached = 0;
     // PHASE 1 — one observation-bearing write for EVERY due owner, most urgent
     // first, before anything else (#2497 r9). A Held owner gets the evidence
@@ -383,10 +400,12 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
         // eslint-disable-next-line no-await-in-loop
         const settled = await runOwnerSettlement(ctx, budget, owner, 1);
         settleCallsUsed.set(owner, settled ? 1 : 0);
+        let landed = settled;
         if (!settled && budget.writes > 0) {
           // eslint-disable-next-line no-await-in-loop
-          await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+          landed = await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
         }
+        if (landed) dueLanded += 1;
         continue;
       }
       // A held owner with no chain is observed only while the oracle answers:
@@ -395,7 +414,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       // eslint-disable-next-line no-await-in-loop
       if (noChain.has(owner) && !(await oracleAnswers(client, diamond, owner))) continue;
       // eslint-disable-next-line no-await-in-loop
-      await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
+      if (await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner)) dueLanded += 1;
     }
     // PHASE 2 — the clean results (#2497 r7): until committed, a re-flag inside
     // the gap would continue the old chain. Sent only on the oracle's own clean
@@ -409,19 +428,33 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       // eslint-disable-next-line no-await-in-loop
       await sendIfEffective(ctx, budget, 'recordRewardSanctionsEvidence', [owner], () => true, owner);
     }
-    shortfall = { due: plan.dueObservations.length - dueReached, clean: plan.commitClean.length - cleanReached };
+    shortfall = {
+      due: plan.dueObservations.length - dueLanded,
+      unreached: plan.dueObservations.length - dueReached,
+      clean: plan.commitClean.length - cleanReached,
+    };
     // PHASE 3 — the backlogs: the rest of each Confirmed owner's settlement,
-    // then the staging pages, with whatever budget is left.
-    for (const owner of plan.settle) {
+    // then the staging pages, with whatever budget is left. The same rotation
+    // rule as every other queue (#2497 r18): each owner's pages are capped per
+    // run, and the starting owner rotates with the run, so one owner with a
+    // deep backlog cannot take the whole phase run after run.
+    const hourIndex = Math.floor(nowSec / 3600);
+    const resolveCapped = async (owner: Address) => {
+      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline };
+      const before = share.writes;
+      await resolveOwnerRecords(env, ctx, share, owner);
+      budget.writes -= before - share.writes;
+    };
+    for (const owner of rotate(plan.settle, hourIndex)) {
       const used = settleCallsUsed.get(owner) ?? 0;
       // eslint-disable-next-line no-await-in-loop
       if (used < MAX_SETTLE_CALLS_PER_OWNER) await runOwnerSettlement(ctx, budget, owner, MAX_SETTLE_CALLS_PER_OWNER - used);
       // eslint-disable-next-line no-await-in-loop
-      await resolveOwnerRecords(env, ctx, budget, owner);
+      await resolveCapped(owner);
     }
-    for (const owner of plan.resolveOnly) {
+    for (const owner of rotate(plan.resolveOnly, hourIndex)) {
       // eslint-disable-next-line no-await-in-loop
-      await resolveOwnerRecords(env, ctx, budget, owner);
+      await resolveCapped(owner);
     }
   } else if (plan.observe.length + plan.settle.length > 0) {
     console.warn(
@@ -437,7 +470,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   let alertPlan = plan;
   if (budget.touched.size > 0) {
     const touched = [...budget.touched];
-    const fresh = await readStatuses(client as never, diamond, touched);
+    const fresh = await readStatuses(client as never, diamond, touched, deadline + PASS_ALERT_WINDOW_MS);
     alertStatuses = [
       ...statuses.filter((st) => !budget.touched.has(st.owner.toLowerCase())),
       ...fresh.filter((st): st is OwnerSanctionsStatus => st !== null),
@@ -474,10 +507,16 @@ async function readStatuses(
   client: PublicClient,
   diamond: Address,
   owners: readonly string[],
+  /** Past this, the rest read as unread (null), for the next run (#2497 r18). */
+  deadline: number = Number.POSITIVE_INFINITY,
 ): Promise<(OwnerSanctionsStatus | null)[]> {
   const out: (OwnerSanctionsStatus | null)[] = [];
   for (let i = 0; i < owners.length; i += STATUS_CHUNK) {
     const chunk = owners.slice(i, i + STATUS_CHUNK);
+    if (Date.now() >= deadline) {
+      out.push(...chunk.map(() => null));
+      continue;
+    }
     // eslint-disable-next-line no-await-in-loop
     const res = await batchedRead(
       client as never,
@@ -488,6 +527,11 @@ async function readStatuses(
         args: [owner] as const,
       })),
       `rewardSanctionsHold getRewardSanctionsStatus ${i}/${owners.length}`,
+      undefined,
+      // BOUNDED (#2497 r18): a rejected aggregate costs one request and reads
+      // as unread — classified next run — instead of one serial request per
+      // owner, which a degraded RPC would turn into an unbounded read phase.
+      'unread',
     );
     chunk.forEach((owner, j) => {
       const r = res[j];
@@ -552,6 +596,7 @@ async function screenLoanParties(
   client: PublicClient,
   diamond: Address,
   known: ReadonlySet<string>,
+  deadline: number = Number.POSITIVE_INFINITY,
 ): Promise<ScreenOutcome> {
   const total = await countLoanParties(env.DB, chainId);
   if (total === 0) return { found: [], overCapacity: null };
@@ -571,7 +616,7 @@ async function screenLoanParties(
   const terminal = page.length <= size;
   const slice = page.slice(0, size);
   const toRead = slice.filter((a) => !known.has(a));
-  const read = await readStatuses(client, diamond, toRead);
+  const read = await readStatuses(client, diamond, toRead, deadline);
   const byOwner = new Map(toRead.map((a, i) => [a, read[i]]));
   const ok = slice.map((a) => known.has(a) || byOwner.get(a) !== null);
   const found = read.filter((st): st is OwnerSanctionsStatus => st !== null && st.decision !== DECISION_DELIVER);
@@ -785,8 +830,8 @@ export async function raiseAlerts(
   plan: SanctionsHoldPlan,
   nowSec: number,
   screenOverCapacity: { total: number; ticks: number } | null = null,
-  /** What this tick left unsent, measured ({@link observeChain}); null = not measured. */
-  shortfall: { due: number; clean: number } | null = null,
+  /** What this tick left undone, measured ({@link observeChain}); null = not measured. */
+  shortfall: { due: number; unreached: number; clean: number } | null = null,
   /** Past this, alerts wait for the next run (#2497 r17); none by default. */
   alertDeadline: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
@@ -824,7 +869,7 @@ export async function raiseAlerts(
   // not measure (no key) leaves both as they are.
   if (shortfall !== null) {
     await toggle(`sanctions-capacity:${chainId}:all`, shortfall.due > 0, () =>
-      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) were NOT sent this tick (write budget or the ${PASS_SEND_WINDOW_MS / 60_000}-minute window ran out) — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound. Raise the ceiling or the cadence.`,
+      `[chain ${chainId}] reward sanctions hold: ${shortfall.due} due observation(s) did NOT land this tick (${shortfall.unreached} unreached — the write budget or the run's time window ran out — and ${shortfall.due - shortfall.unreached} attempted but not recorded) — if this persists, evidence chains will lapse past their ${OBSERVE_AFTER_SEC / 3600}h bound.`,
     );
     await toggle(`sanctions-clean-backlog:${chainId}:all`, shortfall.clean > 0, () =>
       `[chain ${chainId}] reward sanctions hold: ${shortfall.clean} clean result(s) were NOT committed this tick; every due observation was sent first. Until committed, a re-flag inside the gap would read the old chain as continuous.`,
