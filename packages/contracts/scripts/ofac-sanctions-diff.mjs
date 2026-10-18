@@ -174,8 +174,18 @@ function tagEnd(xml, lt) {
   return -1;
 }
 
-const NAME_RE = /^[A-Za-z_][\w.:-]*/;
-const ATTR_RE = /\s+([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/y;
+/**
+ * One grammar for every element and attribute name: an XML qualified name
+ * (Namespaces in XML §4), an NCName optionally preceded by ONE `prefix:`.
+ * A name with a second colon is not a QName, so it is refused as malformed
+ * instead of resolving its first prefix and dispatching on a "local name"
+ * that still carries a colon (Codex #2543 r16). ASCII NCNames only — every
+ * name in OFAC's schema is one.
+ */
+const NCNAME = '[A-Za-z_][\\w.-]*';
+const QNAME = `${NCNAME}(?::${NCNAME})?`;
+const NAME_RE = new RegExp(`^${QNAME}`);
+const ATTR_RE = new RegExp(`\\s+(${QNAME})\\s*=\\s*(?:"([^"<]*)"|'([^'<]*)')`, 'y');
 const PREDEFINED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
 /**
@@ -314,6 +324,11 @@ export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
       const m = body.match(NAME_RE);
       if (!m) throw new Error(`malformed XML: bad tag at offset ${lt}`);
       const name = m[0];
+      // The name must end where the tag's attributes or end begin; anything
+      // else (a second colon, a stray character) means it is not a QName.
+      if (body.length > name.length && !/[\s/]/.test(body[name.length])) {
+        throw new Error(`malformed XML: <${body.split(/[\s/]/)[0]}> at offset ${lt} is not a valid qualified name`);
+      }
       if (rootClosed || (stack.length === 0 && root !== null)) throw new Error(`malformed XML: second root element <${name}> at offset ${lt}`);
       const selfClosing = body.endsWith('/');
       const attrText = body.slice(name.length, selfClosing ? -1 : undefined);

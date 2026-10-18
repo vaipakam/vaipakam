@@ -283,6 +283,17 @@ test('namespaces: any element outside OFAC\'s namespace refuses the file; a pref
   assert.throws(() => scanXml('<Sanctions><q:Feature/></Sanctions>'), /unbound namespace prefix q/);
 });
 
+// ---- Codex #2543 r16: names are XML qualified names, one colon at most ----
+test('names: an element or attribute name with a second colon is malformed, not a different local name', () => {
+  assert.throws(() => scanXml(`<Sanctions xmlns:o="${NS}"><o:Feature:x/></Sanctions>`), /not a valid qualified name/);
+  assert.throws(() => scanXml('<Sanctions><Feature x:y:z="1"/></Sanctions>'), /bad attribute syntax/);
+  // A feature carrying an address, corrupted this way, refuses the whole file.
+  const corrupted = feature(E).replace('<Feature ', '<o:Feature:x ').replace('</Feature>', '</o:Feature:x>');
+  assert.throws(() => parseSdnAdvanced(withInProfile(corrupted).replace(`xmlns="${NS}"`, `xmlns="${NS}" xmlns:o="${NS}"`)), /not a valid qualified name/);
+  // Single-prefix names still parse.
+  assert.doesNotThrow(() => scanXml(`<Sanctions xmlns:o="${NS}"><o:Feature o:a="1"/></Sanctions>`));
+});
+
 test('references: a record whose FeatureTypeID or ReliabilityID resolves to nothing refuses the file', () => {
   const badType = feature(E).replace('FeatureTypeID="345"', 'FeatureTypeID="99999"');
   assert.throws(() => parseSdnAdvanced(withInProfile(badType)), /FeatureTypeID "99999"/);
