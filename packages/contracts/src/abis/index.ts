@@ -154,6 +154,8 @@ import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 // selector set) — admin tooling / keeper call it as a separate contract.
 import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
 import TestnetSanctionsOverlayABI from './TestnetSanctionsOverlay.json';
+// #2443 — the mainnet sanctions list (standalone; NOT a diamond facet).
+import SanctionsListABI from './SanctionsList.json';
 
 export {
   OfferCreateFacetABI,
@@ -257,6 +259,7 @@ export {
   FlashLoanLiquidatorABI,
   RiskPremiumRateModelABI,
   TestnetSanctionsOverlayABI,
+  SanctionsListABI,
 };
 
 import type { Abi } from 'viem';

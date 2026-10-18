@@ -51,9 +51,14 @@ Specifically:
    Chainalysis's on-chain oracle. Chainalysis has since retired it
    (last updated 2026-03-18, "no longer supported or maintained"); it
    still answers reads, so nothing on-chain shows it is frozen, and it
-   must not be configured anywhere. Which supported source replaces it
-   is open in #2443; testnets screen against the admin's
-   `TestnetSanctionsOverlay` alone. The requirement itself is
+   must not be configured anywhere. *Amended 2026-10-17 (#2443, owner
+   decision):* mainnets screen against Vaipakam's own `SanctionsList` —
+   the OFAC SDN digital-currency addresses, kept on-chain under split roles (an automated adder may only list;
+   the multisig alone may delist, owner decision 2026-10-18) with each update's source-file hash and publication date
+   recorded — OR-composed with RedStone's Sanctions Oracle where it is
+   deployed; a wallet is flagged if either flags it. Where the adder
+   runs is still open, so no mainnet is configured yet. Testnets
+   screen against the admin's `TestnetSanctionsOverlay` alone. The requirement itself is
    unchanged. Tier-1 entry points
    (`createOffer`, `acceptOffer`, vault create, VPFI deposit /
    buy / withdraw, `triggerLiquidation`, EarlyWithdrawal, Preclose,
@@ -95,9 +100,16 @@ Specifically:
   StorageGated` helper being a clearly separate function from the
   pure-true retail path, with tests in `CountryPairGatedTest`.
 - Sanctions screening introduces a third-party oracle dependency
-  (a supported source; which one is open, #2443). If the oracle is misconfigured or
-  fails, the protocol fails-open temporarily (returns `false` for
-  every address — the intentional pre-`setSanctionsOracle` window).
+  (Vaipakam's own OFAC list, plus RedStone's oracle where deployed, #2443).
+  While no oracle is configured, the screen returns `false` for every
+  address (the intentional pre-`setSanctionsOracle` window). Once the
+  list is configured, a RedStone outage does not open that window: an
+  address on Vaipakam's own list is still flagged, and only for an
+  address the own list does not flag does the RedStone failure reach the
+  Diamond, whose screens then fail open or closed exactly where the
+  sanctions rules say. The own list itself goes stale only as fast as
+  its adder stops applying OFAC publications, which is why it publishes
+  its freshness on-chain.
 - Operators must remember to call `setSanctionsOracle` on retail
   deploys. Documented in `CLAUDE.md` § "Retail-deploy policy".
 

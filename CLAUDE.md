@@ -1200,25 +1200,39 @@ release gate, not optional style guidance.
 
 The retail Vaipakam deploy is permissionless for KYC and country-pair
 trade restrictions, but **does** screen wallets against an on-chain
-sanctions oracle (an `ISanctionsList`; which source is open, #2443). Don't conflate the three —
+sanctions oracle (an `ISanctionsList`; on mainnets, Vaipakam's own `SanctionsList`,
+#2443). Don't conflate the three —
 sanctions screening protects the protocol from OFAC-listed addresses;
 KYC and country gating are the industrial-fork knobs that stay dormant.
 
 **Sanctions oracle — REQUIRED on retail post-deploy:**
 
-> **Source open (#2443, owner decision 2026-10-07).** Chainalysis retired its
-> on-chain Sanctions Oracle: last updated 2026-03-18, "no longer supported or
-> maintained", not for production screening. Its contracts still answer, so a
+> **Source decided (#2443, owner decision 2026-10-17); updater open.**
+> Chainalysis retired its on-chain Sanctions Oracle (last updated 2026-03-18,
+> "no longer supported or maintained"). Its contracts still answer, so a
 > Diamond pointed at it screens against a frozen list with nothing on-chain to
-> say so. Do NOT configure it anywhere. `ConfigureSanctionsOracle.s.sol`
-> refuses every mainnet until a supported source is chosen, and testnets screen
-> against the admin's `TestnetSanctionsOverlay` alone (#2439). The requirement
-> below — a sanctions oracle MUST be set before retail routes real value —
-> stands; the source it names is whatever #2443 decides.
+> say so. Do NOT configure it anywhere — the offline diff tool may READ its
+> logs once for a human-review cross-check, nothing more. The mainnet source is
+> **`contracts/src/compliance/SanctionsList.sol`**: Vaipakam's own on-chain
+> record of OFAC SDN EVM digital-currency addresses, applied under
+> split roles (owner = admin, Ownable2Step; an automated ADDER may only list,
+> the multisig REMOVER alone may delist — owner decision 2026-10-18) with each
+> update's source SHA-256, publication date and time recorded on-chain,
+> OR-composed with RedStone's Sanctions Oracle where RedStone has deployed it
+> (an immutable constructor input, empty by default — never hard-coded). The
+> update is computed offline by
+> `packages/contracts/scripts/ofac-sanctions-diff.mjs`. **Where the adder
+> runs is still open**, so `ConfigureSanctionsOracle.s.sol` still
+> refuses every mainnet; testnets screen against the admin's
+> `TestnetSanctionsOverlay` alone (#2439). Both lists share
+> `ComposedSanctionsList` — the OR rule and "a secondary revert propagates for
+> an address the own record does not flag" live there once. Keep it that way:
+> swallowing the revert in a list would silently turn the Diamond's
+> fail-closed screens fail-open.
 
-`ProfileFacet.setSanctionsOracle(<supported-sanctions-oracle>)` MUST be
-called on the retail deploy once a supported source (#2443) is chosen and
-its address is known on-chain. While
+`ProfileFacet.setSanctionsOracle(<SanctionsList>)` MUST be
+called on the retail deploy once its adder host is decided and the list is
+deployed and populated. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
 `false` for every address (intentional fail-open during the deploy
 window). Once set, the Tier-1 entry points
