@@ -1902,6 +1902,14 @@ interface IVaipakamErrors {
     error ServiceCapacityArmingDark(uint8 role);
     /// @notice #1219 — a positive arming fee `rate` outside the fixed bounds [`min`, `max`] (0.5%–10% of the newly armed principal; 0 is the dark switch).
     error ServiceCapacityArmingFeeOutOfBounds(uint256 rate, uint256 min, uint256 max);
+    /// @notice RETIRED by #1219's fixed bounds — never thrown by this version. Declared
+    ///         only so the rolling ABI still decodes reverts from a facet not yet
+    ///         refreshed in place, whose setters throw it (Codex #2556 r8). Delete once
+    ///         every live deployment runs the fixed-bounds facet.
+    error ServiceCapacityArmingFeeBelowFloor(uint256 rate, uint256 floor);
+    /// @notice RETIRED by #1219's fixed bounds — never thrown by this version; kept for
+    ///         the rolling ABI exactly as {ServiceCapacityArmingFeeBelowFloor} is.
+    error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
     /// @notice #2459 r6 — the VPFI token cannot rotate while `held` of provisional compensation awaits its
     ///         day's broadcast: the hold is in the old token and its record names no asset.
     error RewardTokenRotationBlockedByProvisional(uint256 held);

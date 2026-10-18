@@ -8119,6 +8119,11 @@ library LibVaipakam {
         ///      below `rate × everything it armed` (no split post and no fresh
         ///      operator arms anything fee-free) nor more than one smallest unit
         ///      above it. See `LibServiceCapacity.armingFeeAndCredit`.
+        ///      Keyed by rotation epoch like the record itself: a VPFI token
+        ///      rotation retires the epoch, and with it any credit left there
+        ///      (under one smallest unit of the OLD token, which no post under the
+        ///      new token can use). That sub-unit remainder is forfeited, not
+        ///      refunded — disclosed in the spec (Codex #2556 r8).
         ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
         ///      that struct's getter ABI is unchanged. Appended — append-only.
         mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;

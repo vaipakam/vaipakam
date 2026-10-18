@@ -537,7 +537,14 @@ library LibServiceCapacity {
     ///           post whose share the credit already covers pays nothing;
     ///         - no sub-unit gap is ever stranded unarmed (r3).
     ///         The credit is a fraction of one fee unit, so it is independent of the
-    ///         rate in force and carries across a rate change. No overflow:
+    ///         rate in force and carries across a rate change. It is spent at the
+    ///         rate IN FORCE at the post: a rate moved between quote and post can
+    ///         shift at most that credit (under one unit) beyond the fee the payer
+    ///         bound with `maxFee`, the same tolerance stated above. It does not
+    ///         survive a VPFI rotation: the retired epoch's sub-unit credit is
+    ///         forfeited (r8). The lifetime bound covers arming performed by this
+    ///         version; no chain armed principal under the earlier per-post
+    ///         rounding (arming was dark everywhere), so no history is owed. No overflow:
     ///         `granted` ≤ `bondAt4x` ≤ 2^128, `rate` ≤ 1e17 < 2^57, credit < 1e18.
     function armingFeeAndCredit(
         LibVaipakam.Storage storage s,
