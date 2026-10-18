@@ -691,6 +691,35 @@ The post-deploy health check (step `[5d]`) runs on every chain and
 its log is persisted to
 `deployments/<slug>/.history/health-<unix-ts>.log` for audit.
 
+#### Before a `--fresh` redeploy of a chain that already carries reward state: drain the remittances
+
+A fresh Diamond is a new epoch. The indexer resets the chain's rows
+(ProjectDetailsREADME, "Deployment Epochs"), and the keeper serves only the
+ACTIVE Diamond of each chain: its open-work queues, cursors and private state
+are namespaced by Diamond or reset on the change (#2497). So nothing in the
+keeper picks up reward-budget remittance work left on a retired Diamond. That
+covers a Pending reservation still waiting for its acknowledgement, and a
+released one whose late delivery has not yet been acknowledged, which leaves
+its stranded recycled share counted as in transit. The retired Diamond stays
+on-chain and its funds stay settleable there, but only by hand.
+
+So drain first, following the rule the #1566 design sets for every transition
+(`Vpfi1566CanonicalDeliveredBoundDesign.md`, "The cutover DRAINS AND REJECTS"):
+
+1. Stop new remittances from the canonical chain. Disarm the keeper's
+   `REWARD_REMIT_ENABLED`, so no `remitRewardBudget` is sent.
+2. On the canonical Diamond, read `getRemitReservationNonce` and every
+   reservation below it. Wait until every one is acknowledged (status 2), or
+   released (status 3) with its stranded share stamped and resolved. While
+   the keeper is still armed for acks, it does this on its own.
+3. Only then redeploy. Record any reservation that will not settle, by id,
+   in the deploy's release fragment, so the leftover is stated, not implied.
+
+This applies to the canonical chain and, as #2561 explains, to a mirror
+redeployed on its own. A chain whose reservation nonce is 0 has nothing to
+drain. That was the case for Base Sepolia on 2026-10-17: both the retired
+Diamond `0xd89fd7…b995` and the new one read nonce 0.
+
 ### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains, any order)
 
 ```bash
