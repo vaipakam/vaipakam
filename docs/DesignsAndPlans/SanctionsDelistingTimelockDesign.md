@@ -96,16 +96,21 @@ clocks are independent, and a source clock running ahead would let a reading
 taken inside the window pass for one taken after it. So the proof is causal
 instead:
 
-- After `eta`, anyone may call `requestClearance(id)`. It issues a challenge
-  derived from the previous block's hash (plus the contract, chain, proposal,
-  epoch and a nonce), so it cannot be known before it is issued, and it is
-  issued only after the window. An answer echoing it was therefore read after
-  the window. Stated precisely: the previous block's hash is public one block
-  before the challenge is issued, so a caller who predicts that its own
-  request lands in the next block can learn the challenge at most one block
-  (seconds) early. That lead is bounded by the block time, not by either
-  chain's clock.
-- The challenge is usable for `clearanceMaxAge` after issue (1 hour to 7 days,
+- After `eta`, anyone may call `requestClearance(id)`, which records its
+  block. From any later block (within the 256 for which a block hash stays
+  readable), anyone may call `sealClearance(id)`, which derives the challenge
+  from the REQUEST block's hash (plus the contract, chain, proposal, epoch and
+  a nonce). That hash does not exist until the request block does, and the
+  request block is after the window, so an answer echoing the challenge was
+  read after the window. The only party that knows a block's hash as it is
+  built is the chain's own block producer.
+
+  An earlier revision derived the challenge from the PREVIOUS block's hash in
+  a single call. Codex round 2 on #2562 pointed out that hash is public a
+  block early, so a caller who predicts its own request could attest just
+  before `eta`. The two steps remove that lead rather than bounding it.
+- A request that is not sealed within 256 blocks lapses and may be replaced.
+- The challenge is usable for `clearanceMaxAge` after it is sealed (1 hour to 7 days,
   default 1 day), measured on this chain's clock. A new one may be issued only
   when the proposal has none under the current source or the current one has
   lapsed, so nobody can keep voiding an answer in flight.
@@ -174,8 +179,9 @@ instead:
   absent from the plain file and passing the witness check, minus addresses
   already proposed, vetoed, or flagged by RedStone. It then:
   - proposes the candidates;
-  - after `eta`, calls `requestClearance` on the timelock's chain and then
-    `attest` with that challenge on the RedStone chain;
+  - after `eta`, calls `requestClearance` and, a block later,
+    `sealClearance` on the timelock's chain, then `attest` with that
+    challenge on the RedStone chain;
   - executes matured proposals;
   - reconfirms after a new publication.
 

@@ -33,11 +33,10 @@ uint16 constant SANCTIONS_CLEARANCE_WIRE_VERSION = 1;
  *
  *         Two things make an answer usable at the destination, and neither
  *         relies on comparing this chain's clock with the destination's:
- *         - **The challenge.** The timelock issues it only after the
- *           proposal's waiting window has ended, from its own recent block
- *           hash, so nobody can know it earlier. An answer echoing it was
- *           therefore read after the window, whatever either chain's clock
- *           says. The timelock ignores an answer for an unknown or
+ *         - **The challenge.** The timelock seals it from the hash of a
+ *           block that ran after the proposal's waiting window ended, so
+ *           nobody can know it earlier. An answer echoing it was therefore
+ *           read after the window, whatever either chain's clock says. The timelock ignores an answer for an unknown or
  *           superseded challenge, or for other addresses.
  *         - **The oracle's own freshness.** The message carries the
  *           oracle's `getLastUpdateBlockTimestamp()` (read through

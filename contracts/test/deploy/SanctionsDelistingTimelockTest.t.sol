@@ -171,6 +171,17 @@ contract SanctionsDelistingTimelockTest is Test {
         messenger.deliver(tl, SRC, attestorAddr, _payload(ch, accts, flags, oracleUpdatedAt));
     }
 
+    /// @dev Request a clearance, then seal it from the next block with a
+    ///      known hash for the request block (forge leaves past block hashes
+    ///      unset otherwise).
+    function _issue(SanctionsDelistingTimelock tl, uint256 id) internal returns (bytes32) {
+        tl.requestClearance(id);
+        uint256 n = vm.getBlockNumber();
+        vm.setBlockhash(n, keccak256(abi.encode("block", n)));
+        vm.roll(n + 1);
+        return tl.sealClearance(id);
+    }
+
     function _propose(SanctionsDelistingTimelock tl, address[] memory accts) internal returns (uint256 id) {
         vm.prank(bot);
         id = tl.propose(accts, H2, D2);
@@ -477,7 +488,7 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.execute(id);
 
         vm.prank(stranger); // permissionless
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         assertEq(tl.proposalOfChallenge(ch), id);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotAnswered.selector, id, ch));
         tl.execute(id);
@@ -494,6 +505,39 @@ contract SanctionsDelistingTimelockTest is Test {
         assertFalse(list.listedByOwnList(b));
     }
 
+    function test_CrossChain_TheChallengeIsSealedFromTheRequestBlocksHash() public {
+        (, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 2 days);
+        uint256 n = vm.getBlockNumber();
+        tl.requestClearance(id);
+
+        // Not in the request's own block: its hash does not exist yet.
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.SealTooEarly.selector, id, n));
+        tl.sealClearance(id);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotSealed.selector, id, n));
+        tl.execute(id);
+        // A pending request cannot be replaced while it can still be sealed.
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceRequestPending.selector, id, n));
+        tl.requestClearance(id);
+
+        // Past 256 blocks the hash is unreadable: the request lapses and may
+        // be replaced.
+        vm.roll(n + 257);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceRequestLapsed.selector, id, n));
+        tl.sealClearance(id);
+        tl.requestClearance(id);
+        bytes32 h = keccak256("request block");
+        vm.setBlockhash(n + 257, h);
+        vm.roll(n + 258);
+        bytes32 ch = tl.sealClearance(id);
+        assertEq(ch, keccak256(abi.encode(address(tl), block.chainid, id, uint32(1), uint256(1), h)));
+        assertEq(tl.proposalOfChallenge(ch), id);
+        // Sealed once only.
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotRequested.selector, id));
+        tl.sealClearance(id);
+    }
+
     /// @dev An answer read during the window cannot carry the challenge,
     ///      which did not exist yet; anything else it might echo is ignored.
     function test_CrossChain_AnswerToAnUnknownChallenge_IsIgnored() public {
@@ -504,7 +548,7 @@ contract SanctionsDelistingTimelockTest is Test {
         emit ClearanceIgnored(guess, 0, SanctionsDelistingTimelock.IgnoreReason.UnknownChallenge);
         _answer(tl, guess, _arr(a), _flags(false), uint64(T0));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         assertTrue(ch != guess);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotAnswered.selector, id, ch));
         tl.execute(id);
@@ -515,8 +559,8 @@ contract SanctionsDelistingTimelockTest is Test {
         uint256 id1 = _propose(tl, _arr(a));
         uint256 id2 = _propose(tl, _arr(b));
         vm.warp(T0 + 2 days);
-        bytes32 ch1 = tl.requestClearance(id1);
-        bytes32 ch2 = tl.requestClearance(id2);
+        bytes32 ch1 = _issue(tl, id1);
+        bytes32 ch2 = _issue(tl, id2);
         assertTrue(ch1 != ch2, "distinct in one block");
 
         // Cleared first, then flagged.
@@ -543,7 +587,7 @@ contract SanctionsDelistingTimelockTest is Test {
         (SanctionsList list, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a));
         vm.warp(T0 + 10 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
 
         // The oracle reported no last-update time.
         _answer(tl, ch, _arr(a), _flags(false), 0);
@@ -570,7 +614,7 @@ contract SanctionsDelistingTimelockTest is Test {
         // not lower the recorded freshness.
         _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 9 days));
         _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 2 days));
-        (,, uint64 oracleUpdatedAt,,) = tl.clearanceOf(id);
+        (,, uint64 oracleUpdatedAt,,,) = tl.clearanceOf(id);
         assertEq(oracleUpdatedAt, T0 + 9 days);
         tl.execute(id);
         assertFalse(list.listedByOwnList(a));
@@ -580,9 +624,9 @@ contract SanctionsDelistingTimelockTest is Test {
         (, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 3 days));
-        (,, uint64 oracleUpdatedAt,,) = tl.clearanceOf(id);
+        (,, uint64 oracleUpdatedAt,,,) = tl.clearanceOf(id);
         assertEq(oracleUpdatedAt, T0 + 2 days);
     }
 
@@ -590,7 +634,7 @@ contract SanctionsDelistingTimelockTest is Test {
         (SanctionsList list, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         uint64 expiresAt = uint64(T0 + 3 days);
 
         // Not while it is usable: an answer may be in flight.
@@ -604,7 +648,7 @@ contract SanctionsDelistingTimelockTest is Test {
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceExpired.selector, id, expiresAt));
         tl.execute(id);
 
-        bytes32 ch2 = tl.requestClearance(id);
+        bytes32 ch2 = _issue(tl, id);
         assertEq(tl.proposalOfChallenge(ch), 0, "the old challenge is forgotten");
         // An answer to the old one now changes nothing.
         vm.expectEmit(address(tl));
@@ -622,7 +666,7 @@ contract SanctionsDelistingTimelockTest is Test {
         (, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a, b));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
 
         // A subset, or the same addresses in another order, is not the batch.
         vm.expectEmit(address(tl));
@@ -631,8 +675,8 @@ contract SanctionsDelistingTimelockTest is Test {
         vm.expectEmit(address(tl));
         emit ClearanceIgnored(ch, id, SanctionsDelistingTimelock.IgnoreReason.AccountsMismatch);
         _answer(tl, ch, _arr(b, a), _flags(false, false), uint64(T0));
-        (,,,, SanctionsDelistingTimelock.ClearanceState state) = tl.clearanceOf(id);
-        assertEq(uint8(state), uint8(SanctionsDelistingTimelock.ClearanceState.Requested));
+        (,,,,, SanctionsDelistingTimelock.ClearanceState state) = tl.clearanceOf(id);
+        assertEq(uint8(state), uint8(SanctionsDelistingTimelock.ClearanceState.Issued));
 
         vm.prank(bot);
         tl.cancel(id);
@@ -645,7 +689,7 @@ contract SanctionsDelistingTimelockTest is Test {
         (, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         _answer(tl, ch, _arr(a), _flags(false), uint64(T0));
         address attestor2 = makeAddr("attestor2");
         vm.prank(admin);
@@ -664,7 +708,7 @@ contract SanctionsDelistingTimelockTest is Test {
         messenger.deliver(tl, SRC, attestor2, _payload(ch, _arr(a), _flags(false), uint64(T0)));
 
         // A voided challenge may be replaced at once.
-        bytes32 ch2 = tl.requestClearance(id);
+        bytes32 ch2 = _issue(tl, id);
         messenger.deliver(tl, SRC, attestor2, _payload(ch2, _arr(a), _flags(false), uint64(T0)));
         tl.execute(id);
     }
@@ -828,7 +872,7 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.setClearanceSource(address(messenger), SRC, address(att));
         uint256 id = _propose(tl, _arr(a));
         vm.warp(T0 + 2 days);
-        bytes32 ch = tl.requestClearance(id);
+        bytes32 ch = _issue(tl, id);
         vm.deal(address(this), 1 ether);
         att.attest{value: 0.01 ether}(block.chainid, ch, _arr(a));
         messenger.deliver(tl, SRC, address(att), messenger.lastPayload());

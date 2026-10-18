@@ -54,10 +54,14 @@ import {LibOracleFreshness} from "./LibOracleFreshness.sol";
  *            - otherwise, through a CCIP answer sent from a chain where
  *              RedStone is deployed by `SanctionsClearanceAttestor`
  *              (`GateMode.CrossChain`). After the window ends anyone may
- *              {requestClearance}, which issues an unpredictable challenge
- *              for the proposal; only an answer echoing it, for exactly the
- *              proposal's addresses, counts. So the reading was taken after
- *              the window by causality, not by comparing two chains' clocks.
+ *              {requestClearance}, which records its block; from a later
+ *              block anyone may {sealClearance}, which derives the
+ *              proposal's challenge from that block's hash. Nobody can know
+ *              that hash before the block exists, and the block is after the
+ *              window, so an answer echoing the challenge — for exactly the
+ *              proposal's addresses, the only kind that counts — was read
+ *              after the window, by causality rather than by comparing two
+ *              chains' clocks.
  *              One flagged answer marks the challenge flagged for good,
  *              whatever else arrives, so conflicting answers fail closed.
  *              The challenge is usable for `clearanceMaxAge` after it is
@@ -118,21 +122,27 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     }
 
     /// @notice Where a proposal's cross-chain RedStone check stands.
-    ///         `None`: no challenge issued. `Requested`: issued, no answer
-    ///         yet. `Cleared`: every answer so far said "not flagged".
-    ///         `Flagged`: at least one answer flagged an address; it stays
-    ///         so for this challenge whatever arrives later.
+    ///         `None`: nothing requested. `Requested`: the request block is
+    ///         recorded, the challenge not yet sealed from its hash.
+    ///         `Issued`: sealed, no answer yet. `Cleared`: every answer so
+    ///         far said "not flagged". `Flagged`: at least one answer flagged
+    ///         an address; it stays so for this challenge whatever arrives
+    ///         later.
     enum ClearanceState {
         None,
         Requested,
+        Issued,
         Cleared,
         Flagged
     }
 
     /// @notice A proposal's current clearance challenge and its answer.
-    /// @param challenge       The value an answer must echo.
-    /// @param issuedAt        When it was issued, on this chain's clock; it
+    /// @param challenge       The value an answer must echo; zero until
+    ///                        sealed.
+    /// @param issuedAt        When it was sealed, on this chain's clock; it
     ///                        is usable until `issuedAt + clearanceMaxAge`.
+    /// @param requestBlock    The block {requestClearance} ran in, whose
+    ///                        hash seals the challenge.
     /// @param oracleUpdatedAt The freshest oracle last-update time any
     ///                        "not flagged" answer reported (clamped to this
     ///                        chain's clock); 0 when none reported one.
@@ -143,6 +153,7 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         bytes32 challenge;
         uint64 issuedAt;
         uint64 oracleUpdatedAt;
+        uint64 requestBlock;
         uint32 epoch;
         ClearanceState state;
     }
@@ -277,7 +288,9 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @custom:event-category state-change/compliance
     event DelistingExecuted(uint256 indexed id, address indexed by, GateMode gate, uint64 listVersion);
     /// @custom:event-category informational/compliance
-    event ClearanceRequested(
+    event ClearanceRequested(uint256 indexed id, uint32 indexed epoch, uint64 requestBlock);
+    /// @custom:event-category informational/compliance
+    event ClearanceSealed(
         uint256 indexed id, bytes32 indexed challenge, uint32 indexed epoch, uint64 expiresAt, address[] accounts
     );
     /// @notice An answer was recorded. `state` is the challenge's state
@@ -334,8 +347,19 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
     /// @notice The proposal's challenge is still usable; a new one may be
     ///         issued once it expires.
     error ClearanceOutstanding(uint256 id, bytes32 challenge, uint64 expiresAt);
-    /// @notice No challenge under the current source: {requestClearance}.
+    /// @notice A request awaits sealing; it may be replaced only once its
+    ///         block hash is no longer readable (256 blocks).
+    error ClearanceRequestPending(uint256 id, uint64 requestBlock);
+    /// @notice No request under the current source: {requestClearance}.
     error ClearanceNotRequested(uint256 id);
+    /// @notice The request is not sealed yet: {sealClearance} from a later
+    ///         block.
+    error ClearanceNotSealed(uint256 id, uint64 requestBlock);
+    /// @notice Sealing needs a block after the request's.
+    error SealTooEarly(uint256 id, uint64 requestBlock);
+    /// @notice The request's block hash is no longer readable;
+    ///         {requestClearance} again.
+    error ClearanceRequestLapsed(uint256 id, uint64 requestBlock);
     /// @notice The challenge has expired: {requestClearance} again.
     error ClearanceExpired(uint256 id, uint64 expiredAt);
     /// @notice The challenge has had no answer yet.
@@ -548,44 +572,63 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
 
     // ── Clearances ────────────────────────────────────────────────────
 
-    /// @notice Issue a cross-chain clearance challenge for a matured
-    ///         proposal. Anyone may call it (the delister bot does); the
-    ///         attestor on the RedStone chain is then asked to answer it.
-    /// @dev    Issued only once the window has ended and from the previous
-    ///         block's hash, so no answer echoing it can have been read
-    ///         before the window ended — this replaces any comparison of the
-    ///         source chain's clock with ours. (The previous block's hash is
-    ///         public one block early, so a caller predicting its own request
-    ///         can know the challenge at most one block ahead: a lead bounded
-    ///         by the block time.) A new challenge may be issued
-    ///         only when the proposal has none under the current source, or
-    ///         the current one has expired, so a caller cannot keep voiding
-    ///         an answer in flight.
-    /// @return challenge The value the attestor's answer must echo.
-    function requestClearance(uint256 id) external returns (bytes32 challenge) {
+    /// @notice Step 1 of a cross-chain RedStone check: record this block
+    ///         for a matured proposal. Anyone may call it (the delister bot
+    ///         does); {sealClearance} from a later block then fixes the
+    ///         challenge the attestor must echo.
+    /// @dev    The challenge is derived from THIS block's hash, which nobody
+    ///         can know until the block exists, and this block is after the
+    ///         window. So no answer echoing it can have been read before the
+    ///         window ended — causality, not a comparison of the source
+    ///         chain's clock with ours. (The chain's own block producer is
+    ///         the one party that knows a block's hash as it builds it.)
+    ///         A request may be replaced only when the proposal has none
+    ///         under the current source, its seal has lapsed, or its
+    ///         challenge has expired, so a caller cannot keep voiding an
+    ///         answer in flight.
+    function requestClearance(uint256 id) external {
         Proposal storage p = _pending(id);
         if (block.timestamp < p.eta) revert TooEarly(id, p.eta);
         if (address(list.secondary()) != address(0)) revert LocalGateInUse();
         if (clearanceMessenger == address(0)) revert ClearanceUnavailable();
         uint32 epoch = clearanceEpoch;
         ClearanceChallenge storage c = clearanceOf[id];
-        bytes32 previous = c.challenge;
-        if (previous != bytes32(0)) {
-            if (c.epoch == epoch && block.timestamp <= _expiresAt(c)) {
-                revert ClearanceOutstanding(id, previous, _expiresAt(c));
+        if (c.state != ClearanceState.None && c.epoch == epoch) {
+            if (c.state == ClearanceState.Requested) {
+                if (!_sealLapsed(c)) revert ClearanceRequestPending(id, c.requestBlock);
+            } else if (block.timestamp <= _expiresAt(c)) {
+                revert ClearanceOutstanding(id, c.challenge, _expiresAt(c));
             }
-            delete proposalOfChallenge[previous];
         }
-        challenge = keccak256(
-            abi.encode(address(this), block.chainid, id, epoch, ++_challengeNonce, blockhash(block.number - 1))
-        );
-        c.challenge = challenge;
-        c.issuedAt = uint64(block.timestamp);
+        if (c.challenge != bytes32(0)) delete proposalOfChallenge[c.challenge];
+        c.challenge = bytes32(0);
+        c.issuedAt = 0;
         c.oracleUpdatedAt = 0;
+        c.requestBlock = uint64(block.number);
         c.epoch = epoch;
         c.state = ClearanceState.Requested;
+        emit ClearanceRequested(id, epoch, uint64(block.number));
+    }
+
+    /// @notice Step 2: seal the proposal's challenge from the request
+    ///         block's hash. Anyone may call it, from any block after the
+    ///         request's and within the 256 blocks the hash stays readable.
+    /// @return challenge The value the attestor's answer must echo.
+    function sealClearance(uint256 id) external returns (bytes32 challenge) {
+        Proposal storage p = _pending(id);
+        ClearanceChallenge storage c = clearanceOf[id];
+        uint32 epoch = clearanceEpoch;
+        if (c.state != ClearanceState.Requested || c.epoch != epoch) revert ClearanceNotRequested(id);
+        uint64 requestBlock = c.requestBlock;
+        if (block.number <= requestBlock) revert SealTooEarly(id, requestBlock);
+        bytes32 h = blockhash(requestBlock);
+        if (h == bytes32(0)) revert ClearanceRequestLapsed(id, requestBlock);
+        challenge = keccak256(abi.encode(address(this), block.chainid, id, epoch, ++_challengeNonce, h));
+        c.challenge = challenge;
+        c.issuedAt = uint64(block.timestamp);
+        c.state = ClearanceState.Issued;
         proposalOfChallenge[challenge] = id;
-        emit ClearanceRequested(id, challenge, epoch, _expiresAt(c), p.accounts);
+        emit ClearanceSealed(id, challenge, epoch, _expiresAt(c), p.accounts);
     }
 
     /// @inheritdoc ICrossChainMessageRecipient
@@ -714,6 +757,12 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         return c.issuedAt + clearanceMaxAge;
     }
 
+    /// @dev `blockhash` reads only the last 256 blocks, so a request older
+    ///      than that can no longer be sealed.
+    function _sealLapsed(ClearanceChallenge storage c) private view returns (bool) {
+        return block.number > uint256(c.requestBlock) + 256;
+    }
+
     function _isVetoer(address who) private view returns (bool) {
         return who == owner() || list.isRemover(who);
     }
@@ -760,11 +809,12 @@ contract SanctionsDelistingTimelock is Ownable2Step, ICrossChainMessageRecipient
         }
         if (clearanceMessenger == address(0)) revert ClearanceUnavailable();
         ClearanceChallenge storage c = clearanceOf[id];
-        if (c.challenge == bytes32(0) || c.epoch != clearanceEpoch) revert ClearanceNotRequested(id);
+        ClearanceState state = c.state;
+        if (state == ClearanceState.None || c.epoch != clearanceEpoch) revert ClearanceNotRequested(id);
+        if (state == ClearanceState.Requested) revert ClearanceNotSealed(id, c.requestBlock);
         uint64 expiresAt = _expiresAt(c);
         if (block.timestamp > expiresAt) revert ClearanceExpired(id, expiresAt);
-        ClearanceState state = c.state;
-        if (state == ClearanceState.Requested) revert ClearanceNotAnswered(id, c.challenge);
+        if (state == ClearanceState.Issued) revert ClearanceNotAnswered(id, c.challenge);
         if (state == ClearanceState.Flagged) revert ClearanceFlagged(id, c.challenge);
         _requireFresh(GateMode.CrossChain, c.oracleUpdatedAt != 0, c.oracleUpdatedAt);
         return GateMode.CrossChain;
