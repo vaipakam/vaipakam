@@ -3879,6 +3879,22 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityArmingFloorNotRaised",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ServiceCapacityCallFailed",
     "inputs": []
   },

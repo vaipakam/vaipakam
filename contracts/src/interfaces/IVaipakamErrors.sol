@@ -1910,6 +1910,11 @@ interface IVaipakamErrors {
     /// @notice RETIRED by #1219's fixed bounds — never thrown by this version; kept for
     ///         the rolling ABI exactly as {ServiceCapacityArmingFeeBelowFloor} is.
     error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
+    /// @notice RETIRED with the floor setter by #1219's fixed bounds — never thrown by
+    ///         this version; the old `setArmingFeeFloor` stays routed on an
+    ///         un-refreshed facet (until the refresh's stale-route sweep removes
+    ///         it) and throws this, so the rolling ABI keeps it (Codex #2556 r9).
+    error ServiceCapacityArmingFloorNotRaised(uint256 current, uint256 proposed);
     /// @notice #2459 r6 — the VPFI token cannot rotate while `held` of provisional compensation awaits its
     ///         day's broadcast: the hold is in the old token and its record names no asset.
     error RewardTokenRotationBlockedByProvisional(uint256 held);
