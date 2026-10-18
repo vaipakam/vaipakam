@@ -1,7 +1,7 @@
 # Sanctions delisting — bot proposes, Safe vetoes, RedStone agrees (#2443)
 
-Status: built (contracts, tests, testnet deploy script). The delister bot and
-the CCIP clearance wiring are follow-ups, listed in §7.
+Status: built (contracts, tests, testnet deploy script, delister bot). The
+CCIP clearance wiring is the remaining follow-up, listed in §7.
 
 ## 1. Decisions this records
 
@@ -210,27 +210,49 @@ Both accept native value only as their messenger's fee refund.
 
 ## 7. Follow-ups
 
-- **Delister bot** (separate PR): it downloads both OFAC files, requires the
-  advanced file's hash to equal the list's, and requires both files to carry
-  the same publication date. Its candidates are the diff's delistings, each
-  absent from the plain file and passing the witness check, minus addresses
-  already proposed, vetoed, or flagged by RedStone. It then:
-  - proposes the candidates;
-  - on the cross-chain route, after `eta`, calls `requestClearance` on the
-    timelock's chain; once the request arrives, reads the reply from the
-    attestor's `ClearanceRead` event and calls `sendReply` on the RedStone
-    chain;
-  - executes matured proposals once `readiness` reports ready;
-  - reconfirms after a new publication.
+- **Delister bot — built** (`packages/contracts/scripts/sanctions-delister.mjs`,
+  installed with the adder from `ops/sanctions/`). An hourly oneshot with its
+  own key, which must be the timelock's proposer and nothing else (not the
+  timelock's owner, nor the list's adder, remover or owner), and a timelock
+  that serves the list the release records; a chain failing either is
+  refused. Per chain, each run:
+  - discards a removed proposer's proposals; withdraws its own proposals that
+    can no longer complete (vetoed, flagged by RedStone, already delisted
+    another way, beyond the outstanding count, or no longer called for by a
+    newer publication); reconfirms its own proposals onto a newer
+    publication after re-checking every address in them;
+  - after `eta`, requests the clearance (the CCIP fee plus a 10% margin);
+    once RedStone's chain has read it, relays the `ClearanceRead` payload with
+    `sendReply` on that chain, after checking its hash against the attestor's
+    record; executes once `readiness` reports ready;
+  - proposes the remaining delistings, in batches within the list's
+    outstanding count. A candidate must be a delisting in the diff of the
+    advanced file whose hash the list records, pass the witness check, and be
+    absent from the plain SDN.XML, read by its own parser. The two files must
+    carry the same publication date and list the same addresses (the plain
+    file may also carry addresses the advanced file marks false), and the
+    diff's delistings must number exactly the list's `pendingDelistings`.
+    Addresses already proposed or vetoed by the Safe are left out (a veto is
+    the Safe's own decision, so it is only noted); those RedStone flags today,
+    or that only one file supports, are reported for the Safe; an unreadable
+    RedStone answer skips the address for that run.
 
-  It is configured and installed the way the adder is (#2557): one root-only
-  file, `/etc/vaipakam/sanctions-delister.env`, holding its own key (never the
-  adder's, the keeper's, the owner's or the Safe's) and one RPC per chain
-  under the keeper's names; the timelock and list addresses come from the
-  installed release's `deployments.json`, never from the file; one run reads
-  the OFAC files once and serves every chain. The key needs native gas on
-  both chains of a cross-chain route, for the two CCIP fees.
-- **CCIP clearance wiring** (with the bot): deploy the attestor where RedStone
+  Publication-derived steps, and requesting and executing, wait while the
+  list's latest version is not the finalized one. Requesting and executing
+  also wait while OFAC serves a newer publication than the list records,
+  which the bot checks whenever a proposal is ready to execute; between OFAC
+  publishing and the bot's next check anyone may still execute a matured
+  proposal, and the RedStone check is then the guard. With no RedStone check configured (every testnet today) the
+  route is unavailable, so the bot proposes nothing and reports that the
+  delistings await the Safe. The OFAC files are downloaded only when a chain
+  has publication work, and a chain whose state is unchanged is re-checked
+  daily; only a conclusive reading is remembered, so a failed download, two
+  files from different publications, or a send that did not land is retried
+  the next hour. Every transaction is simulated, recorded by hash before broadcast,
+  and reported as included, refused by the node, failed or unknown; one failure never stops the
+  other steps. The key needs native gas on both chains of a cross-chain
+  route, for the two CCIP fees.
+- **CCIP clearance wiring** (next): deploy the attestor where RedStone
   runs; register it as the clearance channel's handler there with the
   timelock as peer, and the timelock as handler on its own chain with the
   attestor as peer (both directions now carry a message); call

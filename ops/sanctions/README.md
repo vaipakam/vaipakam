@@ -1,0 +1,267 @@
+# Sanctions services
+
+Two unattended services keep a `SanctionsList` current with OFAC's SDN list
+(#2443), each with its own key, env file and units:
+
+- the **adder** lists OFAC's new designations with the list's adder key;
+- the **delister** proposes OFAC's delistings to the
+  `SanctionsDelistingTimelock` with the timelock's proposer key. The Safe may
+  veto any of them during the waiting window, and none executes while
+  RedStone's Sanctions Oracle flags the address.
+
+Both run from **one release** of a named commit on main, installed by one
+`install.sh`, so they always read a publication with the same parser.
+
+The list splits its signers by direction (owner decisions 2026-10-18, "Bot
+adds, Safe removes" and "Bot proposes, Safe vetoes"):
+
+| Role | Who | May |
+| --- | --- | --- |
+| owner | the admin | appoint and remove adders, removers and proposers; authorize a rollback; veto |
+| adder | the adder's key | list addresses; record a publication |
+| remover | the Safe (a multisig) | delist directly; veto or cancel any proposal |
+| remover | the timelock | delist a proposal once its window has passed, nothing vetoes it and RedStone clears it |
+| proposer | the delister's key | propose delistings to the timelock; withdraw or reconfirm its own |
+
+## 1. The adder
+
+Once a day it:
+
+1. downloads Treasury's `sdn_advanced.xml` **once** and keeps it on disk,
+   named by publication date and hash, as the record of what was parsed;
+2. parses it once, **in pieces** (about 150 MB resident for the 128 MB
+   2026-10 file, never the whole file in memory), with the same parser and
+   refusals as `packages/contracts/scripts/ofac-sanctions-diff.mjs`, so every
+   chain follows the same publication;
+3. for every configured chain, concurrently and independently, reads the list
+   at the finalized block, sends the publication's **additions**, and for a
+   new publication declares its **delistings** outstanding on-chain without
+   applying them, so the list says which publication it follows and what of
+   it is still to be delisted. One chain's failure never stops another's;
+4. reports once, with a section per chain, to the journal and, when
+   configured, the ops Telegram chat. Outstanding delistings are reported on
+   every run until they are applied.
+
+It **never delists, never rolls back, and never runs on a mainnet**. Every
+refusal of the diff tool stops the run before anything is sent — a malformed
+or moved record, a delisting the file does not support, more delistings than
+the cap, an older or conflicting publication — as do a list that moved past
+the finalized block and a key that is not the list's adder alone (also a
+remover or the owner).
+
+## 2. The delister
+
+Every hour it, for every configured chain with a timelock recorded:
+
+1. reads the timelock, the list and every pending proposal;
+2. only when there is **publication work** (a delisting the list declares
+   outstanding that no proposal covers and that could be proposed now, one of
+   its own proposals left behind by a newer publication, or a proposal ready
+   to execute) downloads OFAC's **two** exports of the publication once for
+   every chain: `sdn_advanced.xml` (the file the list records by hash) and the
+   plain `SDN.XML`, read by a separate parser
+   (`packages/contracts/scripts/ofac-sdn-plain.mjs`). An unchanged chain is
+   re-checked at least once a day, so a delisting the Safe vetoed does not
+   cost a 150 MB download every hour; a failed download, a pair of files from
+   two different publications, or a send built on them that did not land is
+   retried the next hour;
+3. moves every pending proposal on as far as it can go: discards one whose
+   proposer the owner removed; withdraws one of its own that can no longer
+   execute (an address vetoed, flagged by RedStone, already delisted another
+   way, or no longer delisted by OFAC's newer file); reconfirms one of its own
+   onto a newer publication (the window is kept); after the window, on the
+   cross-chain route, requests RedStone's answer and relays it back; and
+   executes it once the timelock reports it ready. Requesting and executing
+   wait while the list is mid-update, or while OFAC serves a newer publication
+   than the list records (until the adder records it);
+4. proposes the rest: the delistings **both files** support (the advanced
+   file's diff, with its witness that the address's digits are gone from the
+   file, and the plain file, which must not mention the address at all),
+   minus addresses already proposed or vetoed by the Safe (its own decision,
+   noted in the journal), and those RedStone flags now (named for the Safe),
+   within what the list declares outstanding;
+5. reports to the journal every run, and to the ops chat when something was
+   sent or failed or needs a person, repeated once a day while it lasts.
+
+It refuses, and leaves for a person: a key that is not the timelock's
+proposer alone; a recorded timelock that serves another list; publication
+work against a file the list does not record, a delisting the advanced file
+still witnesses, a count that differs from what the list declares
+outstanding, or two OFAC files that disagree. An address only one file
+supports, or that RedStone flags, is named in the report and left for the
+Safe. It **never lists, never delists by itself, never lifts a veto, and
+never runs on a mainnet**.
+
+**Which RedStone check applies** is the timelock's own `clearanceRoute()`:
+`Local` where the list composes RedStone on this chain, `CrossChain` through
+Chainlink CCIP to a `SanctionsClearanceAttestor` where RedStone runs, or
+`Unavailable`, in which case nothing can execute, the delister proposes
+nothing, and its report says the delistings await the Safe. On the cross-chain
+route the delister's key pays both CCIP fees (the request on the timelock's
+chain, the reply on the attestor's), so it needs native gas on both, and the
+attestor's chain needs an RPC in the env file even when no timelock lives
+there.
+
+On a testnet both services work against a **rehearsal** list:
+`DeploySanctionsList` deploys it beside the Diamond's
+`TestnetSanctionsOverlay`, and the Diamond does not screen against it. Nothing
+a user sees changes.
+
+## 3. Where they run
+
+On an always-on machine — today the keeper's Oracle Cloud VM — as their own
+systemd units, beside the keeper and separate from it and from each other:
+
+- their own **keys**: the adder key is appointed adder and nothing else; the
+  delister key is appointed proposer and nothing else. Neither is the
+  keeper's key, the owner, or a remover;
+- their own **env files**, `/etc/vaipakam/sanctions-adder.env` and
+  `/etc/vaipakam/sanctions-delister.env`, beside the keeper's `keeper.env`
+  and held the same way (root-only, 0600): the key and one RPC per chain,
+  under the keeper's RPC names. No contract address is ever set there: each
+  comes from the installed release's `deployments.json` (`sanctionsList`,
+  `sanctionsDelistingTimelock`), and the attestor from the timelock itself;
+- their own **dynamic user** per run, which reads only its own env file;
+- a **memory cap** (`MemoryMax=384M`) and low CPU and IO weights, so an
+  unexpected growth fails that service's run and never the keeper;
+- **manual deploys of a named commit on main**. A merge does not deploy them:
+  they sign compliance transactions, so what they run is a deliberate choice.
+
+## 4. Install
+
+### 4.1 Once per service: the key
+
+Create each key (a fresh EOA, used for nothing else). The same adder key is
+the adder on every chain and the same delister key the proposer on every
+chain; fund each with a little gas on each chain (the delister also pays the
+CCIP fees on a cross-chain route).
+
+### 4.2 Once per chain: the list, then the timelock
+
+From the machine holding the admin and deployer keys, with the role addresses
+in `contracts/.env` beside `ADMIN_PRIVATE_KEY` (`SANCTIONS_ADDER_ADDRESS`,
+`SANCTIONS_REMOVER_ADDRESS` = the Safe, `SANCTIONS_DELISTER_ADDRESS`):
+
+```bash
+cd contracts
+forge script script/DeploySanctionsList.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"                    # dry run
+forge script script/DeploySanctionsList.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --slow
+forge script script/DeploySanctionsDelisting.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"               # dry run
+forge script script/DeploySanctionsDelisting.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --slow
+```
+
+The first refuses an adder equal to the remover or the owner and records the
+list as `sanctionsList`. The second deploys the timelock for that list,
+appoints it a remover and the delister key its proposer, and records it as
+`sanctionsDelistingTimelock`; it configures no RedStone check. Both reuse what
+is already recorded. Then export deployments
+(`bash contracts/script/exportFrontendDeployments.sh`), commit, and merge: the
+services read the addresses from the release they run, so a new contract
+reaches them with the next install.
+
+### 4.3 On the machine
+
+```bash
+C=<full commit sha on main>
+curl -fsSL -o install.sh "https://raw.githubusercontent.com/vaipakam/vaipakam/$C/ops/sanctions/install.sh"
+sudo bash install.sh "$C"
+```
+
+`install.sh` builds the release from exactly that commit (the contracts
+package, with dependencies pinned by the lockfile and no install scripts run),
+checks it with `sanctions-adder.mjs --check` and `sanctions-delister.mjs
+--check`, switches `/opt/vaipakam-sanctions/current` to it, and installs both
+services' units from the same commit. It creates each env file from its
+template (0600, root-only) only if it does not exist, and never overwrites
+one. It never starts or enables anything. A machine that ran the adder-only
+installer of #2557 has its old `/opt/vaipakam-sanctions-adder` removed once
+the units point at the new release.
+
+### 4.4 Cut over, one service at a time
+
+```bash
+sudoedit /etc/vaipakam/sanctions-adder.env      # the adder key, and one RPC per chain
+sudo systemctl start vaipakam-sanctions-adder.service
+journalctl -u vaipakam-sanctions-adder -n 80
+sudo systemctl enable --now vaipakam-sanctions-adder.timer
+
+sudoedit /etc/vaipakam/sanctions-delister.env   # the delister key, and one RPC per chain
+sudo systemctl start vaipakam-sanctions-delister.service
+journalctl -u vaipakam-sanctions-delister -n 80
+sudo systemctl enable --now vaipakam-sanctions-delister.timer
+```
+
+Each key is typed once, on the machine that uses it, and never copied between
+machines. Adding a chain later is one RPC line (and its contracts recorded in
+the installed release).
+
+## 5. Operating them
+
+- **Last run:** `/var/lib/vaipakam-sanctions-adder/last-run.json` and
+  `/var/lib/vaipakam-sanctions-delister/last-run.json`, and the journal, with
+  one section per chain. Any chain refused, stopped or partly failed, or an
+  alert not delivered, fails the unit, so it shows in `systemctl --failed`.
+- **The adder** marks a chain `applied` only once its transactions are final
+  and still in the blocks they were included in. A chain that stops part-way
+  is `stopped`, and lists each transaction it broadcast as final, included but
+  not final, or broadcast with no receipt (it may still land); check those
+  before acting.
+- **The delister** lists each transaction it sent as included, failed (not
+  sent), or broadcast with its outcome unknown, and every pending proposal's
+  state. It waits for inclusion only: the next run reads the chain again, and
+  every step it takes is refused on-chain if it no longer applies. Its state
+  directory also holds caches only (`evaluations.json`, `relay.json`,
+  `last-alert.json`); deleting them costs a download, never a wrong action.
+- **Kept publications:** each service's state directory,
+  `sdn-<date>-<hash>.xml` (and, for the delister, `sdn-plain-<date>-<hash>.xml`),
+  newest 14.
+- **Delistings the delister leaves for the Safe** — RedStone flags them, the
+  two files disagree, or no RedStone check is configured — and any delisting
+  the Safe decides to make itself: confirm each against OFAC's Recent Actions
+  notice, then run the diff tool on that exact file and send its remover
+  calls from the Safe:
+
+  ```bash
+  cd /opt/vaipakam-sanctions/current/packages/contracts
+  sudo /usr/local/bin/node scripts/ofac-sanctions-diff.mjs \
+    --xml /var/lib/vaipakam-sanctions-adder/sdn-<date>-<hash>.xml \
+    --rpc "$RPC" --chain-id 84532 --list 0x<list> --confirm-delist 0xA,0xB
+  ```
+
+  The adder's report prints this command with the chain id and list filled
+  in. It prints the remover's calldata; it signs nothing.
+- **Veto a proposal:** from the Safe, `cancel(id)` on the timelock (vetoes
+  every address in it), or `setVetoed([addresses], true)` before or after a
+  proposal. A veto sticks until the Safe or the owner lifts it.
+- **A refused run** says why in the journal and the chat. The next run
+  retries; a refusal that repeats needs a person.
+- **Stop one:** `systemctl disable --now vaipakam-sanctions-<service>.timer`;
+  to stop one chain, remove its RPC line. To take a key's power away on a
+  chain, the owner calls `setAdder(<key>, false)` on that chain's list, or
+  `setProposer(<key>, false)` on its timelock (which also voids every proposal
+  that key made).
+- **Move to a new commit:** re-run `install.sh` with it. The previous release
+  is kept; re-running `install.sh` with its commit is the rollback. That works
+  between commits that carry this kit; a commit from before the adder and the
+  delister shared it is refused by name, and goes back through that commit's
+  own `ops/sanctions-adder/install.sh` after
+  `systemctl disable --now vaipakam-sanctions-delister.timer`. Moving off the
+  adder-only layout waits while the adder is mid-run, since it deletes the
+  release that run executes from.
+
+## 6. Residual risk, stated
+
+A stolen **adder** key can list arbitrary addresses (blocking those wallets
+from opening new positions; closing out stays open) or record a publication
+dated in the future, which stalls later updates until the owner authorizes a
+rollback. Both are recoverable by the owner and the Safe. The key cannot
+delist and cannot appoint anyone.
+
+A stolen **delister** key can propose wrongful delistings, no more in total
+than the publication declares outstanding. Each waits out the window, during
+which the Safe can veto it, and executes only if a current RedStone clears it.
+It cannot shorten the window, skip the RedStone check, lift a veto or touch
+another proposer's proposals, and the owner removing it voids everything it
+queued.
+
+Those bounds are why these two keys alone run unattended.

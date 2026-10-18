@@ -1,0 +1,1102 @@
+#!/usr/bin/env node
+/**
+ * #2443 — the SANCTIONS DELISTER: one unattended run of the delisting side of
+ * the OFAC → `SanctionsList` update, signed by the timelock's PROPOSER key and
+ * limited to what that key may do.
+ *
+ * Delisting is the one change no unattended key may make by itself (owner
+ * decisions D-A to D-F, 2026-10-18, recorded in
+ * docs/DesignsAndPlans/SanctionsDelistingTimelockDesign.md): this bot only
+ * PROPOSES a delisting to the `SanctionsDelistingTimelock`, the Safe may veto
+ * it during the waiting window, and it executes only while RedStone's
+ * Sanctions Oracle, read after the window, does not flag the address. Each
+ * run, for every configured chain with a timelock recorded:
+ *
+ *   1. reads the timelock, the list and every pending proposal (cheap; no
+ *      download);
+ *   2. only when there is publication work — a delisting the list declares
+ *      outstanding that no proposal covers and that could be proposed now,
+ *      one of this key's proposals left behind by a newer publication, or a
+ *      proposal ready to execute — downloads OFAC's two exports of the
+ *      publication ONCE for every chain: the SDN Advanced XML (the file the
+ *      list records by hash) and the plain SDN.XML (ofac-sdn-plain.mjs). A
+ *      chain is re-checked against them when its state changes, and at least
+ *      once a day while the work lasts, so an hourly timer does not download
+ *      150 MB an hour for a delisting the Safe vetoed. Only a conclusive
+ *      reading is remembered: a failed download, OFAC publishing between the
+ *      two downloads, or a send built on the reading that did not land
+ *      leaves the next run to read the files again;
+ *   3. moves every pending proposal on as far as it can go:
+ *        - discards one whose proposer the owner removed (anyone may);
+ *        - withdraws one of ITS OWN that can no longer execute: an address
+ *          vetoed, flagged by RedStone, already delisted by other means, or
+ *          no longer delisted by OFAC's newer file;
+ *        - reconfirms one of its own onto a newer publication once every
+ *          address in it is still a delisting there (the window is kept);
+ *        - after the window, on the cross-chain RedStone route, requests the
+ *          clearance on the timelock's chain, then, once the attestor has
+ *          read RedStone, sends the reply it owes on the attestor's chain;
+ *        - executes it once `readiness` reports ready;
+ *      requesting and executing wait while the list is mid-update or while
+ *      OFAC serves a newer publication than the list records;
+ *   4. proposes the rest: the publication's delistings that BOTH files
+ *      support (absent from the advanced file by the diff tool's witness
+ *      rule, and absent from the plain file), minus addresses already
+ *      proposed, vetoed by the Safe, or flagged by RedStone now, within what
+ *      the list declares outstanding;
+ *   5. reports once: the journal always, the ops Telegram chat when something
+ *      was sent, failed, or needs a person (repeated once a day while it
+ *      lasts), and last-run.json.
+ *
+ * Which chains run: every chain in `SERVICE_CHAINS` whose RPC is set
+ * (`RPC_<CHAIN>`, the keeper's names) and whose `sanctionsDelistingTimelock`
+ * and `sanctionsList` this release's deployments.json records. A configured
+ * chain with no timelock still serves as the attestor chain of another's
+ * cross-chain route. No address is ever configured by hand; the attestor and
+ * its chain are read from the timelock itself.
+ *
+ * What it refuses, and leaves for a person: a key that is not the timelock's
+ * proposer ALONE (also the timelock's owner, or the list's adder, remover or
+ * owner); a timelock recorded for one list that serves another; an RPC that
+ * serves a different chain, whether a timelock's or an attestor's. Publication work is refused, while the rest of
+ * the run goes on, for a file the list does not record, a delisting the
+ * advanced file still witnesses, a count that disagrees with what the list
+ * declares outstanding, and two OFAC files that disagree. An address only
+ * one file supports, or that RedStone flags, is left for the Safe and named
+ * in the report. It never lists, never delists by itself, never lifts a veto.
+ *
+ * Configuration is environment only, one file for every chain
+ * (ops/sanctions/sanctions-delister.env.example):
+ *   SANCTIONS_DELISTER_PRIVATE_KEY  the proposer key; nothing else may hold it
+ *   RPC_<CHAIN>                     one per chain (carries an API key)
+ *   TG_OPS_BOT_TOKEN, TG_OPS_CHAT_ID  the ops-internal bot; optional
+ *   SANCTIONS_DELISTER_STATE_DIR    defaults to $STATE_DIRECTORY (systemd)
+ */
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { decodeEventLog, encodeFunctionData, getAddress, keccak256, parseAbi, toFunctionSelector } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import {
+  OFAC_SDN_ADVANCED_URL,
+  assertDelistingsWitnessed,
+  diffSets,
+  downloadToFile,
+  parseSdnAdvancedFile,
+  readCurrentFromChain,
+  sanctionsListAbi,
+} from './ofac-sanctions-diff.mjs';
+import { OFAC_SDN_PLAIN_URL, parseSdnPlainFile, plainWitness } from './ofac-sdn-plain.mjs';
+import {
+  MAINNET_RPC_ENVS,
+  SERVICE_CHAINS,
+  chainClients,
+  checkPrivateKey,
+  configuredChains,
+  createSendQueues,
+  keepPublication,
+  loadDeployments,
+  notifyOps,
+  redact,
+  sendTransaction,
+} from './sanctions-service.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const LABEL = 'sanctions delister';
+
+export const DEFAULT_KEEP_FILES = 14;
+/** A chain with outstanding delistings is re-checked at least this often. */
+export const RE_EVALUATE_MS = 24 * 60 * 60_000;
+/** A condition that needs a person is alerted when it starts, then this often. */
+export const ALERT_REPEAT_MS = 24 * 60 * 60_000;
+/** The most addresses one proposal may carry (the timelock's MAX_BATCH). */
+export const MAX_BATCH = 100;
+/** Fee margin over a CCIP quote; the contracts refund what is not used. */
+export const FEE_MARGIN_BPS = 1_000n;
+/** Below this the key is reported as running out of gas money. */
+export const LOW_BALANCE_WEI = 5_000_000_000_000_000n;
+/** How far before a request the attestor's chain is searched for the reply,
+ *  to allow for the two chains' clocks disagreeing. */
+const CLOCK_SKEW_S = 600n;
+
+/** The timelock's enums, by position. */
+export const ROUTE = Object.freeze(['Unavailable', 'Local', 'CrossChain']);
+const STATUS_PENDING = 1;
+
+/** The compiled ABIs — never hand-typed. */
+export function timelockAbi() {
+  return JSON.parse(readFileSync(join(HERE, '..', 'src', 'abis', 'SanctionsDelistingTimelock.json'), 'utf8'));
+}
+export function attestorAbi() {
+  return JSON.parse(readFileSync(join(HERE, '..', 'src', 'abis', 'SanctionsClearanceAttestor.json'), 'utf8'));
+}
+const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
+
+/** selector → error name, for reading `readiness`'s reason. */
+export function errorNames(abi) {
+  const names = new Map();
+  for (const e of abi) if (e.type === 'error') names.set(toFunctionSelector(`${e.name}(${e.inputs.map((i) => i.type).join(',')})`), e.name);
+  return names;
+}
+
+const lower = (a) => a.toLowerCase();
+const sameAddress = (a, b) => typeof a === 'string' && typeof b === 'string' && lower(a) === lower(b);
+
+// ── The pure core ─────────────────────────────────────────────────────
+
+/**
+ * What decides whether a chain's publication work can be skipped this run:
+ * every value a propose, a reconfirm or the pre-execute check depends on. A
+ * change in any of them, or a day passing, means the chain is checked
+ * against OFAC's files again.
+ */
+export function fingerprint(snap) {
+  const l = snap.list;
+  return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, executable(snap).map((p) => p.id).join(',')].join('|');
+}
+
+/** The reasons a snapshot rules out acting at all, as a refusal message. */
+export function refusal(snap) {
+  if (!sameAddress(snap.timelockList, snap.list.address)) {
+    return `the recorded timelock serves list ${snap.timelockList}, not the recorded list ${snap.list.address} — fix the release's deployments.json`;
+  }
+  const r = snap.roles;
+  if (!r.proposer) return 'the signing key is not a proposer of this timelock — the owner appoints it with setProposer';
+  const extra = [r.timelockOwner && "the timelock's owner", r.listAdder && "the list's adder", r.listRemover && "the list's remover", r.listOwner && "the list's owner"].filter(Boolean);
+  if (extra.length) return `the signing key is also ${extra.join(' and ')} — an unattended key must be the proposer alone; remove the extra role before it runs again`;
+  return null;
+}
+
+/**
+ * Whether a chain's state calls for OFAC's files, and the cache allows it.
+ * Three things need them: a new proposal that could land, one of this key's
+ * proposals left behind by a newer publication, and a proposal about to be
+ * executed — the irreversible step is taken only after the files were last
+ * read in this same state.
+ */
+export function wantsPublication(snap, key, cached, nowMs) {
+  if (refusal(snap) || !publicationGate(snap)) return false;
+  if (!canPropose(snap) && ownStale(snap, key).length === 0 && executable(snap).length === 0) return false;
+  return !freshCache(snap, cached, nowMs);
+}
+
+/** A cache entry that still describes this chain's state. */
+function freshCache(snap, cached, nowMs) {
+  return Boolean(cached && typeof cached === 'object' && cached.fingerprint === fingerprint(snap) && nowMs - cached.at < RE_EVALUATE_MS);
+}
+
+/** Publication-derived actions read the FINALIZED list; they wait while the
+ *  latest block shows a newer version, as the adder does. */
+function publicationGate(snap) {
+  return BigInt(snap.list.latestVersion) === BigInt(snap.list.version);
+}
+
+/** Whether a proposal names the publication the list records: hash AND
+ *  date, the pair `execute` compares (PublicationChanged otherwise). */
+function samePublication(snap, p) {
+  return lower(p.sourceHash) === lower(snap.list.sourceHash) && Number(p.publicationDate) === Number(snap.list.publicationDate);
+}
+
+/** Pending proposals `execute` would accept now: ready, under the recorded
+ *  publication, and every address still listed (`readiness` does not check
+ *  the last; the removal inside `execute` does). */
+function executable(snap) {
+  return snap.proposals.filter((p) => p.ready && p.proposerAppointed && p.unlisted.length === 0 && samePublication(snap, p));
+}
+
+/** The delistings the list declares outstanding that no proposal reserves. */
+function freeDelistings(snap) {
+  return snap.list.pendingDelistings - snap.reservedDelistings;
+}
+
+/** Whether a new proposal could land on this chain now: the timelock may
+ *  delist, a RedStone check is configured, the list is final, and part of
+ *  its outstanding delistings is unreserved. */
+function canPropose(snap) {
+  return Boolean(snap.timelockIsRemover) && snap.route !== 0 && publicationGate(snap) && freeDelistings(snap) > 0;
+}
+
+/** This key's pending proposals left behind by a newer publication. */
+function ownStale(snap, key) {
+  return snap.proposals.filter((p) => sameAddress(p.proposer, key) && p.proposerAppointed && p.unlisted.length === 0 && !samePublication(snap, p));
+}
+
+/**
+ * One chain's reading of the publication: the delistings both OFAC files
+ * support. `publication` is `{ advanced: {parsed, sourceHash}, plain:
+ * {parsed} }`, `{ error }` when loading failed, or null when it was not
+ * loaded. Returns `{ status: 'ready', removals, absent, stillMentioned }`, or
+ * `{ status, reason }` with status `not-loaded`, `mismatch` (OFAC served this
+ * run another file than the list records) or `refused` (the files or the
+ * counts do not support an unattended delisting). Two flags travel with it:
+ *   transient — the outcome may change with no change on the chain (a failed
+ *     download, OFAC publishing between the two downloads, a stale copy), so
+ *     it is never cached and the next run reads the files again;
+ *   hold — OFAC serves a NEWER publication than the list records, so
+ *     executing or requesting a clearance waits until the adder records it.
+ */
+export function evaluatePublication(snap, publication) {
+  if (!publication) return { status: 'not-loaded', reason: 'OFAC files not loaded this run' };
+  if (publication.error) return { status: 'refused', transient: true, reason: publication.error };
+  const { advanced, plain } = publication;
+  const served = Number(advanced.parsed.publicationDate);
+  const recorded = Number(snap.list.publicationDate);
+  if (lower(advanced.sourceHash) !== lower(snap.list.sourceHash)) {
+    const what = `the list records publication ${recorded} (${snap.list.sourceHash.slice(0, 18)}…) and OFAC served ${served} (${advanced.sourceHash.slice(0, 18)}…) to this run`;
+    if (served < recorded) return { status: 'mismatch', transient: true, reason: `${what}, an older copy than the list's; the next run downloads again` };
+    const reason = `${what}, a newer publication; proposing, executing and requesting wait for the adder to record it`;
+    return { status: 'mismatch', hold: reason, reason };
+  }
+  if (served !== recorded) {
+    return { status: 'refused', reason: `the list records date ${recorded} for this file, which is dated ${served} — a person must reconcile the list's record` };
+  }
+  if (Number(plain.parsed.publicationDate) !== served) {
+    return { status: 'refused', transient: true, reason: `the plain SDN file is publication ${plain.parsed.publicationDate} but the advanced file is ${served} — OFAC published between the two downloads; the next run downloads both again` };
+  }
+  try {
+    const { remove } = diffSets(advanced.parsed.addresses, snap.list.addresses);
+    assertDelistingsWitnessed(advanced.parsed, remove);
+    if (remove.length !== snap.list.pendingDelistings) {
+      throw new Error(`the publication calls for ${remove.length} delisting(s) but the list declares ${snap.list.pendingDelistings} outstanding — a person must reconcile the list with the file`);
+    }
+    const { absent, stillMentioned } = plainWitness(plain.parsed, advanced.parsed, remove);
+    return { status: 'ready', removals: remove, absent, stillMentioned };
+  } catch (e) {
+    return { status: 'refused', reason: String(e?.message ?? e) };
+  }
+}
+
+/** The addresses {@link planChain} needs per-address facts for: only when a
+ *  new proposal could land, since only a proposal reads them. */
+export function factsWanted(snap, evaluation) {
+  return evaluation.status === 'ready' && canPropose(snap) ? evaluation.absent : [];
+}
+
+/**
+ * One chain's plan: the actions to send, the notes a reader needs, and the
+ * items left for a person (`review`). PURE. `facts` maps each address of
+ * {@link factsWanted} to `{ vetoed, proposalOf, flagged }` (`flagged` null
+ * when RedStone could not be read); `factsError` says why they could not be
+ * read at all, which proposes nothing and changes nothing else. Every action
+ * is independent of the others: a withdrawal's freed share is used by the
+ * NEXT run, so a failed send never leaves a later one built on a state that
+ * did not happen. An action built on this run's reading of OFAC's files
+ * carries `derived`, so a failed one keeps the chain from being cached.
+ */
+export function planChain(snap, key, evaluation, facts = new Map(), { factsError = null } = {}) {
+  const actions = [];
+  const notes = [];
+  const review = [];
+  const route = ROUTE[snap.route] ?? `route ${snap.route}`;
+  const gate = publicationGate(snap);
+  if (!gate) notes.push(`the list is at version ${snap.list.latestVersion} but the finalized block shows ${snap.list.version}; proposing, reconfirming, requesting and executing wait for it to be final`);
+  const ready = evaluation.status === 'ready';
+  const absent = new Set(ready ? evaluation.absent.map(lower) : []);
+  // Executing and requesting wait while the list is mid-update, or while
+  // OFAC serves a newer publication than the list records (this run's
+  // reading, or the cached one for this same state).
+  const hold = !gate ? 'the list is mid-update' : (evaluation.hold ?? null);
+
+  for (const p of snap.proposals) {
+    const mine = sameAddress(p.proposer, key);
+    const tag = `proposal ${p.id}`;
+    if (!p.proposerAppointed) {
+      actions.push({ kind: 'discard', id: p.id, why: `its proposer ${p.proposer} was removed` });
+      continue;
+    }
+    if (p.unlisted.length) {
+      const gone = `${p.unlisted.join(', ')} ${p.unlisted.length === 1 ? 'is' : 'are'} no longer listed (delisted another way)`;
+      if (mine) actions.push({ kind: 'withdraw', id: p.id, why: gone });
+      else {
+        notes.push(`${tag} (another proposer's) cannot execute: ${gone}`);
+        review.push(`${tag} (another proposer's) cannot execute because ${gone}; it holds back ${p.accounts.length} of the outstanding delistings until its proposer withdraws it or the owner removes that proposer.`);
+      }
+      continue;
+    }
+    if (!samePublication(snap, p)) {
+      if (!mine) notes.push(`${tag} (another proposer's) names an older publication; only its proposer may reconfirm it`);
+      else if (!gate) notes.push(`${tag} names an older publication; reconfirming waits for the list to be final`);
+      else if (!ready) {
+        notes.push(`${tag} names an older publication and cannot be re-checked yet: ${evaluation.reason}`);
+        if (evaluation.status === 'refused' && !evaluation.transient) review.push(`${tag} names an older publication and cannot be re-checked: ${evaluation.reason}.`);
+      } else {
+        const dropped = p.accounts.filter((a) => !absent.has(lower(a)));
+        if (dropped.length === 0) actions.push({ kind: 'reconfirm', id: p.id, sourceHash: snap.list.sourceHash, publicationDate: snap.list.publicationDate, derived: true });
+        else {
+          actions.push({ kind: 'withdraw', id: p.id, why: `OFAC's publication ${snap.list.publicationDate} no longer supports delisting ${dropped.join(', ')}`, derived: true });
+          review.push(`${tag} was withdrawn: publication ${snap.list.publicationDate} no longer supports delisting ${dropped.join(', ')}.`);
+        }
+      }
+      continue;
+    }
+    if (BigInt(snap.now) < BigInt(p.eta)) {
+      notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${new Date(Number(p.eta) * 1000).toISOString()}`);
+      continue;
+    }
+    if (p.ready) {
+      if (hold) notes.push(`${tag} is ready, but executing waits: ${hold}`);
+      else actions.push({ kind: 'execute', id: p.id });
+      continue;
+    }
+    switch (p.reason) {
+      case 'ClearanceNotRequested':
+      case 'ClearanceExpired':
+        if (hold) notes.push(`${tag} needs a clearance request, which waits: ${hold}`);
+        else actions.push({ kind: 'request', id: p.id });
+        break;
+      case 'ClearanceNotAnswered': {
+        const r = p.relay ?? { status: 'unknown', detail: 'no relay reading' };
+        if (r.status === 'owed') {
+          actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload });
+          if (r.balance !== undefined && BigInt(r.balance) < LOW_BALANCE_WEI) {
+            review.push(`the delister key holds ${formatEther(r.balance)} of native gas on chain ${r.sourceChainId}, where it pays the reply's CCIP fee — top it up.`);
+          }
+        } else if (r.status === 'in-flight') notes.push(`${tag}: its clearance request is on its way to the attestor`);
+        else if (r.status === 'sent') notes.push(`${tag}: RedStone's answer is on its way back`);
+        else {
+          notes.push(`${tag}: its clearance answer cannot be relayed: ${r.detail}`);
+          review.push(`${tag}: the clearance answer cannot be relayed: ${r.detail}.`);
+        }
+        break;
+      }
+      case 'Vetoed':
+      case 'ExceedsPendingDelistings':
+      case 'ClearanceFlagged':
+      case 'StillSanctioned': {
+        const why = {
+          Vetoed: 'the Safe vetoed an address in it',
+          ExceedsPendingDelistings: 'the list now declares fewer delistings outstanding than it names',
+          ClearanceFlagged: 'RedStone flags an address in it',
+          StillSanctioned: 'RedStone flags an address in it',
+        }[p.reason];
+        if (mine) actions.push({ kind: 'withdraw', id: p.id, why });
+        else notes.push(`${tag} (another proposer's) cannot execute: ${why}`);
+        if (p.reason === 'ClearanceFlagged' || p.reason === 'StillSanctioned') review.push(`${tag}: ${why} (${p.accounts.join(', ')}); it is left for the Safe.`);
+        break;
+      }
+      case 'AdditionsOutstanding':
+        // The adder applies a publication's additions on its next run.
+        notes.push(`${tag} waits for the list's outstanding additions to be applied`);
+        break;
+      default:
+        // A stale or unreadable RedStone, a route switched off, or a reason
+        // this release does not know: nothing here can move it on.
+        notes.push(`${tag} is matured but not executable: ${p.reason ?? 'unknown reason'}`);
+        review.push(`${tag} is matured but not executable: ${p.reason ?? 'unknown reason'}.`);
+    }
+  }
+
+  // New proposals.
+  const free = freeDelistings(snap);
+  if (!snap.timelockIsRemover) {
+    notes.push('the timelock is not a remover of the list, so the automated route is closed; the owner appoints it with setRemover');
+  } else if (snap.route === 0) {
+    if (snap.list.pendingDelistings > 0) notes.push(`no RedStone check is configured (clearance route Unavailable), so automated delisting is closed; ${snap.list.pendingDelistings} delisting(s) await the Safe`);
+  } else if (gate && ready) {
+    for (const a of evaluation.stillMentioned) review.push(`${a}: the advanced file delists it but SDN.XML still mentions it, so it is not proposed; it is left for the Safe.`);
+    if (free > 0 && factsError) {
+      notes.push(`nothing proposed: the candidates' veto and RedStone state could not be read: ${factsError}`);
+      review.push(`no delisting was proposed: the candidates' veto and RedStone state could not be read (${factsError}).`);
+    } else if (free > 0) {
+      const candidates = [];
+      for (const a of evaluation.absent) {
+        const f = facts.get(lower(a));
+        if (!f) continue;
+        if (f.proposalOf && f.proposalOf !== 0n && f.proposalOf !== 0) continue;
+        if (f.vetoed) notes.push(`${a} is vetoed by the Safe and is not proposed`);
+        else if (f.flagged === null) notes.push(`${a}: RedStone could not be read, so it is not proposed this run`);
+        else if (f.flagged) review.push(`${a}: OFAC delisted it but RedStone flags it, so it is not proposed; it is left for the Safe.`);
+        else candidates.push(a);
+      }
+      const take = candidates.slice(0, free);
+      for (let i = 0; i < take.length; i += MAX_BATCH) {
+        actions.push({ kind: 'propose', accounts: take.slice(i, i + MAX_BATCH), sourceHash: snap.list.sourceHash, publicationDate: snap.list.publicationDate, derived: true });
+      }
+    }
+  } else if (!ready && evaluation.status !== 'not-loaded' && free > 0) {
+    notes.push(`nothing proposed: ${evaluation.reason}`);
+    if (evaluation.status === 'refused' && !evaluation.transient) review.push(`publication work refused: ${evaluation.reason}`);
+  }
+  if (snap.balance !== undefined && BigInt(snap.balance) < LOW_BALANCE_WEI) {
+    review.push(`the delister key holds ${formatEther(snap.balance)} of native gas here; it pays every transaction and the CCIP fees — top it up.`);
+  }
+  return { route, actions, notes, review };
+}
+
+function formatEther(wei) {
+  const w = BigInt(wei);
+  const whole = w / 10n ** 18n;
+  const frac = (w % 10n ** 18n).toString().padStart(18, '0').slice(0, 6);
+  return `${whole}.${frac}`;
+}
+
+/** A one-line description of an action, for the report. */
+export function describeAction(a) {
+  switch (a.kind) {
+    case 'propose':
+      return `propose ${a.accounts.length} delisting(s) (${a.accounts.join(', ')}) under publication ${a.publicationDate}`;
+    case 'reconfirm':
+      return `reconfirm proposal ${a.id} onto publication ${a.publicationDate}`;
+    case 'withdraw':
+      return `withdraw proposal ${a.id}: ${a.why}`;
+    case 'discard':
+      return `discard proposal ${a.id}: ${a.why}`;
+    case 'execute':
+      return `execute proposal ${a.id}`;
+    case 'request':
+      return `request RedStone's clearance for proposal ${a.id}`;
+    case 'reply':
+      return `relay RedStone's answer for proposal ${a.id} from chain ${a.sourceChainId}`;
+    default:
+      return a.kind;
+  }
+}
+
+/**
+ * One run across every configured chain, with every effect injected:
+ *   chains: `[{ slug, name, id, skipped?, effects }]`, `effects` being
+ *     readSnapshot()                → the chain's snapshot (see chainEffects)
+ *     readFacts(addresses, snap)    → Map(lowercase → { vetoed, proposalOf, flagged })
+ *     send(action, { onSubmitted }) → { hash, blockNumber }
+ *   key: the signing address;
+ *   loadPublication(): the parsed OFAC files, called at most once and only
+ *     when some chain needs them;
+ *   cache: `{ [chainId]: { fingerprint, at, status, hold, outcome } }` from
+ *     the last runs;
+ *   nowMs: the run's clock.
+ * Returns `{ report, cache }`: the report, and the cache to keep. The cache
+ * only ever saves a download: a chain is cached only after a CONCLUSIVE
+ * reading of the files (nothing transient, every send built on it landed),
+ * and a cached entry is used only while the chain's state is unchanged.
+ */
+export async function runDelister({ chains, key, loadPublication, cache = {}, nowMs = Date.now(), redactError = (m) => m }) {
+  const read = await Promise.all(
+    chains.map(async (c) => {
+      if (c.skipped) return { c };
+      try {
+        return { c, snap: await c.effects.readSnapshot() };
+      } catch (e) {
+        return { c, error: redactError(String(e?.message ?? e)) };
+      }
+    }),
+  );
+  const needed = read.some((r) => r.snap && wantsPublication(r.snap, key, cache[r.c.id], nowMs));
+  let publication = null;
+  let publicationReport = { loaded: false };
+  if (needed) {
+    try {
+      publication = await loadPublication();
+      publicationReport = { loaded: true, advanced: publication.advanced.source, plain: publication.plain.source };
+    } catch (e) {
+      const reason = redactError(String(e?.message ?? e));
+      publication = { error: `the OFAC files could not be loaded: ${reason}` };
+      publicationReport = { loaded: false, error: reason };
+    }
+  }
+  // A configured chain with no timelock may still host another chain's
+  // clearance attestor; say so rather than calling it idle.
+  const attestorFor = new Map();
+  for (const { c, snap } of read) {
+    if (snap?.route === 2) {
+      const id = Number(snap.clearanceSourceChainId);
+      attestorFor.set(id, [...(attestorFor.get(id) ?? []), c.name]);
+    }
+  }
+  const nextCache = { ...cache };
+  const results = await Promise.all(
+    read.map(async ({ c, snap, error }) => {
+      const head = { name: c.name, chainId: c.id, timelock: c.timelock ?? null, list: c.list ?? null };
+      if (c.skipped) {
+        const hosts = attestorFor.get(c.id);
+        const reason = hosts ? `no timelock is recorded here; it hosts the clearance attestor for ${hosts.join(', ')}, whose answers are relayed from here` : c.skipped;
+        return [c.slug, { ...head, status: 'skipped', reason }];
+      }
+      if (error) return [c.slug, { ...head, status: 'refused', error, actions: [] }];
+      const refused = refusal(snap);
+      if (refused) return [c.slug, { ...head, status: 'refused', error: refused, actions: [] }];
+      const cached = cache[c.id];
+      let evaluation = evaluatePublication(snap, publication);
+      if (evaluation.status === 'not-loaded' && freshCache(snap, cached, nowMs) && cached.hold) evaluation = { ...evaluation, hold: cached.hold };
+      let facts = new Map();
+      let factsError = null;
+      const wanted = factsWanted(snap, evaluation);
+      if (wanted.length) {
+        try {
+          facts = await c.effects.readFacts(wanted, snap);
+        } catch (e) {
+          factsError = redactError(String(e?.message ?? e));
+        }
+      }
+      const plan = planChain(snap, key, evaluation, facts, { factsError });
+      const sent = [];
+      for (const action of plan.actions) {
+        const entry = { action: describeAction(action), kind: action.kind, id: action.id?.toString(), derived: Boolean(action.derived), tx: null, state: 'submitting' };
+        sent.push(entry);
+        try {
+          const included = await c.effects.send(action, {
+            onSubmitted: (hash) => {
+              entry.tx = hash;
+              entry.state = 'submitted';
+            },
+          });
+          Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), state: 'included' });
+        } catch (e) {
+          Object.assign(entry, { state: !entry.tx ? 'failed' : e?.notBroadcast ? 'rejected' : 'unknown', error: redactError(String(e?.message ?? e)) });
+        }
+      }
+      // Remember the chain's state only after a conclusive reading of the
+      // files: nothing transient about it, the candidates' state read, and
+      // every send built on it landed — otherwise the next run reads again.
+      const derivedFailed = sent.some((e) => e.derived && e.state !== 'included');
+      if (evaluation.status !== 'not-loaded' && !evaluation.transient && !factsError && !derivedFailed) {
+        nextCache[c.id] = {
+          fingerprint: fingerprint(snap),
+          at: nowMs,
+          status: evaluation.status,
+          hold: evaluation.hold ?? null,
+          outcome: evaluation.status === 'ready' ? `checked publication ${snap.list.publicationDate}` : evaluation.reason,
+        };
+      }
+      const notes = [...plan.notes];
+      if (evaluation.status === 'not-loaded' && freshCache(snap, cached, nowMs)) {
+        notes.push(`last checked against OFAC's files at ${new Date(cached.at).toISOString()} (${cached.outcome}); unchanged since`);
+      }
+      const failed = sent.filter((e) => e.state !== 'included');
+      return [
+        c.slug,
+        {
+          ...head,
+          status: failed.length ? 'partial' : 'ok',
+          route: plan.route,
+          list: { ...head.list && { address: head.list }, publicationDate: snap.list.publicationDate, pendingAdditions: snap.list.pendingAdditions, pendingDelistings: snap.list.pendingDelistings },
+          reservedDelistings: snap.reservedDelistings,
+          publication: evaluation.status,
+          actions: sent,
+          notes,
+          review: plan.review,
+        },
+      ];
+    }),
+  );
+  const byChain = Object.fromEntries(results);
+  const statuses = Object.values(byChain).map((r) => r.status);
+  return {
+    report: {
+      status: statuses.some((s) => s === 'refused' || s === 'partial') ? 'failed' : 'ok',
+      publication: publicationReport,
+      chains: byChain,
+    },
+    cache: nextCache,
+  };
+}
+
+/** The lines a person reads for one chain. */
+export function summarizeChain(c) {
+  if (c.status === 'skipped') return `skipped: ${c.reason}`;
+  if (c.status === 'refused') return `REFUSED, nothing sent: ${c.error}`;
+  const lines = [`route ${c.route}; ${c.list?.pendingDelistings ?? 0} delisting(s) outstanding, ${c.reservedDelistings ?? 0} proposed.`];
+  const word = {
+    included: 'included',
+    failed: 'FAILED, not sent',
+    rejected: 'signed, but the node refused it; not broadcast',
+    unknown: 'signed and broadcast attempted, outcome unknown — check it',
+    submitted: 'signed and broadcast attempted, no receipt seen',
+  };
+  for (const e of c.actions ?? []) lines.push(`${e.action}: ${e.tx ? `${e.tx} — ` : ''}${word[e.state] ?? e.state}${e.error ? ` (${e.error})` : ''}`);
+  for (const n of c.notes ?? []) lines.push(n);
+  for (const r of c.review ?? []) lines.push(`NEEDS A PERSON: ${r}`);
+  return lines.join('\n  ');
+}
+
+/** The summary a person reads, in the journal and the chat. */
+export function summarize(report) {
+  const lines = [];
+  const p = report.publication;
+  if (p?.loaded) lines.push(`OFAC ${p.advanced.publicationId}: advanced ${p.advanced.sha256.slice(0, 18)}…, plain ${p.plain.sha256.slice(0, 18)}…`);
+  else if (p?.error) lines.push(`OFAC files could not be loaded: ${p.error}`);
+  for (const [slug, c] of Object.entries(report.chains)) lines.push(`${c.name ?? slug}: ${summarizeChain(c)}`);
+  return lines.join('\n');
+}
+
+/**
+ * Whether a run's outcome calls for the ops chat, and the digest that
+ * identifies it: anything sent or failed, a refusal, or an item for a person.
+ * The digest leaves out what changes every run without changing the
+ * situation, so a standing condition is alerted when it starts and then once
+ * every {@link ALERT_REPEAT_MS}.
+ */
+export function alertDigest(report) {
+  const parts = [];
+  if (report.error) parts.push(`run refused: ${report.error}`);
+  if (report.publication?.error) parts.push(`publication: ${report.publication.error}`);
+  for (const [slug, c] of Object.entries(report.chains)) {
+    if (c.status === 'refused') parts.push(`${slug} refused: ${c.error}`);
+    for (const e of c.actions ?? []) parts.push(`${slug} ${e.action} ${e.state} ${e.tx ?? ''}`);
+    for (const r of c.review ?? []) parts.push(`${slug} review: ${r}`);
+  }
+  if (parts.length === 0) return null;
+  return createHash('sha256').update(parts.join('\n')).digest('hex');
+}
+
+export function shouldAlert(digest, last, nowMs) {
+  if (!digest) return false;
+  return !last || last.digest !== digest || nowMs - last.at >= ALERT_REPEAT_MS;
+}
+
+// ── Configuration and effects ─────────────────────────────────────────
+
+/** Read and check the configuration; throws naming every missing setting. */
+export function readConfig(env) {
+  const missing = [];
+  if (!env.SANCTIONS_DELISTER_PRIVATE_KEY) missing.push('SANCTIONS_DELISTER_PRIVATE_KEY');
+  const chains = configuredChains(env);
+  if (chains.length === 0) missing.push(`an RPC for at least one chain (${SERVICE_CHAINS.map((c) => c.rpcEnv).join(', ')})`);
+  const stateDir = env.SANCTIONS_DELISTER_STATE_DIR || env.STATE_DIRECTORY;
+  if (!stateDir) missing.push('SANCTIONS_DELISTER_STATE_DIR (or systemd StateDirectory=)');
+  if (missing.length) throw new Error(`not configured: ${missing.join(', ')}`);
+  checkPrivateKey('SANCTIONS_DELISTER_PRIVATE_KEY', env.SANCTIONS_DELISTER_PRIVATE_KEY);
+  return {
+    chains,
+    ignoredMainnetRpcs: MAINNET_RPC_ENVS.filter((k) => env[k]),
+    privateKey: env.SANCTIONS_DELISTER_PRIVATE_KEY,
+    stateDir: stateDir.split(':')[0],
+    tgToken: env.TG_OPS_BOT_TOKEN || '',
+    tgChatId: env.TG_OPS_CHAT_ID || '',
+  };
+}
+
+/**
+ * Each configured chain with the timelock and list this release records for
+ * it, or the reason it is skipped. Addresses come only from deployments.json.
+ */
+export function planChains(chains, deployments) {
+  return chains.map((c) => {
+    const d = deployments[String(c.id)] ?? {};
+    if (!d.sanctionsDelistingTimelock || !d.sanctionsList) {
+      return { ...c, skipped: `no ${d.sanctionsList ? 'SanctionsDelistingTimelock' : 'SanctionsList'} is recorded for chain ${c.id} in this release's deployments.json — deploy it, export deployments, merge, and install that commit` };
+    }
+    return { ...c, timelock: getAddress(d.sanctionsDelistingTimelock), list: getAddress(d.sanctionsList) };
+  });
+}
+
+const isRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** A JSON object from the state directory, or `{}` when it is missing,
+ *  unreadable or not an object — every one of them is a cache, never a
+ *  source of truth, so a damaged file costs work and never stops a run. */
+export function readState(stateDir, name) {
+  try {
+    const v = JSON.parse(readFileSync(join(stateDir, name), 'utf8'));
+    return isRecord(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The relay cache, each half an object whatever the file held. */
+export function readRelayCache(stateDir) {
+  const r = readState(stateDir, 'relay.json');
+  return { messageIds: isRecord(r.messageIds) ? r.messageIds : {}, payloads: isRecord(r.payloads) ? r.payloads : {} };
+}
+
+function writeState(stateDir, name, value) {
+  writeFileSync(join(stateDir, name), `${JSON.stringify(value, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2)}\n`);
+}
+
+/** The first block number whose timestamp is >= `ts`, searching [lo, hi]. */
+async function firstBlockAtOrAfter(client, ts, lo, hi) {
+  while (lo < hi) {
+    const mid = (lo + hi) / 2n;
+    const b = await client.getBlock({ blockNumber: mid });
+    if (b.timestamp < ts) lo = mid + 1n;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** `getLogs` over [from, to] in chunks, halving the chunk when the provider
+ *  refuses a range (public RPCs allow as few as 200 blocks, some plans 10);
+ *  stops at the first chunk with a match. */
+async function findLogs(client, params, from, to) {
+  let chunk = 10_000n;
+  for (let start = from; start <= to; ) {
+    const end = start + chunk - 1n > to ? to : start + chunk - 1n;
+    let logs;
+    try {
+      logs = await client.getLogs({ ...params, fromBlock: start, toBlock: end });
+    } catch (e) {
+      if (chunk > 1n) {
+        chunk /= 2n;
+        continue;
+      }
+      throw e;
+    }
+    if (logs.length) return logs;
+    start = end + 1n;
+  }
+  return [];
+}
+
+/**
+ * `clientFor(chainId)`: the clients of a configured chain, checked once per
+ * run to serve that chain — the timelock's own and an attestor's alike, for
+ * reads as well as sends — or null when no RPC is configured for it.
+ */
+export function createClientLookup(clientsByChain) {
+  const checked = new Map();
+  return (chainId) => {
+    const id = Number(chainId);
+    if (!checked.has(id)) {
+      checked.set(
+        id,
+        (async () => {
+          const cc = clientsByChain.get(id);
+          if (!cc) return null;
+          const served = await cc.client.getChainId();
+          if (served !== id) throw new Error(`the RPC configured for chain ${id} serves chain ${served}`);
+          return cc;
+        })(),
+      );
+    }
+    return checked.get(id);
+  };
+}
+
+/** `fn` over `items`, at most `n` at a time, results in order. */
+async function mapLimited(items, n, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += n) out.push(...(await Promise.all(items.slice(i, i + n).map(fn))));
+  return out;
+}
+/** Concurrent reads per chain: enough to be quick, few enough for a
+ *  free-tier RPC's rate limit. */
+const READ_CONCURRENCY = 8;
+
+/**
+ * The real effects of one timelock chain. `clientFor` reaches every
+ * configured chain (see {@link createClientLookup}), so a cross-chain route
+ * can read and send on its attestor's chain; `queues` serialises every send
+ * per chain; `relayCache` remembers request message ids and owed replies
+ * between runs, keyed by the timelock so a new deploy never reads an old
+ * one's entries.
+ */
+function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
+  const { tl, list, att, errors } = abis;
+  const own = async () => (await clientFor(c.id)) ?? Promise.reject(new Error(`no RPC is configured for chain ${c.id}`));
+  const requestKey = (requestId) => `${c.id}:${lower(c.timelock)}:${requestId}`;
+
+  async function requestMessageId(client, id, requestId, requestedAt) {
+    const k = requestKey(requestId);
+    if (relayCache.messageIds[k]) return relayCache.messageIds[k];
+    const latest = await client.getBlockNumber();
+    const from = await firstBlockAtOrAfter(client, BigInt(requestedAt), 0n, latest);
+    const to = await firstBlockAtOrAfter(client, BigInt(requestedAt) + 1n, from, from + 20_000n > latest ? latest : from + 20_000n);
+    const event = tl.find((e) => e.type === 'event' && e.name === 'ClearanceRequested');
+    const logs = await client.getLogs({ address: c.timelock, event, args: { id: BigInt(id), requestId: BigInt(requestId) }, fromBlock: from, toBlock: to > from ? to : from, strict: true });
+    if (!logs.length) return null;
+    relayCache.messageIds[k] = logs[0].args.messageId;
+    return logs[0].args.messageId;
+  }
+
+  async function relayState(client, p, sourceChainId, attestor) {
+    const src = await clientFor(sourceChainId);
+    if (!src) return { status: 'unknown', detail: `no RPC is configured for chain ${sourceChainId}, where its attestor runs` };
+    const messageId = await requestMessageId(client, p.id, p.clearance.requestId, p.clearance.requestedAt);
+    if (!messageId) return { status: 'unknown', detail: `the ClearanceRequested event for request ${p.clearance.requestId} was not found` };
+    const [, payloadHash, , sent] = await src.client.readContract({ address: attestor, abi: att, functionName: 'replyOf', args: [messageId] });
+    if (/^0x0+$/.test(payloadHash)) return { status: 'in-flight', messageId };
+    if (sent) return { status: 'sent', messageId };
+    let payload = relayCache.payloads[messageId];
+    if (!payload || keccak256(payload) !== payloadHash) {
+      const latest = await src.client.getBlockNumber();
+      const floor = BigInt(p.clearance.requestedAt) - CLOCK_SKEW_S;
+      const from = await firstBlockAtOrAfter(src.client, floor > 0n ? floor : 0n, 0n, latest);
+      const event = att.find((e) => e.type === 'event' && e.name === 'ClearanceRead');
+      const logs = await findLogs(src.client, { address: attestor, event, args: { requestMessageId: messageId }, strict: true }, from, latest);
+      payload = logs[0]?.args.payload;
+      if (!payload || keccak256(payload) !== payloadHash) return { status: 'unknown', detail: `the attestor owes a reply for ${messageId} but its ClearanceRead event was not found or does not match` };
+      relayCache.payloads[messageId] = payload;
+    }
+    const balance = await src.client.getBalance({ address: account.address });
+    return { status: 'owed', messageId, payload, sourceChainId: Number(sourceChainId), attestor, balance };
+  }
+
+  return {
+    async readSnapshot() {
+      const { client } = await own();
+      const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
+      const current = await readCurrentFromChain(client, c.list, list, BigInt(c.id));
+      const [latestVersion, block, tlList, owner, isProposer, route, reserved, count, sourceChainId, attestor, isAdder, isRemover, listOwner, tlIsRemover, balance] = await Promise.all([
+        client.readContract({ address: c.list, abi: list, functionName: 'listVersion' }),
+        client.getBlock(),
+        readTl('list'),
+        readTl('owner'),
+        readTl('isProposer', [account.address]),
+        readTl('clearanceRoute'),
+        readTl('reservedDelistings'),
+        readTl('proposalCount'),
+        readTl('clearanceSourceChainId'),
+        readTl('clearanceAttestor'),
+        client.readContract({ address: c.list, abi: list, functionName: 'isAdder', args: [account.address] }),
+        client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [account.address] }),
+        client.readContract({ address: c.list, abi: list, functionName: 'owner' }),
+        client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [c.timelock] }),
+        client.getBalance({ address: account.address }),
+      ]);
+      // The timelock keeps no index of pending proposals, so every one ever
+      // made is read; delistings are rare, so the count stays small.
+      const proposals = [];
+      for (let id = 1n; id <= count; id++) {
+        const p = await readTl('getProposal', [id]);
+        if (Number(p.status) !== STATUS_PENDING) continue;
+        const [proposerAppointed, [ready, reasonSel], cl, listed] = await Promise.all([
+          readTl('isProposer', [p.proposer]),
+          readTl('readiness', [id]),
+          readTl('clearanceOf', [id]),
+          mapLimited(p.accounts, READ_CONCURRENCY, (a) => client.readContract({ address: c.list, abi: list, functionName: 'listedByOwnList', args: [a] })),
+        ]);
+        const [requestId, requestedAt, oracleUpdatedAt, epoch, state] = cl;
+        const entry = {
+          id,
+          proposer: getAddress(p.proposer),
+          proposerAppointed,
+          sourceHash: p.sourceHash,
+          publicationDate: Number(p.publicationDate),
+          eta: p.eta,
+          accounts: p.accounts.map((a) => getAddress(a)),
+          unlisted: p.accounts.filter((_, i) => !listed[i]).map((a) => getAddress(a)),
+          ready,
+          reason: ready ? null : (errors.get(reasonSel) ?? reasonSel),
+          clearance: { requestId, requestedAt, oracleUpdatedAt, epoch, state: Number(state) },
+        };
+        if (entry.reason === 'ClearanceNotAnswered') {
+          try {
+            entry.relay = await relayState(client, entry, sourceChainId, attestor);
+          } catch (e) {
+            entry.relay = { status: 'unknown', detail: `reading the attestor failed: ${e?.shortMessage ?? e?.message ?? e}` };
+          }
+        }
+        proposals.push(entry);
+      }
+      return {
+        chainId: c.id,
+        timelock: c.timelock,
+        timelockList: getAddress(tlList),
+        timelockIsRemover: tlIsRemover,
+        roles: { proposer: isProposer, timelockOwner: sameAddress(owner, account.address), listAdder: isAdder, listRemover: isRemover, listOwner: sameAddress(listOwner, account.address) },
+        route: Number(route),
+        clearanceSourceChainId: sourceChainId,
+        clearanceAttestor: attestor,
+        reservedDelistings: Number(reserved),
+        proposalCount: Number(count),
+        now: block.timestamp,
+        balance,
+        list: {
+          address: c.list,
+          version: current.version,
+          latestVersion,
+          sourceHash: current.recordedHash,
+          publicationDate: current.recordedDate,
+          pendingAdditions: current.recordedPendingAdditions,
+          pendingDelistings: current.recordedPendingDelistings,
+          addresses: current.addresses,
+        },
+        proposals,
+      };
+    },
+
+    /** Each candidate's veto and proposal on this timelock, and whether
+     *  RedStone flags it, read where the snapshot's route says RedStone is.
+     *  Throws when the timelock cannot be read: no proposal is built on a
+     *  partial reading. */
+    async readFacts(addresses, snap) {
+      const { client } = await own();
+      const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
+      let oracle = null;
+      let oracleClient = null;
+      if (snap.route === 1) {
+        oracle = await client.readContract({ address: c.list, abi: list, functionName: 'secondary' });
+        oracleClient = client;
+      } else if (snap.route === 2) {
+        try {
+          const src = await clientFor(snap.clearanceSourceChainId);
+          if (src) {
+            oracle = await src.client.readContract({ address: snap.clearanceAttestor, abi: att, functionName: 'oracle' });
+            oracleClient = src.client;
+          }
+        } catch {
+          // RedStone unreadable: every candidate is skipped this run.
+        }
+      }
+      const rows = await mapLimited(addresses, READ_CONCURRENCY, async (a) => {
+        const [vetoed, proposalOf] = await Promise.all([readTl('vetoed', [a]), readTl('proposalOf', [a])]);
+        let flagged = null;
+        if (oracle) {
+          try {
+            flagged = await oracleClient.readContract({ address: oracle, abi: ORACLE_ABI, functionName: 'isSanctioned', args: [a] });
+          } catch {
+            flagged = null;
+          }
+        }
+        return [lower(a), { vetoed, proposalOf, flagged }];
+      });
+      return new Map(rows);
+    },
+
+    async send(action, { onSubmitted }) {
+      const label = describeAction(action);
+      if (action.kind === 'reply') {
+        const src = await clientFor(action.sourceChainId);
+        if (!src) throw new Error(`no RPC is configured for chain ${action.sourceChainId}`);
+        const fee = await src.client.readContract({ address: action.attestor, abi: att, functionName: 'quoteReply', args: [action.messageId, action.payload] });
+        const data = encodeFunctionData({ abi: att, functionName: 'sendReply', args: [action.messageId, action.payload] });
+        const value = fee + (fee * FEE_MARGIN_BPS) / 10_000n;
+        return queues.run(action.sourceChainId, () => sendTransaction({ client: src.client, wallet: src.wallet, account, to: action.attestor, data, value, onSubmitted, label }));
+      }
+      const { client, wallet } = await own();
+      let data;
+      let value = 0n;
+      switch (action.kind) {
+        case 'propose':
+          data = encodeFunctionData({ abi: tl, functionName: 'propose', args: [action.accounts, action.sourceHash, action.publicationDate] });
+          break;
+        case 'reconfirm':
+          data = encodeFunctionData({ abi: tl, functionName: 'reconfirm', args: [action.id, action.sourceHash, action.publicationDate] });
+          break;
+        case 'withdraw':
+          data = encodeFunctionData({ abi: tl, functionName: 'cancel', args: [action.id] });
+          break;
+        case 'discard':
+          data = encodeFunctionData({ abi: tl, functionName: 'discard', args: [action.id] });
+          break;
+        case 'execute':
+          data = encodeFunctionData({ abi: tl, functionName: 'execute', args: [action.id] });
+          break;
+        case 'request': {
+          const fee = await client.readContract({ address: c.timelock, abi: tl, functionName: 'quoteClearanceRequest', args: [action.id] });
+          value = fee + (fee * FEE_MARGIN_BPS) / 10_000n;
+          data = encodeFunctionData({ abi: tl, functionName: 'requestClearance', args: [action.id] });
+          break;
+        }
+        default:
+          throw new Error(`unknown action ${action.kind}`);
+      }
+      const included = await queues.run(c.id, () => sendTransaction({ client, wallet, account, to: c.timelock, data, value, onSubmitted, label }));
+      if (action.kind === 'request') {
+        // Remember the request's message id, so the relay need not search
+        // for it.
+        const receipt = await client.getTransactionReceipt({ hash: included.hash });
+        for (const log of receipt.logs) {
+          if (!sameAddress(log.address, c.timelock)) continue;
+          try {
+            const ev = decodeEventLog({ abi: tl, data: log.data, topics: log.topics });
+            if (ev.eventName === 'ClearanceRequested') relayCache.messageIds[requestKey(ev.args.requestId)] = ev.args.messageId;
+          } catch {}
+        }
+      }
+      console.log(`${c.name}: ${label}: included in ${included.hash} (block ${included.blockNumber})`);
+      return included;
+    },
+  };
+}
+
+/**
+ * `--check`: prove an installed release can run, without configuration or
+ * network — its modules load, the compiled ABIs are present, and both
+ * parsers read their committed fixtures. install.sh runs it before switching
+ * `current` to a new release.
+ */
+async function check() {
+  for (const [name, abi, fn] of [['SanctionsDelistingTimelock', timelockAbi(), 'propose'], ['SanctionsClearanceAttestor', attestorAbi(), 'sendReply'], ['SanctionsList', sanctionsListAbi(), 'listedByOwnList']]) {
+    if (!abi.some((e) => e.name === fn)) throw new Error(`the ${name} ABI has no ${fn}`);
+  }
+  const { parsed: adv } = await parseSdnAdvancedFile(new URL('./fixtures/sdn_advanced.sample.xml', import.meta.url));
+  const { parsed: plain } = await parseSdnPlainFile(new URL('./fixtures/sdn_plain.sample.xml', import.meta.url));
+  plainWitness(plain, adv, []);
+  console.log(`sanctions-delister: release ok (fixtures ${adv.publicationId}, ${adv.addresses.length} addresses in both files)`);
+}
+
+async function main() {
+  if (process.argv.includes('--check')) return check();
+  const cfg = readConfig(process.env);
+  const secrets = [...cfg.chains.map((c) => c.rpc), cfg.privateKey, cfg.tgToken];
+  const clean = (m) => redact(m, secrets);
+  if (!cfg.tgToken || !cfg.tgChatId) console.log('TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset: this run reports to the journal only.');
+  if (cfg.ignoredMainnetRpcs.length) console.log(`ignored ${cfg.ignoredMainnetRpcs.join(', ')}: the delister runs on testnets only until a hardened mainnet host is decided (#2443).`);
+  mkdirSync(cfg.stateDir, { recursive: true });
+  const nowMs = Date.now();
+  const lastAlert = readState(cfg.stateDir, 'last-alert.json');
+
+  // Every outcome leaves through here: the journal, the chat when it calls
+  // for a person and has not been sent recently, and last-run.json. The unit
+  // fails when any chain failed or an alert was not delivered. Everything
+  // that leaves is redacted once more here, whatever each step already did.
+  const finish = async (rawReport, rawText) => {
+    const report = JSON.parse(clean(JSON.stringify(rawReport, (k, v) => (typeof v === 'bigint' ? v.toString() : v))));
+    const text = clean(rawText);
+    console.log(text);
+    const digest = alertDigest(report);
+    let delivery = { skipped: true, reason: digest ? 'already alerted' : 'nothing to alert' };
+    if (shouldAlert(digest, lastAlert, nowMs)) {
+      delivery = await notifyOps({ label: LABEL, token: cfg.tgToken, chatId: cfg.tgChatId, text });
+      if (delivery.delivered) writeState(cfg.stateDir, 'last-alert.json', { digest, at: nowMs });
+    }
+    writeState(cfg.stateDir, 'last-run.json', { at: new Date(nowMs).toISOString(), ...report, alert: delivery });
+    const problems = [];
+    if (report.status !== 'ok') problems.push(`the run finished as "${report.status}"`);
+    if (delivery.delivered === false) problems.push(`its ops alert was not delivered: ${delivery.reason}`);
+    if (problems.length) throw new Error(problems.join('; '));
+  };
+
+  const plan = planChains(cfg.chains, loadDeployments());
+  if (plan.every((c) => c.skipped)) {
+    const report = { status: 'refused', error: 'no configured chain has a SanctionsDelistingTimelock recorded in this release', chains: Object.fromEntries(plan.map((c) => [c.slug, { name: c.name, chainId: c.id, status: 'skipped', reason: c.skipped }])) };
+    return finish(report, `REFUSED, nothing sent: ${report.error}.\n${plan.map((c) => `${c.name}: skipped: ${c.skipped}`).join('\n')}`);
+  }
+
+  const account = privateKeyToAccount(cfg.privateKey);
+  const tl = timelockAbi();
+  const abis = { tl, list: sanctionsListAbi(), att: attestorAbi(), errors: errorNames(tl) };
+  const clientFor = createClientLookup(new Map(cfg.chains.map((c) => [c.id, chainClients(c, account)])));
+  const queues = createSendQueues();
+  const relayCache = readRelayCache(cfg.stateDir);
+  const cache = readState(cfg.stateDir, 'evaluations.json');
+  let result;
+  try {
+    result = await runDelister({
+      key: account.address,
+      cache,
+      nowMs,
+      redactError: clean,
+      chains: plan.map((c) => (c.skipped ? c : { ...c, effects: chainEffects({ c, account, clientFor, queues, relayCache, abis }) })),
+      loadPublication: async () => {
+        const adv = join(cfg.stateDir, 'download.xml');
+        const plain = join(cfg.stateDir, 'download-plain.xml');
+        await downloadToFile(OFAC_SDN_ADVANCED_URL, adv);
+        await downloadToFile(OFAC_SDN_PLAIN_URL, plain);
+        const a = await parseSdnAdvancedFile(adv);
+        const p = await parseSdnPlainFile(plain);
+        const aFile = keepPublication(adv, cfg.stateDir, a.parsed.publicationDate, a.sourceHash, DEFAULT_KEEP_FILES);
+        const pFile = keepPublication(plain, cfg.stateDir, p.parsed.publicationDate, p.sourceHash, DEFAULT_KEEP_FILES, 'sdn-plain');
+        return {
+          advanced: { parsed: a.parsed, sourceHash: a.sourceHash, source: { file: aFile, sha256: a.sourceHash, publicationId: a.parsed.publicationId, evmAddressCount: a.parsed.addresses.length } },
+          plain: { parsed: p.parsed, sourceHash: p.sourceHash, source: { file: pFile, sha256: p.sourceHash, publicationDate: p.parsed.publicationDate, evmAddressCount: p.parsed.addresses.length } },
+        };
+      },
+    });
+  } catch (e) {
+    const failed = { status: 'refused', error: clean(e.message), chains: {} };
+    return finish(failed, `REFUSED before any chain: ${failed.error}`);
+  }
+  writeState(cfg.stateDir, 'evaluations.json', result.cache);
+  writeState(cfg.stateDir, 'relay.json', relayCache);
+  await finish(result.report, summarize(result.report));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(`sanctions-delister: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_DELISTER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
+    process.exit(1);
+  });
+}
