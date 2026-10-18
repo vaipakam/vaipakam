@@ -498,3 +498,40 @@ test('parseSdnAdvanced: a digital-currency detail must be of the TEXT detail typ
   assert.throws(() => parseSdnAdvanced(withInProfile(unknown)), /DetailTypeID "99999", which no <DetailType> defines/);
   assert.ok(parseSdnAdvanced(withInProfile(feature(E))).addresses.includes(E));
 });
+
+// ---- Codex #2543 r19: XML characters, non-empty references, the delisting witness ----
+test('characters: a character outside XML\'s Char production refuses the file, literal or referenced', () => {
+  const xml = FIXTURE.toString('utf8');
+  for (const bad of ['&#0;', '&#x0;', '&#xD800;', '&#xFFFE;', '&#x1F;']) {
+    assert.throws(() => parseSdnAdvanced(xml.replace('0x252a8bd2319d8a555b872990601221b3a2053bce', `${bad}x252a8bd2319d8a555b872990601221b3a2053bce`)), /not an XML character/, bad);
+  }
+  assert.throws(() => parseSdnAdvanced(xml.replace('<Year>', '<Year>\u0000')), /U\+0000 at offset \d+ is not an XML character/);
+  // Tab, LF, CR and ordinary references still decode.
+  assert.equal(decodeXmlText('a&#9;b&#x41;'), 'a\tbA');
+});
+
+test('references: an empty reference value refuses the file', () => {
+  const xml = FIXTURE.toString('utf8');
+  assert.throws(() => parseSdnAdvanced(xml.replace('<Reliability ID="1561">False</Reliability>', '<Reliability ID="1561"> </Reliability>')), /ID 1561 has an empty value/);
+  assert.throws(() => parseSdnAdvanced(xml.replace('>Digital Currency Address - ETH</FeatureType>', '></FeatureType>')), /ID 345 has an empty value/);
+});
+
+test('buildUpdate: a delisting is refused while the address still appears in the source file', () => {
+  // The address sits in the file but on no path the parser reads: whatever
+  // dropped it, OFAC has not removed its record.
+  const text = withInProfile(`<Other>${E}</Other>`);
+  const parsed = parseSdnAdvanced(text);
+  assert.ok(!parsed.addresses.includes(E));
+  const hash = sourceHash(Buffer.from(text));
+  assert.throws(() => buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, E], currentVersion: 1, ...FRESH }), /still appears in the source file/);
+  // An address absent from the file is a genuine delisting.
+  const ok = buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH });
+  assert.deepEqual(ok.remove, [C]);
+  // An address the file carries only as OFAC-marked False may be delisted.
+  const F = getAddress('0x1111111111111111111111111111111111111111');
+  assert.ok(parsed.excludedFalse.some((e) => e.address === F));
+  assert.deepEqual(buildUpdate({ parsed, sourceHash: hash, current: [...parsed.addresses, F], currentVersion: 1, ...FRESH }).remove, [F]);
+  // A hand-built parsed object without the witness is refused, never skipped.
+  assert.throws(() => buildUpdate({ parsed: { ...parsed, hexRuns: undefined }, sourceHash: hash, current: [...parsed.addresses, C], currentVersion: 1, ...FRESH }), /no hexRuns/);
+});
+

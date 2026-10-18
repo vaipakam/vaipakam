@@ -149,6 +149,8 @@ const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
 /** The zero address: EVM-shaped, but the contract refuses to list or delist it. */
 const ZERO_RE = /^0x0{40}$/i;
 const HEX_PREFIX_RE = /^0x/i;
+/** A run of at least an address's 40 hex digits, anywhere in the source. */
+const HEX_RUN_RE = /[0-9a-fA-F]{40,}/g;
 
 /** The compiled `SanctionsList` ABI — never hand-typed. */
 export function sanctionsListAbi() {
@@ -187,6 +189,13 @@ const QNAME = `${NCNAME}(?::${NCNAME})?`;
 const NAME_RE = new RegExp(`^${QNAME}`);
 const ATTR_RE = new RegExp(`\\s+(${QNAME})\\s*=\\s*(?:"([^"<]*)"|'([^'<]*)')`, 'y');
 const PREDEFINED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+/**
+ * A character outside XML 1.0's `Char` production (§2.2): C0 controls other
+ * than tab/LF/CR, surrogates, U+FFFE/U+FFFF. A document carrying one, as a
+ * literal or as a character reference, is not well-formed, and its text is
+ * not data this tool may act on (Codex #2543 r19).
+ */
+const NON_XML_CHAR = /[^\t\n\r\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
 
 /**
  * Decode the XML-predefined entities and numeric character references in
@@ -202,7 +211,9 @@ export function decodeXmlText(raw, offset = 0) {
     const num = /^#x([0-9a-fA-F]+)$/.exec(ref) ?? /^#([0-9]+)$/.exec(ref);
     if (num) {
       const cp = Number.parseInt(num[1], ref[1] === 'x' ? 16 : 10);
-      if (!Number.isSafeInteger(cp) || cp > 0x10ffff) throw new Error(`malformed XML: bad character reference &${ref}; near offset ${offset}`);
+      if (!Number.isSafeInteger(cp) || cp > 0x10ffff || NON_XML_CHAR.test(String.fromCodePoint(cp))) {
+        throw new Error(`malformed XML: &${ref}; near offset ${offset} is not an XML character`);
+      }
       return String.fromCodePoint(cp);
     }
     throw new Error(`refusing the undeclared entity &${ref}; near offset ${offset}`);
@@ -273,6 +284,8 @@ function resolveNs(qname, scope, offset) {
 export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
   const { open = () => {}, close = () => {}, text = () => {} } = handlers;
   const n = xml.length;
+  const bad = NON_XML_CHAR.exec(xml);
+  if (bad) throw new Error(`malformed XML: U+${bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} at offset ${bad.index} is not an XML character`);
   let i = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
   const stack = []; // { name, ns, scope }
   const BASE_SCOPE = new Map([['xml', XML_NS]]);
@@ -516,6 +529,9 @@ const SDN_SINGLETON_PATHS = new Set([SDN_PATHS.dateOfIssue, SDN_PATHS.year, SDN_
  */
 export function parseSdnAdvanced(xml) {
   const path = []; // local names of the open OFAC-namespace elements, root first
+  // Every run of 40+ hex digits in the file, raw and decoded — the delisting
+  // witness buildUpdate checks (Codex #2543 r19).
+  const hexRuns = new Set((xml.match(HEX_RUN_RE) ?? []).map((r) => r.toLowerCase()));
   const seen = new Map(); // singleton path -> count
   const date = {};
   const featureTypes = new Map();
@@ -605,6 +621,7 @@ export function parseSdnAdvanced(xml) {
     },
     text(value) {
       if (reading) buf += value;
+      for (const run of value.match(HEX_RUN_RE) ?? []) hexRuns.add(run.toLowerCase());
     },
     close() {
       const at = path.join('/');
@@ -622,6 +639,10 @@ export function parseSdnAdvanced(xml) {
           const { label, set } = refSets.get(at);
           if (refId === undefined) throw new Error(`a <${label}> has no ID`);
           if (set.has(refId)) throw new Error(`<${label}> ID ${refId} is defined twice`);
+          // An empty definition resolves an ID to nothing: it would silently
+          // unmark a False reliability or hide a digital-currency type
+          // (Codex #2543 r19).
+          if (value === '') throw new Error(`<${label}> ID ${refId} has an empty value`);
           set.set(refId, value);
         }
         reading = null;
@@ -716,7 +737,7 @@ export function parseSdnAdvanced(xml) {
     .sort((x, y) => x.address.toLowerCase().localeCompare(y.address.toLowerCase()));
   // A False-reliability version of an address listed elsewhere still stands.
   const excluded = excludedFalse.filter((e) => !byAddress.has(e.address.toLowerCase()));
-  return { publicationId, publicationDate, addresses: entries.map((e) => e.address), entries, excludedFalse: excluded, malformed, nonEvmByAsset };
+  return { publicationId, publicationDate, addresses: entries.map((e) => e.address), entries, excludedFalse: excluded, malformed, nonEvmByAsset, hexRuns: [...hexRuns] };
 }
 
 /** Normalise an address list (checksum, dedupe, sorted); throws on a bad entry. */
@@ -797,6 +818,31 @@ export function replayChainalysisLogs(logs) {
  * the counts by exactly what it applies, as the contract requires (Codex
  * #2543 r7, r8, r10).
  */
+/**
+ * THE delisting rule (Codex #2543 r19, the root of r14-r19): OFAC delists an
+ * address by removing its record, so the address's 40 hex digits no longer
+ * appear anywhere in the file. A delisting is only emitted when that is
+ * true. Any parse path that DROPS a record it should have read — a moved or
+ * malformed node, an unresolvable reference, a damaged character — leaves
+ * the address's digits in the file, and is refused here, whichever path
+ * dropped it. The one exception is an address the file still carries only as
+ * OFAC-marked False, which is a real reason to delist.
+ */
+export function assertDelistingsWitnessed(parsed, remove) {
+  if (!Array.isArray(parsed.hexRuns)) throw new Error('parsed source carries no hexRuns — re-parse it with parseSdnAdvanced');
+  const markedFalse = new Set((parsed.excludedFalse ?? []).map((e) => e.address.toLowerCase()));
+  const stillInFile = remove.filter((a) => {
+    if (markedFalse.has(a.toLowerCase())) return false;
+    const body = a.slice(2).toLowerCase();
+    return parsed.hexRuns.some((run) => run.includes(body));
+  });
+  if (stillInFile.length) {
+    throw new Error(
+      `refusing to delist ${stillInFile.join(', ')}: the address still appears in the source file, so OFAC has not removed its record — the parser dropped it, and the file needs review`,
+    );
+  }
+}
+
 export function buildUpdate({
   parsed,
   sourceHash: hash,
@@ -838,6 +884,7 @@ export function buildUpdate({
       `refusing to delist ${remove.length} addresses (limit ${maxRemove}). OFAC delistings are rare; check the source file, then raise --max-remove deliberately.`,
     );
   }
+  assertDelistingsWitnessed(parsed, remove);
   const version = BigInt(currentVersion);
   // `additionsLeft` / `delistingsLeft` are what the contract publishes as
   // `pendingAdditions` / `pendingDelistings` after each call.
