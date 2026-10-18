@@ -1,0 +1,8 @@
+{
+  "chainSlug": "bnb-testnet",
+  "chainId": 97,
+  "deployedAt": "2026-10-18T08:58:38+0530",
+  "monorepoCommit": "872545d4ecfd90f534611870c715059a32739b62",
+  "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
+  "diamond": "0xfa7685Eb0160f8998f70F196d64Be223ce120bC2"
+}
