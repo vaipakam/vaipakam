@@ -306,7 +306,7 @@ contract ConfigureSanctionsOracleTest is Test {
 
             vm.expectRevert(
                 bytes(
-                    "ConfigureSanctionsOracle: mainnet refused - the SanctionsList updater (host and signer) is undecided (#2443); Chainalysis's retired oracle is never configured"
+                    "ConfigureSanctionsOracle: mainnet refused - the SanctionsList adder host is undecided (#2443); Chainalysis's retired oracle is never configured"
                 )
             );
             s.run();
