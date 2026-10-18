@@ -190,6 +190,11 @@ export function markerFromReads(markerRows, digestRows) {
   return { completedAt: Number(markerRows[0].completed_at), fingerprint };
 }
 
+/** Every chain the copied keyed-by-chain rows belong to (#2569 r1) — the
+ *  tables whose rows the keeper's epoch reset would clear. */
+export const COPIED_CHAINS_SQL =
+  'SELECT chain_id FROM hf_band_state UNION SELECT chain_id FROM keeper_commitment_scan UNION SELECT chain_id FROM keeper_commitment_day';
+
 /** Digests per INSERT in the record file: ~14 KB a statement, far under D1's
  *  100 KB statement cap whatever the row count. */
 const DIGESTS_PER_STATEMENT = 200;

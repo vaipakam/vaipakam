@@ -29,10 +29,13 @@ function setup() {
     shared.db
       .prepare(
         `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at) VALUES (84532, ?, 1, 1)
-         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond`,
+         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, reset_pending = 0`,
       )
       .run(diamond);
-  return { shared, keeper, env, band, bands, indexerAdopts };
+  /** The indexer has RECORDED `diamond` but not finished its reset. */
+  const indexerResetting = (diamond: string) =>
+    shared.db.prepare(`UPDATE indexer_deployment SET diamond = ?, reset_pending = 1 WHERE chain_id = 84532`).run(diamond);
+  return { shared, keeper, env, band, bands, indexerAdopts, indexerResetting };
 }
 
 describe('listResetOnDiamondChange — schema-aware, pinned to the real schema', () => {
@@ -134,5 +137,15 @@ describe('adoptKeeperDeployments', () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("waits while the indexer's own reset is still pending, even with the new Diamond recorded (#2569 r1)", async () => {
+    const { keeper, env, band, bands, indexerAdopts, indexerResetting } = setup();
+    indexerAdopts(OLD);
+    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
+    band(84532, 7);
+    indexerResetting(NEW);
+    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/not yet the indexer's/);
+    expect(bands(84532), 'nothing reset while the indexer is mid-reset').toBe(1);
   });
 });

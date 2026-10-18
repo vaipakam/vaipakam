@@ -29,7 +29,7 @@ pnpm --filter @vaipakam/keeper run deploy   # verifies the shared D1 schema, the
 pnpm --filter @vaipakam/keeper run migrate  # applies apps/keeper/migrations/ to the keeper's PRIVATE D1 (vaipakam-keeper-db); `run deploy` also does it first
 ```
 
-**The deploy verifies the shared D1 schema first** (#2409). This Worker binds the shared `vaipakam-warm` database, whose schema `apps/indexer` owns, so `run deploy` runs `apps/indexer/scripts/deploy-shared-d1.mjs verify` before publishing: a read-only check that every migration the build carries is recorded. It waits up to ten minutes for the indexer's deploy to apply pending ones, then refuses to publish onto an older schema. It never applies migrations itself. So the token needs **D1 read** as well as Worker publish rights, and on a release that carries a migration, **deploy the indexer first**. `run deploy` takes no arguments; a dry run is `run deploy:dry`, which never touches the database.
+**The deploy verifies the shared D1 schema first** (#2409). This Worker binds the shared `vaipakam-warm` database, whose schema `apps/indexer` owns, so `run deploy` runs `apps/indexer/scripts/deploy-shared-d1.mjs verify` before publishing: a read-only check that every migration the build carries is recorded. It waits up to ten minutes for the indexer's deploy to apply pending ones, then refuses to publish onto an older schema. It never applies migrations itself. Toward the SHARED schema the deploy is read-only. It also APPLIES the keeper's private schema (below), so the token needs **D1 Edit** (an Edit grant also covers the shared verify) as well as Worker publish rights, and on a release that carries a shared migration, **deploy the indexer first**. `run deploy` takes no arguments; a dry run is `run deploy:dry`, which never touches the database.
 
 **It APPLIES the keeper's PRIVATE schema itself** (`vaipakam-keeper-db`, #2450 — see "D1" below): the keeper is that database's only writer, so `run deploy` applies `apps/keeper/migrations/`, verifies every file is recorded in the database, and only then verifies the shared schema and publishes. The first deploy of a keeper that reads `KEEPER_DB` also needs the one-time row copy, `run cutover`, with the keeper stopped ([`docs/ops/DeploymentRunbook.md`](../../docs/ops/DeploymentRunbook.md), "Keeper private D1 — one-time cutover"); the deploy refuses to publish until that copy is recorded and still matches the shared tables.
 
@@ -123,34 +123,33 @@ in the oracle series whenever the keeper is disabled for an unrelated reason.
 The practical consequence, which is the reason this section exists: **flipping
 the kill-switch is not a way to stop the keeper spending gas entirely.**
 
-**Stop the schedule, not the key.** This Worker has no HTTP surface — every
-pass runs from `scheduled()`. Removing its cron trigger stops all of them,
-snapshot included, with nothing to restore afterwards but the trigger:
+**Stop the runner, not the key.** The keeper runs only on the always-on
+machine (`docs/ops/KeeperMachine.md`); this Worker's `scheduled` handler
+declines every invocation, so nothing on the Cloudflare side stops or starts
+the keeper. The whole emergency stop is on the machine:
 
-**Remove the trigger from the dashboard** — *Settings → Trigger Events*.
-That is the whole of the emergency action, and it touches nothing else.
-
-**It is not instant, though.** The control plane accepts the change
-immediately; the schedule stops firing everywhere only after propagation —
-see the window below, during which this Worker can still sign. An earlier
-revision said "takes effect immediately", which in an incident is precisely
-the wrong thing to believe.
-
-Editing `wrangler.jsonc` does **not** stop anything by itself, and an earlier
-revision of this section told you to do both, which is incoherent — the file
-change has no effect without a deploy, and a deploy is exactly what the next
-paragraph forbids.
-
-**The repository now commits an EMPTY cron** (`"crons": []`) — #1896, done
-deliberately after measurement, and this section previously told you the
-opposite. The follow-up it used to recommend has been taken:
-
-```jsonc
-"triggers": { "crons": [] }
+```bash
+sudo systemctl disable --now vaipakam-keeper-update.timer
+sudo systemctl stop vaipakam-keeper-update.service
+sudo systemctl stop vaipakam-keeper
+systemctl is-active vaipakam-keeper   # must print `inactive`
 ```
 
-— empty, not absent; an absent `triggers` object sends no schedule update at
-all and would silently leave whatever is deployed in place.
+Pausing the update timer first matters: otherwise the next update run could
+restart the keeper. Stopping waits for the tick in flight to finish, because a
+kill can cut a pass off between sending a transaction and recording it
+(`KeeperMachine.md` §6, including what to do about a stop that hangs). To
+resume, `sudo systemctl enable --now vaipakam-keeper-update.timer` and
+`sudo systemctl start vaipakam-keeper`.
+
+The Worker's committed `"crons": []` stays as it is (empty, not absent, so a
+deploy never leaves an old schedule in place); with the handler declining, a
+schedule restored by hand would run nothing anyway.
+
+**Do not pull the key instead.** Removing `KEEPER_PRIVATE_KEY` from the
+machine's env file is no faster than stopping the service, and it leaves a
+process running that you then have to reason about. The service stop is
+complete and reversible.
 
 **The var hazard is handled by the deploy script, not by this config being
 small** (Codex #1924 r7). An earlier revision said the hazard was "resolved"
@@ -208,86 +207,6 @@ Keeping vars costs nothing here: the only var this config declares is
 `TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
 nowhere in the Worker.
 
-**What that means for an incident.** The keeper is not currently scheduled,
-so there is nothing to emergency-stop — the dashboard steps above apply only
-after someone has re-armed it. A deploy from a clean checkout no longer
-re-arms it; it now *keeps it stopped*, which is the inversion to remember if
-you last read this section before #1896.
-
-**And it means the reverse is now the risky direction.** Re-arming requires
-editing `wrangler.jsonc` **and** running `wrangler deploy` — the file alone
-changes nothing, exactly as this section says about stopping. The full
-re-enable sequence, including the trigger-aware readback and the
-up-to-15-minute propagation window, is kept beside the empty list in
-`wrangler.jsonc` rather than here, so it cannot drift from the thing it
-describes.
-
-**Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
-the whole Worker configuration to change one schedule, which is more surface
-than an emergency needs.
-
-The var mechanics, stated accurately after two revisions got them wrong in
-opposite directions: without `--keep-vars` a deploy deletes every var before
-applying the config's; *with* it, vars the config omits survive but the ones
-it **declares are still applied**. So this config's `"TG_BOT_USERNAME": ""`
-lands either way.
-
-**That specific clobber is harmless, though**, and an earlier revision of
-this section treated it as a live hazard across several documents. Verified:
-`apps/keeper` never *reads* `TG_BOT_USERNAME` — it appears in a type, a
-comment, and a pass-through copy in `env.ts`, and nothing consumes it. The
-Telegram deep link that actually uses the handle is built by **`apps/agent`**
-(`index.ts:468`) from the agent's own binding, which a keeper deploy does not
-touch.
-
-The mechanic still matters for any var the keeper does read, and on other
-Workers. It is not a reason to fear this particular deploy.
-
-`wrangler triggers deploy` is not the answer either — experimental, and
-scoped to the `wrangler versions upload` flow.
-
-The dashboard change touches the schedule and nothing else, which is what an
-emergency stop needs.
-
-**Confirm it, do not assume it** — the readback must be trigger-aware, since
-a mistyped or wrongly-nested key leaves the committed cron in place. Check
-the Worker's *Settings → Trigger Events* pane or query its schedules
-directly; `wrangler tail` showing no tick only tells you none has fired
-*yet*. Same hazard and same remedy as `OffChainRestore.md` §1 **step 9**.
-
-**Then wait out the propagation window before calling it stopped.** An empty
-schedules response confirms the control plane accepted the change; Cloudflare
-documents that Cron Trigger updates can take **up to 15 minutes** to reach
-every location. This keeper runs `* * * * *` — every minute — so on the order
-of a dozen more ticks can still be dispatched after a successful readback,
-each able to sign.
-
-During an incident that gap is the whole question. **The confirmation is the
-absence of scheduled ticks after the window has elapsed** — keep
-`wrangler tail vaipakam-keeper` open across it, and treat quiet *before* the
-window as meaningless.
-
-A stationary keeper nonce is corroboration, not proof, and an earlier
-revision of this section called it ground truth. It is wrong in both
-directions: the nonce is per-chain, so one chain's stillness says nothing
-about another; and outside the 00:00–00:09 UTC snapshot window, with no
-eligible liquidation or remittance, a *running* keeper has a stationary nonce
-anyway. It confirms a stop only if it was moving beforehand.
-
-**Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
-is bound via `secrets_store_secrets`, so `wrangler secret put` /
-`secret delete` writes or removes a per-Worker value **this Worker ignores** —
-a successful-looking command and a keeper that keeps signing
-(`docs/ops/AdminKeysAndPause.md` says exactly this for exactly this key). And
-removing the store entry is rotation-grade, and the repository documents
-rotation but **no removal procedure** — so it is not a step to improvise
-during an incident. (`apps/keeper` is its only binder — `apps/agent`
-deliberately does not bind `KEEPER_PRIVATE_KEY` (it does hold
-`PUSH_CHANNEL_PK`, an Ethereum key for signing Push notifications, but that
-is not this secret) — so an earlier "affects every
-binder" here overstated the blast radius. The reason to avoid it stands; the
-scare does not.) Stopping the schedule
-achieves the same outcome and is reversible in one command.
 
 **Three other passes also run ungated** — `watcher`, `preGraceWatcher` and
 `liquidityConfidence` — so the snapshot is not the only thing the switch

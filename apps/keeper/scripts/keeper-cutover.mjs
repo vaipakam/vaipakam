@@ -50,6 +50,7 @@ import {
   readFingerprints,
   readMarker,
   recordSql,
+  COPIED_CHAINS_SQL,
 } from './lib/keeper-cutover.mjs';
 
 const sh = (cmd, args, opts) => spawnSync(cmd, args, { shell: process.platform === 'win32', ...opts });
@@ -149,8 +150,22 @@ function run() {
     // --command string, whose size would grow with the copy): the per-row
     // digests, the keeper's deployment epoch seeded from the indexer's adopted
     // Diamonds (the copied rows belong to those), and LAST the marker.
-    const deployments = query(SHARED_DB, 'SELECT chain_id, diamond FROM indexer_deployment');
+    // Only COMPLETE epochs (reset finished, #2569 r1), and one for EVERY chain
+    // the copied keyed-by-chain rows belong to — a chain with copied rows and
+    // no complete epoch would be adopted blind on the first tick and keep
+    // rows that may belong to a retired Diamond.
+    const deployments = query(SHARED_DB, 'SELECT chain_id, diamond FROM indexer_deployment WHERE reset_pending = 0');
     if (deployments === null) fail(`could not read the indexer's adopted Diamonds in ${SHARED_DB} — no record written; re-run the cutover.`);
+    const copiedChains = query(PRIVATE_DB, COPIED_CHAINS_SQL);
+    if (copiedChains === null) fail(`could not read which chains the copied rows belong to in ${PRIVATE_DB} — no record written; re-run the cutover.`);
+    const seeded = new Set(deployments.map((d) => Number(d.chain_id)));
+    const unseeded = copiedChains.map((r) => Number(r.chain_id)).filter((c) => !seeded.has(c));
+    if (unseeded.length > 0) {
+      fail(
+        `the copied rows include chain(s) ${unseeded.join(', ')} with no completed indexer epoch in ${SHARED_DB} — ` +
+          'no record written. Let the indexer adopt those chains (its next run), then re-run the cutover.',
+      );
+    }
     const now = Math.floor(Date.now() / 1000);
     const recordFile = join(dir, 'record.sql');
     writeFileSync(recordFile, recordSql(after, deployments, now), { mode: 0o600 });

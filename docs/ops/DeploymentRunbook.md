@@ -1124,9 +1124,10 @@ keeper tick in between.
    — and runs the cutover again.
 
 3. **Resume the machine — immediately.** `docs/ops/KeeperMachine.md` §4a
-   step 5: re-enable its update timer. The next update run installs the
-   build that reads `KEEPER_DB` and starts the keeper on it. Nothing may tick
-   between step 2 and this. (The Worker needs no deploy for this: it runs no
+   step 5: re-enable its update timer, run one update to install the build
+   that reads `KEEPER_DB`, then START the keeper explicitly. An update only
+   restarts a keeper that is running, and step 2 stopped it. Nothing may
+   tick between step 2 and this. (The Worker needs no deploy for this: it runs no
    ticks. Its own `run deploy`, which applies the private schema, may run
    whenever it is due.)
 

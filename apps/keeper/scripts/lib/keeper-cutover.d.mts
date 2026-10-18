@@ -24,6 +24,7 @@ export function rowsSql(t: CutoverTable): string;
 export function rowDigest(rows: readonly Record<string, unknown>[]): string;
 export function rowDigests(rows: readonly Record<string, unknown>[]): string[];
 export const MARKER_SQL: string;
+export const COPIED_CHAINS_SQL: string;
 export const MARKER_ROWS_SQL: string;
 export function markerFromReads(markerRows: unknown, digestRows: unknown): Marker;
 export function recordSql(

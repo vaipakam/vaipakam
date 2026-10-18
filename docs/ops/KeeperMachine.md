@@ -230,9 +230,18 @@ from empty state.
 4. **Run the cutover,** same place: `pnpm --filter @vaipakam/keeper run
    cutover` (DeploymentRunbook, "Keeper private D1 — one-time cutover"). It
    records completion only when all five tables match on both sides.
-5. **Resume deploys** (§6). The next run installs the new build and starts the
-   keeper on it. Then confirm, as in §5, that ticks run, with no `tick declined`
-   line.
+5. **Resume deploys, then START the keeper** (§6):
+
+   ```bash
+   sudo systemctl enable --now vaipakam-keeper-update.timer
+   sudo systemctl start vaipakam-keeper-update.service   # install the new build now
+   sudo systemctl start vaipakam-keeper
+   ```
+
+   The explicit start is required. An update RESTARTS the keeper only if it
+   is running (`try-restart`), and step 2 stopped it, so resuming deploys
+   alone installs the build and leaves the keeper off. Then confirm, as in
+   §5, that ticks run, with no `tick declined` line.
 
 If step 4 refuses because a table changed, a keeper wrote the old copy after
 step 2. Find it and stop it, then run step 4 again.

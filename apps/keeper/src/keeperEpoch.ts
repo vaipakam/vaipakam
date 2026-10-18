@@ -47,13 +47,17 @@ export async function listResetOnDiamondChange(db: Env['KEEPER_DB']): Promise<st
   return (r.results ?? []).map((t) => t.name);
 }
 
-/** The Diamond the indexer has adopted for `chainId`, or null when it has
- *  recorded NONE. A failed read THROWS (#2497 r11): an unread record is not an
- *  absent one, and adopting the configured Diamond on a read error could
- *  accept another Diamond's rows for good. */
+/** The Diamond the indexer has COMPLETELY adopted for `chainId`: recorded AND
+ *  its reset finished (`reset_pending = 0`, #2569 r1). The indexer records the
+ *  new Diamond first and clears the old rows after, so while the flag is set
+ *  its shared rows still belong to the old one. Null when none is complete. A
+ *  failed read THROWS (#2497 r11): an unread record is not an absent one. */
 async function indexerAdopted(env: Env, chainId: number): Promise<string | null> {
-  const row = await env.DB.prepare('SELECT diamond FROM indexer_deployment WHERE chain_id = ?').bind(chainId).first<{ diamond: string }>();
-  return typeof row?.diamond === 'string' ? row.diamond.toLowerCase() : null;
+  const row = await env.DB.prepare('SELECT diamond, reset_pending FROM indexer_deployment WHERE chain_id = ?')
+    .bind(chainId)
+    .first<{ diamond: string; reset_pending: number }>();
+  if (typeof row?.diamond !== 'string' || Number(row.reset_pending) !== 0) return null;
+  return row.diamond.toLowerCase();
 }
 
 /**
