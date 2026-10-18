@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
-import { failureReport, keepPublication, notifyOps, readConfig, redact, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
+import { ADDER_CHAINS, failureReport, keepPublication, loadDeployments, needsAlert, notifyOps, planChains, readConfig, redact, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(HERE, 'fixtures', 'sdn_advanced.sample.xml');
@@ -17,17 +17,9 @@ const C = getAddress('0x00000000000000000000000000000000000000c0');
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 const KEY = `0x${'1'.repeat(64)}`;
 
-/** A run against a fake list in state `list`; returns the report and what was sent. */
-async function run(list, overrides = {}) {
-  const stateDir = mkdtempSync(join(tmpdir(), 'adder-'));
-  const sent = [];
-  const report = await runAdder({
-    stateDir,
-    fetchSource: async () => {
-      const p = join(stateDir, 'download.xml');
-      copyFileSync(FIXTURE_PATH, p);
-      return p;
-    },
+/** {@link runChain}'s effects against a fake list in state `list`; `sent` collects what was sent. */
+function fakeChain(list, sent, overrides = {}) {
+  return {
     readCurrent: async () => ({
       version: list.version,
       addresses: list.addresses,
@@ -46,82 +38,130 @@ async function run(list, overrides = {}) {
       return { hash, blockNumber: 200n + BigInt(sent.length), blockHash: `0x${'b'.repeat(64)}` };
     },
     ...overrides,
+  };
+}
+
+/** A run of one chain (`base-sepolia`) against a fake list; returns the run's
+ *  report, that chain's section, what was sent, and the state directory. */
+async function run(list, overrides = {}) {
+  const stateDir = mkdtempSync(join(tmpdir(), 'adder-'));
+  const sent = [];
+  const report = await runAdder({
+    stateDir,
+    fetchSource: async () => {
+      const p = join(stateDir, 'download.xml');
+      copyFileSync(FIXTURE_PATH, p);
+      return p;
+    },
+    chains: [{ slug: 'base-sepolia', name: 'Base Sepolia', id: 84532, list: C, effects: fakeChain(list, sent, overrides) }],
   });
-  return { report, sent, stateDir };
+  return { report, chain: report.chains['base-sepolia'], sent, stateDir };
 }
 
 test('run: a new publication lists its additions and declares its delistings for the Safe', async () => {
-  const { report, sent, stateDir } = await run({ version: 7n, addresses: [C] });
-  assert.equal(report.status, 'applied');
+  const { report, chain, sent, stateDir } = await run({ version: 7n, addresses: [C] });
+  assert.equal(report.status, 'ok');
+  assert.equal(chain.status, 'applied');
   assert.equal(sent.length, 1);
-  assert.equal(report.sent[0].state, 'final', 'applied means final');
+  assert.equal(chain.sent[0].state, 'final', 'applied means final');
   const args = decodeFunctionData({ abi: sanctionsListAbi(), data: sent[0].calldata }).args;
   assert.equal(args[0], 7n);
   assert.deepEqual(args[2], [], 'the adder never delists');
   assert.equal(args[6], 1, 'the delisting is declared outstanding');
-  assert.deepEqual(report.delistingsForRemover, [C]);
-  assert.equal(report.pendingDelistings, 1);
+  assert.deepEqual(chain.delistingsForRemover, [C]);
+  assert.equal(chain.pendingDelistings, 1);
   assert.equal(report.source.sha256, HASH);
   // The publication is kept under its date and hash; the download name is gone.
   assert.deepEqual(readdirSync(stateDir), [`sdn-20260307-${HASH.slice(2, 14)}.xml`]);
-  assert.match(summarize(report), /1 delisting\(s\) await the remover/);
+  const text = summarize(report);
+  assert.match(text, /Base Sepolia: listed 2 new/);
+  assert.match(text, /1 delisting\(s\) await the remover/);
+  assert.match(text, new RegExp(`--chain-id 84532 --list ${C}`));
+  assert.ok(needsAlert(report));
 });
 
 test('run: up to date when the list holds the recorded publication', async () => {
   const fixtureAddrs = ['0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce')];
-  const { report, sent } = await run({ version: 8n, addresses: fixtureAddrs, date: 20260307, hash: HASH });
-  assert.equal(report.status, 'up-to-date');
+  const { report, chain, sent } = await run({ version: 8n, addresses: fixtureAddrs, date: 20260307, hash: HASH });
+  assert.equal(chain.status, 'up-to-date');
   assert.equal(sent.length, 0);
-  assert.equal(report.pendingDelistings, 0);
+  assert.equal(chain.pendingDelistings, 0);
   assert.match(summarize(report), /nothing sent/);
+  assert.equal(needsAlert({ ...report, malformedValues: [] }), false, 'an up-to-date run with nothing to review is journal-only');
 });
 
-test('run: refuses before sending when the list moved past the finalized block or the key is not the adder', async () => {
-  await assert.rejects(run({ version: 7n, latest: 8n, addresses: [] }), /not yet final/);
-  await assert.rejects(run({ version: 7n, addresses: [], isAdder: false }), /not an adder/);
+test('run: refuses a chain before sending when its list moved past the finalized block or the key is not the adder', async () => {
+  let r = await run({ version: 7n, latest: 8n, addresses: [] });
+  assert.equal(r.report.status, 'failed');
+  assert.equal(r.chain.status, 'refused');
+  assert.match(r.chain.error, /not yet final/);
+  assert.equal(r.sent.length, 0);
+  r = await run({ version: 7n, addresses: [], isAdder: false });
+  assert.match(r.chain.error, /not an adder/);
+  assert.equal(r.sent.length, 0);
 });
 
 test('run: a tool refusal sends nothing', async () => {
-  const sent = [];
   // An older publication than the one recorded.
-  await assert.rejects(
-    run({ version: 7n, addresses: [], date: 20270101, hash: `0x${'2'.repeat(64)}` }, { send: async (c) => sent.push(c) }),
-    /not newer/,
-  );
+  const { chain, sent } = await run({ version: 7n, addresses: [], date: 20270101, hash: `0x${'2'.repeat(64)}` });
+  assert.equal(chain.status, 'refused');
+  assert.match(chain.error, /not newer/);
   assert.equal(sent.length, 0);
+});
+
+test('run: one parse feeds every chain, and one chain failing never stops another', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'adder-'));
+  let downloads = 0;
+  const sentA = [];
+  const sentB = [];
+  const report = await runAdder({
+    stateDir,
+    fetchSource: async () => {
+      downloads++;
+      const p = join(stateDir, 'download.xml');
+      copyFileSync(FIXTURE_PATH, p);
+      return p;
+    },
+    redactError: (m) => m.replace('SECRET', '<redacted>'),
+    chains: [
+      { slug: 'base-sepolia', name: 'Base Sepolia', id: 84532, list: C, effects: fakeChain({ version: 7n, addresses: [C] }, sentA) },
+      { slug: 'arb-sepolia', name: 'Arbitrum Sepolia', id: 421614, list: C, effects: fakeChain({ version: 3n, addresses: [] }, sentB, { readCurrent: async () => { throw new Error('RPC https://x/SECRET down'); } }) },
+      { slug: 'sepolia', name: 'Sepolia', id: 11155111, skipped: 'no SanctionsList is recorded' },
+    ],
+  });
+  assert.equal(downloads, 1, 'the publication is downloaded and parsed once');
+  assert.equal(report.status, 'failed');
+  assert.equal(report.chains['base-sepolia'].status, 'applied');
+  assert.equal(sentA.length, 1);
+  assert.equal(report.chains['arb-sepolia'].status, 'refused');
+  assert.equal(report.chains['arb-sepolia'].error, 'RPC https://x/<redacted> down');
+  assert.equal(report.chains.sepolia.status, 'skipped');
+  const text = summarize(report);
+  assert.match(text, /Arbitrum Sepolia: REFUSED, nothing sent/);
+  assert.match(text, /Sepolia: skipped: no SanctionsList/);
 });
 
 test('run: a stop part-way keeps what was already sent, and says what may still land', async () => {
   // Not final: the transaction is included, and the report says so.
-  const progress = [];
-  await assert.rejects(
-    run({ version: 7n, addresses: [C] }, { progress, confirmFinal: async () => { throw new Error('not final after 40 minutes'); } }),
-    /not final/,
-  );
-  assert.equal(progress.length, 1);
-  assert.equal(progress[0].state, 'included');
-  let failed = failureReport('not final after 40 minutes', progress);
-  assert.equal(failed.status, 'stopped');
-  assert.match(summarizeFailure(failed), /included, NOT yet final/);
+  let { chain } = await run({ version: 7n, addresses: [C] }, { confirmFinal: async () => { throw new Error('not final after 40 minutes'); } });
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.sent.length, 1);
+  assert.equal(chain.sent[0].state, 'included');
+  assert.match(summarizeFailure(chain), /included, NOT yet final/);
 
   // Broadcast, then the receipt wait timed out: the hash is known, the outcome is not.
-  const progress2 = [];
-  await assert.rejects(
-    run({ version: 7n, addresses: [C] }, {
-      progress: progress2,
-      send: async (call, { onSubmitted }) => {
-        onSubmitted(`0x${'e'.repeat(64)}`);
-        throw new Error('receipt timeout');
-      },
-    }),
-    /receipt timeout/,
-  );
-  failed = failureReport('receipt timeout', progress2);
-  assert.equal(failed.sent[0].tx, `0x${'e'.repeat(64)}`);
-  assert.match(summarizeFailure(failed), /may still land/);
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'e'.repeat(64)}`);
+      throw new Error('receipt timeout');
+    },
+  }));
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.sent[0].tx, `0x${'e'.repeat(64)}`);
+  assert.match(summarizeFailure(chain), /may still land/);
 
   // Nothing broadcast: a plain refusal.
-  failed = failureReport('x', [{ tx: null, state: 'submitting' }]);
+  const failed = failureReport('x', [{ tx: null, state: 'submitting' }]);
   assert.equal(failed.status, 'refused');
   assert.match(summarizeFailure(failed), /REFUSED, nothing sent/);
 });
@@ -141,20 +181,44 @@ test('keepPublication: keeps the newest N publications', () => {
   assert.deepEqual(readdirSync(dir).sort(), ['last-run.json', `sdn-20260103-${'a'.repeat(11)}3.xml`, `sdn-20260307-${'b'.repeat(12)}.xml`]);
 });
 
-test('config: every missing setting is named; mainnets and bad keys are refused', () => {
-  assert.throws(() => readConfig({}), /SANCTIONS_ADDER_RPC_URL, SANCTIONS_ADDER_CHAIN_ID, SANCTIONS_LIST_ADDRESS, SANCTIONS_ADDER_PRIVATE_KEY, SANCTIONS_ADDER_STATE_DIR/);
-  const env = { SANCTIONS_ADDER_RPC_URL: 'https://rpc', SANCTIONS_ADDER_CHAIN_ID: '84532', SANCTIONS_LIST_ADDRESS: C.toLowerCase(), SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/var/lib/x' };
+test('config: one file for every chain; every missing setting is named; mainnet RPCs and bad keys are refused', () => {
+  assert.throws(() => readConfig({}), /SANCTIONS_ADDER_PRIVATE_KEY, an RPC for at least one chain \(RPC_BASE_SEPOLIA, RPC_ARB_SEPOLIA.*SANCTIONS_ADDER_STATE_DIR/);
+  const env = { RPC_BASE_SEPOLIA: 'https://base', RPC_ARB_SEPOLIA: 'https://arb', SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/var/lib/x' };
   const cfg = readConfig(env);
-  assert.equal(cfg.chainId, 84532n);
-  assert.equal(cfg.list, C);
+  assert.deepEqual(cfg.chains.map((c) => [c.id, c.rpc]), [[84532, 'https://base'], [421614, 'https://arb']]);
   assert.equal(cfg.stateDir, '/var/lib/x');
   assert.equal(cfg.maxRemove, 10);
-  assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_CHAIN_ID: '8453' }), /testnets only/);
-  assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_CHAIN_ID: '1' }), /testnets only/);
+  // A copy of keeper.env carries mainnet RPCs: they are ignored and named, never used.
+  const withMainnet = readConfig({ ...env, RPC_BASE: 'https://mainnet', RPC_ETH: 'https://eth' });
+  assert.deepEqual(withMainnet.chains.map((c) => c.id), [84532, 421614]);
+  assert.deepEqual(withMainnet.ignoredMainnetRpcs, ['RPC_BASE', 'RPC_ETH']);
+  assert.throws(() => readConfig({ RPC_BASE: 'https://mainnet', SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/x' }), /an RPC for at least one chain/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: '0x12' }), /32-byte hex key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'0'.repeat(64)}` }), /not a valid secp256k1 key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'f'.repeat(64)}` }), /not a valid secp256k1 key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_MAX_REMOVE: '-1' }), /non-negative decimal/);
+});
+
+test('chains: testnets only, and the list address comes from deployments.json, never configuration', () => {
+  const mainnets = [1, 8453, 42161, 10, 56, 137, 1101];
+  for (const c of ADDER_CHAINS) assert.ok(!mainnets.includes(c.id), `${c.name} is a testnet`);
+  const plan = planChains(readConfig({ RPC_BASE_SEPOLIA: 'https://b', RPC_SEPOLIA: 'https://s', SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/x' }).chains, {
+    84532: { sanctionsList: C.toLowerCase() },
+    11155111: {},
+  });
+  assert.equal(plan[0].list, C);
+  assert.equal(plan[0].skipped, undefined);
+  assert.match(plan[1].skipped, /no SanctionsList is recorded for chain 11155111/);
+  // The release's own artifact loads, keyed by chain id.
+  assert.ok(loadDeployments()['84532']);
+});
+
+test('env template: names every setting the runner reads', () => {
+  const template = readFileSync(join(HERE, '..', '..', '..', 'ops', 'sanctions-adder', 'sanctions-adder.env.example'), 'utf8');
+  const names = new Set([...template.matchAll(/^([A-Z0-9_]+)=/gm)].map((m) => m[1]));
+  for (const k of ['SANCTIONS_ADDER_PRIVATE_KEY', ...ADDER_CHAINS.map((c) => c.rpcEnv), 'SANCTIONS_ADDER_KEEP_FILES', 'SANCTIONS_ADDER_MAX_REMOVE', 'TG_OPS_BOT_TOKEN', 'TG_OPS_CHAT_ID']) {
+    assert.ok(names.has(k), `the template names ${k}`);
+  }
 });
 
 test('notifyOps: skips without a token, never throws, reports a failed delivery, never leaks the token', async () => {

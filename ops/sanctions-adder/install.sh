@@ -14,9 +14,10 @@
 # updates, so the code it runs is the commit an operator named, and that
 # commit must be on main (reviewed). Nothing here follows a branch.
 #
-# Safe to run again. It never overwrites an env file and never ENABLES or
-# STARTS a timer: enabling a chain's timer is the cutover in the README, done
-# once its env file is filled in and its key appointed adder.
+# Safe to run again. It creates /etc/vaipakam/sanctions-adder.env from the
+# template only when it does not exist, never overwrites it, and never
+# ENABLES or STARTS the timer: enabling it is the cutover in the README, done
+# once the env file is filled in and the key appointed adder on each list.
 #
 # Needs systemd 247+ (LoadCredential=) and Node 22 at /usr/local/bin/node. On
 # the keeper machine the keeper's own install provides that Node.
@@ -26,7 +27,7 @@ main() {
   local commit="${1:-}"
   local REPO_URL="https://github.com/vaipakam/vaipakam.git"
   local ROOT=/opt/vaipakam-sanctions-adder
-  local ETC=/etc/vaipakam/sanctions-adder
+  local ENV_FILE=/etc/vaipakam/sanctions-adder.env
 
   log() { echo "[sanctions-adder-install] $*"; }
   die() { echo "[sanctions-adder-install] $*" >&2; exit 1; }
@@ -95,8 +96,8 @@ main() {
   previous="$(basename "$(readlink "$ROOT/current" 2>/dev/null || true)")"
 
   # Units from the release itself, so they always match the code they run.
-  install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder@.service" /etc/systemd/system/
-  install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder@.timer" /etc/systemd/system/
+  install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder.service" /etc/systemd/system/
+  install -m 644 "$rel/ops/sanctions-adder/vaipakam-sanctions-adder.timer" /etc/systemd/system/
   ln -sfn "$rel" "$ROOT/current.new"
   mv -T "$ROOT/current.new" "$ROOT/current"
   systemctl daemon-reload
@@ -110,14 +111,29 @@ main() {
   done
   rm -rf "$ROOT"/releases/.build.*
 
-  install -d -m 700 "$ETC"
-  install -m 600 "$rel/ops/sanctions-adder/adder.env.example" "$ETC/example.env.template"
+  # The settings: ONE file for every chain, beside the keeper's keeper.env
+  # and held the same way (/etc/vaipakam root-only at 750, the file 0600).
+  if [ -L /etc/vaipakam ] || [ -L "$ENV_FILE" ]; then
+    die "/etc/vaipakam and $ENV_FILE must not be links; fix them by hand and re-run"
+  fi
+  install -d -o root -g root -m 750 /etc/vaipakam
+  if [ ! -e "$ENV_FILE" ]; then
+    install -m 600 -o root -g root "$rel/ops/sanctions-adder/sanctions-adder.env.example" "$ENV_FILE"
+    log "created $ENV_FILE from the template; fill it in before the cutover"
+  fi
+  [ -f "$ENV_FILE" ] || die "$ENV_FILE must be a regular file; fix it by hand and re-run"
+  # Enforced on every run, not only at creation: a file made earlier by hand
+  # keeps its contents but not looser access. A fresh root-owned copy
+  # replaces it, so a descriptor someone held on the old inode reaches
+  # nothing new.
+  install -m 600 -o root -g root "$ENV_FILE" /etc/vaipakam/.sanctions-adder.env.new
+  mv -Tf /etc/vaipakam/.sanctions-adder.env.new "$ENV_FILE"
 
   log "release $commit is current."
-  log "per chain, once (see README §3):"
-  log "  cp $ETC/example.env.template $ETC/<chain-slug>.env && chmod 600 $ETC/<chain-slug>.env  # fill it in"
-  log "  systemctl start vaipakam-sanctions-adder@<chain-slug>.service   # one run now"
-  log "  systemctl enable --now vaipakam-sanctions-adder@<chain-slug>.timer"
+  log "once (see README §3):"
+  log "  sudoedit $ENV_FILE    # the adder key and one RPC per chain"
+  log "  systemctl start vaipakam-sanctions-adder.service   # one run now"
+  log "  systemctl enable --now vaipakam-sanctions-adder.timer"
 }
 
 main "$@"

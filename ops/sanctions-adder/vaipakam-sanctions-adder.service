@@ -1,10 +1,9 @@
-# One run of the sanctions adder for one chain (ops/sanctions-adder/README.md).
-# The instance name is the chain's slug, e.g. vaipakam-sanctions-adder@base-sepolia.
+# One run of the sanctions adder (ops/sanctions-adder/README.md).
 #
-# A oneshot: it downloads OFAC's publication, applies its additions to that
-# chain's SanctionsList with the adder key, reports, and exits. The timer of
-# the same instance starts it once a day; `systemctl start` runs it now.
-# Logs: journalctl -u vaipakam-sanctions-adder@base-sepolia
+# A oneshot: it downloads and parses OFAC's publication once, applies its
+# additions to every configured chain's SanctionsList with the adder key,
+# reports, and exits. The timer starts it once a day; `systemctl start` runs
+# it now. Logs: journalctl -u vaipakam-sanctions-adder
 #
 # The env file stays root-only (0600). LoadCredential hands a copy to this
 # run's dynamic user alone, so no long-lived account owns the adder key, and
@@ -12,7 +11,7 @@
 # source of settings. The keeper's key and env file are never readable here.
 
 [Unit]
-Description=Vaipakam sanctions adder (%i)
+Description=Vaipakam sanctions adder
 Documentation=https://github.com/vaipakam/vaipakam/blob/main/ops/sanctions-adder/README.md
 Wants=network-online.target
 After=network-online.target
@@ -20,10 +19,10 @@ After=network-online.target
 [Service]
 Type=oneshot
 DynamicUser=yes
-StateDirectory=vaipakam-sanctions-adder/%i
+StateDirectory=vaipakam-sanctions-adder
 StateDirectoryMode=0700
-LoadCredential=adder.env:/etc/vaipakam/sanctions-adder/%i.env
-ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-adder/%i /usr/local/bin/node --max-old-space-size=192 --env-file=%d/adder.env /opt/vaipakam-sanctions-adder/current/packages/contracts/scripts/sanctions-adder.mjs
+LoadCredential=sanctions-adder.env:/etc/vaipakam/sanctions-adder.env
+ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-adder /usr/local/bin/node --max-old-space-size=192 --env-file=%d/sanctions-adder.env /opt/vaipakam-sanctions-adder/current/packages/contracts/scripts/sanctions-adder.mjs
 # A run parses the 128 MB publication in pieces (about 150 MB resident).
 # The cap makes an unexpected growth fail THIS run, never the keeper beside
 # it, and the weights below give the keeper the machine whenever both want it.
@@ -31,8 +30,9 @@ MemoryMax=384M
 CPUWeight=20
 IOWeight=20
 Nice=10
-# A download, a parse, a few transactions, and up to 40 minutes waiting for
-# the last of them to be final (FINALITY_TIMEOUT_MS in the runner).
+# A download, a parse, a few transactions per chain, and up to 40 minutes
+# waiting for the last of them to be final (FINALITY_TIMEOUT_MS in the
+# runner). The chains run concurrently, so the wait does not add up.
 TimeoutStartSec=75min
 
 NoNewPrivileges=yes

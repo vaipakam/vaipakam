@@ -9,43 +9,49 @@
  * adder half, run once a day by a systemd timer on an always-on machine
  * (ops/sanctions-adder/). Each run:
  *
- *   1. downloads Treasury's SDN Advanced XML to the state directory and keeps
- *      it, named by publication date and hash, as the record of what was
- *      parsed — the remover's later run needs the SAME bytes;
- *   2. parses it in pieces with the diff tool's parser (never the whole file
- *      in memory), and reads the current list at the finalized block;
- *   3. builds the update in ADDER-ONLY mode: every addition, in batches, and
- *      for a new publication its delistings DECLARED outstanding on-chain but
- *      not applied — the list then says which publication it follows and what
- *      of it awaits the remover;
- *   4. simulates and sends each call in order, waiting for each to be
- *      included, then for the last to be final and every one still in its
- *      block — only then is the run "applied";
- *   5. reports: the journal always, the ops Telegram chat when configured,
- *      and last-run.json, which also records whether the alert was
- *      delivered. A run that stops part-way names what it already sent.
+ *   1. downloads Treasury's SDN Advanced XML ONCE to the state directory and
+ *      keeps it, named by publication date and hash, as the record of what
+ *      was parsed — the remover's later run needs the SAME bytes;
+ *   2. parses it once, in pieces (never the whole file in memory), so every
+ *      chain is updated from the same publication;
+ *   3. for every configured chain, concurrently and independently: reads the
+ *      list at the finalized block, builds the update in ADDER-ONLY mode
+ *      (every addition, in batches, and for a new publication its delistings
+ *      DECLARED outstanding on-chain but not applied), simulates and sends
+ *      each call, then waits for the last to be final and every one still
+ *      in its block — only then is that chain "applied";
+ *   4. reports once: the journal always, the ops Telegram chat when
+ *      configured, and last-run.json, with one section per chain and whether
+ *      the alert was delivered. A chain that stops part-way names what it
+ *      already sent; one chain's failure never stops another's update.
  *      Outstanding delistings are reported on every run until the remover
  *      has applied them, since each is a compliance action someone owes.
+ *
+ * Which chains run: every chain in {@link ADDER_CHAINS} whose RPC is set
+ * (`RPC_<CHAIN>`, the keeper's names) and whose `sanctionsList` this release's
+ * deployments.json records. The list address is never configured by hand: it
+ * comes from the committed, reviewed artifact, as the keeper's Diamond does.
+ * A chain with an RPC but no recorded list is reported as skipped.
  *
  * What it refuses, and leaves for a person: every refusal the diff tool makes
  * (a malformed or moved record, an unwitnessed delisting, too many
  * delistings, an older or conflicting publication), a list that moved past
- * the finalized block, a key that is not the list's adder, and any chain the
- * Diamond's testnet rule does not name — the mainnet adder host is not
- * decided (#2443). It never delists and never rolls back.
+ * the finalized block, a key that is not the list's adder, and an RPC that
+ * serves a different chain. {@link ADDER_CHAINS} holds testnets only: the
+ * mainnet adder host is not decided (#2443). It never delists and never
+ * rolls back.
  *
- * Configuration is environment only (ops/sanctions-adder/adder.env.example):
- *   SANCTIONS_ADDER_RPC_URL      RPC for the list's chain (carries an API key)
- *   SANCTIONS_ADDER_CHAIN_ID     that chain's id, checked against the RPC
- *   SANCTIONS_LIST_ADDRESS       the deployed SanctionsList
+ * Configuration is environment only, one file for every chain
+ * (ops/sanctions-adder/sanctions-adder.env.example):
  *   SANCTIONS_ADDER_PRIVATE_KEY  the adder key; nothing else may hold it
+ *   RPC_<CHAIN>                  one per chain to update (carries an API key)
  *   SANCTIONS_ADDER_STATE_DIR    where publications and the last report go
  *                                (default: $STATE_DIRECTORY, set by systemd)
  *   SANCTIONS_ADDER_KEEP_FILES   publications kept on disk (default 14)
  *   SANCTIONS_ADDER_MAX_REMOVE   delistings a publication may declare (default 10)
  *   TG_OPS_BOT_TOKEN, TG_OPS_CHAT_ID  the ops-internal bot; optional
  */
-import { mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createPublicClient, createWalletClient, defineChain, getAddress, http } from 'viem';
@@ -62,11 +68,24 @@ import {
 } from './ofac-sanctions-diff.mjs';
 
 /**
- * The chains this runner may sign on: the same set as the contracts'
- * `TestnetChains.isTestnet`. A mainnet adder needs a hardened host, which is
- * not decided (#2443), so a mainnet id is refused rather than configured.
+ * The chains this runner may sign on, with the RPC variable each reads — the
+ * keeper's names, so one machine's operator learns one set. Testnets only, all
+ * within the contracts' `TestnetChains.isTestnet`: a mainnet adder needs a
+ * hardened host, which is not decided (#2443), so no mainnet has a row and
+ * none can be configured.
  */
-export const ADDER_TESTNET_CHAIN_IDS = Object.freeze([84532n, 11155111n, 421614n, 11155420n, 80002n, 97n, 31337n]);
+export const ADDER_CHAINS = Object.freeze([
+  { id: 84532, slug: 'base-sepolia', name: 'Base Sepolia', rpcEnv: 'RPC_BASE_SEPOLIA' },
+  { id: 421614, slug: 'arb-sepolia', name: 'Arbitrum Sepolia', rpcEnv: 'RPC_ARB_SEPOLIA' },
+  { id: 11155111, slug: 'sepolia', name: 'Sepolia', rpcEnv: 'RPC_SEPOLIA' },
+  { id: 11155420, slug: 'op-sepolia', name: 'Optimism Sepolia', rpcEnv: 'RPC_OP_SEPOLIA' },
+  { id: 97, slug: 'bnb-testnet', name: 'BNB Testnet', rpcEnv: 'RPC_BNB_TESTNET' },
+]);
+
+/** This release's consolidated deployments, keyed by chain id. */
+export function loadDeployments() {
+  return JSON.parse(readFileSync(new URL('../src/deployments.json', import.meta.url), 'utf8'));
+}
 
 export const DEFAULT_KEEP_FILES = 14;
 
@@ -90,9 +109,21 @@ export function keepPublication(file, dir, publicationDate, hash, keep) {
   return kept;
 }
 
+/** Download (via `fetchSource`), parse and keep one publication. */
+export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP_FILES }) {
+  const downloaded = await fetchSource();
+  const { parsed, sourceHash, byteLength } = await parseSdnAdvancedFile(downloaded);
+  const file = keepPublication(downloaded, stateDir, parsed.publicationDate, sourceHash, keepFiles);
+  return {
+    parsed,
+    sourceHash,
+    source: { file, sha256: sourceHash, bytes: byteLength, publicationId: parsed.publicationId, publicationDate: parsed.publicationDate, evmAddressCount: parsed.addresses.length },
+  };
+}
+
 /**
- * One run, with every effect injected so the rule is testable:
- *   fetchSource()   → path of the freshly downloaded publication
+ * The update of ONE chain's list from an already-parsed publication, with
+ * every effect injected so the rule is testable:
  *   readCurrent()   → the list at the finalized block (readCurrentFromChain)
  *   latestVersion() → `listVersion` at the latest block
  *   isAdder()       → whether the signing key is the list's adder
@@ -106,17 +137,15 @@ export function keepPublication(file, dir, publicationDate, hash, keep) {
  *
  * `progress` (an array the caller passes in and keeps) receives one entry per
  * call as it is broadcast, and each entry's `state` moves from `submitted` to
- * `included` to `final`. The caller reads it after a failure, so a run that
+ * `included` to `final`. The caller reads it after a failure, so a chain that
  * stops part-way says what it already sent and what may still land, rather
  * than reporting a refusal as if nothing had happened.
  *
- * Returns the run's report; throws on any refusal, before anything is sent
+ * Returns the chain's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's.
  */
-export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdder, send, confirmFinal = async () => {}, progress = [], stateDir, keepFiles = DEFAULT_KEEP_FILES, maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
-  const downloaded = await fetchSource();
-  const { parsed, sourceHash, byteLength } = await parseSdnAdvancedFile(downloaded);
-  const file = keepPublication(downloaded, stateDir, parsed.publicationDate, sourceHash, keepFiles);
+export async function runChain({ publication, readCurrent, latestVersion, isAdder, send, confirmFinal = async () => {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+  const { parsed, sourceHash } = publication;
   const current = await readCurrent();
   // The update is computed from the finalized state and sent at the latest
   // block. If the list has moved in between — another update not yet final —
@@ -157,7 +186,6 @@ export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdde
   const last = update.calls[update.calls.length - 1];
   return {
     status: progress.length ? 'applied' : 'up-to-date',
-    source: { file, sha256: sourceHash, bytes: byteLength, publicationId: parsed.publicationId, publicationDate: parsed.publicationDate, evmAddressCount: parsed.addresses.length },
     list: { atVersion: current.version.toString(), finalizedBlock: current.blockNumber?.toString(), count: current.addresses.length },
     publicationOrder: update.order,
     added: update.add,
@@ -167,13 +195,54 @@ export async function runAdder({ fetchSource, readCurrent, latestVersion, isAdde
     pendingAdditions: last ? last.additionsLeft : Number(current.recordedPendingAdditions),
     pendingDelistings: last ? last.delistingsLeft : Number(current.recordedPendingDelistings),
     delistingsForRemover: update.withheldRemovals,
-    malformedValues: parsed.malformed,
   };
 }
 
 /**
- * The report for a run that threw, built from what it had already sent. A
- * run that sent nothing is `refused`; one that broadcast anything is
+ * One run across every configured chain. `chains` is
+ * `[{ slug, name, id, list, skipped?, effects }]`, where `effects` are
+ * {@link runChain}'s injected effects and a chain carrying `skipped` (a
+ * reason) is reported without being touched. The publication is loaded once;
+ * a failure to load it throws, since no chain can proceed. Each chain then
+ * runs concurrently, and a chain that throws is recorded as `refused` or
+ * `stopped` (see {@link failureReport}) without affecting the others.
+ * `redactError` cleans an error message before it is recorded.
+ */
+export async function runAdder({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP_FILES, maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi(), chains, redactError = (m) => m }) {
+  const publication = await loadPublication({ fetchSource, stateDir, keepFiles });
+  const results = await Promise.all(
+    chains.map(async (c) => {
+      const head = { name: c.name, chainId: c.id, listAddress: c.list ?? null };
+      if (c.skipped) return [c.slug, { ...head, status: 'skipped', reason: c.skipped }];
+      const progress = [];
+      try {
+        return [c.slug, { ...head, ...(await runChain({ publication, ...c.effects, progress, maxRemove, abi })) }];
+      } catch (e) {
+        return [c.slug, { ...head, ...failureReport(redactError(String(e?.message ?? e)), progress) }];
+      }
+    }),
+  );
+  const byChain = Object.fromEntries(results);
+  const statuses = Object.values(byChain).map((r) => r.status);
+  return {
+    // `ok` only when every chain that ran is applied or up to date; a skipped
+    // chain is stated in its section, not counted as a failure.
+    status: statuses.some((s) => s === 'refused' || s === 'stopped') ? 'failed' : 'ok',
+    source: publication.source,
+    malformedValues: publication.parsed.malformed,
+    chains: byChain,
+  };
+}
+
+/** Whether a run's outcome calls for an ops alert, not just the journal. */
+export function needsAlert(report) {
+  if (report.status !== 'ok' || report.malformedValues?.length) return true;
+  return Object.values(report.chains ?? {}).some((c) => c.status === 'applied' || c.pendingDelistings > 0);
+}
+
+/**
+ * The report for a chain whose update threw, built from what it had already
+ * sent. A chain that sent nothing is `refused`; one that broadcast anything is
  * `stopped`, and says per transaction whether it is final, included but not
  * yet final, or broadcast with no receipt seen (it may still land).
  */
@@ -182,30 +251,40 @@ export function failureReport(reason, progress) {
   return { status: sent.length ? 'stopped' : 'refused', error: reason, sent };
 }
 
-/** The text a person reads for a failed run. */
+/** The lines a person reads for one chain that did not complete. */
 export function summarizeFailure(report) {
   if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
   const word = { final: 'final', included: 'included, NOT yet final', submitted: 'broadcast, no receipt yet — it may still land' };
   const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
   for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
-  lines.push('Check these on-chain before the next run; it rebuilds from the finalized list either way.');
+  lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');
   return lines.join('\n');
 }
 
-/** The one-paragraph summary a person reads, in the journal and the chat. */
+/** The lines a person reads for one chain. */
+export function summarizeChain(c, sourceFile) {
+  if (c.status === 'skipped') return `skipped: ${c.reason}`;
+  if (c.status === 'refused' || c.status === 'stopped') return summarizeFailure(c);
+  const lines = [];
+  if (c.status === 'applied') {
+    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s), all final: ${c.sent.map((e) => e.tx).join(', ')}.`);
+  } else lines.push('already follows this publication; nothing sent.');
+  if (c.pendingDelistings > 0) {
+    lines.push(
+      `${c.pendingDelistings} delisting(s) await the remover (the Safe)${c.delistingsForRemover.length ? `: ${c.delistingsForRemover.join(', ')}` : ''}. ` +
+        `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${sourceFile} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`,
+    );
+  }
+  return lines.join('\n  ');
+}
+
+/** The summary a person reads, in the journal and the chat: the
+ *  publication, then one section per chain. */
 export function summarize(report) {
   const s = report.source;
   const lines = [`OFAC ${s.publicationId} (sha256 ${s.sha256.slice(0, 18)}…): ${s.evmAddressCount} EVM addresses.`];
-  if (report.status === 'applied') {
-    lines.push(`Listed ${report.added.length} new address(es) in ${report.sent.length} transaction(s), all final: ${report.sent.map((c) => c.tx).join(', ')}.`);
-  } else lines.push(`The list already follows this publication; nothing sent.`);
-  if (report.pendingDelistings > 0) {
-    lines.push(
-      `${report.pendingDelistings} delisting(s) await the remover (the Safe)${report.delistingsForRemover.length ? `: ${report.delistingsForRemover.join(', ')}` : ''}. ` +
-        `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${report.source.file} --confirm-delist … and send its remover calls from the Safe.`,
-    );
-  }
-  if (report.malformedValues.length) lines.push(`${report.malformedValues.length} malformed digital-currency value(s) need review: ${report.malformedValues.map((m) => JSON.stringify(m.value)).join(', ')}.`);
+  for (const [slug, c] of Object.entries(report.chains)) lines.push(`${c.name ?? slug}: ${summarizeChain(c, s.file)}`);
+  if (report.malformedValues?.length) lines.push(`${report.malformedValues.length} malformed digital-currency value(s) need review: ${report.malformedValues.map((m) => JSON.stringify(m.value)).join(', ')}.`);
   return lines.join('\n');
 }
 
@@ -250,23 +329,25 @@ export function redact(text, secrets) {
   return out;
 }
 
+/** The keeper's mainnet RPC names. A copy of keeper.env may carry them; the
+ *  adder ignores them and says so, since it runs on testnets only. */
+const MAINNET_RPC_ENVS = Object.freeze(['RPC_BASE', 'RPC_ETH', 'RPC_ARB', 'RPC_OP', 'RPC_BNB', 'RPC_ZKEVM']);
+
 /** Read and check the configuration; throws naming every missing setting. */
 export function readConfig(env) {
-  const missing = ['SANCTIONS_ADDER_RPC_URL', 'SANCTIONS_ADDER_CHAIN_ID', 'SANCTIONS_LIST_ADDRESS', 'SANCTIONS_ADDER_PRIVATE_KEY'].filter((k) => !env[k]);
+  const missing = [];
+  if (!env.SANCTIONS_ADDER_PRIVATE_KEY) missing.push('SANCTIONS_ADDER_PRIVATE_KEY');
+  const chains = ADDER_CHAINS.filter((c) => env[c.rpcEnv]).map((c) => ({ ...c, rpc: env[c.rpcEnv] }));
+  if (chains.length === 0) missing.push(`an RPC for at least one chain (${ADDER_CHAINS.map((c) => c.rpcEnv).join(', ')})`);
   const stateDir = env.SANCTIONS_ADDER_STATE_DIR || env.STATE_DIRECTORY;
   if (!stateDir) missing.push('SANCTIONS_ADDER_STATE_DIR (or systemd StateDirectory=)');
   if (missing.length) throw new Error(`not configured: ${missing.join(', ')}`);
-  const chainId = parseUintArg('SANCTIONS_ADDER_CHAIN_ID', env.SANCTIONS_ADDER_CHAIN_ID, { min: 1n });
-  if (!ADDER_TESTNET_CHAIN_IDS.includes(chainId)) {
-    throw new Error(`chain ${chainId} refused: the adder runs on testnets only until a hardened mainnet host is decided (#2443)`);
-  }
   if (!/^0x[0-9a-fA-F]{64}$/.test(env.SANCTIONS_ADDER_PRIVATE_KEY)) throw new Error('SANCTIONS_ADDER_PRIVATE_KEY is not a 32-byte hex key');
   const scalar = BigInt(env.SANCTIONS_ADDER_PRIVATE_KEY);
   if (scalar === 0n || scalar >= SECP256K1_ORDER) throw new Error('SANCTIONS_ADDER_PRIVATE_KEY is not a valid secp256k1 key (zero, or not below the curve order)');
   return {
-    rpc: env.SANCTIONS_ADDER_RPC_URL,
-    chainId,
-    list: getAddress(env.SANCTIONS_LIST_ADDRESS),
+    chains,
+    ignoredMainnetRpcs: MAINNET_RPC_ENVS.filter((k) => env[k]),
     privateKey: env.SANCTIONS_ADDER_PRIVATE_KEY,
     // Colon-separated by systemd when several are configured; ours is one.
     stateDir: stateDir.split(':')[0],
@@ -275,6 +356,21 @@ export function readConfig(env) {
     tgToken: env.TG_OPS_BOT_TOKEN || '',
     tgChatId: env.TG_OPS_CHAT_ID || '',
   };
+}
+
+/**
+ * Each configured chain with the list this release records for it, or the
+ * reason it is skipped. The address comes only from deployments.json — the
+ * committed, reviewed artifact — never from configuration.
+ */
+export function planChains(chains, deployments) {
+  return chains.map((c) => {
+    const recorded = deployments[String(c.id)]?.sanctionsList;
+    if (!recorded) {
+      return { ...c, skipped: `no SanctionsList is recorded for chain ${c.id} in this release's deployments.json — deploy one (DeploySanctionsList), export deployments, merge, and install that commit` };
+    }
+    return { ...c, list: getAddress(recorded) };
+  });
 }
 
 /**
@@ -294,97 +390,117 @@ async function check() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** {@link runChain}'s effects for one chain, against its RPC. */
+function chainEffects(c, account, abi) {
+  const chain = defineChain({
+    id: c.id,
+    name: c.name,
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [c.rpc] } },
+  });
+  const client = createPublicClient({ chain, transport: http(c.rpc) });
+  const wallet = createWalletClient({ account, chain, transport: http(c.rpc) });
+  return {
+    // Checks the RPC serves chain `c.id` before reading anything.
+    readCurrent: () => readCurrentFromChain(client, c.list, abi, BigInt(c.id)),
+    latestVersion: () => client.readContract({ address: c.list, abi, functionName: 'listVersion' }),
+    isAdder: () => client.readContract({ address: c.list, abi, functionName: 'isAdder', args: [account.address] }),
+    send: async (call, { onSubmitted }) => {
+      // Simulated first: a call the contract would refuse is reported with
+      // its revert reason instead of spending gas.
+      await client.call({ account: account.address, to: c.list, data: call.calldata });
+      const hash = await wallet.sendTransaction({ to: c.list, data: call.calldata });
+      onSubmitted(hash);
+      const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
+      if (receipt.status !== 'success') throw new Error(`applyUpdate at version ${call.expectedVersion} reverted in ${hash}`);
+      console.log(`${c.name}: applyUpdate at version ${call.expectedVersion}: +${call.add.length}, included in ${hash} (block ${receipt.blockNumber})`);
+      return { hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash };
+    },
+    // "Applied" means final: wait for the finalized block to pass the last
+    // inclusion, then check every transaction is still in the block it was
+    // included in. A reorg that dropped one stops the chain as such.
+    confirmFinal: async (entries) => {
+      const highest = entries.reduce((m, e) => (BigInt(e.blockNumber) > m ? BigInt(e.blockNumber) : m), 0n);
+      const deadline = Date.now() + FINALITY_TIMEOUT_MS;
+      for (;;) {
+        const finalized = await client.getBlock({ blockTag: 'finalized' });
+        if (finalized.number >= highest) break;
+        if (Date.now() > deadline) throw new Error(`not final after ${FINALITY_TIMEOUT_MS / 60_000} minutes (finalized block ${finalized.number}, needed ${highest})`);
+        await sleep(15_000);
+      }
+      for (const e of entries) {
+        const receipt = await client.getTransactionReceipt({ hash: e.tx }).catch(() => null);
+        if (!receipt || receipt.blockHash !== e.blockHash || receipt.status !== 'success') {
+          throw new Error(`${e.tx} is no longer in block ${e.blockNumber} at finality — it was reorganized out`);
+        }
+      }
+    },
+  };
+}
+
 async function main() {
   if (process.argv.includes('--check')) return check();
   // Settings that cannot be read leave nowhere to report but the journal:
   // there is no state directory or chat to trust yet.
   const cfg = readConfig(process.env);
-  const secrets = [cfg.rpc, cfg.privateKey, cfg.tgToken];
+  const secrets = [...cfg.chains.map((c) => c.rpc), cfg.privateKey, cfg.tgToken];
+  const clean = (m) => redact(m, secrets);
   if (!cfg.tgToken || !cfg.tgChatId) console.log('TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset: this run reports to the journal only.');
+  if (cfg.ignoredMainnetRpcs.length) console.log(`ignored ${cfg.ignoredMainnetRpcs.join(', ')}: the adder runs on testnets only until a hardened mainnet host is decided (#2443).`);
   mkdirSync(cfg.stateDir, { recursive: true });
 
   // EVERY outcome leaves through here: the journal, the chat when the
   // outcome calls for it, and last-run.json — written after the chat, so it
-  // records whether the alert was delivered. A failed delivery also fails
-  // the unit, so it shows in `systemctl --failed` rather than nowhere.
+  // records whether the alert was delivered. The unit fails when any chain
+  // failed or the alert was not delivered, so either shows in
+  // `systemctl --failed` rather than nowhere.
   const finish = async (report, text, alert) => {
     console.log(text);
     const delivery = alert ? await notifyOps({ token: cfg.tgToken, chatId: cfg.tgChatId, text }) : { skipped: true, reason: 'nothing to alert' };
     writeFileSync(join(cfg.stateDir, 'last-run.json'), `${JSON.stringify({ at: new Date().toISOString(), ...report, alert: delivery }, null, 2)}\n`);
-    if (delivery.delivered === false) throw new Error(`the run finished as "${report.status}", but its ops alert was not delivered: ${delivery.reason}`);
+    const problems = [];
+    if (report.status !== 'ok') problems.push(`the run finished as "${report.status}"`);
+    if (delivery.delivered === false) problems.push(`its ops alert was not delivered: ${delivery.reason}`);
+    if (problems.length) throw new Error(problems.join('; '));
   };
 
-  const progress = [];
+  const plan = planChains(cfg.chains, loadDeployments());
+  if (plan.every((c) => c.skipped)) {
+    // Nothing to update: stop before downloading 128 MB for no chain.
+    const report = { status: 'refused', error: 'no configured chain has a SanctionsList recorded in this release', chains: Object.fromEntries(plan.map((c) => [c.slug, { name: c.name, chainId: c.id, listAddress: null, status: 'skipped', reason: c.skipped }])) };
+    return finish(report, `REFUSED, nothing sent: ${report.error}.\n${plan.map((c) => `${c.name}: skipped: ${c.skipped}`).join('\n')}`, true);
+  }
+
   let report;
   try {
     const abi = sanctionsListAbi();
     const account = privateKeyToAccount(cfg.privateKey);
-    const chain = defineChain({
-      id: Number(cfg.chainId),
-      name: `chain ${cfg.chainId}`,
-      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-      rpcUrls: { default: { http: [cfg.rpc] } },
-    });
-    const client = createPublicClient({ chain, transport: http(cfg.rpc) });
-    const wallet = createWalletClient({ account, chain, transport: http(cfg.rpc) });
     report = await runAdder({
       stateDir: cfg.stateDir,
       keepFiles: cfg.keepFiles,
       maxRemove: cfg.maxRemove,
       abi,
-      progress,
+      redactError: clean,
       fetchSource: async () => {
         const part = join(cfg.stateDir, 'download.xml');
         await downloadToFile(OFAC_SDN_ADVANCED_URL, part);
         return part;
       },
-      readCurrent: () => readCurrentFromChain(client, cfg.list, abi, cfg.chainId),
-      latestVersion: () => client.readContract({ address: cfg.list, abi, functionName: 'listVersion' }),
-      isAdder: () => client.readContract({ address: cfg.list, abi, functionName: 'isAdder', args: [account.address] }),
-      send: async (call, { onSubmitted }) => {
-        // Simulated first: a call the contract would refuse is reported with
-        // its revert reason instead of spending gas.
-        await client.call({ account: account.address, to: cfg.list, data: call.calldata });
-        const hash = await wallet.sendTransaction({ to: cfg.list, data: call.calldata });
-        onSubmitted(hash);
-        const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
-        if (receipt.status !== 'success') throw new Error(`applyUpdate at version ${call.expectedVersion} reverted in ${hash}`);
-        console.log(`applyUpdate at version ${call.expectedVersion}: +${call.add.length}, included in ${hash} (block ${receipt.blockNumber})`);
-        return { hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash };
-      },
-      // "Applied" means final: wait for the finalized block to pass the last
-      // inclusion, then check every transaction is still in the block it was
-      // included in. A reorg that dropped one stops the run as such.
-      confirmFinal: async (entries) => {
-        const highest = entries.reduce((m, e) => (BigInt(e.blockNumber) > m ? BigInt(e.blockNumber) : m), 0n);
-        const deadline = Date.now() + FINALITY_TIMEOUT_MS;
-        for (;;) {
-          const finalized = await client.getBlock({ blockTag: 'finalized' });
-          if (finalized.number >= highest) break;
-          if (Date.now() > deadline) throw new Error(`not final after ${FINALITY_TIMEOUT_MS / 60_000} minutes (finalized block ${finalized.number}, needed ${highest})`);
-          await sleep(15_000);
-        }
-        for (const e of entries) {
-          const receipt = await client.getTransactionReceipt({ hash: e.tx }).catch(() => null);
-          if (!receipt || receipt.blockHash !== e.blockHash || receipt.status !== 'success') {
-            throw new Error(`${e.tx} is no longer in block ${e.blockNumber} at finality — it was reorganized out`);
-          }
-        }
-      },
+      chains: plan.map((c) => (c.skipped ? c : { ...c, effects: chainEffects(c, account, abi) })),
     });
   } catch (e) {
-    // The full message (viem's carries the request details), with the RPC
-    // URL, the key and the bot token removed before it is written anywhere.
-    const failed = failureReport(redact(e.message, secrets), progress);
-    await finish(failed, summarizeFailure(failed), true);
-    throw new Error(failed.error);
+    // Only the download, the parse or the setup gets here: each chain's own
+    // failure is recorded in its section instead. Nothing has been sent.
+    // The message has the RPC URLs, the key and the bot token removed.
+    const failed = { status: 'refused', error: clean(e.message), chains: {} };
+    return finish(failed, `REFUSED before any chain, nothing sent: ${failed.error}`, true);
   }
-  await finish(report, summarize(report), report.status === 'applied' || report.pendingDelistings > 0 || report.malformedValues.length > 0);
+  await finish(report, summarize(report), needsAlert(report));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((e) => {
-    console.error(`sanctions-adder: ${redact(e.message, [process.env.SANCTIONS_ADDER_RPC_URL, process.env.SANCTIONS_ADDER_PRIVATE_KEY])}`);
+    console.error(`sanctions-adder: ${redact(e.message, [...ADDER_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_ADDER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);
   });
 }
