@@ -122,7 +122,11 @@ would already have paid irreversibly. So the sale itself is guarded:
 - **The priority perk is counted-only, enforced at configuration.** `setPerkConfig`
   refuses a non-zero `durationSeconds` for `PERK_PRIORITY_ROUTING` by name. No timed
   unit can ever be sold, and no timed sale can lock the id's mode
-  (`PerkModeLocked`) into the wrong shape.
+  (`PerkModeLocked`) into the wrong shape. The refusal applies only when the
+  write would ARM the perk: a zero price (disarm) is accepted at any duration,
+  so a deployment holding a legacy timed configuration of this id can still
+  take its price down, and the deliverability predicate below requires the
+  counted shape, so such a legacy configuration is never sold (Codex #2563 r2).
 - **No sale while the perk can deliver nothing — one deliverability predicate.**
   `purchasePerk` for the priority id refuses by name unless the perk can be
   delivered RIGHT NOW, and "deliverable" is a single predicate shared with the

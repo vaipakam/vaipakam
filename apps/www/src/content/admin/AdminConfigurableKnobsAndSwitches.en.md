@@ -655,11 +655,15 @@ bought untouched.
 filling solver's service capacity would refuse goes through on one of the
 intent owner's credits instead.
 
-- **Counted only.** Its duration must be zero; a timed configuration is
-  refused by name, before anything can be sold.
-- **Never sold while it cannot deliver.** A purchase is refused unless the
-  Solver service-capacity curve is set **and** both lender-intent switches
-  (`partialFillEnabled`, `lenderIntentEnabled`) are on. The check is made at the
+- **Counted only.** Its duration must be zero whenever it is priced; a timed
+  configuration with a price is refused by name, before anything can be sold.
+  Disarming (price zero) is accepted at any duration, so a chain that configured
+  or sold perk 1 as a timed perk before #2550 can still take a stale price down.
+  Such a chain's perk 1 stays timed (the mode is frozen once sold) and can never
+  be sold again.
+- **Never sold while it cannot deliver.** A purchase is refused unless the perk
+  is configured counted, the Solver service-capacity curve is set **and** both
+  lender-intent switches (`partialFillEnabled`, `lenderIntentEnabled`) are on. The check is made at the
   purchase, so turning any of them off later stops sales at once.
 - **Arming sequence — all required, per chain, before a non-zero price:**
   1. the facet change that adds this effect deployed on that chain;

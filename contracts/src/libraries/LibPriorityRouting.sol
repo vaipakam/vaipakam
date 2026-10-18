@@ -61,11 +61,16 @@ library LibPriorityRouting {
     ///         sale guard reads (#2558 r2). The Solver capacity curve must be lit
     ///         (otherwise no fill is ever refused for capacity, so a credit unlocks
     ///         nothing), and intent matching must be live: `matchIntent` reverts
-    ///         outright while either master gate is off. Any future precondition
-    ///         of the fill joins THIS predicate rather than a second check.
+    ///         outright while either master gate is off. The perk must also be
+    ///         configured COUNTED: the fill only ever reads credits, so a timed
+    ///         configuration (possible only as legacy state from before #2550,
+    ///         Codex #2563 r2) would sell an expiry the effect never honours.
+    ///         Any future precondition of the fill joins THIS predicate rather
+    ///         than a second check.
     function deliverable(LibVaipakam.Storage storage s) internal view returns (bool) {
         return s.capacityCurves[uint8(LibVaipakam.ServiceCapacityRole.Solver)].freeTier != 0
-            && s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled;
+            && s.protocolCfg.partialFillEnabled && s.protocolCfg.lenderIntentEnabled
+            && s.perkDurationSeconds[PERK_ID] == 0;
     }
 
     /// @notice Whether `owner`'s intent for the pair is opted in AND `owner` holds a

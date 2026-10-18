@@ -578,6 +578,37 @@ contract PriorityRoutingPerkTest is SetupTest {
         (uint256 p1, uint32 dur1,) = _perk().getPerkConfig(PERK);
         assertEq(p1, PRICE, "perk 1 priced");
         assertEq(dur1, 0, "perk 1 counted");
+        _perk().setPerkConfig(PERK, 0, 3600); // a DISARM is accepted at any duration
+        (p1,,) = _perk().getPerkConfig(PERK);
+        assertEq(p1, 0, "perk 1 disarmed");
+    }
+
+    /// @dev Codex #2563 r2 — LEGACY state: perk 1 configured and SOLD as a timed
+    ///      perk before #2550 (written raw; the current setter refuses it). With
+    ///      every other deliverability condition live, a purchase is refused even
+    ///      on the exact legacy terms, because the effect reads only credits. The
+    ///      stale price can still be taken down on the frozen duration, while
+    ///      re-arming it timed stays refused and the mode lock keeps it timed.
+    ///      Straddle: the same rig configured COUNTED sells.
+    function test_LegacyTimedPerk1_NeverSells_AndCanBeDisarmed() public {
+        _lightCurve();
+        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 3600, 1);
+        uint256 vaultBefore = _vaultVpfi(lender);
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PerkNotDeliverable.selector, PERK));
+        _perk().purchasePerk(PERK, 1, PRICE, 3600);
+        assertEq(_vaultVpfi(lender), vaultBefore, "no VPFI moved on the legacy timed terms");
+
+        _perk().setPerkConfig(PERK, 0, 3600); // disarm on the frozen duration
+        (uint256 p1, uint32 dur1, uint256 sold) = _perk().getPerkConfig(PERK);
+        assertEq(p1, 0, "disarmed");
+        assertEq(dur1, 3600, "mode still frozen");
+        assertEq(sold, 1, "sold count untouched");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PerkPriorityMustBeCounted.selector, uint32(3600)));
+        _perk().setPerkConfig(PERK, PRICE, 3600);
+
+        TestMutatorFacet(address(diamond)).setPerkStateRaw(PERK, PRICE, 0, 0);
+        _expectPurchaseSucceeds();
     }
 
     function _expectNotDeliverableNoMove() internal {

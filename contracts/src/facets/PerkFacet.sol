@@ -157,10 +157,16 @@ contract PerkFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #2550 — the priority-routing perk is COUNTED only (one credit = one
-        // capacity-free fill). Refused HERE, before any unit can be sold, so no
-        // buyer can pay for a timed unit the effect never reads, and no timed sale
-        // can lock the id's mode into the wrong shape.
-        if (perkId == LibPriorityRouting.PERK_ID && durationSeconds != 0) {
+        // capacity-free fill). A timed configuration of it is refused HERE when it
+        // would ARM the perk, before any unit can be sold, so no buyer can pay for
+        // a timed unit the effect never reads, and no timed sale can lock the id's
+        // mode into the wrong shape. DISARMING (price zero) is accepted at any
+        // duration (Codex #2563 r2): a deployment that configured or sold id 1 as
+        // a timed perk before #2550 has its mode frozen by {PerkModeLocked}, and
+        // must still be able to take a stale price down. Such a timed id can never
+        // be bought again either way — `LibPriorityRouting.deliverable` requires
+        // the counted shape.
+        if (perkId == LibPriorityRouting.PERK_ID && durationSeconds != 0 && priceVpfi != 0) {
             revert IVaipakamErrors.PerkPriorityMustBeCounted(durationSeconds);
         }
         // The mode is frozen once anything has been sold. Entitlements are
