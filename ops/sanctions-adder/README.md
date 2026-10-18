@@ -43,7 +43,7 @@ only (mainnet RPC names in the file are ignored, and the journal says so). Every
 before anything is sent — a malformed or moved record, a delisting the file
 does not support, more delistings than the cap, an older or conflicting
 publication — as do a list that moved past the finalized block and a key that
-is not the list's adder.
+is not the list's adder alone (also a remover or the owner).
 
 On a testnet the list is a **rehearsal target**: `DeploySanctionsList` deploys
 it beside the Diamond's `TestnetSanctionsOverlay`, and the Diamond does not

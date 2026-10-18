@@ -30,7 +30,7 @@ function fakeChain(list, sent, overrides = {}) {
       blockNumber: 100n,
     }),
     latestVersion: async () => list.latest ?? list.version,
-    isAdder: async () => list.isAdder ?? true,
+    roles: async () => ({ adder: list.isAdder ?? true, remover: list.isRemover ?? false, owner: list.isOwner ?? false }),
     send: async (call, { onSubmitted }) => {
       sent.push(call);
       const hash = `0x${String(sent.length).padStart(64, '0')}`;
@@ -99,6 +99,26 @@ test('run: refuses a chain before sending when its list moved past the finalized
   r = await run({ version: 7n, addresses: [], isAdder: false });
   assert.match(r.chain.error, /not an adder/);
   assert.equal(r.sent.length, 0);
+  // A key that is ALSO the remover or the owner is refused: the stolen-key
+  // bound (it can list, never delist or appoint) holds only for the adder alone.
+  r = await run({ version: 7n, addresses: [C], isRemover: true });
+  assert.match(r.chain.error, /also the list's remover/);
+  assert.equal(r.sent.length, 0);
+  r = await run({ version: 7n, addresses: [C], isOwner: true });
+  assert.match(r.chain.error, /also the list's owner/);
+  assert.equal(r.sent.length, 0);
+});
+
+test('run: a count of additions the publication does not supply is reported and alerted, never read as current', async () => {
+  const fixtureAddrs = ['0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce')];
+  const { report, chain, sent } = await run({ version: 8n, addresses: fixtureAddrs, date: 20260307, hash: HASH, pendingAdditions: 3 });
+  assert.equal(chain.status, 'up-to-date');
+  assert.equal(sent.length, 0);
+  assert.equal(chain.pendingAdditions, 3);
+  assert.ok(needsAlert({ ...report, malformedValues: [] }));
+  const text = summarize(report);
+  assert.match(text, /still declares 3 addition\(s\) outstanding/);
+  assert.doesNotMatch(text, /already follows this publication/);
 });
 
 test('run: a tool refusal sends nothing', async () => {
@@ -148,6 +168,16 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
   assert.equal(chain.sent.length, 1);
   assert.equal(chain.sent[0].state, 'included');
   assert.match(summarizeFailure(chain), /included, NOT yet final/);
+
+  // Signed and recorded, then the broadcast's reply was lost: still reported by hash.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'d'.repeat(64)}`);
+      throw new Error('socket hang up');
+    },
+  }));
+  assert.equal(chain.status, 'stopped', 'an unknown broadcast is never reported as nothing sent');
+  assert.equal(chain.sent[0].tx, `0x${'d'.repeat(64)}`);
 
   // Broadcast, then the receipt wait timed out: the hash is known, the outcome is not.
   ({ chain } = await run({ version: 7n, addresses: [C] }, {

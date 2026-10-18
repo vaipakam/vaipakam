@@ -36,7 +36,8 @@
  * What it refuses, and leaves for a person: every refusal the diff tool makes
  * (a malformed or moved record, an unwitnessed delisting, too many
  * delistings, an older or conflicting publication), a list that moved past
- * the finalized block, a key that is not the list's adder, and an RPC that
+ * the finalized block, a key that is not the list's adder ALONE (also a
+ * remover or the owner), and an RPC that
  * serves a different chain. {@link ADDER_CHAINS} holds testnets only: the
  * mainnet adder host is not decided (#2443). It never delists and never
  * rolls back.
@@ -54,7 +55,7 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createPublicClient, createWalletClient, defineChain, getAddress, http } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, getAddress, http, keccak256 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
   DEFAULT_MAX_REMOVE,
@@ -126,25 +127,29 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  * every effect injected so the rule is testable:
  *   readCurrent()   → the list at the finalized block (readCurrentFromChain)
  *   latestVersion() → `listVersion` at the latest block
- *   isAdder()       → whether the signing key is the list's adder
+ *   roles()         → the signing key's roles on the list:
+ *                     { adder, remover, owner } (booleans)
  *   send(call, { onSubmitted })
- *                   → simulates, sends and waits for one call to be INCLUDED;
- *                     calls `onSubmitted(hash)` as soon as it is broadcast, and
- *                     returns { hash, blockNumber, blockHash }
+ *                   → simulates, signs and sends one call and waits for it to
+ *                     be INCLUDED; calls `onSubmitted(hash)` with the signed
+ *                     transaction's hash BEFORE broadcasting it, so a send
+ *                     whose outcome is unknown (the connection dropped while
+ *                     the node accepted it) is still reported by hash; returns
+ *                     { hash, blockNumber, blockHash }
  *   confirmFinal(entries)
  *                   → waits until every included call is FINAL and still in
  *                     the block it was included in; throws otherwise
  *
  * `progress` (an array the caller passes in and keeps) receives one entry per
- * call as it is broadcast, and each entry's `state` moves from `submitted` to
- * `included` to `final`. The caller reads it after a failure, so a chain that
+ * call before it is broadcast, and each entry's `state` moves from
+ * `submitted` (signed, broadcast attempted) to `included` to `final`. The caller reads it after a failure, so a chain that
  * stops part-way says what it already sent and what may still land, rather
  * than reporting a refusal as if nothing had happened.
  *
  * Returns the chain's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's.
  */
-export async function runChain({ publication, readCurrent, latestVersion, isAdder, send, confirmFinal = async () => {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+export async function runChain({ publication, readCurrent, latestVersion, roles, send, confirmFinal = async () => {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const current = await readCurrent();
   // The update is computed from the finalized state and sent at the latest
@@ -154,7 +159,14 @@ export async function runChain({ publication, readCurrent, latestVersion, isAdde
   if (BigInt(latest) !== BigInt(current.version)) {
     throw new Error(`the list is at version ${latest} but the finalized block shows ${current.version}; an update is not yet final — the next run retries`);
   }
-  if (!(await isAdder())) throw new Error('the signing key is not an adder of this SanctionsList — the owner appoints it with setAdder');
+  // The key must hold the adder role and nothing more: the runbook's bound on
+  // a stolen key (it can list, never delist or appoint) holds only while
+  // that is true, so a role granted to it later stops the service.
+  const r = await roles();
+  if (!r.adder) throw new Error('the signing key is not an adder of this SanctionsList — the owner appoints it with setAdder');
+  if (r.remover || r.owner) {
+    throw new Error(`the signing key is also the list's ${[r.remover && 'remover', r.owner && 'owner'].filter(Boolean).join(' and ')} — an unattended key must be the adder alone; revoke the extra role (setRemover(key, false), or move ownership) before it runs again`);
+  }
   const update = buildUpdate({
     parsed,
     sourceHash,
@@ -234,10 +246,16 @@ export async function runAdder({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP
   };
 }
 
+/** Whether a chain's list still declares part of its publication
+ *  outstanding — additions or delistings — which someone owes. */
+export function hasOutstanding(c) {
+  return c.pendingAdditions > 0 || c.pendingDelistings > 0;
+}
+
 /** Whether a run's outcome calls for an ops alert, not just the journal. */
 export function needsAlert(report) {
   if (report.status !== 'ok' || report.malformedValues?.length) return true;
-  return Object.values(report.chains ?? {}).some((c) => c.status === 'applied' || c.pendingDelistings > 0);
+  return Object.values(report.chains ?? {}).some((c) => c.status === 'applied' || hasOutstanding(c));
 }
 
 /**
@@ -254,7 +272,7 @@ export function failureReport(reason, progress) {
 /** The lines a person reads for one chain that did not complete. */
 export function summarizeFailure(report) {
   if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
-  const word = { final: 'final', included: 'included, NOT yet final', submitted: 'broadcast, no receipt yet — it may still land' };
+  const word = { final: 'final', included: 'included, NOT yet final', submitted: 'signed and broadcast attempted, no receipt seen — it may still land' };
   const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
   for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
   lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');
@@ -268,7 +286,14 @@ export function summarizeChain(c, sourceFile) {
   const lines = [];
   if (c.status === 'applied') {
     lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s), all final: ${c.sent.map((e) => e.tx).join(', ')}.`);
-  } else lines.push('already follows this publication; nothing sent.');
+  } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
+  if (c.pendingAdditions > 0) {
+    // After this run sent every missing address, a non-zero count means the
+    // list declares more additions than the publication has: an earlier
+    // update overstated it. The adder cannot lower a recorded count, so this
+    // needs the owner.
+    lines.push(`the list still declares ${c.pendingAdditions} addition(s) outstanding that this publication does not supply — an earlier update overstated the count, and the list will not read as current until a person corrects it.`);
+  }
   if (c.pendingDelistings > 0) {
     lines.push(
       `${c.pendingDelistings} delisting(s) await the remover (the Safe)${c.delistingsForRemover.length ? `: ${c.delistingsForRemover.join(', ')}` : ''}. ` +
@@ -404,13 +429,25 @@ function chainEffects(c, account, abi) {
     // Checks the RPC serves chain `c.id` before reading anything.
     readCurrent: () => readCurrentFromChain(client, c.list, abi, BigInt(c.id)),
     latestVersion: () => client.readContract({ address: c.list, abi, functionName: 'listVersion' }),
-    isAdder: () => client.readContract({ address: c.list, abi, functionName: 'isAdder', args: [account.address] }),
+    roles: async () => {
+      const [adder, remover, owner] = await Promise.all([
+        client.readContract({ address: c.list, abi, functionName: 'isAdder', args: [account.address] }),
+        client.readContract({ address: c.list, abi, functionName: 'isRemover', args: [account.address] }),
+        client.readContract({ address: c.list, abi, functionName: 'owner' }),
+      ]);
+      return { adder, remover, owner: getAddress(owner) === account.address };
+    },
     send: async (call, { onSubmitted }) => {
       // Simulated first: a call the contract would refuse is reported with
       // its revert reason instead of spending gas.
       await client.call({ account: account.address, to: c.list, data: call.calldata });
-      const hash = await wallet.sendTransaction({ to: c.list, data: call.calldata });
+      // Signed locally and recorded by hash BEFORE it is broadcast: if the
+      // node accepts it but the reply is lost, the report still names it.
+      const request = await wallet.prepareTransactionRequest({ to: c.list, data: call.calldata });
+      const serializedTransaction = await wallet.signTransaction(request);
+      const hash = keccak256(serializedTransaction);
       onSubmitted(hash);
+      await client.sendRawTransaction({ serializedTransaction });
       const receipt = await client.waitForTransactionReceipt({ hash, timeout: 300_000 });
       if (receipt.status !== 'success') throw new Error(`applyUpdate at version ${call.expectedVersion} reverted in ${hash}`);
       console.log(`${c.name}: applyUpdate at version ${call.expectedVersion}: +${call.add.length}, included in ${hash} (block ${receipt.blockNumber})`);
