@@ -192,14 +192,30 @@ contract ConfigureOracle is Script {
         // deployments/<chain>/addresses.json (with legacy
         // <CHAIN>_DIAMOND_ADDRESS env fallback).
         address diamond = Deployments.readDiamond();
-        address weth = _resolveAddressStrict("WETH_ADDRESS");
-        address uniV3Factory = _resolveAddressStrict("UNISWAP_V3_FACTORY");
-        address ethNumeraireFeed = _resolveAddressStrict("ETH_USD_FEED");
+        // #2548 — read the faucet mock rig FIRST. On a testnet carrying one,
+        // every setting the rig writes comes from its record and the chain's
+        // real-venue env settings are not consulted at all: they are what this
+        // run would discard, so requiring them would make the one-pass
+        // testnet-mocks -> configure flow fail on placeholders nobody needs
+        // (Codex #2552 r2). Every other chain resolves exactly as before.
+        // The rig's wiring IS the intended final state there: the faucet's
+        // liquid tokens are priced by its registry and pooled in its factory
+        // against the WETH it recorded.
+        MockRig memory rig = _readTestnetMockRig();
+        if (rig.adopted) {
+            console.log("Testnet mock rig recorded - adopting every setting it writes (oracle wiring + 0x proxy pair).");
+        }
+        address weth = rig.adopted ? rig.weth : _resolveAddressStrict("WETH_ADDRESS");
+        address uniV3Factory = rig.adopted ? rig.factory : _resolveAddressStrict("UNISWAP_V3_FACTORY");
+        address ethNumeraireFeed = rig.adopted ? rig.ethFeed : _resolveAddressStrict("ETH_USD_FEED");
         // Chainlink Denominations library sentinels — chain-agnostic, but
-        // we let each env decide to allow forks to stub them out.
-        address usdDenom = _resolveAddressStrict("USD_DENOMINATOR");
-        address ethDenom = _resolveAddressStrict("ETH_DENOMINATOR");
+        // we let each env decide to allow forks to stub them out (an adopted
+        // rig keys its feeds by the canonical sentinels, so it uses those).
+        address usdDenom = rig.adopted ? RIG_USD_DENOM : _resolveAddressStrict("USD_DENOMINATOR");
+        address ethDenom = rig.adopted ? RIG_ETH_DENOM : _resolveAddressStrict("ETH_DENOMINATOR");
         // l1 has no sequencer feed; L2s do. Address(0) disables the check.
+        // The rig does not set this one, so it resolves from the env on every
+        // chain.
         address sequencerFeed = _resolveAddress("SEQUENCER_UPTIME_FEED");
         // 0x liquidation route. Optional: REQUIRED where 0x is deployed (all
         // mainnets incl. BNB mainnet, + most testnets), but some chains have no
@@ -213,29 +229,12 @@ contract ConfigureOracle is Script {
         // .env for another chain must NOT be inherited here — that would flip
         // this chain into the "0x configured" branch and skip the swap-adapter
         // safety check, leaving BNB testnet with no usable liquidation route.
-        address zeroEx = _resolveAddressPrefixedOnly("ZEROX_PROXY");
-        address allowanceTarget = _resolveAddressPrefixedOnly("ZEROX_ALLOWANCE_TARGET");
-        // Feed Registry only exists on Ethereum mainnet; optional.
-        address feedRegistry = _resolveAddress("CHAINLINK_REGISTRY");
-
-        // #2548 — a testnet carrying the faucet mock rig keeps the rig's oracle
-        // wiring. The faucet's liquid tokens are priced by the rig's registry
-        // and pooled in its factory against the WETH it recorded, so that
-        // wiring IS the intended final state. Before this, configure set the
-        // chain's real feeds over it and the mock script had to run a second
-        // time to put them back.
-        MockRig memory rig = _readTestnetMockRig();
-        if (rig.adopted) {
-            console.log("Testnet mock rig recorded - adopting every setting it writes (oracle wiring + 0x proxy pair).");
-            weth = rig.weth;
-            uniV3Factory = rig.factory;
-            ethNumeraireFeed = rig.ethFeed;
-            feedRegistry = rig.registry;
-            usdDenom = RIG_USD_DENOM;
-            ethDenom = RIG_ETH_DENOM;
-            zeroEx = rig.zeroEx;
-            allowanceTarget = rig.zeroEx;
-        }
+        // An adopted rig supplies its own `ZeroExProxyMock` as both halves.
+        address zeroEx = rig.adopted ? rig.zeroEx : _resolveAddressPrefixedOnly("ZEROX_PROXY");
+        address allowanceTarget = rig.adopted ? rig.zeroEx : _resolveAddressPrefixedOnly("ZEROX_ALLOWANCE_TARGET");
+        // Feed Registry only exists on Ethereum mainnet; optional (the rig's
+        // mock registry when adopted).
+        address feedRegistry = rig.adopted ? rig.registry : _resolveAddress("CHAINLINK_REGISTRY");
 
         console.log("=== Configure Oracle ===");
         console.log("Chain id:              ", block.chainid);
