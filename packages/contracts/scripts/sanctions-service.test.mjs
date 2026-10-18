@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RpcRequestError } from 'viem';
+import { RpcRequestError, TransactionNotFoundError } from 'viem';
 import { SERVICE_CHAINS, TELEGRAM_MAX_TEXT, checkPrivateKey, configuredChains, createSendQueues, keepPublication, notifyOps, redact, sendTransaction } from './sanctions-service.mjs';
 
 const KEY = `0x${'1'.repeat(64)}`;
@@ -100,12 +100,16 @@ test('notifyOps: skips without a token, never throws, reports a failed delivery,
 test('sendTransaction: every failure says what is known — not sent, refused, reverted — or carries the hash of an unknown one', async () => {
   const account = { address: '0x00000000000000000000000000000000000000aa' };
   const wallet = { prepareTransactionRequest: async () => ({}), signTransaction: async () => '0x01' };
-  const refusal = new RpcRequestError({ body: {}, error: { code: -32000, message: 'nonce too low' }, url: 'http://rpc' });
+  const rpcError = (message) => new RpcRequestError({ body: {}, error: { code: -32000, message }, url: 'http://rpc' });
+  const refusal = rpcError('nonce too low');
   const logs = [{ address: '0x01', data: '0x', topics: [] }];
-  const make = ({ sendError, known = false, simulate, status = 'success', receiptError } = {}) => ({
+  // `lookup`: 'held' (the node has it), 'absent' (a conclusive "not found"),
+  // or an Error the lookup itself failed with.
+  const make = ({ sendError, lookup = 'absent', simulate, status = 'success', receiptError } = {}) => ({
     call: async () => (simulate ? Promise.reject(simulate) : {}),
     sendRawTransaction: async () => (sendError ? Promise.reject(sendError) : '0x'),
-    getTransaction: async () => (known ? {} : Promise.reject(new Error('not found'))),
+    getTransaction: async ({ hash }) =>
+      lookup === 'held' ? {} : Promise.reject(lookup === 'absent' ? new TransactionNotFoundError({ hash }) : lookup),
     waitForTransactionReceipt: async () => (receiptError ? Promise.reject(receiptError) : { status, blockNumber: 7n, blockHash: '0xb', logs }),
   });
   const send = (client, extra = {}) => sendTransaction({ client, wallet, account, to: account.address, data: '0x', label: 'l', ...extra });
@@ -113,9 +117,20 @@ test('sendTransaction: every failure says what is known — not sent, refused, r
   let submitted = false;
   await assert.rejects(send(make({ simulate: new Error('execution reverted: X') }), { onSubmitted: () => (submitted = true) }), (e) => e.sendOutcome === 'not-sent' && /X/.test(e.message));
   assert.equal(submitted, false);
-  // Signed, refused by the node, and unknown to it.
+  // Signed, refused by the node for a reason it names, and unknown to it.
   let hash;
   await assert.rejects(send(make({ sendError: refusal }), { onSubmitted: (h) => (hash = h) }), (e) => e.sendOutcome === 'refused' && e.message.includes(hash));
+  // The same refusal, but the lookup itself failed (a timeout, a rate limit):
+  // nothing says the node lacks it, so the outcome stays unknown.
+  await assert.rejects(send(make({ sendError: refusal, lookup: new Error('429 too many requests') })), (e) => e.sendOutcome === undefined && e.hash === hash);
+  // A JSON-RPC error naming no reason it will not take it is not a refusal.
+  await assert.rejects(send(make({ sendError: rpcError('internal error') })), (e) => e.sendOutcome === undefined && e.hash === hash);
+  // "already known" says the node holds it, even when a load-balanced lookup
+  // answers "not found": the send goes on and waits for the receipt.
+  for (const words of ['already known', 'transaction already imported', 'known transaction: 0xab']) {
+    const held = await send(make({ sendError: rpcError(words) }));
+    assert.equal(held.blockNumber, 7n, words);
+  }
   // A dropped connection the node cannot vouch for stays unknown, by hash.
   await assert.rejects(send(make({ sendError: new Error('socket hang up') })), (e) => e.sendOutcome === undefined && e.hash === hash && /socket hang up/.test(e.message));
   // A receipt that never comes is unknown too.
@@ -124,7 +139,7 @@ test('sendTransaction: every failure says what is known — not sent, refused, r
   await assert.rejects(send(make({ status: 'reverted' })), (e) => e.sendOutcome === 'reverted');
   // The node has it (a retry answered "already known"): the send goes on, and
   // the receipt's logs come back with it.
-  const sent = await send(make({ sendError: refusal, known: true }));
+  const sent = await send(make({ sendError: refusal, lookup: 'held' }));
   assert.equal(sent.blockNumber, 7n);
   assert.deepEqual(sent.logs, logs);
 });

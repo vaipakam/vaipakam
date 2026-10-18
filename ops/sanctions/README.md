@@ -71,7 +71,9 @@ Every hour it, for every configured chain with a timelock recorded:
    execute (an address vetoed, flagged by RedStone, already delisted another
    way, or no longer delisted by OFAC's newer file); reconfirms one of its own
    onto a newer publication (the window is kept); after the window, on the
-   cross-chain route, requests RedStone's answer and relays it back; and
+   cross-chain route, requests RedStone's answer (only once the attestor's
+   chain is reachable from here, since a request costs a CCIP fee and its
+   answer must be relayed back) and relays it back; and
    executes it once the timelock reports it ready. Each of those steps, for
    anyone's proposal, needs a reading of OFAC's files made in that same state
    that supports delisting every address the proposal names: with a failed,
@@ -205,6 +207,12 @@ the installed release).
   `/var/lib/vaipakam-sanctions-delister/last-run.json`, and the journal, with
   one section per chain. Any chain refused, stopped or partly failed, or an
   alert not delivered, fails the unit, so it shows in `systemctl --failed`.
+  For the delister, "partly failed" includes work a chain needed that an
+  error put off (no conclusive reading of OFAC's files it needed, such as a
+  failed download or two files that disagree, or candidates it could not
+  check), reported as NOT DONE; work that waits by design (a
+  window, RedStone's answer, the adder recording a newer publication) does
+  not fail it.
 - **The adder** marks a chain `applied` only once its transactions are final
   and still in the blocks they were included in. A chain that stops part-way
   is `stopped`, and lists each transaction it broadcast as final, included but
@@ -212,7 +220,10 @@ the installed release).
   land); check those before acting.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
-  its outcome unknown, and every pending proposal's state. After an unknown
+  its outcome unknown, and every pending proposal's state. "Refused" needs
+  both the node naming why it will not take the transaction and its answer
+  "not found" for the hash; anything less is unknown. The adder reads a send
+  the same way. After an unknown
   outcome it sends nothing more on that chain that run. It waits for inclusion only: the next run reads the chain again, and
   every step it takes is refused on-chain if it no longer applies. Its state
   directory also holds caches only (`evaluations.json`, `relay.json`,

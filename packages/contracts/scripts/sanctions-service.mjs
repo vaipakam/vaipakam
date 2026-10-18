@@ -16,7 +16,7 @@
  */
 import { readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { BaseError, RpcRequestError, createPublicClient, createWalletClient, defineChain, http, keccak256 } from 'viem';
+import { BaseError, RpcRequestError, TransactionNotFoundError, createPublicClient, createWalletClient, defineChain, http, keccak256 } from 'viem';
 
 /**
  * The chains a sanctions service may sign on, with the RPC variable each
@@ -95,12 +95,41 @@ export function chainClients(c, account) {
  * UNKNOWN: the transaction may be in a node's pool or on its way to a block.
  *   not-sent — refused before anything was signed (the simulation reverted,
  *              or preparing or signing failed);
- *   refused  — signed, but the node answered with a JSON-RPC refusal (nonce,
- *              funds, gas) and does not know the hash: not broadcast;
+ *   refused  — signed, but the node NAMED a reason it will not take it (see
+ *              {@link REFUSAL_REASON}) AND answered a lookup of the hash with
+ *              "not found": not broadcast;
  *   reverted — included in a block, and reverted.
  */
 export const SEND_OUTCOMES = Object.freeze(['not-sent', 'refused', 'reverted']);
 const known = (e, outcome) => Object.assign(e instanceof Error ? e : new Error(String(e)), { sendOutcome: outcome });
+
+/**
+ * A node's JSON-RPC answer that names why it will not take a transaction.
+ * Only these make a failed broadcast `refused`: any other answer, a JSON-RPC
+ * error included, leaves the outcome unknown, which costs one run's sends on
+ * that chain and never a nonce. Nodes give no structured code for these (one
+ * code covers them all), so the reason is read from the message, as viem
+ * itself does; an unrecognised wording only falls back to unknown.
+ */
+export const REFUSAL_REASON =
+  /nonce too (low|high)|insufficient funds|exceeds transaction sender account balance|intrinsic gas too (low|high)|(max fee per gas|fee cap) less than block base fee|(max priority fee per gas higher than max fee per gas|tip higher than fee cap)|replacement transaction underpriced|exceeds block gas limit|transaction type not (valid|supported)/i;
+/**
+ * A node's answer that it already HOLDS the transaction ("already known",
+ * "already imported"). Never a refusal, whatever a lookup then says: behind a
+ * load balancer the lookup may reach a node that has not seen it yet. viem
+ * files "already known" under NonceTooLowError, which is why this module
+ * reads the node's own words rather than viem's class.
+ */
+export const HELD_ANSWER = /already known|already imported|known transaction|already exists|already in (the )?(mem)?pool/i;
+
+/** What a lookup of `hash` establishes: `held`, a conclusive `absent` (the
+ *  node answered "not found"), or `unknown` (the lookup itself failed). */
+async function lookUp(client, hash) {
+  return client.getTransaction({ hash }).then(
+    () => 'held',
+    (e) => (e instanceof TransactionNotFoundError || (e instanceof BaseError && e.walk((x) => x instanceof TransactionNotFoundError)) ? 'absent' : 'unknown'),
+  );
+}
 
 /**
  * Send one transaction the way both services do: SIMULATED first, so a call
@@ -114,11 +143,13 @@ const known = (e, outcome) => Object.assign(e instanceof Error ? e : new Error(S
  * {@link SEND_OUTCOMES}); one that says nothing left the outcome unknown,
  * and carries the `hash`.
  *
- * When the broadcast call fails, the node is asked for the hash first: if it
- * has the transaction, the failure was the reply's and the send goes on. If
- * it does not, and its answer was a JSON-RPC refusal, the send is `refused`.
- * Any other failure (a timeout, a dropped connection), and a receipt that
- * never came, leaves the outcome unknown.
+ * When the broadcast call fails, the node is asked for the hash. If it has
+ * the transaction, or its answer said it already does, the failure was the
+ * reply's and the send goes on. The send is `refused` only when BOTH are
+ * conclusive: the node's answer names a reason it will not take it, and the
+ * lookup answered "not found". Anything less (a lookup that failed, a
+ * timeout, a dropped connection, an answer naming no reason) and a receipt
+ * that never came leave the outcome unknown.
  */
 export async function sendTransaction({ client, wallet, account, to, data, value = 0n, onSubmitted = () => {}, label }) {
   let serializedTransaction;
@@ -135,12 +166,11 @@ export async function sendTransaction({ client, wallet, account, to, data, value
     try {
       await client.sendRawTransaction({ serializedTransaction });
     } catch (e) {
-      const held = await client.getTransaction({ hash }).then(
-        () => true,
-        () => false,
-      );
-      if (!held) {
-        if (e instanceof BaseError && e.walk((x) => x instanceof RpcRequestError)) {
+      const rpc = e instanceof BaseError ? e.walk((x) => x instanceof RpcRequestError) : null;
+      const answer = String(rpc?.details ?? '');
+      const lookup = await lookUp(client, hash);
+      if (lookup !== 'held' && !HELD_ANSWER.test(answer)) {
+        if (lookup === 'absent' && rpc && REFUSAL_REASON.test(answer)) {
           throw known(new Error(`the node refused ${label} (${hash}) and does not know it: ${e.shortMessage ?? e.message}`, { cause: e }), 'refused');
         }
         throw e;

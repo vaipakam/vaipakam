@@ -16,6 +16,7 @@ import {
   alertDigest,
   createClientLookup,
   evaluatePublication,
+  fingerprint,
   planChain,
   planChains,
   readConfig,
@@ -68,6 +69,7 @@ function snapOf(o = {}) {
     proposalCount: 0,
     now: 1_000_000n,
     balance: 10n ** 18n,
+    relayPath: { ok: true },
     proposals: [],
     ...o,
     list: {
@@ -400,7 +402,11 @@ test('candidates that cannot be checked propose nothing and stop nothing else', 
   };
   const { report, cache } = await runDelister({ chains: [chain], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 1 });
   assert.deepEqual(sent, ['request']);
-  assert.equal(report.chains.b.status, 'ok');
+  // The proposals it could not check are work an error put off: the chain
+  // and the run say so, and the unit fails.
+  assert.equal(report.chains.b.status, 'partial');
+  assert.equal(report.status, 'failed');
+  assert.ok(report.chains.b.deferred.some((d) => d.includes('attestor chain RPC down')));
   assert.ok(report.chains.b.review.some((r) => r.includes('could not be read (attestor chain RPC down)')));
   assert.equal(cache[84532], undefined, 'checked again next run');
   // Nothing can be proposed (no route): the facts are not even read.
@@ -414,11 +420,21 @@ test('only a conclusive reading is cached', async () => {
   // A failed download: not cached, and the next run downloads again.
   const failedLoad = await runDelister({ chains: [chainWith(snapOf())], key: KEY, loadPublication: async () => (loads++, Promise.reject(new Error('timeout'))), nowMs: 1 });
   assert.equal(failedLoad.cache[84532], undefined);
+  // The mandatory check did not happen: the chain that needed it is not done,
+  // and the run fails, so the unit's own status shows it.
+  assert.equal(failedLoad.report.chains.b.status, 'partial');
+  assert.equal(failedLoad.report.status, 'failed');
+  assert.match(failedLoad.report.chains.b.deferred[0], /needed OFAC's files and has no conclusive reading of them: the OFAC files could not be loaded: timeout/);
+  assert.match(summarize(failedLoad.report), /NOT DONE, retried next run: this chain needed OFAC's files/);
   await runDelister({ chains: [chainWith(snapOf())], key: KEY, loadPublication: async () => (loads++, PUBLICATION), cache: failedLoad.cache, nowMs: 2 });
   assert.equal(loads, 2);
   // Two files either side of a new publication: not cached.
   const torn = { ...PUBLICATION, plain: { ...PUBLICATION.plain, parsed: { ...plain.parsed, publicationDate: 20260308 } } };
-  assert.equal((await runDelister({ chains: [chainWith(snapOf())], key: KEY, loadPublication: async () => torn, nowMs: 3 })).cache[84532], undefined);
+  const tornRun = await runDelister({ chains: [chainWith(snapOf())], key: KEY, loadPublication: async () => torn, nowMs: 3 });
+  assert.equal(tornRun.cache[84532], undefined);
+  // Loaded, but no conclusive reading: not done either.
+  assert.equal(tornRun.report.chains.b.status, 'partial');
+  assert.equal(tornRun.report.status, 'failed');
   // A reconfirm that did not land: not cached.
   const stale = snapOf({ reservedDelistings: 5, proposals: [proposal({ sourceHash: OLD_HASH })] });
   const failedReconfirm = await runDelister({ chains: [chainWith(stale, async () => Promise.reject(new Error('reverted')))], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 4 });
@@ -430,6 +446,9 @@ test('only a conclusive reading is cached', async () => {
   const sends = [];
   const first = await runDelister({ chains: [chainWith(behind, async (a) => (sends.push(a.kind), { hash: '0x02', blockNumber: 3n }))], key: KEY, loadPublication: async () => PUBLICATION, nowMs: 5 });
   assert.equal(first.cache[84532].status, 'mismatch');
+  // Waiting for the adder is by design, not a failure.
+  assert.equal(first.report.status, 'ok');
+  assert.deepEqual(first.report.chains.b.deferred, []);
   const second = await runDelister({ chains: [chainWith(behind, async (a) => (sends.push(a.kind), { hash: '0x02', blockNumber: 3n }))], key: KEY, loadPublication: async () => assert.fail('cached'), cache: first.cache, nowMs: 6 });
   assert.deepEqual(sends, []);
   assert.ok(second.report.chains.b.notes.some((n) => n.startsWith("proposal 1: executing waits: nothing changed since OFAC's files were last read")));
@@ -548,4 +567,27 @@ test('env template: exactly the settings the runner reads, as the file already o
   const template = readFileSync(join(HERE, '..', '..', '..', 'ops', 'sanctions', 'sanctions-delister.env.example'), 'utf8');
   const names = [...template.matchAll(/^([A-Z0-9_]+)=/gm)].map((m) => m[1]).sort();
   assert.deepEqual(names, ['SANCTIONS_DELISTER_PRIVATE_KEY', ...SERVICE_CHAINS.map((c) => c.rpcEnv), 'TG_OPS_BOT_TOKEN', 'TG_OPS_CHAT_ID'].sort());
+});
+
+test('a cross-chain clearance is requested only when its answer can come back', async () => {
+  const noWay = { ok: false, detail: 'no RPC is configured for chain 421614, where its attestor runs' };
+  for (const reason of ['ClearanceNotRequested', 'ClearanceExpired']) {
+    const p = proposal({ id: 1n, reason });
+    // Every outstanding delisting is reserved, so nothing new could be proposed.
+    const snap = snapOf({ reservedDelistings: 5, relayPath: noWay, proposals: [p] });
+    const plan = planChain(snap, KEY, evaluatePublication(snap, PUBLICATION), facts({}));
+    assert.deepEqual(plan.actions, [], `${reason}: a paid request with no way back is never sent`);
+    assert.ok(plan.review.some((r) => r.includes('could not be relayed back') && r.includes('no RPC is configured for chain 421614')), reason);
+    // Nothing to advance, so it costs no download either.
+    assert.equal(wantsPublication(snap, KEY, undefined, 1), false, reason);
+    // Once the way back is proven, the stage changes, so a cached reading
+    // never stands in for a fresh one.
+    const fixed = snapOf({ reservedDelistings: 5, proposals: [p] });
+    assert.equal(wantsPublication(fixed, KEY, undefined, 1), true, `${reason}: a request is checked against OFAC first`);
+    assert.notEqual(fingerprint(snap), fingerprint(fixed));
+    assert.deepEqual(planChain(fixed, KEY, evaluatePublication(fixed, PUBLICATION), facts({})).actions.map((a) => a.kind), ['request']);
+  }
+  // A local route needs no relay: nothing to prove.
+  const local = snapOf({ route: 1, relayPath: null, reservedDelistings: 1, proposals: [proposal({ id: 1n, ready: true, reason: null })] });
+  assert.deepEqual(planChain(local, KEY, evaluatePublication(local, PUBLICATION), facts({})).actions.map((a) => a.kind), ['execute']);
 });

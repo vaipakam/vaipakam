@@ -122,6 +122,7 @@ const CLOCK_SKEW_S = 600n;
 
 /** The timelock's enums, by position. */
 export const ROUTE = Object.freeze(['Unavailable', 'Local', 'CrossChain']);
+const CROSS_CHAIN = ROUTE.indexOf('CrossChain');
 const STATUS_PENDING = 1;
 
 /** The compiled ABIs — never hand-typed. */
@@ -219,8 +220,15 @@ function stage(snap, p) {
   if (!samePublication(snap, p)) return 'stale';
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
   if (p.ready) return 'ready';
+  // A cross-chain request pays a CCIP fee, and its answer is relayed back
+  // from the attestor's chain. With no proven way back, a request would be
+  // paid for again at every expiry without the proposal ever moving.
+  if (NEEDS_REQUEST.has(p.reason) && snap.route === CROSS_CHAIN && !snap.relayPath?.ok) return `${p.reason}:no-relay`;
   return p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
 }
+
+/** The readiness reasons whose next step is a (paid) clearance request. */
+const NEEDS_REQUEST = new Set(['ClearanceNotRequested', 'ClearanceExpired']);
 
 /** The stages with a step that moves a proposal toward a delisting:
  *  executing, requesting the clearance, relaying RedStone's answer. */
@@ -398,6 +406,12 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       } else actions.push({ kind: 'request', id: p.id, derived: true });
       continue;
     }
+    if (at.endsWith(':no-relay')) {
+      const why = `its clearance is not requested, because RedStone's answer could not be relayed back: ${snap.relayPath?.detail ?? 'the way back was not checked'}`;
+      notes.push(`${tag}: ${why}`);
+      review.push(`${tag}: ${why}. A request costs a CCIP fee, so none is sent until the attestor's chain is reachable from here.`);
+      continue;
+    }
     switch (p.reason) {
       case 'ClearanceNotAnswered': {
         const r = p.relay ?? { status: 'unknown', detail: 'no relay reading' };
@@ -532,7 +546,11 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
       }
     }),
   );
-  const needed = read.some((r) => r.snap && wantsPublication(r.snap, key, cache[r.c.id], nowMs));
+  // Which chains need OFAC's files this run, decided once: the same answer
+  // decides whether they are loaded and whether a failed load left that
+  // chain's work undone.
+  const wants = new Map(read.map((r) => [r.c.id, Boolean(r.snap && wantsPublication(r.snap, key, cache[r.c.id], nowMs))]));
+  const needed = [...wants.values()].some(Boolean);
   let publication = null;
   let publicationReport = { loaded: false };
   if (needed) {
@@ -618,16 +636,27 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
         notes.push(`last checked against OFAC's files at ${new Date(cached.at).toISOString()} (${cached.outcome}); unchanged since`);
       }
       const failed = sent.filter((e) => e.state !== 'included');
+      // Work this chain needed that a failure put off, as opposed to work
+      // that waits by design (a window, RedStone's answer, the adder
+      // recording a newer publication: `mismatch`). Either kind is retried
+      // next run; only this kind makes the run a failure, so the unit's own
+      // status shows it. A chain that needed OFAC's files and got no
+      // conclusive reading of them (`refused`: a failed download, files that
+      // disagree, a stale copy, counts that differ) is this kind.
+      const deferred = [];
+      if (wants.get(c.id) && evaluation.status === 'refused') deferred.push(`this chain needed OFAC's files and has no conclusive reading of them: ${evaluation.reason}`);
+      if (factsError) deferred.push(`the candidates' veto and RedStone state could not be read: ${factsError}`);
       return [
         c.slug,
         {
           ...head,
-          status: failed.length ? 'partial' : 'ok',
+          status: failed.length || deferred.length ? 'partial' : 'ok',
           route: plan.route,
           list: { ...head.list && { address: head.list }, publicationDate: snap.list.publicationDate, pendingAdditions: snap.list.pendingAdditions, pendingDelistings: snap.list.pendingDelistings },
           reservedDelistings: snap.reservedDelistings,
           publication: evaluation.status,
           actions: sent,
+          deferred,
           notes,
           review: plan.review,
         },
@@ -670,6 +699,7 @@ export function summarizeChain(c) {
     submitted: 'signed and broadcast attempted, no receipt seen',
   };
   for (const e of c.actions ?? []) lines.push(`${e.action}: ${e.tx ? `${e.tx} — ` : ''}${word[e.state] ?? e.state}${e.error ? ` (${e.error})` : ''}`);
+  for (const d of c.deferred ?? []) lines.push(`NOT DONE, retried next run: ${d}`);
   for (const n of c.notes ?? []) lines.push(n);
   for (const r of c.review ?? []) lines.push(`NEEDS A PERSON: ${r}`);
   return lines.join('\n  ');
@@ -699,6 +729,7 @@ export function alertDigest(report) {
   for (const [slug, c] of Object.entries(report.chains)) {
     if (c.status === 'refused') parts.push(`${slug} refused: ${c.error}`);
     for (const e of c.actions ?? []) parts.push(`${slug} ${e.action} ${e.state} ${e.tx ?? ''}`);
+    for (const d of c.deferred ?? []) parts.push(`${slug} not done: ${d}`);
     for (const r of c.review ?? []) parts.push(`${slug} review: ${r}`);
   }
   if (parts.length === 0) return null;
@@ -865,6 +896,21 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
     return logs[0].args.messageId;
   }
 
+  /** Whether RedStone's answer could come back from here: the attestor's
+   *  chain has an RPC that serves that chain, and the attestor answers on
+   *  it. Read once per run on a cross-chain route; a clearance request (a
+   *  paid CCIP message) is sent only when it holds. */
+  async function relayPath(sourceChainId, attestor) {
+    try {
+      const src = await clientFor(sourceChainId);
+      if (!src) return { ok: false, detail: `no RPC is configured for chain ${sourceChainId}, where its attestor runs` };
+      await src.client.readContract({ address: attestor, abi: att, functionName: 'oracle' });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, detail: `the attestor on chain ${sourceChainId} could not be read: ${e?.shortMessage ?? e?.message ?? e}` };
+    }
+  }
+
   async function relayState(client, p, sourceChainId, attestor) {
     const src = await clientFor(sourceChainId);
     if (!src) return { status: 'unknown', detail: `no RPC is configured for chain ${sourceChainId}, where its attestor runs` };
@@ -910,6 +956,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [c.timelock] }),
         client.getBalance({ address: account.address }),
       ]);
+      const crossChain = Number(route) === CROSS_CHAIN ? await relayPath(sourceChainId, attestor) : null;
       // The timelock keeps no index of pending proposals, so every one ever
       // made is read; delistings are rare, so the count stays small.
       const proposals = [];
@@ -954,6 +1001,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         route: Number(route),
         clearanceSourceChainId: sourceChainId,
         clearanceAttestor: attestor,
+        relayPath: crossChain,
         reservedDelistings: Number(reserved),
         proposalCount: Number(count),
         now: block.timestamp,

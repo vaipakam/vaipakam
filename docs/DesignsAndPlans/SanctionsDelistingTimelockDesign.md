@@ -15,7 +15,16 @@ All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:
   must also be current, or "does not flag it" says nothing — §4.)
 - **D-C — Proposals come from OFAC's files.** The bot reads the advanced XML
   (the file the list records) and the plain `SDN.XML`, which a separate parser
-  reads, and proposes only what both support.
+  reads, and proposes only what both support. For the AUTOMATED route this
+  replaces the operator's confirmation against OFAC's Recent Actions notice
+  that the update tool requires of a direct removal (`--confirm-delist`,
+  #2543 r21): the card the owner answered offered "keep manual" (the Safe
+  delists after an operator confirms each address against OFAC's notice)
+  against "bot proposes, Safe vetoes" (a delister key proposes after two OFAC
+  files agree), and the owner chose the second with both files as the source.
+  The second file, the Safe's window and RedStone's agreement are what stand
+  between a damaged file and a removal on this route. A removal the Safe
+  applies directly keeps the notice confirmation.
 - **D-D — CCIP carries the RedStone check to other chains.** Where RedStone
   is not deployed, the check is made on a chain where it is and the answer is
   sent over Chainlink CCIP, per address, at the time of the delisting.
