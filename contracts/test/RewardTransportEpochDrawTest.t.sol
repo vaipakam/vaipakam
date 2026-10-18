@@ -1817,4 +1817,200 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(armed, needL);
         assertTrue(_mut().entryExecutableNowRaw(id));
     }
+
+    // ───── #1499 acceptance: the predicate AND the claim, both sides ─────
+
+    /// @dev #1499 — refusal cause: an UNATTESTED epoch at the cursor is no
+    ///      coverage (the walk defers the day awaiting its split). Variable:
+    ///      the attestation. Unattested: the predicate reads false AND the
+    ///      claim refuses `NoInteractionRewardsToClaim`, taking nothing.
+    ///      Attested: predicate true AND the claim pays the day from the epoch.
+    ///      The cell above pins the predicate alone; this one adds the claim on
+    ///      both sides. The read reports the withheld day as `capHit`, so
+    ///      dropping the predicate's `capHit` refusal reads the unattested side
+    ///      executable while the claim refuses, and fails this cell.
+    function test_1499_AnUnattestedEpoch_PredicateAndClaimAgree_BothSides() public {
+        uint256 id = _scene(NEED);
+        (uint256 needL, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Lender, 1);
+        bytes32 h = _epochRaw(needL, _one(1), 5, keccak256("unattested-1499"));
+
+        assertFalse(_mut().entryExecutableNowRaw(id), "unattested: non-executable");
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+        assertEq(_balance(h), needL, "the refused claim took nothing");
+
+        _attest(5, 1, 0); // all fresh
+        assertTrue(_mut().entryExecutableNowRaw(id), "attested: executable");
+        assertEq(_claim(), needL, "attested: the claim pays the day from the epoch");
+        assertEq(_balance(h), 0, "drawn exactly");
+    }
+
+    /// @dev #1499 cell 6 — the RECYCLED custody row, straddled at the exact
+    ///      wei on BOTH readers, on an ACTIVATED deployment. A day of mixed
+    ///      composition; the live fresh row and the delivered ledger cover the
+    ///      fresh leg amply, so the recycled draw is the only gate that can
+    ///      bind. Variable: the bucket — which on activated custody IS the
+    ///      holder's recycled row (`setRecycleBucketRaw` relocates the
+    ///      difference), so the predicate's two recycled tests (the drought
+    ///      against `bucketAvailable` and the transfer test against the row)
+    ///      move together.
+    ///
+    ///      Row = draw − 1: the predicate reads false and the claim, whose walk
+    ///      defers the recycled-short day whole, refuses. Row = draw: the
+    ///      predicate reads true and the claim pays the day.
+    ///
+    ///      Which refusal fires on the short side is pinned too: the armed-need
+    ///      view reports a recycled-short day as `capHit` with a zero draw, so
+    ///      the predicate's `capHit` test refuses it; the drought comparison
+    ///      and the row test then see a zero draw. Kills: dropping the `capHit`
+    ///      refusal (short side reads true while the claim refuses);
+    ///      `>` → `>=` in the drought comparison, or `>=` → `>` in the row test
+    ///      (the met side reads false while the claim pays). Dropping the
+    ///      drought comparison or the row test alone is NOT killed — on
+    ///      activated custody the row IS the bucket, and the short side is
+    ///      refused upstream by `capHit`.
+    function test_1499_TheRecycledRow_StraddlesTheDraw_PredicateAndClaimAgree() public {
+        _armedDay(1, NEED); // day 1 finalized, so the cumulative reaches day 2
+        _mut().setDayPoolStampRaw(2, uint128(1e18), uint128(1e18));
+        _mut().setKnownGlobalDailyInterest(2, 1e18, 0, true);
+        _mut().setDayCapThreshold18(2, type(uint256).max);
+        _mut().setDayCapModeRaw(2, 1);
+        _mut().setDayUserSideCapRaw(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint256 id = _entry(2, 3);
+        _ready();
+        _liveOf(2e18, _one(2), 999, keccak256("live-1499-6"));
+        // Read the draw with the bucket able to fund it: the armed-need view
+        // reports the draw of a day the walk would SETTLE.
+        _mut().setRecycleBucketRaw(2 * NEED);
+        (, , , , uint256 draw, bool capAmple, , ) = _epochView().getRewardEntryArmedNeed(id);
+        assertFalse(capAmple, "fixture: ample bucket, the day is the claim's");
+        assertGt(draw, 1, "fixture: the walk draws on the recycled row");
+
+        _mut().setRecycleBucketRaw(draw - 1);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Recycled), draw - 1, "fixture: the row follows the bucket");
+        // OBSERVED: one wei short, the view reports the deferral as `capHit`
+        // with a ZERO draw rather than a draw exceeding the bucket — so it is
+        // the predicate's `capHit` refusal, not the drought comparison, that
+        // refuses this side (see the kill list in the natspec).
+        (, , , , uint256 drawShort, bool capShort, , ) = _epochView().getRewardEntryArmedNeed(id);
+        assertTrue(capShort, "short: the read reports the walk's deferral");
+        assertEq(drawShort, 0, "short: and no draw figure for the deferred day");
+        assertFalse(_mut().entryExecutableNowRaw(id), "row one wei short of the draw: non-executable");
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+
+        _mut().setRecycleBucketRaw(draw);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Recycled), draw, "fixture: the row follows the bucket");
+        assertTrue(_mut().entryExecutableNowRaw(id), "row exactly the draw: executable");
+        uint256 paid = _claim();
+        assertGt(paid, draw, "row exactly the draw: the claim pays the day, fresh and recycled");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Recycled), 0, "and draws the row exactly empty");
+    }
+
+    /// @dev #1499 owner decision 2026-10-18 — THE DELIBERATE CONSERVATIVE
+    ///      EXCEPTION, tested rather than only documented. An entry BEHIND its
+    ///      side's front reads non-executable (the static read cannot price
+    ///      the day ahead of the front, so it does not say the claim would pay
+    ///      this one now), yet its owner's claim SUCCEEDS: it pays the front's
+    ///      day and then this one, in the same call.
+    ///
+    ///      So here the predicate is STRICTER than the claim, and that is the
+    ///      permitted direction: a stricter predicate only pauses the clock —
+    ///      it delays a reap, it never expires an entry its owner could not
+    ///      claim. A LOOSER one is the #1499 failure mode. This cell pins both
+    ///      halves of that asymmetry on one fixture, and pins exactly what the
+    ///      claim paid, so the exception cannot silently widen into a claim
+    ///      that pays something the predicate never priced.
+    function test_1499_BehindTheFront_PredicateStricterThanTheClaim_TheDeliberateException() public {
+        uint256 front = _scene(NEED);
+        _armedDay(2, NEED);
+        _loanSideOpen(2);
+        uint256 behind = _entry(2, 3);
+        _ready();
+        _liveOf(1e18, _one(1), 999, keccak256("live-1499-8")); // covers both days on its own
+        (uint256 need1, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Lender, 1);
+        assertGt(need1, 0, "fixture: the front's day prices");
+
+        assertTrue(_mut().entryExecutableNowRaw(front), "the front: executable");
+        assertFalse(_mut().entryExecutableNowRaw(behind), "behind the front: the predicate waits");
+
+        uint256 paid = _claim();
+        assertEq(paid, 2 * NEED, "yet the claim pays the front's day AND the behind entry's day");
+        assertEq(paid, need1 + NEED, "the front's priced need, then the behind day at its cap");
+        LibVaipakam.RewardEntry[] memory es = InteractionRewardsLensFacet(address(diamond)).getRewardEntriesRange(front, 2);
+        assertTrue(es[0].processed, "the front settled");
+        assertTrue(es[1].processed, "and the behind entry settled in the same call");
+    }
+
+    /// @dev #1499 — the same exception on the side axis: a BORROWER entry
+    ///      reads non-executable while a lender day pends (the lender side
+    ///      walks first), yet the claim pays both sides' days. Stricter, never
+    ///      looser; the claim's payout is pinned to the two sides' priced needs.
+    function test_1499_ABorrowerBehindALenderDay_PredicateStricterThanTheClaim() public {
+        uint256 lender = _scene(NEED);
+        _twoSidedDay(1);
+        uint256 borrower = _borrowerEntry(1, 2);
+        _ready();
+        _liveOf(1e18, _one(1), 999, keccak256("live-1499-8b"));
+        (uint256 needL, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Lender, 1);
+        (uint256 needB, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Borrower, 1);
+        assertGt(needB, 0, "fixture: the borrower day prices");
+
+        assertTrue(_mut().entryExecutableNowRaw(lender), "the lender entry: executable");
+        assertFalse(_mut().entryExecutableNowRaw(borrower), "the borrower entry: the predicate waits");
+        assertEq(_claim(), needL + needB, "yet the claim pays the lender day and then the borrower day");
+        LibVaipakam.RewardEntry[] memory es = InteractionRewardsLensFacet(address(diamond)).getRewardEntriesRange(lender, 2);
+        assertTrue(es[0].processed && es[1].processed, "both settled in the one call");
+    }
+
+    /// @dev #1499 cell 2, with an EPOCH-PAID LEG present — does the pool cap
+    ///      applied first make the predicate STRICTER than the claim? The
+    ///      armed day needs 0.4; an attested epoch pays 0.1 of it; the pool
+    ///      has P = 0.2 left, so the walk budgets the day to 0.2 and the live
+    ///      delivery must fund only the residual 0.1 (`liveArmed`, net of the
+    ///      epoch). The predicate caps `liveArmed + legacyFresh` at the pool
+    ///      and compares it to the bound; the claim charges the delivered
+    ///      ledger only for the live-paid fresh. Variable: the delivered
+    ///      ledger, 0.1 − 1 vs 0.1.
+    ///
+    ///      FINDING: they agree to the wei — not stricter. One wei short, the
+    ///      predicate reads false and the claim's walk defers the armed day
+    ///      on the bound (`NoInteractionRewardsToClaim`); exactly met, the
+    ///      predicate reads true and the claim pays the full pool-capped 0.2
+    ///      (0.1 from the epoch, 0.1 live).
+    ///
+    ///      On an ARMED day the walk itself defers on the bound, and the read
+    ///      reports that as `capHit` — so the short side is refused by the
+    ///      predicate's `capHit` test (dropping it fails this cell) ahead of
+    ///      the aggregate bound comparison. The met side is the
+    ///      stricter-than-the-claim detector: a predicate comparing the GROSS
+    ///      armed figure (`armed`, epoch share included) instead of
+    ///      `liveArmed` reads false at 0.1 while the claim pays.
+    function test_1499_PoolCappedBound_WithAnEpochLeg_PredicateExactlyAsStrictAsTheClaim() public {
+        uint256 id = _scene(NEED);
+        bytes32 h = _epochOf(0.1e18, _one(1), 5, keccak256("part-1499"));
+        _liveOf(1e18, _one(1), 999, keccak256("live-1499-2b")); // the live ROW amply funded
+        uint256 p = 0.2e18;
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - p);
+        (uint256 armed, , , uint256 legacyFresh, , bool capHit, uint256 liveArmed, ) =
+            _epochView().getRewardEntryArmedNeed(id);
+        assertEq(armed, p, "fixture: the walk budgets the day to the pool headroom");
+        assertEq(liveArmed, 0.1e18, "fixture: the live residual is net of the epoch's leg");
+        assertEq(legacyFresh, 0, "fixture: no legacy fresh");
+        assertFalse(capHit, "fixture: the epoch covers its share");
+
+        _mut().setArmedFreshLedgerRaw(0.1e18 - 1, 0);
+        assertFalse(_mut().entryExecutableNowRaw(id), "one wei short of the live residual: non-executable");
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+
+        _mut().setArmedFreshLedgerRaw(0.1e18, 0);
+        assertTrue(_mut().entryExecutableNowRaw(id), "the live residual exactly: executable");
+        assertEq(_claim(), p, "and the claim pays the pool-capped day");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, 0.1e18, "0.1 of it from the epoch");
+        assertEq(_mut().getArmedFreshPaidRaw(), 0.1e18, "and the live 0.1 charged the delivered ledger exactly");
+    }
 }

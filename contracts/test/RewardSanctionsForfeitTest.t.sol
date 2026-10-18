@@ -1302,6 +1302,45 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertGt(_claimWallet(bob), 0, "the unmarked owner still claims during the outage");
     }
 
+    /// @notice #1499 acceptance — barred during an oracle OUTAGE, on both
+    ///         readers. Refusal cause: the claim gate's
+    ///         {LibVaipakam.isRecipientBarred}, whose outage backstop bars a
+    ///         wallet carrying the confirmed marker while the oracle cannot be
+    ///         read. Variable: the owner (marked vs unmarked), during the SAME
+    ///         outage.
+    /// @dev   Marked: the expiry predicate reads false and the claim reverts
+    ///        `SanctionedAddress(alice)`. Unmarked: predicate true and the
+    ///        claim pays. Kills dropping `isRecipientBarred` from the
+    ///        predicate: the marked side then reads executable while her claim
+    ///        reverts — the clock would run through an outage she cannot claim
+    ///        in. (The fail-open screen, false on an unreadable oracle, would
+    ///        read the same here; that substitution was not run.)
+    function test_sanc_1499_anOutageBarsTheMarkedOnBothReaders_andClearsTheUnmarked() public {
+        uint256 idA = _seed(alice, LOAN_A);
+        uint256 idB = _seed(bob, LOAN_B);
+        _mut().userClaimFundingNeedRaw(alice); // the cursor advance the claim performs first
+        _mut().userClaimFundingNeedRaw(bob);
+        assertTrue(_mut().entryExecutableNowRaw(idA), "fixture LIVE: alice executable before any flag");
+        oracle.setFlagged(alice, true);
+        _confirm(alice);
+        assertTrue(_profile().isSanctionsConfirmedFlagged(alice), "fixture: the marker stands");
+
+        oracle.setRevertOnRead(true);
+        vm.warp(_now() + 1);
+        assertTrue(_profile().isRecipientBarred(alice), "fixture: the marked owner is barred during the outage");
+        assertFalse(_profile().isRecipientBarred(bob), "fixture: the unmarked owner is not");
+
+        assertFalse(_mut().entryExecutableNowRaw(idA), "marked, outage: non-executable");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice));
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertTrue(_mut().entryExecutableNowRaw(idB), "unmarked, same outage: executable");
+        assertGt(_claimWallet(bob), 0, "unmarked, same outage: the claim pays");
+        assertTrue(_entry(idB).processed, "and settles the entry");
+        assertFalse(_entry(idA).processed, "the marked owner's entry is untouched");
+    }
+
     /// @notice T5 - a Clean read heals: it delivers, deletes the evidence,
     ///         clears the marker and announces the clear - and, the chain being
     ///         confirmed, RECORDS its window first; a re-flag then starts a
