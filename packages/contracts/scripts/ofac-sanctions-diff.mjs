@@ -8,8 +8,10 @@
  * reaches it as one update, split by signer (step 4). This tool computes that update:
  *
  *   1. Reads Treasury's SDN Advanced XML (`sdn_advanced.xml`) from a local
- *      file (`--xml`) or downloads it (`--fetch`, optionally `--save-xml` so
- *      the exact bytes behind the recorded hash are kept).
+ *      file (`--xml`) or downloads it (`--fetch` with `--save-xml`, so the
+ *      exact bytes behind the recorded hash are kept). Either way the file
+ *      is read from disk in pieces, never held whole in memory: parsing the
+ *      128 MB 2026-10 publication needs about the size of its result.
  *   2. Extracts every EVM-format digital-currency address (`0x` + 40 hex)
  *      listed under ANY "Digital Currency Address - *" feature type — an
  *      EVM-shaped address is the same key on every EVM chain, whatever asset
@@ -113,7 +115,8 @@
  * remover delists. Where the adder runs is still OPEN (#2443); this tool
  * deliberately stops at calldata.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -142,6 +145,8 @@ export const DEFAULT_MAX_REMOVE = 10;
  * `--max-changes-per-call` changes it.
  */
 export const DEFAULT_MAX_CHANGES_PER_CALL = 200;
+/** The largest download accepted as a publication: 4× the 2026-10 file (128 MB). */
+export const DEFAULT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 
 const DCA_PREFIX = 'Digital Currency Address - ';
 /** OFAC's reliability vocabulary — the whole of it, as published in schema version 3. */
@@ -154,6 +159,15 @@ const ZERO_RE = /^0x0{40}$/i;
 const HEX_PREFIX_RE = /^0x/i;
 /** A run of at least an address's 40 hex digits, anywhere in the source. */
 const HEX_RUN_RE = /[0-9a-fA-F]{40,}/g;
+const isHexDigit = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
+/**
+ * A copy of `s` that shares no memory with the text it was cut from. V8 may
+ * keep a substring as a view into its parent, so a value cut from a 1 MiB
+ * piece of the file would keep that whole piece alive for as long as the
+ * value is kept — and the parse keeps every record until the end, which
+ * would hold the entire file again. Kept values are copied through here.
+ */
+const own = (s) => (typeof s === 'string' && s.length > 0 ? Buffer.from(s, 'utf8').toString('utf8') : s);
 
 /** The compiled `SanctionsList` ABI — never hand-typed. */
 export function sanctionsListAbi() {
@@ -285,49 +299,95 @@ function resolveNs(qname, scope, offset) {
  *                              (decoded, never parsed as markup).
  */
 export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
+  const scanner = createXmlScanner(handlers, rootName);
+  scanner.write(xml);
+  scanner.end();
+}
+
+/**
+ * {@link scanXml} fed in pieces, so a 128 MB publication is never held in
+ * memory as one string (#2443 adder host). `write(chunk)` takes the next
+ * piece of decoded text, `end()` says there is no more. Every construct is
+ * handled only once it is COMPLETE in the buffered text — text up to the
+ * next `<`, a tag up to its `>`, a comment up to `-->` — so the handlers see
+ * exactly what one whole-document pass would show them, wherever the pieces
+ * happen to be cut, and every rule {@link scanXml} states holds unchanged.
+ * Offsets in errors are counted from the start of the document.
+ */
+export function createXmlScanner(handlers = {}, rootName = 'Sanctions') {
   const { open = () => {}, close = () => {}, text = () => {} } = handlers;
-  const n = xml.length;
-  const bad = NON_XML_CHAR.exec(xml);
-  if (bad) throw new Error(`malformed XML: U+${bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} at offset ${bad.index} is not an XML character`);
-  let i = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
   const stack = []; // { name, ns, scope }
   const BASE_SCOPE = new Map([['xml', XML_NS]]);
   let root = null;
   let rootClosed = false;
-  while (i < n) {
-    const lt = xml.indexOf('<', i);
-    const textEnd = lt === -1 ? n : lt;
-    if (textEnd > i) {
-      const raw = xml.slice(i, textEnd);
-      if (stack.length === 0) {
-        if (/\S/.test(raw)) throw new Error(`incomplete XML: content outside the root element at offset ${i}`);
-      } else text(decodeXmlText(raw, i));
+  let buf = ''; // text not yet handled
+  let base = 0; // document offset of buf[0]
+  let started = false;
+  let carry = ''; // a high surrogate cut off at the end of the last piece
+  let ended = false;
+  // The longest opening a construct is told apart by (`<![CDATA[`): with
+  // fewer characters buffered after a `<`, more input may change its kind.
+  const LONGEST_OPENER = 9;
+
+  // Handle every complete construct in `buf`; with `final`, everything left.
+  function drain(final) {
+    const xml = buf;
+    const n = xml.length;
+    let i = 0;
+    while (i < n) {
+      const lt = xml.indexOf('<', i);
+      if (lt === -1 && !final) break; // the text may continue in the next piece
+      const textEnd = lt === -1 ? n : lt;
+      if (textEnd > i) {
+        const raw = xml.slice(i, textEnd);
+        if (stack.length === 0) {
+          if (/\S/.test(raw)) throw new Error(`incomplete XML: content outside the root element at offset ${base + i}`);
+        } else text(decodeXmlText(raw, base + i));
+        i = textEnd;
+      }
+      if (lt === -1) break;
+      if (!final && n - lt < LONGEST_OPENER) break;
+      // -1: the construct is not complete in what is buffered yet.
+      const closer = (token, from) => {
+        const e = xml.indexOf(token, from);
+        if (e === -1 && final) throw new Error(`incomplete XML: unterminated construct at offset ${base + lt}`);
+        return e;
+      };
+      if (xml.startsWith('<!--', lt)) {
+        const e = closer('-->', lt + 4);
+        if (e === -1) break;
+        i = e + 3;
+        continue;
+      }
+      if (xml.startsWith('<![CDATA[', lt)) {
+        if (stack.length === 0) throw new Error(`incomplete XML: CDATA outside the root at offset ${base + lt}`);
+        const e = closer(']]>', lt + 9);
+        if (e === -1) break;
+        text(xml.slice(lt + 9, e));
+        i = e + 3;
+        continue;
+      }
+      if (xml.startsWith('<?', lt)) {
+        const e = closer('?>', lt + 2);
+        if (e === -1) break;
+        i = e + 2;
+        continue;
+      }
+      if (xml.startsWith('<!', lt)) throw new Error(`refusing a DOCTYPE or markup declaration at offset ${base + lt}`);
+      const gt = tagEnd(xml, lt);
+      if (gt === -1) {
+        if (final) throw new Error(`incomplete XML: unterminated tag at offset ${base + lt}`);
+        break;
+      }
+      tag(xml.slice(lt + 1, gt), base + lt);
+      i = gt + 1;
     }
-    if (lt === -1) break;
-    const closer = (token, from) => {
-      const e = xml.indexOf(token, from);
-      if (e === -1) throw new Error(`incomplete XML: unterminated construct at offset ${lt}`);
-      return e;
-    };
-    if (xml.startsWith('<!--', lt)) {
-      i = closer('-->', lt + 4) + 3;
-      continue;
-    }
-    if (xml.startsWith('<![CDATA[', lt)) {
-      if (stack.length === 0) throw new Error(`incomplete XML: CDATA outside the root at offset ${lt}`);
-      const e = closer(']]>', lt + 9);
-      text(xml.slice(lt + 9, e));
-      i = e + 3;
-      continue;
-    }
-    if (xml.startsWith('<?', lt)) {
-      i = closer('?>', lt + 2) + 2;
-      continue;
-    }
-    if (xml.startsWith('<!', lt)) throw new Error(`refusing a DOCTYPE or markup declaration at offset ${lt}`);
-    const gt = tagEnd(xml, lt);
-    if (gt === -1) throw new Error(`incomplete XML: unterminated tag at offset ${lt}`);
-    const body = xml.slice(lt + 1, gt);
+    buf = xml.slice(i);
+    base += i;
+  }
+
+  // One complete tag; `body` is what lies between its `<` and `>`.
+  function tag(body, lt) {
     if (body.startsWith('/')) {
       const name = body.slice(1).trimEnd();
       const top = stack.pop();
@@ -336,42 +396,79 @@ export function scanXml(xml, handlers = {}, rootName = 'Sanctions') {
       }
       close(localName(name), stack.length, top.ns);
       if (stack.length === 0) rootClosed = true;
-    } else {
-      const m = body.match(NAME_RE);
-      if (!m) throw new Error(`malformed XML: bad tag at offset ${lt}`);
-      const name = m[0];
-      // The name must end where the tag's attributes or end begin; anything
-      // else (a second colon, a stray character) means it is not a QName.
-      if (body.length > name.length && !/[\s/]/.test(body[name.length])) {
-        throw new Error(`malformed XML: <${body.split(/[\s/]/)[0]}> at offset ${lt} is not a valid qualified name`);
-      }
-      if (rootClosed || (stack.length === 0 && root !== null)) throw new Error(`malformed XML: second root element <${name}> at offset ${lt}`);
-      const selfClosing = body.endsWith('/');
-      const attrText = body.slice(name.length, selfClosing ? -1 : undefined);
-      const attrs = new Map();
-      ATTR_RE.lastIndex = 0;
-      let at = 0;
-      for (let a; (a = ATTR_RE.exec(attrText)); at = ATTR_RE.lastIndex) {
-        if (attrs.has(a[1])) throw new Error(`malformed XML: duplicate attribute ${a[1]} at offset ${lt}`);
-        attrs.set(a[1], decodeXmlText(a[2] ?? a[3], lt));
-      }
-      if (/\S/.test(attrText.slice(at))) throw new Error(`malformed XML: bad attribute syntax in <${name}> at offset ${lt}`);
-      if (root === null) {
-        root = name;
-        if (localName(name) !== rootName) throw new Error(`unexpected root element <${name}> (want <${rootName}>)`);
-      }
-      const scope = scopeWith(stack.length ? stack[stack.length - 1].scope : BASE_SCOPE, attrs, lt);
-      const ns = resolveNs(name, scope, lt);
-      open(localName(name), attrs, stack.length, ns);
-      if (selfClosing) {
-        close(localName(name), stack.length, ns);
-        if (stack.length === 0) rootClosed = true;
-      } else stack.push({ name, ns, scope });
+      return;
     }
-    i = gt + 1;
+    const m = body.match(NAME_RE);
+    if (!m) throw new Error(`malformed XML: bad tag at offset ${lt}`);
+    const name = m[0];
+    // The name must end where the tag's attributes or end begin; anything
+    // else (a second colon, a stray character) means it is not a QName.
+    if (body.length > name.length && !/[\s/]/.test(body[name.length])) {
+      throw new Error(`malformed XML: <${body.split(/[\s/]/)[0]}> at offset ${lt} is not a valid qualified name`);
+    }
+    if (rootClosed || (stack.length === 0 && root !== null)) throw new Error(`malformed XML: second root element <${name}> at offset ${lt}`);
+    const selfClosing = body.endsWith('/');
+    const attrText = body.slice(name.length, selfClosing ? -1 : undefined);
+    const attrs = new Map();
+    ATTR_RE.lastIndex = 0;
+    let at = 0;
+    for (let a; (a = ATTR_RE.exec(attrText)); at = ATTR_RE.lastIndex) {
+      if (attrs.has(a[1])) throw new Error(`malformed XML: duplicate attribute ${a[1]} at offset ${lt}`);
+      attrs.set(a[1], decodeXmlText(a[2] ?? a[3], lt));
+    }
+    if (/\S/.test(attrText.slice(at))) throw new Error(`malformed XML: bad attribute syntax in <${name}> at offset ${lt}`);
+    if (root === null) {
+      root = name;
+      if (localName(name) !== rootName) throw new Error(`unexpected root element <${name}> (want <${rootName}>)`);
+    }
+    const scope = scopeWith(stack.length ? stack[stack.length - 1].scope : BASE_SCOPE, attrs, lt);
+    const ns = resolveNs(name, scope, lt);
+    open(localName(name), attrs, stack.length, ns);
+    if (selfClosing) {
+      close(localName(name), stack.length, ns);
+      if (stack.length === 0) rootClosed = true;
+    } else stack.push({ name, ns, scope });
   }
-  if (root === null) throw new Error('incomplete XML: no root element');
-  if (stack.length) throw new Error(`incomplete XML: ${stack.length} element(s) never closed, innermost <${stack[stack.length - 1].name}> — the file is truncated`);
+
+  function checkChars(s) {
+    const bad = NON_XML_CHAR.exec(s);
+    if (bad) {
+      throw new Error(`malformed XML: U+${bad[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} at offset ${base + buf.length + bad.index} is not an XML character`);
+    }
+  }
+
+  return {
+    write(chunk) {
+      if (ended) throw new Error('the XML scanner was already ended');
+      let s = carry + chunk;
+      carry = '';
+      // A surrogate pair cut between two pieces is one character: hold its
+      // first half until the second arrives.
+      const last = s.charCodeAt(s.length - 1);
+      if (last >= 0xd800 && last <= 0xdbff) {
+        carry = s.slice(-1);
+        s = s.slice(0, -1);
+      }
+      if (!started && s.length > 0) {
+        started = true;
+        if (s.charCodeAt(0) === 0xfeff) {
+          s = s.slice(1);
+          base = 1;
+        }
+      }
+      checkChars(s);
+      buf += s;
+      drain(false);
+    },
+    end() {
+      if (ended) throw new Error('the XML scanner was already ended');
+      ended = true;
+      if (carry) checkChars(carry);
+      drain(true);
+      if (root === null) throw new Error('incomplete XML: no root element');
+      if (stack.length) throw new Error(`incomplete XML: ${stack.length} element(s) never closed, innermost <${stack[stack.length - 1].name}> — the file is truncated`);
+    },
+  };
 }
 
 /** Throws unless `xml` is a complete document — {@link scanXml} with no handlers. */
@@ -423,6 +520,71 @@ export function decodeSource(bytes) {
   } catch {
     throw new Error('the source file is not valid UTF-8 — refusing a file whose bytes were corrupted');
   }
+}
+
+/**
+ * Parse a publication from its BYTES as they arrive — any async iterable of
+ * byte chunks, such as a file stream (#2443 adder host). One pass computes
+ * the source hash over exactly the bytes parsed, decodes them as UTF-8 with
+ * the same refusal as {@link decodeSource}, and feeds the text to
+ * {@link createSdnParser}; nothing holds the whole file, so memory stays at
+ * the size of the parse result rather than the 128 MB publication.
+ */
+export async function parseSdnAdvancedStream(chunks) {
+  const hash = createHash('sha256');
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const parser = createSdnParser();
+  let byteLength = 0;
+  const decode = (bytes, stream) => {
+    try {
+      return decoder.decode(bytes, { stream });
+    } catch {
+      throw new Error('the source file is not valid UTF-8 — refusing a file whose bytes were corrupted');
+    }
+  };
+  for await (const chunk of chunks) {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    hash.update(bytes);
+    byteLength += bytes.length;
+    parser.write(decode(bytes, true));
+  }
+  parser.write(decode(undefined, false));
+  return { parsed: parser.end(), sourceHash: `0x${hash.digest('hex')}`, byteLength };
+}
+
+/** {@link parseSdnAdvancedStream} over a file on disk, read in 1 MiB pieces. */
+export function parseSdnAdvancedFile(path) {
+  return parseSdnAdvancedStream(createReadStream(path, { highWaterMark: 1 << 20 }));
+}
+
+/**
+ * Download a publication to `path`, streaming it to disk — never into memory
+ * — and refusing a response larger than `maxBytes`. The file is written to
+ * `path + '.part'` and renamed only once complete, so a cut transfer never
+ * leaves something at `path` that looks like a publication.
+ */
+export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_BYTES, fetchImpl = fetch } = {}) {
+  const res = await fetchImpl(url);
+  if (!res.ok) throw new Error(`download of ${url} failed: HTTP ${res.status}`);
+  if (!res.body) throw new Error(`download of ${url} returned no body`);
+  const part = `${path}.part`;
+  const out = createWriteStream(part);
+  let size = 0;
+  try {
+    for await (const chunk of res.body) {
+      size += chunk.length;
+      if (size > maxBytes) throw new Error(`download of ${url} exceeds ${maxBytes} bytes — refusing it`);
+      if (!out.write(chunk)) await once(out, 'drain');
+    }
+    out.end();
+    await once(out, 'finish');
+  } catch (e) {
+    out.destroy();
+    rmSync(part, { force: true });
+    throw e;
+  }
+  renameSync(part, path);
+  return size;
 }
 
 /**
@@ -531,11 +693,29 @@ const SDN_SINGLETON_PATHS = new Set([SDN_PATHS.dateOfIssue, SDN_PATHS.year, SDN_
  * nothing inside it is consumed (Codex #2543 r4).
  */
 export function parseSdnAdvanced(xml) {
+  const parser = createSdnParser();
+  parser.write(xml);
+  return parser.end();
+}
+
+/**
+ * {@link parseSdnAdvanced} fed in pieces (#2443 adder host): `write(chunk)`
+ * takes the next piece of decoded text and `end()` returns the parse. The
+ * rules are the same — it IS the same parser, driven through
+ * {@link createXmlScanner} — and so is the result, wherever the pieces are
+ * cut; a whole publication is never held as one string.
+ */
+export function createSdnParser() {
   const path = []; // local names of the open OFAC-namespace elements, root first
   // Every run of 40+ hex digits in the file, raw and in decoded text, kept
   // with repeats — the delisting witness buildUpdate checks (Codex #2543
-  // r19/r20).
-  const hexRuns = { raw: (xml.match(HEX_RUN_RE) ?? []).map((r) => r.toLowerCase()), text: [] };
+  // r19/r20). A raw run can straddle two pieces, so the hex digits that end
+  // a piece wait for the next one before they are counted.
+  const hexRuns = { raw: [], text: [] };
+  let hexTail = '';
+  const countRaw = (s) => {
+    for (const run of s.match(HEX_RUN_RE) ?? []) hexRuns.raw.push(run.toLowerCase());
+  };
   const seen = new Map(); // singleton path -> count
   const date = {};
   const featureTypes = new Map();
@@ -555,7 +735,7 @@ export function parseSdnAdvanced(xml) {
   let refId = null;
   let detailTypeId = null; // DetailTypeID of the <VersionDetail> being read
 
-  scanXml(xml, {
+  const scanner = createXmlScanner({
     open(name, attrs, depth, ns) {
       if (depth === 0 && ns !== OFAC_SDN_ADVANCED_NAMESPACE) {
         // Exact match, not a substring test: a namespace that merely
@@ -601,22 +781,22 @@ export function parseSdnAdvanced(xml) {
           break;
         case SDN_PATHS.versionDetail:
           reading = at;
-          detailTypeId = attrs.get('DetailTypeID');
+          detailTypeId = own(attrs.get('DetailTypeID'));
           buf = '';
           break;
         case SDN_PATHS.featureType:
         case SDN_PATHS.reliability:
         case SDN_PATHS.detailType:
           reading = at;
-          refId = attrs.get('ID');
+          refId = own(attrs.get('ID'));
           buf = '';
           break;
         case SDN_PATHS.feature:
-          feature = { typeId: attrs.get('FeatureTypeID'), versions: 0 };
+          feature = { typeId: own(attrs.get('FeatureTypeID')), versions: 0 };
           break;
         case SDN_PATHS.featureVersion:
           feature.versions++;
-          version = { rel: attrs.get('ReliabilityID'), details: 0 };
+          version = { rel: own(attrs.get('ReliabilityID')), details: 0 };
           break;
         default:
         // Any other element — including a same-named <Feature> anywhere off
@@ -631,7 +811,7 @@ export function parseSdnAdvanced(xml) {
       const at = path.join('/');
       path.pop();
       if (reading === at) {
-        const value = buf.trim();
+        const value = own(buf.trim());
         if (at === SDN_PATHS.year) date.Year = value;
         else if (at === SDN_PATHS.month) date.Month = value;
         else if (at === SDN_PATHS.day) date.Day = value;
@@ -668,6 +848,26 @@ export function parseSdnAdvanced(xml) {
     },
   });
 
+  return {
+    write(chunk) {
+      const joined = hexTail + chunk;
+      let cut = joined.length;
+      while (cut > 0 && isHexDigit(joined.charCodeAt(cut - 1))) cut--;
+      countRaw(joined.slice(0, cut));
+      hexTail = joined.slice(cut);
+      scanner.write(chunk);
+    },
+    end() {
+      countRaw(hexTail);
+      hexTail = '';
+      scanner.end();
+      return resolveSdnRecords({ date, featureTypes, reliability, detailTypes, records, hexRuns });
+    },
+  };
+}
+
+/** The pass after the scan: resolve every record against the reference sets. */
+function resolveSdnRecords({ date, featureTypes, reliability, detailTypes, records, hexRuns }) {
   if (!/^\d{4}$/.test(date.Year ?? '') || !/^\d{1,2}$/.test(date.Month ?? '') || !/^\d{1,2}$/.test(date.Day ?? '')) {
     throw new Error('no <DateOfIssue> — cannot identify the publication');
   }
@@ -900,8 +1100,12 @@ export function buildUpdate({
   maxRemove = DEFAULT_MAX_REMOVE,
   maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL,
   confirmedDelistings = [],
+  signers = 'all',
   abi = sanctionsListAbi(),
 }) {
+  if (signers !== 'all' && signers !== 'adder') throw new Error(`signers must be 'all' or 'adder', got ${JSON.stringify(signers)}`);
+  // The adder service never rolls back: that is the owner's deliberate act.
+  if (signers === 'adder' && allowRollback) throw new Error('an adder-only update never rolls back a publication');
   if (!Number.isSafeInteger(maxRemove) || maxRemove < 0) throw new Error(`maxRemove must be a non-negative integer, got ${maxRemove}`);
   if (!Number.isSafeInteger(maxChangesPerCall) || maxChangesPerCall < 1) throw new Error(`maxChangesPerCall must be a positive integer, got ${maxChangesPerCall}`);
   if (recordedDate === undefined || recordedHash === undefined) throw new Error('the recorded publication date and hash are required');
@@ -929,8 +1133,14 @@ export function buildUpdate({
       `refusing to delist ${remove.length} addresses (limit ${maxRemove}). OFAC delistings are rare; check the source file, then raise --max-remove deliberately.`,
     );
   }
+  // The witness holds in both modes: in adder-only mode the delistings are
+  // not applied, but their count is DECLARED on-chain as outstanding, and a
+  // count the file does not support must not be published either.
   assertDelistingsWitnessed(parsed, remove);
-  assertDelistingsConfirmed(remove, confirmedDelistings, parsed.malformed ?? []);
+  // Confirmation is required of the calls that delist. An adder-only update
+  // delists nothing, so it needs none: its removals wait, declared, for the
+  // remover, whose run confirms them (#2443 adder host).
+  if (signers === 'all') assertDelistingsConfirmed(remove, confirmedDelistings, parsed.malformed ?? []);
   const version = BigInt(currentVersion);
   // `additionsLeft` / `delistingsLeft` are what the contract publishes as
   // `pendingAdditions` / `pendingDelistings` after each call.
@@ -965,19 +1175,31 @@ export function buildUpdate({
     return out;
   };
   // An empty diff is still one adder call: the refresh that records the
-  // publication. A delisting-only update goes to the remover alone.
-  const addBatches = add.length > 0 ? batches(add) : remove.length > 0 ? [] : [[]];
+  // publication. A delisting-only update goes to the remover alone — except
+  // in adder-only mode, where a NEW publication is still recorded by one
+  // empty adder call declaring its delistings outstanding, so the list says
+  // which publication it follows and what of it is not yet applied. A repeat
+  // with nothing left to add gives the adder nothing to do.
+  let addBatches;
+  if (add.length > 0) addBatches = batches(add);
+  else if (signers === 'adder') addBatches = order === 'same-publication' ? [] : [[]];
+  else addBatches = remove.length > 0 ? [] : [[]];
   for (const batch of addBatches) {
     addsLeft -= batch.length;
     push('adder', batch, [], addsLeft, delsLeft);
   }
-  for (const batch of batches(remove)) {
-    delsLeft -= batch.length;
-    push('remover', [], batch, addsLeft, delsLeft);
+  if (signers === 'all') {
+    for (const batch of batches(remove)) {
+      delsLeft -= batch.length;
+      push('remover', [], batch, addsLeft, delsLeft);
+    }
   }
   return {
     add,
     remove,
+    // The delistings this update leaves for the remover: all of them in
+    // adder-only mode, none otherwise.
+    withheldRemovals: signers === 'adder' ? remove : [],
     order,
     authorizeCalldata:
       order === 'rollback'
@@ -1020,8 +1242,7 @@ function readList(path) {
  * with `requireCanonical`, so a reorg during the reads makes them fail
  * instead of mixing two forks at one height.
  */
-async function readCurrentFromChain(rpc, list, abi, expectedChainId) {
-  const client = createPublicClient({ transport: http(rpc) });
+export async function readCurrentFromChain(client, list, abi, expectedChainId) {
   // The same list address and version can exist on another chain; reads
   // there are self-consistent and wrong (Codex #2543 r21).
   const chainId = BigInt(await client.getChainId());
@@ -1064,21 +1285,21 @@ async function main() {
     console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('*/')[0]);
     return;
   }
-  let bytes;
+  // The publication is streamed to disk and parsed from there in pieces, so
+  // the tool never holds the 128 MB file in memory (#2443 adder host).
+  let file;
   let source;
   if (args.fetch) {
-    const res = await fetch(OFAC_SDN_ADVANCED_URL);
-    if (!res.ok) throw new Error(`OFAC download failed: HTTP ${res.status}`);
-    bytes = Buffer.from(await res.arrayBuffer());
+    if (!args['save-xml']) throw new Error('--fetch needs --save-xml <file>: the download is kept as the record of what was parsed');
+    await downloadToFile(OFAC_SDN_ADVANCED_URL, args['save-xml']);
+    file = args['save-xml'];
     source = OFAC_SDN_ADVANCED_URL;
-    if (args['save-xml']) writeFileSync(args['save-xml'], bytes);
   } else if (args.xml) {
-    bytes = readFileSync(args.xml);
+    file = args.xml;
     source = args.xml;
   } else throw new Error('give --xml <file> or --fetch');
 
-  const parsed = parseSdnAdvanced(decodeSource(bytes));
-  const hash = sourceHash(bytes);
+  const { parsed, sourceHash: hash } = await parseSdnAdvancedFile(file);
   const abi = sanctionsListAbi();
 
   // The current list is read from the deployed contract and nowhere else
@@ -1090,7 +1311,7 @@ async function main() {
   if (args.current !== undefined) throw new Error('--current (a file of addresses) is no longer accepted: read the list from the chain with --rpc + --list');
   if (args.block !== undefined) throw new Error('--block is no longer accepted: the list is always read at the finalized block, so no reorg can replace the state an update is computed from');
   if (args['chain-id'] === undefined) throw new Error('give --chain-id: the chain the list lives on, checked against what --rpc serves');
-  const current = await readCurrentFromChain(args.rpc, getAddress(args.list), abi, parseUintArg('--chain-id', args['chain-id'], { min: 1n }));
+  const current = await readCurrentFromChain(createPublicClient({ transport: http(args.rpc) }), getAddress(args.list), abi, parseUintArg('--chain-id', args['chain-id'], { min: 1n }));
   current.source = { chainId: current.chainId.toString(), list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
 
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;

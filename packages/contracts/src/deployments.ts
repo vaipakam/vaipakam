@@ -334,6 +334,11 @@ export interface Deployment {
    *  recorded when deployed. Equals `sanctions.oracle` once the Diamond is
    *  configured with it; set alone while that call awaits a timelock. */
   sanctionsTestnetOverlay?: HexAddress;
+  /** #2443 — the `SanctionsList` `DeploySanctionsList` deployed on this
+   *  chain, recorded when deployed. On a testnet it is the adder service's
+   *  rehearsal target and is NOT what the Diamond screens against
+   *  (`sanctions.oracle` says what it does). */
+  sanctionsList?: HexAddress;
 
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven

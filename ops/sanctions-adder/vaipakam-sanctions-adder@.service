@@ -1,0 +1,49 @@
+# One run of the sanctions adder for one chain (ops/sanctions-adder/README.md).
+# The instance name is the chain's slug, e.g. vaipakam-sanctions-adder@base-sepolia.
+#
+# A oneshot: it downloads OFAC's publication, applies its additions to that
+# chain's SanctionsList with the adder key, reports, and exits. The timer of
+# the same instance starts it once a day; `systemctl start` runs it now.
+# Logs: journalctl -u vaipakam-sanctions-adder@base-sepolia
+#
+# The env file stays root-only (0600). LoadCredential hands a copy to this
+# run's dynamic user alone, so no long-lived account owns the adder key, and
+# `env -i` starts Node with an EMPTY environment so the file is the only
+# source of settings. The keeper's key and env file are never readable here.
+
+[Unit]
+Description=Vaipakam sanctions adder (%i)
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/ops/sanctions-adder/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=vaipakam-sanctions-adder/%i
+StateDirectoryMode=0700
+LoadCredential=adder.env:/etc/vaipakam/sanctions-adder/%i.env
+ExecStart=/usr/bin/env -i STATE_DIRECTORY=/var/lib/vaipakam-sanctions-adder/%i /usr/local/bin/node --max-old-space-size=192 --env-file=%d/adder.env /opt/vaipakam-sanctions-adder/current/packages/contracts/scripts/sanctions-adder.mjs
+# A run parses the 128 MB publication in pieces (about 150 MB resident).
+# The cap makes an unexpected growth fail THIS run, never the keeper beside
+# it, and the weights below give the keeper the machine whenever both want it.
+MemoryMax=384M
+CPUWeight=20
+IOWeight=20
+Nice=10
+# A download, a parse and a few transactions with their receipts.
+TimeoutStartSec=45min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute is deliberately NOT set: V8's JIT needs W+X pages.
+SystemCallArchitectures=native
