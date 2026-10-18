@@ -6,7 +6,7 @@ import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -306,7 +306,11 @@ contract LenderIntentFacet is
     ///         clears it.
     /// @dev    Opting in is Tier-1 sanctions-gated (it authorizes future spends of
     ///         the caller's paid credits); opting OUT is always allowed, so a
-    ///         flagged owner can withdraw consent. A protocol-run owner — an
+    ///         flagged owner can withdraw consent. Opting in is also refused
+    ///         while the protocol is paused, like every other consent-creating
+    ///         entry point (`setLenderIntent` is `whenNotPaused`); opting OUT
+    ///         stays open during a pause, since revoking consent is containment
+    ///         (Codex #2563 r3). A protocol-run owner — an
     ///         aggregator adapter or the backstop vault — is refused by name: those
     ///         are not perk buyers, and the flag could never be used.
     function setLenderIntentPriority(address lendingAsset, address collateralAsset, bool enabled)
@@ -315,6 +319,7 @@ contract LenderIntentFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (enabled) {
+            LibPausable.requireNotPaused();
             LibVaipakam._assertNotSanctioned(msg.sender);
             if (s.isAggregatorAdapter[msg.sender] || msg.sender == s.backstopVault) {
                 revert IVaipakamErrors.LenderIntentPriorityProtocolOwner(msg.sender);

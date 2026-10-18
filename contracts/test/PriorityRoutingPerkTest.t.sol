@@ -12,6 +12,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {PerkFacet} from "../src/facets/PerkFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
@@ -563,6 +564,28 @@ contract PriorityRoutingPerkTest is SetupTest {
         m.setFlagged(lender, false);
         _setPriority(true); // straddle: cleared, accepted
         assertTrue(_priority(), "opted in once unflagged");
+    }
+
+    /// @dev Codex #2563 r3 — opting IN is consent-creating and refused while the
+    ///      protocol is paused, like `setLenderIntent`; opting OUT is containment and
+    ///      stays open during the pause. Straddle: unpaused, the same opt-in lands.
+    function test_Paused_OptInRefused_OptOutAllowed() public {
+        _setIntent();
+        _setPriority(true);
+        AdminFacet(address(diamond)).pause();
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        _setPriority(false); // revoke during the pause
+
+        vm.prank(lender);
+        vm.expectRevert(LibPausable.EnforcedPause.selector);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        assertFalse(_priority(), "no opt-in written while paused");
+
+        AdminFacet(address(diamond)).unpause();
+        _setPriority(true);
+        assertTrue(_priority(), "opted in once unpaused");
     }
 
     // ─── 7. sale guards ─────────────────────────────────────────────────────
