@@ -11,6 +11,7 @@ import {
 import {ICrossChainMessenger} from "../../src/crosschain/ICrossChainMessenger.sol";
 import {ISanctionsList} from "../../src/interfaces/ISanctionsList.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
+import {MockTimestampedSanctionsOracle} from "../mocks/MockTimestampedSanctionsOracle.sol";
 
 /// @dev A messenger stand-in: records what a handler sends, charges a fixed
 ///      fee and refunds the rest to the caller, and delivers on demand.
@@ -83,8 +84,12 @@ contract SanctionsDelistingTimelockTest is Test {
     uint32 internal constant D1 = 20261015;
     uint32 internal constant D2 = 20261016;
     uint256 internal constant SRC = 8453;
+    /// @dev The test's start time. Later times are written as literals from
+    ///      it, not read from `block.timestamp`: under viaIR a test may read
+    ///      the pre-warp value back.
+    uint256 internal constant T0 = 1_800_000_000;
 
-    MockSanctionsList internal redstone;
+    MockTimestampedSanctionsOracle internal redstone;
     ClearanceMessengerMock internal messenger;
     address internal attestorAddr = makeAddr("attestor");
 
@@ -100,11 +105,21 @@ contract SanctionsDelistingTimelockTest is Test {
         uint256 indexed id, address indexed by, SanctionsDelistingTimelock.GateMode gate, uint64 listVersion
     );
     event DelistingCancelled(uint256 indexed id, address indexed by);
-    event ClearanceRecorded(address indexed account, bool flagged, uint64 asOf, uint32 indexed epoch);
+    event ClearanceAnswered(
+        uint256 indexed id,
+        bytes32 indexed challenge,
+        bool[] flagged,
+        uint64 oracleUpdatedAt,
+        SanctionsDelistingTimelock.ClearanceState state
+    );
+    event ClearanceIgnored(
+        bytes32 indexed challenge, uint256 indexed id, SanctionsDelistingTimelock.IgnoreReason reason
+    );
 
     function setUp() public {
-        vm.warp(1_800_000_000);
-        redstone = new MockSanctionsList();
+        vm.warp(T0);
+        redstone = new MockTimestampedSanctionsOracle();
+        redstone.setLastUpdate(T0);
         messenger = new ClearanceMessengerMock();
     }
 
@@ -138,8 +153,22 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.setClearanceSource(address(messenger), SRC, attestorAddr);
     }
 
-    function _clear(SanctionsDelistingTimelock tl, address[] memory accts, bool[] memory flags, uint64 asOf) internal {
-        messenger.deliver(tl, SRC, attestorAddr, abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, accts, flags, asOf));
+    function _payload(bytes32 ch, address[] memory accts, bool[] memory flags, uint64 oracleUpdatedAt)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, ch, accts, flags, oracleUpdatedAt);
+    }
+
+    function _answer(
+        SanctionsDelistingTimelock tl,
+        bytes32 ch,
+        address[] memory accts,
+        bool[] memory flags,
+        uint64 oracleUpdatedAt
+    ) internal {
+        messenger.deliver(tl, SRC, attestorAddr, _payload(ch, accts, flags, oracleUpdatedAt));
     }
 
     function _propose(SanctionsDelistingTimelock tl, address[] memory accts) internal returns (uint256 id) {
@@ -348,13 +377,36 @@ contract SanctionsDelistingTimelockTest is Test {
         uint256 id = _propose(tl, _arr(a, b));
         redstone.setFlagged(b, true);
         vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.StillSanctioned.selector, b));
+        tl.execute(id);
+        assertTrue(list.listedByOwnList(a), "all or nothing");
+    }
+
+    function test_Execute_Local_UnknownOrStaleOracle_FailsClosed() public {
+        (SanctionsList list, SanctionsDelistingTimelock tl) = _local();
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 8 days);
+        // RedStone last updated at T0: eight days ago, past the default.
         vm.expectRevert(
             abi.encodeWithSelector(
-                SanctionsDelistingTimelock.StillSanctioned.selector, b, SanctionsDelistingTimelock.GateMode.Local
+                SanctionsDelistingTimelock.OracleStale.selector, SanctionsDelistingTimelock.GateMode.Local, T0, 7 days
             )
         );
         tl.execute(id);
-        assertTrue(list.listedByOwnList(a), "all or nothing");
+        redstone.setRevertOnTimestamp(true);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SanctionsDelistingTimelock.OracleFreshnessUnknown.selector, SanctionsDelistingTimelock.GateMode.Local
+            )
+        );
+        tl.execute(id);
+        redstone.setRevertOnTimestamp(false);
+        redstone.setLastUpdate(T0 + 7 days);
+        // The local gate needs no challenge, and refuses to issue one.
+        vm.expectRevert(SanctionsDelistingTimelock.LocalGateInUse.selector);
+        tl.requestClearance(id);
+        tl.execute(id);
+        assertFalse(list.listedByOwnList(a));
     }
 
     function test_Execute_Local_OracleOutageFailsClosed() public {
@@ -405,34 +457,34 @@ contract SanctionsDelistingTimelockTest is Test {
     function test_Execute_NoGateConfigured_IsClosed() public {
         (, SanctionsDelistingTimelock tl) = _deploy(address(0));
         uint256 id = _propose(tl, _arr(a));
-        vm.warp(block.timestamp + 2 days);
+        vm.warp(T0 + 2 days);
         vm.expectRevert(SanctionsDelistingTimelock.ClearanceUnavailable.selector);
         tl.execute(id);
+        vm.expectRevert(SanctionsDelistingTimelock.ClearanceUnavailable.selector);
+        tl.requestClearance(id);
     }
 
-    function test_Execute_CrossChain_NeedsAFreshClearanceFromAfterTheEta() public {
+    function test_Execute_CrossChain_ChallengeIssuedAfterTheEta_ThenAnswered() public {
         (SanctionsList list, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a, b));
-        uint64 eta = tl.getProposal(id).eta;
 
-        // A clearance observed during the window does not count.
-        _clear(tl, _arr(a, b), _flags(false, false), uint64(block.timestamp));
-        vm.warp(eta);
-        vm.expectRevert(
-            abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceMissingOrStale.selector, a, eta - 2 days, eta)
-        );
+        // No challenge can be issued during the window.
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.TooEarly.selector, id, T0 + 2 days));
+        tl.requestClearance(id);
+
+        vm.warp(T0 + 2 days);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotRequested.selector, id));
         tl.execute(id);
 
-        // One observed at the eta does.
-        _clear(tl, _arr(a, b), _flags(false, false), eta);
-        // ...but not once it is older than the max age.
-        vm.warp(eta + 1 days + 1);
-        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceMissingOrStale.selector, a, eta, eta));
+        vm.prank(stranger); // permissionless
+        bytes32 ch = tl.requestClearance(id);
+        assertEq(tl.proposalOfChallenge(ch), id);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotAnswered.selector, id, ch));
         tl.execute(id);
 
-        // A literal, not `block.timestamp`: under viaIR a test may read the
-        // pre-warp value back.
-        _clear(tl, _arr(a, b), _flags(false, false), eta + 1 days + 1);
+        vm.expectEmit(address(tl));
+        emit ClearanceAnswered(id, ch, _flags(false, false), uint64(T0), SanctionsDelistingTimelock.ClearanceState.Cleared);
+        _answer(tl, ch, _arr(a, b), _flags(false, false), uint64(T0));
         (bool ready,) = tl.readiness(id);
         assertTrue(ready);
         vm.expectEmit(address(tl));
@@ -442,63 +494,184 @@ contract SanctionsDelistingTimelockTest is Test {
         assertFalse(list.listedByOwnList(b));
     }
 
-    function test_Execute_CrossChain_RefusedWhenFlagged() public {
+    /// @dev An answer read during the window cannot carry the challenge,
+    ///      which did not exist yet; anything else it might echo is ignored.
+    function test_CrossChain_AnswerToAnUnknownChallenge_IsIgnored() public {
         (, SanctionsDelistingTimelock tl) = _crossChain();
-        uint256 id = _propose(tl, _arr(a, b));
-        vm.warp(block.timestamp + 2 days);
-        _clear(tl, _arr(a, b), _flags(false, true), uint64(block.timestamp));
+        uint256 id = _propose(tl, _arr(a));
+        bytes32 guess = keccak256("guess");
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(guess, 0, SanctionsDelistingTimelock.IgnoreReason.UnknownChallenge);
+        _answer(tl, guess, _arr(a), _flags(false), uint64(T0));
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
+        assertTrue(ch != guess);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotAnswered.selector, id, ch));
+        tl.execute(id);
+    }
+
+    function test_CrossChain_AFlaggedAnswerWins_InEitherOrder() public {
+        (, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id1 = _propose(tl, _arr(a));
+        uint256 id2 = _propose(tl, _arr(b));
+        vm.warp(T0 + 2 days);
+        bytes32 ch1 = tl.requestClearance(id1);
+        bytes32 ch2 = tl.requestClearance(id2);
+        assertTrue(ch1 != ch2, "distinct in one block");
+
+        // Cleared first, then flagged.
+        _answer(tl, ch1, _arr(a), _flags(false), uint64(T0));
+        _answer(tl, ch1, _arr(a), _flags(true), uint64(T0));
+        // Flagged first, then cleared, even with a fresher oracle.
+        _answer(tl, ch2, _arr(b), _flags(true), uint64(T0));
+        vm.expectEmit(address(tl));
+        emit ClearanceAnswered(
+            id2, ch2, _flags(false), uint64(T0 + 1 days), SanctionsDelistingTimelock.ClearanceState.Flagged
+        );
+        _answer(tl, ch2, _arr(b), _flags(false), uint64(T0 + 1 days));
+
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceFlagged.selector, id1, ch1));
+        tl.execute(id1);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceFlagged.selector, id2, ch2));
+        tl.execute(id2);
+        (bool ready, bytes4 reason) = tl.readiness(id2);
+        assertFalse(ready);
+        assertEq(reason, SanctionsDelistingTimelock.ClearanceFlagged.selector);
+    }
+
+    function test_CrossChain_UnknownOrStaleOracle_FailsClosed() public {
+        (SanctionsList list, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 10 days);
+        bytes32 ch = tl.requestClearance(id);
+
+        // The oracle reported no last-update time.
+        _answer(tl, ch, _arr(a), _flags(false), 0);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SanctionsDelistingTimelock.StillSanctioned.selector, b, SanctionsDelistingTimelock.GateMode.CrossChain
+                SanctionsDelistingTimelock.OracleFreshnessUnknown.selector, SanctionsDelistingTimelock.GateMode.CrossChain
             )
         );
         tl.execute(id);
-        (bool ready, bytes4 reason) = tl.readiness(id);
-        assertFalse(ready);
-        assertEq(reason, SanctionsDelistingTimelock.StillSanctioned.selector);
+
+        // It last updated eight days ago: older than the seven-day default.
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 2 days));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SanctionsDelistingTimelock.OracleStale.selector,
+                SanctionsDelistingTimelock.GateMode.CrossChain,
+                T0 + 2 days,
+                7 days
+            )
+        );
+        tl.execute(id);
+
+        // A later answer from a current oracle; an older one after it does
+        // not lower the recorded freshness.
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 9 days));
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 2 days));
+        (,, uint64 oracleUpdatedAt,,) = tl.clearanceOf(id);
+        assertEq(oracleUpdatedAt, T0 + 9 days);
+        tl.execute(id);
+        assertFalse(list.listedByOwnList(a));
     }
 
-    function test_Clearance_NewestWins_AndFutureClockIsClamped() public {
-        (, SanctionsDelistingTimelock tl) = _crossChain();
-        uint64 t = uint64(block.timestamp);
-        _clear(tl, _arr(a), _flags(true), t);
-        // An older reading delivered late does not replace it.
-        _clear(tl, _arr(a), _flags(false), t - 10);
-        (uint64 asOf,, bool flagged) = tl.clearanceOf(a);
-        assertEq(asOf, t);
-        assertTrue(flagged);
-        // A reading stamped in our future is recorded as now.
-        vm.expectEmit(address(tl));
-        emit ClearanceRecorded(b, false, t, 1);
-        _clear(tl, _arr(b), _flags(false), t + 1 hours);
-    }
-
-    function test_Clearance_NewSourceInvalidatesOldClearances() public {
+    function test_CrossChain_OracleClockAheadOfOurs_IsClamped() public {
         (, SanctionsDelistingTimelock tl) = _crossChain();
         uint256 id = _propose(tl, _arr(a));
-        vm.warp(block.timestamp + 2 days);
-        _clear(tl, _arr(a), _flags(false), uint64(block.timestamp));
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 3 days));
+        (,, uint64 oracleUpdatedAt,,) = tl.clearanceOf(id);
+        assertEq(oracleUpdatedAt, T0 + 2 days);
+    }
+
+    function test_CrossChain_ChallengeExpires_AndOnlyThenCanBeReissued() public {
+        (SanctionsList list, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
+        uint64 expiresAt = uint64(T0 + 3 days);
+
+        // Not while it is usable: an answer may be in flight.
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceOutstanding.selector, id, ch, expiresAt)
+        );
+        tl.requestClearance(id);
+
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 2 days));
+        vm.warp(T0 + 3 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceExpired.selector, id, expiresAt));
+        tl.execute(id);
+
+        bytes32 ch2 = tl.requestClearance(id);
+        assertEq(tl.proposalOfChallenge(ch), 0, "the old challenge is forgotten");
+        // An answer to the old one now changes nothing.
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(ch, 0, SanctionsDelistingTimelock.IgnoreReason.UnknownChallenge);
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0 + 3 days));
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotAnswered.selector, id, ch2));
+        tl.execute(id);
+
+        _answer(tl, ch2, _arr(a), _flags(false), uint64(T0 + 3 days));
+        tl.execute(id);
+        assertFalse(list.listedByOwnList(a));
+    }
+
+    function test_CrossChain_AnswersForOtherAccountsOrClosedProposals_AreIgnored() public {
+        (, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id = _propose(tl, _arr(a, b));
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
+
+        // A subset, or the same addresses in another order, is not the batch.
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(ch, id, SanctionsDelistingTimelock.IgnoreReason.AccountsMismatch);
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0));
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(ch, id, SanctionsDelistingTimelock.IgnoreReason.AccountsMismatch);
+        _answer(tl, ch, _arr(b, a), _flags(false, false), uint64(T0));
+        (,,,, SanctionsDelistingTimelock.ClearanceState state) = tl.clearanceOf(id);
+        assertEq(uint8(state), uint8(SanctionsDelistingTimelock.ClearanceState.Requested));
+
+        vm.prank(bot);
+        tl.cancel(id);
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(ch, id, SanctionsDelistingTimelock.IgnoreReason.ProposalClosed);
+        _answer(tl, ch, _arr(a, b), _flags(false, false), uint64(T0));
+    }
+
+    function test_CrossChain_NewSourceVoidsTheChallenge() public {
+        (, SanctionsDelistingTimelock tl) = _crossChain();
+        uint256 id = _propose(tl, _arr(a));
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0));
         address attestor2 = makeAddr("attestor2");
         vm.prank(admin);
         tl.setClearanceSource(address(messenger), SRC, attestor2);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                SanctionsDelistingTimelock.ClearanceMissingOrStale.selector, a, block.timestamp, block.timestamp
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceNotRequested.selector, id));
         tl.execute(id);
-        // The old attestor is no longer accepted; the new one is.
-        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.UnauthorizedClearanceSender.selector, SRC, attestorAddr));
-        _clear(tl, _arr(a), _flags(false), uint64(block.timestamp));
-        messenger.deliver(
-            tl, SRC, attestor2, abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, _arr(a), _flags(false), uint64(block.timestamp))
+
+        // The old attestor is no longer accepted, and a voided challenge's
+        // answer from the new one is ignored.
+        vm.expectRevert(
+            abi.encodeWithSelector(SanctionsDelistingTimelock.UnauthorizedClearanceSender.selector, SRC, attestorAddr)
         );
+        _answer(tl, ch, _arr(a), _flags(false), uint64(T0));
+        vm.expectEmit(address(tl));
+        emit ClearanceIgnored(ch, id, SanctionsDelistingTimelock.IgnoreReason.Superseded);
+        messenger.deliver(tl, SRC, attestor2, _payload(ch, _arr(a), _flags(false), uint64(T0)));
+
+        // A voided challenge may be replaced at once.
+        bytes32 ch2 = tl.requestClearance(id);
+        messenger.deliver(tl, SRC, attestor2, _payload(ch2, _arr(a), _flags(false), uint64(T0)));
         tl.execute(id);
     }
 
     function test_Clearance_InboundRefusals() public {
         (, SanctionsDelistingTimelock tl) = _crossChain();
-        bytes memory ok = abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, _arr(a), _flags(false), uint64(block.timestamp));
+        bytes memory ok = _payload(keccak256("x"), _arr(a), _flags(false), uint64(T0));
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotMessenger.selector, stranger));
         tl.onCrossChainMessage(SRC, attestorAddr, ok, new ICrossChainMessenger.TokenAmount[](0), bytes32(0));
@@ -510,12 +683,12 @@ contract SanctionsDelistingTimelockTest is Test {
         messenger.deliverWithToken(tl, SRC, attestorAddr, ok);
 
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.UnsupportedClearanceVersion.selector, 2));
-        messenger.deliver(tl, SRC, attestorAddr, abi.encode(uint16(2), _arr(a), _flags(false), uint64(block.timestamp)));
+        messenger.deliver(
+            tl, SRC, attestorAddr, abi.encode(uint16(2), keccak256("x"), _arr(a), _flags(false), uint64(T0))
+        );
 
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.LengthMismatch.selector, 2, 1));
-        messenger.deliver(
-            tl, SRC, attestorAddr, abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, _arr(a, b), _flags(false), uint64(1))
-        );
+        messenger.deliver(tl, SRC, attestorAddr, _payload(keccak256("x"), _arr(a, b), _flags(false), uint64(1)));
 
         // Turned off, nothing is accepted.
         vm.prank(admin);
@@ -535,6 +708,12 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.setDelay(30 days + 1);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.ClearanceMaxAgeOutOfRange.selector, 59 minutes));
         tl.setClearanceMaxAge(59 minutes);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.OracleMaxAgeOutOfRange.selector, 1 days - 1));
+        tl.setOracleMaxAge(1 days - 1);
+        vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.OracleMaxAgeOutOfRange.selector, 30 days + 1));
+        tl.setOracleMaxAge(30 days + 1);
+        tl.setOracleMaxAge(30 days);
+        assertEq(tl.oracleMaxAge(), 30 days);
         vm.expectRevert(SanctionsDelistingTimelock.InvalidClearanceSource.selector);
         tl.setClearanceSource(address(messenger), 0, attestorAddr);
         vm.expectRevert(abi.encodeWithSelector(SanctionsDelistingTimelock.NotAContract.selector, stranger));
@@ -550,6 +729,8 @@ contract SanctionsDelistingTimelockTest is Test {
         tl.setProposer(stranger, true);
         vm.expectRevert();
         tl.setClearanceSource(address(messenger), SRC, attestorAddr);
+        vm.expectRevert();
+        tl.setOracleMaxAge(3 days);
         vm.stopPrank();
 
         // A new delay applies to new proposals only.
@@ -581,37 +762,53 @@ contract SanctionsDelistingTimelockTest is Test {
 
     // ── Attestor ──────────────────────────────────────────────────────
 
-    function test_Attestor_SendsWhatTheOracleSays_AndRefunds() public {
+    function test_Attestor_SendsWhatTheOracleSays_WithItsFreshness_AndRefunds() public {
         SanctionsClearanceAttestor att =
             new SanctionsClearanceAttestor(ISanctionsList(address(redstone)), ICrossChainMessenger(address(messenger)));
         redstone.setFlagged(b, true);
-        assertEq(att.quote(84532, _arr(a, b)), messenger.FEE());
+        redstone.setLastUpdate(T0 - 1 hours);
+        bytes32 ch = keccak256("challenge");
+        assertEq(att.quote(84532, ch, _arr(a, b)), messenger.FEE());
         vm.deal(stranger, 1 ether);
         vm.prank(stranger);
-        att.attest{value: 0.05 ether}(84532, _arr(a, b));
+        att.attest{value: 0.05 ether}(84532, ch, _arr(a, b));
         assertEq(stranger.balance, 1 ether - messenger.FEE(), "overpayment returned to the caller");
         assertEq(address(att).balance, 0);
         assertEq(messenger.lastDest(), 84532);
         assertEq(messenger.lastGas(), att.DEST_GAS_BASE() + 2 * att.DEST_GAS_PER_ACCOUNT());
-        (uint16 v, address[] memory accts, bool[] memory flags, uint64 asOf) =
-            abi.decode(messenger.lastPayload(), (uint16, address[], bool[], uint64));
+        (uint16 v, bytes32 gotCh, address[] memory accts, bool[] memory flags, uint64 updatedAt) =
+            abi.decode(messenger.lastPayload(), (uint16, bytes32, address[], bool[], uint64));
         assertEq(v, SANCTIONS_CLEARANCE_WIRE_VERSION);
+        assertEq(gotCh, ch);
         assertEq(accts[0], a);
         assertEq(accts[1], b);
         assertFalse(flags[0]);
         assertTrue(flags[1]);
-        assertEq(asOf, block.timestamp);
+        assertEq(updatedAt, T0 - 1 hours);
+    }
+
+    function test_Attestor_OracleWithoutFreshness_SendsZero() public {
+        MockSanctionsList plain = new MockSanctionsList();
+        SanctionsClearanceAttestor att =
+            new SanctionsClearanceAttestor(ISanctionsList(address(plain)), ICrossChainMessenger(address(messenger)));
+        vm.deal(address(this), 1 ether);
+        att.attest{value: 0.01 ether}(84532, keccak256("c"), _arr(a));
+        (,,,, uint64 updatedAt) = abi.decode(messenger.lastPayload(), (uint16, bytes32, address[], bool[], uint64));
+        assertEq(updatedAt, 0);
     }
 
     function test_Attestor_Refusals() public {
         SanctionsClearanceAttestor att =
             new SanctionsClearanceAttestor(ISanctionsList(address(redstone)), ICrossChainMessenger(address(messenger)));
         vm.deal(address(this), 1 ether);
+        bytes32 ch = keccak256("challenge");
         redstone.setRevertFor(b, true);
         vm.expectRevert(bytes("oracle-outage"));
-        att.attest{value: 0.01 ether}(84532, _arr(a, b));
+        att.attest{value: 0.01 ether}(84532, ch, _arr(a, b));
         vm.expectRevert(SanctionsClearanceAttestor.EmptyBatch.selector);
-        att.attest{value: 0.01 ether}(84532, _none());
+        att.attest{value: 0.01 ether}(84532, ch, _none());
+        vm.expectRevert(SanctionsClearanceAttestor.ZeroChallenge.selector);
+        att.attest{value: 0.01 ether}(84532, bytes32(0), _arr(a));
         vm.expectRevert(SanctionsClearanceAttestor.NotAReceiver.selector);
         att.onCrossChainMessage(1, a, "", new ICrossChainMessenger.TokenAmount[](0), bytes32(0));
         vm.expectRevert(abi.encodeWithSelector(SanctionsClearanceAttestor.UnexpectedNative.selector, address(this)));
@@ -621,8 +818,8 @@ contract SanctionsDelistingTimelockTest is Test {
         new SanctionsClearanceAttestor(ISanctionsList(stranger), ICrossChainMessenger(address(messenger)));
     }
 
-    /// @dev End to end through the attestor's own payload: what it sends is
-    ///      what the timelock accepts.
+    /// @dev End to end through the attestor's own payload: what it sends for
+    ///      the timelock's challenge is what the timelock accepts.
     function test_AttestorPayload_IsAcceptedByTheTimelock() public {
         (SanctionsList list, SanctionsDelistingTimelock tl) = _deploy(address(0));
         SanctionsClearanceAttestor att =
@@ -630,9 +827,10 @@ contract SanctionsDelistingTimelockTest is Test {
         vm.prank(admin);
         tl.setClearanceSource(address(messenger), SRC, address(att));
         uint256 id = _propose(tl, _arr(a));
-        vm.warp(block.timestamp + 2 days);
+        vm.warp(T0 + 2 days);
+        bytes32 ch = tl.requestClearance(id);
         vm.deal(address(this), 1 ether);
-        att.attest{value: 0.01 ether}(block.chainid, _arr(a));
+        att.attest{value: 0.01 ether}(block.chainid, ch, _arr(a));
         messenger.deliver(tl, SRC, address(att), messenger.lastPayload());
         tl.execute(id);
         assertFalse(list.listedByOwnList(a));

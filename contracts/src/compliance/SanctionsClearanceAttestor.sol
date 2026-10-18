@@ -3,9 +3,13 @@ pragma solidity ^0.8.29;
 
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {ICrossChainMessenger, ICrossChainMessageRecipient} from "../crosschain/ICrossChainMessenger.sol";
+import {LibOracleFreshness} from "./LibOracleFreshness.sol";
 
 /// @dev The clearance wire format both ends agree on:
-///      `abi.encode(uint16 version, address[] accounts, bool[] flagged, uint64 asOf)`.
+///      `abi.encode(uint16 version, bytes32 challenge, address[] accounts,
+///      bool[] flagged, uint64 oracleUpdatedAt)`. `challenge` is the one the
+///      destination timelock issued for the proposal; `oracleUpdatedAt` is
+///      the oracle's own last-update time, 0 when it reports none.
 uint16 constant SANCTIONS_CLEARANCE_WIRE_VERSION = 1;
 
 /**
@@ -22,10 +26,23 @@ uint16 constant SANCTIONS_CLEARANCE_WIRE_VERSION = 1;
  *         It reports what the oracle says and nothing else: no owner, no
  *         configuration beyond the oracle and messenger fixed at deploy,
  *         and anyone may call {attest} and pay its fee. A caller can choose
- *         WHICH addresses are read, never what the answer is, and the
- *         receiving timelock keeps only the newest reading per address. An
- *         oracle read that reverts reverts the attestation, so an
- *         unreadable oracle never produces a "not flagged".
+ *         WHICH addresses are read and which challenge is echoed, never
+ *         what the answer is. An oracle read that reverts reverts the
+ *         attestation, so an unreadable oracle never produces a
+ *         "not flagged".
+ *
+ *         Two things make an answer usable at the destination, and neither
+ *         relies on comparing this chain's clock with the destination's:
+ *         - **The challenge.** The timelock issues it only after the
+ *           proposal's waiting window has ended, from its own recent block
+ *           hash, so nobody can know it earlier. An answer echoing it was
+ *           therefore read after the window, whatever either chain's clock
+ *           says. The timelock ignores an answer for an unknown or
+ *           superseded challenge, or for other addresses.
+ *         - **The oracle's own freshness.** The message carries the
+ *           oracle's `getLastUpdateBlockTimestamp()` (read through
+ *           {LibOracleFreshness}; 0 when unknown), so a frozen oracle that
+ *           still answers "not flagged" cannot clear a delisting.
  *
  *         Each destination needs this contract registered as the handler of
  *         the clearance channel on this chain's messenger, with the
@@ -36,10 +53,10 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
     /// @notice The most addresses one attestation may carry.
     uint256 public constant MAX_ACCOUNTS = 100;
 
-    /// @notice Destination gas: a base allowance plus one clearance write
-    ///         per address.
-    uint256 public constant DEST_GAS_BASE = 100_000;
-    uint256 public constant DEST_GAS_PER_ACCOUNT = 35_000;
+    /// @notice Destination gas: a base allowance plus a per-address share
+    ///         (decoding, hashing the batch against the proposal).
+    uint256 public constant DEST_GAS_BASE = 120_000;
+    uint256 public constant DEST_GAS_PER_ACCOUNT = 10_000;
 
     /// @notice RedStone's Sanctions Oracle on this chain.
     ISanctionsList public immutable oracle;
@@ -52,14 +69,16 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
         uint256 indexed destinationChainId,
         bytes32 indexed messageId,
         address indexed caller,
+        bytes32 challenge,
         address[] accounts,
         bool[] flagged,
-        uint64 asOf
+        uint64 oracleUpdatedAt
     );
 
     error ZeroAddress();
     error NotAContract(address candidate);
     error EmptyBatch();
+    error ZeroChallenge();
     error BatchTooLarge(uint256 size, uint256 max);
     error NotAReceiver();
     error UnexpectedNative(address from);
@@ -73,20 +92,26 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
         messenger = messenger_;
     }
 
-    /// @notice Read the oracle for `accounts` and send the answers to the
-    ///         timelock on `destinationChainId`. Pay the fee as `msg.value`
-    ///         (quote it with {quote}); any overpayment is returned.
+    /// @notice Read the oracle for `accounts` and send the answers, with
+    ///         the oracle's own freshness, to the timelock on
+    ///         `destinationChainId`. Pay the fee as `msg.value` (quote it with
+    ///         {quote}); any overpayment is returned.
+    /// @param challenge The challenge the destination timelock issued for
+    ///                  the proposal naming `accounts` (`requestClearance`).
+    /// @param accounts  That proposal's addresses, in its order.
     /// @return messageId The transport's id for the message.
-    function attest(uint256 destinationChainId, address[] calldata accounts)
+    function attest(uint256 destinationChainId, bytes32 challenge, address[] calldata accounts)
         external
         payable
         returns (bytes32 messageId)
     {
-        (bytes memory payload, bool[] memory flagged, uint64 asOf) = _payload(accounts);
+        (bytes memory payload, bool[] memory flagged, uint64 oracleUpdatedAt) = _payload(challenge, accounts);
         messageId = messenger.sendMessage{value: msg.value}(
             destinationChainId, payload, new ICrossChainMessenger.TokenAmount[](0), _destGas(accounts.length)
         );
-        emit ClearanceAttested(destinationChainId, messageId, msg.sender, accounts, flagged, asOf);
+        emit ClearanceAttested(
+            destinationChainId, messageId, msg.sender, challenge, accounts, flagged, oracleUpdatedAt
+        );
         // The messenger refunds overpayment here; pass it on. This contract
         // holds nothing between calls, so its whole balance is the refund.
         uint256 refund = address(this).balance;
@@ -97,8 +122,12 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
     }
 
     /// @notice The fee {attest} would need for the same arguments now.
-    function quote(uint256 destinationChainId, address[] calldata accounts) external view returns (uint256) {
-        (bytes memory payload,,) = _payload(accounts);
+    function quote(uint256 destinationChainId, bytes32 challenge, address[] calldata accounts)
+        external
+        view
+        returns (uint256)
+    {
+        (bytes memory payload,,) = _payload(challenge, accounts);
         return messenger.quoteMessageFee(
             destinationChainId, payload, new ICrossChainMessenger.TokenAmount[](0), _destGas(accounts.length)
         );
@@ -117,11 +146,12 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
         if (msg.sender != address(messenger)) revert UnexpectedNative(msg.sender);
     }
 
-    function _payload(address[] calldata accounts)
+    function _payload(bytes32 challenge, address[] calldata accounts)
         private
         view
-        returns (bytes memory payload, bool[] memory flagged, uint64 asOf)
+        returns (bytes memory payload, bool[] memory flagged, uint64 oracleUpdatedAt)
     {
+        if (challenge == bytes32(0)) revert ZeroChallenge();
         uint256 n = accounts.length;
         if (n == 0) revert EmptyBatch();
         if (n > MAX_ACCOUNTS) revert BatchTooLarge(n, MAX_ACCOUNTS);
@@ -130,8 +160,10 @@ contract SanctionsClearanceAttestor is ICrossChainMessageRecipient {
             if (accounts[i] == address(0)) revert ZeroAddress();
             flagged[i] = oracle.isSanctioned(accounts[i]);
         }
-        asOf = uint64(block.timestamp);
-        payload = abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, accounts, flagged, asOf);
+        // Known values are at most this block's timestamp, so they fit.
+        (, uint256 updatedAt) = LibOracleFreshness.lastUpdate(address(oracle));
+        oracleUpdatedAt = uint64(updatedAt);
+        payload = abi.encode(SANCTIONS_CLEARANCE_WIRE_VERSION, challenge, accounts, flagged, oracleUpdatedAt);
     }
 
     function _destGas(uint256 n) private pure returns (uint256) {

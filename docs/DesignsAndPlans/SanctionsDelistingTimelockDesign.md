@@ -11,7 +11,8 @@ All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:
   multisig must be able to stop any single delisting before it happens.
 - **D-B — RedStone must agree.** A wallet is delisted only while RedStone's
   Sanctions Oracle, the only independent on-chain list available, does not
-  flag it.
+  flag it. (Codex round 1 on #2562 added the corollary built here: RedStone
+  must also be current, or "does not flag it" says nothing — §4.)
 - **D-C — Proposals come from OFAC's files.** The bot reads the advanced XML
   (the file the list records) and the plain `SDN.XML`, which a separate parser
   reads, and proposes only what both support.
@@ -60,7 +61,7 @@ the owner revokes the timelock's remover role.
    2. publication unchanged;
    3. within `pendingDelistings`;
    4. not vetoed;
-   5. RedStone clears every address (§4).
+   5. a current RedStone clears every address (§4).
 
    Then it calls `SanctionsList.applyUpdate` as a **repeat of the recorded
    publication**, delisting the batch and lowering `pendingDelistings` by its
@@ -69,44 +70,88 @@ the owner revokes the timelock's remover role.
 
 ## 4. The RedStone gate
 
+Two things must hold for every execution, whichever route reads RedStone:
+
+- **RedStone does not flag any address in the batch.**
+- **RedStone is current.** Its own `getLastUpdateBlockTimestamp()` must be
+  known (not missing, reverting, zero or in the future) and no older than
+  `oracleMaxAge` (owner-set, 1 to 30 days, default 7). A frozen oracle keeps
+  answering, and answers "not flagged" for every address it never listed —
+  the same failure that retired Chainalysis's oracle from this design. One
+  reading rule, `LibOracleFreshness`, serves the list's `secondaryLastUpdate`,
+  this gate and the attestor. RedStone publishes no update cadence for this
+  oracle, so the default is generous; a quieter oracle closes the automated
+  route and leaves the Safe's direct delist.
+
 | Where | How | Failure |
 | --- | --- | --- |
-| The list composes RedStone as its secondary on this chain | `secondary.isSanctioned(a)` read live at execution | A revert propagates (fail closed); `true` reverts `StillSanctioned` |
-| Otherwise, a clearance source is configured | The newest CCIP clearance per address, which must be from the current source epoch, observed at or after `eta`, at most `clearanceMaxAge` old (1 hour to 7 days, default 1 day), and unflagged | `ClearanceMissingOrStale` or `StillSanctioned` |
+| The list composes RedStone as its secondary on this chain | Freshness, then `secondary.isSanctioned(a)`, read live at execution | `OracleFreshnessUnknown` / `OracleStale`; a read revert propagates (fail closed); `true` reverts `StillSanctioned` |
+| Otherwise, a clearance source is configured | The proposal's current challenge (below), answered `Cleared` with a known, recent oracle time | `ClearanceNotRequested`, `ClearanceExpired`, `ClearanceNotAnswered`, `ClearanceFlagged`, `OracleFreshnessUnknown`, `OracleStale` |
 | Neither | none | `ClearanceUnavailable`: automated delisting is closed and only the Safe's direct delist remains |
 
-**Why "at or after `eta`".** A designation RedStone makes during the window
-must be caught. A clearance read when the proposal was made would miss it.
+**The cross-chain challenge.** A designation RedStone makes during the window
+must be caught, so the reading has to be taken after the window ends. Comparing
+the attestor chain's timestamp with this chain's cannot prove that: the two
+clocks are independent, and a source clock running ahead would let a reading
+taken inside the window pass for one taken after it. So the proof is causal
+instead:
+
+- After `eta`, anyone may call `requestClearance(id)`. It issues a challenge
+  derived from the previous block's hash (plus the contract, chain, proposal,
+  epoch and a nonce), so it cannot be known before it is issued, and it is
+  issued only after the window. An answer echoing it was therefore read after
+  the window. Stated precisely: the previous block's hash is public one block
+  before the challenge is issued, so a caller who predicts that its own
+  request lands in the next block can learn the challenge at most one block
+  (seconds) early. That lead is bounded by the block time, not by either
+  chain's clock.
+- The challenge is usable for `clearanceMaxAge` after issue (1 hour to 7 days,
+  default 1 day), measured on this chain's clock. A new one may be issued only
+  when the proposal has none under the current source or the current one has
+  lapsed, so nobody can keep voiding an answer in flight.
+- An answer counts only for the proposal's exact batch (its `accountsHash`).
+- One flagged answer marks the challenge `Flagged` for good. Two answers to
+  one challenge can disagree only if RedStone changed between them; whichever
+  arrives first, the result fails closed. A later challenge, after this one
+  lapses, is a fresh reading.
+- Among "not flagged" answers, the freshest oracle time is kept, clamped to
+  this chain's clock. Clock skew between chains is seconds against an
+  `oracleMaxAge` of days, so it is the one clock comparison left, and it is
+  bounded.
 
 **The clearance path:**
 
 - **`SanctionsClearanceAttestor`**, deployed on a chain where RedStone runs,
   is permissionless and ownerless.
-  - `attest(destChainId, accounts)` reads `oracle.isSanctioned` for each
-    address. A revert propagates, so an unreadable oracle never yields "not
-    flagged".
-  - It sends `(version, accounts, flagged, asOf)` through the chain's
-    `ICrossChainMessenger`, and passes on the messenger's fee refund.
-  - A caller chooses which addresses are read, never the answer.
-- **The timelock's `onCrossChainMessage`** accepts a message only when all of
-  these hold:
+  - `attest(destChainId, challenge, accounts)` reads `oracle.isSanctioned`
+    for each address. A revert propagates, so an unreadable oracle never
+    yields "not flagged". It also reads the oracle's own last-update time (0
+    when unknown).
+  - It sends `(version, challenge, accounts, flagged, oracleUpdatedAt)`
+    through the chain's `ICrossChainMessenger`, and passes on the messenger's
+    fee refund.
+  - A caller chooses which addresses are read and which challenge is echoed,
+    never the answer.
+- **The timelock's `onCrossChainMessage`** reverts unless all of these hold:
   - it comes from the configured messenger;
   - the source chain and sender are the configured attestor (on top of the
     messenger's own lane and peer authentication);
-  - it carries no tokens and has a known wire version.
+  - it carries no tokens, has a known wire version and matching array lengths.
 
-  It keeps the newest reading per address, because CCIP may deliver out of
-  order, and clamps a future source timestamp to the local clock. Changing the
-  source bumps an epoch, so readings from the old source stop counting.
+  A well-formed message that carries no evidence about a live proposal — an
+  unknown or superseded challenge, a closed proposal, other addresses — is
+  ignored with `ClearanceIgnored` and its reason, not reverted, since anyone
+  can make the attestor send one. Changing the source bumps an epoch, which
+  voids every outstanding challenge.
 
 ## 5. What each key can do if stolen
 
 | Key | Can | Cannot |
 | --- | --- | --- |
-| Proposer (delister bot) | Propose wrongful delistings, which the Safe can veto and RedStone must still clear; withdraw proposals | Shorten the window, skip the RedStone check, lift a veto |
+| Proposer (delister bot) | Propose wrongful delistings, which the Safe can veto and a current RedStone must still clear; withdraw proposals | Shorten the window, skip the RedStone check, lift a veto |
 | Adder | List addresses; record a publication | Delist |
 | Safe (remover) | Delist directly; veto; cancel | — (it is the multisig) |
-| Owner (admin) | Appoint or revoke the proposer and the timelock's remover role; set the delay, the clearance source and its max age; veto | Delist without appointing itself |
+| Owner (admin) | Appoint or revoke the proposer and the timelock's remover role; set the delay, the clearance source, the challenge lifetime and the oracle's max age; veto | Delist without appointing itself |
 
 ## 6. Stated limits
 
@@ -129,7 +174,8 @@ must be caught. A clearance read when the proposal was made would miss it.
   absent from the plain file and passing the witness check, minus addresses
   already proposed, vetoed, or flagged by RedStone. It then:
   - proposes the candidates;
-  - after `eta`, requests the attestation on the RedStone chain;
+  - after `eta`, calls `requestClearance` on the timelock's chain and then
+    `attest` with that challenge on the RedStone chain;
   - executes matured proposals;
   - reconfirms after a new publication.
 
