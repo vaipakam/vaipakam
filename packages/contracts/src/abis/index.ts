@@ -156,6 +156,9 @@ import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
 import TestnetSanctionsOverlayABI from './TestnetSanctionsOverlay.json';
 // #2443 — the mainnet sanctions list (standalone; NOT a diamond facet).
 import SanctionsListABI from './SanctionsList.json';
+// #2443 — the delisting timelock and its CCIP RedStone attestor (standalone).
+import SanctionsDelistingTimelockABI from './SanctionsDelistingTimelock.json';
+import SanctionsClearanceAttestorABI from './SanctionsClearanceAttestor.json';
 
 export {
   OfferCreateFacetABI,
@@ -260,6 +263,8 @@ export {
   RiskPremiumRateModelABI,
   TestnetSanctionsOverlayABI,
   SanctionsListABI,
+  SanctionsDelistingTimelockABI,
+  SanctionsClearanceAttestorABI,
 };
 
 import type { Abi } from 'viem';

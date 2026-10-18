@@ -13,7 +13,7 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  * @notice Deploys Vaipakam's own `SanctionsList` on a TESTNET, appoints its
  *         adder and remover, and records it in the chain's artifact — the
  *         target the sanctions adder service rehearses against
- *         (ops/sanctions-adder/).
+ *         (ops/sanctions/).
  *
  * @dev    #2443. What this does NOT do, stated so nobody infers it:
  *         - It never points the Diamond at the list. On a testnet the Diamond

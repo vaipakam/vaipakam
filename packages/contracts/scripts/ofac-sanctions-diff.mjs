@@ -160,6 +160,43 @@ const HEX_PREFIX_RE = /^0x/i;
 /** A run of at least an address's 40 hex digits, anywhere in the source. */
 const HEX_RUN_RE = /[0-9a-fA-F]{40,}/g;
 const isHexDigit = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
+
+/**
+ * The delisting witness's view of a file: every maximal run of 40+ hex
+ * digits, kept with repeats, in two streams (Codex #2543 r19/r20, #2567 r1).
+ *   raw(piece)  — the file's text as it arrives. A run can straddle two
+ *     pieces, so the hex digits that end a piece wait for the next one.
+ *   text(value) — the tokenizer's decoded character data. One element's value
+ *     can reach it in several calls — text, then a CDATA section, around a
+ *     comment — so the same carry applies across calls: a run split that way
+ *     is one run of the decoded text, never two short ones the witness would
+ *     miss. Nothing resets the carry, not even an element boundary: joining
+ *     two adjacent values can only ADD a mention, which refuses a delisting,
+ *     never permits one.
+ * `end()` counts both carries and returns `{ raw, text }`. Both OFAC parsers
+ * use this one collector, so the witness rule cannot differ between them.
+ */
+export function createHexRunCollector() {
+  const runs = { raw: [], text: [] };
+  const carry = { raw: '', text: '' };
+  const feed = (stream, s, last) => {
+    const joined = carry[stream] + s;
+    let cut = joined.length;
+    if (!last) while (cut > 0 && isHexDigit(joined.charCodeAt(cut - 1))) cut--;
+    for (const run of joined.slice(0, cut).match(HEX_RUN_RE) ?? []) runs[stream].push(run.toLowerCase());
+    carry[stream] = joined.slice(cut);
+  };
+  return {
+    raw: (piece) => feed('raw', piece, false),
+    text: (value) => feed('text', value, false),
+    end() {
+      feed('raw', '', true);
+      feed('text', '', true);
+      return runs;
+    },
+  };
+}
+
 /**
  * A copy of `s` that shares no memory with the text it was cut from. V8 may
  * keep a substring as a view into its parent, so a value cut from a 1 MiB
@@ -568,6 +605,7 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
   if (!res.ok) throw new Error(`download of ${url} failed: HTTP ${res.status}`);
   if (!res.body) throw new Error(`download of ${url} returned no body`);
   const part = `${path}.part`;
+  const file = createWriteStream(part);
   let size = 0;
   try {
     // `pipeline` owns the streams: an error from the response, the size cap
@@ -583,9 +621,13 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
           yield chunk;
         }
       },
-      createWriteStream(part),
+      file,
     );
   } catch (e) {
+    // The write stream opens its file asynchronously; a refusal that lands
+    // before that open completes would see the partial file created AFTER
+    // it was removed. Wait for the stream to close, then remove.
+    if (!file.closed) await new Promise((resolve) => file.once('close', resolve));
     rmSync(part, { force: true });
     throw e;
   }
@@ -713,15 +755,9 @@ export function parseSdnAdvanced(xml) {
  */
 export function createSdnParser() {
   const path = []; // local names of the open OFAC-namespace elements, root first
-  // Every run of 40+ hex digits in the file, raw and in decoded text, kept
-  // with repeats — the delisting witness buildUpdate checks (Codex #2543
-  // r19/r20). A raw run can straddle two pieces, so the hex digits that end
-  // a piece wait for the next one before they are counted.
-  const hexRuns = { raw: [], text: [] };
-  let hexTail = '';
-  const countRaw = (s) => {
-    for (const run of s.match(HEX_RUN_RE) ?? []) hexRuns.raw.push(run.toLowerCase());
-  };
+  // Every run of 40+ hex digits in the file, raw and in decoded text — the
+  // delisting witness buildUpdate checks (see createHexRunCollector).
+  const hex = createHexRunCollector();
   const seen = new Map(); // singleton path -> count
   const date = {};
   const featureTypes = new Map();
@@ -811,7 +847,7 @@ export function createSdnParser() {
     },
     text(value) {
       if (reading) buf += value;
-      for (const run of value.match(HEX_RUN_RE) ?? []) hexRuns.text.push(run.toLowerCase());
+      hex.text(value);
     },
     close() {
       const at = path.join('/');
@@ -856,18 +892,12 @@ export function createSdnParser() {
 
   return {
     write(chunk) {
-      const joined = hexTail + chunk;
-      let cut = joined.length;
-      while (cut > 0 && isHexDigit(joined.charCodeAt(cut - 1))) cut--;
-      countRaw(joined.slice(0, cut));
-      hexTail = joined.slice(cut);
+      hex.raw(chunk);
       scanner.write(chunk);
     },
     end() {
-      countRaw(hexTail);
-      hexTail = '';
       scanner.end();
-      return resolveSdnRecords({ date, featureTypes, reliability, detailTypes, records, hexRuns });
+      return resolveSdnRecords({ date, featureTypes, reliability, detailTypes, records, hexRuns: hex.end() });
     },
   };
 }

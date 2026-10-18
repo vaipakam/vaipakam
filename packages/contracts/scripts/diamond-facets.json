@@ -106,6 +106,8 @@
     "FlashLoanLiquidator",
     "RiskPremiumRateModel",
     "TestnetSanctionsOverlay",
-    "SanctionsList"
+    "SanctionsList",
+    "SanctionsDelistingTimelock",
+    "SanctionsClearanceAttestor"
   ]
 }
