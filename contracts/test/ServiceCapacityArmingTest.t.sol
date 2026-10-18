@@ -615,13 +615,16 @@ contract ServiceCapacityArmingTest is SetupTest {
         (, fee, granted, , ) = _f().previewArming(SOLVER, op, 99);
         assertEq(granted, 99, "every grant arms");
         assertEq(fee, 1, "0.99 rounds up to 1: 0.01 prepaid");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 0, "a fresh record holds no credit");
         assertEq(_post(SOLVER, 99), LibServiceCapacity.STATUS_OK);
         assertEq(_eligible(), 99, "armed");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 1e16, "the 0.01 overpayment is readable as the record's credit");
         (, fee, granted, , ) = _f().previewArming(SOLVER, op, 1);
         assertEq(granted, 1);
         assertEq(fee, 0, "the 0.01 share is covered by the 0.01 prepaid");
         assertEq(_post(SOLVER, 1), LibServiceCapacity.STATUS_OK);
         assertEq(_bucket(), bucketBefore + 1, "the record paid 1 for 100 armed: exactly 1%");
+        assertEq(_f().getArmingFeeCredit(SOLVER, op, 0), 0, "the credit is spent");
         (, fee, , , ) = _f().previewArming(SOLVER, op, 100);
         assertEq(fee, 1, "the credit was spent: the next 100 owe exactly 1 again");
     }

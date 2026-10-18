@@ -3278,7 +3278,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
     function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -3304,6 +3304,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1219 review — the free-tier bucket the backstop and unbound routes charge.
         s[20] = ServiceCapacityFacet.previewFreeTierCapacity.selector;
         s[21] = ServiceCapacityFacet.getArmingFeeBounds.selector; // #1219 Codex #2556 r2
+        s[22] = ServiceCapacityFacet.getArmingFeeCredit.selector; // #1219 Codex #2556 r7
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170 host split).

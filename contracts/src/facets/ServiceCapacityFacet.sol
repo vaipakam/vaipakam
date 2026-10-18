@@ -243,6 +243,17 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         return LibVaipakam.storageSlot().serviceDeposits[role][operator][rotationEpoch];
     }
 
+    /// @notice The arming fee one deposit record has PREPAID beyond what it has
+    ///         armed so far, in 1e18ths of one token unit (always under one unit,
+    ///         i.e. < 1e18). A post spends this credit against its own share before
+    ///         charging the rest rounded up, so it is why a later post can quote a
+    ///         smaller fee, or none ({LibServiceCapacity.armingFeeAndCredit}).
+    ///         Kept beside the record, so {getCapacityDeposit}'s shape is unchanged
+    ///         (Codex #2556 r7).
+    function getArmingFeeCredit(uint8 role, address operator, uint64 rotationEpoch) external view returns (uint256) {
+        return LibVaipakam.storageSlot().armingFeePrepaid[role][operator][rotationEpoch];
+    }
+
     /// @notice The escrow holder, the live rotation epoch, and the principal the
     ///         escrow holds for that epoch — the fourth tracked VPFI balance class.
     function getServiceCapacityEscrow() external view returns (address escrow, uint64 rotationEpoch, uint256 liveEpochTotal) {
