@@ -331,3 +331,37 @@ test('buildUpdate: completing a partly applied publication declares what the con
   const refresh = buildUpdate({ parsed, sourceHash: hash, current: parsed.addresses, currentVersion: 3, ...same, recordedPending: 2 });
   assert.equal(last(refresh), 2);
 });
+
+// ---- Codex #2543 r9: a digital-currency version with no address is refused ----
+test('parseSdnAdvanced: a digital-currency FeatureVersion without a VersionDetail refuses the file', () => {
+  const noDetail = `<Feature ID="9100" FeatureTypeID="345"><FeatureVersion ID="9101" ReliabilityID="1"></FeatureVersion></Feature>`;
+  assert.throws(() => parseSdnAdvanced(withInProfile(noDetail)), /carries no <VersionDetail>/);
+  const selfClosing = `<Feature ID="9102" FeatureTypeID="345"><FeatureVersion ID="9103" ReliabilityID="1"/></Feature>`;
+  assert.throws(() => parseSdnAdvanced(withInProfile(selfClosing)), /carries no <VersionDetail>/);
+  const emptyDetail = feature('');
+  assert.throws(() => parseSdnAdvanced(withInProfile(emptyDetail)), /carries no <VersionDetail>/);
+  // A detail-less version of a NON-digital-currency feature is not ours to read.
+  const otherType = `<Feature ID="9104" FeatureTypeID="25"><FeatureVersion ID="9105" ReliabilityID="1"/></Feature>`;
+  assert.ok(parseSdnAdvanced(withInProfile(otherType)).addresses.length > 0);
+});
+
+// ---- Codex #2543 r9: file mode has no default for the pending count ----
+test('CLI file mode: --current-pending is required, never defaulted', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'ofac-cli-'));
+  try {
+    const current = join(dir, 'current.json');
+    writeFileSync(current, '[]');
+    const base = [join(HERE, 'ofac-sanctions-diff.mjs'), '--xml', join(HERE, 'fixtures', 'sdn_advanced.sample.xml'),
+      '--current', current, '--current-version', '0', '--current-publication', '0'];
+    const missing = spawnSync(process.execPath, base, { encoding: 'utf8' });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /--current-pending/);
+    const given = spawnSync(process.execPath, [...base, '--current-pending', '0', '--out', join(dir, 'u.json')], { encoding: 'utf8' });
+    assert.equal(given.status, 0, given.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

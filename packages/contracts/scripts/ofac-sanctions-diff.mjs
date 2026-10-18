@@ -22,8 +22,8 @@
  *      the block is resolved once to its HASH and every read — version,
  *      publication, hash, count, each page — is pinned to it by EIP-1898
  *      with `requireCanonical`, using the census tooling's helper), or from a file (`--current` + `--current-version`
- *      + `--current-publication` [+ `--current-source-hash`]
- *      [+ `--current-pending`, the list's `pendingDelistings`, default 0]).
+ *      + `--current-publication` + `--current-pending` (the list's
+ *      `pendingDelistings`; required, no default) [+ `--current-source-hash`]).
  *   4. Prints the add / remove sets, the source SHA-256 and publication date
  *      (`DateOfIssue` as `YYYYMMDD`), and the ready `applyUpdate` calls, each
  *      carrying the list version it applies to, so it cannot apply to any
@@ -96,7 +96,8 @@
  *     --rpc "$RPC" --list 0xList [--block N] [--out update.json]
  *   node scripts/ofac-sanctions-diff.mjs --fetch --save-xml sdn.xml \
  *     --current current.json --current-version 3 \
- *     --current-publication 20261015 --current-source-hash 0x…
+ *     --current-publication 20261015 --current-source-hash 0x… \
+ *     --current-pending 0
  *   … [--chainalysis-rpc "$RPC" --chainalysis-oracle 0x40C5… \
  *      --chainalysis-from-block 14356508 [--log-chunk 10000]]
  *   … [--chainalysis-list chainalysis.json]
@@ -417,9 +418,9 @@ export function parseSdnAdvanced(xml) {
   const date = {};
   const featureTypes = new Map();
   const reliability = new Map();
-  const records = []; // { typeId, rel, value }
+  const records = []; // { typeId, rel, value } — value null: a version with no detail
   let feature = null; // { typeId }
-  let version = null; // { rel }
+  let version = null; // { rel, details }
   let buf = null; // text accumulator for the element being read
   let reading = null; // the full path `buf` belongs to
   let refId = null;
@@ -464,7 +465,7 @@ export function parseSdnAdvanced(xml) {
           feature = { typeId: attrs.get('FeatureTypeID') };
           break;
         case SDN_PATHS.featureVersion:
-          version = { rel: attrs.get('ReliabilityID') };
+          version = { rel: attrs.get('ReliabilityID'), details: 0 };
           break;
         default:
         // Any other element — including a same-named <Feature> anywhere off
@@ -486,7 +487,10 @@ export function parseSdnAdvanced(xml) {
         if (at === SDN_PATHS.year) date.Year = value;
         else if (at === SDN_PATHS.month) date.Month = value;
         else if (at === SDN_PATHS.day) date.Day = value;
-        else if (at === SDN_PATHS.versionDetail) records.push({ typeId: feature.typeId, rel: version.rel, value });
+        else if (at === SDN_PATHS.versionDetail) {
+          version.details++;
+          records.push({ typeId: feature.typeId, rel: version.rel, value });
+        }
         else {
           const label = at === SDN_PATHS.featureType ? 'FeatureType' : 'Reliability';
           const set = at === SDN_PATHS.featureType ? featureTypes : reliability;
@@ -496,7 +500,13 @@ export function parseSdnAdvanced(xml) {
         }
         reading = null;
         buf = null;
-      } else if (at === SDN_PATHS.featureVersion) version = null;
+      } else if (at === SDN_PATHS.featureVersion) {
+        // A version that carries no detail is still a record: whether it
+        // matters depends on its feature type, which resolves after the pass
+        // (Codex #2543 r9).
+        if (version.details === 0) records.push({ typeId: feature.typeId, rel: version.rel, value: null });
+        version = null;
+      }
       else if (at === SDN_PATHS.feature) feature = null;
     },
   });
@@ -525,6 +535,12 @@ export function parseSdnAdvanced(xml) {
     }
     const asset = dcaTypes.get(typeId);
     if (asset === undefined) continue;
+    if (value === null || value === '') {
+      // A digital-currency version with no address in it is a record we
+      // cannot read, not a record with nothing to list: refuse the file
+      // rather than drop the entry silently (Codex #2543 r9).
+      throw new Error(`a "${DCA_PREFIX}${asset}" <FeatureVersion> carries no <VersionDetail> address — refusing a file whose digital-currency records do not resolve`);
+    }
     if (EVM_RE.test(value) && ZERO_RE.test(value)) {
       // The contract reverts ZeroAddress on it, so it can never reach a
       // ready update; surface it for review instead (Codex #2543 r7).
@@ -787,8 +803,11 @@ async function main() {
     current = await readCurrentFromChain(args.rpc, getAddress(args.list), block, abi);
     current.source = { list: getAddress(args.list), atBlock: current.blockNumber.toString(), atBlockHash: current.blockHash, pinnedFrom: current.blockTag };
   } else if (args.current) {
-    if (args['current-version'] === undefined || args['current-publication'] === undefined) {
-      throw new Error('--current needs --current-version and --current-publication (YYYYMMDD, or 0 before the first update)');
+    if (args['current-version'] === undefined || args['current-publication'] === undefined || args['current-pending'] === undefined) {
+      // No default for the pending count: a guessed 0 would let a repeated
+      // publication's calls carry the wrong `delistingsLeft` and revert on
+      // chain, or hide outstanding delistings from the reviewer (Codex #2543 r9).
+      throw new Error('--current needs --current-version, --current-publication (YYYYMMDD, or 0 before the first update) and --current-pending (the list\'s pendingDelistings)');
     }
     const recordedDate = Number(parseUintArg('--current-publication', args['current-publication'], { max: 29991231n }));
     if (recordedDate !== 0 && !isPublicationDate(recordedDate)) throw new Error(`--current-publication ${recordedDate} is not YYYYMMDD`);
@@ -801,11 +820,11 @@ async function main() {
       version: parseUintArg('--current-version', args['current-version'], { max: 2n ** 64n - 1n }),
       recordedDate,
       recordedHash,
-      recordedPending: args['current-pending'] !== undefined ? Number(parseUintArg('--current-pending', args['current-pending'], { max: 2n ** 32n - 1n })) : 0,
+      recordedPending: Number(parseUintArg('--current-pending', args['current-pending'], { max: 2n ** 32n - 1n })),
       addresses: readList(args.current),
       source: { file: args.current },
     };
-  } else throw new Error('give the current list: --rpc + --list, or --current + --current-version + --current-publication');
+  } else throw new Error('give the current list: --rpc + --list, or --current + --current-version + --current-publication + --current-pending');
 
   const maxRemove = args['max-remove'] !== undefined ? Number(parseUintArg('--max-remove', args['max-remove'], { max: 1_000_000n })) : DEFAULT_MAX_REMOVE;
   const update = buildUpdate({

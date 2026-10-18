@@ -1211,7 +1211,7 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > fail-closed screens fail-open.
 
 `ProfileFacet.setSanctionsOracle(<SanctionsList>)` MUST be
-called on the retail deploy once its updater is decided and the list is
+called on the retail deploy once its adder host is decided and the list is
 deployed and populated. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
 `false` for every address (intentional fail-open during the deploy
