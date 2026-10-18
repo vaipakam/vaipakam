@@ -1,0 +1,16 @@
+# Runs the sanctions adder, for every configured chain, once a day. OFAC publishes on US
+# business days, usually during US Eastern office hours; 22:00 UTC is after
+# them, so a publication is applied the day it appears. Persistent= runs a
+# missed day's run at the next boot.
+#   systemctl enable --now vaipakam-sanctions-adder.timer
+
+[Unit]
+Description=Vaipakam sanctions adder: daily run
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
