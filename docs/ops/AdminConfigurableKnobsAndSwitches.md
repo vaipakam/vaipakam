@@ -1418,9 +1418,15 @@ follow-up drain.
 
 ### Sanctions oracle address
 
-(any `ISanctionsList`; never Chainalysis's retired on-chain oracle —
-which supported source mainnets use is open, #2443; testnets use the
-admin's `TestnetSanctionsOverlay`). Zero leaves the
+(any `ISanctionsList`; never Chainalysis's retired on-chain oracle.
+Mainnets are meant to use Vaipakam's own `SanctionsList` — the OFAC SDN
+digital-currency addresses kept on-chain under split roles (an automated adder may only list; the
+multisig remover alone may delist, decided 2026-10-18), with the
+source file's hash and publication date recorded per update, OR-composed
+with RedStone's Sanctions Oracle where it is deployed (owner decision on
+#2443, 2026-10-17). Where the adder runs is still open, and no
+script configures a mainnet yet; testnets use the admin's
+`TestnetSanctionsOverlay`). Zero leaves the
 sanctions check fail-open during the deploy window (intentional);
 non-zero enables Tier-1 sanctions screening on protocol entrypoints.
 See CLAUDE.md "Retail-deploy policy" — sanctions ON, KYC + country-

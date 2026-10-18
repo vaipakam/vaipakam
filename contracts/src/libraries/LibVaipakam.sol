@@ -3620,9 +3620,12 @@ library LibVaipakam {
         // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
         // Governance sets this slot to the chain's on-chain sanctions
         // oracle (any `ISanctionsList`) via {ProfileFacet.setSanctionsOracle}.
-        // Which source mainnets use is open (#2443): Chainalysis retired
-        // its on-chain oracle (last updated 2026-03-18) and it must not be
-        // configured; testnets use the admin's `TestnetSanctionsOverlay`. When the
+        // Mainnets are meant to use Vaipakam's own `SanctionsList` (OFAC SDN
+        // addresses, optionally OR-composed with RedStone's oracle, #2443);
+        // where its adder runs is still open, so no mainnet is configured
+        // yet. Chainalysis retired its on-chain oracle (last updated
+        // 2026-03-18) and it must not be configured; testnets use the
+        // admin's `TestnetSanctionsOverlay`. When the
         // slot is non-zero, {OfferCreateFacet.createOffer} and
         // {OfferAcceptFacet.acceptOffer} both refuse calls from (or involving)
         // flagged addresses — the OFAC-aligned "no new business" posture.
@@ -11805,8 +11808,8 @@ library LibVaipakam {
     ///
     /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
     ///
-    /// The retail deploy may have a sanctions oracle configured (which
-    /// source is open, #2443). When set, the gate splits the
+    /// The retail deploy may have a sanctions oracle configured (on
+    /// mainnets, Vaipakam's own `SanctionsList`, #2443). When set, the gate splits the
     /// callable surface into two tiers:
     ///
     /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert

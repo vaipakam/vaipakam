@@ -25,9 +25,15 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  *           last updated 2026-03-18, and not recommended for production
  *           screening. Its contracts still answer every read, so nothing
  *           on-chain shows the list is frozen, and installing it would present
- *           a list that no longer grows as live screening. Which supported
- *           source a mainnet uses is an open decision (#2443); this script
- *           will not make it by default.
+ *           a list that no longer grows as live screening. The mainnet source
+ *           is now decided (#2443, 2026-10-17): Vaipakam's own `SanctionsList`,
+ *           OR-composed with RedStone's Sanctions Oracle where deployed.
+ *           The signers are decided (2026-10-18: an automated adder lists,
+ *           the multisig alone delists); configuring it still waits on where
+ *           the adder runs — a mainnet pointed at a list nobody
+ *           keeps current would be the frozen list again under a new address
+ *           — so this script still refuses every mainnet, and it never
+ *           configures Chainalysis's oracle.
  *         - **Testnet** (`TestnetChains`): a `TestnetSanctionsOverlay` with no
  *           upstream — the network admin's test list, the whole screen. An
  *           overlay already recorded for the chain is reused while it is still
@@ -54,7 +60,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         // A mainnet is refused before anything else is read or collected.
         require(
             TestnetChains.isTestnet(block.chainid),
-            "ConfigureSanctionsOracle: no supported on-chain sanctions source for a mainnet (Chainalysis retired its oracle on 2026-03-18; see #2443)"
+            "ConfigureSanctionsOracle: mainnet refused - the SanctionsList adder host is undecided (#2443); Chainalysis's retired oracle is never configured"
         );
         // Resolved next: on a live broadcast carrying `DEPLOY_SKIP_ARTIFACTS`
         // it reverts here, before any transaction is collected.
