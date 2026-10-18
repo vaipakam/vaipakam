@@ -11,6 +11,9 @@ export interface Fingerprint {
   digest: string;
   /** One SHA-256 per row, sorted (#2497 r10). */
   rows: string[];
+  /** The chains the rows are keyed by; empty for a Diamond-keyed table, and
+   *  absent on a fingerprint read back from the cutover record (#2569 r1). */
+  chains?: number[];
 }
 export type FingerprintRead = Fingerprint | 'absent' | null;
 export type Marker = { completedAt: number; fingerprint: Record<string, Fingerprint> } | 'none' | null;
@@ -24,13 +27,17 @@ export function rowsSql(t: CutoverTable): string;
 export function rowDigest(rows: readonly Record<string, unknown>[]): string;
 export function rowDigests(rows: readonly Record<string, unknown>[]): string[];
 export const MARKER_SQL: string;
-export const COPIED_CHAINS_SQL: string;
-export const EPOCHS_SQL: string;
 export const MARKER_ROWS_SQL: string;
 export function markerFromReads(markerRows: unknown, digestRows: unknown): Marker;
+export function chainIds(rows: readonly unknown[]): number[];
+export function seedVerdict(
+  fingerprints: Record<string, Fingerprint>,
+  indexerRows: unknown,
+): { ok: true; deployments: { chain_id: number; diamond: string }[] } | { ok: false; why: string };
+export function adoptionsDiffer(a: unknown, b: unknown): boolean;
 export function recordSql(
   fingerprints: Record<string, Fingerprint>,
-  indexerDeployments: readonly { chain_id: number; diamond: string }[],
+  deployments: readonly { chain_id: number; diamond: string }[],
   nowSec: number,
 ): string;
 export function fingerprintFromReads(countRows: unknown, rows: unknown): Fingerprint | null;

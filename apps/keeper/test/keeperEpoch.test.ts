@@ -24,18 +24,16 @@ function setup() {
       .run(chainId, loanId, 'warn', '0xabc');
   const bands = (chainId: number) =>
     (keeper.db.prepare('SELECT COUNT(*) AS n FROM hf_band_state WHERE chain_id = ?').get(chainId) as { n: number }).n;
-  /** The indexer adopts `diamond` for chain 84532 (its own epoch record). */
-  const indexerAdopts = (diamond: string) =>
+  /** The indexer adopts `diamond` for chain 84532 (its own epoch record);
+   *  `resetPending` is the flag it keeps set until the old rows are gone. */
+  const indexerAdopts = (diamond: string, resetPending = 0) =>
     shared.db
       .prepare(
-        `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at) VALUES (84532, ?, 1, 1)
-         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, reset_pending = 0`,
+        `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (84532, ?, 1, 1, ?)
+         ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, reset_pending = excluded.reset_pending`,
       )
-      .run(diamond);
-  /** The indexer has RECORDED `diamond` but not finished its reset. */
-  const indexerResetting = (diamond: string) =>
-    shared.db.prepare(`UPDATE indexer_deployment SET diamond = ?, reset_pending = 1 WHERE chain_id = 84532`).run(diamond);
-  return { shared, keeper, env, band, bands, indexerAdopts, indexerResetting };
+      .run(diamond, resetPending);
+  return { shared, keeper, env, band, bands, indexerAdopts };
 }
 
 describe('listResetOnDiamondChange — schema-aware, pinned to the real schema', () => {
@@ -80,11 +78,42 @@ describe('adoptKeeperDeployments', () => {
     expect(bands(84532)).toBe(1);
   });
 
-  it('a fresh environment adopts the configured Diamond and resets nothing', async () => {
-    const { env, band, bands } = setup();
-    band(84532, 3);
+  it('a fresh environment — no record, no private rows — adopts the configured Diamond and resets nothing', async () => {
+    const { keeper, env, band, bands } = setup();
+    band(97, 3); // another chain's rows do not count
     expect(await adoptKeeperDeployments(env, [chain(NEW.toUpperCase().replace('0X', '0x'))])).toEqual([]);
+    expect(keeper.db.prepare('SELECT diamond FROM keeper_deployment WHERE chain_id = 84532').get()).toEqual({ diamond: NEW });
+    expect(bands(97)).toBe(1);
+  });
+
+  it('declines, naming the tables, when private rows exist for a chain with no record — never adopts over them (#2569 r1)', async () => {
+    const { keeper, env, band, bands } = setup();
+    band(84532, 3);
+    keeper.db.prepare("INSERT INTO keeper_commitment_day (chain_id, day_id, resolved_at) VALUES (84532, 1, 1)").run();
+    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/hf_band_state \(1 row\(s\)\), keeper_commitment_day \(1 row\(s\)\) hold private rows but keeper_deployment records no Diamond/);
+    expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_deployment').get(), 'nothing recorded').toEqual({ n: 0 });
+    expect(bands(84532), 'nothing reset').toBe(1);
+    // The copy seeds the record; the next tick then runs.
+    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(NEW);
+    expect(await adoptKeeperDeployments(env, [chain(NEW)])).toEqual([]);
     expect(bands(84532)).toBe(1);
+  });
+
+  it("an indexer record whose reset is still pending is not an adoption: the tick declines until it clears (#2569 r1)", async () => {
+    const { keeper, env, band, bands, indexerAdopts } = setup();
+    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
+    band(84532, 7);
+    indexerAdopts(NEW, 1); // recorded, old rows not yet cleared
+    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/not yet the indexer's \(none settled/);
+    expect(bands(84532), 'nothing reset while the indexer is mid-reset').toBe(1);
+    indexerAdopts(NEW, 0);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await adoptKeeperDeployments(env, [chain(NEW)])).toEqual([84532]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(bands(84532)).toBe(0);
   });
 
   it('a redeploy later resets the chain once, then records it', async () => {
@@ -129,7 +158,7 @@ describe('adoptKeeperDeployments', () => {
       batch: (keeper.d1 as unknown as { batch: unknown }).batch,
     };
     const bad = { DB: (env as unknown as { DB: unknown }).DB, KEEPER_DB: flaky } as unknown as Env;
-    await expect(adoptKeeperDeployments(bad, [chain(NEW)])).rejects.toThrow(/left 1 row/);
+    await expect(adoptKeeperDeployments(bad, [chain(NEW)])).rejects.toThrow(/left rows: hf_band_state \(1 row/);
     expect(keeper.db.prepare('SELECT diamond FROM keeper_deployment').get()).toEqual({ diamond: OLD });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
@@ -137,15 +166,5 @@ describe('adoptKeeperDeployments', () => {
     } finally {
       log.mockRestore();
     }
-  });
-
-  it("waits while the indexer's own reset is still pending, even with the new Diamond recorded (#2569 r1)", async () => {
-    const { keeper, env, band, bands, indexerAdopts, indexerResetting } = setup();
-    indexerAdopts(OLD);
-    keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
-    band(84532, 7);
-    indexerResetting(NEW);
-    await expect(adoptKeeperDeployments(env, [chain(NEW)])).rejects.toThrow(/not yet the indexer's/);
-    expect(bands(84532), 'nothing reset while the indexer is mid-reset').toBe(1);
   });
 });

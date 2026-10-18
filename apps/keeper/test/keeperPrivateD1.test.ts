@@ -164,7 +164,11 @@ import {
   parseFingerprint,
   rowDigest,
   rowsSql,
+  chainIds,
+  seedVerdict,
+  adoptionsDiffer,
 } from '../scripts/lib/keeper-cutover.mjs';
+import { INDEXER_DEPLOYMENTS_SQL, INDEXER_DEPLOYMENT_SQL, indexerAdopted } from '../scripts/lib/indexer-adoption.mjs';
 
 /** The five tables that began in the shared database (the grandfathered set). */
 const MOVED = [...GRANDFATHERED_SHARED.values()].flat().sort();
@@ -246,6 +250,64 @@ describe('deploy-keeper — refuses to publish unless the cutover is recorded an
   });
 });
 
+describe("the indexer's adoption — one rule for the copy's seed and the keeper's epoch (#2569 r1)", () => {
+  it('a record is an adoption only once reset_pending is zero; anything else is null, never a Diamond', () => {
+    expect(indexerAdopted({ diamond: '0xABC', reset_pending: 0 })).toBe('0xabc');
+    expect(indexerAdopted({ diamond: '0xABC', reset_pending: '0' })).toBe('0xabc');
+    expect(indexerAdopted({ diamond: '0xABC', reset_pending: 1 }), 'mid-reset').toBeNull();
+    expect(indexerAdopted({ diamond: '0xABC' }), 'flag unread').toBeNull();
+    expect(indexerAdopted({ diamond: '', reset_pending: 0 })).toBeNull();
+    expect(indexerAdopted(null)).toBeNull();
+    expect(indexerAdopted(undefined)).toBeNull();
+  });
+
+  it('both readers select the flag they decide on, from the real shared schema', () => {
+    const h = createSharedD1();
+    h.db.prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (84532, ?, 1, 1, 1)').run('0xAbC');
+    expect(indexerAdopted(h.db.prepare(INDEXER_DEPLOYMENT_SQL).get(84532))).toBeNull();
+    h.db.prepare('UPDATE indexer_deployment SET reset_pending = 0').run();
+    expect(indexerAdopted(h.db.prepare(INDEXER_DEPLOYMENT_SQL).get(84532))).toBe('0xabc');
+    expect(h.db.prepare(INDEXER_DEPLOYMENTS_SQL).all()).toEqual([{ chain_id: 84532, diamond: '0xAbC', reset_pending: 0 }]);
+  });
+
+  it('a fingerprint carries the chains its rows are keyed by; a Diamond-keyed table carries none', () => {
+    expect(chainIds([{ chain_id: 97, loan_id: 1 }, { chain_id: 84532, loan_id: 2 }, { chain_id: 97, loan_id: 3 }])).toEqual([97, 84532]);
+    expect(chainIds([{ base_chain_id: 84532, diamond: 'd', remit_id: 1 }])).toEqual([]);
+    expect(fingerprintFromReads([{ n: 1, at: 5 }], [{ chain_id: 97, loan_id: 1 }])?.chains).toEqual([97]);
+  });
+
+  it('the seed refuses a copied chain without a settled adoption, and seeds every settled one otherwise', () => {
+    const copied = fps({ hf_band_state: { n: 3, at: 100, digest: D, rows: R3, chains: [84532, 97] } as Fp });
+    const settled = [
+      { chain_id: 84532, diamond: '0xA', reset_pending: 0 },
+      { chain_id: 421614, diamond: '0xB', reset_pending: 0 },
+    ];
+    expect(seedVerdict(copied, settled), 'chain 97 has no record').toMatchObject({ ok: false, why: expect.stringMatching(/chain 97,? .*no settled indexer/) });
+    expect(seedVerdict(copied, [...settled, { chain_id: 97, diamond: '0xC', reset_pending: 1 }]), 'mid-reset is not settled').toMatchObject({ ok: false });
+    expect(seedVerdict(copied, [...settled, { chain_id: 97, diamond: '0xC', reset_pending: 0 }])).toEqual({
+      ok: true,
+      deployments: [
+        { chain_id: 84532, diamond: '0xa' },
+        { chain_id: 421614, diamond: '0xb' },
+        { chain_id: 97, diamond: '0xc' },
+      ],
+    });
+    expect(seedVerdict(copied, null), 'unread').toMatchObject({ ok: false, why: expect.stringMatching(/could not read/) });
+    // No copied chains at all: nothing to require, everything settled is seeded.
+    expect(seedVerdict(fps(), settled)).toMatchObject({ ok: true, deployments: expect.arrayContaining([{ chain_id: 84532, diamond: '0xa' }]) });
+  });
+
+  it('adoptionsDiffer — any change between the two reads refuses the record (#2569 r2)', () => {
+    const a = [{ chain_id: 84532, diamond: '0xA', reset_pending: 0 }, { chain_id: 421614, diamond: '0xB', reset_pending: 0 }];
+    expect(adoptionsDiffer(a, [...a].reverse()), 'order is not a difference').toBe(false);
+    expect(adoptionsDiffer(a, [{ ...a[0], diamond: '0xa' }, a[1]]), 'nor is case').toBe(false);
+    expect(adoptionsDiffer(a, [{ ...a[0], diamond: '0xC' }, a[1]]), 'a Diamond changed').toBe(true);
+    expect(adoptionsDiffer(a, [{ ...a[0], reset_pending: 1 }, a[1]]), 'a reset began').toBe(true);
+    expect(adoptionsDiffer(a, [a[0]]), 'a chain dropped').toBe(true);
+    expect(adoptionsDiffer(a, null), 'unreadable after').toBe(true);
+  });
+});
+
 describe('keeper-cutover — records nothing unless every table copied whole', () => {
   it('equal fingerprints on both sides pass; any one table short or newer fails', () => {
     expect(copyVerdict(fps(), fps()).ok).toBe(true);
@@ -265,15 +327,19 @@ describe('keeper-cutover — records nothing unless every table copied whole', (
     expect(insert, 'it records a marker').toBeGreaterThan(0);
     expect(src.indexOf('copyVerdict(after, priv)'), 'the verify precedes the record').toBeLessThan(insert);
     expect(src.indexOf('copyVerdict(before, after)'), 'so does the unchanged-source check').toBeLessThan(insert);
-    // The indexer's epochs are read BEFORE the export and again AFTER the
-    // verify, before the record (#2569 r2), so the seed matches the snapshot.
-    const firstEpochs = src.indexOf('query(SHARED_DB, EPOCHS_SQL)');
+    // The indexer's adoptions are read BEFORE the export — the seed verdict is
+    // decided from that read, so a copied chain without a settled adoption
+    // refuses with nothing changed — and re-read AFTER the verify, before the
+    // record, refusing if they moved (#2569 r1, r2).
+    const firstRead = src.indexOf('query(SHARED_DB, INDEXER_DEPLOYMENTS_SQL)');
     const exportAt = src.indexOf("'d1', 'export'");
-    const secondEpochs = src.indexOf('query(SHARED_DB, EPOCHS_SQL)', firstEpochs + 1);
-    expect(firstEpochs, 'epochs read before the export').toBeGreaterThan(0);
-    expect(firstEpochs).toBeLessThan(exportAt);
-    expect(secondEpochs, 'and re-read after the verify, before the record').toBeGreaterThan(src.indexOf('copyVerdict(after, priv)'));
-    expect(secondEpochs).toBeLessThan(insert);
+    const secondRead = src.indexOf('query(SHARED_DB, INDEXER_DEPLOYMENTS_SQL)', firstRead + 1);
+    expect(firstRead, 'adoptions read before the export').toBeGreaterThan(0);
+    expect(firstRead).toBeLessThan(exportAt);
+    expect(src.indexOf('seedVerdict(before, adoptionsBefore)'), 'seed verdict from that read, before the export').toBeLessThan(exportAt);
+    expect(secondRead, 'and re-read after the verify').toBeGreaterThan(src.indexOf('copyVerdict(after, priv)'));
+    expect(src.indexOf('adoptionsDiffer(adoptionsBefore, adoptionsAfter)'), 'compared before any record').toBeGreaterThan(secondRead);
+    expect(src.indexOf('adoptionsDiffer(adoptionsBefore, adoptionsAfter)')).toBeLessThan(insert);
     // `process.exit` would skip the `finally` that removes the export files.
     expect(src.slice(src.indexOf('function run()')), 'no exit inside the copy').not.toMatch(/process\.exit\(/);
   });

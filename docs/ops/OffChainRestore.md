@@ -665,8 +665,9 @@ then deploy.
    > `apps/agent` declare `"crons": ["* * * * *"]`, so a
    > plain `wrangler deploy` here arms every-minute scheduled work against a
    > database that §§4–6 have not restored or verified yet. **The keeper is
-   > the exception and needs no action:** it commits `"crons": []` under
-   > #1896, so deploying it arms nothing — do not "fix" that empty list
+   > the exception and needs no action:** it commits `"crons": []` — first
+   > under #1896, and for good since #2569 moved the keeper onto its own
+   > machine — so deploying it arms nothing; do not "fix" that empty list
    > here, and do not read the resulting quiet as a successful restore.
    > Concretely: the
    > indexer starts writing before §6 resets its cursor; the keeper's alert
@@ -680,8 +681,8 @@ then deploy.
    >
    > Same hazard the archive Worker gets its own warning for below, and the
    > same remedy: do not let a cron run before the data it reads is real.
-   > For the **indexer and the agent** — not the keeper, which already
-   > commits an empty list under #1896 and must stay that way — set the
+   > For the **indexer and the agent** — not the keeper, whose empty list
+   > is permanent (#2569) — set the
    > trigger list empty for this deploy —
    >
    > ```jsonc
@@ -737,13 +738,15 @@ then deploy.
    > is that the schedules stay off until each one's data is verified.
    >
    > **The keeper is NOT in that restore, and this is the sentence most
-   > likely to be skimmed.** Its schedule is not "off for the restore" and
-   > waiting to come back — it is off permanently until #1896's CPU work
-   > lands, because the Worker was being terminated for exceeding CPU on
-   > nearly every invocation. Restoring it here would re-arm an
-   > every-minute pass on the one Worker holding a transaction-signing
-   > key. Route it through §7a branch A, which covers this deliberately;
-   > do not treat it like the agent.
+   > likely to be skimmed.** Its Worker has no schedule to put back: since
+   > #2569 the keeper runs only on the always-on machine
+   > (`docs/ops/KeeperMachine.md`), its `wrangler.jsonc` keeps
+   > `"crons": []` for good, and the Worker's `scheduled` handler declines
+   > every tick it is given. Re-arming a Worker schedule here would spend a
+   > trigger slot on a runner that does nothing — or, on an older build,
+   > start an every-minute pass on a Worker holding a transaction-signing
+   > key. The keeper comes back on its machine in §7a step 3, which covers
+   > this deliberately; do not treat it like the agent.
 
    > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
@@ -1680,11 +1683,13 @@ there.)
 
 ## 7a. Re-arm the keeper and agent — schedules first, then the flags
 
-Everything up to here has run with `apps/keeper` and `apps/agent` deployed
-but never scheduled (§1 step 9). This is where that ends. The order below is
-the point of the section: it moves from passes that only read, to passes
-that message users, to passes that sign transactions — so a mistake is
-caught at the cheapest stage.
+Everything up to here has run with `apps/agent` deployed but never
+scheduled (§1 step 9), and with no keeper running anywhere. This is where
+that ends. The order below is the point of the section: it moves from passes
+that only read, to passes that message users, to passes that sign
+transactions — so a mistake is caught at the cheapest stage. The keeper is
+restored on its machine in step 3; its Worker keeps `"crons": []` for good
+(#2569).
 
 1. **Restore the AGENT's schedule and redeploy** — not the keeper's; see the
    note below, and step 3 for the keeper. (This step said "both schedules"
@@ -1694,25 +1699,26 @@ caught at the cheapest stage.
    and retention passes read and message only. Expect the first tick within
    a minute.
 
-   > **The keeper's schedule is NOT read-only, so it is not restored here.**
-   > `runDailyOracleSnapshot` checks only that `KEEPER_PRIVATE_KEY` is
-   > present and then calls `writeContract` — it does **not** consult
-   > `KEEPER_ENABLED`. Restoring the keeper cron therefore arms a
+   > **The keeper's tick is NOT read-only, so the keeper is not started
+   > here.** `runDailyOracleSnapshot` checks only that `KEEPER_PRIVATE_KEY`
+   > is present and then calls `writeContract` — it does **not** consult
+   > `KEEPER_ENABLED`. Starting the keeper therefore arms a
    > transaction-signing pass immediately, from a key this restore has just
-   > re-uploaded, before anything has verified the signing configuration.
-   > If the schedule is restored during 00:00–00:09 UTC with no
-   > current-day `oracle_snapshot_state` row, it broadcasts on the first
-   > tick. Treating the keeper tick as "reads and alerts only" was wrong —
-   > that is true of its *other* passes, not of this one. Its schedule goes
-   > back in step 3, together with the signing configuration it implies.
-   > Gating that pass behind `isKeeperEnabled` like every other signing
-   > pass was tracked as #1466 and has been **declined** (owner decision
-   > 2026-08-03): the snapshot is a public good rather than an autonomous
-   > risk-taking action — anyone may call `captureDailyPriceSnapshot`
-   > permissionlessly — and gating it would leave holes in the price series
-   > whenever the keeper is disabled for an unrelated reason. So the
-   > behaviour above is permanent, not pending a fix. To make a window
-   > genuinely write-free, empty the Worker's cron list.
+   > put back, before anything has verified the signing configuration. If
+   > it starts during 00:00–00:09 UTC with no current-day
+   > `oracle_snapshot_state` row, it broadcasts on the first tick. Treating
+   > the keeper tick as "reads and alerts only" was wrong — that is true of
+   > its *other* passes, not of this one. The keeper is started in step 3,
+   > on its machine, together with the signing configuration that implies;
+   > its Worker has no schedule to restore (#2569). Gating that pass behind
+   > `isKeeperEnabled` like every other signing pass was tracked as #1466
+   > and has been **declined** (owner decision 2026-08-03): the snapshot is
+   > a public good rather than an autonomous risk-taking action — anyone may
+   > call `captureDailyPriceSnapshot` permissionlessly — and gating it would
+   > leave holes in the price series whenever the keeper is disabled for an
+   > unrelated reason. So the behaviour above is permanent, not pending a
+   > fix. To make a window genuinely write-free, stop the machine's service
+   > (`KeeperMachine.md` §6).
 
 2. **Watch one full agent tick before going further.**
 
@@ -1726,46 +1732,238 @@ caught at the cheapest stage.
    this moment — if the restore is long enough that state has gone stale,
    expect a burst.
 
-3. **Only then restore the keeper — on the always-on machine.** The keeper
-   runs only there (`docs/ops/KeeperMachine.md`); the Worker's `scheduled`
-   handler declines every invocation, so there is no schedule to restore and
-   no Worker tick to wait for. Before starting: confirm the keeper EOA is the
-   address you expect and is funded on every chain it submits from.
+3. **Only then restore the keeper — on the machine, disarmed first, armed
+   last**, from the offline record captured in §1 step 6f.
 
-   1. **Redeploy the Worker** so the keeper's private schema is applied to the
-      fresh `vaipakam-keeper-db` and its binding is current:
-      `pnpm --filter @vaipakam/keeper run deploy`. (It publishes a Worker that
-      runs no ticks; its deploy is the private database's one applier.)
-   2. **Configure the machine** from the offline record captured in §1 step
-      6f: the env file (`/etc/vaipakam/keeper.env`) with the keys, the RPCs,
-      the D1 settings and the knobs. Leave `KEEPER_ENABLED=false` and every
-      per-pass flag empty for now (`KeeperMachine.md` §3).
-   3. **Start it disarmed and validate** exactly as `KeeperMachine.md` §5
-      says: the `chains resolved` line names every chain served, no pass logs
-      an error, and there is no `tick declined` line.
-   4. **Arm it**, `KeeperMachine.md` §5 step 3: `KEEPER_ENABLED`, then each
-      per-pass flag that was on before — the captured record is the list —
-      one at a time, restarting after each.
+   > **Since #2569 the keeper's ticks run on the always-on machine**
+   > ([`KeeperMachine.md`](KeeperMachine.md)), and the Worker's `scheduled`
+   > handler declines every invocation it gets. So NOTHING in this restore
+   > restores a keeper cron: `"crons": []` stays committed and deployed, and
+   > the Worker is deployed at all only because its deploy is the private
+   > database's one migration applier (`apps/keeper/scripts/deploy-keeper.mjs`).
+   > Earlier revisions of this step carried a two-branch procedure (a #1896
+   > hold, then a schedule restore with cron-slot bookkeeping, a propagation
+   > window and `wrangler tail`); every one of those actions would now either
+   > do nothing or spend a trigger slot on a Worker that declines the tick.
+   > `CloudflareCronSlots.md` keeps the keeper row exactly as it is.
 
-4. **Confirm every flag from the machine's journal, not from the record.**
-   Since #1475 every gated pass logs exactly one line per tick naming its
-   state, so `journalctl -u vaipakam-keeper -f` is the authoritative check:
-   an armed pass logs its `done in …` work, and a pass held by a flag logs
-   which binding held it. The flags are matched case-sensitively, exactly
-   `true` or `1`. A typed `True`, `ture` or a trailing space shows as a skip
-   line naming that flag (`… wrong case`), never as silence. The restore is
-   not complete until one tick has produced the expected line for every gated
-   pass, with each flag that was on before reading armed.
+   Before anything: confirm the keeper EOA is the address you expect and is
+   funded on every chain it submits from.
+
+   **A. Deploy the Worker — as the applier, nothing more.**
+
+   ```bash
+   ( cd apps/keeper && pnpm run deploy )
+   ```
+
+   It applies `apps/keeper/migrations/` to `vaipakam-keeper-db` (§1 step 7
+   may already have; the apply is idempotent), verifies every file is
+   recorded, checks the cutover verdict — which PASSES on a restore without a
+   record, because the restored shared copies of the five moved tables are
+   empty (§1 step 3) — verifies the shared schema, and publishes with an
+   empty schedule. The deploy token needs D1 Edit for that apply. Confirm no
+   schedule was carried:
+
+   ```bash
+   # UNQUOTED heredoc delimiter — `<<'HDR'` would suppress expansion and send
+   # curl the literal string `$CF_API_TOKEN` as the bearer token (#1450 r21).
+   # `-K -` keeps the token out of the process's argv either way.
+   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+   curl -sS --fail-with-body -X GET -K - <<HDR \
+     "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/schedules" | jq '.result'
+   header = "Authorization: Bearer $CF_API_TOKEN"
+   HDR
+   unset CF_API_TOKEN
+   ```
+
+   An **empty `result.schedules` ARRAY** is the pass condition (that endpoint
+   always returns `result` as an object, `{"schedules": []}` when nothing is
+   armed). A non-empty one means a schedule was restored by hand: the Worker
+   declines each tick it gets, but a trigger slot is spent and a second
+   runner is one config edit away — remove it from *Settings → Trigger
+   Events*.
+
+   The Worker's own `KEEPER_ENABLED`, `REWARD_*`, `GRACE_DEFAULT_ENABLED`
+   and `KEEPER_PRIVATE_KEY` bindings drive NO pass any more. Leave them as §1
+   step 6 restored them; they are not what step 4 confirms.
+
+   **B. The machine, with every flag off.** If the machine survived (a
+   Cloudflare-side restore), `/etc/vaipakam/keeper.env` still holds the
+   keeper's secrets, RPC URLs, knobs and flags. If it was rebuilt, install it
+   per `KeeperMachine.md` §3 and fill the env file per §4 from the offline
+   record. Either way, BEFORE starting, set `KEEPER_ENABLED=false` and every
+   per-pass flag (`REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+   `GRACE_DEFAULT_ENABLED`) empty — by editing the file (`sudo -e
+   /etc/vaipakam/keeper.env`), never by assuming what it held. Never paste a
+   value from that file anywhere. The update timer deploys `main`'s tip on
+   its own; a build that reads `KEEPER_DB` declines every tick, naming the
+   missing migration, until step A has applied it — that is the gate
+   working, not a fault.
+
+   **C. Start disarmed and validate** — `KeeperMachine.md` §5 step 1:
+
+   ```bash
+   sudo systemctl enable --now vaipakam-keeper
+   journalctl -u vaipakam-keeper -f
+   ```
+
+   Count a tick as good only if its `[keeper] chains resolved: …` line names
+   exactly the chains served, no pass logged an error, and there is no `tick
+   declined`, skipped-minute or `not launched … still in flight` line. The
+   first tick logs `runner "host:…" acquired the one-runner lease`; a `holds
+   the one-runner lease` decline means another runner is live — stop and find
+   it before anything else. Cover a full 15-minute cycle (`preGraceWatcher`)
+   and the 00:00–00:09 UTC window (`dailyOracleSnapshot`); neither checks
+   `KEEPER_ENABLED`, so both run disarmed — and the snapshot SIGNS, from the
+   restored key, which is why the key and funding check above comes first.
+
+   **D. Confirm the flags from a tick** — step 4 below, with
+   `KEEPER_ENABLED` at `false` ON PURPOSE.
+
+   **E. Arm — the earliest safe point, and only with the owner's OK** —
+   `KeeperMachine.md` §5 steps 2–3. Set `KEEPER_ENABLED=true` in the env
+   file, `sudo systemctl restart vaipakam-keeper`, and cover at least one
+   full 5-minute cycle of the gated passes. Then the per-pass flags that were
+   on per the offline record, ONE AT A TIME, each validated on its own
+   cadence. Rollback at any point: `KEEPER_ENABLED=false` and restart, or
+   `sudo systemctl stop vaipakam-keeper` (§6). Nothing on the Cloudflare side
+   changes in either direction.
+
+   `REWARD_REMIT_ENABLED` has two further prerequisites, and on a
+   NON-compromise restore **both are normally already satisfied** — so
+   VERIFY them rather than assuming they need rebuilding:
+
+   - **The remit-ack tables.** They are keeper-private since #2450 and
+     come from the keeper's own `apps/keeper/migrations/0001_keeper_state.sql`
+     (the shared `0044_keeper_remit_ack.sql` still exists, and still applies
+     to `vaipakam-warm`, but the keeper no longer reads that copy). §1 step 7
+     and step A above apply the private one. Confirm it from `apps/keeper/`:
+     `wrangler d1 migrations list vaipakam-keeper-db --remote`.
+   - **The on-chain authority.** Two of them, and they are not the same —
+     this is the part that is easy to get wrong. `remitRewardBudget`
+     authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**
+     Base's configured `rewardRemittanceKeeper`, and **never consults
+     `KEEPER_ROLE`**. So confirming `KEEPER_ROLE` on every mirror — correct
+     for the commitment and tier-update duties — says *nothing* about
+     whether remittance will work. Enable the flag on that evidence and
+     every Base send fails while the pass logs as skipped. Read back
+     **`getRewardRemittanceKeeper()` on Base** as well, and confirm it is
+     the EOA you expect. Both authorities live on chain and survive losing
+     the Cloudflare account entirely.
+
+   Reauthorisation is only needed where the keeper key was actually
+   **rotated** — the compromise branch in §1 step 6, not a lockout. An
+   earlier revision claimed neither prerequisite survived a restore, which
+   would have left remittance switched off indefinitely while it was ready;
+   a later revision then deleted this block wholesale while correcting a
+   different error in the same step.
+
+4. **Confirm the flags from a tick.** Nothing can read a flag's value back
+   — on the Worker they were write-only secrets, and on the machine the env
+   file is root-only and must never be echoed — so **the tick is the
+   authoritative check**: since #1475 every gated pass emits exactly one
+   line per tick naming its state, whichever way its gate goes.
+
+   ```bash
+   journalctl -u vaipakam-keeper -f
+   # Wait for one tick.
+   ```
+
+   **One tick resolves every flag.** Every *gated* pass emits exactly one
+   line per tick, and the skip line names each binding that stopped it:
+
+   - Armed and running: `[keeper] <pass> start`.
+   - Stopped: `[keeper] <pass> skipped: <BINDING> <what is wrong>`, one clause
+     per blocker, separated by `; `. For example:
+
+     ```
+     [keeper] rewardBudgetRemit start
+     [keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED wrong case — these flags require lowercase `true`
+     [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
+     ```
+
+   **No value is ever printed — only the form of the state**: `unset`,
+   `empty`, `off (explicitly disabled)`, `wrong case`,
+   `has surrounding whitespace`, or `unrecognised (N chars)`. The signing
+   key adds `malformed (N chars, expected 66)`, `malformed (not
+   hexadecimal)` and `malformed (not a valid signing key)` — that last one is
+   a value of the right length and alphabet that is still not a scalar on
+   the curve, which only attempting to build the account can determine.
+   Malformed is the one to expect during a restore: a key that is present
+   but unusable used to satisfy the gate, so every pass announced `start`
+   and then produced nothing. Echoing a value would copy a credential into
+   the journal at the moment it is likeliest to be wrong, which is exactly
+   how a pasted credential arrives; the character count still tells you
+   whether you are looking at a four-letter typo or something long that does
+   not belong there.
+
+   `off (explicitly disabled)` is a STATE, not a fault: setting a flag to
+   `false` is the documented way to disable a pass, and during step 3C–D
+   every gated pass reports `KEEPER_ENABLED off (explicitly disabled)` ON
+   PURPOSE. "Fixing" those lines arms the fund-moving passes before the
+   disarmed validation has finished — leave `KEEPER_ENABLED` alone until
+   step 3E. Every OTHER named blocker is worth repairing now.
+
+   **Every blocker appears on the one line.** If three settings are wrong,
+   one line names all three — you are never fixing one and waiting a tick to
+   discover the next.
 
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
    `rewardBudgetRemit`, `remitAck` and `commitmentReport`. This list is the
-   one place the set is written down; every other step here says "every gated
-   pass" rather than counting them, because a count goes stale the day a pass
-   is added (#2497 r1). If `PUSH_CHANNEL_PK` was rotated, confirm a
-   `[push] sent channel=…` line from the keeper too
-   (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
+   one place the set is written down; every other step here says "every
+   gated pass" rather than counting them, because a count goes stale the day
+   a pass is added (#2497 r1). `watcher`, `dailyOracleSnapshot` and
+   `preGraceWatcher` have no binding of their own, and `liquidityConfidence`
+   always runs and consults the gate only to decide whether to submit —
+   **absent lines from those four are normal**, not a failed tick.
+
+   **Repairing a named setting.** On the machine every flag, secret and knob
+   is one line in `/etc/vaipakam/keeper.env`, read when the process starts:
+
+   ```bash
+   sudo -e /etc/vaipakam/keeper.env        # fix the named line; never paste the value elsewhere
+   sudo systemctl restart vaipakam-keeper  # the tick in flight finishes first
+   ```
+
+   Then watch another tick. There is no `wrangler secret put` and no
+   Secrets Store step here: those write the Worker's bindings, which drive no
+   pass since #2569, so a repair made there looks successful and changes
+   nothing a tick reports. (`KEEPER_PRIVATE_KEY unset` on the machine has one
+   cause — the line is empty or missing — unlike the Worker, where a failed
+   store lookup produced the same line for a tick.)
+
+   Do not conclude the restore is complete until one tick has produced a
+   line from **every gated pass** (the list above), and every line reads the
+   way you intended. The other four emit nothing by design — waiting for
+   them would be waiting forever.
+
+   **The two guards do not parse alike**, which is a trap worth knowing
+   before you eyeball the output:
+
+   | | accepts | rejects |
+   |---|---|---|
+   | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+
+   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
+   **off but reported**, not silently so. That is the whole point of the
+   diagnostic above: the tick says `REWARD_REMIT_ENABLED wrong case — these
+   flags require lowercase \`true\``, naming the asymmetry rather than
+   leaving you to deduce it. (It WAS silent until #1475; if you are working
+   from memory of the old behaviour, that is the change.) Use lowercase
+   `true` for every flag and the asymmetry never arises.
+
+   Only after that is the journal useful as positive confirmation: watch for
+   a pass you expect to have work to do. Arming is step 3E, and its gate is
+   the disarmed validation in 3C and this step; nothing printed here is a
+   command to run before then.
+
+   If `PUSH_CHANNEL_PK` was rotated, confirm a `[push] sent channel=…` line
+   from the keeper too (`docs/ops/IncidentRunbook.md`, Push-rotation step 6).
+
+---
 
 ## 7b. LAST: activate the backup writer
 
@@ -1834,8 +2032,8 @@ is #1977 again by a different route.
    derivation and have to be re-done together — which is exactly what the
    authority says about itself, in the sentence explaining why the summary is
    pinned to the table.
-3. Re-read the token first. Branch B runs `unset CF_API_TOKEN` at the end of
-   its keeper-settings readback, which is far above this point, so following
+3. Re-read the token first. §7a step 3A runs `unset CF_API_TOKEN` at the end
+   of its empty-schedule readback, which is far above this point, so following
    the runbook in order arrives here with the variable GONE — under the
    `set -u` these blocks use that aborts, and without it `--live` receives an
    empty credential and reports missing credentials. Either way the operator

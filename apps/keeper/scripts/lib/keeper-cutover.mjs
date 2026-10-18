@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { SUCCESSOR } from '../../../indexer/scripts/lib/cutover-databases.mjs';
 import { PRIVATE_DATABASES } from '../../../indexer/scripts/lib/d1-workers.mjs';
+import { indexerAdopted } from './indexer-adoption.mjs';
 
 /** Both names from their pinned registries, never spelled here. */
 export const PRIVATE_DB = PRIVATE_DATABASES.find((d) => d.binding === 'KEEPER_DB').name;
@@ -73,12 +74,20 @@ export function rowDigests(rows) {
     .sort();
 }
 
+/** The chains a table's rows are keyed by (`chain_id`), sorted — empty for a
+ *  table keyed by Diamond instead, whose rows need no epoch (#2569 r1). */
+export function chainIds(rows) {
+  const ids = new Set();
+  for (const r of rows) if (r && typeof r === 'object' && 'chain_id' in r) ids.add(Number(r.chain_id));
+  return [...ids].sort((a, b) => a - b);
+}
+
 /** A table's whole fingerprint from its two reads, or `null` when either
  *  failed (never a partial fingerprint). */
 export function fingerprintFromReads(countRows, rows) {
   const base = parseFingerprint(countRows);
   if (base === null || !Array.isArray(rows) || rows.length !== base.n) return null;
-  return { ...base, digest: rowDigest(rows), rows: rowDigests(rows) };
+  return { ...base, digest: rowDigest(rows), rows: rowDigests(rows), chains: chainIds(rows) };
 }
 
 /** Whether every row the shared copy holds NOW was in the copy (#2497 r10).
@@ -190,14 +199,62 @@ export function markerFromReads(markerRows, digestRows) {
   return { completedAt: Number(markerRows[0].completed_at), fingerprint };
 }
 
-/** The indexer's epochs, ordered, for the before/after comparison and the
- *  seed (#2569 r2). */
-export const EPOCHS_SQL = 'SELECT chain_id, lower(diamond) AS diamond, reset_pending FROM indexer_deployment ORDER BY chain_id';
+/**
+ * What the record may seed the keeper's epoch with — pure, for the tests
+ * (#2569 r1). `indexerRows` is the read of {@link INDEXER_DEPLOYMENTS_SQL}
+ * on the shared database. Every chain the copied rows are keyed by must have
+ * a SETTLED indexer adoption (`indexer-adoption.mjs`), because that is the
+ * Diamond those rows belong to: the keeper's first tick reads a chain with no
+ * record as one with no copied rows, and would otherwise adopt the configured
+ * Diamond over rows of another. A chain the indexer has not adopted, or is
+ * mid-reset on, refuses the copy and is named rather than guessed at. Every
+ * settled adoption is seeded, copied rows or not.
+ */
+export function seedVerdict(fingerprints, indexerRows) {
+  if (!Array.isArray(indexerRows)) {
+    return { ok: false, why: `could not read the indexer's adopted Diamonds (indexer_deployment) in ${SHARED_DB}` };
+  }
+  const adopted = new Map();
+  for (const r of indexerRows) {
+    const diamond = indexerAdopted(r);
+    const chainId = Number(r?.chain_id);
+    if (diamond !== null && Number.isSafeInteger(chainId)) adopted.set(chainId, diamond);
+  }
+  const missing = [];
+  for (const { table } of CUTOVER_TABLES) {
+    for (const c of fingerprints[table]?.chains ?? []) {
+      if (!adopted.has(c) && !missing.includes(c)) missing.push(c);
+    }
+  }
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      why:
+        `the copied rows are keyed by chain ${missing.join(', ')}, for which ${SHARED_DB} records no settled indexer ` +
+        'adoption (an indexer_deployment row with reset_pending = 0), so the Diamond those rows belong to is unknown. ' +
+        'Let the indexer adopt that chain first (its next pass after its deploy), or delete those rows from the shared copies if they are known stale, then re-run.',
+    };
+  }
+  return { ok: true, deployments: [...adopted].map(([chain_id, diamond]) => ({ chain_id, diamond })) };
+}
 
-/** Every chain the copied keyed-by-chain rows belong to (#2569 r1) — the
- *  tables whose rows the keeper's epoch reset would clear. */
-export const COPIED_CHAINS_SQL =
-  'SELECT chain_id FROM hf_band_state UNION SELECT chain_id FROM keeper_commitment_scan UNION SELECT chain_id FROM keeper_commitment_day';
+/**
+ * Whether two reads of {@link INDEXER_DEPLOYMENTS_SQL} describe different
+ * adoptions (#2569 r2). The cutover takes one read BEFORE the export and one
+ * after the verify: an adoption the indexer finishes in between would seed the
+ * NEW Diamond for rows copied under the old one, so any difference — a chain
+ * added or dropped, a Diamond changed, a reset begun or finished — refuses the
+ * record. An unreadable side counts as different.
+ */
+export function adoptionsDiffer(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return true;
+  const canon = (rows) =>
+    rows
+      .map((r) => `${Number(r?.chain_id)}:${String(r?.diamond ?? '').toLowerCase()}:${Number(r?.reset_pending)}`)
+      .sort()
+      .join('\n');
+  return canon(a) !== canon(b);
+}
 
 /** Digests per INSERT in the record file: ~14 KB a statement, far under D1's
  *  100 KB statement cap whatever the row count. */
@@ -209,12 +266,12 @@ const sqlText = (v) => `'${String(v).replace(/'/g, "''")}'`;
  * The record of a completed copy, as ONE SQL FILE for `wrangler d1 execute
  * --file` (#2497 re-cut) — never one `--command` string, whose size grows with
  * the copy. In order: the per-row digests (`keeper_cutover_row`), the
- * keeper's deployment epoch per chain seeded from the indexer's adopted
- * Diamonds (the copied rows belong to those, so a later Diamond change resets
- * them), and LAST the marker itself, carrying count, latest write and digest
- * per table. Pure; pinned by the tests.
+ * keeper's deployment epoch per chain, `deployments` being what
+ * {@link seedVerdict} allowed (the copied rows belong to those Diamonds, so a
+ * later Diamond change resets them), and LAST the marker itself, carrying
+ * count, latest write and digest per table. Pure; pinned by the tests.
  */
-export function recordSql(fingerprints, indexerDeployments, nowSec) {
+export function recordSql(fingerprints, deployments, nowSec) {
   const out = ['DELETE FROM keeper_cutover_row;'];
   for (const { table } of CUTOVER_TABLES) {
     const rows = fingerprints[table]?.rows ?? [];
@@ -223,7 +280,7 @@ export function recordSql(fingerprints, indexerDeployments, nowSec) {
       out.push(`INSERT INTO keeper_cutover_row (tbl, digest) VALUES ${values.join(', ')};`);
     }
   }
-  for (const d of indexerDeployments) {
+  for (const d of deployments) {
     out.push(
       `INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (${Number(d.chain_id)}, ${sqlText(String(d.diamond).toLowerCase())}, ${nowSec}) ` +
         'ON CONFLICT (chain_id) DO UPDATE SET diamond = excluded.diamond, adopted_at = excluded.adopted_at;',

@@ -19,15 +19,25 @@
  * NEVER AHEAD OF THE INDEXER. A change is applied only once the indexer has
  * adopted the same Diamond (its `indexer_deployment` record); until then the
  * tick declines, since the shared rows the passes read still belong to the old
- * one (#2497 r12).
+ * one (#2497 r12). What counts as adopted is defined ONCE, in
+ * `scripts/lib/indexer-adoption.mjs`, shared with the one-time copy: a record
+ * whose `reset_pending` is still set is NOT an adoption (#2569 r1) — the
+ * indexer writes the new Diamond first and clears the old rows after, and in
+ * between the shared rows still belong to the old one.
  *
  * WHICH DIAMOND, the first time. The one-time copy (`scripts/keeper-cutover.mjs`)
  * SEEDS this record with the Diamond the indexer had adopted for each chain
- * when it copied, since the copied rows belong to that one. So a later
- * Diamond change resets them, however long the keeper waited before its first
- * tick. A chain with no record at all has no copied rows (a fresh environment),
- * and the configured Diamond is adopted, resetting nothing.
+ * when it copied, since the copied rows belong to that one, and refuses to
+ * record a copy whose rows are keyed by a chain the indexer has not adopted.
+ * So a later Diamond change resets them, however long the keeper waited
+ * before its first tick. A chain with no record at all and NO private rows
+ * (a fresh environment) adopts the configured Diamond, resetting nothing. A
+ * chain with no record but WITH private rows is not assumed either way: the
+ * Diamond those rows belong to is unknown, so the tick declines, naming the
+ * tables, until the record exists (#2569 r1) — the assumption "no record
+ * means no copied rows" is checked, never trusted.
  */
+import { INDEXER_DEPLOYMENT_SQL, indexerAdopted } from '../scripts/lib/indexer-adoption.mjs';
 import type { ChainConfig, Env } from './env';
 
 /** Private tables keyed by chain and not namespaced by Diamond. */
@@ -47,17 +57,25 @@ export async function listResetOnDiamondChange(db: Env['KEEPER_DB']): Promise<st
   return (r.results ?? []).map((t) => t.name);
 }
 
-/** The Diamond the indexer has COMPLETELY adopted for `chainId`: recorded AND
- *  its reset finished (`reset_pending = 0`, #2569 r1). The indexer records the
- *  new Diamond first and clears the old rows after, so while the flag is set
- *  its shared rows still belong to the old one. Null when none is complete. A
- *  failed read THROWS (#2497 r11): an unread record is not an absent one. */
-async function indexerAdopted(env: Env, chainId: number): Promise<string | null> {
-  const row = await env.DB.prepare('SELECT diamond, reset_pending FROM indexer_deployment WHERE chain_id = ?')
-    .bind(chainId)
-    .first<{ diamond: string; reset_pending: number }>();
-  if (typeof row?.diamond !== 'string' || Number(row.reset_pending) !== 0) return null;
-  return row.diamond.toLowerCase();
+/** The Diamond the indexer has adopted for `chainId`, or null when it has
+ *  recorded NONE or its reset is still pending (`indexer-adoption.mjs`). A
+ *  failed read THROWS (#2497 r11): an unread record is not an absent one, and
+ *  adopting the configured Diamond on a read error could accept another
+ *  Diamond's rows for good. */
+async function indexerAdoptedFor(env: Env, chainId: number): Promise<string | null> {
+  const row = await env.DB.prepare(INDEXER_DEPLOYMENT_SQL).bind(chainId).first<{ diamond: string; reset_pending: number }>();
+  return indexerAdopted(row);
+}
+
+/** The reset tables that still hold a row for `chainId`, by name. */
+async function tablesHolding(db: Env['KEEPER_DB'], tables: readonly string[], chainId: number): Promise<string[]> {
+  const held: string[] = [];
+  for (const t of tables) {
+    // eslint-disable-next-line no-await-in-loop
+    const left = await db.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE chain_id = ?`).bind(chainId).first<{ n: number }>();
+    if (Number(left?.n) !== 0) held.push(`${t} (${String(left?.n)} row(s))`);
+  }
+  return held;
 }
 
 /**
@@ -77,8 +95,21 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
       .first<{ diamond: string }>();
     let have = rec?.diamond?.toLowerCase() ?? null;
     if (have === null) {
-      // No record: no copied rows for this chain (the copy seeds one), so the
-      // configured Diamond is adopted and nothing is reset.
+      // No record. The copy seeds one for every chain its rows are keyed by,
+      // so no record should mean no private rows — CHECKED, not assumed: rows
+      // with no record belong to a Diamond nobody wrote down, and adopting
+      // the configured one over them could keep a loan id the new Diamond
+      // reuses "already notified" (#2569 r1).
+      // eslint-disable-next-line no-await-in-loop
+      tables ??= await listResetOnDiamondChange(env.KEEPER_DB);
+      // eslint-disable-next-line no-await-in-loop
+      const held = await tablesHolding(env.KEEPER_DB, tables, chain.id);
+      if (held.length > 0) {
+        throw new Error(
+          `chain ${chain.id}: ${held.join(', ')} hold private rows but keeper_deployment records no Diamond they belong to; ` +
+            'the one-time copy seeds that record (DeploymentRunbook, "Keeper private D1 — one-time cutover") — run it, or delete those rows if they are known stale',
+        );
+      }
       have = want;
       // eslint-disable-next-line no-await-in-loop
       await env.KEEPER_DB.prepare('INSERT OR IGNORE INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)')
@@ -92,10 +123,10 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
     // the retired Diamond's row. So the tick declines until it has; the
     // keeper's deploy can land before the indexer's.
     // eslint-disable-next-line no-await-in-loop
-    const indexer = await indexerAdopted(env, chain.id);
+    const indexer = await indexerAdoptedFor(env, chain.id);
     if (indexer !== want) {
       throw new Error(
-        `chain ${chain.id}: the configured Diamond ${want} is not yet the indexer's (${indexer ?? 'none recorded'}); waiting for it to adopt the new deployment`,
+        `chain ${chain.id}: the configured Diamond ${want} is not yet the indexer's (${indexer ?? 'none settled: no record, or one whose reset is still pending'}); waiting for it to adopt the new deployment`,
       );
     }
     // eslint-disable-next-line no-await-in-loop
@@ -109,11 +140,9 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
       // eslint-disable-next-line no-await-in-loop
       await env.KEEPER_DB.prepare(`DELETE FROM "${t}" WHERE chain_id = ?`).bind(chain.id).run();
     }
-    for (const t of tables) {
-      // eslint-disable-next-line no-await-in-loop
-      const left = await env.KEEPER_DB.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE chain_id = ?`).bind(chain.id).first<{ n: number }>();
-      if (Number(left?.n) !== 0) throw new Error(`reset of ${t} for chain ${chain.id} left ${String(left?.n)} row(s)`);
-    }
+    // eslint-disable-next-line no-await-in-loop
+    const left = await tablesHolding(env.KEEPER_DB, tables, chain.id);
+    if (left.length > 0) throw new Error(`reset for chain ${chain.id} left rows: ${left.join(', ')}`);
     // eslint-disable-next-line no-await-in-loop
     await env.KEEPER_DB.prepare(
       `INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (?, ?, ?)
