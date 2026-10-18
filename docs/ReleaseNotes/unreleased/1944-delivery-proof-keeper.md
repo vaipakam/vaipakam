@@ -8,11 +8,11 @@
 Until an epoch's days are indexed its value funds nothing a claim can find. The mirror delivery gate also holds every funded day until its delivery is proven, so the runbook kept the gate dark: no keeper step existed.
 
 **What changed.** The keeper has a new pass, armed by its own flag, that runs every few minutes on every mirror.
-- **Finding deliveries.** It reads the chain's own record of recent budget deliveries from the indexer. Each delivery is joined to the event carrying its day list: the flat list itself, or the rooted wire's marker.
+- **Finding deliveries.** It reads the chain's own record of every budget delivery from the indexer, with no age window, a page at a time (see the open-work note). Each delivery is joined to the event carrying its day list: the flat list itself, or the rooted wire's marker.
 - **Flat lists.** For a delivery holding an epoch, it indexes the next page of the list until the index is whole. For one holding no epoch, it proves the whole list, unless every listed day has already landed.
 - **Rooted lists.** It rebuilds the list from the canonical chain, following the runbook's rule: the reservation's day list, filtered to the days actually funded for this chain. It splits the list into chunks and builds the root with the wire's own encoding. It sends nothing unless that root matches both the reservation's and the delivery's. It then indexes, or proves, each chunk not yet landed, with that chunk's proof.
 
-Every call is simulated first and moves no value. Each send waits to be mined before the next, so the pass never races the keeper's other jobs, which sign from the same account. The wire encoding is checked against values computed independently, so an encoding drift fails a test rather than a proof on chain.
+Every call is simulated first and moves no value. Each send waits to be mined before the next. The keeper's per-account send queue orders it with the keeper's other jobs, which sign from the same account, so no two sends take the same nonce. The wire encoding is checked against values computed independently, so an encoding drift fails a test rather than a proof on chain.
 
 **Operator steps.** Arm the pass on every mirror before reward transport is live there. The delivery gate may then be armed on a mirror once the pass runs there. The restore runbook captures the new flag.
 

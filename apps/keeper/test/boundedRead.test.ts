@@ -4,7 +4,7 @@
  * reads as unread, never one serial request per entry.
  */
 import { describe, expect, it } from 'vitest';
-import { boundedRead } from '../src/batchRead';
+import { PastRunDeadline, boundedRead, deadlineClient } from '../src/batchRead';
 
 function client(behaviour: 'reject' | 'ok') {
   const calls = { multicall: 0, readContract: 0 };
@@ -44,5 +44,18 @@ describe('boundedRead', () => {
     const { c } = client('ok');
     const res = await boundedRead(c, contracts, 'test', Date.now() + 60_000);
     expect(res.every((r) => r.status === 'success')).toBe(true);
+  });
+});
+
+describe('deadlineClient — every read of a deadline-bound pass, one guard (#2497 re-cut)', () => {
+  it('refuses reads past the deadline and passes everything else through', async () => {
+    let reads = 0;
+    const base = { readContract: async () => { reads += 1; return 7; }, getChainId: async () => 1 };
+    const open = deadlineClient(base, Date.now() + 60_000);
+    expect(await open.readContract()).toBe(7);
+    const closed = deadlineClient(base, Date.now() - 1);
+    expect(() => closed.readContract()).toThrow(PastRunDeadline);
+    expect(reads, 'nothing issued past the deadline').toBe(1);
+    expect(await closed.getChainId(), 'an unguarded method is untouched').toBe(1);
   });
 });

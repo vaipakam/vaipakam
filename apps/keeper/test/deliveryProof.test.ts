@@ -153,6 +153,31 @@ describe('listBudgetDeliveries (real schema)', () => {
   }
   const S = '84532';
 
+  it('the PRODUCTION discovery page never splits a packet: a page cut at a block keeps each packet whole (#2497 re-cut)', async () => {
+    const { discoverBudgetDeliveries } = await import('../src/db');
+    const { h, seed } = ledger();
+    const P1 = `0x${'a1'.repeat(32)}`;
+    const P2 = `0x${'a2'.repeat(32)}`;
+    // One transaction per packet, its three events in ONE block (distinct log indexes).
+    const ev = h.db.prepare(
+      `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at) VALUES (421614, ?, ?, ?, ?, ?, 5000)`,
+    );
+    for (const [tx, p, blk, days] of [['0xb1', P1, 100, ['4']], ['0xb2', P2, 101, ['5']]] as const) {
+      ev.run(blk, 0, tx, 'IngressPacketRecorded', JSON.stringify({ packetHash: p, kind: 1, remitId: '7', sourceChainId: S }));
+      ev.run(blk, 1, tx, 'IngressPacketDayListRecorded', JSON.stringify({ packetHash: p, dayListHash: flatDayListHash([...days]), dayCount: '1' }));
+      ev.run(blk, 2, tx, 'RewardBudgetReceived', JSON.stringify({ dayIds: [...days], remitId: '7', sourceChainId: S }));
+    }
+    void seed;
+    // limit 4: the 5th row is block 101, so the page ends before it.
+    const first = await discoverBudgetDeliveries(h.d1 as D1Database, 421614, 0, 1_000, 4);
+    expect(first.rows.map((r) => r.packetHash.toLowerCase())).toEqual([P1]);
+    expect(first.rows[0].flatDayIds, 'paired inside its own page').toEqual(['4']);
+    expect(first.next).toBe(101);
+    const second = await discoverBudgetDeliveries(h.d1 as D1Database, 421614, first.next, 1_000, 4);
+    expect(second.rows.map((r) => r.packetHash.toLowerCase())).toEqual([P2]);
+    expect(second.next, 'past the watermark it was given').toBe(1_001);
+  });
+
   it('lists every budget packet with a VERIFIED day list, oldest first — no age window (Codex #2489 r1)', async () => {
     const { h, seed } = ledger();
     const P1 = `0x${'1'.repeat(64)}`;

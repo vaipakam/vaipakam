@@ -126,3 +126,31 @@ export async function boundedRead(
   }
   return batchedRead(client, contracts, label, undefined, 'unread');
 }
+
+/** A read refused because the pass's run deadline has passed (#2497 re-cut). */
+export class PastRunDeadline extends Error {}
+
+/** The client READ methods a pass uses, each refused past the deadline. */
+const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs']);
+
+/**
+ * `client` with every READ refused once `deadline` has passed — the ONE place
+ * a deadline-bound pass's reads are bounded, so a read added later (a hint
+ * walk, a single `readContract`) cannot slip past it the way per-call checks
+ * could (#2497 re-cut review). A refusal throws `PastRunDeadline`, which every
+ * caller already treats as an unread value for the next run. Receipt waits are
+ * NOT guarded: a sent transaction's outcome is still worth knowing.
+ */
+export function deadlineClient<T extends object>(client: T, deadline: number): T {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      if (!DEADLINE_GUARDED.has(String(prop))) return value.bind(target);
+      return (...args: unknown[]) => {
+        if (Date.now() >= deadline) throw new PastRunDeadline(`${String(prop)}: past the run deadline — read next run`);
+        return value.apply(target, args);
+      };
+    },
+  });
+}

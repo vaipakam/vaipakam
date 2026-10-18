@@ -47,7 +47,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { boundedRead } from './batchRead';
+import { boundedRead, deadlineClient } from './batchRead';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -229,7 +229,8 @@ export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void>
 }
 
 async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number = Number.POSITIVE_INFINITY): Promise<void> {
-  const client = createPublicClient({ transport: http(chain.rpc) });
+  // Every read of this run is refused past its deadline (`deadlineClient`).
+  const client = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline) as PublicClient;
   const diamond = chain.diamond as Address;
   const cfg = (await client.readContract({
     address: diamond,
@@ -257,7 +258,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   const finished = new Set<string>();
   // The chain each rooted packet was REMITTED from, by the packet's own
   // record (#2497 r6) — never the canonical chain as configured today.
-  const sources = sourceReader(byId);
+  const sources = sourceReader(byId, deadline);
   const ctx = buildKeeperContext(env, chain, client as never);
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
@@ -269,10 +270,11 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
-      if (canSend && (budget.writes <= 0 || Date.now() >= deadline)) break; // the rest keep their turn
-      examined.add(key);
+      // The deadline binds whether or not there is a key to send with.
+      if (Date.now() >= deadline || (canSend && budget.writes <= 0)) break; // the rest keep their turn
       const packet = packets.get(key);
-      if (!packet) continue; // unread, or not arrived: read again in its turn
+      if (!packet) continue; // unread, or not arrived: it keeps its place and is read first next run
+      examined.add(key); // only a row actually READ rotates to the back
       if (!packetMayNeedWork(packet)) {
         finished.add(key);
         continue;
@@ -305,14 +307,14 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
 }
 
 /** A client per remitting chain, made on first use. */
-function sourceReader(byId: ReadonlyMap<number, ChainConfig>): (chainId: number) => PublicClient | null {
+function sourceReader(byId: ReadonlyMap<number, ChainConfig>, deadline: number): (chainId: number) => PublicClient | null {
   const made = new Map<number, PublicClient>();
   return (chainId) => {
     const c = byId.get(chainId);
     if (!c) return null;
     let cl = made.get(chainId);
     if (!cl) {
-      cl = createPublicClient({ transport: http(c.rpc) }) as PublicClient;
+      cl = deadlineClient(createPublicClient({ transport: http(c.rpc) }), deadline) as PublicClient;
       made.set(chainId, cl);
     }
     return cl;
@@ -456,7 +458,9 @@ async function allLanded(client: PublicClient, diamond: Address, days: bigint[],
       deadline,
     );
     for (const r of res) {
-      if (!r || r.status !== 'success') return false;
+      // An UNREAD state is not "not landed" (#2497 re-cut review): proving on
+      // it would pay for a no-op. It stops this row for the run instead.
+      if (!r || r.status !== 'success') throw new Error('day delivery state unread — retried next run');
       const t = r.result as readonly unknown[];
       if (t[3] !== true) return false; // `landed`
     }

@@ -36,7 +36,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead } from './batchRead';
+import { batchedRead, boundedRead, deadlineClient } from './batchRead';
+import type { PassTick } from './passSchedule';
 import {
   discoverReleasedRemits,
   finishWork,
@@ -93,20 +94,23 @@ interface RemitReservationView {
   dayIds: readonly bigint[];
 }
 
-export async function runRemitAck(env: Env): Promise<void> {
+export async function runRemitAck(env: Env, tick?: PassTick): Promise<void> {
   if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
+  // The run's deadline (#2497 re-cut review): every read through this run's
+  // clients is refused past it, and no send starts after it.
+  const deadline = tick?.deadlineMs ?? Date.now() + 60_000;
 
   for (const chain of getChainConfigs(env)) {
     try {
-      await ackFromBaseLedger(env, chain);
+      await ackFromBaseLedger(env, chain, deadline);
     } catch (err) {
       console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
     }
   }
 }
 
-async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
-  const publicClient = createPublicClient({ transport: http(chain.rpc) });
+async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number = Date.now() + 60_000): Promise<void> {
+  const publicClient = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline);
   const diamond = chain.diamond as Address;
 
   // The reservation ledger lives on Base only.
@@ -134,7 +138,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
   // more than the cap however its work splits between them.
-  const ackBudget = { remaining: MAX_ACKS_PER_TICK };
+  const ackBudget = { remaining: MAX_ACKS_PER_TICK, deadline };
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
@@ -239,7 +243,7 @@ async function ackPending(
   reservations: ReadonlyMap<number, RemitReservationView>,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number },
+  ackBudget: { remaining: number; deadline: number },
 ): Promise<void> {
   if (pendingIds.length === 0) return;
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
@@ -249,7 +253,7 @@ async function ackPending(
   // first ids re-take the budget every backoff window while later ones waited
   // indefinitely.
   for (const remitId of ackOrder(pendingIds, attempts)) {
-    if (ackBudget.remaining <= 0) break;
+    if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
     const r = reservations.get(remitId);
     if (!r) continue;
     const prior = attempts.get(remitId);
@@ -279,7 +283,7 @@ async function sendAckFromMirror(
   // diamond whose reservation ledger this pass is scanning.
   baseDiamond: Address,
   /** The tick's ONE send budget (#2497 r2), charged at the broadcast. */
-  ackBudget: { remaining: number },
+  ackBudget: { remaining: number; deadline: number },
   // A LATE ack (a released reservation) only resolves a settled receipt: Base's
   // released branch stamps nothing for a provisional one, so sending it would
   // pay the CCIP fee every backoff window for nothing.
@@ -287,7 +291,7 @@ async function sendAckFromMirror(
 ): Promise<boolean> {
   let client = clients.get(mirrorCfg.id);
   if (!client) {
-    client = createPublicClient({ transport: http(mirrorCfg.rpc) });
+    client = deadlineClient(createPublicClient({ transport: http(mirrorCfg.rpc) }), ackBudget.deadline) as PublicClient;
     clients.set(mirrorCfg.id, client);
   }
   const diamond = mirrorCfg.diamond as Address;
@@ -412,7 +416,7 @@ async function ackLateDeliveries(
   diamond: Address,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number },
+  ackBudget: { remaining: number; deadline: number },
 ): Promise<void> {
   // DISCOVER new releases into the open-work queue, then WORK a bounded slice
   // of what is open (#2497 r8, `workQueue.ts`): a release leaves only when the
@@ -427,7 +431,7 @@ async function ackLateDeliveries(
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
-    const part = await batchedRead(
+    const part = await boundedRead(
       publicClient as never,
       ids.slice(i, i + LATE_READ_CHUNK).map((id) => ({
         address: diamond,
@@ -436,18 +440,26 @@ async function ackLateDeliveries(
         args: [BigInt(id)] as const,
       })),
       `remitAck late deliveries ${i}/${ids.length}`,
+      ackBudget.deadline,
     );
     res.push(...part);
   }
-  // Retired before any send, so a failed send cannot lose them; the rest of
-  // the slice goes to the back of the rotation.
+  // Retired before any send, so a failed send cannot lose them. Only a release
+  // actually READ rotates to the back; an unread one keeps its place and is
+  // read first next run.
   const finished = ids.filter((id, i) => {
     const r = res[i];
     return r?.status === 'success' && lateAckDone(r.result as RemitReservationView);
   });
   const fin = new Set(finished);
   await finishWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, finished.map(String));
-  await touchOpenWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, ids.filter((id) => !fin.has(id)).map(String));
+  await touchOpenWork(
+    env.KEEPER_DB,
+    baseChainId,
+    diamond,
+    LATE_KIND,
+    ids.filter((id, i) => res[i]?.status === 'success' && !fin.has(id)).map(String),
+  );
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
   const now = Math.floor(Date.now() / 1000);
   // The same rotation rule as the Pending acks (#2497 r17): least recently
@@ -455,7 +467,7 @@ async function ackLateDeliveries(
   // budget every backoff window.
   const at = new Map(ids.map((id, i) => [id, i]));
   for (const id of ackOrder(ids, attempts)) {
-    if (ackBudget.remaining <= 0) break;
+    if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
     const i = at.get(id)!;
     const r = res[i];
     if (!r || r.status !== 'success') continue;
