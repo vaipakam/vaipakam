@@ -43,6 +43,7 @@ import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
+import { readCutoffMs, rotated, runIndex } from './runWindow';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
@@ -75,17 +76,24 @@ export async function runLiquidator(env: Env, tick: PassTick): Promise<void> {
   // serial, so a D1 stall inside an earlier chain's band pass would
   // otherwise delay LATER chains' scans and submits — notification
   // storage must never sit anywhere on the liquidation critical path.
+  //
+  // Chains run side by side (#2572 r5, `runWindow.ts` rule 1): one deadline
+  // covers the pass, so in series a slow chain would spend the window of every
+  // chain after it. Each chain has its own RPC and its own nonce lane.
   const bandQueue: { chain: ChainConfig; readings: HfReading[] }[] = [];
-  for (const chain of getChainConfigs(env)) {
-    try {
-      const readings = await liquidatePassForChain(env, chain, tick.deadlineMs);
-      bandQueue.push({ chain, readings });
-    } catch (err) {
-      console.error(
-        `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+  const run = runIndex(tick, 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        const readings = await liquidatePassForChain(env, chain, tick.deadlineMs, run);
+        bandQueue.push({ chain, readings });
+      } catch (err) {
+        console.error(
+          `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
   for (const { chain, readings } of bandQueue) {
     await hfBandPass(env, chain, readings);
   }
@@ -102,7 +110,13 @@ async function liquidatePassForChain(
   chain: ChainConfig,
   /** This run's deadline (#2572): no liquidation is signed after it. */
   deadlineMs: number,
+  /** This run's index ({@link runIndex}), which picks the page the scan starts at. */
+  run = 0,
 ): Promise<HfReading[]> {
+  // The scan stops here, leaving the liquidations it found time to be sent
+  // (#2572 r5, `runWindow.ts` rule 3). A scan cut short acts on what it read
+  // and is not reported complete.
+  const readCutoff = readCutoffMs(deadlineMs);
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -164,7 +178,20 @@ async function liquidatePassForChain(
   // (Codex #1924 r18). Tracked explicitly rather than inferred from
   // `ids.length`, which is non-empty in exactly this case.
   let pagesComplete = true;
-  for (let off = 0n; off < total; off += SCAN_PAGE) {
+  // Pages in an order that starts one page further on each run (#2572 r5,
+  // rule 2), so a scan the cutoff stops early still reaches every page over
+  // successive runs. Every page is read at the pinned block, so the order does
+  // not change what a full scan sees.
+  const offsets: bigint[] = [];
+  for (let off = 0n; off < total; off += SCAN_PAGE) offsets.push(off);
+  for (const off of rotated(offsets, run)) {
+    if (Date.now() >= readCutoff) {
+      console.log(
+        `[keeper] liquidator chain=${chain.name} read cutoff reached during paging; acting on ${ids.length} loan(s) read, the rest next run`,
+      );
+      pagesComplete = false;
+      break;
+    }
     let page: readonly bigint[];
     try {
       page = (await client.readContract({
@@ -181,7 +208,7 @@ async function liquidatePassForChain(
       pagesComplete = false;
       break;
     }
-    if (page.length === 0) break;
+    if (page.length === 0) continue;
     ids.push(...page);
   }
   if (ids.length === 0) {
@@ -209,6 +236,15 @@ async function liquidatePassForChain(
   // was scanned (Codex #1924 r19).
   let unevaluated = 0;
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
+    if (Date.now() >= readCutoff) {
+      // Unread rather than failed, so not counted as unevaluated; the scan
+      // is simply not complete, and the page rotation reaches them later.
+      pagesComplete = false;
+      console.log(
+        `[keeper] liquidator chain=${chain.name} read cutoff reached during HF reads; ${ids.length - i} loan(s) left for the next run`,
+      );
+      break;
+    }
     const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
       address: diamond,

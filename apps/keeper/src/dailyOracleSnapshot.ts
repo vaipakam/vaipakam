@@ -27,7 +27,8 @@ import {
 } from 'viem';
 
 import type { Env, ChainConfig } from './env';
-import { RUN_DEADLINE_MARGIN_MS, type PassTick } from './passSchedule';
+import type { PassTick } from './passSchedule';
+import { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';

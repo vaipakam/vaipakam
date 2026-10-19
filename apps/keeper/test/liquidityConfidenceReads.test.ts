@@ -495,6 +495,16 @@ describe('liquidityConfidence promotion evidence (#2572 r4)', () => {
     expect(held).toMatchObject({ on_chain_tier: 2, healthy_streak: 0 });
   });
 
+  it('evidence gathered at another tier does not carry over (r5)', async () => {
+    const { nextKeeperTier } = await import('../src/liquidityConfidence');
+    // The counter still names tier 1, but the chain is at 2 (a promotion
+    // landed and its counter write failed): the old streak must not promote
+    // 2→3 without a window of its own.
+    const r = nextKeeperTier({ ...prev, agg_tier: 3 }, 3, 2, 2_000, knobs);
+    expect(r.target).toBeNull();
+    expect(r.held).toMatchObject({ on_chain_tier: 2, healthy_streak: 1, first_eligible_ts: 2_000 });
+  });
+
   it('with no target the held row is the row', async () => {
     const { nextKeeperTier } = await import('../src/liquidityConfidence');
     const r = nextKeeperTier(prev, 1, 1, 2_000, knobs);

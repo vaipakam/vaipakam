@@ -104,13 +104,17 @@ function readNumber(env: Env, key: string, fallback: number): number {
 export async function runCommitmentReport(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'commitmentReport', 'REWARD_COMMIT_ENABLED')) return;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await reportFromMirror(env, chain, tick.deadlineMs);
-    } catch (err) {
-      console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
-    }
-  }
+  // Mirrors side by side (#2572 r5, `runWindow.ts` rule 1): one deadline
+  // covers the pass, so in series a slow mirror would spend the later ones'.
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await reportFromMirror(env, chain, tick.deadlineMs);
+      } catch (err) {
+        console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
 /** Shared per-invocation work budgets (batch txs + range-page reads). */

@@ -28,6 +28,7 @@
  */
 import type { Env } from './env';
 import { isTickDue, isWithinUtcMinuteWindow } from '@vaipakam/lib/cronCadence';
+import { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 
 import { runWatcher } from './watcher';
 import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
@@ -82,8 +83,8 @@ export interface PassTick {
   readonly deadlineMs: number;
 }
 
-/** What a run leaves for its own wrap-up (logging, alert de-dup writes). */
-export const RUN_DEADLINE_MARGIN_MS = 30_000;
+// Lives in the leaf module `runWindow.ts`, which passes import without a cycle.
+export { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 
 /** The deadline of one run of `pass` launched for `scheduledTimeMs`. Pure. */
 export function runDeadline(pass: Pick<KeeperPass, 'cadenceMinutes'>, scheduledTimeMs: number | undefined, nowMs: number = Date.now()): number {

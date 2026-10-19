@@ -101,13 +101,16 @@ export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
   // clients is refused past it, and no send starts after it.
   const deadline = tick.deadlineMs;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await ackFromBaseLedger(env, chain, deadline);
-    } catch (err) {
-      console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
-    }
-  }
+  // Chains side by side (#2572 r5, `runWindow.ts` rule 1).
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await ackFromBaseLedger(env, chain, deadline);
+      } catch (err) {
+        console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
 async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number): Promise<void> {

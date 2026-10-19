@@ -33,6 +33,7 @@ import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { rotated, runIndex } from './runWindow';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -210,16 +211,20 @@ function readBigint(env: Env, key: string, fallback: bigint): bigint {
 export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')) return;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await remitFromCanonical(env, chain, tick.deadlineMs);
-    } catch (err) {
-      console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
-    }
-  }
+  // Chains side by side, mirrors from a rotating start (#2572 r5, `runWindow.ts`).
+  const run = runIndex(tick, 5 * 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await remitFromCanonical(env, chain, tick.deadlineMs, run);
+      } catch (err) {
+        console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
-async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
+async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: number, run = 0): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -270,7 +275,9 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
 
   let covered = 0;
   const attempted = mirrorIds.length;
-  for (const mirrorId of mirrorIds) {
+  // From a start that moves each run (#2572 r5, rule 2), so the deadline does
+  // not leave the same mirrors unfunded run after run.
+  for (const mirrorId of rotated(mirrorIds, run)) {
     // #2572 — past the run's deadline the send queue refuses every remit
     // before broadcast; the remaining mirrors are funded next run.
     if (Date.now() >= deadlineMs) {

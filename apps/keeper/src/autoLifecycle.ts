@@ -64,6 +64,7 @@ import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { rotated, runIndex } from './runWindow';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -99,19 +100,23 @@ interface ExtendCaps {
 export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'autoLifecycle')) return;
   const chains = getChainConfigs(env);
-  for (const chain of chains) {
-    try {
-      await processChain(env, chain, tick.deadlineMs);
-    } catch (err) {
-      console.error(
-        `[keeper] autoLifecycle chain=${chain.id} failed:`,
-        err,
-      );
-    }
-  }
+  // Chains side by side, pages from a rotating start (#2572 r5, `runWindow.ts`).
+  const run = runIndex(tick, 60_000);
+  await Promise.all(
+    chains.map(async (chain) => {
+      try {
+        await processChain(env, chain, tick.deadlineMs, run);
+      } catch (err) {
+        console.error(
+          `[keeper] autoLifecycle chain=${chain.id} failed:`,
+          err,
+        );
+      }
+    }),
+  );
 }
 
-async function processChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
+async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, run: number): Promise<void> {
   if (!chain.diamond) return;
   const publicClient = createPublicClient({
     transport: http(chain.rpc),
@@ -136,8 +141,20 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number): P
   })) as bigint;
   if (total === 0n) return;
 
-  const loanIds: bigint[] = [];
-  for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) {
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
+  if (!ctx) return;
+
+  // Read a page, act on it, read the next (#2572 r5): the scan never spends
+  // the window before the first extension, and the first page moves on each
+  // run, so a run the deadline stops early leaves the rest to later runs
+  // rather than the same tail every time.
+  const cursors: bigint[] = [];
+  for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) cursors.push(cursor);
+  let scanned = 0;
+  let submitted = 0;
+  let stopped = false;
+  for (const cursor of rotated(cursors, run)) {
+    if (stopped || submitted >= MAX_EXTENDS_PER_TICK) break;
     const limit =
       cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;
     const page = (await publicClient.readContract({
@@ -146,31 +163,27 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number): P
       functionName: 'getActiveLoansPaginated',
       args: [cursor, limit],
     })) as bigint[];
-    loanIds.push(...page);
-  }
-
-  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
-  if (!ctx) return;
-
-  let submitted = 0;
-  for (const loanIdBig of loanIds) {
-    if (submitted >= MAX_EXTENDS_PER_TICK) break;
-    // #2572 — past the run's deadline every extension would be refused at
-    // its turn in the send queue; the rest wait for the next run.
-    if (Date.now() >= deadlineMs) {
-      console.log(`[keeper] autoLifecycle chain=${chain.id} run deadline reached; remaining loans left for the next run`);
-      break;
+    for (const loanIdBig of page) {
+      if (submitted >= MAX_EXTENDS_PER_TICK) break;
+      // #2572 — past the run's deadline every extension would be refused at
+      // its turn in the send queue; the rest wait for the next run.
+      if (Date.now() >= deadlineMs) {
+        console.log(`[keeper] autoLifecycle chain=${chain.id} run deadline reached; remaining loans left for the next run`);
+        stopped = true;
+        break;
+      }
+      scanned += 1;
+      const fired = await tryExtend(
+        publicClient,
+        ctx.wallet,
+        chain.diamond as Address,
+        loanIdBig,
+      );
+      if (fired) submitted++;
     }
-    const fired = await tryExtend(
-      publicClient,
-      ctx.wallet,
-      chain.diamond as Address,
-      loanIdBig,
-    );
-    if (fired) submitted++;
   }
   console.log(
-    `[keeper] autoLifecycle chain=${chain.id} scanned=${loanIds.length} extended=${submitted}`,
+    `[keeper] autoLifecycle chain=${chain.id} scanned=${scanned} extended=${submitted}`,
   );
 }
 

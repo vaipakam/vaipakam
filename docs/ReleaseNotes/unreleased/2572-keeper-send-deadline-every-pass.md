@@ -47,3 +47,17 @@ first ten minutes of the day, so a capture refused at its last run's deadline
 could never be retried and the day's price would be missing for good. Nothing in
 a capture goes stale within its day, because the Diamond reads the prices when
 the transaction executes.
+
+A deadline only defers work if the next run can reach it, so every pass that
+works under one follows three rules. Chains now run side by side rather than one
+after another, so a slow chain cannot use up the window of the chains after it.
+A list walked in a fixed order (the liquidator's loan pages, auto-extend's loan
+pages, the tier relay's assets, the reward-budget remit's mirrors) starts one
+step further on each run, so the deadline never cuts off the same tail every
+time. And the liquidator stops reading early enough to leave its liquidations
+ten seconds to be sent. A scan stopped that way acts on what it read and is not
+reported as complete. Auto-extend now acts on each page of loans as it reads it,
+rather than reading the whole book first. When a tier change is sent, its
+transaction is logged before any bookkeeping, and a bookkeeping failure no
+longer stops the other assets. Evidence gathered toward a promotion now counts
+only while the chain is still at the tier it was gathered at.

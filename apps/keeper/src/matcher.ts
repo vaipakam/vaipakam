@@ -1355,20 +1355,20 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
 export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
-  for (const chain of chains) {
-    if (Date.now() >= tick.deadlineMs) {
-      console.log(`[matcher] chain=${chain.id} (${chain.name}) skipped: the run's deadline passed; next run`);
-      continue;
-    }
-    try {
-      const publicClient = createPublicClient({ transport: http(chain.rpc) });
-      const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
-      if (!ctx) continue;
-      await runOfferMatcherTickForChain(ctx);
-    } catch (err) {
-      console.error(
-        `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+  // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
+  // the pass, so in series a slow chain would spend every later chain's window.
+  await Promise.all(
+    chains.map(async (chain) => {
+      try {
+        const publicClient = createPublicClient({ transport: http(chain.rpc) });
+        const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
+        if (!ctx) return;
+        await runOfferMatcherTickForChain(ctx);
+      } catch (err) {
+        console.error(
+          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
 }

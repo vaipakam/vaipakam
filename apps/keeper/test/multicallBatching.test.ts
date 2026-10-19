@@ -289,6 +289,31 @@ afterEach(() => {
 });
 
 describe('Multicall3 batching (#1946)', () => {
+  it('the liquidator scan stops at the read cutoff, leaving its sends time (#2572 r5)', async () => {
+    const { seen, restore } = recordCalls();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let lines: string[];
+    try {
+      const { runLiquidator } = await import('../src/liquidator');
+      // Inside the send reserve already: no page may be read.
+      await runLiquidator({
+        DB: undefined as never,
+        KEEPER_ENABLED: 'true',
+        KEEPER_PRIVATE_KEY:
+          '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+        RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+      } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 5_000 });
+      lines = log.mock.calls.map((c) => String(c[0]));
+    } finally {
+      restore();
+      log.mockRestore();
+    }
+    expect(lines.some((l) => l.includes('read cutoff reached during paging'))).toBe(true);
+    expect(seen.filter((x) => x.selector === AGGREGATE3_SELECTOR)).toEqual([]);
+    // Cut short, so never reported as a complete scan.
+    expect(lines.some((l) => l.includes('scan complete'))).toBe(false);
+  });
+
   it('the canonical address is the deterministic Multicall3 deployment', () => {
     // Pinned deliberately: a typo here reintroduces the exact silent fallback
     // this module exists to prevent, and every other assertion in this file

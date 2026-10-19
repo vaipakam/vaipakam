@@ -60,6 +60,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { reportSendError } from './submissionQueue';
+import { rotated, runIndex } from './runWindow';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -729,12 +730,21 @@ async function battleTestedElsewhere(
  *  promotes on that evidence instead of opening a new window, which by default
  *  lasts three days. With no target the two are the same row. */
 export function nextKeeperTier(
-  prev: LiquidityConfidenceRow,
+  recorded: LiquidityConfidenceRow,
   aggTier: number,
   currentOnChainTier: number,
   nowSec: number,
   knobs: RelayKnobs,
 ): { target: number | null; row: LiquidityConfidenceRow; held: LiquidityConfidenceRow } {
+  // Promotion evidence counts only toward a step up FROM the tier it was
+  // gathered at (#2572 r5). If the chain's tier moved without the counter
+  // recording it — a counter write that failed after its send, or a change
+  // made outside this pass — the old streak and window describe another tier
+  // and start over.
+  const prev: LiquidityConfidenceRow =
+    recorded.on_chain_tier === currentOnChainTier
+      ? recorded
+      : { ...recorded, healthy_streak: 0, first_eligible_ts: null };
   // Demotion: aggregator can't confirm the current tier ⇒ drop now to
   // max(1, aggTier). (aggTier 0 ⇒ alarming, but `setKeeperTier` requires
   // 1..3; floor at 1 — the on-chain ceiling is still its own check.)
@@ -792,6 +802,8 @@ async function runRelayForChain(
   client: PublicClient,
   /** This run's deadline (#2572): no tier change is signed after it. */
   deadlineMs: number,
+  /** This run's index ({@link runIndex}), which picks the asset to start at. */
+  run = 0,
 ): Promise<void> {
   const diamond = chain.diamond as Address;
   const cfg = await loadConfig(client, diamond, env);
@@ -826,7 +838,10 @@ async function runRelayForChain(
   const nowSec = Math.floor(Date.now() / 1000);
   let submits = 0;
 
-  for (const asset of assets) {
+  // From a start that moves each run (#2572 r5, rule 2): the deadline below
+  // would otherwise cut the same assets off every run, and their demotions are
+  // the fail-safe.
+  for (const asset of rotated(assets, run)) {
     // #2572 r4 — past the deadline nothing more is signed, and a run still in
     // flight holds back the next one, whose demotions are the fail-safe.
     if (Date.now() >= deadlineMs) {
@@ -923,35 +938,49 @@ async function runRelayForChain(
       // Not sent, or not known to be: the counter keeps the evidence, and the
       // next run re-reads the chain's tier and re-derives the target from
       // fresh quotes. A deadline refusal reads as a deferral (#2572).
-      await upsertLiquidityConfidence(env.DB, held);
       reportSendError(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target}`,
         err,
         `failed: ${String(err).slice(0, 250)}`,
       );
+      await upsertLiquidityConfidence(env.DB, held);
       continue;
     }
+    // Sent: the hash is logged before any bookkeeping (#2572 r5), and a
+    // bookkeeping failure is reported on its own without stopping the other
+    // assets. A counter left unwritten still names the old tier, so once the
+    // change lands the next run discards its evidence (see `nextKeeperTier`).
     submits += 1;
-    await upsertLiquidityConfidence(env.DB, row);
     console.log(
       `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
     );
+    try {
+      await upsertLiquidityConfidence(env.DB, row);
+    } catch (err) {
+      console.error(
+        `[keeper] liq-confidence chain=${chain.name} asset=${key} tx=${hash} sent but its counter was not recorded: ${String(err).slice(0, 200)}`,
+      );
+    }
   }
 }
 
 export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
-  for (const chain of getChainConfigs(env)) {
-    if (Date.now() >= tick.deadlineMs) {
-      console.log(`[keeper] liq-confidence run deadline reached before chain=${chain.name}; resumes next run`);
-      break;
-    }
-    try {
-      const client = createPublicClient({ transport: http(chain.rpc) });
-      await runRelayForChain(env, chain, client, tick.deadlineMs);
-    } catch (err) {
-      console.error(
-        `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+  // Chains side by side, assets from a rotating start (#2572 r5, `runWindow.ts`).
+  const run = runIndex(tick, 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      if (Date.now() >= tick.deadlineMs) {
+        console.log(`[keeper] liq-confidence run deadline reached before chain=${chain.name}; resumes next run`);
+        return;
+      }
+      try {
+        const client = createPublicClient({ transport: http(chain.rpc) });
+        await runRelayForChain(env, chain, client, tick.deadlineMs, run);
+      } catch (err) {
+        console.error(
+          `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
 }
