@@ -1,3 +1,0 @@
-## Thread — Keeper: a zero-collateral rental has no health factor by design (PR #2518)
-
-An NFT rental secured by its prepay holds no collateral, and the protocol refuses to compute a health factor for a loan with none. The keeper's liquidator counted those rentals as loans it had failed to evaluate, so on Base Sepolia and BNB Testnet every scan reported itself incomplete because of loan 4, a rental on each chain. Both health-factor passes now treat a zero-collateral rental like an illiquid loan, with no health factor by design. The scan's "incomplete" marker now means a real gap, such as a loan whose asset has no price feed. Found on the keeper's first armed ticks on its always-on machine.
