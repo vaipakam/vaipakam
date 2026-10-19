@@ -27,7 +27,7 @@ import {
 } from 'viem';
 
 import type { Env, ChainConfig } from './env';
-import type { PassTick } from './passSchedule';
+import { RUN_DEADLINE_MARGIN_MS, type PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
@@ -117,7 +117,19 @@ async function setLastCaptureDay(env: Env, chainId: number, dayIndex: number): P
   assertGuardedWriteLanded(result, `oracle_snapshot_state for chain ${chainId}`);
 }
 
-async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
+/** The deadline a capture's send carries (#2572 r4): the end of the UTC day
+ *  it captures, less the run margin, NOT the run's own deadline. A capture
+ *  holds nothing that goes stale within its day (the Diamond reads the prices
+ *  when the transaction executes), and no later run can retry it: the pass
+ *  acts only in the first minutes of the day, so a send refused at its last
+ *  run's deadline would leave that day's slot empty for good. A run held this
+ *  long only holds back this pass's own later runs in the window, which would
+ *  attempt the same capture. Pure. */
+export function captureDeadlineMs(todayIndex: number): number {
+  return (todayIndex + 1) * 86_400_000 - RUN_DEADLINE_MARGIN_MS;
+}
+
+async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
   const todayIndex = Math.floor(Date.now() / 1000 / 86400);
   const lastCapturedDay = await getLastCaptureDay(env, chain.id);
   if (lastCapturedDay === todayIndex) return;
@@ -147,7 +159,11 @@ async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number)
   }
   const { account } = resolved;
   // Queued with the other passes' sends (#2486): same key, same chain.
-  const wallet = queuedWallet(createWalletClient({ account, transport: http(chain.rpc) }), chain.id, deadlineMs);
+  const wallet = queuedWallet(
+    createWalletClient({ account, transport: http(chain.rpc) }),
+    chain.id,
+    captureDeadlineMs(todayIndex),
+  );
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
 
   try {
@@ -177,7 +193,8 @@ async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number)
  * isolated per-chain so one chain's stuck RPC doesn't wedge the
  * rest of the worker tick.
  */
-export async function runDailyOracleSnapshot(env: Env, tick: PassTick): Promise<void> {
+// The tick's run deadline is deliberately not used: see `captureDeadlineMs`.
+export async function runDailyOracleSnapshot(env: Env, _tick: PassTick): Promise<void> {
   // Tight pre-check: only fire inside the daily-cadence window.
   // The Worker cron runs every minute; we attempt at most ~10
   // ticks per day per chain (00:00–00:09 UTC). After 00:10 we
@@ -188,5 +205,5 @@ export async function runDailyOracleSnapshot(env: Env, tick: PassTick): Promise<
   if (minutesIntoDay >= 10) return;
 
   const chains = getChainConfigs(env);
-  await Promise.all(chains.map((chain) => captureForChain(env, chain, tick.deadlineMs)));
+  await Promise.all(chains.map((chain) => captureForChain(env, chain)));
 }

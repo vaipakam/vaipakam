@@ -40,10 +40,10 @@ export async function keeperTxPending(
 
 /** The skip reason an attempt's thrown error is logged under (#2572): a send
  *  the slot refused past its run's deadline is a deferral, said as one —
- *  nothing was signed and the next run retries — not an error. */
+ *  nothing was sent and the next run retries — not an error. */
 export function attemptErrorReason(err: unknown): string {
   return isSendPastDeadline(err)
-    ? 'deferred:run-deadline-passed (nothing signed; next run)'
+    ? 'deferred:run-deadline-passed (nothing sent; next run)'
     : `error:${describeFailure(err)}`;
 }
 
@@ -67,7 +67,7 @@ export async function sendInSubmissionSlot(
   wallet: WalletClient,
   chainId: number,
   /** The sending pass's run deadline, enforced by the slot (#2572): past it
-   *  this throws `SendPastDeadline` and nothing is signed. */
+   *  this throws `SendPastDeadline` and nothing is sent. */
   notAfterMs: number,
   to: Address,
   data: Hex,

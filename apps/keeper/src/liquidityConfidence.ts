@@ -48,6 +48,7 @@ import {
   erc20Abi,
   type Abi,
   type Address,
+  type Hex,
   type PublicClient,
 } from 'viem';
 import {
@@ -720,29 +721,32 @@ async function battleTestedElsewhere(
 }
 
 /** Apply the promote/demote state machine to one D1 row + return the
- *  on-chain `keeperTier` target (1..3) or `null` for "no change". */
-function nextKeeperTier(
+ *  on-chain `keeperTier` target (1..3) or `null` for "no change".
+ *
+ *  `row` is the state once the target is ON CHAIN; `held` is the state to keep
+ *  when it is not (#2572 r4): a send refused, failed or never attempted. A
+ *  promotion's `held` keeps the evidence that qualified it, so the next run
+ *  promotes on that evidence instead of opening a new window, which by default
+ *  lasts three days. With no target the two are the same row. */
+export function nextKeeperTier(
   prev: LiquidityConfidenceRow,
   aggTier: number,
   currentOnChainTier: number,
   nowSec: number,
   knobs: RelayKnobs,
-): { target: number | null; row: LiquidityConfidenceRow } {
+): { target: number | null; row: LiquidityConfidenceRow; held: LiquidityConfidenceRow } {
   // Demotion: aggregator can't confirm the current tier ⇒ drop now to
   // max(1, aggTier). (aggTier 0 ⇒ alarming, but `setKeeperTier` requires
   // 1..3; floor at 1 — the on-chain ceiling is still its own check.)
   if (aggTier < currentOnChainTier) {
     const target = Math.max(1, aggTier);
+    const reset = { ...prev, agg_tier: aggTier, healthy_streak: 0, first_eligible_ts: null, last_check_ts: nowSec };
+    // A demotion carries no evidence to keep: the next run re-quotes and
+    // demotes again while the chain still shows the higher tier.
     return {
       target: target === currentOnChainTier ? null : target,
-      row: {
-        ...prev,
-        agg_tier: aggTier,
-        on_chain_tier: target,
-        healthy_streak: 0,
-        first_eligible_ts: null,
-        last_check_ts: nowSec,
-      },
+      row: { ...reset, on_chain_tier: target },
+      held: { ...reset, on_chain_tier: currentOnChainTier },
     };
   }
   // Eligible-to-promote: aggregator confirms strictly above the current
@@ -751,45 +755,35 @@ function nextKeeperTier(
     const streak = prev.healthy_streak + 1;
     const firstEligible = prev.first_eligible_ts ?? nowSec;
     const windowOk = nowSec - firstEligible >= knobs.minWindowSec;
+    const evidence: LiquidityConfidenceRow = {
+      ...prev,
+      agg_tier: aggTier,
+      on_chain_tier: currentOnChainTier,
+      healthy_streak: streak,
+      first_eligible_ts: firstEligible,
+      last_check_ts: nowSec,
+    };
     if (streak >= knobs.minChecks && windowOk) {
       const target = currentOnChainTier + 1;
       return {
         target,
-        row: {
-          ...prev,
-          agg_tier: aggTier,
-          on_chain_tier: target,
-          healthy_streak: 0,
-          first_eligible_ts: null,
-          last_check_ts: nowSec,
-        },
+        row: { ...evidence, on_chain_tier: target, healthy_streak: 0, first_eligible_ts: null },
+        held: evidence,
       };
     }
-    return {
-      target: null,
-      row: {
-        ...prev,
-        agg_tier: aggTier,
-        on_chain_tier: currentOnChainTier,
-        healthy_streak: streak,
-        first_eligible_ts: firstEligible,
-        last_check_ts: nowSec,
-      },
-    };
+    return { target: null, row: evidence, held: evidence };
   }
   // Steady (aggTier == currentOnChainTier, or already at the cap) — no
   // change; reset the eligible-streak.
-  return {
-    target: null,
-    row: {
-      ...prev,
-      agg_tier: aggTier,
-      on_chain_tier: currentOnChainTier,
-      healthy_streak: 0,
-      first_eligible_ts: null,
-      last_check_ts: nowSec,
-    },
+  const steady: LiquidityConfidenceRow = {
+    ...prev,
+    agg_tier: aggTier,
+    on_chain_tier: currentOnChainTier,
+    healthy_streak: 0,
+    first_eligible_ts: null,
+    last_check_ts: nowSec,
   };
+  return { target: null, row: steady, held: steady };
 }
 
 async function runRelayForChain(
@@ -833,6 +827,12 @@ async function runRelayForChain(
   let submits = 0;
 
   for (const asset of assets) {
+    // #2572 r4 — past the deadline nothing more is signed, and a run still in
+    // flight holds back the next one, whose demotions are the fail-safe.
+    if (Date.now() >= deadlineMs) {
+      console.log(`[keeper] liq-confidence chain=${chain.name} run deadline reached; remaining assets left for the next run`);
+      break;
+    }
     const key = asset.toLowerCase();
     let currentOnChainTier: number;
     try {
@@ -879,35 +879,39 @@ async function runRelayForChain(
         first_eligible_ts: null,
         last_check_ts: 0,
       };
-    const { target, row } = nextKeeperTier(
+    const { target, row, held } = nextKeeperTier(
       prevRow,
       aggTier,
       currentOnChainTier,
       nowSec,
       cfg.knobs,
     );
-    // Always persist the updated counter (even when not submitting).
-    await upsertLiquidityConfidence(env.DB, row);
 
     if (target === null) {
+      await upsertLiquidityConfidence(env.DB, row);
       console.log(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} agg=${aggTier} onchain=${currentOnChainTier} streak=${row.healthy_streak} (no change)`,
       );
       continue;
     }
+    // From here a target exists. Until a send for it is accepted the counter
+    // keeps `held` — the evidence, with the chain's current tier (#2572 r4).
     if (!canSubmit) {
+      await upsertLiquidityConfidence(env.DB, held);
       console.log(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} would set keeperTier ${currentOnChainTier}→${target} (skipped: submit disabled)`,
       );
       continue;
     }
     if (submits >= MAX_SUBMITS_PER_TICK) {
+      await upsertLiquidityConfidence(env.DB, held);
       console.log(`[keeper] liq-confidence chain=${chain.name} submit cap reached`);
       break;
     }
+    let hash: Hex;
     try {
       const account = ctx!.wallet.account!;
-      const hash = await ctx!.wallet.writeContract({
+      hash = await ctx!.wallet.writeContract({
         address: diamond,
         abi: RELAY_ABI,
         functionName: 'setKeeperTier',
@@ -915,24 +919,32 @@ async function runRelayForChain(
         account,
         chain: ctx!.wallet.chain,
       });
-      submits += 1;
-      console.log(
-        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
-      );
     } catch (err) {
-      // #2572 — a deadline refusal came before signing: the counter above is
-      // persisted, so the next run recomputes the same target from fresh quotes.
+      // Not sent, or not known to be: the counter keeps the evidence, and the
+      // next run re-reads the chain's tier and re-derives the target from
+      // fresh quotes. A deadline refusal reads as a deferral (#2572).
+      await upsertLiquidityConfidence(env.DB, held);
       reportSendError(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target}`,
         err,
         `failed: ${String(err).slice(0, 250)}`,
       );
+      continue;
     }
+    submits += 1;
+    await upsertLiquidityConfidence(env.DB, row);
+    console.log(
+      `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
+    );
   }
 }
 
 export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
   for (const chain of getChainConfigs(env)) {
+    if (Date.now() >= tick.deadlineMs) {
+      console.log(`[keeper] liq-confidence run deadline reached before chain=${chain.name}; resumes next run`);
+      break;
+    }
     try {
       const client = createPublicClient({ transport: http(chain.rpc) });
       await runRelayForChain(env, chain, client, tick.deadlineMs);

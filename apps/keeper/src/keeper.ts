@@ -341,7 +341,7 @@ export async function maybeAutonomousLiquidate(
   hfRaw: bigint,
   publicClient: PublicClient,
   /** The liquidator run's deadline (#2572): a send whose turn in the queue
-   *  comes after it is refused before signing, and the loan is retried by the
+   *  comes after it is refused before broadcast, and the loan is retried by the
    *  next run, from fresh health-factor reads and fresh quotes. */
   notAfterMs: number,
 ): Promise<boolean> {
@@ -853,7 +853,7 @@ export async function maybeAutonomousLiquidate(
     );
     return true;
   } catch (err) {
-    // #2572 — a deadline refusal came before signing (no nonce spent, nothing
+    // #2572 — a deadline refusal came before broadcast (no nonce spent, nothing
     // sent) and is reported as a deferral. Any other failure here is
     // non-fatal — we logged + dedupe'd, so the watcher won't hammer the same
     // loan in this tick. The most common cause is "another keeper got there

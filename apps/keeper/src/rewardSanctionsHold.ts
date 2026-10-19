@@ -1009,7 +1009,7 @@ async function send(
     } as never)) as Hex;
   } catch (err) {
     budget.writes = 0;
-    // Refused before signing at its turn in the queue: nothing was sent.
+    // Refused past the run deadline, before broadcast: nothing was sent.
     if (isSendPastDeadline(err)) return 'skipped';
     console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
     return 'failed';

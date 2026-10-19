@@ -272,7 +272,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   const attempted = mirrorIds.length;
   for (const mirrorId of mirrorIds) {
     // #2572 — past the run's deadline the send queue refuses every remit
-    // before signing; the remaining mirrors are funded next run.
+    // before broadcast; the remaining mirrors are funded next run.
     if (Date.now() >= deadlineMs) {
       console.log(`[keeper] rewardBudgetRemit run deadline reached before Base->${mirrorId}; resumes next run`);
       break;

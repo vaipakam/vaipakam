@@ -203,7 +203,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number
   for (const d of dayList) {
     if (budget.batches <= 0 || budget.pages <= 0) break;
     // #2572 — past the run's deadline the send queue refuses every batch and
-    // report before signing; the remaining days resume next run.
+    // report before broadcast; the remaining days resume next run.
     if (Date.now() >= deadlineMs) {
       console.log(`[keeper] commitmentReport chain=${chain.id} run deadline reached at day=${d}; resumes next run`);
       break;

@@ -1165,7 +1165,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   // site checks `overBudget()` before doing more work.
   //
   // #2572 — the run's own deadline binds too: past it the send queue refuses
-  // every match, fill and roll before signing, so the pass stops looking for
+  // every match, fill and roll before broadcast, so the pass stops looking for
   // more and leaves the book to the next run.
   const tickStart = Date.now();
   const overBudget = () =>

@@ -320,14 +320,14 @@ function db(): unknown {
   return { prepare: () => stmt, batch: async () => [], exec: async () => ({}) };
 }
 
-async function run(): Promise<void> {
+async function run(deadlineMs: number = Date.now() + 60_000): Promise<void> {
   const { runLiquidityConfidence } = await import('../src/liquidityConfidence');
   // The fence holds for the chain the pass resolves (#2569 r5).
   armHeldFence([{ id: 84532, diamond: getDeployment(84532)!.diamond }]);
   await runLiquidityConfidence({
     DB: db(),
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-  } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
+  } as never, { scheduledTimeMs: undefined, deadlineMs });
 }
 
 /** How many times `x` appears in `xs`. */
@@ -445,5 +445,60 @@ describe('liquidityConfidence read budget (#1896)', () => {
     const tierLines = lines.filter((x) => x.includes('liq-confidence') && x.includes('asset='));
     expect(tierLines.length).toBe(ASSETS.length);
     for (const l of tierLines) expect(l).toMatch(/agg=0|keeperTier 1→0/);
+  });
+
+  it('starts no chain once the run deadline has passed (#2572 r4)', async () => {
+    const { tally, restore } = install();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let lines: string[];
+    try {
+      await run(Date.now() - 1);
+      lines = log.mock.calls.map((c) => String(c[0]));
+    } finally {
+      restore();
+      log.mockRestore();
+    }
+    expect(lines.some((l) => l.includes('run deadline reached before chain='))).toBe(true);
+    expect(lines.filter((l) => l.includes('asset='))).toEqual([]);
+    expect(tally.price).toEqual([]);
+  });
+});
+
+describe('liquidityConfidence promotion evidence (#2572 r4)', () => {
+  const knobs = { minChecks: 3, minWindowSec: 100 } as never;
+  const prev = {
+    chain_id: 84532,
+    asset: '0xabc',
+    agg_tier: 2,
+    on_chain_tier: 1,
+    healthy_streak: 5,
+    first_eligible_ts: 1_000,
+    last_check_ts: 1_500,
+  };
+
+  it('a qualified promotion keeps its evidence until the send lands', async () => {
+    const { nextKeeperTier } = await import('../src/liquidityConfidence');
+    const { target, row, held } = nextKeeperTier(prev, 2, 1, 2_000, knobs);
+    expect(target).toBe(2);
+    expect(row).toMatchObject({ on_chain_tier: 2, healthy_streak: 0, first_eligible_ts: null });
+    // Not landed: the chain still reads tier 1, so the next run must find the
+    // same qualifying streak and window rather than open a new one.
+    expect(held).toMatchObject({ on_chain_tier: 1, healthy_streak: 6, first_eligible_ts: 1_000 });
+    const again = nextKeeperTier(held, 2, 1, 2_060, knobs);
+    expect(again.target).toBe(2);
+  });
+
+  it('a demotion that does not land leaves the chain tier as recorded', async () => {
+    const { nextKeeperTier } = await import('../src/liquidityConfidence');
+    const { target, held } = nextKeeperTier({ ...prev, on_chain_tier: 2 }, 1, 2, 2_000, knobs);
+    expect(target).toBe(1);
+    expect(held).toMatchObject({ on_chain_tier: 2, healthy_streak: 0 });
+  });
+
+  it('with no target the held row is the row', async () => {
+    const { nextKeeperTier } = await import('../src/liquidityConfidence');
+    const r = nextKeeperTier(prev, 1, 1, 2_000, knobs);
+    expect(r.target).toBeNull();
+    expect(r.held).toEqual(r.row);
   });
 });

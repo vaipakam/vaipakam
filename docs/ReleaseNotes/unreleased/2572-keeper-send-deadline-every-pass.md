@@ -9,9 +9,11 @@ daily oracle snapshot did not, so a send from any of them could wait behind
 another pass on the same key and then be signed after its own run was over.
 
 A run's deadline is its scheduled minute plus its cadence, less a thirty-second
-margin. A send whose turn in the queue comes after that point is refused before
-it is signed. No nonce is spent and nothing reaches the network, and the work
-is picked up by the next run from fresh reads. For the liquidator and the
+margin. A send whose turn in the queue comes after that point is refused, and so
+is one whose preparation runs past it, at the last moment before broadcast. No
+nonce is spent and nothing reaches the network, and the work is picked up by the
+next run from fresh reads. (A send refused at that last moment may already have
+been signed locally; the bytes are discarded, never sent.) For the liquidator and the
 matcher this is a deliberate behaviour change, chosen by the owner: a
 liquidation or match that would have been signed late, priced from old state,
 now waits for the next one-minute run instead. Passes that loop over loans,
@@ -28,8 +30,20 @@ cannot switch the check off by leaving it out. A refusal is recognised however
 the signing library wraps it, and the liquidation routes that catch their own
 send failures hand it on rather than reporting it as their own failure. Every
 pass logs such a refusal the same way, as "deferred to the next run: the run
-deadline passed before broadcast, so nothing was signed or sent", never as a
+deadline passed before broadcast, so nothing was sent", never as a
 failed broadcast, so an operator reading the log is not sent looking for a
 transaction that was never made. Real failures keep each pass's existing
 wording. The fallback deadlines three passes used when no tick was supplied are
 gone. Closes #2572.
+
+Two passes needed more than the send check. The liquidity-tier relay now also
+stops starting new assets and chains once its deadline passes, so a slow quote
+source cannot hold back the next run's fail-safe demotions. When a tier change
+it decided on is not sent, for any reason, it keeps the evidence that qualified
+the change, so a promotion is retried next run instead of starting a new
+qualifying window. The daily price snapshot is the one pass whose sends carry a
+later deadline: the end of the UTC day being captured. The pass acts only in the
+first ten minutes of the day, so a capture refused at its last run's deadline
+could never be retried and the day's price would be missing for good. Nothing in
+a capture goes stale within its day, because the Diamond reads the prices when
+the transaction executes.

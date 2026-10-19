@@ -104,9 +104,12 @@ export function resetSubmissionQueues(): void {
   floors.clear();
 }
 
-/** A send refused at its turn in the queue because its pass's run deadline
- *  had passed (#2571 r1, #2572). Raised BEFORE the nonce is read or anything
- *  is signed, so no nonce is spent and nothing reaches the network. */
+/** A send refused because its pass's run deadline had passed (#2571 r1,
+ *  #2572). Raised at its turn in the queue, before the nonce is read, or at
+ *  the last moment before broadcast. Either way no nonce is spent and nothing
+ *  reaches the network. The second check comes AFTER signing, so the bytes
+ *  may have been signed locally and discarded: the guarantee is "not sent",
+ *  never "not signed" (#2572 r4). */
 export class SendPastDeadline extends Error {}
 
 /** Whether `err` is, or wraps, a {@link SendPastDeadline}. viem wraps an
@@ -123,7 +126,7 @@ export function isSendPastDeadline(err: unknown): boolean {
 
 /** How a deadline refusal reads in a log line, wherever a send reports one. */
 export const SEND_DEFERRED_WORDING =
-  'deferred to the next run: the run deadline passed before broadcast, so nothing was signed or sent';
+  'deferred to the next run: the run deadline passed before broadcast, so nothing was sent';
 
 /** The one way a send site reports a send that did not go out (#2572 r3).
  *  A deadline refusal is a deferral, logged as such, never as a failure: the
