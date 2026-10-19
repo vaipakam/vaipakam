@@ -69,7 +69,9 @@ from the start of the book. And a pass that reads before it sends (the
 liquidator's scan, the commitment report's entry scan, the reward-budget
 remit's planning, the tier relay's asset discovery, the matcher's listings and
 offer reads) stops reading early enough to leave its sends ten seconds, and
-acts on what it read.
+acts on what it read. The tier relay and the matcher read each page's details
+before listing the next page, so a run stopped partway always has something to
+act on.
 The commitment report also records how far it got when a batch is not sent, so
 the next run continues from there instead of repeating the same scan. A scan stopped that way acts on what it read and is not
 reported as complete. Auto-extend now acts on each page of loans as it reads it,

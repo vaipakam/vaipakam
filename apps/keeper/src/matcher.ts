@@ -345,10 +345,18 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
   };
 }
 
-/** The active offer ids, walked from an offer that moves each run and stopped
- *  once `stop()` holds (#2572 r8, `runWindow.ts` rules 2 and 3), so a slow book
- *  still yields the offers read and later runs reach the rest. */
-async function listActiveOfferIds(ctx: KeeperContext, run: number, stop: () => boolean): Promise<bigint[]> {
+/** The active offers, walked from an offer that moves each run, each page
+ *  hydrated before the next is listed, and stopped before the next page once
+ *  `stop()` holds (#2572 r8/r9, `runWindow.ts` rules 2 and 3). A slow book
+ *  still yields hydrated offers to match, and later runs reach the rest.
+ *  Listing every id before hydrating any left a run the cutoff stopped during
+ *  listing with ids and nothing to match. `listed` counts the ids read, so a
+ *  caller can tell an empty book from offers that all hydrated as taken. */
+export async function listActiveOffers(
+  ctx: KeeperContext,
+  run: number,
+  stop: () => boolean,
+): Promise<{ offers: OfferLite[]; listed: number }> {
   let total: bigint;
   try {
     total = (await ctx.client.readContract({
@@ -360,35 +368,42 @@ async function listActiveOfferIds(ctx: KeeperContext, run: number, stop: () => b
     console.error(
       `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${String(err).slice(0, 200)}`,
     );
-    return [];
+    return { offers: [], listed: 0 };
   }
-  if (total === 0n) return [];
+  if (total === 0n) return { offers: [], listed: 0 };
 
-  const ids: bigint[] = [];
+  const offers: OfferLite[] = [];
+  let listed = 0;
   for (const { cursor: offset, limit } of pagedWalk(total, SCAN_PAGE, run)) {
     if (stop()) break;
+    let page: readonly bigint[];
     try {
-      const page = (await ctx.client.readContract({
+      // eslint-disable-next-line no-await-in-loop
+      page = (await ctx.client.readContract({
         address: ctx.diamond,
         abi: MATCHER_ABI,
         functionName: 'getActiveOffersPaginated',
         args: [offset, limit],
       })) as readonly bigint[];
-      for (const id of page) ids.push(id);
     } catch (err) {
       console.error(
         `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
       );
       break;
     }
+    listed += page.length;
+    // The page is hydrated whole even if the cutoff passes meanwhile: it is a
+    // bounded read, and stopping inside it would leave ids with nothing to
+    // match, which is the stall this order exists to prevent.
+    // eslint-disable-next-line no-await-in-loop
+    offers.push(...(await hydrateOffers(ctx, page)));
   }
-  return ids;
+  return { offers, listed };
 }
 
 async function hydrateOffers(
   ctx: KeeperContext,
   ids: readonly bigint[],
-  stop: () => boolean = () => false,
 ): Promise<OfferLite[]> {
   // BATCHED (#1896). This was one `getOffer` per offer id — `Promise.all`
   // made them concurrent but each is still its own SUBREQUEST, and the ceiling
@@ -401,8 +416,6 @@ async function hydrateOffers(
   // exactly as the per-id catch did.
   const out: OfferLite[] = [];
   for (let i = 0; i < ids.length; i += HYDRATE_CHUNK) {
-    // A read phase: it stops at the read cutoff and matches what it hydrated.
-    if (stop()) break;
     const chunk = ids.slice(i, i + HYDRATE_CHUNK);
     // eslint-disable-next-line no-await-in-loop
     const results = await batchedRead(
@@ -647,11 +660,12 @@ function readsOver(ctx: KeeperContext, overBudget: () => boolean): () => boolean
   return () => overBudget() || Date.now() >= cutoff;
 }
 
-/** Read a registry view that returns `[rows, total]` per page: the first page
- *  at 0, which reports the size, then the rest from a start that moves each
- *  run (#2572 r8, `runWindow.ts` rule 2), stopping once `stop()` holds. From
+/** Read a registry view that returns `[rows, total]` per page: a zero-length
+ *  read for the size, then every page from a start that moves each run
+ *  (#2572 r8/r9, `runWindow.ts` rule 2), stopping once `stop()` holds. From
  *  offset 0 every run, a registry the budget cut short left its tail
- *  unreached run after run. */
+ *  unreached run after run, and a full first page read only for its size
+ *  would do the same to everything after it. */
 async function walkRegistry<T>(
   ctx: KeeperContext,
   functionName: 'getActiveLenderIntents' | 'getRollableIntentLoans',
@@ -662,6 +676,7 @@ async function walkRegistry<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   const read = async (offset: bigint, limit: bigint): Promise<bigint | null> => {
+    // A zero limit returns no rows and the registry's size (MetricsFacet).
     try {
       const [rows, total] = (await ctx.client.readContract({
         address: ctx.diamond,
@@ -679,9 +694,9 @@ async function walkRegistry<T>(
     }
   };
   if (stop()) return out;
-  const total = await read(0n, pageSize);
+  const total = await read(0n, 0n);
   if (total === null) return out;
-  for (const { cursor, limit } of pagedWalk(total, pageSize, run, pageSize)) {
+  for (const { cursor, limit } of pagedWalk(total, pageSize, run)) {
     if (stop()) break;
     // eslint-disable-next-line no-await-in-loop
     if ((await read(cursor, limit)) === null) break;
@@ -1313,16 +1328,14 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
     Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS || Date.now() >= ctx.notAfterMs;
 
   // Listing and hydration only read, so they stop at the read cutoff and the
-  // pass matches what they reached (#2572 r8, `runWindow.ts` rules 2 and 3).
-  const readStop = readsOver(ctx, overBudget);
-  const ids = await listActiveOfferIds(ctx, run, readStop);
-  if (ids.length === 0) {
+  // pass matches what they reached (#2572 r8/r9, `runWindow.ts` rules 2 and 3).
+  const { offers, listed } = await listActiveOffers(ctx, run, readsOver(ctx, overBudget));
+  if (listed === 0) {
     // No open offers to match/fill, but there may still be fully-repaid intent
     // loans to AUTO-ROLL (independent of the offer book) — #625 WI-2c part 2b.
     if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0, run);
     return;
   }
-  const offers = await hydrateOffers(ctx, ids, readStop);
   const { lenders, borrowers } = partitionByBucket(offers);
 
   let previewCalls = 0;

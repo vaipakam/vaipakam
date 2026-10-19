@@ -66,18 +66,3 @@ describe('pagedWalk', () => {
     expect(pagedWalk(0n, 200n, 3)).toEqual([]);
   });
 });
-
-describe('pagedWalk from an offset (#2572 r8)', () => {
-  it('covers exactly the items from the offset on, starting inside that range', () => {
-    for (const run of [0, 7, 29_000_017]) {
-      const seen: bigint[] = [];
-      for (const { cursor, limit } of pagedWalk(437n, 100n, run, 100n)) {
-        for (let i = 0n; i < limit; i++) seen.push(cursor + i);
-      }
-      expect(seen.length).toBe(337);
-      expect(new Set(seen.map(String)).size).toBe(337);
-      expect(seen.every((x) => x >= 100n && x < 437n)).toBe(true);
-    }
-    expect(pagedWalk(100n, 100n, 3, 100n)).toEqual([]);
-  });
-});
