@@ -15,10 +15,41 @@ import { isEntryPoint } from './entry-point.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE = join(HERE, '..');
 
-test('the entry point is what Node reports, and an unreported one is an error', () => {
+test('the entry point is what Node reports', () => {
   assert.equal(isEntryPoint({ main: true }), true);
   assert.equal(isEntryPoint({ main: false }), false);
-  assert.throws(() => isEntryPoint({}), /Node 22\.18 or newer is needed/);
+});
+
+// A Node before 22.18 sets no import.meta.main. Importing must still work;
+// anything that looks like a start must be an error, never a quiet false.
+test('on a Node without import.meta.main, an import answers false', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'entry-point-old-node-'));
+  const script = join(dir, 'sanctions-adder.mjs');
+  writeFileSync(script, '');
+  const meta = { url: pathToFileURL(script).href };
+  writeFileSync(join(dir, 'importer.mjs'), '');
+  assert.equal(isEntryPoint(meta, join(dir, 'importer.mjs')), false);
+  assert.equal(isEntryPoint(meta, undefined), false, 'node -e, or an embedder, names no script');
+});
+
+test('on a Node without import.meta.main, anything that looks like a start throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'entry-point-old-node-'));
+  mkdirSync(join(dir, 'release'));
+  mkdirSync(join(dir, 'elsewhere'));
+  const script = join(dir, 'release', 'sanctions-adder.mjs');
+  writeFileSync(script, '');
+  const meta = { url: pathToFileURL(script).href };
+  const expected = /run it with Node 22\.18 or newer/;
+  // By its real path, and through a link to its directory.
+  symlinkSync(join(dir, 'release'), join(dir, 'current'));
+  assert.throws(() => isEntryPoint(meta, script), expected);
+  assert.throws(() => isEntryPoint(meta, join(dir, 'current', 'sanctions-adder.mjs')), expected);
+  // Through a link to the file under another name.
+  symlinkSync(script, join(dir, 'adder'));
+  assert.throws(() => isEntryPoint(meta, join(dir, 'adder')), expected);
+  // Through a directory link repointed after Node resolved it.
+  symlinkSync(join(dir, 'elsewhere'), join(dir, 'repointed'));
+  assert.throws(() => isEntryPoint(meta, join(dir, 'repointed', 'sanctions-adder.mjs')), expected);
 });
 
 /** A fresh directory with `current`, a link to this package, as the units have. */
