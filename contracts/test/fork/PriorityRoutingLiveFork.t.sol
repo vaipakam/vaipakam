@@ -296,8 +296,56 @@ contract PriorityRoutingLiveFork is Test {
         }
     }
 
+    /// @dev EVERY field of every read the proof relies on is asserted (Codex
+    ///      #2582 r8 — the rule applied across the test, not per finding).
     function _credits(address who) internal view returns (uint256 c) {
-        (,, c) = d.getPerkEntitlement(who, PERK);
+        bool active;
+        uint64 until;
+        (active, until, c) = d.getPerkEntitlement(who, PERK);
+        assertEq(active, c > 0, "entitlement: active iff a counted unit is held");
+        assertEq(until, 0, "entitlement: counted, no expiry");
+    }
+
+    function _assertPriority(
+        address who,
+        bool enabled,
+        uint256 credits,
+        bool covers,
+        bool unlocks,
+        string memory tag
+    ) internal view {
+        (bool e, uint256 c, bool cv, bool u) = d.getLenderIntentPriority(who, lendAsset, collAsset, solver, solver);
+        assertEq(e, enabled, string.concat(tag, ": priority view enabled"));
+        assertEq(c, credits, string.concat(tag, ": priority view credits"));
+        assertEq(cv, covers, string.concat(tag, ": priority view capacityCovers"));
+        assertEq(u, unlocks, string.concat(tag, ": priority view creditUnlocks"));
+    }
+
+    function _assertPerkConfig(uint256 price, uint32 duration, uint256 sold, string memory tag) internal view {
+        (uint256 p, uint32 dur, uint256 s_) = d.getPerkConfig(PERK);
+        assertEq(p, price, string.concat(tag, ": price"));
+        assertEq(dur, duration, string.concat(tag, ": duration"));
+        assertEq(s_, sold, string.concat(tag, ": units sold"));
+    }
+
+    /// @dev An Ok preview's terms are the fill the proof then makes.
+    function _assertOkPreview(IntentPreview memory pv, bool spendsCredit, string memory tag) internal pure {
+        assertTrue(pv.ok, string.concat(tag, ": ok"));
+        assertEq(pv.intentError, 0, string.concat(tag, ": no intent error"));
+        assertEq(pv.matchError, 0, string.concat(tag, ": no match error"));
+        assertEq(pv.riskBlock, 0, string.concat(tag, ": no risk block"));
+        assertEq(pv.matchAmount, PRINCIPAL, string.concat(tag, ": the whole principal matches"));
+        assertGe(pv.matchRateBps, MIN_RATE_BPS, string.concat(tag, ": rate at or above the intent's floor"));
+        assertLe(pv.matchRateBps, MIN_RATE_BPS + 100, string.concat(tag, ": rate within the borrower's ceiling"));
+        assertGt(pv.reqCollateral, 0, string.concat(tag, ": collateral required"));
+        assertGe(pv.availableCapital, PRINCIPAL, string.concat(tag, ": capital covers the fill"));
+        assertEq(pv.spendsPriorityCredit, spendsCredit, string.concat(tag, ": spendsPriorityCredit"));
+    }
+
+    function _assertRefusedPreview(IntentPreview memory pv, string memory tag) internal pure {
+        assertFalse(pv.ok, string.concat(tag, ": refused"));
+        assertEq(pv.intentError, CAPACITY_EXHAUSTED, string.concat(tag, ": for capacity"));
+        assertFalse(pv.spendsPriorityCredit, string.concat(tag, ": spends no credit"));
     }
 
     function test_ForkProof_OneCreditFillsOnePriorityIntentWhileAnOrdinaryOneIsRefused() public {
@@ -309,9 +357,7 @@ contract PriorityRoutingLiveFork is Test {
         //    The proof is of the FIRST-TIME arming (Codex #2582 r2): the perk is
         //    unpriced and has never sold, and the price write emits the one-time
         //    arming event.
-        (uint256 price0,, uint256 sold0) = d.getPerkConfig(PERK);
-        assertEq(price0, 0, "pre-state: unpriced");
-        assertEq(sold0, 0, "pre-state: no unit ever sold");
+        _assertPerkConfig(0, 0, 0, "pre-state");
         // Precondition 2: the chain's own Solver curve is lit, and the proof runs
         // on it as deployed.
         LibVaipakam.CapacityCurve memory curve = d.getCapacityCurve(SOLVER);
@@ -327,9 +373,7 @@ contract PriorityRoutingLiveFork is Test {
                 assertEq(abi.decode(armLogs[i].data, (uint256)), PRICE, "armed at the configured price");
             }
         }
-        (uint256 price, uint32 duration,) = d.getPerkConfig(PERK);
-        assertEq(price, PRICE, "configured price reads back");
-        assertEq(duration, 0, "counted, not timed");
+        _assertPerkConfig(PRICE, 0, 0, "armed");
         // The price write leaves the chain's curve exactly as it was.
         // Every field (Codex #2582 r4).
         LibVaipakam.CapacityCurve memory after_ = d.getCapacityCurve(SOLVER);
@@ -348,12 +392,14 @@ contract PriorityRoutingLiveFork is Test {
         _buyCredit(plain);
         // The protocol's durable sale record moved with the two sales (Codex
         // #2582 r5): it is what freezes the perk's mode after a first sale.
-        (,, uint256 soldAfter) = d.getPerkConfig(PERK);
-        assertEq(soldAfter, 2, "the sale counter recorded both units");
+        _assertPerkConfig(PRICE, 0, 2, "after both sales");
+        _assertPriority(flagged, false, 1, true, false, "bought, not yet opted in");
+        _assertPriority(plain, false, 1, true, false, "control bought");
         vm.recordLogs();
         vm.prank(flagged);
         d.setLenderIntentPriority(lendAsset, collAsset, true);
         _assertOptIn(vm.getRecordedLogs());
+        _assertPriority(flagged, true, 1, true, false, "opted in, capacity covers");
 
         // 3a. While the solver CAN afford it, the flagged fill is charged to its
         //     capacity and the credit is untouched: a credit only ever buys a
@@ -370,21 +416,19 @@ contract PriorityRoutingLiveFork is Test {
             (bool spent,) = address(d).call(abi.encodeCall(IDiamondForProof.capacityChargeInternal, (SOLVER, solver)));
             if (!spent) break;
         }
-        (uint256 accrued,,,) = d.previewCapacity(SOLVER, solver);
+        (uint256 accrued, uint256 rate, uint256 ceiling, bool dark) = d.previewCapacity(SOLVER, solver);
         assertLt(accrued, curve.classCost, "fixture-live: the solver cannot afford a fill at the deployed cost");
-        (, , bool covers, bool unlocks) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
-        assertFalse(covers, "capacity does not cover");
-        assertTrue(unlocks, "the credit unlocks the flagged intent");
+        assertFalse(dark, "the limiter is lit");
+        assertEq(rate, curve.freeRatePerSec, "unbonded: the free refill rate");
+        assertEq(ceiling, curve.freeTier, "unbonded: the free ceiling");
+        _assertPriority(flagged, true, 1, false, true, "exhausted, one credit");
+        _assertPriority(plain, false, 1, false, false, "exhausted, control not opted in");
 
         // The deployed preview — what the keeper decides by — agrees for both.
         uint256 cp1 = _postBorrower("proof-borrower-1");
         uint256 cp2 = _postBorrower("proof-borrower-2");
-        IntentPreview memory pf = _preview(flagged, cp1);
-        assertTrue(pf.ok, "preview: the flagged fill is ok");
-        assertTrue(pf.spendsPriorityCredit, "preview: it spends a priority credit");
-        IntentPreview memory pp = _preview(plain, cp2);
-        assertFalse(pp.ok, "preview: the unflagged fill is refused");
-        assertEq(pp.intentError, CAPACITY_EXHAUSTED, "preview: for capacity");
+        _assertOkPreview(_preview(flagged, cp1), true, "preview flagged");
+        _assertRefusedPreview(_preview(plain, cp2), "preview control");
 
         // 4. The flagged fill goes through on the credit, spending exactly one,
         //    with no capacity charge.
@@ -411,19 +455,15 @@ contract PriorityRoutingLiveFork is Test {
         // 4b. The same opted-in intent with its credit spent is refused like any
         //     other: the opt-in alone unlocks nothing (Codex #2582 r6).
         uint256 cp3 = _postBorrower("proof-borrower-3");
-        (, , bool c3, bool u3) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
-        assertFalse(c3 || u3, "zero credits: nothing lets the flagged intent through");
-        IntentPreview memory p3 = _preview(flagged, cp3);
-        assertFalse(p3.ok, "zero credits: preview refuses");
-        assertEq(p3.intentError, CAPACITY_EXHAUSTED, "zero credits: for capacity");
+        _assertPriority(flagged, true, 0, false, false, "zero credits");
+        _assertRefusedPreview(_preview(flagged, cp3), "zero credits");
         vm.prank(solver);
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
         d.matchIntent(flagged, lendAsset, collAsset, cp3, PRINCIPAL);
 
         // 5. The unflagged intent — holding a credit, not opted in — is refused
         //    for capacity at the same moment, and its credit stays unspent.
-        (, , bool plainCovers, bool plainUnlocks) = d.getLenderIntentPriority(plain, lendAsset, collAsset, solver, solver);
-        assertFalse(plainCovers || plainUnlocks, "nothing lets the unflagged intent through");
+        _assertPriority(plain, false, 1, false, false, "control at the refusal");
         vm.prank(solver);
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
         d.matchIntent(plain, lendAsset, collAsset, cp2, PRINCIPAL);
@@ -434,12 +474,8 @@ contract PriorityRoutingLiveFork is Test {
     ///      solver, the credit untouched, no priority record.
     function _coveredFillKeepsTheCredit() internal {
         uint256 cp0 = _postBorrower("proof-borrower-0");
-        (, , bool covers0, bool unlocks0) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
-        assertTrue(covers0, "covered: capacity covers the fill");
-        assertFalse(unlocks0, "covered: no credit is needed");
-        IntentPreview memory p0 = _preview(flagged, cp0);
-        assertTrue(p0.ok, "covered: preview ok");
-        assertFalse(p0.spendsPriorityCredit, "covered: preview spends no credit");
+        _assertPriority(flagged, true, 1, true, false, "covered");
+        _assertOkPreview(_preview(flagged, cp0), false, "covered preview");
         LibVaipakam.CapacityBucket memory b0 = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
         vm.prank(solver);
@@ -455,7 +491,20 @@ contract PriorityRoutingLiveFork is Test {
         LibVaipakam.CapacityBucket memory b1 = d.getCapacityBucket(SOLVER, solver);
         assertFalse(b0.seen, "covered: the solver's bucket was unseen before");
         assertTrue(b1.seen, "covered: the charge touched the solver's own bucket");
-        assertEq(b1.curveEpoch, d.getCapacityCurve(SOLVER).epoch, "covered: settled under the live curve");
+        LibVaipakam.CapacityCurve memory cv = d.getCapacityCurve(SOLVER);
+        assertEq(b1.curveEpoch, cv.epoch, "covered: settled under the live curve");
+        // The DEBIT itself (Codex #2582 r8): a first-seen bucket holds exactly one
+        // action, and the fill takes exactly one, so nothing is left — read from
+        // the bucket and from the charge record's own payload.
+        assertEq(uint256(b1.balance), 0, "covered: the one first-seen action was debited");
+        for (uint256 i = 0; i < l0.length; i++) {
+            if (l0[i].emitter != address(d) || l0[i].topics.length == 0 || l0[i].topics[0] != T_CAPACITY_SPENT) continue;
+            assertEq(uint256(l0[i].topics[1]), uint256(SOLVER), "charge: role");
+            assertEq(address(uint160(uint256(l0[i].topics[2]))), solver, "charge: actor");
+            (uint256 cost, uint256 balanceAfter) = abi.decode(l0[i].data, (uint256, uint256));
+            assertEq(cost, cv.classCost, "charge: one fill's cost");
+            assertEq(balanceAfter, uint256(b1.balance), "charge: balance after matches the bucket");
+        }
         assertEq(_count(l0, T_PRIORITY_FILL), 0, "covered: no IntentPriorityFill");
         assertEq(_count(l0, T_CREDIT_CONSUMED), 0, "covered: no PerkCreditConsumed");
     }
