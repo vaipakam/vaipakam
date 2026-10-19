@@ -57,14 +57,17 @@ import {
   LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
-import { rotate } from './rotate';
+import { pagedWalk, rotate } from './rotate';
+import { readCutoffMs, runIndex } from './runWindow';
 import { getChainConfigs } from './env';
 import {
   buildKeeperContext,
   passIsArmed,
   type KeeperContext,
 } from './keeper';
+import { reportSendError } from './submissionQueue';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -342,7 +345,18 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
   };
 }
 
-async function listActiveOfferIds(ctx: KeeperContext): Promise<bigint[]> {
+/** The active offers, walked from an offer that moves each run, each page
+ *  hydrated before the next is listed, and stopped before the next page once
+ *  `stop()` holds (#2572 r8/r9, `runWindow.ts` rules 2 and 3). A slow book
+ *  still yields hydrated offers to match, and later runs reach the rest.
+ *  Listing every id before hydrating any left a run the cutoff stopped during
+ *  listing with ids and nothing to match. `listed` counts the ids read, so a
+ *  caller can tell an empty book from offers that all hydrated as taken. */
+export async function listActiveOffers(
+  ctx: KeeperContext,
+  run: number,
+  stop: () => boolean,
+): Promise<{ offers: OfferLite[]; listed: number }> {
   let total: bigint;
   try {
     total = (await ctx.client.readContract({
@@ -354,29 +368,37 @@ async function listActiveOfferIds(ctx: KeeperContext): Promise<bigint[]> {
     console.error(
       `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${String(err).slice(0, 200)}`,
     );
-    return [];
+    return { offers: [], listed: 0 };
   }
-  if (total === 0n) return [];
+  if (total === 0n) return { offers: [], listed: 0 };
 
-  const ids: bigint[] = [];
-  for (let offset = 0n; offset < total; offset += SCAN_PAGE) {
+  const offers: OfferLite[] = [];
+  let listed = 0;
+  for (const { cursor: offset, limit } of pagedWalk(total, SCAN_PAGE, run)) {
+    if (stop()) break;
+    let page: readonly bigint[];
     try {
-      const page = (await ctx.client.readContract({
+      // eslint-disable-next-line no-await-in-loop
+      page = (await ctx.client.readContract({
         address: ctx.diamond,
         abi: MATCHER_ABI,
         functionName: 'getActiveOffersPaginated',
-        args: [offset, SCAN_PAGE],
+        args: [offset, limit],
       })) as readonly bigint[];
-      for (const id of page) ids.push(id);
-      if (page.length < Number(SCAN_PAGE)) break;
     } catch (err) {
       console.error(
         `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
       );
       break;
     }
+    listed += page.length;
+    // The page is hydrated whole even if the cutoff passes meanwhile: it is a
+    // bounded read, and stopping inside it would leave ids with nothing to
+    // match, which is the stall this order exists to prevent.
+    // eslint-disable-next-line no-await-in-loop
+    offers.push(...(await hydrateOffers(ctx, page)));
   }
-  return ids;
+  return { offers, listed };
 }
 
 async function hydrateOffers(
@@ -545,8 +567,11 @@ async function submitMatch(
         killSwitchLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(
-        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return false;
@@ -619,35 +644,62 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
 async function listActiveIntents(
   ctx: KeeperContext,
   overBudget: () => boolean,
+  run = 0,
 ): Promise<LenderIntentSummary[]> {
-  const out: LenderIntentSummary[] = [];
-  let total: bigint | null = null;
-  for (
-    let offset = 0n;
-    total === null || offset < total;
-    offset += INTENT_SCAN_PAGE
-  ) {
-    // Codex #748 r3 — stop paging the registry the moment the per-chain
-    // wall-time budget is spent; a large/slow registry must not delay later
-    // chains in the same cron tick before any borrower scanning starts.
-    if (overBudget()) break;
+  // Codex #748 r3 — stop paging the registry the moment the per-chain
+  // wall-time budget is spent; a large/slow registry must not delay later
+  // chains in the same cron tick before any borrower scanning starts.
+  return walkRegistry(ctx, 'getActiveLenderIntents', INTENT_SCAN_PAGE, run, readsOver(ctx, overBudget), liftIntent);
+}
+
+/** When a read phase that feeds sends must stop: the pass's own budget, or
+ *  the run's read cutoff (#2572 r8, `runWindow.ts` rule 3), which leaves the
+ *  sends it feeds time before the deadline. */
+function readsOver(ctx: KeeperContext, overBudget: () => boolean): () => boolean {
+  const cutoff = readCutoffMs(ctx.notAfterMs);
+  return () => overBudget() || Date.now() >= cutoff;
+}
+
+/** Read a registry view that returns `[rows, total]` per page: a zero-length
+ *  read for the size, then every page from a start that moves each run
+ *  (#2572 r8/r9, `runWindow.ts` rule 2), stopping once `stop()` holds. From
+ *  offset 0 every run, a registry the budget cut short left its tail
+ *  unreached run after run, and a full first page read only for its size
+ *  would do the same to everything after it. */
+async function walkRegistry<T>(
+  ctx: KeeperContext,
+  functionName: 'getActiveLenderIntents' | 'getRollableIntentLoans',
+  pageSize: bigint,
+  run: number,
+  stop: () => boolean,
+  lift: (row: Record<string, unknown>) => T,
+): Promise<T[]> {
+  const out: T[] = [];
+  const read = async (offset: bigint, limit: bigint): Promise<bigint | null> => {
+    // A zero limit returns no rows and the registry's size (MetricsFacet).
     try {
-      const res = (await ctx.client.readContract({
+      const [rows, total] = (await ctx.client.readContract({
         address: ctx.diamond,
         abi: MATCHER_ABI,
-        functionName: 'getActiveLenderIntents',
-        args: [offset, INTENT_SCAN_PAGE],
+        functionName,
+        args: [offset, limit],
       })) as readonly [readonly Record<string, unknown>[], bigint];
-      const [rows, t] = res;
-      total = t;
-      for (const r of rows) out.push(liftIntent(r));
-      if (rows.length < Number(INTENT_SCAN_PAGE)) break;
+      for (const r of rows) out.push(lift(r));
+      return total;
     } catch (err) {
       console.error(
-        `[matcher] chain=${ctx.chainId} getActiveLenderIntents offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
       );
-      break;
+      return null;
     }
+  };
+  if (stop()) return out;
+  const total = await read(0n, 0n);
+  if (total === null) return out;
+  for (const { cursor, limit } of pagedWalk(total, pageSize, run)) {
+    if (stop()) break;
+    // eslint-disable-next-line no-await-in-loop
+    if ((await read(cursor, limit)) === null) break;
   }
   return out;
 }
@@ -714,8 +766,11 @@ async function submitIntentFill(
         killSwitchLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return null;
@@ -900,6 +955,9 @@ export async function runIntentFillPass(
   // #2564 — the offer-match pass already found this keeper's fill capacity
   // spent: the pass starts where a capacity refusal would have left it.
   capacitySpentAtStart = false,
+  // #2572 r8 — this run's index ({@link runIndex}), which moves where the
+  // intent registry walk starts.
+  run = 0,
   // #625 WI-2c part 2b — returns the cumulative submit count so the tick can
   // thread the SHARED per-tick budget on into the roll pass.
 ): Promise<number> {
@@ -931,7 +989,7 @@ export async function runIntentFillPass(
     return submitsUsed;
   }
 
-  const intents = await listActiveIntents(ctx, overBudget);
+  const intents = await listActiveIntents(ctx, overBudget, run);
   if (intents.length === 0 || borrowers.length === 0) return submitsUsed;
 
   // Codex #748 r1 — CONTINUE the outer tick's RPC/gas budget rather than
@@ -1145,33 +1203,9 @@ function liftRollable(raw: Record<string, unknown>): RollableIntentLoan {
 async function listRollableLoans(
   ctx: KeeperContext,
   overBudget: () => boolean,
+  run = 0,
 ): Promise<RollableIntentLoan[]> {
-  const out: RollableIntentLoan[] = [];
-  let total: bigint | null = null;
-  for (
-    let offset = 0n;
-    total === null || offset < total;
-    offset += ROLL_SCAN_PAGE
-  ) {
-    if (overBudget()) break;
-    try {
-      const res = (await ctx.client.readContract({
-        address: ctx.diamond,
-        abi: MATCHER_ABI,
-        functionName: 'getRollableIntentLoans',
-        args: [offset, ROLL_SCAN_PAGE],
-      })) as readonly [readonly Record<string, unknown>[], bigint];
-      const [rows, t] = res;
-      total = t;
-      for (const r of rows) out.push(liftRollable(r));
-    } catch (err) {
-      console.error(
-        `[matcher] chain=${ctx.chainId} getRollableIntentLoans offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
-      );
-      break;
-    }
-  }
-  return out;
+  return walkRegistry(ctx, 'getRollableIntentLoans', ROLL_SCAN_PAGE, run, readsOver(ctx, overBudget), liftRollable);
 }
 
 async function submitRoll(
@@ -1197,8 +1231,11 @@ async function submitRoll(
     // caller skips them rather than re-probing each.
     const unauthorized = errStr.includes('KeeperAccessRequired');
     if (!unauthorized) {
-      console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return { ok: false, unauthorized };
@@ -1237,6 +1274,7 @@ async function runIntentRollPass(
   ctx: KeeperContext,
   overBudget: () => boolean,
   submitsUsed: number,
+  run = 0,
 ): Promise<void> {
   if (overBudget() || submitsUsed >= MAX_SUBMITS_PER_TICK) return;
   if (!ctx.wallet.account) return;
@@ -1245,7 +1283,7 @@ async function runIntentRollPass(
     return;
   }
 
-  const rollable = await listRollableLoans(ctx, overBudget);
+  const rollable = await listRollableLoans(ctx, overBudget, run);
   if (rollable.length === 0) return;
 
   let submits = submitsUsed;
@@ -1277,22 +1315,27 @@ async function runIntentRollPass(
 }
 
 /** One pass over a chain's order book. */
-async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
+async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
+  //
+  // #2572 — the run's own deadline binds too: past it the send queue refuses
+  // every match, fill and roll before broadcast, so the pass stops looking for
+  // more and leaves the book to the next run.
   const tickStart = Date.now();
   const overBudget = () =>
-    Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS;
+    Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS || Date.now() >= ctx.notAfterMs;
 
-  const ids = await listActiveOfferIds(ctx);
-  if (ids.length === 0) {
+  // Listing and hydration only read, so they stop at the read cutoff and the
+  // pass matches what they reached (#2572 r8/r9, `runWindow.ts` rules 2 and 3).
+  const { offers, listed } = await listActiveOffers(ctx, run, readsOver(ctx, overBudget));
+  if (listed === 0) {
     // No open offers to match/fill, but there may still be fully-repaid intent
     // loans to AUTO-ROLL (independent of the offer book) — #625 WI-2c part 2b.
-    if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0);
+    if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0, run);
     return;
   }
-  const offers = await hydrateOffers(ctx, ids);
   const { lenders, borrowers } = partitionByBucket(offers);
 
   let previewCalls = 0;
@@ -1437,6 +1480,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
       previewCalls,
       uncertainBorrowers,
       capacitySpent,
+      run,
     );
   }
 
@@ -1449,7 +1493,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   // #625 WI-2c part 2b — auto-roll fully-repaid intent loans, sharing the
   // per-tick submit + wall-time budget carried through the match + fill passes.
   if (!overBudget()) {
-    await runIntentRollPass(ctx, overBudget, submits);
+    await runIntentRollPass(ctx, overBudget, submits, run);
   }
 
   if (overBudget()) {
@@ -1467,19 +1511,24 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
  * chain runs in its own try/catch so a transient RPC hiccup on one
  * can't wedge the rest.
  */
-export async function runMatcher(env: Env): Promise<void> {
+export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
-  for (const chain of chains) {
-    try {
-      const publicClient = createPublicClient({ transport: http(chain.rpc) });
-      const ctx = buildKeeperContext(env, chain, publicClient);
-      if (!ctx) continue;
-      await runOfferMatcherTickForChain(ctx);
-    } catch (err) {
-      console.error(
-        `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+  const run = runIndex(tick, 60_000);
+  // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
+  // the pass, so in series a slow chain would spend every later chain's window.
+  await Promise.all(
+    chains.map(async (chain) => {
+      try {
+        const publicClient = createPublicClient({ transport: http(chain.rpc) });
+        const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
+        if (!ctx) return;
+        await runOfferMatcherTickForChain(ctx, run);
+      } catch (err) {
+        console.error(
+          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
 }

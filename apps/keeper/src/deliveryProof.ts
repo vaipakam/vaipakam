@@ -48,6 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { boundedRead, deadlineClient } from './batchRead';
+import { reportSendError } from './submissionQueue';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -245,14 +246,14 @@ export function deliveryComplete(args: {
   return args.flatAllLanded;
 }
 
-export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void> {
+export async function runDeliveryProof(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'deliveryProof', 'REWARD_DELIVERY_PROOF_ENABLED')) return;
   const chains = getChainConfigs(env);
   const byId = new Map(chains.map((c) => [c.id, c]));
   // Inside this run's own cadence (#2497 r18): mirrors CONCURRENTLY (each chain
   // has its own nonce lane in the submission queue), and no new send past the
   // run's deadline — the rest stays queued for the next run, five minutes on.
-  const deadline = tick?.deadlineMs ?? Date.now() + 5 * 60_000;
+  const deadline = tick.deadlineMs;
   await Promise.all(
     chains.map(async (chain) => {
       try {
@@ -264,7 +265,7 @@ export async function runDeliveryProof(env: Env, tick?: PassTick): Promise<void>
   );
 }
 
-async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number = Number.POSITIVE_INFINITY): Promise<void> {
+async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, ChainConfig>, deadline: number): Promise<void> {
   // Every read of this run is refused past its deadline (`deadlineClient`).
   const client = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline) as PublicClient;
   const diamond = chain.diamond as Address;
@@ -295,7 +296,7 @@ async function proveOnMirror(env: Env, chain: ChainConfig, byId: Map<number, Cha
   // The chain each rooted packet was REMITTED from, by the packet's own
   // record (#2497 r6) — never the canonical chain as configured today.
   const sources = sourceReader(byId, deadline);
-  const ctx = buildKeeperContext(env, chain, client as never, undefined, deadline);
+  const ctx = buildKeeperContext(env, chain, client as never, { notAfterMs: deadline });
   const canSend = Boolean(ctx?.wallet.account);
   if (!canSend) console.warn(`[keeper] deliveryProof chain=${chain.id}: no keeper key — nothing sent`);
   const budget = { writes: canSend ? MAX_WRITES_PER_TICK : 0 };
@@ -688,7 +689,7 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
       console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
     }
   } catch (err) {
-    console.error(`[keeper] deliveryProof ${call.functionName} send failed: ${shortErr(err)}`);
+    reportSendError(`[keeper] deliveryProof ${call.functionName}`, err, `send failed: ${shortErr(err)}`);
     budget.writes = 0;
   }
 }

@@ -71,6 +71,7 @@
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import { DefaultedFacetABI, MetricsFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { attemptErrorReason } from './keeperSend';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
@@ -139,7 +140,7 @@ const ROTATION_STEP_MS = 5 * 60_000;
 /** LibVaipakam.AssetType.ERC20. */
 const ASSET_TYPE_ERC20 = 0;
 
-export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> {
+export async function runGraceDefault(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
   const chains = getChainConfigs(env).filter((c) => c.diamond);
   if (chains.length === 0) return;
@@ -148,7 +149,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   // delivery must not land on the previous run's index and repeat its work
   // (or skip some). Only an invocation that is not a cron tick reads the
   // clock.
-  const run = Math.floor((tick?.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
+  const run = Math.floor((tick.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
 
   // ONE chain per run, and a bounded window of its active list: the
   // subrequest allowance is the invocation's — shared by every chain and
@@ -160,7 +161,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   const chain = chains[run % chains.length];
   const visit = Math.floor(run / chains.length);
   try {
-    await processChain(env, chain, visit);
+    await processChain(env, chain, visit, tick.deadlineMs);
   } catch (err) {
     // Described, never stringified: a viem transport error carries the
     // request URL, and this Worker's RPC URLs carry API keys.
@@ -168,14 +169,14 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   }
 }
 
-async function processChain(env: Env, chain: ChainConfig, visit: number): Promise<void> {
+async function processChain(env: Env, chain: ChainConfig, visit: number, deadlineMs: number): Promise<void> {
   // Every request below goes through this one budget — reads, quotes and
   // the wallet's send alike.
   const budget = createSubrequestBudget(SUBREQUEST_BUDGET);
   const client = createPublicClient({
     transport: http(chain.rpc, { fetchFn: budget.fetch }),
   }) as PublicClient;
-  const ctx = buildKeeperContext(env, chain, client, budget.fetch);
+  const ctx = buildKeeperContext(env, chain, client, { notAfterMs: deadlineMs, fetchFn: budget.fetch });
   if (!ctx) return;
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;
@@ -206,6 +207,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     wallet: ctx.wallet,
     diamond: ctx.diamond,
     chainId: chain.id,
+    notAfterMs: ctx.notAfterMs,
     buildRoute: (loan) =>
       orchestrateServerQuotes(env, client, {
         chainId: chain.id,
@@ -226,15 +228,25 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     // Active must be able to tell "waiting its turn" from "never seen".
     console.log(`[keeper] graceDefault ${where} deferred-by-cap loans=${deferred.join(',')}`);
   }
+  // Counted per attempt made, not per loan picked (#2572 r7): a run the
+  // deadline stops before a picked loan made no attempt on it.
+  let attempted = 0;
   let submitted = 0;
   let unconfirmed = 0;
   for (const loanId of picked) {
+    // #2572 — past the run's deadline every send is refused at its turn; the
+    // remaining loans keep their place for the next run.
+    if (Date.now() >= ctx.notAfterMs) {
+      console.log(`[keeper] graceDefault ${where} run deadline reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`);
+      break;
+    }
     let outcome: GraceDefaultOutcome;
+    attempted += 1;
     try {
       // eslint-disable-next-line no-await-in-loop
       outcome = await attemptGraceDefault(deps, loanId);
     } catch (err) {
-      outcome = { kind: 'skipped', reason: `error:${describeFailure(err)}` };
+      outcome = { kind: 'skipped', reason: attemptErrorReason(err) };
     }
     // Whatever step the cap interrupted — a read that threw, or a route
     // build that swallowed its failures and came back empty — the attempt
@@ -260,7 +272,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number): Promis
     }
   }
   console.log(
-    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted} unconfirmed=${unconfirmed} ${spent()}`,
+    `[keeper] graceDefault ${where} defaultable=${candidates.length} picked=${picked.length} attempted=${attempted} submitted=${submitted} unconfirmed=${unconfirmed} ${spent()}`,
   );
 }
 

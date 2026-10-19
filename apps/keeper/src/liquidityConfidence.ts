@@ -48,6 +48,7 @@ import {
   erc20Abi,
   type Abi,
   type Address,
+  type Hex,
   type PublicClient,
 } from 'viem';
 import {
@@ -57,6 +58,10 @@ import {
   LoanFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
+import { reportSendError } from './submissionQueue';
+import { readCutoffMs, runIndex } from './runWindow';
+import { pagedWalk, rotate } from './rotate';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -181,12 +186,21 @@ async function loadConfig(
   };
 }
 
-/** Distinct ERC-20 collateral assets across all Active loans on this
- *  chain (deduped, lowercased, capped at MAX_ASSETS_PER_TICK). */
-async function activeCollateralAssets(
+/** Distinct ERC-20 collateral assets across the Active loans on this chain
+ *  (deduped, capped at MAX_ASSETS_PER_TICK), walked from a loan that moves
+ *  each run and stopped at `stopAtMs` (#2572 r8, `runWindow.ts` rules 2 and 3).
+ *
+ *  Each page's loans are read for their assets before the next page, so a
+ *  run the cutoff stops partway still evaluates the assets it found, and the
+ *  moving start reaches the rest of the book on later runs. The same start
+ *  also moves which assets the cap admits: from loan 0 every run, an asset
+ *  first held only past the cap's reach was never evaluated at all. */
+export async function activeCollateralAssets(
   client: PublicClient,
   diamond: Address,
-): Promise<Address[]> {
+  run = 0,
+  stopAtMs: number = Number.POSITIVE_INFINITY,
+): Promise<{ assets: Address[]; cutShort: boolean }> {
   let total: bigint;
   try {
     total = (await client.readContract({
@@ -195,27 +209,51 @@ async function activeCollateralAssets(
       functionName: 'getActiveLoansCount',
     })) as bigint;
   } catch {
-    return [];
+    return { assets: [], cutShort: false };
   }
-  if (total === 0n) return [];
+  if (total === 0n) return { assets: [], cutShort: false };
 
-  const ids: bigint[] = [];
-  for (let off = 0n; off < total; off += SCAN_PAGE) {
-    let page: readonly bigint[];
+  const seen = new Set<string>();
+  const out: Address[] = [];
+  let cutShort = false;
+  for (const { cursor, limit } of pagedWalk(total, SCAN_PAGE, run)) {
+    if (out.length >= MAX_ASSETS_PER_TICK) break;
+    if (Date.now() >= stopAtMs) {
+      cutShort = true;
+      break;
+    }
+    let ids: readonly bigint[];
     try {
-      page = (await client.readContract({
+      // eslint-disable-next-line no-await-in-loop
+      ids = (await client.readContract({
         address: diamond,
         abi: RELAY_ABI,
         functionName: 'getActiveLoansPaginated',
-        args: [off, SCAN_PAGE],
+        args: [cursor, limit],
       })) as readonly bigint[];
     } catch {
       break;
     }
-    if (page.length === 0) break;
-    ids.push(...page);
+    if (ids.length === 0) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (await collectPageAssets(client, diamond, ids, stopAtMs, seen, out)) {
+      cutShort = true;
+      break;
+    }
   }
+  return { assets: out, cutShort };
+}
 
+/** Add the distinct ERC-20 collateral assets of `ids` to `out`, stopping at
+ *  MAX_ASSETS_PER_TICK. Returns true when `stopAtMs` cut it short. */
+async function collectPageAssets(
+  client: PublicClient,
+  diamond: Address,
+  ids: readonly bigint[],
+  stopAtMs: number,
+  seen: Set<string>,
+  out: Address[],
+): Promise<boolean> {
   // BATCHED, but still chunk-by-chunk so the MAX_ASSETS_PER_TICK cap can
   // short-circuit (#1896).
   //
@@ -230,9 +268,8 @@ async function activeCollateralAssets(
   // and on a chain with thousands of active loans an unbounded batch trades one
   // problem for another. Chunking keeps both properties — one subrequest per
   // DETAIL_CHUNK loans, and the walk still stops at the cap.
-  const seen = new Set<string>();
-  const out: Address[] = [];
   for (let i = 0; i < ids.length && out.length < MAX_ASSETS_PER_TICK; i += DETAIL_CHUNK) {
+    if (Date.now() >= stopAtMs) return true;
     const chunk = ids.slice(i, i + DETAIL_CHUNK);
     // eslint-disable-next-line no-await-in-loop
     const results = await batchedRead(
@@ -264,7 +301,7 @@ async function activeCollateralAssets(
       out.push(loan.collateralAsset);
     }
   }
-  return out;
+  return false;
 }
 
 /**
@@ -718,29 +755,41 @@ async function battleTestedElsewhere(
 }
 
 /** Apply the promote/demote state machine to one D1 row + return the
- *  on-chain `keeperTier` target (1..3) or `null` for "no change". */
-function nextKeeperTier(
-  prev: LiquidityConfidenceRow,
+ *  on-chain `keeperTier` target (1..3) or `null` for "no change".
+ *
+ *  `row` is the state once the target is ON CHAIN; `held` is the state to keep
+ *  when it is not (#2572 r4): a send refused, failed or never attempted. A
+ *  promotion's `held` keeps the evidence that qualified it, so the next run
+ *  promotes on that evidence instead of opening a new window, which by default
+ *  lasts three days. With no target the two are the same row. */
+export function nextKeeperTier(
+  recorded: LiquidityConfidenceRow,
   aggTier: number,
   currentOnChainTier: number,
   nowSec: number,
   knobs: RelayKnobs,
-): { target: number | null; row: LiquidityConfidenceRow } {
+): { target: number | null; row: LiquidityConfidenceRow; held: LiquidityConfidenceRow } {
+  // Promotion evidence counts only toward a step up FROM the tier it was
+  // gathered at (#2572 r5). If the chain's tier moved without the counter
+  // recording it — a counter write that failed after its send, or a change
+  // made outside this pass — the old streak and window describe another tier
+  // and start over.
+  const prev: LiquidityConfidenceRow =
+    recorded.on_chain_tier === currentOnChainTier
+      ? recorded
+      : { ...recorded, healthy_streak: 0, first_eligible_ts: null };
   // Demotion: aggregator can't confirm the current tier ⇒ drop now to
   // max(1, aggTier). (aggTier 0 ⇒ alarming, but `setKeeperTier` requires
   // 1..3; floor at 1 — the on-chain ceiling is still its own check.)
   if (aggTier < currentOnChainTier) {
     const target = Math.max(1, aggTier);
+    const reset = { ...prev, agg_tier: aggTier, healthy_streak: 0, first_eligible_ts: null, last_check_ts: nowSec };
+    // A demotion carries no evidence to keep: the next run re-quotes and
+    // demotes again while the chain still shows the higher tier.
     return {
       target: target === currentOnChainTier ? null : target,
-      row: {
-        ...prev,
-        agg_tier: aggTier,
-        on_chain_tier: target,
-        healthy_streak: 0,
-        first_eligible_ts: null,
-        last_check_ts: nowSec,
-      },
+      row: { ...reset, on_chain_tier: target },
+      held: { ...reset, on_chain_tier: currentOnChainTier },
     };
   }
   // Eligible-to-promote: aggregator confirms strictly above the current
@@ -749,51 +798,45 @@ function nextKeeperTier(
     const streak = prev.healthy_streak + 1;
     const firstEligible = prev.first_eligible_ts ?? nowSec;
     const windowOk = nowSec - firstEligible >= knobs.minWindowSec;
+    const evidence: LiquidityConfidenceRow = {
+      ...prev,
+      agg_tier: aggTier,
+      on_chain_tier: currentOnChainTier,
+      healthy_streak: streak,
+      first_eligible_ts: firstEligible,
+      last_check_ts: nowSec,
+    };
     if (streak >= knobs.minChecks && windowOk) {
       const target = currentOnChainTier + 1;
       return {
         target,
-        row: {
-          ...prev,
-          agg_tier: aggTier,
-          on_chain_tier: target,
-          healthy_streak: 0,
-          first_eligible_ts: null,
-          last_check_ts: nowSec,
-        },
+        row: { ...evidence, on_chain_tier: target, healthy_streak: 0, first_eligible_ts: null },
+        held: evidence,
       };
     }
-    return {
-      target: null,
-      row: {
-        ...prev,
-        agg_tier: aggTier,
-        on_chain_tier: currentOnChainTier,
-        healthy_streak: streak,
-        first_eligible_ts: firstEligible,
-        last_check_ts: nowSec,
-      },
-    };
+    return { target: null, row: evidence, held: evidence };
   }
   // Steady (aggTier == currentOnChainTier, or already at the cap) — no
   // change; reset the eligible-streak.
-  return {
-    target: null,
-    row: {
-      ...prev,
-      agg_tier: aggTier,
-      on_chain_tier: currentOnChainTier,
-      healthy_streak: 0,
-      first_eligible_ts: null,
-      last_check_ts: nowSec,
-    },
+  const steady: LiquidityConfidenceRow = {
+    ...prev,
+    agg_tier: aggTier,
+    on_chain_tier: currentOnChainTier,
+    healthy_streak: 0,
+    first_eligible_ts: null,
+    last_check_ts: nowSec,
   };
+  return { target: null, row: steady, held: steady };
 }
 
 async function runRelayForChain(
   env: Env,
   chain: ChainConfig,
   client: PublicClient,
+  /** This run's deadline (#2572): no tier change is signed after it. */
+  deadlineMs: number,
+  /** This run's index ({@link runIndex}), which picks the asset to start at. */
+  run = 0,
 ): Promise<void> {
   const diamond = chain.diamond as Address;
   const cfg = await loadConfig(client, diamond, env);
@@ -803,7 +846,7 @@ async function runRelayForChain(
   // the `setKeeperTier` signer. Reads work without the key (0x is then
   // not asked; each aggregator's taker is its adapter either way); writes
   // need `isKeeperEnabled`.
-  const ctx = buildKeeperContext(env, chain, client);
+  const ctx = buildKeeperContext(env, chain, client, { notAfterMs: deadlineMs });
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
   const txOrigin = ctx?.wallet.account?.address as Address | undefined;
   // Lazily, once per chain tick — see `aggregatorConfirmedTier`. The
@@ -818,7 +861,14 @@ async function runRelayForChain(
       () => null,
     ));
 
-  const assets = await activeCollateralAssets(client, diamond);
+  // Discovery reads before anything is quoted or sent, so it stops at the
+  // read cutoff (#2572 r8, rule 3) and the assets it found are still evaluated.
+  const { assets, cutShort } = await activeCollateralAssets(client, diamond, run, readCutoffMs(deadlineMs));
+  if (cutShort) {
+    console.log(
+      `[keeper] liq-confidence chain=${chain.name} read cutoff reached during asset discovery; evaluating ${assets.length} asset(s) found, the rest of the book next run`,
+    );
+  }
   if (assets.length === 0) return;
 
   // One cache for this chain's whole tick — see the TickCache note. It dies
@@ -828,7 +878,16 @@ async function runRelayForChain(
   const nowSec = Math.floor(Date.now() / 1000);
   let submits = 0;
 
-  for (const asset of assets) {
+  // From a start that moves each run (#2572 r5, rule 2): the deadline below
+  // would otherwise cut the same assets off every run, and their demotions are
+  // the fail-safe.
+  for (const asset of rotate(assets, run)) {
+    // #2572 r4 — past the deadline nothing more is signed, and a run still in
+    // flight holds back the next one, whose demotions are the fail-safe.
+    if (Date.now() >= deadlineMs) {
+      console.log(`[keeper] liq-confidence chain=${chain.name} run deadline reached; remaining assets left for the next run`);
+      break;
+    }
     const key = asset.toLowerCase();
     let currentOnChainTier: number;
     try {
@@ -875,35 +934,39 @@ async function runRelayForChain(
         first_eligible_ts: null,
         last_check_ts: 0,
       };
-    const { target, row } = nextKeeperTier(
+    const { target, row, held } = nextKeeperTier(
       prevRow,
       aggTier,
       currentOnChainTier,
       nowSec,
       cfg.knobs,
     );
-    // Always persist the updated counter (even when not submitting).
-    await upsertLiquidityConfidence(env.DB, row);
 
     if (target === null) {
+      await upsertLiquidityConfidence(env.DB, row);
       console.log(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} agg=${aggTier} onchain=${currentOnChainTier} streak=${row.healthy_streak} (no change)`,
       );
       continue;
     }
+    // From here a target exists. Until a send for it is accepted the counter
+    // keeps `held` — the evidence, with the chain's current tier (#2572 r4).
     if (!canSubmit) {
+      await upsertLiquidityConfidence(env.DB, held);
       console.log(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} would set keeperTier ${currentOnChainTier}→${target} (skipped: submit disabled)`,
       );
       continue;
     }
     if (submits >= MAX_SUBMITS_PER_TICK) {
+      await upsertLiquidityConfidence(env.DB, held);
       console.log(`[keeper] liq-confidence chain=${chain.name} submit cap reached`);
       break;
     }
+    let hash: Hex;
     try {
       const account = ctx!.wallet.account!;
-      const hash = await ctx!.wallet.writeContract({
+      hash = await ctx!.wallet.writeContract({
         address: diamond,
         abi: RELAY_ABI,
         functionName: 'setKeeperTier',
@@ -911,27 +974,53 @@ async function runRelayForChain(
         account,
         chain: ctx!.wallet.chain,
       });
-      submits += 1;
-      console.log(
-        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
+    } catch (err) {
+      // Not sent, or not known to be: the counter keeps the evidence, and the
+      // next run re-reads the chain's tier and re-derives the target from
+      // fresh quotes. A deadline refusal reads as a deferral (#2572).
+      reportSendError(
+        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target}`,
+        err,
+        `failed: ${String(err).slice(0, 250)}`,
       );
+      await upsertLiquidityConfidence(env.DB, held);
+      continue;
+    }
+    // Sent: the hash is logged before any bookkeeping (#2572 r5), and a
+    // bookkeeping failure is reported on its own without stopping the other
+    // assets. A counter left unwritten still names the old tier, so once the
+    // change lands the next run discards its evidence (see `nextKeeperTier`).
+    submits += 1;
+    console.log(
+      `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
+    );
+    try {
+      await upsertLiquidityConfidence(env.DB, row);
     } catch (err) {
       console.error(
-        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier failed: ${String(err).slice(0, 250)}`,
+        `[keeper] liq-confidence chain=${chain.name} asset=${key} tx=${hash} sent but its counter was not recorded: ${String(err).slice(0, 200)}`,
       );
     }
   }
 }
 
-export async function runLiquidityConfidence(env: Env): Promise<void> {
-  for (const chain of getChainConfigs(env)) {
-    try {
-      const client = createPublicClient({ transport: http(chain.rpc) });
-      await runRelayForChain(env, chain, client);
-    } catch (err) {
-      console.error(
-        `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
+  // Chains side by side, assets from a rotating start (#2572 r5, `runWindow.ts`).
+  const run = runIndex(tick, 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      if (Date.now() >= tick.deadlineMs) {
+        console.log(`[keeper] liq-confidence run deadline reached before chain=${chain.name}; resumes next run`);
+        return;
+      }
+      try {
+        const client = createPublicClient({ transport: http(chain.rpc) });
+        await runRelayForChain(env, chain, client, tick.deadlineMs, run);
+      } catch (err) {
+        console.error(
+          `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
 }

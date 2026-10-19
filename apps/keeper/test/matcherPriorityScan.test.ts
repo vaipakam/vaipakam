@@ -52,8 +52,11 @@ function fakeCtx(opts: {
       switch (req.functionName) {
         case 'keepersPaused':
           return false;
-        case 'getActiveLenderIntents':
-          return [opts.intents.map(intentRow), BigInt(opts.intents.length)];
+        case 'getActiveLenderIntents': {
+          // Honours offset and limit like MetricsFacet; a zero limit is the size read.
+          const [offset, limit] = req.args as readonly [bigint, bigint];
+          return [opts.intents.slice(Number(offset), Number(offset + limit)).map(intentRow), BigInt(opts.intents.length)];
+        }
         case 'previewIntent': {
           const o = String(req.args[2]).toLowerCase();
           calls.previews.push(o);

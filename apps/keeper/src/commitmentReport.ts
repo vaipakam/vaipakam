@@ -47,6 +47,7 @@ import {
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import {
@@ -56,6 +57,8 @@ import {
   markReconciledDayConsumed,
   putCommitmentScanFrontier,
 } from './db';
+import { reportSendError } from './submissionQueue';
+import { readCutoffMs } from './runWindow';
 
 const COMMIT_ABI = RewardCommitmentFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
@@ -99,22 +102,26 @@ function readNumber(env: Env, key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-export async function runCommitmentReport(env: Env): Promise<void> {
+export async function runCommitmentReport(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'commitmentReport', 'REWARD_COMMIT_ENABLED')) return;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await reportFromMirror(env, chain);
-    } catch (err) {
-      console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
-    }
-  }
+  // Mirrors side by side (#2572 r5, `runWindow.ts` rule 1): one deadline
+  // covers the pass, so in series a slow mirror would spend the later ones'.
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await reportFromMirror(env, chain, tick.deadlineMs);
+      } catch (err) {
+        console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
 /** Shared per-invocation work budgets (batch txs + range-page reads). */
 type TickBudget = { batches: number; pages: number };
 
-async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
+async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -148,7 +155,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   const armedFromDay = commitState[0];
   if (armedFromDay === 0n) return;
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx || !ctx.wallet.account) return;
 
   // FULL bounded range every tick (Codex #1425 r2): floor at armedFromDay,
@@ -200,6 +207,12 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
 
   for (const d of dayList) {
     if (budget.batches <= 0 || budget.pages <= 0) break;
+    // #2572 — past the run's deadline the send queue refuses every batch and
+    // report before broadcast; the remaining days resume next run.
+    if (Date.now() >= deadlineMs) {
+      console.log(`[keeper] commitmentReport chain=${chain.id} run deadline reached at day=${d}; resumes next run`);
+      break;
+    }
     if (resolved.has(Number(d))) {
       // A reconciled rediscovery whose report is already dispatched is
       // terminal — retire the D1 row so the union stays bounded.
@@ -275,6 +288,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
             cursor,
             scans.get(`${Number(d)}:${side}`),
             budget,
+            deadlineMs,
           );
         }
 
@@ -300,9 +314,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
     } catch (err) {
       // Benign races (a competing tick advanced the cursor, the stamp landing
       // mid-scan, etc.) — log and let the next tick re-evaluate.
-      console.log(
-        `[keeper] commitmentReport chain=${chain.id} day=${d} skipped: ${(err as Error).message}`,
-      );
+      reportSendError(`[keeper] commitmentReport chain=${chain.id} day=${d}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }
@@ -338,7 +350,7 @@ async function isDayResolved(
  * the registration day, so the walk stops at the first entry with
  * `startDay > day`.
  */
-async function submitSide(
+export async function submitSide(
   env: Env,
   publicClient: PublicClient,
   ctx: KeeperContext,
@@ -349,7 +361,11 @@ async function submitSide(
   cursor: bigint,
   persisted: { scanNext: bigint; lastCursor: bigint } | undefined,
   budget: TickBudget,
+  /** This run's deadline (#2572): page reads stop at its read cutoff, so the
+   *  batches they found still have time to be sent. */
+  deadlineMs: number,
 ): Promise<void> {
+  const readCutoff = readCutoffMs(deadlineMs);
   // Reset detection: cursor moved backward vs the frontier's snapshot.
   const frontierValid = persisted !== undefined && cursor >= persisted.lastCursor;
   let nextId = cursor + 1n;
@@ -366,17 +382,34 @@ async function submitSide(
   const flush = async (): Promise<boolean> => {
     if (pending.length === 0) return true;
     const batch = pending.slice(0, MAX_IDS_PER_BATCH);
-    const hash = await ctx.wallet.writeContract({
-      address: diamond,
-      abi: COMMIT_ABI,
-      functionName: 'submitCommitmentBatch',
-      args: [day, side, batch],
-      chain: undefined,
-      account: ctx.wallet.account ?? null,
-    } as never);
-    // Sequential batches share the ascending cursor — each must mine before
-    // the next is even valid. Bounded wait, matching the remit pass.
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    // A batch that did not go out, or whose receipt did not come, keeps its
+    // ids in `pending`, so the frontier persisted below stays at the lowest
+    // unsubmitted covering id (#2572 r6). Thrown out of here instead, the
+    // frontier was never written and the next run repeated this run's scan,
+    // which under a deadline it could do forever.
+    let hash: `0x${string}`;
+    let receipt: { status: string };
+    try {
+      hash = await ctx.wallet.writeContract({
+        address: diamond,
+        abi: COMMIT_ABI,
+        functionName: 'submitCommitmentBatch',
+        args: [day, side, batch],
+        chain: undefined,
+        account: ctx.wallet.account ?? null,
+      } as never);
+      // Sequential batches share the ascending cursor — each must mine before
+      // the next is even valid. Bounded wait, matching the remit pass.
+      receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    } catch (err) {
+      reportSendError(
+        `[keeper] commitmentReport chain=${chainId} day=${day} side=${side}`,
+        err,
+        `batch not confirmed (resumes from the on-chain cursor / frontier next tick): ${(err as Error).message}`,
+        console.warn,
+      );
+      return false;
+    }
     budget.batches--;
     if (receipt.status !== 'success') {
       // Keep the batch in `pending` — the frontier persisted below must not
@@ -395,7 +428,14 @@ async function submitSide(
   };
 
   let aborted = false;
+  let cutShort = false;
   while (!frontierReached && !aborted && budget.pages > 0) {
+    if (Date.now() >= readCutoff) {
+      // Stop reading with time left to send what was found (`runWindow.ts`
+      // rule 3); the frontier below records how far the scan got.
+      cutShort = true;
+      break;
+    }
     budget.pages--;
     const page = (await publicClient.readContract({
       address: diamond,
@@ -455,9 +495,9 @@ async function submitSide(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,
     );
   }
-  if (aborted || (!frontierReached && budget.pages <= 0)) {
+  if (aborted || cutShort || (!frontierReached && budget.pages <= 0)) {
     console.log(
-      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} paused (budgets) — frontier=${frontier} persisted, resumes next tick`,
+      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} paused (${cutShort ? 'read cutoff' : 'budgets'}) — frontier=${frontier} persisted, resumes next tick`,
     );
   }
 }

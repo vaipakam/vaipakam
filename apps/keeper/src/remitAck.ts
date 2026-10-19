@@ -51,6 +51,7 @@ import {
   markRemitAcked,
 } from './db';
 import { discoverWork } from './workQueue';
+import { reportSendError } from './submissionQueue';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
 // headroom on the mutating facet; viem resolves functions from the
@@ -94,22 +95,25 @@ interface RemitReservationView {
   dayIds: readonly bigint[];
 }
 
-export async function runRemitAck(env: Env, tick?: PassTick): Promise<void> {
+export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
   // The run's deadline (#2497 re-cut review): every read through this run's
   // clients is refused past it, and no send starts after it.
-  const deadline = tick?.deadlineMs ?? Date.now() + 60_000;
+  const deadline = tick.deadlineMs;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await ackFromBaseLedger(env, chain, deadline);
-    } catch (err) {
-      console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
-    }
-  }
+  // Chains side by side (#2572 r5, `runWindow.ts` rule 1).
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await ackFromBaseLedger(env, chain, deadline);
+      } catch (err) {
+        console.error(`[keeper] remitAck chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
-async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number = Date.now() + 60_000): Promise<void> {
+async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number): Promise<void> {
   const publicClient = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline);
   const diamond = chain.diamond as Address;
 
@@ -265,9 +269,7 @@ async function ackPending(
       const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond, ackBudget);
       if (sent) await recordAttemptBestEffort(env, baseChainId, diamond, remitId, r.dstChainId);
     } catch (err) {
-      console.log(
-        `[keeper] remitAck remit=${remitId} dst=${r.dstChainId} skipped: ${(err as Error).message}`,
-      );
+      reportSendError(`[keeper] remitAck remit=${remitId} dst=${r.dstChainId}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }
@@ -308,7 +310,7 @@ async function sendAckFromMirror(
     return false;
   }
 
-  const ctx = buildKeeperContext(env, mirrorCfg, client, undefined, ackBudget.deadline);
+  const ctx = buildKeeperContext(env, mirrorCfg, client, { notAfterMs: ackBudget.deadline });
   if (!ctx || !ctx.wallet.account) return false;
 
   const fee = (await client.readContract({
@@ -502,7 +504,7 @@ async function ackLateDeliveries(
       // eslint-disable-next-line no-await-in-loop
       if (ok) await recordAttemptBestEffort(env, baseChainId, diamond, ids[i], Number(v.dstChainId));
     } catch (err) {
-      console.log(`[keeper] remitAck late remit=${ids[i]} skipped: ${(err as Error).message}`);
+      reportSendError(`[keeper] remitAck late remit=${ids[i]}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }
