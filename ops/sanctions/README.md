@@ -186,7 +186,11 @@ sudo bash install.sh "$C"
 package, with dependencies pinned by the lockfile and no install scripts run),
 checks it with `sanctions-adder.mjs --check` and `sanctions-delister.mjs
 --check`, switches `/opt/vaipakam-sanctions/current` to it, and installs both
-services' units from the same commit. It creates each env file from its
+services' units from the same commit. Each check runs the way the unit runs
+that service: as a throwaway dynamic user, with an empty environment, through
+a link to the release, and it must print its `release ok` line. A release the
+service could not read, or a script that would not run when started through
+`current`, therefore stops the install before it becomes current. It creates each env file from its
 template (0600, root-only) only if it does not exist, and never overwrites
 one. It never starts or enables anything. A machine that ran the adder-only
 installer of #2557 has its old `/opt/vaipakam-sanctions-adder` removed once
@@ -205,6 +209,11 @@ sudo systemctl start vaipakam-sanctions-delister.service
 journalctl -u vaipakam-sanctions-delister -n 80
 sudo systemctl enable --now vaipakam-sanctions-delister.timer
 ```
+
+A run that worked ends its journal with its report and writes
+`last-run.json` in its state directory (§5). A run that exits with neither did
+not do its work, even when systemd reports it finished successfully: stop
+there, and don't enable that timer.
 
 Each key is typed once, on the machine that uses it, and never copied between
 machines. Adding a chain later is one RPC line (and its contracts recorded in

@@ -83,9 +83,10 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { decodeEventLog, encodeFunctionData, getAddress, keccak256, parseAbi, toFunctionSelector } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { isEntryPoint } from './entry-point.mjs';
 import {
   OFAC_SDN_ADVANCED_URL,
   assertDelistingsWitnessed,
@@ -1338,7 +1339,7 @@ async function main() {
   await finish(result.report, { 'evaluations.json': result.cache, 'relay.json': relayCache });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((e) => {
     console.error(`sanctions-delister: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_DELISTER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);

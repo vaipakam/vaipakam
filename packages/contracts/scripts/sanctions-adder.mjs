@@ -54,9 +54,9 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { isEntryPoint } from './entry-point.mjs';
 import {
   DEFAULT_MAX_REMOVE,
   OFAC_SDN_ADVANCED_URL,
@@ -459,7 +459,7 @@ async function main() {
   await finish(report, summarize(report), needsAlert(report));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((e) => {
     console.error(`sanctions-adder: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_ADDER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);

@@ -101,9 +101,32 @@ main() {
     echo "$commit" > "$build/SOURCE_COMMIT"
     chown -R root:root "$build"
     chmod -R go-w "$build"
+    # mktemp made the directory 0700, and the services run as a dynamic user
+    # that must be able to enter it.
+    chmod 755 "$build"
+    # Each service's check runs the way its unit runs that service: as a
+    # throwaway dynamic user, with an empty environment, through a link to
+    # the release (the units start through `current`). A release that user
+    # cannot read, or a script that does not run when started through a
+    # link, fails here and never becomes current. The check must also print
+    # its "release ok" line, since a script that never reached its main
+    # prints nothing and still exits 0. No network: the check needs none.
+    ln -sfnT "$build" "$ROOT/.candidate"
+    local out
     for s in "${SERVICES[@]}"; do
-      /usr/bin/env -i /usr/local/bin/node "$build/packages/contracts/scripts/sanctions-$s.mjs" --check
+      out="$(systemd-run --quiet --wait --pipe --collect \
+        --unit="vaipakam-sanctions-check-$s" \
+        -p DynamicUser=yes \
+        -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+        -p PrivateNetwork=yes -p NoNewPrivileges=yes \
+        /usr/bin/env -i /usr/local/bin/node --max-old-space-size=192 \
+        "$ROOT/.candidate/packages/contracts/scripts/sanctions-$s.mjs" --check)" \
+        || die "the $s check failed on release $commit"
+      grep -q "^sanctions-$s: release ok " <<<"$out" \
+        || die "the $s check printed no 'release ok' line on release $commit: the script did not run"
+      log "$out"
     done
+    rm -f "$ROOT/.candidate"
     touch "$build/.complete"
     mv -T "$build" "$rel"
   fi
@@ -134,6 +157,7 @@ main() {
     [ "$r" = "$commit" ] || [ "$r" = "$previous" ] || rm -rf "${ROOT:?}/releases/$r"
   done
   rm -rf "$ROOT"/releases/.build.*
+  rm -f "$ROOT/.candidate"
 
   # The settings: ONE file per service for every chain, beside the keeper's
   # keeper.env and held the same way (/etc/vaipakam root-only at 750, each
