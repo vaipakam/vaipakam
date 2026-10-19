@@ -72,6 +72,12 @@ interface IDiamondForProof {
     function getCapacityCurve(uint8) external view returns (LibVaipakam.CapacityCurve memory);
     function getRiskAccessGateEnabled() external view returns (bool);
     function paused() external view returns (bool);
+    function getCapacityBucket(uint8, address) external view returns (LibVaipakam.CapacityBucket memory);
+    function getLoanDetails(uint256) external view returns (LibVaipakam.Loan memory);
+    function getPriorityRoutingStatus()
+        external
+        view
+        returns (bool, bool, bool, bool, bool, bool, bool, bool, bool);
     function setRiskAccessGateEnabled(bool) external;
 }
 
@@ -333,6 +339,7 @@ contract PriorityRoutingLiveFork is Test {
         assertEq(after_.classCost, curve.classCost, "arming leaves the curve: classCost");
         assertEq(after_.epoch, curve.epoch, "arming leaves the curve: epoch");
         assertEq(after_.setAt, curve.setAt, "arming leaves the curve: setAt");
+        _assertStatusAllTrue();
 
         // 2. BOTH owners buy one credit each, at exactly the price; only the
         //    flagged owner opts the intent in. The control therefore differs from
@@ -348,18 +355,21 @@ contract PriorityRoutingLiveFork is Test {
         d.setLenderIntentPriority(lendAsset, collAsset, true);
         _assertOptIn(vm.getRecordedLogs());
 
-        // 3. Exhaust the solver's bucket through the Diamond-gated charge the
-        //    gated routes use, until the limiter refuses. A bucket seen for the
-        //    first time holds exactly one free action (TokenomicsTechSpec), so
-        //    one charge spends it; the loop does not assume the count.
-        uint256 charged;
+        // 3a. While the solver CAN afford it, the flagged fill is charged to its
+        //     capacity and the credit is untouched: a credit only ever buys a
+        //     fill that would not otherwise have happened (Codex #2582 r6). A
+        //     bucket seen for the first time holds exactly one free action, so
+        //     this fill is also what first spends the solver's capacity.
+        _coveredFillKeepsTheCredit();
+
+        // 3b. Exhaust whatever capacity is left through the Diamond-gated charge
+        //     the gated routes use, until the limiter refuses; the loop does not
+        //     assume a count.
         for (uint256 i = 0; i < 200; i++) {
             vm.prank(address(d));
             (bool spent,) = address(d).call(abi.encodeCall(IDiamondForProof.capacityChargeInternal, (SOLVER, solver)));
             if (!spent) break;
-            charged++;
         }
-        assertGt(charged, 0, "fixture-live: at least one free action was spent");
         (uint256 accrued,,,) = d.previewCapacity(SOLVER, solver);
         assertLt(accrued, curve.classCost, "fixture-live: the solver cannot afford a fill at the deployed cost");
         (, , bool covers, bool unlocks) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
@@ -378,17 +388,37 @@ contract PriorityRoutingLiveFork is Test {
 
         // 4. The flagged fill goes through on the credit, spending exactly one,
         //    with no capacity charge.
+        LibVaipakam.CapacityBucket memory bucketBefore = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
         vm.prank(solver);
         uint256 loanId = d.matchIntent(flagged, lendAsset, collAsset, cp1, PRINCIPAL);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertGt(loanId, 0, "the flagged fill landed");
+        _assertLoan(loanId, makeAddr("proof-borrower-1"));
+        // The capacity STATE, not only the events (Codex #2582 r6).
+        LibVaipakam.CapacityBucket memory bucketAfter = d.getCapacityBucket(SOLVER, solver);
+        assertEq(bucketAfter.balance, bucketBefore.balance, "bucket untouched: balance");
+        assertEq(bucketAfter.lastTouch, bucketBefore.lastTouch, "bucket untouched: lastTouch");
+        assertEq(bucketAfter.curveEpoch, bucketBefore.curveEpoch, "bucket untouched: curveEpoch");
+        assertEq(bucketAfter.seen, bucketBefore.seen, "bucket untouched: seen");
         assertEq(_credits(flagged), 0, "exactly one credit spent");
         assertEq(_count(logs, T_PRIORITY_FILL), 1, "IntentPriorityFill once");
         assertEq(_count(logs, T_CREDIT_CONSUMED), 1, "PerkCreditConsumed once");
         assertEq(_count(logs, T_CAPACITY_SPENT), 0, "no capacity charge");
         assertEq(_count(logs, T_FREE_TIER_SPENT), 0, "no free-tier charge either");
         _assertPayloads(logs, loanId);
+
+        // 4b. The same opted-in intent with its credit spent is refused like any
+        //     other: the opt-in alone unlocks nothing (Codex #2582 r6).
+        uint256 cp3 = _postBorrower("proof-borrower-3");
+        (, , bool c3, bool u3) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
+        assertFalse(c3 || u3, "zero credits: nothing lets the flagged intent through");
+        IntentPreview memory p3 = _preview(flagged, cp3);
+        assertFalse(p3.ok, "zero credits: preview refuses");
+        assertEq(p3.intentError, CAPACITY_EXHAUSTED, "zero credits: for capacity");
+        vm.prank(solver);
+        vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
+        d.matchIntent(flagged, lendAsset, collAsset, cp3, PRINCIPAL);
 
         // 5. The unflagged intent — holding a credit, not opted in — is refused
         //    for capacity at the same moment, and its credit stays unspent.
@@ -398,6 +428,54 @@ contract PriorityRoutingLiveFork is Test {
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
         d.matchIntent(plain, lendAsset, collAsset, cp2, PRINCIPAL);
         assertEq(_credits(plain), 1, "the control's credit was not spent");
+    }
+
+    /// @dev The flagged intent's fill while capacity covers it: charged to the
+    ///      solver, the credit untouched, no priority record.
+    function _coveredFillKeepsTheCredit() internal {
+        uint256 cp0 = _postBorrower("proof-borrower-0");
+        (, , bool covers0, bool unlocks0) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
+        assertTrue(covers0, "covered: capacity covers the fill");
+        assertFalse(unlocks0, "covered: no credit is needed");
+        IntentPreview memory p0 = _preview(flagged, cp0);
+        assertTrue(p0.ok, "covered: preview ok");
+        assertFalse(p0.spendsPriorityCredit, "covered: preview spends no credit");
+        vm.recordLogs();
+        vm.prank(solver);
+        uint256 loan0 = d.matchIntent(flagged, lendAsset, collAsset, cp0, PRINCIPAL);
+        Vm.Log[] memory l0 = vm.getRecordedLogs();
+        assertGt(loan0, 0, "covered: filled");
+        assertEq(_credits(flagged), 1, "covered: the credit is untouched");
+        assertEq(_count(l0, T_CAPACITY_SPENT) + _count(l0, T_FREE_TIER_SPENT), 1, "covered: one capacity charge");
+        assertEq(_count(l0, T_PRIORITY_FILL), 0, "covered: no IntentPriorityFill");
+        assertEq(_count(l0, T_CREDIT_CONSUMED), 0, "covered: no PerkCreditConsumed");
+    }
+
+    /// @dev The loan the credit paid for is persisted as matched (Codex #2582 r6).
+    function _assertLoan(uint256 loanId, address borrowerAddr) internal view {
+        LibVaipakam.Loan memory loan = d.getLoanDetails(loanId);
+        assertEq(loan.id, loanId, "loan: id");
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active), "loan: active");
+        assertEq(loan.lender, flagged, "loan: lender of record");
+        assertEq(loan.borrower, borrowerAddr, "loan: borrower");
+        assertEq(loan.principalAsset, lendAsset, "loan: principal asset");
+        assertEq(loan.collateralAsset, collAsset, "loan: collateral asset");
+        assertEq(loan.principal, PRINCIPAL, "loan: principal");
+    }
+
+    /// @dev The operator's status read, every field, after arming (Codex #2582 r6).
+    function _assertStatusAllTrue() internal view {
+        (bool purchasable, bool notPaused, bool vpfiSet, bool priced, bool armed, bool deliverable, bool counted, bool lit, bool live_) =
+            d.getPriorityRoutingStatus();
+        assertTrue(notPaused, "status: notPaused");
+        assertTrue(vpfiSet, "status: vpfiTokenSet");
+        assertTrue(priced, "status: priced");
+        assertTrue(armed, "status: armed");
+        assertTrue(deliverable, "status: deliverable");
+        assertTrue(counted, "status: counted");
+        assertTrue(lit, "status: solverCapacityLit");
+        assertTrue(live_, "status: intentMatchingLive");
+        assertTrue(purchasable, "status: purchasable");
     }
 
     /// @dev The consent record of the opt-in, decoded (Codex #2582 r2): the
