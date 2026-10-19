@@ -206,9 +206,28 @@ const INTENT_ERR_PASS_TERMINAL = new Set<number>([
   1, // Paused — diamond globally paused
   3, // MatcherDisabled — partialFillEnabled off
   4, // IntentDisabled — lenderIntentEnabled off
-  22, // CapacityExhausted (#1219) — this keeper's fill capacity is spent until it refills
 ]);
+/** `CapacityExhausted` (#1219) — this keeper's fill capacity is spent until it
+ *  refills. NOT pass-terminal (#2564): the capacity is the SOLVER's, but since
+ *  the priority-routing perk (#2550) an intent opted into priority whose owner
+ *  holds a credit still fills on that credit, and `previewIntent` reports it
+ *  Ok. So the refusal ends ordinary intents for the rest of the pass, and the
+ *  pass carries on only with intents a credit unlocks ({@link intentRefusalScope}). */
+const INTENT_ERR_CAPACITY_EXHAUSTED = 22;
 const INTENT_ERR_MATCHER_DISABLED = 3;
+
+/** How far a non-ok `previewIntent` verdict reaches — the ONE rule the intent
+ *  pass acts on. `pass`: the same verdict for every intent and borrower this
+ *  tick. `capacity`: the solver's capacity is spent — the current intent ends,
+ *  and only intents a priority credit unlocks are worth previewing after it
+ *  (#2564). `intent`: the same for every borrower of this intent. `borrower`:
+ *  this pairing only. Pure; pinned by the tests. */
+export function intentRefusalScope(intentError: number): 'pass' | 'capacity' | 'intent' | 'borrower' {
+  if (INTENT_ERR_PASS_TERMINAL.has(intentError)) return 'pass';
+  if (intentError === INTENT_ERR_CAPACITY_EXHAUSTED) return 'capacity';
+  if (INTENT_ERR_INTENT_TERMINAL.has(intentError)) return 'intent';
+  return 'borrower';
+}
 const INTENT_ERR_INTENT_DISABLED = 4;
 
 /** INTENT-level codes — identical for every BORROWER of this intent, so abandon
@@ -723,6 +742,45 @@ async function submitIntentFill(
   return true;
 }
 
+/** Chains whose Diamond carries no priority-routing getter yet, logged once. */
+const priorityGetterMissingLogged = new Map<number, boolean>();
+
+/**
+ * Whether a priority credit unlocks a fill of `intent` for this solver while
+ * its own capacity is spent (#2564) — `getLenderIntentPriority(...).creditUnlocks`,
+ * the SAME predicate the fill and `previewIntent` use (`LibPriorityRouting`).
+ * The keeper is a direct solver, so the outer initiator is the solver itself.
+ * Fails CLOSED: a Diamond without the getter (the perk not yet deployed there)
+ * or a failed read is "no unlock", so the pass skips the intent instead of
+ * spending a preview on it.
+ */
+export async function priorityCreditUnlocks(
+  ctx: Pick<KeeperContext, 'client' | 'diamond' | 'chainId'>,
+  intent: Pick<LenderIntentSummary, 'owner' | 'lendingAsset' | 'collateralAsset'>,
+  solver: Address,
+): Promise<boolean> {
+  try {
+    const r = (await ctx.client.readContract({
+      address: ctx.diamond,
+      abi: MATCHER_ABI,
+      functionName: 'getLenderIntentPriority',
+      args: [intent.owner, intent.lendingAsset, intent.collateralAsset, solver, solver],
+    })) as readonly [boolean, bigint, boolean, boolean];
+    return r[3] === true;
+  } catch (err) {
+    const msg = String(err);
+    if (/FunctionDoesNotExist|0xa9ad62f8/.test(msg)) {
+      if (!priorityGetterMissingLogged.get(ctx.chainId)) {
+        console.log(`[matcher] chain=${ctx.chainId} priority routing is not deployed on this Diamond: no credit can unlock a fill while capacity is spent`);
+        priorityGetterMissingLogged.set(ctx.chainId, true);
+      }
+    } else {
+      console.log(`[matcher] chain=${ctx.chainId} priority read for intent ${intent.owner} unread, skipped this tick: ${msg.slice(0, 160)}`);
+    }
+    return false;
+  }
+}
+
 /** Read the operational keeper pause (Codex #748 r3/r4). Fail-CLOSED: a failed
  *  read returns `true` so the pass skips rather than risk originating loans
  *  during an unconfirmed pause. Cheap enough to re-read immediately before each
@@ -786,7 +844,7 @@ function sizeIntentFill(
  * gas-free `previewIntent` view, and submit `matchIntent`. Bounded by the
  * per-tick caps + the shared per-chain wall-time budget.
  */
-async function runIntentFillPass(
+export async function runIntentFillPass(
   ctx: KeeperContext,
   borrowers: readonly OfferLite[],
   overBudget: () => boolean,
@@ -796,6 +854,9 @@ async function runIntentFillPass(
   // uncertain this tick. Shared with the matchOffers loop so a borrower left
   // in-flight by an offer-match timeout isn't double-filled by an intent.
   uncertainBorrowers: Set<string>,
+  // #2564 — the offer-match pass already found this keeper's fill capacity
+  // spent: the pass starts where a capacity refusal would have left it.
+  capacitySpentAtStart = false,
   // #625 WI-2c part 2b — returns the cumulative submit count so the tick can
   // thread the SHARED per-tick budget on into the roll pass.
 ): Promise<number> {
@@ -837,8 +898,18 @@ async function runIntentFillPass(
   let previews = previewsUsed;
   let submits = submitsUsed;
   let intentFills = 0;
+  /** #2564 — this solver's capacity is spent. From then on an intent is worth
+   *  scanning only when a priority credit unlocks it; the read costs one
+   *  preview slot, so the per-tick rails bound it like any other preview. */
+  let capacitySpent = capacitySpentAtStart;
+  let creditFills = 0;
   for (const intent of intents) {
     if (overBudget() || submits >= MAX_SUBMITS_PER_TICK) break;
+    if (capacitySpent) {
+      if (previews >= MAX_PREVIEW_CALLS_PER_TICK) break;
+      previews += 1;
+      if (!(await priorityCreditUnlocks(ctx, intent, solver))) continue;
+    }
     for (const b of borrowers) {
       if (
         previews >= MAX_PREVIEW_CALLS_PER_TICK ||
@@ -930,10 +1001,11 @@ async function runIntentFillPass(
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
       if (!preview.ok) {
         const e = preview.intentError;
+        const scope = intentRefusalScope(e);
         // GLOBAL terminal — same verdict for EVERY intent + borrower this tick,
         // so stop the whole pass; the master kill-switches additionally log
         // once (sharing the matchOffers latch) (Codex #748 r2/r3).
-        if (INTENT_ERR_PASS_TERMINAL.has(e)) {
+        if (scope === 'pass') {
           if (
             (e === INTENT_ERR_MATCHER_DISABLED ||
               e === INTENT_ERR_INTENT_DISABLED) &&
@@ -946,11 +1018,25 @@ async function runIntentFillPass(
           }
           return submits;
         }
+        // CAPACITY (#2564) — this solver's capacity is spent. It ends THIS
+        // intent (no credit covers it: a credit-backed intent previews Ok), and
+        // from here on only intents a priority credit unlocks are scanned. A
+        // credit-backed intent refused here ran out of credits mid-pass; the
+        // next one may still hold some.
+        if (scope === 'capacity') {
+          if (!capacitySpent) {
+            console.log(
+              `[matcher] chain=${ctx.chainId} intent-fill: this keeper's fill capacity is spent; continuing only with intents a priority credit unlocks`,
+            );
+          }
+          capacitySpent = true;
+          break;
+        }
         // INTENT-level terminal — same verdict for every BORROWER of this intent
         // (auth, aggregator-pause, inactive, VPFI-lending, unresolvable
         // collateral, …), so abandon the intent rather than burning a preview
         // per borrower for an identical result (Codex #748 r1/r3).
-        if (INTENT_ERR_INTENT_TERMINAL.has(e)) break;
+        if (scope === 'intent') break;
         // Borrower-specific — try the next borrower.
         continue;
       }
@@ -969,6 +1055,7 @@ async function runIntentFillPass(
       const filled = await submitIntentFill(ctx, intent, b.id, fillAmount, preview);
       if (filled) {
         intentFills += 1;
+        if (capacitySpent) creditFills += 1;
         // Keep the in-memory borrower snapshot live for later intents that
         // target the same borrower (the single-fill slice consumes exactly
         // `matchAmount`).
@@ -988,7 +1075,7 @@ async function runIntentFillPass(
   }
   if (intentFills > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} intent-fill pass: ${intentFills} fill(s) across ${intents.length} active intent(s)`,
+      `[matcher] chain=${ctx.chainId} intent-fill pass: ${intentFills} fill(s) across ${intents.length} active intent(s)${creditFills > 0 ? `, ${creditFills} on a priority credit while capacity was spent` : ''}`,
     );
   }
   return submits;
@@ -1307,6 +1394,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
       submits,
       previewCalls,
       uncertainBorrowers,
+      capacitySpent,
     );
   }
 
