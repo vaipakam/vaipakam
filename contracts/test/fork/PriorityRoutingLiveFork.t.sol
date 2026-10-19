@@ -31,12 +31,12 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
  *         Self-gates on `FORK_URL_BASE_SEPOLIA` like the other fork suites, and
  *         reads the Diamond from `FORK_DIAMOND` (defaulting to Base Sepolia's) and
  *         the role holders from `FORK_ADMIN` / `FORK_RISK_ADMIN` / `FORK_KYC_ADMIN`
- *         (each defaulting to the owner). The curve and price are the figures
- *         proposed for the live arming.
+ *         (each defaulting to the owner). The Solver curve is the chain's own,
+ *         which must already be lit (precondition 2); the price is the decided
+ *         2 VPFI per credit.
  */
 interface IDiamondForProof {
     // ServiceCapacityFacet
-    function setCapacityCurve(uint8, uint256, uint256, uint256, uint256) external;
     function capacityChargeInternal(uint8, address) external;
     function previewCapacity(uint8, address) external view returns (uint256, uint256, uint256, bool);
     // PerkFacet
@@ -93,19 +93,25 @@ interface IERC20Lite {
 
 contract PriorityRoutingLiveFork is Test {
     address internal constant BASE_SEPOLIA_DIAMOND = 0x2535baC87F3df287268fC697F2f31cf418365303;
+    /// @dev A Base Sepolia block BEFORE the perk was armed there — Solver curve
+    ///      lit, lender intents on, perk unpriced and never sold (Codex #2582 r3).
+    ///      The proof is of the arming transition, so it forks the state that
+    ///      transition starts from; a later run therefore stays green after the
+    ///      live arming. `FORK_BLOCK` overrides it (0 = latest) for another chain.
+    uint256 internal constant BASE_SEPOLIA_PRE_ARM_BLOCK = 48309942;
 
     uint256 internal constant PERK = 1; // LibPriorityRouting.PERK_ID
     uint8 internal constant SOLVER = uint8(LibVaipakam.ServiceCapacityRole.Solver);
-    // The proposed testnet Solver curve: one fill costs 3.6e9 units, the free
-    // refill is 1e6 units a second (one fill an hour), the free tier holds five
-    // fills, and capacity reaches 4x at a 10,000 VPFI deposit.
-    uint256 internal constant COST = 3_600_000_000;
-    uint256 internal constant RATE = 1_000_000;
-    uint256 internal constant FREE = 5 * COST;
-    uint256 internal constant AT4X = 10_000e18;
-    uint256 internal constant PRICE = 10e18; // VPFI per credit (proposed)
+    /// @dev The decided price (owner, 2026-10-19; recorded on #2550 and in the
+    ///      design note). The Solver curve is NOT set here: arming precondition 2
+    ///      is that the chain's OWN curve is lit, so the proof runs on it.
+    uint256 internal constant PRICE = 2e18; // VPFI per credit
 
     uint256 internal constant PRINCIPAL = 1000 ether;
+    /// @dev 10x the principal (a 10% LTV, HF ~8 at an 80% threshold), so the
+    ///      fixture clears any sane deployment risk setting instead of being sized
+    ///      to one (Codex #2582 r3); routing, not risk, is what the proof is about.
+    uint256 internal constant COLLATERAL = 10 * PRINCIPAL;
     uint256 internal constant MIN_RATE_BPS = 500;
     /// @dev The floor every deployment's duration cap admits (`setMaxOfferDurationDays`
     ///      accepts nothing below 7), so the fixture term never depends on the
@@ -136,9 +142,12 @@ contract PriorityRoutingLiveFork is Test {
     function setUp() public {
         string memory url = vm.envOr("FORK_URL_BASE_SEPOLIA", string(""));
         if (bytes(url).length == 0) return; // self-gate: no RPC, no proof
-        vm.createSelectFork(url);
+        address target = vm.envOr("FORK_DIAMOND", BASE_SEPOLIA_DIAMOND);
+        uint256 pin = vm.envOr("FORK_BLOCK", target == BASE_SEPOLIA_DIAMOND ? BASE_SEPOLIA_PRE_ARM_BLOCK : 0);
+        if (pin == 0) vm.createSelectFork(url);
+        else vm.createSelectFork(url, pin);
         live = true;
-        d = IDiamondForProof(vm.envOr("FORK_DIAMOND", BASE_SEPOLIA_DIAMOND));
+        d = IDiamondForProof(target);
         address own = d.owner();
         admin = vm.envOr("FORK_ADMIN", own);
         riskAdmin = vm.envOr("FORK_RISK_ADMIN", own);
@@ -236,7 +245,7 @@ contract PriorityRoutingLiveFork is Test {
                 amount: PRINCIPAL,
                 interestRateBps: MIN_RATE_BPS,
                 collateralAsset: collAsset,
-                collateralAmount: 2 * PRINCIPAL,
+                collateralAmount: COLLATERAL,
                 durationDays: MAX_DURATION,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -251,7 +260,7 @@ contract PriorityRoutingLiveFork is Test {
                 allowsParallelSale: false,
                 amountMax: PRINCIPAL,
                 interestRateBpsMax: MIN_RATE_BPS + 100,
-                collateralAmountMax: 2 * PRINCIPAL,
+                collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -284,8 +293,11 @@ contract PriorityRoutingLiveFork is Test {
         (uint256 price0,, uint256 sold0) = d.getPerkConfig(PERK);
         assertEq(price0, 0, "pre-state: unpriced");
         assertEq(sold0, 0, "pre-state: no unit ever sold");
+        // Precondition 2: the chain's own Solver curve is lit, and the proof runs
+        // on it as deployed.
+        LibVaipakam.CapacityCurve memory curve = d.getCapacityCurve(SOLVER);
+        assertGt(curve.freeTier, 0, "precondition: the chain's Solver curve is lit");
         vm.startPrank(admin);
-        d.setCapacityCurve(SOLVER, FREE, RATE, AT4X, COST);
         vm.recordLogs();
         d.setPerkConfig(PERK, PRICE, 0);
         Vm.Log[] memory armLogs = vm.getRecordedLogs();
@@ -299,13 +311,10 @@ contract PriorityRoutingLiveFork is Test {
         (uint256 price, uint32 duration,) = d.getPerkConfig(PERK);
         assertEq(price, PRICE, "configured price reads back");
         assertEq(duration, 0, "counted, not timed");
-        // Every field of the stored curve, so the proposed figures are what the
-        // limiter runs on (Codex #2582 r2).
-        LibVaipakam.CapacityCurve memory curve = d.getCapacityCurve(SOLVER);
-        assertEq(curve.freeTier, FREE, "curve: freeTier");
-        assertEq(curve.freeRatePerSec, RATE, "curve: freeRatePerSec");
-        assertEq(curve.bondAt4x, AT4X, "curve: bondAt4x");
-        assertEq(curve.classCost, COST, "curve: classCost");
+        // The price write leaves the chain's curve exactly as it was.
+        LibVaipakam.CapacityCurve memory after_ = d.getCapacityCurve(SOLVER);
+        assertEq(after_.epoch, curve.epoch, "the curve is untouched by arming");
+        assertEq(after_.classCost, curve.classCost, "the curve's cost is untouched by arming");
 
         // 2. BOTH owners buy one credit each, at exactly the price; only the
         //    flagged owner opts the intent in. The control therefore differs from
@@ -322,7 +331,7 @@ contract PriorityRoutingLiveFork is Test {
         //    first time holds exactly one free action (TokenomicsTechSpec), so
         //    one charge spends it; the loop does not assume the count.
         uint256 charged;
-        for (uint256 i = 0; i < 10; i++) {
+        for (uint256 i = 0; i < 200; i++) {
             vm.prank(address(d));
             (bool spent,) = address(d).call(abi.encodeCall(IDiamondForProof.capacityChargeInternal, (SOLVER, solver)));
             if (!spent) break;
