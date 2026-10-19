@@ -4,5 +4,78 @@
   "deployedAt": "2026-10-18T08:58:38+0530",
   "monorepoCommit": "872545d4ecfd90f534611870c715059a32739b62",
   "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
-  "diamond": "0xfa7685Eb0160f8998f70F196d64Be223ce120bC2"
+  "diamond": "0xfa7685Eb0160f8998f70F196d64Be223ce120bC2",
+  "inPlaceRefreshes": [
+    {
+      "kind": "changed-facet-refresh",
+      "tool": "contracts/script/RefreshChangedFacetsInPlace.s.sol (#2576)",
+      "at": "2026-10-19T04:45:50Z",
+      "monorepoCommit": "dc72b36f847a5ee4657ef0794b2b1d87e7e99f92",
+      "operator": "0xf718bae5e0dc36140f16daef73289294c2372030",
+      "facetsRefreshed": {
+        "vaultFactoryFacet": "0xaEC448de9c9053313C46105616E64b78E3801BB0",
+        "rewardEpochViewFacet": "0xa4D4954f50b2EC028B0595B360EbcC62d3768295",
+        "rewardClosureFacet": "0x268a478428854958Bf9365567A1A9e52F27DCEdd",
+        "serviceCapacityFacet": "0x1705b621C3aA23aD85c8A6009DB8Db7b018e2E0E",
+        "offerMatchIntentFacet": "0xaA0418BeBE1c465dE14FEe80C6Bb0aDfdBDED7E6",
+        "lenderIntentFacet": "0x013df81e47Cf0aBb6B4f6B2423ed4C53c8F96D77",
+        "riskPreviewFacet": "0xCD611C831E8BeCf50f6768040A2F77508CdaC1E3",
+        "aggregatorAdapterFactoryFacet": "0xC4154b271F1Aef8dEF5E904E7997a2367e628C1E",
+        "backstopFacet": "0xaf779BfffDecf5f8742e12052B20D67A41d74Bc0",
+        "perkFacet": "0x60406E489b082712f22451E68ee5aD136E5232B5"
+      },
+      "staleRoutesRemoved": [
+        "setArmingFeeFloor(uint256)"
+      ],
+      "calls": [
+        {
+          "function": "pause()",
+          "tx": "0xa609ed8722c2bf5fad2075ab84519fc4778316c5e1d25dfabcbd89c9528a5f9f"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0x996d9c540d2ece7ce26a9882b1a6ee7099ca75620525245c6b6c4ce96f0c1389"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0x5a957ccfa16cee8d3459b858ee689f6a7d5731517326e39881fd48ad22bc570b"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0xa5d26403d33abc523697dc1048e3d5da54767c022adf2bf5ae2ea37916767955"
+        },
+        {
+          "function": "stampRewardCustodyCutover()",
+          "tx": "0xded5c9aa59d3b4272067548798dc2df42c8a5407d6ae4a750a7182f676b817a0"
+        },
+        {
+          "function": "unpauseIfPauseEpoch(uint64)",
+          "tx": "0x959d9b87c16945342138e1668b2c0a3faacaa50ef9aa6fa7222d7e3293d59e45"
+        }
+      ],
+      "broadcast": "contracts/broadcast/RefreshChangedFacetsInPlace.s.sol/97/run-1792385150732.json (gitignored; this record is its committed summary)",
+      "adminActivation": {
+        "ops": [
+          {
+            "call": "bindServiceCapacityEscrow()",
+            "tx": "0x7206ec90e3a4b31c664816263e9bb53788ff515f308d021a8ffde54fff297c24",
+            "block": 137640341
+          },
+          {
+            "call": "setServiceCapacityEnabled(true)",
+            "tx": "0xedcf6ba51a661d879522131c0c4a3c74de9e12b6a1765b52c9843a6c93180be1",
+            "block": 137640344
+          },
+          {
+            "call": "setArmingFeeRate(2e16)",
+            "tx": "0x0894b3642123366e65d4e7db765b79cb00ea60c68e8e9617225bd286ea5fc8a5",
+            "block": 137640347
+          }
+        ],
+        "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
+        "armingFeeRate": "2e16 (2%)",
+        "note": "owner-approved 2026-10-19; no capacity curve set; perk 1 unpriced"
+      }
+    }
+  ]
 }
