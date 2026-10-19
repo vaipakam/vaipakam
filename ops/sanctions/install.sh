@@ -53,6 +53,12 @@ main() {
   /usr/local/bin/node --input-type=module -e 'process.exit(import.meta.main === true ? 0 : 1)' \
     || die "Node $(/usr/local/bin/node -v) at /usr/local/bin/node does not set import.meta.main: 22.18 or newer is needed"
 
+  # One install at a time, for the whole run: two at once could repoint the
+  # candidate link between one run's two checks, or race each other's build,
+  # switch and pruning. The lock goes when this process exits.
+  exec 9>/run/vaipakam-sanctions-deploy.lock
+  flock -n 9 || { log "waiting for another sanctions install to finish"; flock 9; }
+
   export DEBIAN_FRONTEND=noninteractive
   command -v git >/dev/null || { apt-get update -q >/dev/null; apt-get install -y -q git ca-certificates >/dev/null; }
 
