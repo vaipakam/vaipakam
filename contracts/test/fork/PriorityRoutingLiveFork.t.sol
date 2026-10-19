@@ -440,13 +440,22 @@ contract PriorityRoutingLiveFork is Test {
         IntentPreview memory p0 = _preview(flagged, cp0);
         assertTrue(p0.ok, "covered: preview ok");
         assertFalse(p0.spendsPriorityCredit, "covered: preview spends no credit");
+        LibVaipakam.CapacityBucket memory b0 = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
         vm.prank(solver);
         uint256 loan0 = d.matchIntent(flagged, lendAsset, collAsset, cp0, PRINCIPAL);
         Vm.Log[] memory l0 = vm.getRecordedLogs();
         assertGt(loan0, 0, "covered: filled");
         assertEq(_credits(flagged), 1, "covered: the credit is untouched");
-        assertEq(_count(l0, T_CAPACITY_SPENT) + _count(l0, T_FREE_TIER_SPENT), 1, "covered: one capacity charge");
+        // A DIRECT solver is charged on its own bonded bucket, never a free-only
+        // one (Codex #2582 r7): exactly one CapacitySpent, no CapacityFreeTierSpent,
+        // and the bucket itself moved from unseen to seen.
+        assertEq(_count(l0, T_CAPACITY_SPENT), 1, "covered: one charge to the solver's own bucket");
+        assertEq(_count(l0, T_FREE_TIER_SPENT), 0, "covered: no free-only bucket charged");
+        LibVaipakam.CapacityBucket memory b1 = d.getCapacityBucket(SOLVER, solver);
+        assertFalse(b0.seen, "covered: the solver's bucket was unseen before");
+        assertTrue(b1.seen, "covered: the charge touched the solver's own bucket");
+        assertEq(b1.curveEpoch, d.getCapacityCurve(SOLVER).epoch, "covered: settled under the live curve");
         assertEq(_count(l0, T_PRIORITY_FILL), 0, "covered: no IntentPriorityFill");
         assertEq(_count(l0, T_CREDIT_CONSUMED), 0, "covered: no PerkCreditConsumed");
     }
