@@ -94,6 +94,30 @@
             "meaning": "free allowance ceiling 60 actions, refill 60/hour (a first-seen operator starts with 1 action); 10,000 VPFI deposit for 4x ceiling and rate; 1 unit per action",
             "tx": "0x62507f2dc47182ae28839d43ed88ebedd6318049bf7f240de56aacb19ec0b468",
             "block": 320629798
+          },
+          {
+            "call": "setCapacityCurve(Solver (0)) - retune, curve epoch 2",
+            "args": {
+              "freeTier": "20000000000000000000",
+              "freeRatePerSec": "5555555555555556",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "same values; refill rate rounded UP (ceil(20e18/3600)) so one fill accrues in exactly 180s; the epoch-1 floor-rounded rate fell 40-80 units short at that boundary (Codex #2581 r5)",
+            "tx": "0x81914b636d69d83b3bede46f606357f4a8cef16fee348fcfe96842c2dcc8329f",
+            "block": 320639607
+          },
+          {
+            "call": "setCapacityCurve(Keeper (1)) - retune, curve epoch 2",
+            "args": {
+              "freeTier": "60000000000000000000",
+              "freeRatePerSec": "16666666666666667",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "same values; refill rate rounded UP (ceil(60e18/3600)) so one action accrues in exactly 60s; the epoch-1 floor-rounded rate fell 40-80 units short at that boundary (Codex #2581 r5)",
+            "tx": "0x4cf8b4ff7929badb162a003a987df09cdf9cfa9898017850e51296b1219d3dac",
+            "block": 320639630
           }
         ],
         "serviceCapacityEscrow": "0x098155866D7EbAe0a765f2E220998f4C001d8490",
