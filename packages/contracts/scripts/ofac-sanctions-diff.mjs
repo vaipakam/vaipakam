@@ -119,11 +119,12 @@ import { createReadStream, createWriteStream, readFileSync, renameSync, rmSync, 
 import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, getAddress, encodeFunctionData, parseAbi, parseAbiItem } from 'viem';
 // The census tooling's EIP-1898 helper: every state read below is pinned to
 // ONE block by HASH with requireCanonical, never by number (Codex #2543 r2).
 import { callAtHash } from './census-grandfathered-custody.mjs';
+import { isEntryPoint } from './entry-point.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The root namespace OFAC's SDN Advanced export declares. */
@@ -1446,7 +1447,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta)) {
   main().catch((e) => {
     console.error(`ofac-sanctions-diff: ${e.message}`);
     process.exit(1);
