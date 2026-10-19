@@ -79,7 +79,7 @@
               "bondAt4x": "10000000000000000000000",
               "classCost": "1000000000000000000"
             },
-            "meaning": "20 fills free burst, 20/hour refill, 10,000 VPFI for 4x, 1 unit per fill",
+            "meaning": "free allowance ceiling 20 fills, refill 20/hour (a first-seen operator starts with 1 fill); 10,000 VPFI deposit for 4x ceiling and rate; 1 unit per fill",
             "tx": "0xd52812cb13a013edee76efffd936d3cd399d05caca2550737a4d03740d3304e7",
             "block": 137644517
           },
@@ -91,7 +91,7 @@
               "bondAt4x": "10000000000000000000000",
               "classCost": "1000000000000000000"
             },
-            "meaning": "60 actions free burst, 60/hour refill, 10,000 VPFI for 4x, 1 unit per action",
+            "meaning": "free allowance ceiling 60 actions, refill 60/hour (a first-seen operator starts with 1 action); 10,000 VPFI deposit for 4x ceiling and rate; 1 unit per action",
             "tx": "0xb756b5a4dc7bb58dda2b2051b5881154a901ea68514253cf8c754b946c317c96",
             "block": 137644529
           }
