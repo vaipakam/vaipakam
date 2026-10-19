@@ -72,6 +72,8 @@ interface IDiamondForProof {
     function getCapacityCurve(uint8) external view returns (LibVaipakam.CapacityCurve memory);
     function getRiskAccessGateEnabled() external view returns (bool);
     function paused() external view returns (bool);
+    function getPartialFillEnabled() external view returns (bool);
+    function isLenderIntentEnabled() external view returns (bool);
     function getCapacityBucket(uint8, address) external view returns (LibVaipakam.CapacityBucket memory);
     function getLoanDetails(uint256) external view returns (LibVaipakam.Loan memory);
     function getPriorityRoutingStatus()
@@ -132,6 +134,7 @@ contract PriorityRoutingLiveFork is Test {
     bytes32 internal constant T_FREE_TIER_SPENT = keccak256("CapacityFreeTierSpent(uint8,address,uint256,uint256)");
     bytes32 internal constant T_PERK_ARMED = keccak256("PriorityRoutingPerkArmed(uint256)");
     bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,bool)");
+    bytes32 internal constant T_PERK_PURCHASED = keccak256("PerkPurchased(address,uint256,uint256,uint256,uint64,uint256)");
 
     uint8 internal constant CAPACITY_EXHAUSTED = 22; // LibOfferMatch.IntentError.CapacityExhausted
     uint8 internal constant KYC_TIER2 = 2; // LibVaipakam.KYCTier.Tier2
@@ -170,6 +173,12 @@ contract PriorityRoutingLiveFork is Test {
         // fills nothing; arming one is a scheduled arming the operator verifies
         // after the pause lifts, against the unpaused state.
         require(!d.paused(), "precondition: the target Diamond is paused; prove after the pause lifts");
+        // PRECONDITION (Codex #2582 r9): both intent master gates are already on
+        // in the deployment. The proof must not switch them on itself, or it
+        // would certify a chain where the price write alone still leaves the
+        // perk undeliverable.
+        require(d.getPartialFillEnabled(), "precondition: partial fills are off on the target");
+        require(d.isLenderIntentEnabled(), "precondition: lender-intent matching is off on the target");
         solver = makeAddr("proofSolver");
         flagged = makeAddr("flaggedOwner");
         plain = makeAddr("plainOwner");
@@ -192,8 +201,6 @@ contract PriorityRoutingLiveFork is Test {
         // is switched off ON THE FORK when a deployment has it on, and only then
         // (Codex #2582 r2). Nothing here reaches the live chain.
         if (d.getRiskAccessGateEnabled()) d.setRiskAccessGateEnabled(false);
-        d.setPartialFillEnabled(true);
-        d.setLenderIntentEnabled(true);
         vm.stopPrank();
 
         _openIntent(flagged);
@@ -218,8 +225,24 @@ contract PriorityRoutingLiveFork is Test {
         d.depositVPFIToVault(PRICE);
         address vault = d.getUserVaultAddress(who);
         uint256 before = IERC20Lite(vpfi).balanceOf(vault);
+        vm.recordLogs();
         d.purchasePerk(PERK, 1, PRICE, 0);
+        Vm.Log[] memory pl = vm.getRecordedLogs();
         vm.stopPrank();
+        // The sale receipt, decoded (Codex #2582 r9): the public link between
+        // the payment and the entitlement the proof later spends.
+        assertEq(_count(pl, T_PERK_PURCHASED), 1, "PerkPurchased once");
+        for (uint256 i = 0; i < pl.length; i++) {
+            if (pl[i].emitter != address(d) || pl[i].topics.length == 0 || pl[i].topics[0] != T_PERK_PURCHASED) continue;
+            assertEq(address(uint160(uint256(pl[i].topics[1]))), who, "receipt: buyer");
+            assertEq(uint256(pl[i].topics[2]), PERK, "receipt: perkId");
+            (uint256 units, uint256 spent, uint64 until, uint256 creditsAfter) =
+                abi.decode(pl[i].data, (uint256, uint256, uint64, uint256));
+            assertEq(units, 1, "receipt: units");
+            assertEq(spent, PRICE, "receipt: VPFI spent");
+            assertEq(until, 0, "receipt: counted, no expiry");
+            assertEq(creditsAfter, 1, "receipt: credits after");
+        }
         assertEq(before - IERC20Lite(vpfi).balanceOf(vault), PRICE, "exactly the configured price was charged");
         assertEq(_credits(who), 1, "one credit bought");
     }
@@ -342,9 +365,18 @@ contract PriorityRoutingLiveFork is Test {
         assertEq(pv.spendsPriorityCredit, spendsCredit, string.concat(tag, ": spendsPriorityCredit"));
     }
 
+    /// @dev Capacity is the preview's LAST check, so a refusal for it still
+    ///      reports the position it evaluated — every other field as an Ok one.
     function _assertRefusedPreview(IntentPreview memory pv, string memory tag) internal pure {
         assertFalse(pv.ok, string.concat(tag, ": refused"));
         assertEq(pv.intentError, CAPACITY_EXHAUSTED, string.concat(tag, ": for capacity"));
+        assertEq(pv.matchError, 0, string.concat(tag, ": no match error"));
+        assertEq(pv.riskBlock, 0, string.concat(tag, ": no risk block"));
+        assertEq(pv.matchAmount, PRINCIPAL, string.concat(tag, ": the whole principal evaluated"));
+        assertGe(pv.matchRateBps, MIN_RATE_BPS, string.concat(tag, ": rate at or above the intent's floor"));
+        assertLe(pv.matchRateBps, MIN_RATE_BPS + 100, string.concat(tag, ": rate within the borrower's ceiling"));
+        assertGt(pv.reqCollateral, 0, string.concat(tag, ": collateral required"));
+        assertGe(pv.availableCapital, PRINCIPAL, string.concat(tag, ": capital covers the fill"));
         assertFalse(pv.spendsPriorityCredit, string.concat(tag, ": spends no credit"));
     }
 
