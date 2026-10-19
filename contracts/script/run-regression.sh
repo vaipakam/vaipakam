@@ -128,33 +128,41 @@ for sub in "${SUBDIRS[@]}"; do
 
   # `fork` subdir: each file needs a SPECIFIC fork RPC and self-skips without it
   # (`vm.envOr("FORK_URL_*", "")` → early return), so with no URL it adds zero
-  # coverage. Gate each file by the URL IT needs (Codex #1201) so setting only
-  # one URL never drags in — and tries to COMPILE — the other's files:
-  #   • *Seaport* sources need FORK_URL_BASE_SEPOLIA (Base-Sepolia fork). They
-  #     ALSO exceed the viaIR bounded-compile ceiling on current main (even a
-  #     single Seaport file trips "Variable size N too deep" — full build only,
-  #     #601/#603), so absent that URL they must not be compiled here at all.
-  #   • *LiveFork* sources also need FORK_URL_BASE_SEPOLIA: they exercise the
-  #     DEPLOYED Base Sepolia Diamond on a fork (e.g. the #2355 refinance
-  #     check). Unlike Seaport they compile within the bounded ceiling.
-  #   • the mainnet-fork sources (Oracle / Permit2 / Liquidation) need
-  #     FORK_URL_MAINNET; they DO compile+skip cleanly in a bounded chunk.
-  # A file whose URL is unset is dropped (still "covered" by the exhaustiveness
-  # guard below). Both unset → the whole subdir is skipped, keeping the default
-  # no-URL pre-deploy gate green. NOTE: when FORK_URL_BASE_SEPOLIA IS set, the
-  # Seaport chunk still needs the src-level lean-DTO ceiling fix to compile —
-  # this gate does not pretend otherwise.
+  # coverage. Gate each file by the URLs IT reads (Codex #1201) so setting only
+  # one URL never drags in — and tries to COMPILE — another chain's files.
+  #
+  # The URLs a file needs are the `FORK_URL_*` names written in it, and the file
+  # is kept when ANY of them is set: a file with one cell per chain (e.g. the
+  # #2550 priority-routing proof, Base Sepolia and Arbitrum Sepolia) must run its
+  # Arbitrum cell when only FORK_URL_ARB_SEPOLIA is set, and each cell skips
+  # itself when its own URL is unset. Classifying by file NAME could not express
+  # that (Codex #2589 r1): every *LiveFork* file was gated on the Base URL alone,
+  # so an Arbitrum-only run compiled nothing and passed. A fork file that names
+  # no `FORK_URL_*` at all is refused rather than guessed at.
+  #
+  # Today that reads as: the *Seaport* and Base Sepolia *LiveFork* sources need
+  # FORK_URL_BASE_SEPOLIA, and the mainnet-fork sources (Oracle / Permit2 /
+  # Liquidation) need FORK_URL_MAINNET. The Seaport sources ALSO exceed the viaIR
+  # bounded-compile ceiling on current main (even a single Seaport file trips
+  # "Variable size N too deep" — full build only, #601/#603), so absent that URL
+  # they must not be compiled here at all.
+  # A file whose URLs are all unset is dropped (still "covered" by the
+  # exhaustiveness guard below). All unset → the whole subdir is skipped, keeping
+  # the default no-URL pre-deploy gate green. NOTE: when FORK_URL_BASE_SEPOLIA IS
+  # set, the Seaport chunk still needs the src-level lean-DTO ceiling fix to
+  # compile — this gate does not pretend otherwise.
   if [ "$sub" = "fork" ]; then
     kept=()
     for stem in "${SUBFILES[@]}"; do
-      case "$stem" in
-        *Seaport*|*LiveFork*)
-          if [ -n "${FORK_URL_BASE_SEPOLIA:-}" ]; then kept+=("$stem")
-          else echo "  fork: skip $stem (needs FORK_URL_BASE_SEPOLIA)"; fi ;;
-        *)
-          if [ -n "${FORK_URL_MAINNET:-}" ]; then kept+=("$stem")
-          else echo "  fork: skip $stem (needs FORK_URL_MAINNET)"; fi ;;
-      esac
+      mapfile -t needs < <(grep -oE 'FORK_URL_[A-Z0-9_]+' "test/fork/$stem.t.sol" | sort -u)
+      if (( ${#needs[@]} == 0 )); then
+        echo "run-regression: test/fork/$stem.t.sol names no FORK_URL_* variable, so the RPC it needs is unknown -- name the variable it reads" >&2
+        exit 1
+      fi
+      have=0
+      for v in "${needs[@]}"; do [ -n "${!v:-}" ] && have=1; done
+      if (( have )); then kept+=("$stem")
+      else echo "  fork: skip $stem (needs one of: ${needs[*]})"; fi
     done
     if (( ${#kept[@]} == 0 )); then
       echo ""

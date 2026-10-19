@@ -1515,9 +1515,14 @@ splits the run so each `forge test` invocation stays under it:
 - **Subdirectory suites** — one pass per `SUBDIRS` entry (`scenarios deploy
   fork seaport token`), chunked `SUBDIR_CHUNK_SIZE` at a time (default 3;
   `fork` alone crossed the ceiling in a single glob by 2026-07-13).
-- **`fork` files self-gate** on the RPC each needs — `FORK_URL_BASE_SEPOLIA`
-  for the Seaport sources, `FORK_URL_MAINNET` for the rest — and are dropped
-  when unset, so a no-URL pre-deploy gate stays green.
+- **`fork` files self-gate** on the RPCs each one names: a file is kept when
+  any `FORK_URL_*` variable written in it is set, and dropped when all of them
+  are unset, so a no-URL pre-deploy gate stays green. Today that is
+  `FORK_URL_BASE_SEPOLIA` for the Seaport and Base Sepolia live-fork sources,
+  `FORK_URL_MAINNET` for the mainnet-fork ones, and either Base or Arbitrum
+  Sepolia for the multi-chain priority-routing proof, whose cells skip
+  individually. A fork file that names no `FORK_URL_*` variable fails the run
+  (#2589).
 
 Foundry caches `src/` across invocations, so only the first chunk pays the full
 src compile; the rest add just their own test files. Same total compile, in
