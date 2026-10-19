@@ -70,11 +70,35 @@
             "call": "setArmingFeeRate(2e16)",
             "tx": "0x0894b3642123366e65d4e7db765b79cb00ea60c68e8e9617225bd286ea5fc8a5",
             "block": 137640347
+          },
+          {
+            "call": "setCapacityCurve(Solver (0))",
+            "args": {
+              "freeTier": "20000000000000000000",
+              "freeRatePerSec": "5555555555555555",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "20 fills free burst, 20/hour refill, 10,000 VPFI for 4x, 1 unit per fill",
+            "tx": "0xd52812cb13a013edee76efffd936d3cd399d05caca2550737a4d03740d3304e7",
+            "block": 137644517
+          },
+          {
+            "call": "setCapacityCurve(Keeper (1))",
+            "args": {
+              "freeTier": "60000000000000000000",
+              "freeRatePerSec": "16666666666666666",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "60 actions free burst, 60/hour refill, 10,000 VPFI for 4x, 1 unit per action",
+            "tx": "0xb756b5a4dc7bb58dda2b2051b5881154a901ea68514253cf8c754b946c317c96",
+            "block": 137644529
           }
         ],
         "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
         "armingFeeRate": "2e16 (2%)",
-        "note": "owner-approved 2026-10-19; no capacity curve set; perk 1 unpriced"
+        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 unpriced - decided starting price 2 VPFI per credit, applied only after keeper #2564 ships and a fork check passes"
       }
     }
   ]
