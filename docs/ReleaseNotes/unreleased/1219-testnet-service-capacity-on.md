@@ -1,0 +1,5 @@
+## Thread — service capacity is switched on across the testnets, with the 2% arming fee (PR #<n>)
+
+On 2026-10-19 the three testnet Diamonds, Base Sepolia, Arbitrum Sepolia and BNB testnet, received the arming-fee bounds and the priority-routing perk through an in-place refresh of only the facets whose code had changed. Each Diamond then had its capacity deposit escrow bound, the service-capacity channel switched on, and the arming fee set to 2% of newly armed principal, the intended starting rate inside the fixed 0.5% to 10% bounds. The owner approved each of these steps.
+
+Switching the channel on does not yet limit anyone. A role is limited, and a deposit can be armed, only once that role has a capacity curve. No curve is set on any testnet; the free-tier size, refill rate and deposit knee are still to be chosen. The priority-routing perk stays unpriced, so it cannot be bought; its pricing waits on the keeper change that delivers it. The deployment artifacts and the consolidated deployments file record the refreshed facet addresses. Refs #1219, #2559, #2576.
