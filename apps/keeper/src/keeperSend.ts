@@ -87,8 +87,10 @@ export async function sendInSubmissionSlot(
       // `chain: null`: the client is chainless, and the chain id the request
       // was prepared with (read from the RPC) is the one signed over.
       const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
-      tx = keccak256(serialized);
+      // `signed()` first: it may refuse past the run's deadline (#2572), and
+      // a hash recorded before that refusal would read as a broadcast.
       signed();
+      tx = keccak256(serialized);
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
   } catch (err) {

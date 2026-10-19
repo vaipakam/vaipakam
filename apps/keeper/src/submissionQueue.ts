@@ -137,11 +137,20 @@ function assertFiniteDeadline(notAfterMs: unknown, where: string): asserts notAf
  * nonce, call `signed()` once it holds the signed bytes and before
  * broadcasting them, and resolve only once the broadcast has returned.
  *
- * `notAfterMs` is the run deadline of the pass sending (#2572). It is checked
- * HERE, when the slot's turn comes, because this is the one place every send
- * passes through — the queued wallet and the keeper's own prepared sends alike
- * — and the only moment that covers the wait behind another pass's send. Past
- * it, the slot refuses with {@link SendPastDeadline} before reading a nonce.
+ * `notAfterMs` is the run deadline of the pass sending (#2572), enforced HERE
+ * because this is the one place every send passes through — the queued wallet
+ * and the keeper's own prepared sends alike. It is checked twice:
+ *
+ *  - when the slot's turn comes, so a send that waited out its deadline behind
+ *    another pass's costs no nonce read or preparation;
+ *  - inside `signed()`, the boundary every sender calls between holding the
+ *    signed bytes and broadcasting them (#2572 r2). The nonce read, the epoch
+ *    fence and the sender's own preparation all await the network, and any of
+ *    them can cross the deadline; this is the last moment before anything
+ *    leaves the process. Refused there, the signed bytes are discarded unsent
+ *    and the nonce is released.
+ *
+ * Either refusal is a {@link SendPastDeadline}.
  *
  * The nonce is read through `wallet`'s own transport, so a pass that caps
  * its requests counts the read.
@@ -180,6 +189,11 @@ export async function withSubmissionSlot<T>(
     let result: T;
     try {
       result = await send(nonce, () => {
+        // Thrown before `wasSigned` is set: nothing is broadcast, so the
+        // nonce stays free for the next send.
+        if (now() >= notAfterMs) {
+          throw new SendPastDeadline(`send refused before broadcast: the run's deadline passed while it was prepared — next run`);
+        }
         wasSigned = true;
       });
     } catch (err) {
@@ -225,6 +239,9 @@ export function isDefinitiveRejection(err: unknown): boolean {
     chain.push(e);
   }
   if (chain.some((e) => e instanceof SubrequestBudgetExhausted)) return true;
+  // Refused by the slot before any broadcast (#2572): nothing reached the
+  // network, like the subrequest budget's refusal above.
+  if (chain.some((e) => e instanceof SendPastDeadline)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
     return false;

@@ -13,6 +13,7 @@ import {
   type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { sendInSubmissionSlot } from '../src/keeperSend';
 import {
   FLOOR_TTL_MS,
   isDefinitiveRejection,
@@ -51,6 +52,10 @@ interface Node {
   refuseNext?: boolean;
   /** Hold every broadcast until this settles — a send that keeps its slot. */
   hold?: Promise<void>;
+  /** Hold gas estimation until this settles — a slow preparation. */
+  holdEstimate?: Promise<void>;
+  /** Answer the fee reads viem makes when a send names no fees. */
+  serveFees?: boolean;
 }
 
 function nodeWallet(node: Node): WalletClient {
@@ -65,7 +70,16 @@ function nodeWallet(node: Node): WalletClient {
             return `0x${CHAIN_ID.toString(16)}`;
           case 'eth_getTransactionCount':
             return `0x${(node.reportedPending?.() ?? node.accepted.length).toString(16)}`;
+          // Fee reads, for a sender that leaves the fees to viem — opt-in, so
+          // the tests built without them keep failing where they did.
+          case 'eth_getBlockByNumber':
+            if (!node.serveFees) throw new Error(`unexpected ${method}`);
+            return { baseFeePerGas: '0x1', number: '0x1', hash: `0x${'cd'.repeat(32)}`, transactions: [] };
+          case 'eth_maxPriorityFeePerGas':
+            if (!node.serveFees) throw new Error(`unexpected ${method}`);
+            return '0x1';
           case 'eth_estimateGas':
+            if (node.holdEstimate) await node.holdEstimate;
             if (node.failNextEstimate) {
               node.failNextEstimate = false;
               throw new Error('execution reverted');
@@ -305,6 +319,36 @@ describe('every send carries its run deadline (#2572)', () => {
         String(bad),
       ).rejects.toThrow(TypeError);
     }
+  });
+
+  it('a deadline crossed while the send is prepared is refused before broadcast, and frees the nonce (r2)', async () => {
+    const node: Node = { accepted: [], rejected: [] };
+    let release!: () => void;
+    node.holdEstimate = new Promise<void>((r) => (release = r));
+    // Its turn comes at once, inside the deadline; the slow estimate then
+    // carries it past. No gas limit is given, so preparation estimates it.
+    const late = queuedWallet(nodeWallet(node), CHAIN_ID, Date.now() + 20);
+    const sent = late.sendTransaction({ account, chain: null, to: TO, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n } as never);
+    await new Promise((r) => setTimeout(r, 60));
+    node.holdEstimate = undefined;
+    release();
+    await expect(sent).rejects.toSatisfy(isSendPastDeadline);
+    expect(node.accepted, 'nothing broadcast').toEqual([]);
+    const next = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    await expect(next.sendTransaction({ account, chain: null, to: TO, ...FEES } as never)).resolves.toBeTruthy();
+    expect(node.accepted, 'the refused send held no nonce').toEqual([0]);
+  });
+
+  it('the prepared-send helper reports such a refusal as nothing sent, not as unconfirmed (r2)', async () => {
+    const node: Node = { accepted: [], rejected: [], serveFees: true };
+    let release!: () => void;
+    node.holdEstimate = new Promise<void>((r) => (release = r));
+    const sent = sendInSubmissionSlot(nodeWallet(node), CHAIN_ID, Date.now() + 20, TO, '0x');
+    await new Promise((r) => setTimeout(r, 60));
+    node.holdEstimate = undefined;
+    release();
+    await expect(sent).rejects.toSatisfy(isSendPastDeadline);
+    expect(node.accepted).toEqual([]);
   });
 
   it('a refusal raised inside writeContract is recognised through viem\'s wrapping', async () => {
