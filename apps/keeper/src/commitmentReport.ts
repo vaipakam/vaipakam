@@ -58,6 +58,7 @@ import {
   putCommitmentScanFrontier,
 } from './db';
 import { reportSendError } from './submissionQueue';
+import { readCutoffMs } from './runWindow';
 
 const COMMIT_ABI = RewardCommitmentFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
@@ -287,6 +288,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number
             cursor,
             scans.get(`${Number(d)}:${side}`),
             budget,
+            deadlineMs,
           );
         }
 
@@ -348,7 +350,7 @@ async function isDayResolved(
  * the registration day, so the walk stops at the first entry with
  * `startDay > day`.
  */
-async function submitSide(
+export async function submitSide(
   env: Env,
   publicClient: PublicClient,
   ctx: KeeperContext,
@@ -359,7 +361,11 @@ async function submitSide(
   cursor: bigint,
   persisted: { scanNext: bigint; lastCursor: bigint } | undefined,
   budget: TickBudget,
+  /** This run's deadline (#2572): page reads stop at its read cutoff, so the
+   *  batches they found still have time to be sent. */
+  deadlineMs: number,
 ): Promise<void> {
+  const readCutoff = readCutoffMs(deadlineMs);
   // Reset detection: cursor moved backward vs the frontier's snapshot.
   const frontierValid = persisted !== undefined && cursor >= persisted.lastCursor;
   let nextId = cursor + 1n;
@@ -376,17 +382,34 @@ async function submitSide(
   const flush = async (): Promise<boolean> => {
     if (pending.length === 0) return true;
     const batch = pending.slice(0, MAX_IDS_PER_BATCH);
-    const hash = await ctx.wallet.writeContract({
-      address: diamond,
-      abi: COMMIT_ABI,
-      functionName: 'submitCommitmentBatch',
-      args: [day, side, batch],
-      chain: undefined,
-      account: ctx.wallet.account ?? null,
-    } as never);
-    // Sequential batches share the ascending cursor — each must mine before
-    // the next is even valid. Bounded wait, matching the remit pass.
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    // A batch that did not go out, or whose receipt did not come, keeps its
+    // ids in `pending`, so the frontier persisted below stays at the lowest
+    // unsubmitted covering id (#2572 r6). Thrown out of here instead, the
+    // frontier was never written and the next run repeated this run's scan,
+    // which under a deadline it could do forever.
+    let hash: `0x${string}`;
+    let receipt: { status: string };
+    try {
+      hash = await ctx.wallet.writeContract({
+        address: diamond,
+        abi: COMMIT_ABI,
+        functionName: 'submitCommitmentBatch',
+        args: [day, side, batch],
+        chain: undefined,
+        account: ctx.wallet.account ?? null,
+      } as never);
+      // Sequential batches share the ascending cursor — each must mine before
+      // the next is even valid. Bounded wait, matching the remit pass.
+      receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    } catch (err) {
+      reportSendError(
+        `[keeper] commitmentReport chain=${chainId} day=${day} side=${side}`,
+        err,
+        `batch not confirmed (resumes from the on-chain cursor / frontier next tick): ${(err as Error).message}`,
+        console.warn,
+      );
+      return false;
+    }
     budget.batches--;
     if (receipt.status !== 'success') {
       // Keep the batch in `pending` — the frontier persisted below must not
@@ -405,7 +428,14 @@ async function submitSide(
   };
 
   let aborted = false;
+  let cutShort = false;
   while (!frontierReached && !aborted && budget.pages > 0) {
+    if (Date.now() >= readCutoff) {
+      // Stop reading with time left to send what was found (`runWindow.ts`
+      // rule 3); the frontier below records how far the scan got.
+      cutShort = true;
+      break;
+    }
     budget.pages--;
     const page = (await publicClient.readContract({
       address: diamond,
@@ -465,9 +495,9 @@ async function submitSide(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,
     );
   }
-  if (aborted || (!frontierReached && budget.pages <= 0)) {
+  if (aborted || cutShort || (!frontierReached && budget.pages <= 0)) {
     console.log(
-      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} paused (budgets) — frontier=${frontier} persisted, resumes next tick`,
+      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} paused (${cutShort ? 'read cutoff' : 'budgets'}) — frontier=${frontier} persisted, resumes next tick`,
     );
   }
 }

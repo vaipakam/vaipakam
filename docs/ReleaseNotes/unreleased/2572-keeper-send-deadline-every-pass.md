@@ -54,8 +54,10 @@ after another, so a slow chain cannot use up the window of the chains after it.
 A list walked in a fixed order (the liquidator's loan pages, auto-extend's loan
 pages, the tier relay's assets, the reward-budget remit's mirrors) starts one
 step further on each run, so the deadline never cuts off the same tail every
-time. And the liquidator stops reading early enough to leave its liquidations
-ten seconds to be sent. A scan stopped that way acts on what it read and is not
+time. And a pass that reads before it sends (the liquidator's scan, the commitment
+report's entry scan) stops reading early enough to leave its sends ten seconds.
+The commitment report also records how far it got when a batch is not sent, so
+the next run continues from there instead of repeating the same scan. A scan stopped that way acts on what it read and is not
 reported as complete. Auto-extend now acts on each page of loans as it reads it,
 rather than reading the whole book first. When a tier change is sent, its
 transaction is logged before any bookkeeping, and a bookkeeping failure no

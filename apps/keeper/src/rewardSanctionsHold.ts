@@ -60,7 +60,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { isSendPastDeadline } from './submissionQueue';
+import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import {
@@ -1009,10 +1009,14 @@ async function send(
     } as never)) as Hex;
   } catch (err) {
     budget.writes = 0;
-    // Refused past the run deadline, before broadcast: nothing was sent.
-    if (isSendPastDeadline(err)) return 'skipped';
-    console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
-    return 'failed';
+    // A deadline refusal is a deferral, said as one (nothing was sent), and
+    // counts as skipped; anything else is a failed send (#2572 r6).
+    const deferred = reportSendError(
+      `[keeper] rewardSanctionsHold ${fn} owner=${owner}`,
+      err,
+      `send failed: ${shortErr(err)}`,
+    );
+    return deferred ? 'skipped' : 'failed';
   }
   try {
     budget.writes -= 1;
