@@ -71,6 +71,7 @@ interface IDiamondForProof {
         returns (IntentPreview memory);
     function getCapacityCurve(uint8) external view returns (LibVaipakam.CapacityCurve memory);
     function getRiskAccessGateEnabled() external view returns (bool);
+    function paused() external view returns (bool);
     function setRiskAccessGateEnabled(bool) external;
 }
 
@@ -158,6 +159,11 @@ contract PriorityRoutingLiveFork is Test {
         kycAdmin = vm.envOr("FORK_KYC_ADMIN", own);
         require(d.hasRole(keccak256("ADMIN_ROLE"), admin), "FORK_ADMIN does not hold ADMIN_ROLE");
         require(d.hasRole(keccak256("RISK_ADMIN_ROLE"), riskAdmin), "FORK_RISK_ADMIN does not hold RISK_ADMIN_ROLE");
+        // PRECONDITION, stated rather than normalised (Codex #2582 r5): the proof
+        // is of arming a LIVE perk, and a paused deployment sells nothing and
+        // fills nothing; arming one is a scheduled arming the operator verifies
+        // after the pause lifts, against the unpaused state.
+        require(!d.paused(), "precondition: the target Diamond is paused; prove after the pause lifts");
         solver = makeAddr("proofSolver");
         flagged = makeAddr("flaggedOwner");
         plain = makeAddr("plainOwner");
@@ -333,6 +339,10 @@ contract PriorityRoutingLiveFork is Test {
         //    the flagged intent in the opt-in alone (Codex #2582 r1).
         _buyCredit(flagged);
         _buyCredit(plain);
+        // The protocol's durable sale record moved with the two sales (Codex
+        // #2582 r5): it is what freezes the perk's mode after a first sale.
+        (,, uint256 soldAfter) = d.getPerkConfig(PERK);
+        assertEq(soldAfter, 2, "the sale counter recorded both units");
         vm.recordLogs();
         vm.prank(flagged);
         d.setLenderIntentPriority(lendAsset, collAsset, true);
