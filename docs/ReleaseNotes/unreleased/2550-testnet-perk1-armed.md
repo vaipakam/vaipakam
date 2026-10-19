@@ -1,4 +1,4 @@
-## Thread — the priority-routing perk is armed on Base Sepolia and Arbitrum Sepolia (PR #TBD)
+## Thread — the priority-routing perk is armed on Base Sepolia and Arbitrum Sepolia (PR #2589)
 
 Since 2026-10-19 a lender on Base Sepolia or Arbitrum Sepolia can buy priority-routing credits at 2 VPFI each, paid from their vault. A credit is used only when a solver's free fill allowance is spent. If the lender has opted that standing intent in and holds a credit, the fill still goes through and uses up exactly one credit. Every other fill is charged to the solver's allowance as before, and no credit moves. Setting the price was also the one-time arming of the effect, which the contracts require before any credit can be sold or spent.
 
