@@ -33,7 +33,7 @@ import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { runIndex } from './runWindow';
+import { readCutoffMs, runIndex } from './runWindow';
 import { rotate } from './rotate';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
@@ -278,15 +278,18 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   const attempted = mirrorIds.length;
   // From a start that moves each run (#2572 r5, rule 2), so the deadline does
   // not leave the same mirrors unfunded run after run.
+  // A mirror's planning reads stop at the read cutoff (#2572 r7, rule 3), so a
+  // slow plan cannot use the window its own remit needs.
+  const readCutoff = readCutoffMs(deadlineMs);
   for (const mirrorId of rotate(mirrorIds, run)) {
-    // #2572 — past the run's deadline the send queue refuses every remit
-    // before broadcast; the remaining mirrors are funded next run.
-    if (Date.now() >= deadlineMs) {
-      console.log(`[keeper] rewardBudgetRemit run deadline reached before Base->${mirrorId}; resumes next run`);
+    // #2572 — a mirror starts with its planning reads, so none starts once
+    // the read cutoff has passed; the remaining mirrors are funded next run.
+    if (Date.now() >= readCutoff) {
+      console.log(`[keeper] rewardBudgetRemit read cutoff reached before Base->${mirrorId}; resumes next run`);
       break;
     }
     try {
-      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay)) {
+      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay, readCutoff)) {
         covered += 1;
       }
     } catch (err) {
@@ -318,6 +321,7 @@ async function remitToMirror(
   lookback: number,
   laneCap: bigint,
   armedFromDay: bigint,
+  readCutoff: number = Number.POSITIVE_INFINITY,
 ): Promise<boolean> {
   // Returns TRUE only when this destination is SETTLED for this tick —
   // either remitted successfully, or genuinely nothing owed. FALSE on every
@@ -374,6 +378,14 @@ async function remitToMirror(
   let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
+    // Each re-plan is a read; past the cutoff the remit it feeds would be
+    // refused at its turn, so the plan stops and the next run plans afresh.
+    if (Date.now() >= readCutoff) {
+      console.log(
+        `[keeper] rewardBudgetRemit mirror=${mirrorId} read cutoff reached during planning (pass ${pass + 1}); nothing sent, next run re-plans`,
+      );
+      return false;
+    }
     [perDay, closeable] = (await publicClient.readContract({
       address: diamond,
       abi: REMIT_ABI,

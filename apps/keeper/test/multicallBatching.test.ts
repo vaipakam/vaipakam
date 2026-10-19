@@ -143,6 +143,11 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
         );
       }
       if (selector === PAGE_SELECTOR) {
+        // Honours offset and limit like the Diamond, so a walk that reads the
+        // list as two pages (#2572 r7) sees each loan once.
+        const offset = Number(BigInt('0x' + data.slice(10, 74)));
+        const limit = Number(BigInt('0x' + data.slice(74, 138)));
+        const end = Math.min(LOAN_COUNT, offset + limit);
         return ok(
           encodeFunctionResult({
             abi: [
@@ -160,7 +165,7 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
             functionName: 'getActiveLoansPaginated',
             // DISTINCT ids — a repeated id would collapse the batch and hide a
             // per-loan fallback behind an apparently-correct call count.
-            result: Array.from({ length: LOAN_COUNT }, (_, i) => BigInt(i + 1)),
+            result: Array.from({ length: Math.max(0, end - offset) }, (_, i) => BigInt(offset + i + 1)),
           }),
         );
       }

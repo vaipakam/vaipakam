@@ -65,7 +65,7 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { runIndex } from './runWindow';
-import { rotate } from './rotate';
+import { pagedWalk } from './rotate';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -101,7 +101,7 @@ interface ExtendCaps {
 export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'autoLifecycle')) return;
   const chains = getChainConfigs(env);
-  // Chains side by side, pages from a rotating start (#2572 r5, `runWindow.ts`).
+  // Chains side by side, loans from a moving start (#2572 r5/r7, `runWindow.ts`).
   const run = runIndex(tick, 60_000);
   await Promise.all(
     chains.map(async (chain) => {
@@ -146,18 +146,15 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
   if (!ctx) return;
 
   // Read a page, act on it, read the next (#2572 r5): the scan never spends
-  // the window before the first extension, and the first page moves on each
-  // run, so a run the deadline stops early leaves the rest to later runs
-  // rather than the same tail every time.
-  const cursors: bigint[] = [];
-  for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) cursors.push(cursor);
+  // the window before the first extension. The walk starts at a loan that
+  // moves each run (`pagedWalk`, #2572 r7), not at a page, so a run the
+  // deadline stops partway through its first page does not leave that page's
+  // tail unreached run after run.
   let scanned = 0;
   let submitted = 0;
   let stopped = false;
-  for (const cursor of rotate(cursors, run)) {
+  for (const { cursor, limit } of pagedWalk(total, SCAN_PAGE, run)) {
     if (stopped || submitted >= MAX_EXTENDS_PER_TICK) break;
-    const limit =
-      cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;
     const page = (await publicClient.readContract({
       address: chain.diamond as Address,
       abi: METRICS_ABI,

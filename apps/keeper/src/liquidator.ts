@@ -44,7 +44,7 @@ import { MULTICALL3_ADDRESS } from './multicall3';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
 import { readCutoffMs, runIndex } from './runWindow';
-import { rotate } from './rotate';
+import { pagedWalk } from './rotate';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
@@ -179,13 +179,13 @@ async function liquidatePassForChain(
   // (Codex #1924 r18). Tracked explicitly rather than inferred from
   // `ids.length`, which is non-empty in exactly this case.
   let pagesComplete = true;
-  // Pages in an order that starts one page further on each run (#2572 r5,
-  // rule 2), so a scan the cutoff stops early still reaches every page over
-  // successive runs. Every page is read at the pinned block, so the order does
-  // not change what a full scan sees.
-  const offsets: bigint[] = [];
-  for (let off = 0n; off < total; off += SCAN_PAGE) offsets.push(off);
-  for (const off of rotate(offsets, run)) {
+  // Loans in an order that starts at a loan that moves each run (#2572 r5/r7,
+  // rule 2, `pagedWalk`), so a scan the cutoff stops early, in the paging or
+  // in the HF reads below, still reaches every loan over successive runs. A
+  // start that moved a page at a time left a page's tail unreached whenever a
+  // run stopped inside its first page. Every page is read at the pinned
+  // block, so the order does not change what a full scan sees.
+  for (const { cursor: off, limit } of pagedWalk(total, SCAN_PAGE, run)) {
     if (Date.now() >= readCutoff) {
       console.log(
         `[keeper] liquidator chain=${chain.name} read cutoff reached during paging; acting on ${ids.length} loan(s) read, the rest next run`,
@@ -199,7 +199,7 @@ async function liquidatePassForChain(
         address: diamond,
         abi: METRICS_ABI,
         functionName: 'getActiveLoansPaginated',
-        args: [off, SCAN_PAGE],
+        args: [off, limit],
         blockNumber: pinnedBlock,
       })) as readonly bigint[];
     } catch (err) {
@@ -239,7 +239,7 @@ async function liquidatePassForChain(
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
     if (Date.now() >= readCutoff) {
       // Unread rather than failed, so not counted as unevaluated; the scan
-      // is simply not complete, and the page rotation reaches them later.
+      // is simply not complete, and the moving walk start reaches them later.
       pagesComplete = false;
       console.log(
         `[keeper] liquidator chain=${chain.name} read cutoff reached during HF reads; ${ids.length - i} loan(s) left for the next run`,

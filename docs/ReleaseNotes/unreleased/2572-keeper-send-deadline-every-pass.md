@@ -42,24 +42,35 @@ source cannot hold back the next run's fail-safe demotions. When a tier change
 it decided on is not sent, for any reason, it keeps the evidence that qualified
 the change, so a promotion is retried next run instead of starting a new
 qualifying window. The daily price snapshot is the one pass whose sends carry a
-later deadline: the end of the UTC day being captured. The pass acts only in the
-first ten minutes of the day, so a capture refused at its last run's deadline
-could never be retried and the day's price would be missing for good. Nothing in
-a capture goes stale within its day, because the Diamond reads the prices when
-the transaction executes.
+later deadline: an hour before the end of the UTC day being captured. The pass
+acts only in the first ten minutes of the day, so a capture refused at its last
+run's deadline could never be retried and the day's price would be missing for
+good. Nothing in a capture goes stale within its day, because the Diamond reads
+the prices when the transaction executes. The hour is left for inclusion: the
+Diamond files a capture under the day of the block that mines it, so one mined
+after midnight would fill the next day's slot. The keeper now records the day
+the mined block actually filed it under, not the day it meant to capture, says
+so in the log when the two differ, and records nothing for a capture that
+reverted.
 
 A deadline only defers work if the next run can reach it, so every pass that
 works under one follows three rules. Chains now run side by side rather than one
 after another, so a slow chain cannot use up the window of the chains after it.
-A list walked in a fixed order (the liquidator's loan pages, auto-extend's loan
-pages, the tier relay's assets, the reward-budget remit's mirrors) starts one
-step further on each run, so the deadline never cuts off the same tail every
-time. And a pass that reads before it sends (the liquidator's scan, the commitment
-report's entry scan) stops reading early enough to leave its sends ten seconds.
+A list walked in a fixed order (the liquidator's loans, auto-extend's loans,
+the tier relay's assets, the reward-budget remit's mirrors) starts at a point
+that moves each run, so the deadline never cuts off the same tail every time.
+The two loan scans read the book in pages but move their start by loan, not by
+page, spread evenly over the book from run to run, so a run that stops partway
+through its first page does not leave the rest of that page unreached. And a
+pass that reads before it sends (the liquidator's scan, the commitment report's
+entry scan, the reward-budget remit's planning) stops reading early enough to
+leave its sends ten seconds.
 The commitment report also records how far it got when a batch is not sent, so
 the next run continues from there instead of repeating the same scan. A scan stopped that way acts on what it read and is not
 reported as complete. Auto-extend now acts on each page of loans as it reads it,
 rather than reading the whole book first. When a tier change is sent, its
 transaction is logged before any bookkeeping, and a bookkeeping failure no
 longer stops the other assets. Evidence gathered toward a promotion now counts
-only while the chain is still at the tier it was gathered at.
+only while the chain is still at the tier it was gathered at. The grace-default summary
+now counts the loans it actually attempted separately from the loans it picked,
+so a run the deadline stops early does not report an attempt it never made.

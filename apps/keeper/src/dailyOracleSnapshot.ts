@@ -28,7 +28,6 @@ import {
 
 import type { Env, ChainConfig } from './env';
 import type { PassTick } from './passSchedule';
-import { RUN_DEADLINE_MARGIN_MS } from './runWindow';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
@@ -118,16 +117,29 @@ async function setLastCaptureDay(env: Env, chainId: number, dayIndex: number): P
   assertGuardedWriteLanded(result, `oracle_snapshot_state for chain ${chainId}`);
 }
 
+/** How long before the UTC day ends a capture stops being broadcast
+ *  (#2572 r7). The Diamond files a capture under the day of the block that
+ *  includes it, so a send broadcast just before midnight and mined after it
+ *  fills the NEXT day's slot. This leaves inclusion an hour, far more than a
+ *  congested testnet takes. */
+export const CAPTURE_INCLUSION_RESERVE_MS = 60 * 60_000;
+
 /** The deadline a capture's send carries (#2572 r4): the end of the UTC day
- *  it captures, less the run margin, NOT the run's own deadline. A capture
- *  holds nothing that goes stale within its day (the Diamond reads the prices
- *  when the transaction executes), and no later run can retry it: the pass
- *  acts only in the first minutes of the day, so a send refused at its last
- *  run's deadline would leave that day's slot empty for good. A run held this
- *  long only holds back this pass's own later runs in the window, which would
- *  attempt the same capture. Pure. */
+ *  it captures, less {@link CAPTURE_INCLUSION_RESERVE_MS}, NOT the run's own
+ *  deadline. A capture holds nothing that goes stale within its day (the
+ *  Diamond reads the prices when the transaction executes), and no later run
+ *  can retry it: the pass acts only in the first minutes of the day, so a send
+ *  refused at its last run's deadline would leave that day's slot empty for
+ *  good. A run held this long only holds back this pass's own later runs in
+ *  the window, which would attempt the same capture. Pure. */
 export function captureDeadlineMs(todayIndex: number): number {
-  return (todayIndex + 1) * 86_400_000 - RUN_DEADLINE_MARGIN_MS;
+  return (todayIndex + 1) * 86_400_000 - CAPTURE_INCLUSION_RESERVE_MS;
+}
+
+/** The UTC day a mined capture was filed under: its block's day, the same
+ *  rule the Diamond applies. Pure. */
+export function capturedDayIndex(blockTimestampSec: bigint): number {
+  return Number(blockTimestampSec / 86_400n);
 }
 
 async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
@@ -178,8 +190,22 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
     });
     // Wait for inclusion before recording — a stuck or reorg'd tx
     // shouldn't bump the day-state and skip a future retry.
-    await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
-    await setLastCaptureDay(env, chain.id, todayIndex);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+    if (receipt.status !== 'success') {
+      console.error(`[dailyOracle] chain=${chain.name} day=${todayIndex} tx=${hash} REVERTED; nothing captured, not recorded`);
+      return;
+    }
+    // Record the day the chain filed the capture under, read from the block
+    // that included it (#2572 r7), never the day this run meant to capture.
+    const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+    const filedDay = capturedDayIndex(block.timestamp);
+    await setLastCaptureDay(env, chain.id, filedDay);
+    if (filedDay !== todayIndex) {
+      console.error(
+        `[dailyOracle] chain=${chain.name} capture meant for day=${todayIndex} was mined on day=${filedDay} tx=${hash}; day ${todayIndex}'s slot is still empty`,
+      );
+      return;
+    }
     console.log(
       `[dailyOracle] chain=${chain.name} day=${todayIndex} assets=${assets.length} tx=${hash}`,
     );

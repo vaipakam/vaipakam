@@ -10,7 +10,8 @@
  *      run in series would let a slow early chain spend the window of every
  *      chain after it, run after run.
  *   2. A list walked in a fixed order starts at a point that moves each run
- *      (`rotate` in `rotate.ts`, the keeper's one rotation). Otherwise the
+ *      (`rotate.ts`: `rotate` for a list held whole, `pagedWalk` for one read
+ *      in pages, whose start moves by item, not by page). Otherwise the
  *      deadline cuts the same tail off every run, and that tail is never
  *      reached.
  *   3. A pass that reads before it sends stops reading early enough to leave

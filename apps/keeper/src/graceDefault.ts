@@ -228,6 +228,9 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     // Active must be able to tell "waiting its turn" from "never seen".
     console.log(`[keeper] graceDefault ${where} deferred-by-cap loans=${deferred.join(',')}`);
   }
+  // Counted per attempt made, not per loan picked (#2572 r7): a run the
+  // deadline stops before a picked loan made no attempt on it.
+  let attempted = 0;
   let submitted = 0;
   let unconfirmed = 0;
   for (const loanId of picked) {
@@ -238,6 +241,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
       break;
     }
     let outcome: GraceDefaultOutcome;
+    attempted += 1;
     try {
       // eslint-disable-next-line no-await-in-loop
       outcome = await attemptGraceDefault(deps, loanId);
@@ -268,7 +272,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     }
   }
   console.log(
-    `[keeper] graceDefault ${where} defaultable=${candidates.length} attempted=${picked.length} submitted=${submitted} unconfirmed=${unconfirmed} ${spent()}`,
+    `[keeper] graceDefault ${where} defaultable=${candidates.length} picked=${picked.length} attempted=${attempted} submitted=${submitted} unconfirmed=${unconfirmed} ${spent()}`,
   );
 }
 
