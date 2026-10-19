@@ -83,6 +83,37 @@ contract BindServiceCapacityEscrowTest is Test {
         vm.removeDir(root, true);
     }
 
+    /// Codex #2585 r2 — without a redirect, under forge test, record() writes
+    /// nothing: the committed artifact is never touched by a test.
+    function test_RecordUnderTestWithoutRedirect_WritesNothing() public {
+        BindServiceCapacityEscrow s = new BindServiceCapacityEscrow();
+        s.bindWith(diamond, DEPLOYER_KEY);
+        string memory committed = string.concat("deployments/", Deployments.chainSlug(), "/addresses.json");
+        bool existed = vm.exists(committed);
+        bytes32 before = existed ? keccak256(bytes(vm.readFile(committed))) : bytes32(0);
+        assertEq(s.recordFor(diamond), _escrow(), "record still reports the bound escrow");
+        assertEq(vm.exists(committed), existed, "no committed artifact created");
+        if (existed) assertEq(keccak256(bytes(vm.readFile(committed))), before, "the committed artifact is unchanged");
+    }
+
+    /// Codex #2585 r2 — a stale artifact naming an escrow while the Diamond has
+    /// none bound refuses BEFORE the one-shot bind, in both bind routes.
+    function test_StaleArtifactWhileUnbound_RefusesBindAndStage() public {
+        BindServiceCapacityEscrow s = _script("stale");
+        vm.writeJson(
+            vm.toString(makeAddr("staleHolder")),
+            string.concat(root, "/", Deployments.chainSlug(), "/addresses.json"),
+            ".serviceCapacityEscrow"
+        );
+        bytes memory reason = bytes("BindServiceCapacityEscrow: the artifact names an escrow but the Diamond has none bound -- reconcile the artifact before binding");
+        vm.expectRevert(reason);
+        s.bindWith(diamond, DEPLOYER_KEY);
+        vm.expectRevert(reason);
+        s.stageFor(diamond);
+        assertEq(_escrow(), address(0), "nothing was bound");
+        vm.removeDir(root, true);
+    }
+
     function test_ArtifactNamingADifferentEscrow_Refuses() public {
         BindServiceCapacityEscrow s = _script("foreign");
         s.bindWith(diamond, DEPLOYER_KEY);

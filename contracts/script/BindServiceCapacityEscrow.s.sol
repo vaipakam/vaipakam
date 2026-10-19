@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script, console} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
@@ -38,7 +39,13 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *         dry run and the ordinary writers skip it. `record()` writes through
  *         the dedicated reconciliation writer
  *         ({Deployments.writeServiceCapacityEscrowReconciled}), from live state
- *         only, and is idempotent.
+ *         only, and is idempotent. It follows the reward-custody ceremony's
+ *         non-broadcast write policy ({_nonBroadcastWritesEnabled}): no write
+ *         under `forge test` or with `DEPLOY_SKIP_ARTIFACTS` unless the
+ *         artifact is redirected to a scratch root (Codex #2585 r2). Binding
+ *         and staging refuse when the artifact names an escrow that the
+ *         Diamond does not have bound, so a stale artifact is found BEFORE the
+ *         one-shot bind changes live state, never after (r2).
  *
  *         Usage, from contracts/ on main:
  *           forge script script/BindServiceCapacityEscrow.s.sol --rpc-url $RPC --broadcast   # bind (direct)
@@ -95,16 +102,38 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
             recorded == address(0) || recorded == escrow,
             "BindServiceCapacityEscrow: the artifact names a different escrow than the Diamond reports"
         );
+        if (!_nonBroadcastWritesEnabled()) {
+            console.log("writes are off for this run (forge test / DEPLOY_SKIP_ARTIFACTS) -- .serviceCapacityEscrow NOT written");
+            return escrow;
+        }
         Deployments.writeServiceCapacityEscrowReconciled(escrow);
         console.log("recorded .serviceCapacityEscrow from live state:", escrow);
         console.log("next: bash script/exportFrontendDeployments.sh");
     }
 
+    /// @dev Before a bind or a stage: the Diamond has no escrow bound AND the
+    ///      artifact names none. An artifact that names one while the Diamond
+    ///      has none is stale, and binding past it would leave a fresh holder
+    ///      that record() then refuses to publish.
     function _requireUnbound(address diamond) internal view {
         (address escrow,,) = ServiceCapacityFacet(diamond).getServiceCapacityEscrow();
         require(
             escrow == address(0),
             "BindServiceCapacityEscrow: the escrow is already bound (binding is one-shot) -- run record() to publish it"
         );
+        require(
+            Deployments.readServiceCapacityEscrowOptional() == address(0),
+            "BindServiceCapacityEscrow: the artifact names an escrow but the Diamond has none bound -- reconcile the artifact before binding"
+        );
+    }
+
+    /// @dev The reward-custody ceremony's non-broadcast write policy
+    ///      (`RewardCustodyCeremonyBase._nonBroadcastWritesEnabled`), plus the
+    ///      one case that is always safe: a REDIRECTED artifact, which lives under
+    ///      the scratch prefix and can never be a committed file.
+    function _nonBroadcastWritesEnabled() internal view returns (bool) {
+        if (Deployments.artifactIsRedirected()) return true;
+        if (vm.isContext(VmSafe.ForgeContext.TestGroup)) return false;
+        return !vm.envOr("DEPLOY_SKIP_ARTIFACTS", false);
     }
 }
