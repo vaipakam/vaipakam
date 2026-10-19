@@ -28,7 +28,15 @@
 #     contributor is expected to review the diff and commit in the
 #     keeper-bot repo themselves.
 #   - Doesn't run forge build first. Assumes you've already run
-#     `forge build` in contracts/ since the last contract edit.
+#     `forge build --skip test` in contracts/ since the last contract edit.
+#
+# What it DOES run besides `forge inspect`: the bot's own
+# `scripts/gen-typed-abis.mjs`, when the checkout has it, so the typed ABI
+# modules the bot compiles against match the JSON written here.
+#
+# Export from a CLEAN checkout of the commit being synced. A dirty tree
+# stamps `_source.json` "(dirty)" and the export is then not reproducible
+# from the recorded commit; the script warns when that happens.
 
 set -euo pipefail
 
@@ -143,9 +151,40 @@ cat > "$OUT_DIR/_source.json" <<EOF
 EOF
 echo "  source stamp -> $OUT_DIR/_source.json"
 
+# ── Typed ABI modules (vaipakam-keeper-bot#13 / #14) ──
+# The bot types every Diamond call from `src/abis/typed/*.ts`, generated from
+# the JSON just written, and its CI (`npm run check:abis`) fails a sync whose
+# typed modules were not regenerated. Run the bot's own generator here so the
+# sync is complete in one step. A bot checkout older than #14 has no
+# generator; that is not an error, it only means there is nothing to
+# regenerate, so say so and carry on.
+GEN="$KEEPER_BOT_DIR/scripts/gen-typed-abis.mjs"
+if [ -f "$GEN" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Error: node not in PATH; it is needed to run $GEN" >&2
+    exit 1
+  fi
+  echo "Generating typed ABI modules"
+  if ! node "$GEN"; then
+    echo "Error: $GEN failed; src/abis/typed/ is not in sync with the JSON" >&2
+    exit 1
+  fi
+  echo "  typed modules -> $OUT_DIR/typed/"
+else
+  echo "Note: $GEN not found (bot checkout predates keeper-bot#14);"
+  echo "      skipped typed-ABI generation."
+fi
+
+if [ -n "$DIRTY" ]; then
+  echo ""
+  echo "Warning: the monorepo tree was not clean at a single commit during this"
+  echo "export, so _source.json is stamped '(dirty)' and the export cannot be"
+  echo "reproduced from $COMMIT. Re-run it from a clean checkout before committing."
+fi
+
 echo ""
 echo "Done. Next steps:"
 echo "  cd $KEEPER_BOT_DIR"
-echo "  git diff src/abis/   # review the change"
-echo "  npm run typecheck    # confirm bot still builds"
-echo "  git commit -am 'Sync ABIs with vaipakam@${COMMIT:0:7}'"
+echo "  git diff src/abis/   # review the change (JSON and typed modules)"
+echo "  npm run typecheck    # every Diamond call is checked against the new ABIs"
+echo "  git add src/abis && git commit -m 'Sync ABIs with vaipakam@${COMMIT:0:7}'"
