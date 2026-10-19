@@ -101,12 +101,13 @@ import {
   MAINNET_RPC_ENVS,
   SERVICE_CHAINS,
   chainClients,
-  checkPrivateKey,
   configuredChains,
   createSendQueues,
   keepPublication,
   loadDeployments,
   notifyOps,
+  privateKeySecret,
+  readPrivateKey,
   redact,
   sendTransaction,
   writeStateFile,
@@ -842,11 +843,11 @@ export function readConfig(env) {
   const stateDir = env.SANCTIONS_DELISTER_STATE_DIR || env.STATE_DIRECTORY;
   if (!stateDir) missing.push('SANCTIONS_DELISTER_STATE_DIR (or systemd StateDirectory=)');
   if (missing.length) throw new Error(`not configured: ${missing.join(', ')}`);
-  checkPrivateKey('SANCTIONS_DELISTER_PRIVATE_KEY', env.SANCTIONS_DELISTER_PRIVATE_KEY);
+  const privateKey = readPrivateKey('SANCTIONS_DELISTER_PRIVATE_KEY', env.SANCTIONS_DELISTER_PRIVATE_KEY);
   return {
     chains,
     ignoredMainnetRpcs: MAINNET_RPC_ENVS.filter((k) => env[k]),
-    privateKey: env.SANCTIONS_DELISTER_PRIVATE_KEY,
+    privateKey,
     stateDir: stateDir.split(':')[0],
     tgToken: env.TG_OPS_BOT_TOKEN || '',
     tgChatId: env.TG_OPS_CHAT_ID || '',
@@ -1251,7 +1252,7 @@ async function check() {
 async function main() {
   if (process.argv.includes('--check')) return check();
   const cfg = readConfig(process.env);
-  const secrets = [...cfg.chains.map((c) => c.rpc), cfg.privateKey, cfg.tgToken];
+  const secrets = [...cfg.chains.map((c) => c.rpc), privateKeySecret(cfg.privateKey), cfg.tgToken];
   const clean = (m) => redact(m, secrets);
   if (!cfg.tgToken || !cfg.tgChatId) console.log('TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset: this run reports to the journal only.');
   if (cfg.ignoredMainnetRpcs.length) console.log(`ignored ${cfg.ignoredMainnetRpcs.join(', ')}: the delister runs on testnets only until a hardened mainnet host is decided (#2443).`);
@@ -1341,7 +1342,7 @@ async function main() {
 
 if (isEntryPoint(import.meta)) {
   main().catch((e) => {
-    console.error(`sanctions-delister: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_DELISTER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
+    console.error(`sanctions-delister: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), privateKeySecret(process.env.SANCTIONS_DELISTER_PRIVATE_KEY), process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);
   });
 }

@@ -46,11 +46,32 @@ export function loadDeployments() {
 /** secp256k1's group order: a private key must be in [1, n). */
 const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 
-/** Throws unless `value` (the setting `name`) is a usable private key. */
-export function checkPrivateKey(name, value) {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error(`${name} is not a 32-byte hex key`);
-  const scalar = BigInt(value);
+/**
+ * The private key the setting `name` holds, as `0x` and 64 hex digits; throws
+ * unless `value` is a usable one. The key may be written with or without its
+ * `0x` prefix and with spaces around it, the forms the keeper accepts for
+ * KEEPER_PRIVATE_KEY (apps/keeper/src/keeper.ts, resolveKeeperAccount), so a
+ * key copied the way keeper.env holds it works here too. Every caller signs
+ * with the returned value, never with `value` itself. The errors never quote
+ * the value.
+ */
+export function readPrivateKey(name, value) {
+  const trimmed = String(value ?? '').trim();
+  const key = trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error(`${name} is not a 32-byte hex key (64 hex digits, with or without 0x)`);
+  const scalar = BigInt(key);
   if (scalar === 0n || scalar >= SECP256K1_ORDER) throw new Error(`${name} is not a valid secp256k1 key (zero, or not below the curve order)`);
+  return key;
+}
+
+/**
+ * What redaction removes for a key setting: `value` without spaces around it
+ * or its `0x` prefix. Both ways of writing the key contain that, so a message
+ * printing either form loses it.
+ */
+export function privateKeySecret(value) {
+  const trimmed = String(value ?? '').trim();
+  return trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
 }
 
 /** The configured chains: every {@link SERVICE_CHAINS} row whose RPC is set. */

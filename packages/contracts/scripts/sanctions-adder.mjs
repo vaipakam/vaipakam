@@ -71,11 +71,12 @@ import {
   MAINNET_RPC_ENVS,
   SERVICE_CHAINS,
   chainClients,
-  checkPrivateKey,
   configuredChains,
   keepPublication,
   loadDeployments,
   notifyOps,
+  privateKeySecret,
+  readPrivateKey,
   redact,
   sendTransaction,
   sleep,
@@ -309,11 +310,11 @@ export function readConfig(env) {
   const stateDir = env.SANCTIONS_ADDER_STATE_DIR || env.STATE_DIRECTORY;
   if (!stateDir) missing.push('SANCTIONS_ADDER_STATE_DIR (or systemd StateDirectory=)');
   if (missing.length) throw new Error(`not configured: ${missing.join(', ')}`);
-  checkPrivateKey('SANCTIONS_ADDER_PRIVATE_KEY', env.SANCTIONS_ADDER_PRIVATE_KEY);
+  const privateKey = readPrivateKey('SANCTIONS_ADDER_PRIVATE_KEY', env.SANCTIONS_ADDER_PRIVATE_KEY);
   return {
     chains,
     ignoredMainnetRpcs: MAINNET_RPC_ENVS.filter((k) => env[k]),
-    privateKey: env.SANCTIONS_ADDER_PRIVATE_KEY,
+    privateKey,
     // Colon-separated by systemd when several are configured; ours is one.
     stateDir: stateDir.split(':')[0],
     keepFiles: env.SANCTIONS_ADDER_KEEP_FILES ? Number(parseUintArg('SANCTIONS_ADDER_KEEP_FILES', env.SANCTIONS_ADDER_KEEP_FILES, { min: 1n, max: 1000n })) : DEFAULT_KEEP_FILES,
@@ -401,7 +402,7 @@ async function main() {
   // Settings that cannot be read leave nowhere to report but the journal:
   // there is no state directory or chat to trust yet.
   const cfg = readConfig(process.env);
-  const secrets = [...cfg.chains.map((c) => c.rpc), cfg.privateKey, cfg.tgToken];
+  const secrets = [...cfg.chains.map((c) => c.rpc), privateKeySecret(cfg.privateKey), cfg.tgToken];
   const clean = (m) => redact(m, secrets);
   if (!cfg.tgToken || !cfg.tgChatId) console.log('TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset: this run reports to the journal only.');
   if (cfg.ignoredMainnetRpcs.length) console.log(`ignored ${cfg.ignoredMainnetRpcs.join(', ')}: the adder runs on testnets only until a hardened mainnet host is decided (#2443).`);
@@ -461,7 +462,7 @@ async function main() {
 
 if (isEntryPoint(import.meta)) {
   main().catch((e) => {
-    console.error(`sanctions-adder: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_ADDER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
+    console.error(`sanctions-adder: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), privateKeySecret(process.env.SANCTIONS_ADDER_PRIVATE_KEY), process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);
   });
 }
