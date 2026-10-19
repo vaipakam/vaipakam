@@ -90,6 +90,7 @@ export {
   type GraceDefaultOutcome,
   type GraceLoan,
 } from './closeOut';
+import { rotate } from './rotate';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
@@ -345,12 +346,8 @@ export async function findDefaultable(
   return { defaultable, unread, window };
 }
 
-/** The candidates starting at `step mod length`. */
-export function rotate<T>(items: readonly T[], step: number): T[] {
-  if (items.length === 0) return [];
-  const start = ((step % items.length) + items.length) % items.length;
-  return [...items.slice(start), ...items.slice(0, start)];
-}
+/** The candidates starting at `step mod length` — the keeper's shared rule (`rotate.ts`). */
+export { rotate } from './rotate';
 
 /** This run's batch: `width` candidates starting `run × width` along the
  *  list, so consecutive runs take consecutive, non-overlapping batches and
