@@ -526,13 +526,6 @@ library Deployments {
     ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
     ///         (live chains); replaced only by the paused ceremony.
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
-    /// @notice #2583 — the service-capacity deposit escrow (a `RewardCustodyHolder`
-    ///         instance of its own) bound to this Diamond by
-    ///         `bindServiceCapacityEscrow()`, which binds once. Written by
-    ///         `BindServiceCapacityEscrow` from the address the Diamond reports, so
-    ///         the artifact can never name a holder the Diamond does not use. Not an
-    ///         identity key: it changes no inventory identity.
-    function writeServiceCapacityEscrow(address a) internal { _writeAddr(".serviceCapacityEscrow", a); }
     /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
     ///         this Diamond, recorded as ONE `.sanctions` object:
     ///         `{oracle, kind}`. `kind` is "testnet-overlay" today; the record
@@ -1282,9 +1275,11 @@ library Deployments {
     ///      before the publication marker so a dry run never demands a live
     ///      publication token either. There is NO switch that widens it — not
     ///      an environment variable, which a caller's shell or `.env` could
-    ///      carry into every write (Codex #2158 r21 P2); the single real-run
-    ///      exception is {writeRewardCustodyHolderReconciled}, a dedicated
-    ///      writer for one field that a caller invokes on purpose.
+    ///      carry into every write (Codex #2158 r21 P2); the real-run
+    ///      exceptions are the two reconciliation writers,
+    ///      {writeRewardCustodyHolderReconciled} and
+    ///      {writeServiceCapacityEscrowReconciled}, each a dedicated writer for
+    ///      one field that a caller invokes on purpose.
     function _dryRunSkips(string memory jsonKey) private view returns (bool) {
         if (!CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun)) return false;
         console.log("Deployments: dry run - NOT writing", jsonKey);
@@ -1303,6 +1298,21 @@ library Deployments {
         requireMarkedPublication(".rewardCustodyHolder");
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(a), path(), ".rewardCustodyHolder");
+    }
+
+    /// @dev #2583 (Codex #2585 r1) — the ONLY writer of `.serviceCapacityEscrow`,
+    ///      and the second reconciliation exception to the dry-run gate, on the
+    ///      same ground as {writeRewardCustodyHolderReconciled}: its caller,
+    ///      `BindServiceCapacityEscrow.record()`, sends nothing, so forge
+    ///      classifies it as a dry run, yet it IS the real run. It writes the
+    ///      escrow the Diamond REPORTS from live state, read after the bind has
+    ///      confirmed. There is deliberately no writer fed by a bind's simulated
+    ///      return value, so the artifact can never name a holder that a
+    ///      submitted-but-failed bind never produced. Not an identity key.
+    function writeServiceCapacityEscrowReconciled(address a) internal {
+        requireMarkedPublication(".serviceCapacityEscrow");
+        _ensureFile();
+        CHEATS.writeJson(CHEATS.toString(a), path(), ".serviceCapacityEscrow");
     }
 
     function _writeAddr(string memory jsonKey, address a) private {

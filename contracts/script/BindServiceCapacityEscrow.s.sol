@@ -3,60 +3,108 @@ pragma solidity ^0.8.29;
 
 import {Script, console} from "forge-std/Script.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /**
  * @title  BindServiceCapacityEscrow
- * @notice Bind this chain's service-capacity deposit escrow if it is not bound
- *         yet, and record the bound address in the deployment artifact as
- *         `.serviceCapacityEscrow` (#2583).
+ * @notice Bind this chain's service-capacity deposit escrow and publish it in the
+ *         deployment artifact as `.serviceCapacityEscrow` (#2583).
  *
- *         `bindServiceCapacityEscrow()` deploys a `RewardCustodyHolder` instance
- *         of its own, the contract that custodies operators' refundable capacity
- *         principal, and binds it ONCE. Recording it in the artifact lets
- *         monitoring and explorer tooling find it from the canonical deployments
- *         bundle, as they find `rewardCustodyHolder`.
+ *         `bindServiceCapacityEscrow()` constructs a `RewardCustodyHolder`
+ *         instance of its own (the contract that custodies operators' refundable
+ *         capacity principal) and binds it ONCE. The Diamond constructs it, so
+ *         nothing is deployed or supplied here.
  *
- * @dev    The recorded address is ALWAYS the one the Diamond reports
- *         (`getServiceCapacityEscrow()`), read back after any bind, never a
- *         value computed or remembered by this script. So the artifact cannot
- *         name a holder the Diamond does not use. On a chain already bound, the
- *         script sends nothing and only records; run it with `--broadcast` so
- *         the artifact write is not treated as a dry run.
+ *  - `run()`    — DIRECT: `ADMIN_PRIVATE_KEY` holds `ADMIN_ROLE` (every chain
+ *                 before `Handover`; testnets stay admin-owned). Binds and
+ *                 writes NOTHING. Refuses before any broadcast when the key
+ *                 lacks the role, pointing at `stage()`.
+ *  - `stage()`  — STAGED, for a handed-over deployment where `ADMIN_ROLE` sits on
+ *                 the Timelock: broadcasts nothing and prints the calldata the
+ *                 Timelock executes against the Diamond.
+ *  - `record()` — after the bind has CONFIRMED, by either route: writes
+ *                 `.serviceCapacityEscrow` from the address the Diamond reports
+ *                 in live state. Refuses while nothing is bound, and when the
+ *                 artifact already names a different escrow.
  *
- *         Env: ADMIN_PRIVATE_KEY (holds ADMIN_ROLE on the Diamond; needed only
- *         when a bind is due). Usage, from contracts/ on main:
- *           forge script script/BindServiceCapacityEscrow.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+ * @dev    Why bind and record are separate runs (Codex #2585 r1). The artifact
+ *         must never name a holder the Diamond does not use. A run that binds
+ *         would otherwise record the address from Forge's pre-broadcast
+ *         simulation, before the transaction is submitted or confirmed. And a
+ *         run on an already-bound chain sends nothing, so Forge treats it as a
+ *         dry run and the ordinary writers skip it. `record()` writes through
+ *         the dedicated reconciliation writer
+ *         ({Deployments.writeServiceCapacityEscrowReconciled}), from live state
+ *         only, and is idempotent.
+ *
+ *         Usage, from contracts/ on main:
+ *           forge script script/BindServiceCapacityEscrow.s.sol --rpc-url $RPC --broadcast   # bind (direct)
+ *           forge script script/BindServiceCapacityEscrow.s.sol --sig "stage()" --rpc-url $RPC
+ *           forge script script/BindServiceCapacityEscrow.s.sol --sig "record()" --rpc-url $RPC  # after confirmation
+ *           bash script/exportFrontendDeployments.sh
  */
-contract BindServiceCapacityEscrow is Script {
+contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     function run() external {
-        address diamond = Deployments.readDiamond();
-        (address escrow,,) = ServiceCapacityFacet(diamond).getServiceCapacityEscrow();
-        uint256 adminKey = escrow == address(0) ? vm.envUint("ADMIN_PRIVATE_KEY") : 0;
-        runWith(diamond, adminKey);
+        bindWith(Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"));
     }
 
-    /// @notice Parameterised entry: the same body as {run}, with the Diamond and
-    ///         the admin key passed in (tests drive this, not the environment).
-    function runWith(address diamond, uint256 adminKey) public returns (address escrow) {
-        ServiceCapacityFacet capacity = ServiceCapacityFacet(diamond);
-        (escrow,,) = capacity.getServiceCapacityEscrow();
-        if (escrow == address(0)) {
-            require(adminKey != 0, "BindServiceCapacityEscrow: a bind is due and no admin key was given");
-            vm.startBroadcast(adminKey);
-            capacity.bindServiceCapacityEscrow();
-            vm.stopBroadcast();
-            (escrow,,) = capacity.getServiceCapacityEscrow();
-            require(escrow != address(0), "BindServiceCapacityEscrow: the bind did not take");
-            console.log("bound service-capacity escrow:", escrow);
-        } else {
-            console.log("service-capacity escrow already bound:", escrow);
-        }
-        if (Deployments.artifactWritesEnabled()) {
-            Deployments.writeServiceCapacityEscrow(escrow);
-            console.log("recorded .serviceCapacityEscrow in addresses.json; next: bash script/exportFrontendDeployments.sh");
-        } else {
-            console.log("dry run: addresses.json NOT written");
-        }
+    function stage() external view {
+        stageFor(Deployments.readDiamond());
+    }
+
+    function record() external {
+        recordFor(Deployments.readDiamond());
+    }
+
+    // ── parameterised entries (tests drive these, not the environment) ──────
+
+    function bindWith(address diamond, uint256 adminKey) public {
+        _requireUnbound(diamond);
+        address admin = vm.addr(adminKey);
+        require(
+            AccessControlFacet(diamond).hasRole(LibAccessControl.ADMIN_ROLE, admin),
+            "BindServiceCapacityEscrow: ADMIN_PRIVATE_KEY does not hold ADMIN_ROLE -- after governance handover use stage() / record()"
+        );
+        console.log("=== Service-capacity escrow (bind, direct) ===");
+        console.log("Diamond:", diamond);
+        vm.startBroadcast(adminKey);
+        ServiceCapacityFacet(diamond).bindServiceCapacityEscrow();
+        vm.stopBroadcast();
+        console.log("bind submitted; once it has confirmed, run record() to publish the escrow");
+    }
+
+    function stageFor(address diamond) public view {
+        _requireUnbound(diamond);
+        console.log("=== Service-capacity escrow (bind, staged) ===");
+        console.log("Diamond:", diamond);
+        console.log("Execute against the Diamond, via the Timelock:");
+        console.log("  bindServiceCapacityEscrow()  -- constructs and binds the escrow in that transaction");
+        console.logBytes(abi.encodeCall(ServiceCapacityFacet.bindServiceCapacityEscrow, ()));
+        console.log("Then run record() to publish it.");
+    }
+
+    function recordFor(address diamond) public returns (address escrow) {
+        (escrow,,) = ServiceCapacityFacet(diamond).getServiceCapacityEscrow();
+        require(escrow != address(0), "BindServiceCapacityEscrow: no escrow is bound yet -- bind (run() or stage()) and let it confirm first");
+        require(escrow.code.length != 0, "BindServiceCapacityEscrow: the reported escrow has no code");
+        address recorded = Deployments.readServiceCapacityEscrowOptional();
+        require(
+            recorded == address(0) || recorded == escrow,
+            "BindServiceCapacityEscrow: the artifact names a different escrow than the Diamond reports"
+        );
+        Deployments.writeServiceCapacityEscrowReconciled(escrow);
+        console.log("recorded .serviceCapacityEscrow from live state:", escrow);
+        console.log("next: bash script/exportFrontendDeployments.sh");
+    }
+
+    function _requireUnbound(address diamond) internal view {
+        (address escrow,,) = ServiceCapacityFacet(diamond).getServiceCapacityEscrow();
+        require(
+            escrow == address(0),
+            "BindServiceCapacityEscrow: the escrow is already bound (binding is one-shot) -- run record() to publish it"
+        );
     }
 }
