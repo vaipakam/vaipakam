@@ -403,6 +403,9 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
+    /// @notice #2583 — optional, non-reverting read of `.serviceCapacityEscrow`.
+    ///         Zero on a chain whose escrow has not been bound and recorded.
+    function readServiceCapacityEscrowOptional() internal view returns (address) { return _tryReadAddr(".serviceCapacityEscrow"); }
     /// @notice #2439 — optional, non-reverting read of `.sanctions.oracle`, the
     ///         oracle `ConfigureSanctionsOracle` last set on this Diamond. Zero
     ///         on a chain that has not run it.
@@ -523,6 +526,13 @@ library Deployments {
     ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
     ///         (live chains); replaced only by the paused ceremony.
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
+    /// @notice #2583 — the service-capacity deposit escrow (a `RewardCustodyHolder`
+    ///         instance of its own) bound to this Diamond by
+    ///         `bindServiceCapacityEscrow()`, which binds once. Written by
+    ///         `BindServiceCapacityEscrow` from the address the Diamond reports, so
+    ///         the artifact can never name a holder the Diamond does not use. Not an
+    ///         identity key: it changes no inventory identity.
+    function writeServiceCapacityEscrow(address a) internal { _writeAddr(".serviceCapacityEscrow", a); }
     /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
     ///         this Diamond, recorded as ONE `.sanctions` object:
     ///         `{oracle, kind}`. `kind` is "testnet-overlay" today; the record
