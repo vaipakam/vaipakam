@@ -122,6 +122,7 @@ contract PriorityRoutingLiveFork is Test {
         keccak256("IntentPriorityFill(address,address,address,uint256,address,uint256)");
     bytes32 internal constant T_CREDIT_CONSUMED = keccak256("PerkCreditConsumed(address,uint256,uint256)");
     bytes32 internal constant T_CAPACITY_SPENT = keccak256("CapacitySpent(uint8,address,uint256,uint256)");
+    bytes32 internal constant T_FREE_TIER_SPENT = keccak256("CapacityFreeTierSpent(uint8,address,uint256,uint256)");
     bytes32 internal constant T_PERK_ARMED = keccak256("PriorityRoutingPerkArmed(uint256)");
     bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,bool)");
 
@@ -146,6 +147,9 @@ contract PriorityRoutingLiveFork is Test {
         uint256 pin = vm.envOr("FORK_BLOCK", target == BASE_SEPOLIA_DIAMOND ? BASE_SEPOLIA_PRE_ARM_BLOCK : 0);
         if (pin == 0) vm.createSelectFork(url);
         else vm.createSelectFork(url, pin);
+        // The default target is Base Sepolia's: proof against it must BE Base
+        // Sepolia (Codex #2582 r4); an explicit FORK_DIAMOND names its own chain.
+        if (target == BASE_SEPOLIA_DIAMOND) require(block.chainid == 84532, "default target: the fork is not Base Sepolia");
         live = true;
         d = IDiamondForProof(target);
         address own = d.owner();
@@ -164,8 +168,11 @@ contract PriorityRoutingLiveFork is Test {
         _mockOracle(lendAsset);
         _mockOracle(collAsset);
         vm.startPrank(riskAdmin);
-        d.updateRiskParams(lendAsset, 8000, 300, 1000);
-        d.updateRiskParams(collAsset, 8000, 300, 1000);
+        // A zero liquidation bonus, so the fixture never depends on the
+        // deployment's incentive cap (Codex #2582 r4); liquidation is not what
+        // this proof is about.
+        d.updateRiskParams(lendAsset, 8000, 0, 1000);
+        d.updateRiskParams(collAsset, 8000, 0, 1000);
         vm.stopPrank();
         vm.startPrank(admin);
         // The progressive risk-access gate is an onboarding posture orthogonal to
@@ -312,9 +319,14 @@ contract PriorityRoutingLiveFork is Test {
         assertEq(price, PRICE, "configured price reads back");
         assertEq(duration, 0, "counted, not timed");
         // The price write leaves the chain's curve exactly as it was.
+        // Every field (Codex #2582 r4).
         LibVaipakam.CapacityCurve memory after_ = d.getCapacityCurve(SOLVER);
-        assertEq(after_.epoch, curve.epoch, "the curve is untouched by arming");
-        assertEq(after_.classCost, curve.classCost, "the curve's cost is untouched by arming");
+        assertEq(after_.freeTier, curve.freeTier, "arming leaves the curve: freeTier");
+        assertEq(after_.freeRatePerSec, curve.freeRatePerSec, "arming leaves the curve: freeRatePerSec");
+        assertEq(after_.bondAt4x, curve.bondAt4x, "arming leaves the curve: bondAt4x");
+        assertEq(after_.classCost, curve.classCost, "arming leaves the curve: classCost");
+        assertEq(after_.epoch, curve.epoch, "arming leaves the curve: epoch");
+        assertEq(after_.setAt, curve.setAt, "arming leaves the curve: setAt");
 
         // 2. BOTH owners buy one credit each, at exactly the price; only the
         //    flagged owner opts the intent in. The control therefore differs from
@@ -365,6 +377,7 @@ contract PriorityRoutingLiveFork is Test {
         assertEq(_count(logs, T_PRIORITY_FILL), 1, "IntentPriorityFill once");
         assertEq(_count(logs, T_CREDIT_CONSUMED), 1, "PerkCreditConsumed once");
         assertEq(_count(logs, T_CAPACITY_SPENT), 0, "no capacity charge");
+        assertEq(_count(logs, T_FREE_TIER_SPENT), 0, "no free-tier charge either");
         _assertPayloads(logs, loanId);
 
         // 5. The unflagged intent — holding a credit, not opted in — is refused
