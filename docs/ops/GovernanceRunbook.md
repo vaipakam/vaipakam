@@ -859,6 +859,10 @@ Establish both by hand on the TARGET Diamond before scheduling anything:
   On a partial or stacked target, verify that the whole set was refreshed
   together (this is what `RefreshAllFacetsInPlace` exists for) rather than
   spot-checking a facet, and read the cap knob as well.
+  `RefreshChangedFacetsInPlace` (#2576) satisfies the same check on a testnet:
+  it refreshes every facet whose executable code differs from the build, which
+  is every facet the inlined library reached, and then verifies that every
+  routed selector runs this tree's code.
 - **PR-6, the ALREADY-LANDED family** — an upgrade that installs the #1947 fix
   says nothing about whether THIS Diamond ever received #1354/#1383. Loupe-resolve
   and compare `RepayFacet`, `RepayPeriodicFacet`, `PrecloseFacet`,
