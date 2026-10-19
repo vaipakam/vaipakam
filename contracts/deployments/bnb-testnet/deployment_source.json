@@ -122,7 +122,7 @@
         ],
         "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
         "armingFeeRate": "2e16 (2%)",
-        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 unpriced - decided starting price 2 VPFI per credit, applied only after keeper #2564 ships and a fork check passes"
+        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 deliberately left UNPRICED: this deployment carries no oracle-priced test assets, so no lender intent can be filled here and the fork check (design precondition 4) cannot pass on its live state. Selling a credit would sell an effect that cannot be delivered. Price it only once a fillable pair exists and the fork check passes"
       }
     }
   ]

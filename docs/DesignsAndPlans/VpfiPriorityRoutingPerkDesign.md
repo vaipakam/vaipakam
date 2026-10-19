@@ -164,6 +164,15 @@ times the 0.5 VPFI default notification fee, since a credit buys a fill that
 would otherwise wait — set only after preconditions 3 and 4 hold on that chain,
 and revisited before any mainnet pricing.
 
+**Applied 2026-10-19** on Base Sepolia and Arbitrum Sepolia, once the keeper change
+was live there and `test/fork/PriorityRoutingPerkLiveForkTest.t.sol` had passed on a
+fork of each chain's deployed Diamond. That test runs against the live Solver curve, the
+live intent gates and the live oracle, and makes no change on the fork except the arming
+write. **BNB testnet stays unpriced.** Its deployment carries no oracle-priced test
+assets, so no lender intent can be filled there. Precondition 4 therefore cannot hold on
+its live state, and a credit sold there could never be used. Price it only once a
+fillable pair exists and the same fork check passes there.
+
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
 chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):
 the first priced, counted write by this version sets a one-time marker that the

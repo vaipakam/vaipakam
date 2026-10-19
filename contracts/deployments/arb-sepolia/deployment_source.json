@@ -118,11 +118,18 @@
             "meaning": "same values; refill rate rounded UP (ceil(60e18/3600)) so one action accrues in exactly 60s; the epoch-1 floor-rounded rate fell 40-80 units short at that boundary (Codex #2581 r5)",
             "tx": "0x4cf8b4ff7929badb162a003a987df09cdf9cfa9898017850e51296b1219d3dac",
             "block": 320639630
+          },
+          {
+            "call": "setPerkConfig(1, 2e18, 0)",
+            "meaning": "arms the priority-routing perk (id 1): 2 VPFI per credit, counted; emits PriorityRoutingPerkArmed. Applied after keeper #2564 was live and test/fork/PriorityRoutingPerkLiveForkTest passed on a fork of this Diamond",
+            "tx": "0x8a77a5c76cc772f50736cd7f2f0ea90814771bef95b3a18d3b5e17f0af1579a8",
+            "block": 320669577
           }
         ],
         "serviceCapacityEscrow": "0x098155866D7EbAe0a765f2E220998f4C001d8490",
         "armingFeeRate": "2e16 (2%)",
-        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 unpriced - decided starting price 2 VPFI per credit, applied only after keeper #2564 ships and a fork check passes"
+        "note": "owner-approved 2026-10-19 (rate, enable, the curves, and the perk 1 price); perk 1 ARMED at 2 VPFI per credit after keeper #2564 went live and the fork check passed",
+        "priorityRoutingPerkPrice": "2e18 (2 VPFI per credit, counted)"
       }
     }
   ]
