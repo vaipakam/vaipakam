@@ -60,7 +60,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { SendPastDeadline } from './submissionQueue';
+import { isSendPastDeadline } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import {
@@ -1010,7 +1010,7 @@ async function send(
   } catch (err) {
     budget.writes = 0;
     // Refused before signing at its turn in the queue: nothing was sent.
-    if (err instanceof SendPastDeadline) return 'skipped';
+    if (isSendPastDeadline(err)) return 'skipped';
     console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} send failed: ${shortErr(err)}`);
     return 'failed';
   }

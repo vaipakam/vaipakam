@@ -18,8 +18,13 @@ now waits for the next one-minute run instead. Passes that loop over loans,
 days or mirrors also stop asking for more work once the deadline has passed,
 and say so in the log, rather than queueing sends that would be refused.
 
-The deadline is enforced twice. The type system makes every pass state it, and
-the queue refuses at run time a missing, non-numeric or infinite deadline, so a
-caller outside the typechecked sources cannot switch the check off by leaving
-it out. The fallback deadlines three passes used when no tick was supplied are
+The check lives in one place: the submission slot every keeper transaction
+passes through, whether it goes out through the queued wallet or through the
+keeper's own prepared sends (the internal-match liquidation and the in-kind and
+grace-default close-outs). The slot needs a deadline to run at all. The type
+system makes every pass state it, and the slot refuses at run time a missing,
+non-numeric or infinite deadline, so a caller outside the typechecked sources
+cannot switch the check off by leaving it out. A refusal is recognised however
+the signing library wraps it, and the liquidation routes that catch their own
+send failures hand it on rather than reporting it as their own failure. The fallback deadlines three passes used when no tick was supplied are
 gone. Closes #2572.

@@ -23,7 +23,8 @@
  *     entire path is no-op.
  */
 
-import { queuedWallet, SendPastDeadline } from './submissionQueue';
+import { isSendPastDeadline, queuedWallet } from './submissionQueue';
+import { attemptErrorReason } from './keeperSend';
 import {
   type Address,
   createWalletClient,
@@ -309,12 +310,13 @@ export async function tryInKindCloseOut(
       wallet: ctx.wallet,
       diamond: ctx.diamond,
       chainId: chain.id,
+      notAfterMs: ctx.notAfterMs,
       // The in-kind role sends an empty list and never builds a route.
       buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
     },
     loanIdBig,
     'in-kind',
-  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
+  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: attemptErrorReason(err) }));
   if (outcome.kind === 'skipped') {
     console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${outcome.reason}`);
     return false;
@@ -689,6 +691,10 @@ export async function maybeAutonomousLiquidate(
           );
           return true;
         } catch (partialErr) {
+          // #2572 — a deadline refusal ends the attempt: every later send this run
+          // would be refused too. Rethrown to the outer catch, which logs it
+          // as a deferral rather than as this route's failure.
+          if (isSendPastDeadline(partialErr)) throw partialErr;
           const msg = String(partialErr);
           const lastAttempt = attempt + 1 >= MAX_PARTIAL_RESIZE_ATTEMPTS;
 
@@ -822,6 +828,10 @@ export async function maybeAutonomousLiquidate(
         );
         return true;
       } catch (splitErr) {
+        // #2572 — a deadline refusal ends the attempt: every later send this run
+        // would be refused too. Rethrown to the outer catch, which logs it
+        // as a deferral rather than as this route's failure.
+        if (isSendPastDeadline(splitErr)) throw splitErr;
         console.log(
           `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
         );
@@ -845,8 +855,8 @@ export async function maybeAutonomousLiquidate(
   } catch (err) {
     // #2572 — refused at its turn in the queue, before signing: no nonce was
     // spent and nothing reached the network. Said as a deferral, not an error.
-    if (err instanceof SendPastDeadline) {
-      console.log(`[keeper] loan=${loanId} chain=${chain.name} deferred to the next run: ${err.message}`);
+    if (isSendPastDeadline(err)) {
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} deferred to the next run: the run's deadline passed before the send's turn; nothing was signed`);
       return false;
     }
     // Any failure here is non-fatal — we logged + dedupe'd, so the
@@ -1327,6 +1337,10 @@ async function tryFlashLoanDiscountedPath(
     );
     return true;
   } catch (err) {
+    // #2572 — refused past the run's deadline: rethrown so the caller's outer
+    // catch logs one deferral instead of falling through to legacy branches
+    // whose sends would be refused the same way.
+    if (isSendPastDeadline(err)) throw err;
     console.error(
       `[keeper] loan=${loanId} chain=${chain.name} flash-loan-submit-failed ` +
         `err=${String(err).slice(0, 250)}`,

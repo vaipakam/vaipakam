@@ -19,9 +19,11 @@ import {
   queuedWallet,
   resetSubmissionQueues,
   SendPastDeadline,
+  isSendPastDeadline,
   withSubmissionSlot,
 } from '../src/submissionQueue';
 
+const FAR_DEADLINE = Number.MAX_SAFE_INTEGER;
 const KEY = `0x${'11'.repeat(32)}` as Hex;
 const account = privateKeyToAccount(KEY);
 const CHAIN_ID = 84532;
@@ -118,7 +120,7 @@ describe('submission queue (#2486)', () => {
     // way graceDefault sends, started together.
     const passA = wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
     const base = nodeWallet(node);
-    const passB = withSubmissionSlot(base, CHAIN_ID, account.address, async (nonce, signed) => {
+    const passB = withSubmissionSlot(base, CHAIN_ID, account.address, FAR_DEADLINE, async (nonce, signed) => {
       const signedTx = await base.signTransaction({
         account,
         chain: null,
@@ -187,6 +189,7 @@ describe('submission queue (#2486)', () => {
         wallet,
         CHAIN_ID,
         account.address,
+        FAR_DEADLINE,
         async (nonce, signed) => {
           signed();
           return nonce;
@@ -204,11 +207,11 @@ describe('submission queue (#2486)', () => {
     const node: Node = { accepted: [], rejected: [], reportedPending: () => 0 };
     const wallet = nodeWallet(node);
     await expect(
-      withSubmissionSlot(wallet, CHAIN_ID, account.address, async () => {
+      withSubmissionSlot(wallet, CHAIN_ID, account.address, FAR_DEADLINE, async () => {
         throw new Error('execution reverted');
       }),
     ).rejects.toThrow();
-    const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, async (n) => n);
+    const nonce = await withSubmissionSlot(wallet, CHAIN_ID, account.address, FAR_DEADLINE, async (n) => n);
     expect(nonce).toBe(0);
   });
 
@@ -242,11 +245,11 @@ describe('submission queue (#2486)', () => {
     const order: string[] = [];
     let releaseA!: () => void;
     const holding = new Promise<void>((r) => (releaseA = r));
-    const a = withSubmissionSlot(wallet, 1, account.address, async () => {
+    const a = withSubmissionSlot(wallet, 1, account.address, FAR_DEADLINE, async () => {
       await holding;
       order.push('chain1');
     });
-    const b = withSubmissionSlot(wallet, 2, account.address, async () => {
+    const b = withSubmissionSlot(wallet, 2, account.address, FAR_DEADLINE, async () => {
       order.push('chain2');
     });
     await b;
@@ -284,5 +287,38 @@ describe('every send carries its run deadline (#2572)', () => {
     await expect(a.sendTransaction({ account, chain: null, to: TO, ...FEES } as never)).resolves.toBeTruthy();
     expect(node.accepted).toEqual([0, 1]);
     expect(node.rejected).toEqual([]);
+  });
+
+  it('the slot itself enforces it, for a sender that bypasses the queued wallet', async () => {
+    const node: Node = { accepted: [], rejected: [] };
+    const wallet = nodeWallet(node);
+    let ran = false;
+    await expect(
+      withSubmissionSlot(wallet, CHAIN_ID, account.address, Date.now() - 1, async () => {
+        ran = true;
+      }),
+    ).rejects.toBeInstanceOf(SendPastDeadline);
+    expect(ran, 'the send body never ran').toBe(false);
+    for (const bad of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        withSubmissionSlot(wallet, CHAIN_ID, account.address, bad as number, async () => undefined),
+        String(bad),
+      ).rejects.toThrow(TypeError);
+    }
+  });
+
+  it('a refusal raised inside writeContract is recognised through viem\'s wrapping', async () => {
+    const node: Node = { accepted: [], rejected: [] };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, Date.now() - 1);
+    const err = await wallet
+      .writeContract({ address: TO, abi: PING_ABI, functionName: 'ping', account, chain: null, ...FEES } as never)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).not.toBeNull();
+    expect(isSendPastDeadline(err)).toBe(true);
+    expect(isSendPastDeadline(new Error('other'))).toBe(false);
+    expect(node.accepted).toEqual([]);
   });
 });

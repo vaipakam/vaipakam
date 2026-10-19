@@ -25,6 +25,8 @@ import {
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 import { attemptCloseOut } from '../src/closeOut';
+import { attemptErrorReason } from '../src/keeperSend';
+import { SendPastDeadline } from '../src/submissionQueue';
 import { inKindBlocker, tryInKindCloseOut } from '../src/keeper';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '@vaipakam/lib/saleHold';
 import {
@@ -87,6 +89,8 @@ interface Scene {
   internalMatch?: boolean;
   /** `isLoanDefaultable`; null makes the read fail. */
   defaultable?: boolean | null;
+  /** The pass's run deadline; defaults to one no test reaches. */
+  notAfterMs?: number;
 }
 
 const SIGNED: Hex = '0x02f86b0182';
@@ -170,6 +174,7 @@ function harness(scene: Scene) {
     wallet,
     diamond: DIAMOND,
     chainId: 84532,
+    notAfterMs: scene.notAfterMs ?? Number.MAX_SAFE_INTEGER,
     buildRoute: async (loan) => {
       routes.push(loan);
       const n = scene.calls ?? 1;
@@ -192,6 +197,17 @@ describe('attemptGraceDefault', () => {
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect(out).toMatchObject({ kind: 'unconfirmed', tx: keccak256(SIGNED), preview: 'sale', calls: 1 });
     expect(h.writes).toHaveLength(1);
+  });
+
+  it('a send whose turn comes after the run deadline is refused before signing and logged as a deferral (#2572)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, notAfterMs: Date.now() - 1 });
+    const err = await attemptGraceDefault(h.deps, LOAN_ID).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SendPastDeadline);
+    expect(h.writes, 'nothing prepared or signed').toHaveLength(0);
+    expect(attemptErrorReason(err)).toMatch(/^deferred:run-deadline-passed/);
   });
 
   it('does not report a broadcast the node refused as possibly sent', async () => {

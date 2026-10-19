@@ -71,6 +71,7 @@
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import { DefaultedFacetABI, MetricsFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { attemptErrorReason } from './keeperSend';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
@@ -205,6 +206,7 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     wallet: ctx.wallet,
     diamond: ctx.diamond,
     chainId: chain.id,
+    notAfterMs: ctx.notAfterMs,
     buildRoute: (loan) =>
       orchestrateServerQuotes(env, client, {
         chainId: chain.id,
@@ -228,12 +230,18 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
   let submitted = 0;
   let unconfirmed = 0;
   for (const loanId of picked) {
+    // #2572 — past the run's deadline every send is refused at its turn; the
+    // remaining loans keep their place for the next run.
+    if (Date.now() >= ctx.notAfterMs) {
+      console.log(`[keeper] graceDefault ${where} run deadline reached; left for the next run loans=${picked.slice(picked.indexOf(loanId)).join(',')}`);
+      break;
+    }
     let outcome: GraceDefaultOutcome;
     try {
       // eslint-disable-next-line no-await-in-loop
       outcome = await attemptGraceDefault(deps, loanId);
     } catch (err) {
-      outcome = { kind: 'skipped', reason: `error:${describeFailure(err)}` };
+      outcome = { kind: 'skipped', reason: attemptErrorReason(err) };
     }
     // Whatever step the cap interrupted — a read that threw, or a route
     // build that swallowed its failures and came back empty — the attempt

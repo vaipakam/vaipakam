@@ -104,11 +104,44 @@ export function resetSubmissionQueues(): void {
   floors.clear();
 }
 
+/** A send refused at its turn in the queue because its pass's run deadline
+ *  had passed (#2571 r1, #2572). Raised BEFORE the nonce is read or anything
+ *  is signed, so no nonce is spent and nothing reaches the network. */
+export class SendPastDeadline extends Error {}
+
+/** Whether `err` is, or wraps, a {@link SendPastDeadline}. viem wraps an
+ *  error raised inside `writeContract` (`ContractFunctionExecutionError`,
+ *  with the original as `cause`), so a top-level `instanceof` misses it; the
+ *  cause chain is walked the way {@link isDefinitiveRejection} walks it. */
+export function isSendPastDeadline(err: unknown): boolean {
+  let depth = 0;
+  for (let e: unknown = err; e && depth < 8; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof SendPastDeadline) return true;
+  }
+  return false;
+}
+
+/** The one rule for a run deadline, applied wherever a send states one. */
+function assertFiniteDeadline(notAfterMs: unknown, where: string): asserts notAfterMs is number {
+  // Refused as well as typed: the keeper's typecheck does not cover its tests
+  // or any untyped caller, and a missing or NaN deadline would compare false
+  // forever and silently switch the check off.
+  if (typeof notAfterMs !== 'number' || !Number.isFinite(notAfterMs)) {
+    throw new TypeError(`${where}: a finite run deadline is required (got ${String(notAfterMs)})`);
+  }
+}
+
 /**
  * Run `send` in this account's next slot on `chainId`, handing it the
  * nonce to use. `send` must broadcast at most one transaction with that
  * nonce, call `signed()` once it holds the signed bytes and before
  * broadcasting them, and resolve only once the broadcast has returned.
+ *
+ * `notAfterMs` is the run deadline of the pass sending (#2572). It is checked
+ * HERE, when the slot's turn comes, because this is the one place every send
+ * passes through — the queued wallet and the keeper's own prepared sends alike
+ * — and the only moment that covers the wait behind another pass's send. Past
+ * it, the slot refuses with {@link SendPastDeadline} before reading a nonce.
  *
  * The nonce is read through `wallet`'s own transport, so a pass that caps
  * its requests counts the read.
@@ -117,9 +150,11 @@ export async function withSubmissionSlot<T>(
   wallet: WalletClient,
   chainId: number,
   address: Address,
+  notAfterMs: number,
   send: (nonce: number, signed: () => void) => Promise<T>,
   now: () => number = Date.now,
 ): Promise<T> {
+  assertFiniteDeadline(notAfterMs, 'withSubmissionSlot');
   const key = keyOf(chainId, address);
   const previous = tails.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -130,6 +165,9 @@ export async function withSubmissionSlot<T>(
   tails.set(key, tail);
   await previous;
   try {
+    if (now() >= notAfterMs) {
+      throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
+    }
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
@@ -207,10 +245,6 @@ export function isDefinitiveRejection(err: unknown): boolean {
  * The queued send calls viem's actions on the UNEXTENDED client, so
  * nothing re-enters the queue. Every other action is untouched.
  */
-/** A send refused at its turn in the queue because its pass's run deadline
- *  had passed (#2571 r1). Raised BEFORE signing, so no nonce is spent. */
-export class SendPastDeadline extends Error {}
-
 export function queuedWallet(
   wallet: WalletClient,
   chainId: number,
@@ -223,12 +257,9 @@ export function queuedWallet(
    *  it. */
   notAfterMs: number,
 ): WalletClient {
-  // Refused at build time as well as by the type: the keeper's typecheck does
-  // not cover its tests or any untyped caller, and a missing or NaN deadline
-  // would otherwise compare false forever and silently disable the check.
-  if (typeof notAfterMs !== 'number' || !Number.isFinite(notAfterMs)) {
-    throw new TypeError(`queuedWallet: a finite run deadline is required (got ${String(notAfterMs)})`);
-  }
+  // At build time too, so a wallet without a deadline fails where it is made
+  // rather than at its first send.
+  assertFiniteDeadline(notAfterMs, 'queuedWallet');
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
@@ -242,10 +273,7 @@ export function queuedWallet(
       }
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
-      return withSubmissionSlot(base, chainId, account.address, async (nonce, signed) => {
-        if (Date.now() >= notAfterMs) {
-          throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
-        }
+      return withSubmissionSlot(base, chainId, account.address, notAfterMs, async (nonce, signed) => {
         const request = await prepareTransactionRequest(base, {
           ...(args as object),
           account,
