@@ -60,7 +60,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { reportSendError } from './submissionQueue';
-import { rotated, runIndex } from './runWindow';
+import { runIndex } from './runWindow';
+import { rotate } from './rotate';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -841,7 +842,7 @@ async function runRelayForChain(
   // From a start that moves each run (#2572 r5, rule 2): the deadline below
   // would otherwise cut the same assets off every run, and their demotions are
   // the fail-safe.
-  for (const asset of rotated(assets, run)) {
+  for (const asset of rotate(assets, run)) {
     // #2572 r4 — past the deadline nothing more is signed, and a run still in
     // flight holds back the next one, whose demotions are the fail-safe.
     if (Date.now() >= deadlineMs) {

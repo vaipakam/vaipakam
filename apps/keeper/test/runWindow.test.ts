@@ -2,27 +2,7 @@
  * How a pass spends one run's window (#2572 r5, src/runWindow.ts).
  */
 import { describe, expect, it } from 'vitest';
-import { readCutoffMs, rotated, runIndex, SEND_RESERVE_MS } from '../src/runWindow';
-
-describe('rotated', () => {
-  it('starts successive runs at successive items, wrapping round', () => {
-    const items = ['a', 'b', 'c'];
-    expect(rotated(items, 0)).toEqual(['a', 'b', 'c']);
-    expect(rotated(items, 1)).toEqual(['b', 'c', 'a']);
-    expect(rotated(items, 5)).toEqual(['c', 'a', 'b']);
-  });
-
-  it('puts every item at the head within one cycle of runs', () => {
-    const items = [1, 2, 3, 4];
-    const heads = new Set([0, 1, 2, 3].map((r) => rotated(items, r)[0]));
-    expect(heads).toEqual(new Set(items));
-  });
-
-  it('keeps every item exactly once, and an empty list empty', () => {
-    expect(rotated([1, 2, 3], 7).sort()).toEqual([1, 2, 3]);
-    expect(rotated([], 3)).toEqual([]);
-  });
-});
+import { readCutoffMs, runIndex, SEND_RESERVE_MS } from '../src/runWindow';
 
 describe('runIndex', () => {
   it('counts cadence steps from the scheduled time, not the clock', () => {

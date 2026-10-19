@@ -64,7 +64,8 @@ import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { rotated, runIndex } from './runWindow';
+import { runIndex } from './runWindow';
+import { rotate } from './rotate';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -153,7 +154,7 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
   let scanned = 0;
   let submitted = 0;
   let stopped = false;
-  for (const cursor of rotated(cursors, run)) {
+  for (const cursor of rotate(cursors, run)) {
     if (stopped || submitted >= MAX_EXTENDS_PER_TICK) break;
     const limit =
       cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;

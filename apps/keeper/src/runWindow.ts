@@ -10,8 +10,9 @@
  *      run in series would let a slow early chain spend the window of every
  *      chain after it, run after run.
  *   2. A list walked in a fixed order starts at a point that moves each run
- *      ({@link rotated}). Otherwise the deadline cuts the same tail off every
- *      run, and that tail is never reached.
+ *      (`rotate` in `rotate.ts`, the keeper's one rotation). Otherwise the
+ *      deadline cuts the same tail off every run, and that tail is never
+ *      reached.
  *   3. A pass that reads before it sends stops reading early enough to leave
  *      its sends time ({@link readCutoffMs}). Otherwise a slow read phase uses
  *      the whole window, every send is refused, and the next run repeats it.
@@ -38,14 +39,4 @@ export function readCutoffMs(deadlineMs: number): number {
  *  `stepMs` is the pass's cadence. */
 export function runIndex(tick: PassTick, stepMs: number, nowMs: number = Date.now()): number {
   return Math.floor((tick.scheduledTimeMs ?? nowMs) / stepMs);
-}
-
-/** `items` starting at position `index` (mod its length), wrapping round, so
- *  successive runs start successive items at the head. Pure; an empty list
- *  stays empty. */
-export function rotated<T>(items: readonly T[], index: number): T[] {
-  const n = items.length;
-  if (n === 0) return [];
-  const start = ((index % n) + n) % n;
-  return [...items.slice(start), ...items.slice(0, start)];
 }

@@ -43,7 +43,8 @@ import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
-import { readCutoffMs, rotated, runIndex } from './runWindow';
+import { readCutoffMs, runIndex } from './runWindow';
+import { rotate } from './rotate';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
@@ -184,7 +185,7 @@ async function liquidatePassForChain(
   // not change what a full scan sees.
   const offsets: bigint[] = [];
   for (let off = 0n; off < total; off += SCAN_PAGE) offsets.push(off);
-  for (const off of rotated(offsets, run)) {
+  for (const off of rotate(offsets, run)) {
     if (Date.now() >= readCutoff) {
       console.log(
         `[keeper] liquidator chain=${chain.name} read cutoff reached during paging; acting on ${ids.length} loan(s) read, the rest next run`,

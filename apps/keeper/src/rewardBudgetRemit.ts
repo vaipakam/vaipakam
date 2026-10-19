@@ -33,7 +33,8 @@ import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { rotated, runIndex } from './runWindow';
+import { runIndex } from './runWindow';
+import { rotate } from './rotate';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -277,7 +278,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   const attempted = mirrorIds.length;
   // From a start that moves each run (#2572 r5, rule 2), so the deadline does
   // not leave the same mirrors unfunded run after run.
-  for (const mirrorId of rotated(mirrorIds, run)) {
+  for (const mirrorId of rotate(mirrorIds, run)) {
     // #2572 — past the run's deadline the send queue refuses every remit
     // before broadcast; the remaining mirrors are funded next run.
     if (Date.now() >= deadlineMs) {
