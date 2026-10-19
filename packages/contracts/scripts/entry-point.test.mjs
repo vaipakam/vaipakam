@@ -1,6 +1,7 @@
-// entry-point.test.mjs — #2443: a script started through a link still runs.
-// The sanctions services are started through /opt/vaipakam-sanctions/current,
-// a link; with the paths compared as written, every run skipped its main and
+// entry-point.test.mjs — #2443: the sanctions scripts run when started
+// through a link, even one repointed while they load, and not when imported.
+// The services are started through /opt/vaipakam-sanctions/current, a link
+// the installer repoints; a guard comparing paths skipped every run there and
 // exited 0 having done nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,52 +13,74 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isEntryPoint } from './entry-point.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const PACKAGE = join(HERE, '..');
 
-/** A fresh directory holding `real/script.mjs` and `link`, a link to `real`. */
-function linkedScript() {
-  const dir = mkdtempSync(join(tmpdir(), 'entry-point-'));
-  const real = join(dir, 'real');
-  mkdirSync(real);
-  const script = join(real, 'script.mjs');
-  writeFileSync(script, '');
-  symlinkSync(real, join(dir, 'link'));
-  return { script, viaLink: join(dir, 'link', 'script.mjs'), dir };
+test('the entry point is what Node reports, and an unreported one is an error', () => {
+  assert.equal(isEntryPoint({ main: true }), true);
+  assert.equal(isEntryPoint({ main: false }), false);
+  assert.throws(() => isEntryPoint({}), /Node 22\.18 or newer is needed/);
+});
+
+/** A fresh directory with `current`, a link to this package, as the units have. */
+function release() {
+  const dir = mkdtempSync(join(tmpdir(), 'entry-point-release-'));
+  symlinkSync(PACKAGE, join(dir, 'current'));
+  return dir;
 }
-
-test('the module is the entry point when started by its real path', () => {
-  const { script } = linkedScript();
-  assert.equal(isEntryPoint(pathToFileURL(script).href, script), true);
-});
-
-test('the module is the entry point when started through a link', () => {
-  const { script, viaLink } = linkedScript();
-  // Node's default: import.meta.url is the link's target, argv[1] the link.
-  assert.equal(isEntryPoint(pathToFileURL(script).href, viaLink), true);
-  // Under --preserve-symlinks-main, import.meta.url keeps the link path.
-  assert.equal(isEntryPoint(pathToFileURL(viaLink).href, viaLink), true);
-});
-
-test('another script, no script, or a missing file is not the entry point', () => {
-  const { script, dir } = linkedScript();
-  const other = join(dir, 'other.mjs');
-  writeFileSync(other, '');
-  assert.equal(isEntryPoint(pathToFileURL(script).href, other), false);
-  assert.equal(isEntryPoint(pathToFileURL(script).href, undefined), false);
-  assert.equal(isEntryPoint(pathToFileURL(script).href, join(dir, 'missing.mjs')), false);
-});
 
 // The real scripts, started the way their units start them: through a link to
 // the release, with an empty environment. Each must reach its main and say so.
-for (const [script, args, expected] of [
+const SCRIPTS = [
   ['sanctions-adder.mjs', ['--check'], /^sanctions-adder: release ok /m],
   ['sanctions-delister.mjs', ['--check'], /^sanctions-delister: release ok /m],
   ['ofac-sanctions-diff.mjs', ['--help'], /OFAC SDN → `SanctionsList` DIFF TOOL/],
-]) {
+];
+
+for (const [script, args, expected] of SCRIPTS) {
   test(`${script} ${args.join(' ')} runs when started through a link`, () => {
-    const dir = mkdtempSync(join(tmpdir(), 'entry-point-release-'));
-    symlinkSync(join(HERE, '..'), join(dir, 'current'));
+    const dir = release();
     const r = spawnSync(process.execPath, [join(dir, 'current', 'scripts', script), ...args], { encoding: 'utf8', env: {} });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, expected);
+  });
+}
+
+// The installer repointing `current` while a run is still loading its modules
+// must not stop that run: the link is moved to an empty directory as soon as
+// the script, already resolved, asks for its first dependency.
+for (const [script, args, expected] of SCRIPTS) {
+  test(`${script} ${args.join(' ')} runs when its link is repointed while it loads`, () => {
+    const dir = release();
+    mkdirSync(join(dir, 'elsewhere'));
+    const hooks = join(dir, 'hooks.mjs');
+    writeFileSync(hooks, `
+      import { renameSync, symlinkSync } from 'node:fs';
+      let moved = false;
+      export async function resolve(specifier, context, next) {
+        if (!moved && specifier === 'viem') {
+          moved = true;
+          symlinkSync(${JSON.stringify(join(dir, 'elsewhere'))}, ${JSON.stringify(join(dir, 'current.new'))});
+          renameSync(${JSON.stringify(join(dir, 'current.new'))}, ${JSON.stringify(join(dir, 'current'))});
+        }
+        return next(specifier, context);
+      }
+    `);
+    const register = join(dir, 'register.mjs');
+    writeFileSync(register, `import { register } from 'node:module'; register(${JSON.stringify(pathToFileURL(hooks).href)});`);
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(register).href, join(dir, 'current', 'scripts', script), ...args], { encoding: 'utf8', env: {} });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, expected);
+  });
+}
+
+// Imported by another program, as the tests import them, none of them runs.
+for (const [script, args] of SCRIPTS) {
+  test(`${script} does not run when another script imports it`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'entry-point-import-'));
+    const importer = join(dir, 'importer.mjs');
+    writeFileSync(importer, `await import(${JSON.stringify(pathToFileURL(join(HERE, script)).href)}); console.log('imported');`);
+    const r = spawnSync(process.execPath, [importer, ...args], { encoding: 'utf8', env: {} });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, 'imported\n');
   });
 }

@@ -1447,7 +1447,7 @@ async function main() {
   }
 }
 
-if (isEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta)) {
   main().catch((e) => {
     console.error(`ofac-sanctions-diff: ${e.message}`);
     process.exit(1);

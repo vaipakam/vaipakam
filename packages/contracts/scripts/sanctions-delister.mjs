@@ -1339,7 +1339,7 @@ async function main() {
   await finish(result.report, { 'evaluations.json': result.cache, 'relay.json': relayCache });
 }
 
-if (isEntryPoint(import.meta.url)) {
+if (isEntryPoint(import.meta)) {
   main().catch((e) => {
     console.error(`sanctions-delister: ${redact(e.message, [...SERVICE_CHAINS.map((c) => process.env[c.rpcEnv]), process.env.SANCTIONS_DELISTER_PRIVATE_KEY, process.env.TG_OPS_BOT_TOKEN])}`);
     process.exit(1);

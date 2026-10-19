@@ -22,8 +22,8 @@
 # STARTS a timer: enabling one is that service's cutover in the README, done
 # once its env file is filled in and its key appointed on each chain.
 #
-# Needs systemd 247+ (LoadCredential=) and Node 22 at /usr/local/bin/node. On
-# the keeper machine the keeper's own install provides that Node.
+# Needs systemd 247+ (LoadCredential=) and Node 22.18+ at /usr/local/bin/node.
+# On the keeper machine the keeper's own install provides that Node.
 set -euo pipefail
 
 main() {
@@ -48,6 +48,10 @@ main() {
   local node_major
   node_major="$(/usr/local/bin/node -p 'process.versions.node.split(".")[0]')"
   [ "$node_major" -ge 22 ] 2>/dev/null || die "Node $node_major at /usr/local/bin/node: 22 or newer is needed"
+  # The scripts ask Node whether they were started directly (import.meta.main,
+  # packages/contracts/scripts/entry-point.mjs), which Node sets from 22.18.
+  /usr/local/bin/node --input-type=module -e 'process.exit(import.meta.main === true ? 0 : 1)' \
+    || die "Node $(/usr/local/bin/node -v) at /usr/local/bin/node does not set import.meta.main: 22.18 or newer is needed"
 
   export DEBIAN_FRONTEND=noninteractive
   command -v git >/dev/null || { apt-get update -q >/dev/null; apt-get install -y -q git ca-certificates >/dev/null; }
@@ -101,35 +105,38 @@ main() {
     echo "$commit" > "$build/SOURCE_COMMIT"
     chown -R root:root "$build"
     chmod -R go-w "$build"
-    # mktemp made the directory 0700, and the services run as a dynamic user
-    # that must be able to enter it.
-    chmod 755 "$build"
-    # Each service's check runs the way its unit runs that service: as a
-    # throwaway dynamic user, with an empty environment, through a link to
-    # the release (the units start through `current`). A release that user
-    # cannot read, or a script that does not run when started through a
-    # link, fails here and never becomes current. The check must also print
-    # its "release ok" line, since a script that never reached its main
-    # prints nothing and still exits 0. No network: the check needs none.
-    ln -sfnT "$build" "$ROOT/.candidate"
-    local out
-    for s in "${SERVICES[@]}"; do
-      out="$(systemd-run --quiet --wait --pipe --collect \
-        --unit="vaipakam-sanctions-check-$s" \
-        -p DynamicUser=yes \
-        -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
-        -p PrivateNetwork=yes -p NoNewPrivileges=yes \
-        /usr/bin/env -i /usr/local/bin/node --max-old-space-size=192 \
-        "$ROOT/.candidate/packages/contracts/scripts/sanctions-$s.mjs" --check)" \
-        || die "the $s check failed on release $commit"
-      grep -q "^sanctions-$s: release ok " <<<"$out" \
-        || die "the $s check printed no 'release ok' line on release $commit: the script did not run"
-      log "$out"
-    done
-    rm -f "$ROOT/.candidate"
     touch "$build/.complete"
     mv -T "$build" "$rel"
   fi
+
+  # The services run as a dynamic user, which must be able to enter the
+  # release. Opened on every run, not only at build: mktemp makes the
+  # directory 0700, and a release an earlier installer built is still 0700.
+  chmod 755 "$rel"
+  # Each service's check runs on every run, a rollback included, against the
+  # release about to become current, and the way its unit runs that service:
+  # as a throwaway dynamic user, with an empty environment, through a link to
+  # the release (the units start through `current`). A release that user
+  # cannot read, or a script that does not run when started through a link,
+  # fails here and never becomes current. The check must also print its
+  # "release ok" line, since a script that never reached its main prints
+  # nothing and still exits 0. No network: the check needs none.
+  ln -sfnT "$rel" "$ROOT/.candidate"
+  local out
+  for s in "${SERVICES[@]}"; do
+    out="$(systemd-run --quiet --wait --pipe --collect \
+      --unit="vaipakam-sanctions-check-$s" \
+      -p DynamicUser=yes \
+      -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+      -p PrivateNetwork=yes -p NoNewPrivileges=yes \
+      /usr/bin/env -i /usr/local/bin/node --max-old-space-size=192 \
+      "$ROOT/.candidate/packages/contracts/scripts/sanctions-$s.mjs" --check)" \
+      || die "the $s check failed on release $commit; current is unchanged"
+    grep -q "^sanctions-$s: release ok " <<<"$out" \
+      || die "the $s check printed no 'release ok' line on release $commit, so the script did not run (a commit from before #2586 never runs through a link); current is unchanged"
+    log "$out"
+  done
+  rm -f "$ROOT/.candidate"
 
   # The release in use before this run is kept beside the new one, so
   # re-running with its commit is a rollback that needs no rebuild.
