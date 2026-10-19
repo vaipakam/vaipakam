@@ -119,6 +119,7 @@
       "kind": "testnet-overlay",
       "oracle": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40"
     },
+    "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394",
     "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
     "sanctionsTestnetOverlay": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40",
     "testnetMocks": {
@@ -272,6 +273,7 @@
       "kind": "testnet-overlay",
       "oracle": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6"
     },
+    "sanctionsDelistingTimelock": "0xdE3E600Ef34a04349412B00bCba9B81b9b3ca3B6",
     "sanctionsList": "0x75b29Eaa25dfdaB6477892e59985d4771f5B2FC5",
     "sanctionsTestnetOverlay": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6",
     "testnetMocks": {
