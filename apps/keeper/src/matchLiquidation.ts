@@ -30,7 +30,7 @@ import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { INTERNAL_MATCH_EXECUTED_TOPIC } from '@vaipakam/lib/routeBuilder';
 import type { ChainConfig } from './env';
 import type { KeeperContext } from './keeper';
-import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
+import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './keeperSend';
 
 const RISK_ABI: Abi = RiskFacetABI as Abi;
 
@@ -90,7 +90,7 @@ export type MatchLiquidationOutcome =
 
 /** Preview, hold, send. Never sends when a step cannot establish its answer. */
 export async function attemptMatchLiquidation(
-  deps: Pick<KeeperContext, 'wallet' | 'diamond' | 'chainId'> & {
+  deps: Pick<KeeperContext, 'wallet' | 'diamond' | 'chainId' | 'notAfterMs'> & {
     client: Pick<PublicClient, 'simulateCalls' | 'getBlockNumber' | 'getTransactionCount'>;
   },
   loanId: bigint,
@@ -108,7 +108,7 @@ export async function attemptMatchLiquidation(
   const pending = await keeperTxPending(client, keeper);
   if (pending !== null) return { kind: 'skipped', reason: pending };
 
-  return sendInSubmissionSlot(wallet, deps.chainId, diamond, emptyListLiquidation(loanId));
+  return sendInSubmissionSlot(wallet, deps.chainId, deps.notAfterMs, diamond, emptyListLiquidation(loanId));
 }
 
 /**
@@ -123,9 +123,9 @@ export async function tryMatchLiquidation(
   loanIdBig: bigint,
 ): Promise<boolean> {
   const outcome = await attemptMatchLiquidation(
-    { client: publicClient, wallet: ctx.wallet, diamond: ctx.diamond, chainId: chain.id },
+    { client: publicClient, wallet: ctx.wallet, diamond: ctx.diamond, chainId: chain.id, notAfterMs: ctx.notAfterMs },
     loanIdBig,
-  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
+  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: attemptErrorReason(err) }));
   if (outcome.kind === 'skipped') {
     console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} internal-match skipped: ${outcome.reason}`);
     return false;

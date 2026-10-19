@@ -23,7 +23,8 @@
  *     entire path is no-op.
  */
 
-import { queuedWallet } from './submissionQueue';
+import { isSendPastDeadline, queuedWallet, reportSendError } from './submissionQueue';
+import { attemptErrorReason } from './keeperSend';
 import {
   type Address,
   createWalletClient,
@@ -240,6 +241,9 @@ export interface KeeperContext {
   client: PublicClient;
   diamond: Address;
   chainId: number;
+  /** The run deadline the wallet's queue enforces (#2572), restated here so a
+   *  pass's own loops can stop asking for work its sends would be refused. */
+  notAfterMs: number;
 }
 
 const ATTEMPTED: Set<string> = new Set();
@@ -306,12 +310,13 @@ export async function tryInKindCloseOut(
       wallet: ctx.wallet,
       diamond: ctx.diamond,
       chainId: chain.id,
+      notAfterMs: ctx.notAfterMs,
       // The in-kind role sends an empty list and never builds a route.
       buildRoute: () => Promise.reject(new Error('in-kind close-out builds no route')),
     },
     loanIdBig,
     'in-kind',
-  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: `error:${describeFailure(err)}` }));
+  ).catch((err: unknown) => ({ kind: 'skipped' as const, reason: attemptErrorReason(err) }));
   if (outcome.kind === 'skipped') {
     console.log(`[keeper] loan=${loanIdBig} chain=${chain.name} in-kind skipped: ${outcome.reason}`);
     return false;
@@ -335,6 +340,10 @@ export async function maybeAutonomousLiquidate(
   loanIdBig: bigint,
   hfRaw: bigint,
   publicClient: PublicClient,
+  /** The liquidator run's deadline (#2572): a send whose turn in the queue
+   *  comes after it is refused before broadcast, and the loan is retried by the
+   *  next run, from fresh health-factor reads and fresh quotes. */
+  notAfterMs: number,
 ): Promise<boolean> {
   // Eligibility: keeper enabled, HF actually below 1, dedupe miss.
   if (!isKeeperEnabled(env)) return false;
@@ -344,7 +353,7 @@ export async function maybeAutonomousLiquidate(
   if (ATTEMPTED.has(key)) return false;
   ATTEMPTED.add(key);
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs });
   if (!ctx) return false;
 
   try {
@@ -682,6 +691,10 @@ export async function maybeAutonomousLiquidate(
           );
           return true;
         } catch (partialErr) {
+          // #2572 — a deadline refusal ends the attempt: every later send this run
+          // would be refused too. Rethrown to the outer catch, which logs it
+          // as a deferral rather than as this route's failure.
+          if (isSendPastDeadline(partialErr)) throw partialErr;
           const msg = String(partialErr);
           const lastAttempt = attempt + 1 >= MAX_PARTIAL_RESIZE_ATTEMPTS;
 
@@ -815,6 +828,10 @@ export async function maybeAutonomousLiquidate(
         );
         return true;
       } catch (splitErr) {
+        // #2572 — a deadline refusal ends the attempt: every later send this run
+        // would be refused too. Rethrown to the outer catch, which logs it
+        // as a deferral rather than as this route's failure.
+        if (isSendPastDeadline(splitErr)) throw splitErr;
         console.log(
           `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
         );
@@ -836,13 +853,13 @@ export async function maybeAutonomousLiquidate(
     );
     return true;
   } catch (err) {
-    // Any failure here is non-fatal — we logged + dedupe'd, so the
-    // watcher won't hammer the same loan in this tick. The most
-    // common cause is "another keeper got there first" or "MEV bot
-    // front-ran us", both of which are fine — the loan is liquidated.
-    console.error(
-      `[keeper] loan=${loanId} chain=${chain.name} err=${String(err).slice(0, 250)}`,
-    );
+    // #2572 — a deadline refusal came before broadcast (no nonce spent, nothing
+    // sent) and is reported as a deferral. Any other failure here is
+    // non-fatal — we logged + dedupe'd, so the watcher won't hammer the same
+    // loan in this tick. The most common cause is "another keeper got there
+    // first" or "MEV bot front-ran us", both of which are fine — the loan is
+    // liquidated.
+    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
     return false;
   }
 }
@@ -1058,16 +1075,26 @@ export function passIsArmed(
   return true;
 }
 
+/** What a pass states when it builds its signing context (#2572). */
+export interface KeeperContextOptions {
+  /** The pass's run deadline (`PassTick.deadlineMs`), honoured at each send's
+   *  turn in the queue: a send whose turn comes after it is refused before
+   *  signing (`SendPastDeadline`) and left for the next run. REQUIRED — every
+   *  pass has one, and a pass that could omit it is how the liquidator,
+   *  matcher and five others came to sign after their run was over. */
+  readonly notAfterMs: number;
+  /** The fetch the wallet's requests go through — a pass that caps its
+   *  requests passes its budget's (see subrequestBudget.ts). */
+  readonly fetchFn?: typeof fetch;
+}
+
 export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
-  /** The fetch the wallet's requests go through — a pass that caps its
-   *  requests passes its budget's (see subrequestBudget.ts). */
-  fetchFn?: typeof fetch,
-  /** The pass's run deadline, honoured at each send's turn in the queue. */
-  notAfterMs?: number,
+  opts: KeeperContextOptions,
 ): KeeperContext | null {
+  const { notAfterMs, fetchFn } = opts;
   if (!env.KEEPER_PRIVATE_KEY) return null;
   // The same call the gate makes, so a key that logged `start` cannot be
   // rejected here, and one rejected here cannot have logged `start`.
@@ -1092,6 +1119,7 @@ export function buildKeeperContext(
     client: publicClient,
     diamond: chain.diamond as Address,
     chainId: chain.id,
+    notAfterMs,
   };
 }
 
@@ -1303,6 +1331,10 @@ async function tryFlashLoanDiscountedPath(
     );
     return true;
   } catch (err) {
+    // #2572 — refused past the run's deadline: rethrown so the caller's outer
+    // catch logs one deferral instead of falling through to legacy branches
+    // whose sends would be refused the same way.
+    if (isSendPastDeadline(err)) throw err;
     console.error(
       `[keeper] loan=${loanId} chain=${chain.name} flash-loan-submit-failed ` +
         `err=${String(err).slice(0, 250)}`,

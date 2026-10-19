@@ -12,6 +12,9 @@ import type { ChainConfig, Env } from '../src/env';
 import { EpochFenceRefusal, assertEpochsHold, disarmEpochFence } from '../src/epochFence';
 import { putNotifyState } from '../src/db';
 import { resetSubmissionQueues, withSubmissionSlot } from '../src/submissionQueue';
+
+/** A run deadline no test reaches. */
+const FAR_DEADLINE = Number.MAX_SAFE_INTEGER;
 import { createSharedD1 } from './helpers/schemas';
 import { armFenceReading, armHeldFence, settleIndexer } from './helpers/epochFence';
 
@@ -77,10 +80,10 @@ describe('the send seam', () => {
       signed();
       return nonce;
     });
-    await expect(withSubmissionSlot(wallet, 84532, account.address, send)).rejects.toBeInstanceOf(EpochFenceRefusal);
+    await expect(withSubmissionSlot(wallet, 84532, account.address, FAR_DEADLINE, send)).rejects.toBeInstanceOf(EpochFenceRefusal);
     expect(send, 'the send callback never ran').not.toHaveBeenCalled();
     armHeldFence([CHAIN]);
-    expect(await withSubmissionSlot(wallet, 84532, account.address, send), 'the nonce was not reserved by the refusal').toBe(0);
+    expect(await withSubmissionSlot(wallet, 84532, account.address, FAR_DEADLINE, send), 'the nonce was not reserved by the refusal').toBe(0);
   });
 });
 

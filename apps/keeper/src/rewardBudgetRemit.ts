@@ -28,9 +28,13 @@ import {
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { reportSendError } from './submissionQueue';
+import { readCutoffMs, runIndex } from './runWindow';
+import { rotate } from './rotate';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -205,19 +209,23 @@ function readBigint(env: Env, key: string, fallback: bigint): bigint {
   }
 }
 
-export async function runRewardBudgetRemit(env: Env): Promise<void> {
+export async function runRewardBudgetRemit(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')) return;
 
-  for (const chain of getChainConfigs(env)) {
-    try {
-      await remitFromCanonical(env, chain);
-    } catch (err) {
-      console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
-    }
-  }
+  // Chains side by side, mirrors from a rotating start (#2572 r5, `runWindow.ts`).
+  const run = runIndex(tick, 5 * 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        await remitFromCanonical(env, chain, tick.deadlineMs, run);
+      } catch (err) {
+        console.error(`[keeper] rewardBudgetRemit chain=${chain.id} failed:`, err);
+      }
+    }),
+  );
 }
 
-async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
+async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: number, run = 0): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -238,7 +246,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   })) as readonly [bigint, boolean];
   if (!active || currentDay <= 1n) return; // no finalized (day < currentDay) yet
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx || !ctx.wallet.account) return;
 
   // Mirror list comes from the ON-CHAIN reward topology (the expected reward
@@ -268,17 +276,27 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
 
   let covered = 0;
   const attempted = mirrorIds.length;
-  for (const mirrorId of mirrorIds) {
+  // From a start that moves each run (#2572 r5, rule 2), so the deadline does
+  // not leave the same mirrors unfunded run after run.
+  // A mirror's planning reads stop at the read cutoff (#2572 r7, rule 3), so a
+  // slow plan cannot use the window its own remit needs.
+  const readCutoff = readCutoffMs(deadlineMs);
+  for (const mirrorId of rotate(mirrorIds, run)) {
+    // #2572 — a mirror starts with its planning reads, so none starts once
+    // the read cutoff has passed; the remaining mirrors are funded next run.
+    if (Date.now() >= readCutoff) {
+      console.log(`[keeper] rewardBudgetRemit read cutoff reached before Base->${mirrorId}; resumes next run`);
+      break;
+    }
     try {
-      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay)) {
+      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay, readCutoff)) {
         covered += 1;
       }
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
-      console.log(
-        `[keeper] rewardBudgetRemit skipped Base->${mirrorId}: ${(err as Error).message}`,
-      );
+      // The failure marker `skipped Base-><id>:` is the one the runbook names.
+      reportSendError(`[keeper] rewardBudgetRemit`, err, `skipped Base->${mirrorId}: ${(err as Error).message}`, console.log);
     }
   }
   // #1896 — POSITIVE coverage evidence, for the same reason the liquidator
@@ -303,6 +321,7 @@ async function remitToMirror(
   lookback: number,
   laneCap: bigint,
   armedFromDay: bigint,
+  readCutoff: number = Number.POSITIVE_INFINITY,
 ): Promise<boolean> {
   // Returns TRUE only when this destination is SETTLED for this tick —
   // either remitted successfully, or genuinely nothing owed. FALSE on every
@@ -359,6 +378,14 @@ async function remitToMirror(
   let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
+    // Each re-plan is a read; past the cutoff the remit it feeds would be
+    // refused at its turn, so the plan stops and the next run plans afresh.
+    if (Date.now() >= readCutoff) {
+      console.log(
+        `[keeper] rewardBudgetRemit mirror=${mirrorId} read cutoff reached during planning (pass ${pass + 1}); nothing sent, next run re-plans`,
+      );
+      return false;
+    }
     [perDay, closeable] = (await publicClient.readContract({
       address: diamond,
       abi: REMIT_ABI,

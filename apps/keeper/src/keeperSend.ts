@@ -21,7 +21,7 @@
 
 import { keccak256, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { isDefinitiveRejection, withSubmissionSlot } from './submissionQueue';
+import { isDefinitiveRejection, isSendPastDeadline, withSubmissionSlot } from './submissionQueue';
 
 /** Null when the keeper has no unmined transaction; otherwise the reason
  *  to hold this send. */
@@ -36,6 +36,15 @@ export async function keeperTxPending(
   return pendingNonce > minedNonce
     ? `keeper-tx-pending (${pendingNonce - minedNonce} unmined)`
     : null;
+}
+
+/** The skip reason an attempt's thrown error is logged under (#2572): a send
+ *  the slot refused past its run's deadline is a deferral, said as one —
+ *  nothing was sent and the next run retries — not an error. */
+export function attemptErrorReason(err: unknown): string {
+  return isSendPastDeadline(err)
+    ? 'deferred:run-deadline-passed (nothing sent; next run)'
+    : `error:${describeFailure(err)}`;
 }
 
 /** What one broadcast came to. `unconfirmed`: the signed bytes went to the
@@ -57,6 +66,9 @@ export type SendOutcome =
 export async function sendInSubmissionSlot(
   wallet: WalletClient,
   chainId: number,
+  /** The sending pass's run deadline, enforced by the slot (#2572): past it
+   *  this throws `SendPastDeadline` and nothing is sent. */
+  notAfterMs: number,
   to: Address,
   data: Hex,
 ): Promise<SendOutcome> {
@@ -64,7 +76,7 @@ export async function sendInSubmissionSlot(
   if (!account) throw new Error('no keeper account');
   let tx: Hex | undefined;
   try {
-    await withSubmissionSlot(wallet, chainId, account.address, async (nonce, signed) => {
+    await withSubmissionSlot(wallet, chainId, account.address, notAfterMs, async (nonce, signed) => {
       const request = await wallet.prepareTransactionRequest({
         account,
         to,
@@ -75,8 +87,10 @@ export async function sendInSubmissionSlot(
       // `chain: null`: the client is chainless, and the chain id the request
       // was prepared with (read from the RPC) is the one signed over.
       const serialized = await wallet.signTransaction({ ...(request as object), chain: null } as never);
-      tx = keccak256(serialized);
+      // `signed()` first: it may refuse past the run's deadline (#2572), and
+      // a hash recorded before that refusal would read as a broadcast.
       signed();
+      tx = keccak256(serialized);
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
   } catch (err) {

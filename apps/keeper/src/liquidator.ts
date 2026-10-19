@@ -39,9 +39,12 @@ import { createPublicClient, http, type Abi, type Address } from 'viem';
 import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
+import { readCutoffMs, runIndex } from './runWindow';
+import { pagedWalk } from './rotate';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
@@ -62,7 +65,7 @@ const MAX_LIQUIDATIONS_PER_TICK = 12;
  *  in `hfLine.ts`, which every pass that must agree on it imports. */
 export { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 
-export async function runLiquidator(env: Env): Promise<void> {
+export async function runLiquidator(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'liquidator')) return;
   // Reset the in-isolate dedupe set so a previously-attempted loan can
   // be retried this tick. Lived in `runWatcher` pre-split; lives here
@@ -74,17 +77,24 @@ export async function runLiquidator(env: Env): Promise<void> {
   // serial, so a D1 stall inside an earlier chain's band pass would
   // otherwise delay LATER chains' scans and submits — notification
   // storage must never sit anywhere on the liquidation critical path.
+  //
+  // Chains run side by side (#2572 r5, `runWindow.ts` rule 1): one deadline
+  // covers the pass, so in series a slow chain would spend the window of every
+  // chain after it. Each chain has its own RPC and its own nonce lane.
   const bandQueue: { chain: ChainConfig; readings: HfReading[] }[] = [];
-  for (const chain of getChainConfigs(env)) {
-    try {
-      const readings = await liquidatePassForChain(env, chain);
-      bandQueue.push({ chain, readings });
-    } catch (err) {
-      console.error(
-        `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
-      );
-    }
-  }
+  const run = runIndex(tick, 60_000);
+  await Promise.all(
+    getChainConfigs(env).map(async (chain) => {
+      try {
+        const readings = await liquidatePassForChain(env, chain, tick.deadlineMs, run);
+        bandQueue.push({ chain, readings });
+      } catch (err) {
+        console.error(
+          `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
+        );
+      }
+    }),
+  );
   for (const { chain, readings } of bandQueue) {
     await hfBandPass(env, chain, readings);
   }
@@ -99,7 +109,15 @@ export async function runLiquidator(env: Env): Promise<void> {
 async function liquidatePassForChain(
   env: Env,
   chain: ChainConfig,
+  /** This run's deadline (#2572): no liquidation is signed after it. */
+  deadlineMs: number,
+  /** This run's index ({@link runIndex}), which picks the page the scan starts at. */
+  run = 0,
 ): Promise<HfReading[]> {
+  // The scan stops here, leaving the liquidations it found time to be sent
+  // (#2572 r5, `runWindow.ts` rule 3). A scan cut short acts on what it read
+  // and is not reported complete.
+  const readCutoff = readCutoffMs(deadlineMs);
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -161,14 +179,27 @@ async function liquidatePassForChain(
   // (Codex #1924 r18). Tracked explicitly rather than inferred from
   // `ids.length`, which is non-empty in exactly this case.
   let pagesComplete = true;
-  for (let off = 0n; off < total; off += SCAN_PAGE) {
+  // Loans in an order that starts at a loan that moves each run (#2572 r5/r7,
+  // rule 2, `pagedWalk`), so a scan the cutoff stops early, in the paging or
+  // in the HF reads below, still reaches every loan over successive runs. A
+  // start that moved a page at a time left a page's tail unreached whenever a
+  // run stopped inside its first page. Every page is read at the pinned
+  // block, so the order does not change what a full scan sees.
+  for (const { cursor: off, limit } of pagedWalk(total, SCAN_PAGE, run)) {
+    if (Date.now() >= readCutoff) {
+      console.log(
+        `[keeper] liquidator chain=${chain.name} read cutoff reached during paging; acting on ${ids.length} loan(s) read, the rest next run`,
+      );
+      pagesComplete = false;
+      break;
+    }
     let page: readonly bigint[];
     try {
       page = (await client.readContract({
         address: diamond,
         abi: METRICS_ABI,
         functionName: 'getActiveLoansPaginated',
-        args: [off, SCAN_PAGE],
+        args: [off, limit],
         blockNumber: pinnedBlock,
       })) as readonly bigint[];
     } catch (err) {
@@ -178,7 +209,7 @@ async function liquidatePassForChain(
       pagesComplete = false;
       break;
     }
-    if (page.length === 0) break;
+    if (page.length === 0) continue;
     ids.push(...page);
   }
   if (ids.length === 0) {
@@ -206,6 +237,15 @@ async function liquidatePassForChain(
   // was scanned (Codex #1924 r19).
   let unevaluated = 0;
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
+    if (Date.now() >= readCutoff) {
+      // Unread rather than failed, so not counted as unevaluated; the scan
+      // is simply not complete, and the moving walk start reaches them later.
+      pagesComplete = false;
+      console.log(
+        `[keeper] liquidator chain=${chain.name} read cutoff reached during HF reads; ${ids.length - i} loan(s) left for the next run`,
+      );
+      break;
+    }
     const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
       address: diamond,
@@ -331,7 +371,16 @@ async function liquidatePassForChain(
       );
       break;
     }
-    const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
+    // #2572 — past the run's deadline, every send would be refused at its
+    // turn anyway; stop asking for quotes and leave the rest, lowest health
+    // factor first again, to the next run's fresh reads.
+    if (Date.now() >= deadlineMs) {
+      console.log(
+        `[keeper] liquidator chain=${chain.name} run deadline reached; ${atRisk.length - atRisk.indexOf(r)} at-risk loan(s) left for the next run`,
+      );
+      break;
+    }
+    const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client, deadlineMs);
     if (submitted) submits += 1;
   }
   if (pagesComplete && unevaluated === 0) {

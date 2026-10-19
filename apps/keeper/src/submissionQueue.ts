@@ -104,11 +104,79 @@ export function resetSubmissionQueues(): void {
   floors.clear();
 }
 
+/** A send refused because its pass's run deadline had passed (#2571 r1,
+ *  #2572). Raised at its turn in the queue, before the nonce is read, or at
+ *  the last moment before broadcast. Either way no nonce is spent and nothing
+ *  reaches the network. The second check comes AFTER signing, so the bytes
+ *  may have been signed locally and discarded: the guarantee is "not sent",
+ *  never "not signed" (#2572 r4). */
+export class SendPastDeadline extends Error {}
+
+/** Whether `err` is, or wraps, a {@link SendPastDeadline}. viem wraps an
+ *  error raised inside `writeContract` (`ContractFunctionExecutionError`,
+ *  with the original as `cause`), so a top-level `instanceof` misses it; the
+ *  cause chain is walked the way {@link isDefinitiveRejection} walks it. */
+export function isSendPastDeadline(err: unknown): boolean {
+  let depth = 0;
+  for (let e: unknown = err; e && depth < 8; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof SendPastDeadline) return true;
+  }
+  return false;
+}
+
+/** How a deadline refusal reads in a log line, wherever a send reports one. */
+export const SEND_DEFERRED_WORDING =
+  'deferred to the next run: the run deadline passed before broadcast, so nothing was sent';
+
+/** The one way a send site reports a send that did not go out (#2572 r3).
+ *  A deadline refusal is a deferral, logged as such, never as a failure: the
+ *  slot refused it before anything was signed, so there is nothing to chase
+ *  and the next run retries. Anything else is logged with `failure`, through
+ *  `logFailure` (the site's own level). Returns whether it was a deferral. */
+export function reportSendError(
+  prefix: string,
+  err: unknown,
+  failure: string,
+  logFailure: (line: string) => void = console.error,
+): boolean {
+  if (isSendPastDeadline(err)) {
+    console.log(`${prefix} ${SEND_DEFERRED_WORDING}`);
+    return true;
+  }
+  logFailure(`${prefix} ${failure}`);
+  return false;
+}
+
+/** The one rule for a run deadline, applied wherever a send states one. */
+function assertFiniteDeadline(notAfterMs: unknown, where: string): asserts notAfterMs is number {
+  // Refused as well as typed: the keeper's typecheck does not cover its tests
+  // or any untyped caller, and a missing or NaN deadline would compare false
+  // forever and silently switch the check off.
+  if (typeof notAfterMs !== 'number' || !Number.isFinite(notAfterMs)) {
+    throw new TypeError(`${where}: a finite run deadline is required (got ${String(notAfterMs)})`);
+  }
+}
+
 /**
  * Run `send` in this account's next slot on `chainId`, handing it the
  * nonce to use. `send` must broadcast at most one transaction with that
  * nonce, call `signed()` once it holds the signed bytes and before
  * broadcasting them, and resolve only once the broadcast has returned.
+ *
+ * `notAfterMs` is the run deadline of the pass sending (#2572), enforced HERE
+ * because this is the one place every send passes through — the queued wallet
+ * and the keeper's own prepared sends alike. It is checked twice:
+ *
+ *  - when the slot's turn comes, so a send that waited out its deadline behind
+ *    another pass's costs no nonce read or preparation;
+ *  - inside `signed()`, the boundary every sender calls between holding the
+ *    signed bytes and broadcasting them (#2572 r2). The nonce read, the epoch
+ *    fence and the sender's own preparation all await the network, and any of
+ *    them can cross the deadline; this is the last moment before anything
+ *    leaves the process. Refused there, the signed bytes are discarded unsent
+ *    and the nonce is released.
+ *
+ * Either refusal is a {@link SendPastDeadline}.
  *
  * The nonce is read through `wallet`'s own transport, so a pass that caps
  * its requests counts the read.
@@ -117,9 +185,11 @@ export async function withSubmissionSlot<T>(
   wallet: WalletClient,
   chainId: number,
   address: Address,
+  notAfterMs: number,
   send: (nonce: number, signed: () => void) => Promise<T>,
   now: () => number = Date.now,
 ): Promise<T> {
+  assertFiniteDeadline(notAfterMs, 'withSubmissionSlot');
   const key = keyOf(chainId, address);
   const previous = tails.get(key) ?? Promise.resolve();
   let release!: () => void;
@@ -130,6 +200,9 @@ export async function withSubmissionSlot<T>(
   tails.set(key, tail);
   await previous;
   try {
+    if (now() >= notAfterMs) {
+      throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
+    }
     const pending = await getTransactionCount(wallet, { address, blockTag: 'pending' });
     const floor = floors.get(key);
     const fresh = floor !== undefined && now() - floor.at < FLOOR_TTL_MS;
@@ -142,6 +215,11 @@ export async function withSubmissionSlot<T>(
     let result: T;
     try {
       result = await send(nonce, () => {
+        // Thrown before `wasSigned` is set: nothing is broadcast, so the
+        // nonce stays free for the next send.
+        if (now() >= notAfterMs) {
+          throw new SendPastDeadline(`send refused before broadcast: the run's deadline passed while it was prepared — next run`);
+        }
         wasSigned = true;
       });
     } catch (err) {
@@ -187,6 +265,9 @@ export function isDefinitiveRejection(err: unknown): boolean {
     chain.push(e);
   }
   if (chain.some((e) => e instanceof SubrequestBudgetExhausted)) return true;
+  // Refused by the slot before any broadcast (#2572): nothing reached the
+  // network, like the subrequest budget's refusal above.
+  if (chain.some((e) => e instanceof SendPastDeadline)) return true;
   if (chain.some((e) => e instanceof TimeoutError || e instanceof HttpRequestError)) return false;
   if (chain.some((e) => NONCE_TAKEN.test(String((e as { message?: unknown }).message ?? '')))) {
     return false;
@@ -207,19 +288,21 @@ export function isDefinitiveRejection(err: unknown): boolean {
  * The queued send calls viem's actions on the UNEXTENDED client, so
  * nothing re-enters the queue. Every other action is untouched.
  */
-/** A send refused at its turn in the queue because its pass's run deadline
- *  had passed (#2571 r1). Raised BEFORE signing, so no nonce is spent. */
-export class SendPastDeadline extends Error {}
-
 export function queuedWallet(
   wallet: WalletClient,
   chainId: number,
-  /** The run deadline of the pass this wallet sends for, if it has one
-   *  (#2571 r1). Checked INSIDE the submission slot, at the moment the send's
-   *  turn comes — a check before queuing cannot cover the wait behind another
-   *  pass's send, or a slow fee estimate. */
-  notAfterMs?: number,
+  /** The run deadline of the pass this wallet sends for (#2571 r1; required
+   *  since #2572). Checked INSIDE the submission slot, at the moment the
+   *  send's turn comes — a check before queuing cannot cover the wait behind
+   *  another pass's send, or a slow fee estimate. Every pass has one: the
+   *  tick computes it from the pass's cadence, so a send signed after its
+   *  run's slot has ended waits for the next run instead of competing with
+   *  it. */
+  notAfterMs: number,
 ): WalletClient {
+  // At build time too, so a wallet without a deadline fails where it is made
+  // rather than at its first send.
+  assertFiniteDeadline(notAfterMs, 'queuedWallet');
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
@@ -233,10 +316,7 @@ export function queuedWallet(
       }
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
-      return withSubmissionSlot(base, chainId, account.address, async (nonce, signed) => {
-        if (notAfterMs !== undefined && Date.now() >= notAfterMs) {
-          throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
-        }
+      return withSubmissionSlot(base, chainId, account.address, notAfterMs, async (nonce, signed) => {
         const request = await prepareTransactionRequest(base, {
           ...(args as object),
           account,

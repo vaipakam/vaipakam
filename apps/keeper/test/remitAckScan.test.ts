@@ -235,7 +235,7 @@ async function run(shared: unknown, keeper: unknown): Promise<void> {
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-  } as never);
+  } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
 }
 
 /** Did the pass persist its scan progress? */
