@@ -122,6 +122,7 @@
     "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394",
     "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
     "sanctionsTestnetOverlay": "0x6D1E9d697935EC19226673178C7fa1b8DbeF3A40",
+    "serviceCapacityEscrow": "0x098155866D7EbAe0a765f2E220998f4C001d8490",
     "testnetMocks": {
       "ethUsdFeed": "0x792e9e8d2A6433aD0f97e46207Bd21327AaA4e32",
       "feedRegistry": "0xBe23Bb838005410baf4D6E3aDF7054e934c5F3e3",
@@ -276,6 +277,7 @@
     "sanctionsDelistingTimelock": "0xdE3E600Ef34a04349412B00bCba9B81b9b3ca3B6",
     "sanctionsList": "0x75b29Eaa25dfdaB6477892e59985d4771f5B2FC5",
     "sanctionsTestnetOverlay": "0x546d15e349920caaE7F8C98BD9381a666c7c21C6",
+    "serviceCapacityEscrow": "0x2FbcFce49713aB5f4b35fA7906930FdA2B56Cebf",
     "testnetMocks": {
       "ethUsdFeed": "0x61ABAAe4d6C663b2af58adE50f558eAdcD94Be86",
       "feedRegistry": "0xb9318B968a04A966e57df19e544c2AAA24c875E2",
@@ -429,6 +431,7 @@
       "oracle": "0x06fb141dbFC1c57d472Ab1eD098F3af8b57625d4"
     },
     "sanctionsTestnetOverlay": "0x06fb141dbFC1c57d472Ab1eD098F3af8b57625d4",
+    "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
     "swapAdapters": {
       "uniV3": "0x2557cF3e9Da67310357ae4Cc49C74FF5fE8F3140"
     },
