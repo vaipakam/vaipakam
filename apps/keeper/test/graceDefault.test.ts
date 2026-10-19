@@ -486,7 +486,7 @@ describe("the liquidator's no-route fallback (#2487)", () => {
   const UNDER = 9n * 10n ** 17n;
   const CHAIN = { id: 84532, name: 'base-sepolia' };
   const ctxOf = (h: ReturnType<typeof harness>) =>
-    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532 });
+    ({ client: h.deps.client, wallet: h.deps.wallet, diamond: DIAMOND, chainId: 84532, notAfterMs: Number.MAX_SAFE_INTEGER });
 
   it('closes in kind when the loan is past grace', async () => {
     const h = harness({ hf: UNDER, ending: 'other', defaulted: true, defaultable: true });

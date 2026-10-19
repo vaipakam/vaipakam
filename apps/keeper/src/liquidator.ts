@@ -39,6 +39,7 @@ import { createPublicClient, http, type Abi, type Address } from 'viem';
 import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
@@ -62,7 +63,7 @@ const MAX_LIQUIDATIONS_PER_TICK = 12;
  *  in `hfLine.ts`, which every pass that must agree on it imports. */
 export { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 
-export async function runLiquidator(env: Env): Promise<void> {
+export async function runLiquidator(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'liquidator')) return;
   // Reset the in-isolate dedupe set so a previously-attempted loan can
   // be retried this tick. Lived in `runWatcher` pre-split; lives here
@@ -77,7 +78,7 @@ export async function runLiquidator(env: Env): Promise<void> {
   const bandQueue: { chain: ChainConfig; readings: HfReading[] }[] = [];
   for (const chain of getChainConfigs(env)) {
     try {
-      const readings = await liquidatePassForChain(env, chain);
+      const readings = await liquidatePassForChain(env, chain, tick.deadlineMs);
       bandQueue.push({ chain, readings });
     } catch (err) {
       console.error(
@@ -99,6 +100,8 @@ export async function runLiquidator(env: Env): Promise<void> {
 async function liquidatePassForChain(
   env: Env,
   chain: ChainConfig,
+  /** This run's deadline (#2572): no liquidation is signed after it. */
+  deadlineMs: number,
 ): Promise<HfReading[]> {
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
@@ -331,7 +334,16 @@ async function liquidatePassForChain(
       );
       break;
     }
-    const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
+    // #2572 — past the run's deadline, every send would be refused at its
+    // turn anyway; stop asking for quotes and leave the rest, lowest health
+    // factor first again, to the next run's fresh reads.
+    if (Date.now() >= deadlineMs) {
+      console.log(
+        `[keeper] liquidator chain=${chain.name} run deadline reached; ${atRisk.length - atRisk.indexOf(r)} at-risk loan(s) left for the next run`,
+      );
+      break;
+    }
+    const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client, deadlineMs);
     if (submitted) submits += 1;
   }
   if (pagesComplete && unevaluated === 0) {

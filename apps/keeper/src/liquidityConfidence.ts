@@ -57,6 +57,8 @@ import {
   LoanFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
+import { SendPastDeadline } from './submissionQueue';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -794,6 +796,8 @@ async function runRelayForChain(
   env: Env,
   chain: ChainConfig,
   client: PublicClient,
+  /** This run's deadline (#2572): no tier change is signed after it. */
+  deadlineMs: number,
 ): Promise<void> {
   const diamond = chain.diamond as Address;
   const cfg = await loadConfig(client, diamond, env);
@@ -803,7 +807,7 @@ async function runRelayForChain(
   // the `setKeeperTier` signer. Reads work without the key (0x is then
   // not asked; each aggregator's taker is its adapter either way); writes
   // need `isKeeperEnabled`.
-  const ctx = buildKeeperContext(env, chain, client);
+  const ctx = buildKeeperContext(env, chain, client, { notAfterMs: deadlineMs });
   const canSubmit = isKeeperEnabled(env) && ctx !== null && cfg.knobs.submitGloballyEnabled;
   const txOrigin = ctx?.wallet.account?.address as Address | undefined;
   // Lazily, once per chain tick — see `aggregatorConfirmedTier`. The
@@ -916,6 +920,14 @@ async function runRelayForChain(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
       );
     } catch (err) {
+      // #2572 — refused before signing: the counter above is persisted, so
+      // the next run recomputes the same target from fresh quotes.
+      if (err instanceof SendPastDeadline) {
+        console.log(
+          `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} deferred to the next run: ${err.message}`,
+        );
+        continue;
+      }
       console.error(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier failed: ${String(err).slice(0, 250)}`,
       );
@@ -923,11 +935,11 @@ async function runRelayForChain(
   }
 }
 
-export async function runLiquidityConfidence(env: Env): Promise<void> {
+export async function runLiquidityConfidence(env: Env, tick: PassTick): Promise<void> {
   for (const chain of getChainConfigs(env)) {
     try {
       const client = createPublicClient({ transport: http(chain.rpc) });
-      await runRelayForChain(env, chain, client);
+      await runRelayForChain(env, chain, client, tick.deadlineMs);
     } catch (err) {
       console.error(
         `[keeper] runLiquidityConfidence chain=${chain.name} failed: ${String(err).slice(0, 250)}`,

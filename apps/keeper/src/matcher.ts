@@ -57,6 +57,7 @@ import {
   LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { batchedRead } from './batchRead';
 import { getChainConfigs } from './env';
 import {
@@ -1152,9 +1153,13 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
+  //
+  // #2572 — the run's own deadline binds too: past it the send queue refuses
+  // every match, fill and roll before signing, so the pass stops looking for
+  // more and leaves the book to the next run.
   const tickStart = Date.now();
   const overBudget = () =>
-    Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS;
+    Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS || Date.now() >= ctx.notAfterMs;
 
   const ids = await listActiveOfferIds(ctx);
   if (ids.length === 0) {
@@ -1337,13 +1342,17 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
  * chain runs in its own try/catch so a transient RPC hiccup on one
  * can't wedge the rest.
  */
-export async function runMatcher(env: Env): Promise<void> {
+export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
   for (const chain of chains) {
+    if (Date.now() >= tick.deadlineMs) {
+      console.log(`[matcher] chain=${chain.id} (${chain.name}) skipped: the run's deadline passed; next run`);
+      continue;
+    }
     try {
       const publicClient = createPublicClient({ transport: http(chain.rpc) });
-      const ctx = buildKeeperContext(env, chain, publicClient);
+      const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
       if (!ctx) continue;
       await runOfferMatcherTickForChain(ctx);
     } catch (err) {

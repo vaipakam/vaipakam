@@ -138,7 +138,7 @@ const ROTATION_STEP_MS = 5 * 60_000;
 /** LibVaipakam.AssetType.ERC20. */
 const ASSET_TYPE_ERC20 = 0;
 
-export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> {
+export async function runGraceDefault(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'graceDefault', 'GRACE_DEFAULT_ENABLED')) return;
   const chains = getChainConfigs(env).filter((c) => c.diamond);
   if (chains.length === 0) return;
@@ -147,7 +147,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   // delivery must not land on the previous run's index and repeat its work
   // (or skip some). Only an invocation that is not a cron tick reads the
   // clock.
-  const run = Math.floor((tick?.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
+  const run = Math.floor((tick.scheduledTimeMs ?? Date.now()) / ROTATION_STEP_MS);
 
   // ONE chain per run, and a bounded window of its active list: the
   // subrequest allowance is the invocation's — shared by every chain and
@@ -159,7 +159,7 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   const chain = chains[run % chains.length];
   const visit = Math.floor(run / chains.length);
   try {
-    await processChain(env, chain, visit);
+    await processChain(env, chain, visit, tick.deadlineMs);
   } catch (err) {
     // Described, never stringified: a viem transport error carries the
     // request URL, and this Worker's RPC URLs carry API keys.
@@ -167,14 +167,14 @@ export async function runGraceDefault(env: Env, tick?: PassTick): Promise<void> 
   }
 }
 
-async function processChain(env: Env, chain: ChainConfig, visit: number): Promise<void> {
+async function processChain(env: Env, chain: ChainConfig, visit: number, deadlineMs: number): Promise<void> {
   // Every request below goes through this one budget — reads, quotes and
   // the wallet's send alike.
   const budget = createSubrequestBudget(SUBREQUEST_BUDGET);
   const client = createPublicClient({
     transport: http(chain.rpc, { fetchFn: budget.fetch }),
   }) as PublicClient;
-  const ctx = buildKeeperContext(env, chain, client, budget.fetch);
+  const ctx = buildKeeperContext(env, chain, client, { notAfterMs: deadlineMs, fetchFn: budget.fetch });
   if (!ctx) return;
   const keeper = ctx.wallet.account?.address;
   if (!keeper) return;

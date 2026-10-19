@@ -315,9 +315,9 @@ export function observeDue(st: OwnerSanctionsStatus, nowSec: number): boolean {
  *  raises it. Everything a run does is therefore inside its own cadence. */
 export const PASS_ALERT_WINDOW_MS = 10 * 60_000;
 
-export async function runRewardSanctionsHold(env: Env, tick?: PassTick): Promise<void> {
+export async function runRewardSanctionsHold(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardSanctionsHold', 'REWARD_SANCTIONS_KEEPER_ENABLED')) return;
-  const runDeadlineMs = tick?.deadlineMs ?? Date.now() + 60 * 60_000;
+  const runDeadlineMs = tick.deadlineMs;
   const deadline = runDeadlineMs - PASS_ALERT_WINDOW_MS;
   // Chains run CONCURRENTLY (#2497 r16): each has its own nonce lane in the
   // per-key submission queue, so one chain's receipt waits never spend another
@@ -424,7 +424,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   }
   // The run's deadline is honoured at each send's turn in the queue too
   // (`SendPastDeadline`), not only before the send joins it.
-  const ctx = buildKeeperContext(env, chain, client as never, undefined, deadline);
+  const ctx = buildKeeperContext(env, chain, client as never, { notAfterMs: deadline });
   const budget = { writes: plan.writes, touched: new Set<string>(), deadline };
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time

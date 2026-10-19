@@ -23,7 +23,7 @@
  *     entire path is no-op.
  */
 
-import { queuedWallet } from './submissionQueue';
+import { queuedWallet, SendPastDeadline } from './submissionQueue';
 import {
   type Address,
   createWalletClient,
@@ -240,6 +240,9 @@ export interface KeeperContext {
   client: PublicClient;
   diamond: Address;
   chainId: number;
+  /** The run deadline the wallet's queue enforces (#2572), restated here so a
+   *  pass's own loops can stop asking for work its sends would be refused. */
+  notAfterMs: number;
 }
 
 const ATTEMPTED: Set<string> = new Set();
@@ -335,6 +338,10 @@ export async function maybeAutonomousLiquidate(
   loanIdBig: bigint,
   hfRaw: bigint,
   publicClient: PublicClient,
+  /** The liquidator run's deadline (#2572): a send whose turn in the queue
+   *  comes after it is refused before signing, and the loan is retried by the
+   *  next run, from fresh health-factor reads and fresh quotes. */
+  notAfterMs: number,
 ): Promise<boolean> {
   // Eligibility: keeper enabled, HF actually below 1, dedupe miss.
   if (!isKeeperEnabled(env)) return false;
@@ -344,7 +351,7 @@ export async function maybeAutonomousLiquidate(
   if (ATTEMPTED.has(key)) return false;
   ATTEMPTED.add(key);
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs });
   if (!ctx) return false;
 
   try {
@@ -836,6 +843,12 @@ export async function maybeAutonomousLiquidate(
     );
     return true;
   } catch (err) {
+    // #2572 — refused at its turn in the queue, before signing: no nonce was
+    // spent and nothing reached the network. Said as a deferral, not an error.
+    if (err instanceof SendPastDeadline) {
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} deferred to the next run: ${err.message}`);
+      return false;
+    }
     // Any failure here is non-fatal — we logged + dedupe'd, so the
     // watcher won't hammer the same loan in this tick. The most
     // common cause is "another keeper got there first" or "MEV bot
@@ -1058,16 +1071,26 @@ export function passIsArmed(
   return true;
 }
 
+/** What a pass states when it builds its signing context (#2572). */
+export interface KeeperContextOptions {
+  /** The pass's run deadline (`PassTick.deadlineMs`), honoured at each send's
+   *  turn in the queue: a send whose turn comes after it is refused before
+   *  signing (`SendPastDeadline`) and left for the next run. REQUIRED — every
+   *  pass has one, and a pass that could omit it is how the liquidator,
+   *  matcher and five others came to sign after their run was over. */
+  readonly notAfterMs: number;
+  /** The fetch the wallet's requests go through — a pass that caps its
+   *  requests passes its budget's (see subrequestBudget.ts). */
+  readonly fetchFn?: typeof fetch;
+}
+
 export function buildKeeperContext(
   env: Env,
   chain: ChainConfig,
   publicClient: PublicClient,
-  /** The fetch the wallet's requests go through — a pass that caps its
-   *  requests passes its budget's (see subrequestBudget.ts). */
-  fetchFn?: typeof fetch,
-  /** The pass's run deadline, honoured at each send's turn in the queue. */
-  notAfterMs?: number,
+  opts: KeeperContextOptions,
 ): KeeperContext | null {
+  const { notAfterMs, fetchFn } = opts;
   if (!env.KEEPER_PRIVATE_KEY) return null;
   // The same call the gate makes, so a key that logged `start` cannot be
   // rejected here, and one rejected here cannot have logged `start`.
@@ -1092,6 +1115,7 @@ export function buildKeeperContext(
     client: publicClient,
     diamond: chain.diamond as Address,
     chainId: chain.id,
+    notAfterMs,
   };
 }
 

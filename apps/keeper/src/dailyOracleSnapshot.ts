@@ -27,6 +27,7 @@ import {
 } from 'viem';
 
 import type { Env, ChainConfig } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { resolveKeeperAccount } from './keeper';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
@@ -116,7 +117,7 @@ async function setLastCaptureDay(env: Env, chainId: number, dayIndex: number): P
   assertGuardedWriteLanded(result, `oracle_snapshot_state for chain ${chainId}`);
 }
 
-async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
+async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const todayIndex = Math.floor(Date.now() / 1000 / 86400);
   const lastCapturedDay = await getLastCaptureDay(env, chain.id);
   if (lastCapturedDay === todayIndex) return;
@@ -146,7 +147,7 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
   }
   const { account } = resolved;
   // Queued with the other passes' sends (#2486): same key, same chain.
-  const wallet = queuedWallet(createWalletClient({ account, transport: http(chain.rpc) }), chain.id);
+  const wallet = queuedWallet(createWalletClient({ account, transport: http(chain.rpc) }), chain.id, deadlineMs);
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
 
   try {
@@ -178,7 +179,7 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
  * isolated per-chain so one chain's stuck RPC doesn't wedge the
  * rest of the worker tick.
  */
-export async function runDailyOracleSnapshot(env: Env): Promise<void> {
+export async function runDailyOracleSnapshot(env: Env, tick: PassTick): Promise<void> {
   // Tight pre-check: only fire inside the daily-cadence window.
   // The Worker cron runs every minute; we attempt at most ~10
   // ticks per day per chain (00:00–00:09 UTC). After 00:10 we
@@ -189,5 +190,5 @@ export async function runDailyOracleSnapshot(env: Env): Promise<void> {
   if (minutesIntoDay >= 10) return;
 
   const chains = getChainConfigs(env);
-  await Promise.all(chains.map((chain) => captureForChain(env, chain)));
+  await Promise.all(chains.map((chain) => captureForChain(env, chain, tick.deadlineMs)));
 }

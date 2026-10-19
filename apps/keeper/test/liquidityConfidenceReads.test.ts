@@ -327,7 +327,7 @@ async function run(): Promise<void> {
   await runLiquidityConfidence({
     DB: db(),
     RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-  } as never);
+  } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
 }
 
 /** How many times `x` appears in `xs`. */

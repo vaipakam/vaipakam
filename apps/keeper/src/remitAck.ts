@@ -94,11 +94,11 @@ interface RemitReservationView {
   dayIds: readonly bigint[];
 }
 
-export async function runRemitAck(env: Env, tick?: PassTick): Promise<void> {
+export async function runRemitAck(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
   // The run's deadline (#2497 re-cut review): every read through this run's
   // clients is refused past it, and no send starts after it.
-  const deadline = tick?.deadlineMs ?? Date.now() + 60_000;
+  const deadline = tick.deadlineMs;
 
   for (const chain of getChainConfigs(env)) {
     try {
@@ -109,7 +109,7 @@ export async function runRemitAck(env: Env, tick?: PassTick): Promise<void> {
   }
 }
 
-async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number = Date.now() + 60_000): Promise<void> {
+async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number): Promise<void> {
   const publicClient = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline);
   const diamond = chain.diamond as Address;
 
@@ -308,7 +308,7 @@ async function sendAckFromMirror(
     return false;
   }
 
-  const ctx = buildKeeperContext(env, mirrorCfg, client, undefined, ackBudget.deadline);
+  const ctx = buildKeeperContext(env, mirrorCfg, client, { notAfterMs: ackBudget.deadline });
   if (!ctx || !ctx.wallet.account) return false;
 
   const fee = (await client.readContract({

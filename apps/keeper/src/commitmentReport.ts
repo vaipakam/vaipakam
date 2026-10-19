@@ -47,6 +47,7 @@ import {
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import {
@@ -99,12 +100,12 @@ function readNumber(env: Env, key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-export async function runCommitmentReport(env: Env): Promise<void> {
+export async function runCommitmentReport(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'commitmentReport', 'REWARD_COMMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {
-      await reportFromMirror(env, chain);
+      await reportFromMirror(env, chain, tick.deadlineMs);
     } catch (err) {
       console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
     }
@@ -114,7 +115,7 @@ export async function runCommitmentReport(env: Env): Promise<void> {
 /** Shared per-invocation work budgets (batch txs + range-page reads). */
 type TickBudget = { batches: number; pages: number };
 
-async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
+async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
@@ -148,7 +149,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   const armedFromDay = commitState[0];
   if (armedFromDay === 0n) return;
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx || !ctx.wallet.account) return;
 
   // FULL bounded range every tick (Codex #1425 r2): floor at armedFromDay,
@@ -200,6 +201,12 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
 
   for (const d of dayList) {
     if (budget.batches <= 0 || budget.pages <= 0) break;
+    // #2572 — past the run's deadline the send queue refuses every batch and
+    // report before signing; the remaining days resume next run.
+    if (Date.now() >= deadlineMs) {
+      console.log(`[keeper] commitmentReport chain=${chain.id} run deadline reached at day=${d}; resumes next run`);
+      break;
+    }
     if (resolved.has(Number(d))) {
       // A reconciled rediscovery whose report is already dispatched is
       // terminal — retire the D1 row so the union stays bounded.

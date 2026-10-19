@@ -214,12 +214,21 @@ export class SendPastDeadline extends Error {}
 export function queuedWallet(
   wallet: WalletClient,
   chainId: number,
-  /** The run deadline of the pass this wallet sends for, if it has one
-   *  (#2571 r1). Checked INSIDE the submission slot, at the moment the send's
-   *  turn comes — a check before queuing cannot cover the wait behind another
-   *  pass's send, or a slow fee estimate. */
-  notAfterMs?: number,
+  /** The run deadline of the pass this wallet sends for (#2571 r1; required
+   *  since #2572). Checked INSIDE the submission slot, at the moment the
+   *  send's turn comes — a check before queuing cannot cover the wait behind
+   *  another pass's send, or a slow fee estimate. Every pass has one: the
+   *  tick computes it from the pass's cadence, so a send signed after its
+   *  run's slot has ended waits for the next run instead of competing with
+   *  it. */
+  notAfterMs: number,
 ): WalletClient {
+  // Refused at build time as well as by the type: the keeper's typecheck does
+  // not cover its tests or any untyped caller, and a missing or NaN deadline
+  // would otherwise compare false forever and silently disable the check.
+  if (typeof notAfterMs !== 'number' || !Number.isFinite(notAfterMs)) {
+    throw new TypeError(`queuedWallet: a finite run deadline is required (got ${String(notAfterMs)})`);
+  }
   return wallet.extend((base) => {
     // Typed loosely: viem's generic signatures for these actions cannot be
     // restated by a wrapper; the arguments pass through unchanged.
@@ -234,7 +243,7 @@ export function queuedWallet(
       // viem's own sendTransaction, split at the signature so the slot
       // knows whether a failure could have reached the network.
       return withSubmissionSlot(base, chainId, account.address, async (nonce, signed) => {
-        if (notAfterMs !== undefined && Date.now() >= notAfterMs) {
+        if (Date.now() >= notAfterMs) {
           throw new SendPastDeadline(`send refused at its turn: the run's deadline passed while it waited — next run`);
         }
         const request = await prepareTransactionRequest(base, {

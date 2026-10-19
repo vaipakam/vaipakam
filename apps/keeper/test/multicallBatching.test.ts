@@ -317,7 +317,7 @@ describe('Multicall3 batching (#1946)', () => {
         KEEPER_PRIVATE_KEY:
           '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-      } as never);
+      } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
     } finally {
       restore();
       spy.mockRestore();
@@ -372,7 +372,7 @@ describe('Multicall3 batching (#1946)', () => {
         KEEPER_PRIVATE_KEY:
           '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-      } as never);
+      } as never, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 });
     } finally {
       restore();
       spy.mockRestore();

@@ -60,6 +60,7 @@ import {
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 
@@ -94,12 +95,12 @@ interface ExtendCaps {
   setter: Address;
 }
 
-export async function runAutoLifecycle(env: Env): Promise<void> {
+export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'autoLifecycle')) return;
   const chains = getChainConfigs(env);
   for (const chain of chains) {
     try {
-      await processChain(env, chain);
+      await processChain(env, chain, tick.deadlineMs);
     } catch (err) {
       console.error(
         `[keeper] autoLifecycle chain=${chain.id} failed:`,
@@ -109,7 +110,7 @@ export async function runAutoLifecycle(env: Env): Promise<void> {
   }
 }
 
-async function processChain(env: Env, chain: ChainConfig): Promise<void> {
+async function processChain(env: Env, chain: ChainConfig, deadlineMs: number): Promise<void> {
   if (!chain.diamond) return;
   const publicClient = createPublicClient({
     transport: http(chain.rpc),
@@ -147,12 +148,18 @@ async function processChain(env: Env, chain: ChainConfig): Promise<void> {
     loanIds.push(...page);
   }
 
-  const ctx = buildKeeperContext(env, chain, publicClient);
+  const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: deadlineMs });
   if (!ctx) return;
 
   let submitted = 0;
   for (const loanIdBig of loanIds) {
     if (submitted >= MAX_EXTENDS_PER_TICK) break;
+    // #2572 — past the run's deadline every extension would be refused at
+    // its turn in the send queue; the rest wait for the next run.
+    if (Date.now() >= deadlineMs) {
+      console.log(`[keeper] autoLifecycle chain=${chain.id} run deadline reached; remaining loans left for the next run`);
+      break;
+    }
     const fired = await tryExtend(
       publicClient,
       ctx.wallet,
