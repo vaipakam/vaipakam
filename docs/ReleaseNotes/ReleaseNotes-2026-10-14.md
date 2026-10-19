@@ -1,6 +1,6 @@
 # Release Notes — 2026-10-14
 
-Most of the day's changes concern loans whose grace period has ended. Both parties now get an inbox alert when a grace window ends, and the Positions page marks such loans "Past grace". A lender can now close one out when its collateral must be sold, and the lender's notice no longer promises an automatic close. The keeper gained a pass that closes these loans itself, including collapsed ones that no venue will quote. It also sends its transactions on each network one at a time, reads its liquidation routes and the swap-venue list from the protocol, and can now run on an always-on machine. Elsewhere, the loan page states that a loan is settled only once it is, the desk's History shows the terms a fill actually executed at, and the indexer has a health route that says whether ingest is advancing.
+Most of the day's changes concern loans whose grace period has ended. Both parties now get an inbox alert when a grace window ends, and the Positions page marks such loans "Past grace". A lender can now close one out when its collateral must be sold, and the lender's notice no longer promises an automatic close. The keeper gained a grace-default pass that can close these loans itself. It ships switched off behind its own setting. Separately, the keeper's health-factor liquidation, not that pass, now closes a collapsed past-grace loan that no venue will quote; it is armed by the keeper-wide switch, which was off on the live deployment. It also sends its transactions on each network one at a time, reads its liquidation routes and the swap-venue list from the protocol, and can now run on an always-on machine. Elsewhere, the loan page states that a loan is settled only once it is, the desk's History shows the terms a fill actually executed at, and the indexer has a health route that says whether ingest is advancing.
 
 ## Thread — Grace-ended inbox alert (PR #2479)
 
@@ -165,7 +165,7 @@ The liquidation now closes that loan itself. When every listed venue was asked a
 This behaviour is part of the liquidation duty and so is armed by the keeper-wide switch, which is off on the live deployment. Closes #2487.
 <!-- assembled-fragment: 2487-keeper-in-kind-close-out.md sha256=82b58fdc904066ab06a0db2dfb9187acb51a2a877ff24b8013102e900aeee6dc -->
 
-### Keeper reads the swap-venue list in one request (#2488)
+## Thread — The keeper reads the swap-venue list in one request (PR #2491)
 
 When the keeper builds a close-out route, it reads the Diamond's list of swap venues and, for each venue, its name and whether it is switched off. It used to read each name and each switch separately: two requests per venue on every route build, for both the liquidation and grace-default passes. With a long venue list, those reads alone could use up the request allowance a keeper run shares with its other duties.
 

@@ -1,6 +1,6 @@
 # Release Notes — 2026-10-07
 
-Internal matching now leaves a record of what it cleared from a loan, and the lender's claim states that amount. The testnets gained a sanctions test list and a script that configures it, together with the in-app banner a flagged wallet sees.
+Internal matching now leaves a record of what it cleared from a loan. Where that record is complete and readable, the lender's claim states the amount. An incomplete, missing or unreadable record is stated as such, with no figures. The testnets gained a sanctions test list and a script that configures it, together with the in-app banner a flagged wallet sees.
 
 ## Thread — the protocol records what internal matching cleared from a loan, and a lender's claim states it (PR #2444)
 
