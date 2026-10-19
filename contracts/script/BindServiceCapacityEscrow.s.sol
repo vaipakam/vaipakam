@@ -8,6 +8,7 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
+import {RewardCustodyHolder} from "../src/RewardCustodyHolder.sol";
 
 /**
  * @title  BindServiceCapacityEscrow
@@ -69,6 +70,7 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     // ── parameterised entries (tests drive these, not the environment) ──────
 
     function bindWith(address diamond, uint256 adminKey) public {
+        _requireArtifactDiamond(diamond);
         _requireUnbound(diamond);
         address admin = vm.addr(adminKey);
         require(
@@ -84,6 +86,7 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     }
 
     function stageFor(address diamond) public view {
+        _requireArtifactDiamond(diamond);
         _requireUnbound(diamond);
         console.log("=== Service-capacity escrow (bind, staged) ===");
         console.log("Diamond:", diamond);
@@ -94,9 +97,14 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
     }
 
     function recordFor(address diamond) public returns (address escrow) {
+        _requireArtifactDiamond(diamond);
         (escrow,,) = ServiceCapacityFacet(diamond).getServiceCapacityEscrow();
         require(escrow != address(0), "BindServiceCapacityEscrow: no escrow is bound yet -- bind (run() or stage()) and let it confirm first");
         require(escrow.code.length != 0, "BindServiceCapacityEscrow: the reported escrow has no code");
+        require(
+            RewardCustodyHolder(escrow).DIAMOND() == diamond,
+            "BindServiceCapacityEscrow: the reported escrow does not answer to this Diamond"
+        );
         address recorded = Deployments.readServiceCapacityEscrowOptional();
         require(
             recorded == address(0) || recorded == escrow,
@@ -109,6 +117,16 @@ contract BindServiceCapacityEscrow is Script, ArtifactRootBase {
         Deployments.writeServiceCapacityEscrowReconciled(escrow);
         console.log("recorded .serviceCapacityEscrow from live state:", escrow);
         console.log("next: bash script/exportFrontendDeployments.sh");
+    }
+
+    /// @dev Every entry acts on the ARTIFACT's Diamond only (Codex #2585 r4): the
+    ///      parameterised entries are public, so without this a wrong address
+    ///      could have its holder published into this chain's canonical artifact.
+    function _requireArtifactDiamond(address diamond) internal view {
+        require(
+            diamond == Deployments.readDiamond(),
+            "BindServiceCapacityEscrow: the Diamond is not this chain's deployment artifact Diamond"
+        );
     }
 
     /// @dev Before a bind or a stage: the Diamond has no escrow bound AND the

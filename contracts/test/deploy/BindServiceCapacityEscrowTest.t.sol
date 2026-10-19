@@ -12,6 +12,13 @@ import {ServiceCapacityFacet} from "../../src/facets/ServiceCapacityFacet.sol";
 ///         escrow is published only by `record()`, from the address the Diamond
 ///         reports in live state, through the dedicated reconciliation writer.
 ///         Artifacts are redirected to a scratch root, never the committed files.
+/// @dev Exposes the script's non-broadcast write policy for the test above.
+contract WritePolicyProbe is BindServiceCapacityEscrow {
+    function writesEnabled() external view returns (bool) {
+        return _nonBroadcastWritesEnabled();
+    }
+}
+
 contract BindServiceCapacityEscrowTest is Test {
     uint256 internal constant DEPLOYER_KEY = 1;
     address internal diamond;
@@ -31,7 +38,10 @@ contract BindServiceCapacityEscrowTest is Test {
         s.setArtifactRootOverride(root);
         string memory dir = string.concat(root, "/", Deployments.chainSlug());
         vm.createDir(dir, true);
-        vm.writeJson(string.concat("{\"chainId\":", vm.toString(block.chainid), "}"), string.concat(dir, "/addresses.json"));
+        vm.writeJson(
+            string.concat("{\"chainId\":", vm.toString(block.chainid), ",\"diamond\":\"", vm.toString(diamond), "\"}"),
+            string.concat(dir, "/addresses.json")
+        );
     }
 
     function _artifact() internal view returns (string memory) {
@@ -83,17 +93,15 @@ contract BindServiceCapacityEscrowTest is Test {
         vm.removeDir(root, true);
     }
 
-    /// Codex #2585 r2 — without a redirect, under forge test, record() writes
-    /// nothing: the committed artifact is never touched by a test.
-    function test_RecordUnderTestWithoutRedirect_WritesNothing() public {
-        BindServiceCapacityEscrow s = new BindServiceCapacityEscrow();
-        s.bindWith(diamond, DEPLOYER_KEY);
-        string memory committed = string.concat("deployments/", Deployments.chainSlug(), "/addresses.json");
-        bool existed = vm.exists(committed);
-        bytes32 before = existed ? keccak256(bytes(vm.readFile(committed))) : bytes32(0);
-        assertEq(s.recordFor(diamond), _escrow(), "record still reports the bound escrow");
-        assertEq(vm.exists(committed), existed, "no committed artifact created");
-        if (existed) assertEq(keccak256(bytes(vm.readFile(committed))), before, "the committed artifact is unchanged");
+    /// Codex #2585 r2 — the non-broadcast write policy itself: under forge test
+    /// writes are OFF unless the artifact is redirected to a scratch root, so a
+    /// test can never rewrite a committed artifact through record().
+    function test_WritePolicy_OffUnderTest_OnlyARedirectEnablesIt() public {
+        WritePolicyProbe probe = new WritePolicyProbe();
+        assertFalse(probe.writesEnabled(), "under test, no redirect: writes are off");
+        string memory scratch = string.concat(ARTIFACT_SCRATCH_PREFIX, "bind-capacity-escrow-policy");
+        probe.setArtifactRootOverride(scratch);
+        assertTrue(probe.writesEnabled(), "a redirected (scratch) artifact may be written");
     }
 
     /// Codex #2585 r2 — a stale artifact naming an escrow while the Diamond has
@@ -111,6 +119,27 @@ contract BindServiceCapacityEscrowTest is Test {
         vm.expectRevert(reason);
         s.stageFor(diamond);
         assertEq(_escrow(), address(0), "nothing was bound");
+        vm.removeDir(root, true);
+    }
+
+    /// Codex #2585 r4 — every entry acts on the artifact's Diamond only: a
+    /// different Diamond, bound or not, is refused before anything is read or
+    /// written, and nothing is published.
+    function test_ADiamondOtherThanTheArtifacts_IsRefused() public {
+        BindServiceCapacityEscrow s = _script("other");
+        DeployDiamond other = new DeployDiamond();
+        other.runWith(vm.addr(DEPLOYER_KEY), address(0xBEEF), DEPLOYER_KEY);
+        address otherDiamond = other.diamond();
+        bytes memory reason = bytes("BindServiceCapacityEscrow: the Diamond is not this chain's deployment artifact Diamond");
+        vm.expectRevert(reason);
+        s.bindWith(otherDiamond, DEPLOYER_KEY);
+        vm.expectRevert(reason);
+        s.stageFor(otherDiamond);
+        vm.prank(vm.addr(DEPLOYER_KEY));
+        ServiceCapacityFacet(otherDiamond).bindServiceCapacityEscrow();
+        vm.expectRevert(reason);
+        s.recordFor(otherDiamond);
+        assertFalse(vm.keyExistsJson(_artifact(), ".serviceCapacityEscrow"), "nothing published");
         vm.removeDir(root, true);
     }
 
