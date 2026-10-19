@@ -1,0 +1,5 @@
+## Thread — each chain's service-capacity deposit escrow is published with its deployment (PR #2585)
+
+Binding a chain's service-capacity escrow creates a dedicated holder contract that will custody operators' refundable capacity deposits. Until now its address could be found only by asking the Diamond. It now appears in each chain's deployment artifact and in the consolidated deployments bundle, alongside the reward custody holder, so monitoring and explorer tooling can find it the same way.
+
+Binding and publishing are separate steps, as they are for the reward custody holder. The operator binds directly while the admin key holds the role, or stages the call for the Timelock after governance handover. Only once the bind has confirmed is the address published, from the address the Diamond itself reports. An address that existed only in a pre-broadcast simulation can therefore never reach the artifact, and a chain that is already bound can be published without sending anything. The escrows bound on Base Sepolia, Arbitrum Sepolia and BNB testnet on 2026-10-19 are published this way. Closes #2583.

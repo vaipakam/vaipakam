@@ -150,5 +150,6 @@
   "ccipMessengerImpl": "0xe88e98d5b34a1325311fd37c16a3e4ed6f452477",
   "rewardMessengerImpl": "0x29d771ca6d749e6ebd0a76a61de4b88832e30107",
   "sanctionsList": "0x0A6De512dEaa00d54677d513ea7AdbAf5Ec34DD3",
-  "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394"
+  "sanctionsDelistingTimelock": "0xD8827C000cF49b0B40763ab9F2b2851B090aA394",
+  "serviceCapacityEscrow": "0x098155866D7EbAe0a765f2E220998f4C001d8490"
 }

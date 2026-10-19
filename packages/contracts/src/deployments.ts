@@ -318,6 +318,14 @@ export interface Deployment {
    *  reads it until slice 4 PR B's cutover. */
   rewardCustodyHolder?: HexAddress;
 
+  /** #2583 — the service-capacity deposit escrow: a `RewardCustodyHolder`
+   *  instance of its own, bound once by `bindServiceCapacityEscrow()`, which
+   *  custodies operators' refundable capacity principal. Never the reward
+   *  holder. Recorded by `BindServiceCapacityEscrow.s.sol` from the address
+   *  the Diamond reports (`getServiceCapacityEscrow()`). Absent on a chain
+   *  whose escrow is not bound yet. */
+  serviceCapacityEscrow?: HexAddress;
+
   /** #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on this
    *  Diamond, as one record replaced whole on every configure run. Absent on
    *  a chain that has not run it. The Diamond's own `getSanctionsOracle()` is
