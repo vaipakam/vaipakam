@@ -65,6 +65,7 @@ import {
   passIsArmed,
   type KeeperContext,
 } from './keeper';
+import { reportSendError } from './submissionQueue';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -526,8 +527,11 @@ async function submitMatch(
         killSwitchLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(
-        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return false;
@@ -695,8 +699,11 @@ async function submitIntentFill(
         killSwitchLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return false;
@@ -1069,8 +1076,11 @@ async function submitRoll(
     // caller skips them rather than re-probing each.
     const unauthorized = errStr.includes('KeeperAccessRequired');
     if (!unauthorized) {
-      console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      reportSendError(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)}`,
+        err,
+        `broadcast failed: ${errStr.slice(0, 200)}`,
+        console.log,
       );
     }
     return { ok: false, unauthorized };

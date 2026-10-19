@@ -121,6 +121,29 @@ export function isSendPastDeadline(err: unknown): boolean {
   return false;
 }
 
+/** How a deadline refusal reads in a log line, wherever a send reports one. */
+export const SEND_DEFERRED_WORDING =
+  'deferred to the next run: the run deadline passed before broadcast, so nothing was signed or sent';
+
+/** The one way a send site reports a send that did not go out (#2572 r3).
+ *  A deadline refusal is a deferral, logged as such, never as a failure: the
+ *  slot refused it before anything was signed, so there is nothing to chase
+ *  and the next run retries. Anything else is logged with `failure`, through
+ *  `logFailure` (the site's own level). Returns whether it was a deferral. */
+export function reportSendError(
+  prefix: string,
+  err: unknown,
+  failure: string,
+  logFailure: (line: string) => void = console.error,
+): boolean {
+  if (isSendPastDeadline(err)) {
+    console.log(`${prefix} ${SEND_DEFERRED_WORDING}`);
+    return true;
+  }
+  logFailure(`${prefix} ${failure}`);
+  return false;
+}
+
 /** The one rule for a run deadline, applied wherever a send states one. */
 function assertFiniteDeadline(notAfterMs: unknown, where: string): asserts notAfterMs is number {
   // Refused as well as typed: the keeper's typecheck does not cover its tests

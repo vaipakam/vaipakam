@@ -51,6 +51,7 @@ import {
   markRemitAcked,
 } from './db';
 import { discoverWork } from './workQueue';
+import { reportSendError } from './submissionQueue';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
 // headroom on the mutating facet; viem resolves functions from the
@@ -265,9 +266,7 @@ async function ackPending(
       const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond, ackBudget);
       if (sent) await recordAttemptBestEffort(env, baseChainId, diamond, remitId, r.dstChainId);
     } catch (err) {
-      console.log(
-        `[keeper] remitAck remit=${remitId} dst=${r.dstChainId} skipped: ${(err as Error).message}`,
-      );
+      reportSendError(`[keeper] remitAck remit=${remitId} dst=${r.dstChainId}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }
@@ -502,7 +501,7 @@ async function ackLateDeliveries(
       // eslint-disable-next-line no-await-in-loop
       if (ok) await recordAttemptBestEffort(env, baseChainId, diamond, ids[i], Number(v.dstChainId));
     } catch (err) {
-      console.log(`[keeper] remitAck late remit=${ids[i]} skipped: ${(err as Error).message}`);
+      reportSendError(`[keeper] remitAck late remit=${ids[i]}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }

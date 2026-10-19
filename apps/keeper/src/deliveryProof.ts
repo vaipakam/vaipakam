@@ -48,6 +48,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { boundedRead, deadlineClient } from './batchRead';
+import { reportSendError } from './submissionQueue';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
@@ -688,7 +689,7 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
       console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
     }
   } catch (err) {
-    console.error(`[keeper] deliveryProof ${call.functionName} send failed: ${shortErr(err)}`);
+    reportSendError(`[keeper] deliveryProof ${call.functionName}`, err, `send failed: ${shortErr(err)}`);
     budget.writes = 0;
   }
 }

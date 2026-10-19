@@ -58,7 +58,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
-import { isSendPastDeadline } from './submissionQueue';
+import { reportSendError } from './submissionQueue';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -920,16 +920,12 @@ async function runRelayForChain(
         `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} tx=${hash}`,
       );
     } catch (err) {
-      // #2572 — refused before signing: the counter above is persisted, so
-      // the next run recomputes the same target from fresh quotes.
-      if (isSendPastDeadline(err)) {
-        console.log(
-          `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target} deferred to the next run: the run's deadline passed before the send's turn; nothing was signed`,
-        );
-        continue;
-      }
-      console.error(
-        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier failed: ${String(err).slice(0, 250)}`,
+      // #2572 — a deadline refusal came before signing: the counter above is
+      // persisted, so the next run recomputes the same target from fresh quotes.
+      reportSendError(
+        `[keeper] liq-confidence chain=${chain.name} asset=${key} setKeeperTier ${currentOnChainTier}→${target}`,
+        err,
+        `failed: ${String(err).slice(0, 250)}`,
       );
     }
   }

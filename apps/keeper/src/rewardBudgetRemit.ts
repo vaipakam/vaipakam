@@ -32,6 +32,7 @@ import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { reportSendError } from './submissionQueue';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -283,9 +284,8 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
-      console.log(
-        `[keeper] rewardBudgetRemit skipped Base->${mirrorId}: ${(err as Error).message}`,
-      );
+      // The failure marker `skipped Base-><id>:` is the one the runbook names.
+      reportSendError(`[keeper] rewardBudgetRemit`, err, `skipped Base->${mirrorId}: ${(err as Error).message}`, console.log);
     }
   }
   // #1896 — POSITIVE coverage evidence, for the same reason the liquidator

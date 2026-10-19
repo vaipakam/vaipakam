@@ -23,7 +23,7 @@
  *     entire path is no-op.
  */
 
-import { isSendPastDeadline, queuedWallet } from './submissionQueue';
+import { isSendPastDeadline, queuedWallet, reportSendError } from './submissionQueue';
 import { attemptErrorReason } from './keeperSend';
 import {
   type Address,
@@ -853,19 +853,13 @@ export async function maybeAutonomousLiquidate(
     );
     return true;
   } catch (err) {
-    // #2572 — refused at its turn in the queue, before signing: no nonce was
-    // spent and nothing reached the network. Said as a deferral, not an error.
-    if (isSendPastDeadline(err)) {
-      console.log(`[keeper] loan=${loanId} chain=${chain.name} deferred to the next run: the run's deadline passed before the send's turn; nothing was signed`);
-      return false;
-    }
-    // Any failure here is non-fatal — we logged + dedupe'd, so the
-    // watcher won't hammer the same loan in this tick. The most
-    // common cause is "another keeper got there first" or "MEV bot
-    // front-ran us", both of which are fine — the loan is liquidated.
-    console.error(
-      `[keeper] loan=${loanId} chain=${chain.name} err=${String(err).slice(0, 250)}`,
-    );
+    // #2572 — a deadline refusal came before signing (no nonce spent, nothing
+    // sent) and is reported as a deferral. Any other failure here is
+    // non-fatal — we logged + dedupe'd, so the watcher won't hammer the same
+    // loan in this tick. The most common cause is "another keeper got there
+    // first" or "MEV bot front-ran us", both of which are fine — the loan is
+    // liquidated.
+    reportSendError(`[keeper] loan=${loanId} chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
     return false;
   }
 }

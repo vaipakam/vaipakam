@@ -57,6 +57,7 @@ import {
   markReconciledDayConsumed,
   putCommitmentScanFrontier,
 } from './db';
+import { reportSendError } from './submissionQueue';
 
 const COMMIT_ABI = RewardCommitmentFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
@@ -307,9 +308,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number
     } catch (err) {
       // Benign races (a competing tick advanced the cursor, the stamp landing
       // mid-scan, etc.) — log and let the next tick re-evaluate.
-      console.log(
-        `[keeper] commitmentReport chain=${chain.id} day=${d} skipped: ${(err as Error).message}`,
-      );
+      reportSendError(`[keeper] commitmentReport chain=${chain.id} day=${d}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
 }

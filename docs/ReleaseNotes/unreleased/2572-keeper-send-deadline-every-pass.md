@@ -26,5 +26,10 @@ system makes every pass state it, and the slot refuses at run time a missing,
 non-numeric or infinite deadline, so a caller outside the typechecked sources
 cannot switch the check off by leaving it out. A refusal is recognised however
 the signing library wraps it, and the liquidation routes that catch their own
-send failures hand it on rather than reporting it as their own failure. The fallback deadlines three passes used when no tick was supplied are
+send failures hand it on rather than reporting it as their own failure. Every
+pass logs such a refusal the same way, as "deferred to the next run: the run
+deadline passed before broadcast, so nothing was signed or sent", never as a
+failed broadcast, so an operator reading the log is not sent looking for a
+transaction that was never made. Real failures keep each pass's existing
+wording. The fallback deadlines three passes used when no tick was supplied are
 gone. Closes #2572.

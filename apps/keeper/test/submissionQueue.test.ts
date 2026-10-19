@@ -3,7 +3,7 @@
  * nonce. Driven against a mock RPC that checks nonces the way a node does:
  * a broadcast is accepted only at the next nonce in sequence.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { armHeldFence } from './helpers/epochFence';
 import {
   createWalletClient,
@@ -21,6 +21,8 @@ import {
   resetSubmissionQueues,
   SendPastDeadline,
   isSendPastDeadline,
+  reportSendError,
+  SEND_DEFERRED_WORDING,
   withSubmissionSlot,
 } from '../src/submissionQueue';
 
@@ -364,5 +366,29 @@ describe('every send carries its run deadline (#2572)', () => {
     expect(isSendPastDeadline(err)).toBe(true);
     expect(isSendPastDeadline(new Error('other'))).toBe(false);
     expect(node.accepted).toEqual([]);
+  });
+
+  describe('every send site reports a refusal as a deferral (r3)', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('a wrapped refusal is logged as deferred, never through the failure logger', async () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const failures: string[] = [];
+      const node: Node = { accepted: [], rejected: [] };
+      const err = await queuedWallet(nodeWallet(node), CHAIN_ID, Date.now() - 1)
+        .writeContract({ address: TO, abi: PING_ABI, functionName: 'ping', account, chain: null, ...FEES } as never)
+        .then(() => null, (e: unknown) => e);
+      expect(reportSendError('[site]', err, 'broadcast failed: x', (l) => failures.push(l))).toBe(true);
+      expect(failures).toEqual([]);
+      expect(log).toHaveBeenCalledWith(`[site] ${SEND_DEFERRED_WORDING}`);
+    });
+
+    it('any other error keeps the site\'s own failure line and level', () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const failures: string[] = [];
+      expect(reportSendError('[site]', new Error('nonce too low'), 'broadcast failed: nonce too low', (l) => failures.push(l))).toBe(false);
+      expect(failures).toEqual(['[site] broadcast failed: nonce too low']);
+      expect(log).not.toHaveBeenCalled();
+    });
   });
 });

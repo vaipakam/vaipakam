@@ -16,7 +16,7 @@
  * keeper isn't a single-point-of-failure, it's the predictable-
  * cadence default.
  */
-import { queuedWallet } from './submissionQueue';
+import { queuedWallet, reportSendError } from './submissionQueue';
 import {
   http,
   createPublicClient,
@@ -167,9 +167,7 @@ async function captureForChain(env: Env, chain: ChainConfig, deadlineMs: number)
       `[dailyOracle] chain=${chain.name} day=${todayIndex} assets=${assets.length} tx=${hash}`,
     );
   } catch (err) {
-    console.error(
-      `[dailyOracle] chain=${chain.name} err=${String(err).slice(0, 250)}`,
-    );
+    reportSendError(`[dailyOracle] chain=${chain.name}`, err, `err=${String(err).slice(0, 250)}`);
   }
 }
 

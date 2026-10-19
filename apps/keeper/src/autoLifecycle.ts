@@ -63,6 +63,7 @@ import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
+import { reportSendError } from './submissionQueue';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -243,9 +244,7 @@ async function tryExtend(
     // Most reverts here are benign (loan in last day, grace
     // expired, both-side consent flipped between read + write).
     // Log at info, not error.
-    console.log(
-      `[keeper] autoLifecycle extend skipped loan=${loanIdBig}: ${(err as Error).message}`,
-    );
+    reportSendError(`[keeper] autoLifecycle extend loan=${loanIdBig}`, err, `skipped: ${(err as Error).message}`, console.log);
     return false;
   }
 }
