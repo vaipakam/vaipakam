@@ -3,6 +3,15 @@
 Status: built (contracts, tests, testnet deploy script, delister bot). The
 CCIP clearance wiring is the remaining follow-up, listed in §7.
 
+Testnet deployments (2026-10-19, recorded in each chain's deployment artifact
+as `sanctionsDelistingTimelock`): Base Sepolia and Arbitrum Sepolia, one
+timelock each for that chain's rehearsal list. On both the admin owns the
+timelock, the delister bot key is its only proposer, the delay is the default
+48 hours, and the timelock is a remover of the list beside the existing one
+(the Safe on Base Sepolia, the admin on Arbitrum Sepolia). Neither has a
+RedStone check, so every execution refuses until the clearance wiring lands;
+delistings meanwhile stay with each list's existing remover.
+
 ## 1. Decisions this records
 
 All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:

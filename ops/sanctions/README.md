@@ -186,7 +186,12 @@ sudo bash install.sh "$C"
 package, with dependencies pinned by the lockfile and no install scripts run),
 checks it with `sanctions-adder.mjs --check` and `sanctions-delister.mjs
 --check`, switches `/opt/vaipakam-sanctions/current` to it, and installs both
-services' units from the same commit. It creates each env file from its
+services' units from the same commit. The checks run on every install, a
+rollback included, and each runs the way the unit runs that service: as a
+throwaway dynamic user, with an empty environment, through a link to the
+release, and it must print its `release ok` line. A release the service could
+not read, or a script that would not run when started through `current`,
+therefore stops the install and leaves `current` where it was. It creates each env file from its
 template (0600, root-only) only if it does not exist, and never overwrites
 one. It never starts or enables anything. A machine that ran the adder-only
 installer of #2557 has its old `/opt/vaipakam-sanctions-adder` removed once
@@ -205,6 +210,11 @@ sudo systemctl start vaipakam-sanctions-delister.service
 journalctl -u vaipakam-sanctions-delister -n 80
 sudo systemctl enable --now vaipakam-sanctions-delister.timer
 ```
+
+A run that worked ends its journal with its report and writes
+`last-run.json` in its state directory (§5). A run that exits with neither did
+not do its work, even when systemd reports it finished successfully: stop
+there, and don't enable that timer.
 
 Each key is typed once, on the machine that uses it, and never copied between
 machines. Adding a chain later is one RPC line (and its contracts recorded in
@@ -271,7 +281,10 @@ the installed release).
   `setProposer(<key>, false)` on its timelock (which also voids every proposal
   that key made).
 - **Move to a new commit:** re-run `install.sh` with it. The previous release
-  is kept; re-running `install.sh` with its commit is the rollback. That works
+  is kept; re-running `install.sh` with its commit is the rollback. Never roll
+  back to a commit from before #2586: its services skip their work when started
+  through `current`, and report success. The installer from #2586 on refuses
+  one, because its check fails; an older installer would not. That works
   between commits that carry this kit; a commit from before the adder and the
   delister shared it is refused by name, and goes back through that commit's
   own `ops/sanctions-adder/install.sh` after

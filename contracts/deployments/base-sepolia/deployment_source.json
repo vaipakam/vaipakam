@@ -4,5 +4,126 @@
   "deployedAt": "2026-10-17T23:31:46+0530",
   "monorepoCommit": "719172ce83c9cd0c87dd6cb9c57791635460eeca (dirty)",
   "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
-  "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303"
+  "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303",
+  "inPlaceRefreshes": [
+    {
+      "kind": "changed-facet-refresh",
+      "tool": "contracts/script/RefreshChangedFacetsInPlace.s.sol (#2576)",
+      "at": "2026-10-19T04:19:19Z",
+      "monorepoCommit": "dc72b36f847a5ee4657ef0794b2b1d87e7e99f92",
+      "operator": "0xf718bae5e0dc36140f16daef73289294c2372030",
+      "facetsRefreshed": {
+        "vaultFactoryFacet": "0xe56633171BC938ED053054B5275703A9091A43c9",
+        "rewardEpochViewFacet": "0x9a79D19A7233EC4b603f792Fa1970A4684CF6009",
+        "rewardClosureFacet": "0x6aF133165c25239A898381F07e611b81424617F3",
+        "serviceCapacityFacet": "0xA9792975eFa42fbE1e3a6B4e78B8368b4FC5EdD4",
+        "offerMatchIntentFacet": "0xfd7FF6f8235E6cE811d0DE3E18Ea9faC93739cf0",
+        "lenderIntentFacet": "0x997f5f7aAC16F1e2D560AA4a7e711f290e0bf909",
+        "riskPreviewFacet": "0x31B4E1a60180D7D43f067e85289E342FcFdF7cD0",
+        "aggregatorAdapterFactoryFacet": "0x586D66314C19BCdb068ce19227746e81d42305EC",
+        "backstopFacet": "0x59f8755bC68D4A055Ad18359dDA57C209cb306F8",
+        "perkFacet": "0xCE71f733885e52E17E4fF47ED1b7d1C9611edfF9"
+      },
+      "staleRoutesRemoved": [
+        "setArmingFeeFloor(uint256)"
+      ],
+      "calls": [
+        {
+          "function": "pause()",
+          "tx": "0x026ea12d0fcf57da4d140bc484a1bebd5c279a7a524914e53099164a4141b770"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0xaabf14e6a3774c9fd9f83c446e10bb75f88bac5b2d9f562808453d00e759340d"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0xe2438bdcd8855d21b03e72137520c69d18f05c65d0a9bdfd2d4d892fa86ca2a0"
+        },
+        {
+          "function": "diamondCut((address,uint8,bytes4[])[],address,bytes)",
+          "tx": "0xf13895d7677af3a2c59d027bc6b78b7d563617f490373cadde73fe4780a8f99a"
+        },
+        {
+          "function": "stampRewardCustodyCutover()",
+          "tx": "0x35ad8d878b080e1c1eaa279c8698b0c77362ab58ba4bbc2c2c62e3ca7c880edc"
+        },
+        {
+          "function": "unpauseIfPauseEpoch(uint64)",
+          "tx": "0x613601c124f80481d594a8f0b08fc259579d6d9fc8982ea8b5357bb56d5c1963"
+        }
+      ],
+      "broadcast": "contracts/broadcast/RefreshChangedFacetsInPlace.s.sol/84532/run-1792383559996.json (gitignored; this record is its committed summary)",
+      "adminActivation": {
+        "ops": [
+          {
+            "call": "bindServiceCapacityEscrow()",
+            "tx": "0x955c0cec5be46dd04feecd0a6dfbbed5e50e861a38afb5c2c17ebc1abfb39fff",
+            "block": 48308453
+          },
+          {
+            "call": "setServiceCapacityEnabled(true)",
+            "tx": "0x06a7bda520078d9c37629fcd327cf4de35594a28c0b1f2abd904fd3f148ea9e7",
+            "block": 48308468
+          },
+          {
+            "call": "setArmingFeeRate(2e16)",
+            "tx": "0x4febb6253fc861f8f716e261d6c56bcc6e3d606eaa7a0b70e8c81fddf6a4412c",
+            "block": 48308455
+          },
+          {
+            "call": "setCapacityCurve(Solver (0))",
+            "args": {
+              "freeTier": "20000000000000000000",
+              "freeRatePerSec": "5555555555555555",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "free allowance ceiling 20 fills, refill 20/hour (a first-seen operator starts with 1 fill); 10,000 VPFI deposit for 4x ceiling and rate; 1 unit per fill",
+            "tx": "0xe4ddebbcd8e7f200312e03810fe868666efde8ceb4559d5cddd6f21e25829369",
+            "block": 48309385
+          },
+          {
+            "call": "setCapacityCurve(Keeper (1))",
+            "args": {
+              "freeTier": "60000000000000000000",
+              "freeRatePerSec": "16666666666666666",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "free allowance ceiling 60 actions, refill 60/hour (a first-seen operator starts with 1 action); 10,000 VPFI deposit for 4x ceiling and rate; 1 unit per action",
+            "tx": "0x4b56d7732a3abb71acca891e5c92c789b08f419745878a6373163498c15c2302",
+            "block": 48309390
+          },
+          {
+            "call": "setCapacityCurve(Solver (0)) - retune, curve epoch 2",
+            "args": {
+              "freeTier": "20000000000000000000",
+              "freeRatePerSec": "5555555555555556",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "same values; refill rate rounded UP (ceil(20e18/3600)) so one fill accrues in exactly 180s; the epoch-1 floor-rounded rate fell 40-80 units short at that boundary (Codex #2581 r5)",
+            "tx": "0xe0c17d657d5bf1000e847cc698deed577c1b6c6a9dc9ea596f97d1579690e027",
+            "block": 48310673
+          },
+          {
+            "call": "setCapacityCurve(Keeper (1)) - retune, curve epoch 2",
+            "args": {
+              "freeTier": "60000000000000000000",
+              "freeRatePerSec": "16666666666666667",
+              "bondAt4x": "10000000000000000000000",
+              "classCost": "1000000000000000000"
+            },
+            "meaning": "same values; refill rate rounded UP (ceil(60e18/3600)) so one action accrues in exactly 60s; the epoch-1 floor-rounded rate fell 40-80 units short at that boundary (Codex #2581 r5)",
+            "tx": "0x0aa31b83a15b593c2d6a146e096970988018845ad2584b8e05bdee8d1cb653d5",
+            "block": 48310678
+          }
+        ],
+        "serviceCapacityEscrow": "0x2FbcFce49713aB5f4b35fA7906930FdA2B56Cebf",
+        "armingFeeRate": "2e16 (2%)",
+        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 unpriced - decided starting price 2 VPFI per credit, applied only after keeper #2564 ships and a fork check passes"
+      }
+    }
+  ]
 }

@@ -159,6 +159,11 @@ would already have paid irreversibly. So the sale itself is guarded:
    offering a live sale before it is proven, and needs no privileged credit-mint
    surface.
 
+**Starting price (owner, 2026-10-19): 2 VPFI per credit** on the testnets — four
+times the 0.5 VPFI default notification fee, since a credit buys a fill that
+would otherwise wait — set only after preconditions 3 and 4 hold on that chain,
+and revisited before any mainnet pricing.
+
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
 chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):
 the first priced, counted write by this version sets a one-time marker that the
