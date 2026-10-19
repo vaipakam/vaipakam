@@ -65,6 +65,8 @@ interface IDiamondForProof {
     function updateKYCTier(address, uint8) external;
     function getPerkConfig(uint256) external view returns (uint256, uint32, uint256);
     function getUserVaultAddress(address) external view returns (address);
+    function getRecycleBucket() external view returns (uint256);
+    function getPerkSpendCumulative() external view returns (uint256);
     function previewIntent(address, address, address, address, address, uint256, uint256)
         external
         view
@@ -216,17 +218,22 @@ contract PriorityRoutingLiveFork is Test {
     }
 
     /// @dev Buy `units` credits for `who` with exactly `units * PRICE` VPFI from
-    ///      their vault, asserting the exact debit (Codex #2582 r1).
-    function _buyCredit(address who) internal {
+    ///      their vault, asserting the exact debit (Codex #2582 r1) and where the
+    ///      VPFI landed: the recycle bucket and the lifetime perk spend each rise
+    ///      by exactly the spend (Codex #2582 r10).
+    function _buyCredit(address who, uint256 units_) internal {
+        uint256 cost = units_ * PRICE;
         address vpfi = d.getVPFIToken();
-        deal(vpfi, who, PRICE);
+        deal(vpfi, who, cost);
         vm.startPrank(who);
-        assertTrue(IERC20Lite(vpfi).approve(address(d), PRICE), "approve");
-        d.depositVPFIToVault(PRICE);
+        assertTrue(IERC20Lite(vpfi).approve(address(d), cost), "approve");
+        d.depositVPFIToVault(cost);
         address vault = d.getUserVaultAddress(who);
         uint256 before = IERC20Lite(vpfi).balanceOf(vault);
+        uint256 bucket0 = d.getRecycleBucket();
+        uint256 spend0 = d.getPerkSpendCumulative();
         vm.recordLogs();
-        d.purchasePerk(PERK, 1, PRICE, 0);
+        d.purchasePerk(PERK, units_, cost, 0);
         Vm.Log[] memory pl = vm.getRecordedLogs();
         vm.stopPrank();
         // The sale receipt, decoded (Codex #2582 r9): the public link between
@@ -238,13 +245,15 @@ contract PriorityRoutingLiveFork is Test {
             assertEq(uint256(pl[i].topics[2]), PERK, "receipt: perkId");
             (uint256 units, uint256 spent, uint64 until, uint256 creditsAfter) =
                 abi.decode(pl[i].data, (uint256, uint256, uint64, uint256));
-            assertEq(units, 1, "receipt: units");
-            assertEq(spent, PRICE, "receipt: VPFI spent");
+            assertEq(units, units_, "receipt: units");
+            assertEq(spent, cost, "receipt: VPFI spent");
             assertEq(until, 0, "receipt: counted, no expiry");
-            assertEq(creditsAfter, 1, "receipt: credits after");
+            assertEq(creditsAfter, units_, "receipt: credits after");
         }
-        assertEq(before - IERC20Lite(vpfi).balanceOf(vault), PRICE, "exactly the configured price was charged");
-        assertEq(_credits(who), 1, "one credit bought");
+        assertEq(before - IERC20Lite(vpfi).balanceOf(vault), cost, "exactly the configured price was charged");
+        assertEq(d.getRecycleBucket() - bucket0, cost, "the spend entered the recycle bucket, exactly");
+        assertEq(d.getPerkSpendCumulative() - spend0, cost, "the lifetime perk spend rose by exactly the spend");
+        assertEq(_credits(who), units_, "the credits bought");
     }
 
     function _preview(address who, uint256 offerId) internal view returns (IntentPreview memory) {
@@ -269,8 +278,8 @@ contract PriorityRoutingLiveFork is Test {
         ERC20Mock(lendAsset).mint(who, 10 * PRINCIPAL);
         vm.startPrank(who);
         d.setLenderIntent(lendAsset, collAsset, 10_000 ether, MIN_RATE_BPS, 5000, MAX_DURATION, 100 ether, false, true);
-        ERC20Mock(lendAsset).approve(address(d), 3 * PRINCIPAL);
-        d.fundLenderIntent(lendAsset, collAsset, 3 * PRINCIPAL);
+        ERC20Mock(lendAsset).approve(address(d), 5 * PRINCIPAL);
+        d.fundLenderIntent(lendAsset, collAsset, 5 * PRINCIPAL);
         vm.stopPrank();
     }
 
@@ -420,18 +429,20 @@ contract PriorityRoutingLiveFork is Test {
         // 2. BOTH owners buy one credit each, at exactly the price; only the
         //    flagged owner opts the intent in. The control therefore differs from
         //    the flagged intent in the opt-in alone (Codex #2582 r1).
-        _buyCredit(flagged);
-        _buyCredit(plain);
+        // The flagged owner buys TWO credits, so the first priority fill must
+        // DECREMENT by one, not clear the balance (Codex #2582 r10).
+        _buyCredit(flagged, 2);
+        _buyCredit(plain, 1);
         // The protocol's durable sale record moved with the two sales (Codex
         // #2582 r5): it is what freezes the perk's mode after a first sale.
-        _assertPerkConfig(PRICE, 0, 2, "after both sales");
-        _assertPriority(flagged, false, 1, true, false, "bought, not yet opted in");
+        _assertPerkConfig(PRICE, 0, 3, "after both sales");
+        _assertPriority(flagged, false, 2, true, false, "bought, not yet opted in");
         _assertPriority(plain, false, 1, true, false, "control bought");
         vm.recordLogs();
         vm.prank(flagged);
         d.setLenderIntentPriority(lendAsset, collAsset, true);
         _assertOptIn(vm.getRecordedLogs());
-        _assertPriority(flagged, true, 1, true, false, "opted in, capacity covers");
+        _assertPriority(flagged, true, 2, true, false, "opted in, capacity covers");
 
         // 3a. While the solver CAN afford it, the flagged fill is charged to its
         //     capacity and the credit is untouched: a credit only ever buys a
@@ -453,7 +464,7 @@ contract PriorityRoutingLiveFork is Test {
         assertFalse(dark, "the limiter is lit");
         assertEq(rate, curve.freeRatePerSec, "unbonded: the free refill rate");
         assertEq(ceiling, curve.freeTier, "unbonded: the free ceiling");
-        _assertPriority(flagged, true, 1, false, true, "exhausted, one credit");
+        _assertPriority(flagged, true, 2, false, true, "exhausted, two credits");
         _assertPriority(plain, false, 1, false, false, "exhausted, control not opted in");
 
         // The deployed preview — what the keeper decides by — agrees for both.
@@ -462,27 +473,11 @@ contract PriorityRoutingLiveFork is Test {
         _assertOkPreview(_preview(flagged, cp1), true, "preview flagged");
         _assertRefusedPreview(_preview(plain, cp2), "preview control");
 
-        // 4. The flagged fill goes through on the credit, spending exactly one,
-        //    with no capacity charge.
-        LibVaipakam.CapacityBucket memory bucketBefore = d.getCapacityBucket(SOLVER, solver);
-        vm.recordLogs();
-        vm.prank(solver);
-        uint256 loanId = d.matchIntent(flagged, lendAsset, collAsset, cp1, PRINCIPAL);
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertGt(loanId, 0, "the flagged fill landed");
-        _assertLoan(loanId, makeAddr("proof-borrower-1"));
-        // The capacity STATE, not only the events (Codex #2582 r6).
-        LibVaipakam.CapacityBucket memory bucketAfter = d.getCapacityBucket(SOLVER, solver);
-        assertEq(bucketAfter.balance, bucketBefore.balance, "bucket untouched: balance");
-        assertEq(bucketAfter.lastTouch, bucketBefore.lastTouch, "bucket untouched: lastTouch");
-        assertEq(bucketAfter.curveEpoch, bucketBefore.curveEpoch, "bucket untouched: curveEpoch");
-        assertEq(bucketAfter.seen, bucketBefore.seen, "bucket untouched: seen");
-        assertEq(_credits(flagged), 0, "exactly one credit spent");
-        assertEq(_count(logs, T_PRIORITY_FILL), 1, "IntentPriorityFill once");
-        assertEq(_count(logs, T_CREDIT_CONSUMED), 1, "PerkCreditConsumed once");
-        assertEq(_count(logs, T_CAPACITY_SPENT), 0, "no capacity charge");
-        assertEq(_count(logs, T_FREE_TIER_SPENT), 0, "no free-tier charge either");
-        _assertPayloads(logs, loanId);
+        // 4. Each flagged fill goes through on a credit, spending exactly ONE
+        //    (2 -> 1, then 1 -> 0), with no capacity charge.
+        _priorityFill(cp1, "proof-borrower-1", 1);
+        _assertPriority(flagged, true, 1, false, true, "exhausted, one credit left");
+        _priorityFill(_postBorrower("proof-borrower-4"), "proof-borrower-4", 0);
 
         // 4b. The same opted-in intent with its credit spent is refused like any
         //     other: the opt-in alone unlocks nothing (Codex #2582 r6).
@@ -502,11 +497,36 @@ contract PriorityRoutingLiveFork is Test {
         assertEq(_credits(plain), 1, "the control's credit was not spent");
     }
 
+    /// @dev One exhausted, credit-paid fill of the flagged intent, leaving
+    ///      `left` credits: the loan persisted, the capacity bucket untouched, both
+    ///      priority records exact.
+    function _priorityFill(uint256 offerId, string memory borrowerName, uint256 left) internal {
+        LibVaipakam.CapacityBucket memory bucketBefore = d.getCapacityBucket(SOLVER, solver);
+        vm.recordLogs();
+        vm.prank(solver);
+        uint256 loanId = d.matchIntent(flagged, lendAsset, collAsset, offerId, PRINCIPAL);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertGt(loanId, 0, "the flagged fill landed");
+        _assertLoan(loanId, makeAddr(borrowerName));
+        // The capacity STATE, not only the events (Codex #2582 r6).
+        LibVaipakam.CapacityBucket memory bucketAfter = d.getCapacityBucket(SOLVER, solver);
+        assertEq(bucketAfter.balance, bucketBefore.balance, "bucket untouched: balance");
+        assertEq(bucketAfter.lastTouch, bucketBefore.lastTouch, "bucket untouched: lastTouch");
+        assertEq(bucketAfter.curveEpoch, bucketBefore.curveEpoch, "bucket untouched: curveEpoch");
+        assertEq(bucketAfter.seen, bucketBefore.seen, "bucket untouched: seen");
+        assertEq(_credits(flagged), left, "exactly one credit spent");
+        assertEq(_count(logs, T_PRIORITY_FILL), 1, "IntentPriorityFill once");
+        assertEq(_count(logs, T_CREDIT_CONSUMED), 1, "PerkCreditConsumed once");
+        assertEq(_count(logs, T_CAPACITY_SPENT), 0, "no capacity charge");
+        assertEq(_count(logs, T_FREE_TIER_SPENT), 0, "no free-tier charge either");
+        _assertPayloads(logs, loanId, left);
+    }
+
     /// @dev The flagged intent's fill while capacity covers it: charged to the
     ///      solver, the credit untouched, no priority record.
     function _coveredFillKeepsTheCredit() internal {
         uint256 cp0 = _postBorrower("proof-borrower-0");
-        _assertPriority(flagged, true, 1, true, false, "covered");
+        _assertPriority(flagged, true, 2, true, false, "covered");
         _assertOkPreview(_preview(flagged, cp0), false, "covered preview");
         LibVaipakam.CapacityBucket memory b0 = d.getCapacityBucket(SOLVER, solver);
         vm.recordLogs();
@@ -514,7 +534,7 @@ contract PriorityRoutingLiveFork is Test {
         uint256 loan0 = d.matchIntent(flagged, lendAsset, collAsset, cp0, PRINCIPAL);
         Vm.Log[] memory l0 = vm.getRecordedLogs();
         assertGt(loan0, 0, "covered: filled");
-        assertEq(_credits(flagged), 1, "covered: the credit is untouched");
+        assertEq(_credits(flagged), 2, "covered: the credits are untouched");
         // A DIRECT solver is charged on its own bonded bucket, never a free-only
         // one (Codex #2582 r7): exactly one CapacitySpent, no CapacityFreeTierSpent,
         // and the bucket itself moved from unseen to seen.
@@ -584,21 +604,21 @@ contract PriorityRoutingLiveFork is Test {
 
     /// @dev Every field of the two priority records (Codex #2582 r1): they are
     ///      the audit link between the paid credit and the loan.
-    function _assertPayloads(Vm.Log[] memory logs, uint256 loanId) internal view {
+    function _assertPayloads(Vm.Log[] memory logs, uint256 loanId, uint256 left) internal view {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].emitter != address(d) || logs[i].topics.length == 0) continue;
             if (logs[i].topics[0] == T_PRIORITY_FILL) {
                 assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "fill: owner");
                 assertEq(address(uint160(uint256(logs[i].topics[2]))), lendAsset, "fill: lendingAsset");
                 assertEq(address(uint160(uint256(logs[i].topics[3]))), collAsset, "fill: collateralAsset");
-                (uint256 lid, address slv, uint256 left) = abi.decode(logs[i].data, (uint256, address, uint256));
+                (uint256 lid, address slv, uint256 left_) = abi.decode(logs[i].data, (uint256, address, uint256));
                 assertEq(lid, loanId, "fill: loanId");
                 assertEq(slv, solver, "fill: solver");
-                assertEq(left, 0, "fill: creditsLeft");
+                assertEq(left_, left, "fill: creditsLeft");
             } else if (logs[i].topics[0] == T_CREDIT_CONSUMED) {
                 assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "consumed: user");
                 assertEq(uint256(logs[i].topics[2]), PERK, "consumed: perkId");
-                assertEq(abi.decode(logs[i].data, (uint256)), 0, "consumed: creditsAfter");
+                assertEq(abi.decode(logs[i].data, (uint256)), left, "consumed: creditsAfter");
             }
         }
     }
