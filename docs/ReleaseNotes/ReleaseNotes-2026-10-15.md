@@ -1,6 +1,6 @@
 # Release Notes — 2026-10-15
 
-The keeper's move to an always-on machine continued: it now has an install kit that redeploys it on every merge, and a lease so that only one copy runs at a time, wherever it is hosted. It now sends a health-factor liquidation that an internal match can close even when no swap venue quotes. It also no longer reports illiquid loans or zero-collateral rentals as failed health-factor reads. The indexer shows internally matched loans as settled once both sides have claimed, and the ingest-health alert can no longer hang on a GitHub call or fail without saying so.
+The keeper's move to an always-on machine continued: it now has an install kit that redeploys it on every merge, and a shared lease that stops a second copy from starting work while the first is renewing it. The lease is a guard, not a guarantee: a copy that stalls past the lease's expiry can overlap with its successor, so the procedure of running one copy at a time still applies. It now sends a health-factor liquidation that an internal match can close even when no swap venue quotes. It also no longer reports illiquid loans or zero-collateral rentals as failed health-factor reads. The indexer shows internally matched loans as settled once both sides have claimed, and the ingest-health alert can no longer hang on a GitHub call or fail without saying so.
 
 ## Indexer — internally matched loans now show as settled once claimed (#2464)
 
