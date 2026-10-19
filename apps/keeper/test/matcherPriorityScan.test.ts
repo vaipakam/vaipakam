@@ -5,7 +5,8 @@
  * a Diamond without the getter.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { intentRefusalScope, priorityCreditUnlocks, runIntentFillPass } from '../src/matcher';
+import { intentRefusalScope, priorityState, receiptSpentPriorityCredit, runIntentFillPass } from '../src/matcher';
+import { encodeEventTopics, encodeAbiParameters } from 'viem';
 
 const SOLVER = '0x00000000000000000000000000000000000000aa';
 const DIAMOND = '0x00000000000000000000000000000000000000d1';
@@ -39,6 +40,10 @@ function fakeCtx(opts: {
   intents: `0x${string}`[];
   preview: Record<string, number>;
   unlocks?: Record<string, boolean>;
+  /** Owners for which the capacity covers the fill again (it refilled). */
+  covers?: Record<string, boolean>;
+  /** Owners whose mined fill carries `IntentPriorityFill`. */
+  creditLog?: Record<string, boolean>;
   getter?: boolean;
 }) {
   const calls = { previews: [] as string[], priority: [] as string[], fills: [] as string[] };
@@ -62,13 +67,17 @@ function fakeCtx(opts: {
           const o = String(req.args[0]).toLowerCase();
           calls.priority.push(o);
           if (opts.getter === false) throw new Error('reverted: FunctionDoesNotExist()');
-          return [true, 1n, false, opts.unlocks?.[o] ?? false];
+          const covers = opts.covers?.[o] ?? false;
+          return [true, 1n, covers, !covers && (opts.unlocks?.[o] ?? false)];
         }
         default:
           throw new Error(`unexpected read ${req.functionName}`);
       }
     }),
-    waitForTransactionReceipt: vi.fn(async () => ({ status: 'success' })),
+    waitForTransactionReceipt: vi.fn(async () => {
+      const o = calls.fills[calls.fills.length - 1];
+      return { status: 'success', logs: opts.creditLog?.[o] ? [priorityFillLog(o)] : [] };
+    }),
   };
   const wallet = {
     account: { address: SOLVER, type: 'local' },
@@ -81,12 +90,30 @@ function fakeCtx(opts: {
   return { ctx: { client, wallet, diamond: DIAMOND, chainId: 84532 } as never, calls };
 }
 
-async function run(c: ReturnType<typeof fakeCtx>, borrowers: number, capacitySpentAtStart = false) {
+const PRIORITY_FILL_EVENT = {
+  type: 'event', name: 'IntentPriorityFill', anonymous: false,
+  inputs: [
+    { name: 'owner', type: 'address', indexed: true }, { name: 'lendingAsset', type: 'address', indexed: true },
+    { name: 'collateralAsset', type: 'address', indexed: true }, { name: 'loanId', type: 'uint256', indexed: false },
+    { name: 'solver', type: 'address', indexed: false }, { name: 'creditsLeft', type: 'uint256', indexed: false },
+  ],
+} as const;
+function priorityFillLog(o: string) {
+  return {
+    address: DIAMOND,
+    topics: encodeEventTopics({ abi: [PRIORITY_FILL_EVENT], eventName: 'IntentPriorityFill', args: { owner: o as `0x${string}`, lendingAsset: LEND, collateralAsset: COLL } }),
+    data: encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], [1n, SOLVER, 0n]),
+  };
+}
+
+async function run(c: ReturnType<typeof fakeCtx>, borrowers: number, capacitySpentAtStart = false, minute = 0) {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const now = vi.spyOn(Date, 'now').mockReturnValue(minute * 60_000);
   try {
     const book = Array.from({ length: borrowers }, (_, i) => borrower(BigInt(i + 1)));
     return await runIntentFillPass(c.ctx, book as never, () => false, 0, 0, new Set(), capacitySpentAtStart);
   } finally {
+    now.mockRestore();
     log.mockRestore();
   }
 }
@@ -147,17 +174,64 @@ describe('runIntentFillPass — a capacity refusal does not end the pass (#2564)
   });
 });
 
-describe('priorityCreditUnlocks', () => {
-  it('reads the fill predicate for this solver as both solver and initiator, and is false on any read failure', async () => {
+describe('runIntentFillPass — Codex #2577 r1', () => {
+  it('resumes ordinary scanning when the capacity has refilled since it was seen spent', async () => {
+    const [a, b, c] = [owner(1), owner(2), owner(3)];
+    const f = fakeCtx({ intents: [a, b, c], preview: { [a]: CAPACITY }, covers: { [b]: true } });
+    expect(await run(f, 2)).toBe(2);
+    expect(f.calls.fills).toEqual([b, c]);
+    expect(f.calls.priority, 'no read once ordinary scanning resumed').toEqual([b]);
+  });
+
+  it('spends no priority read on an intent no borrower could fill', async () => {
+    const [a, b] = [owner(1), owner(2)];
+    const f = fakeCtx({ intents: [a, b], preview: {}, unlocks: { [b]: true } });
+    const book = [borrower(1n)];
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      // `a`'s only compatible borrower is quarantined, so it fits nobody.
+      const uncertain = new Set<string>();
+      await runIntentFillPass(f.ctx, book as never, () => false, 0, 0, uncertain, true);
+      expect(f.calls.priority).toEqual([a, b]);
+      f.calls.priority.length = 0;
+      uncertain.add('1');
+      await runIntentFillPass(f.ctx, book as never, () => false, 0, 0, uncertain, true);
+      expect(f.calls.priority, 'no compatible borrower, no read').toEqual([]);
+    } finally {
+      now.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it('rotates the intent order with the tick, so a later intent is reached first in turn', async () => {
+    const [a, b, c] = [owner(1), owner(2), owner(3)];
+    const f0 = fakeCtx({ intents: [a, b, c], preview: {} });
+    await run(f0, 3, false, 0);
+    const f1 = fakeCtx({ intents: [a, b, c], preview: {} });
+    await run(f1, 3, false, 1);
+    expect(f0.calls.fills[0]).toBe(a);
+    expect(f1.calls.fills[0]).toBe(b);
+  });
+
+  it('counts a credit fill from the mined IntentPriorityFill, never from the capacity state', () => {
+    expect(receiptSpentPriorityCredit([priorityFillLog(owner(9))], DIAMOND)).toBe(true);
+    expect(receiptSpentPriorityCredit([], DIAMOND)).toBe(false);
+    expect(receiptSpentPriorityCredit([{ ...priorityFillLog(owner(9)), address: owner(0xdead) }], DIAMOND), 'another contract').toBe(false);
+  });
+});
+
+describe('priorityState', () => {
+  it('reads the fill predicate for this solver as both solver and initiator, and is blocked on any read failure', async () => {
     const f = fakeCtx({ intents: [], preview: {}, unlocks: { [owner(5)]: true } });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       const intent = { owner: owner(5), lendingAsset: LEND, collateralAsset: COLL } as const;
-      expect(await priorityCreditUnlocks(f.ctx, intent, SOLVER)).toBe(true);
+      expect(await priorityState(f.ctx, intent, SOLVER)).toBe('credit');
       const req = (f.ctx as { client: { readContract: { mock: { calls: { args: unknown[] }[][] } } } }).client.readContract.mock.calls[0][0];
       expect(req.args).toEqual([owner(5), LEND, COLL, SOLVER, SOLVER]);
       const broken = fakeCtx({ intents: [], preview: {}, getter: false });
-      expect(await priorityCreditUnlocks(broken.ctx, intent, SOLVER)).toBe(false);
+      expect(await priorityState(broken.ctx, intent, SOLVER)).toBe('blocked');
     } finally {
       log.mockRestore();
     }
