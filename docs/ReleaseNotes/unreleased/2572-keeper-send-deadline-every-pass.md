@@ -59,12 +59,17 @@ after another, so a slow chain cannot use up the window of the chains after it.
 A list walked in a fixed order (the liquidator's loans, auto-extend's loans,
 the tier relay's assets, the reward-budget remit's mirrors) starts at a point
 that moves each run, so the deadline never cuts off the same tail every time.
-The two loan scans read the book in pages but move their start by loan, not by
-page, spread evenly over the book from run to run, so a run that stops partway
-through its first page does not leave the rest of that page unreached. And a
-pass that reads before it sends (the liquidator's scan, the commitment report's
-entry scan, the reward-budget remit's planning) stops reading early enough to
-leave its sends ten seconds.
+Every scan that reads a list in pages (the liquidator's and auto-extend's
+loans, the tier relay's asset discovery, and the matcher's offers, lender
+intents and repaid intent loans) moves its start by item, not by page, spread
+evenly over the list from run to run, so a run that stops partway through its
+first page does not leave the rest of that page unreached. For the tier relay
+this also changes which assets its per-run cap admits, which before always came
+from the start of the book. And a pass that reads before it sends (the
+liquidator's scan, the commitment report's entry scan, the reward-budget
+remit's planning, the tier relay's asset discovery, the matcher's listings and
+offer reads) stops reading early enough to leave its sends ten seconds, and
+acts on what it read.
 The commitment report also records how far it got when a batch is not sent, so
 the next run continues from there instead of repeating the same scan. A scan stopped that way acts on what it read and is not
 reported as complete. Auto-extend now acts on each page of loans as it reads it,

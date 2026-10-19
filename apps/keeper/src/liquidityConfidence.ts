@@ -60,8 +60,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
 import { reportSendError } from './submissionQueue';
-import { runIndex } from './runWindow';
-import { rotate } from './rotate';
+import { readCutoffMs, runIndex } from './runWindow';
+import { pagedWalk, rotate } from './rotate';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
@@ -186,12 +186,21 @@ async function loadConfig(
   };
 }
 
-/** Distinct ERC-20 collateral assets across all Active loans on this
- *  chain (deduped, lowercased, capped at MAX_ASSETS_PER_TICK). */
-async function activeCollateralAssets(
+/** Distinct ERC-20 collateral assets across the Active loans on this chain
+ *  (deduped, capped at MAX_ASSETS_PER_TICK), walked from a loan that moves
+ *  each run and stopped at `stopAtMs` (#2572 r8, `runWindow.ts` rules 2 and 3).
+ *
+ *  Each page's loans are read for their assets before the next page, so a
+ *  run the cutoff stops partway still evaluates the assets it found, and the
+ *  moving start reaches the rest of the book on later runs. The same start
+ *  also moves which assets the cap admits: from loan 0 every run, an asset
+ *  first held only past the cap's reach was never evaluated at all. */
+export async function activeCollateralAssets(
   client: PublicClient,
   diamond: Address,
-): Promise<Address[]> {
+  run = 0,
+  stopAtMs: number = Number.POSITIVE_INFINITY,
+): Promise<{ assets: Address[]; cutShort: boolean }> {
   let total: bigint;
   try {
     total = (await client.readContract({
@@ -200,27 +209,51 @@ async function activeCollateralAssets(
       functionName: 'getActiveLoansCount',
     })) as bigint;
   } catch {
-    return [];
+    return { assets: [], cutShort: false };
   }
-  if (total === 0n) return [];
+  if (total === 0n) return { assets: [], cutShort: false };
 
-  const ids: bigint[] = [];
-  for (let off = 0n; off < total; off += SCAN_PAGE) {
-    let page: readonly bigint[];
+  const seen = new Set<string>();
+  const out: Address[] = [];
+  let cutShort = false;
+  for (const { cursor, limit } of pagedWalk(total, SCAN_PAGE, run)) {
+    if (out.length >= MAX_ASSETS_PER_TICK) break;
+    if (Date.now() >= stopAtMs) {
+      cutShort = true;
+      break;
+    }
+    let ids: readonly bigint[];
     try {
-      page = (await client.readContract({
+      // eslint-disable-next-line no-await-in-loop
+      ids = (await client.readContract({
         address: diamond,
         abi: RELAY_ABI,
         functionName: 'getActiveLoansPaginated',
-        args: [off, SCAN_PAGE],
+        args: [cursor, limit],
       })) as readonly bigint[];
     } catch {
       break;
     }
-    if (page.length === 0) break;
-    ids.push(...page);
+    if (ids.length === 0) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (await collectPageAssets(client, diamond, ids, stopAtMs, seen, out)) {
+      cutShort = true;
+      break;
+    }
   }
+  return { assets: out, cutShort };
+}
 
+/** Add the distinct ERC-20 collateral assets of `ids` to `out`, stopping at
+ *  MAX_ASSETS_PER_TICK. Returns true when `stopAtMs` cut it short. */
+async function collectPageAssets(
+  client: PublicClient,
+  diamond: Address,
+  ids: readonly bigint[],
+  stopAtMs: number,
+  seen: Set<string>,
+  out: Address[],
+): Promise<boolean> {
   // BATCHED, but still chunk-by-chunk so the MAX_ASSETS_PER_TICK cap can
   // short-circuit (#1896).
   //
@@ -235,9 +268,8 @@ async function activeCollateralAssets(
   // and on a chain with thousands of active loans an unbounded batch trades one
   // problem for another. Chunking keeps both properties — one subrequest per
   // DETAIL_CHUNK loans, and the walk still stops at the cap.
-  const seen = new Set<string>();
-  const out: Address[] = [];
   for (let i = 0; i < ids.length && out.length < MAX_ASSETS_PER_TICK; i += DETAIL_CHUNK) {
+    if (Date.now() >= stopAtMs) return true;
     const chunk = ids.slice(i, i + DETAIL_CHUNK);
     // eslint-disable-next-line no-await-in-loop
     const results = await batchedRead(
@@ -269,7 +301,7 @@ async function activeCollateralAssets(
       out.push(loan.collateralAsset);
     }
   }
-  return out;
+  return false;
 }
 
 /**
@@ -829,7 +861,14 @@ async function runRelayForChain(
       () => null,
     ));
 
-  const assets = await activeCollateralAssets(client, diamond);
+  // Discovery reads before anything is quoted or sent, so it stops at the
+  // read cutoff (#2572 r8, rule 3) and the assets it found are still evaluated.
+  const { assets, cutShort } = await activeCollateralAssets(client, diamond, run, readCutoffMs(deadlineMs));
+  if (cutShort) {
+    console.log(
+      `[keeper] liq-confidence chain=${chain.name} read cutoff reached during asset discovery; evaluating ${assets.length} asset(s) found, the rest of the book next run`,
+    );
+  }
   if (assets.length === 0) return;
 
   // One cache for this chain's whole tick — see the TickCache note. It dies

@@ -38,19 +38,22 @@ export interface WalkPage {
   limit: bigint;
 }
 
-/** The page reads that walk `total` items from {@link walkStart}`(run, total)`
- *  to the end and then from the start, each at most `pageSize` long. Every item
- *  is in exactly one page. Pure. */
-export function pagedWalk(total: bigint, pageSize: bigint, run: number): WalkPage[] {
-  if (total <= 0n || pageSize <= 0n) return [];
-  const start = BigInt(walkStart(run, Number(total)));
+/** The page reads that walk items `from`..`total` from a start that moves
+ *  each run ({@link walkStart} over that range) to its end and then from
+ *  `from`, each at most `pageSize` long. Every item in the range is in exactly
+ *  one page. `from` serves a registry that reports its size only with a page:
+ *  read the first page at 0, then walk the rest from `from` = that page's
+ *  span. Pure. */
+export function pagedWalk(total: bigint, pageSize: bigint, run: number, from: bigint = 0n): WalkPage[] {
+  if (total <= from || pageSize <= 0n) return [];
+  const start = from + BigInt(walkStart(run, Number(total - from)));
   const pages: WalkPage[] = [];
-  const segment = (from: bigint, to: bigint): void => {
-    for (let cursor = from; cursor < to; cursor += pageSize) {
-      pages.push({ cursor, limit: to - cursor < pageSize ? to - cursor : pageSize });
+  const segment = (lo: bigint, hi: bigint): void => {
+    for (let cursor = lo; cursor < hi; cursor += pageSize) {
+      pages.push({ cursor, limit: hi - cursor < pageSize ? hi - cursor : pageSize });
     }
   };
   segment(start, total);
-  segment(0n, start);
+  segment(from, start);
   return pages;
 }

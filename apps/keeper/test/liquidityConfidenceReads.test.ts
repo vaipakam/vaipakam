@@ -512,3 +512,20 @@ describe('liquidityConfidence promotion evidence (#2572 r4)', () => {
     expect(r.held).toEqual(r.row);
   });
 });
+
+describe('liquidity-tier asset discovery under the read cutoff (#2572 r8)', () => {
+  it('reads no page once the cutoff has passed, and says it was cut short', async () => {
+    const { activeCollateralAssets } = await import('../src/liquidityConfidence');
+    const calls: string[] = [];
+    const client = {
+      readContract: async (req: { functionName: string }) => {
+        calls.push(req.functionName);
+        if (req.functionName === 'getActiveLoansCount') return 500n;
+        throw new Error(`unexpected read ${req.functionName}`);
+      },
+    };
+    const out = await activeCollateralAssets(client as never, '0x0000000000000000000000000000000000000001', 3, Date.now() - 1);
+    expect(out).toEqual({ assets: [], cutShort: true });
+    expect(calls).toEqual(['getActiveLoansCount']);
+  });
+});
