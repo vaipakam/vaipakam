@@ -1,4 +1,4 @@
-## Thread — a testnet refresh that touches only the facets whose code changed (PR #<n>)
+## Thread — a testnet refresh that touches only the facets whose code changed (PR #2578)
 
 Testnets could already be brought up to date in place, but only by redeploying every one of the Diamond's facets. That was deliberate: a shared library is compiled into many facets, so a change to it reaches facets nobody edited, and a subset picked by reading the diff would leave the Diamond running two versions of one rule. The new refresh keeps that safety and drops the waste. It builds every facet of the current tree locally, compares each one's executable code with the code the Diamond actually runs for it, and redeploys and re-cuts only the facets that differ. A facet that compiles in a changed library therefore differs and is refreshed, while a facet whose code is byte-identical keeps its address. The comparison ignores the compiler's metadata, which changes with any edit to any imported file, even a comment, while the code that runs does not.
 
