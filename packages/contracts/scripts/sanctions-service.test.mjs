@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RpcRequestError, TransactionNotFoundError } from 'viem';
-import { SERVICE_CHAINS, TELEGRAM_MAX_TEXT, checkPrivateKey, configuredChains, createSendQueues, keepPublication, notifyOps, redact, sendTransaction, writeStateFile } from './sanctions-service.mjs';
+import { SERVICE_CHAINS, TELEGRAM_MAX_TEXT, configuredChains, createSendQueues, keepPublication, notifyOps, privateKeySecret, readPrivateKey, redact, sendTransaction, writeStateFile } from './sanctions-service.mjs';
 
 const KEY = `0x${'1'.repeat(64)}`;
 
@@ -33,11 +33,24 @@ test('keepPublication: keeps the newest N publications of its own prefix', () =>
   assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith('sdn-plain-')), [`sdn-plain-20260307-${'d'.repeat(12)}.xml`]);
 });
 
-test('checkPrivateKey and configuredChains', () => {
-  checkPrivateKey('K', KEY);
-  assert.throws(() => checkPrivateKey('K', '0x12'), /K is not a 32-byte hex key/);
-  assert.throws(() => checkPrivateKey('K', `0x${'0'.repeat(64)}`), /not a valid secp256k1 key/);
-  assert.throws(() => checkPrivateKey('K', `0x${'f'.repeat(64)}`), /not a valid secp256k1 key/);
+test('readPrivateKey and configuredChains', () => {
+  assert.equal(readPrivateKey('K', KEY), KEY);
+  // Written the way keeper.env may hold it: no 0x, spaces around it.
+  assert.equal(readPrivateKey('K', KEY.slice(2)), KEY);
+  assert.equal(readPrivateKey('K', `  ${KEY.slice(2)}\t`), KEY);
+  assert.equal(readPrivateKey('K', ` ${KEY} `), KEY);
+  assert.throws(() => readPrivateKey('K', '0x12'), /K is not a 32-byte hex key/);
+  assert.throws(() => readPrivateKey('K', '12'), /K is not a 32-byte hex key/);
+  assert.throws(() => readPrivateKey('K', `0x0x${'1'.repeat(62)}`), /K is not a 32-byte hex key/);
+  assert.throws(() => readPrivateKey('K', `0X${'1'.repeat(64)}`), /K is not a 32-byte hex key/);
+  assert.throws(() => readPrivateKey('K', `${'g'.repeat(64)}`), /K is not a 32-byte hex key/);
+  assert.throws(() => readPrivateKey('K', `0x${'0'.repeat(64)}`), /not a valid secp256k1 key/);
+  assert.throws(() => readPrivateKey('K', '0'.repeat(64)), /not a valid secp256k1 key/);
+  assert.throws(() => readPrivateKey('K', `0x${'f'.repeat(64)}`), /not a valid secp256k1 key/);
+  assert.throws(() => readPrivateKey('K', 'f'.repeat(64)), /not a valid secp256k1 key/);
+  // The error never quotes the value.
+  const bad = `${'a'.repeat(63)}z`;
+  assert.throws(() => readPrivateKey('K', bad), (e) => !e.message.includes(bad) && !e.message.includes('a'.repeat(20)));
   const chains = configuredChains({ RPC_ARB_SEPOLIA: 'https://a', RPC_BASE: 'https://mainnet' });
   assert.deepEqual(chains.map((c) => [c.id, c.rpc]), [[421614, 'https://a']]);
   const mainnets = [1, 8453, 42161, 10, 56, 137, 1101];
@@ -151,6 +164,17 @@ test('redact: an RPC URL and its key never reach a report, in any of the forms v
   assert.ok(!out.includes('SECRETKEY123'), out);
   assert.match(out, /<redacted>/);
   assert.equal(redact(`key ${KEY}`, [undefined, KEY]), 'key <redacted>');
+});
+
+test('privateKeySecret: redaction removes the key in either form, whichever form the setting holds', () => {
+  const body = KEY.slice(2);
+  for (const setting of [KEY, body, `  ${body} `, ` ${KEY}\t`]) {
+    const secret = privateKeySecret(setting);
+    assert.equal(secret, body);
+    assert.equal(redact(`a ${KEY} b ${body} c`, [secret]), 'a 0x<redacted> b <redacted> c');
+  }
+  assert.equal(privateKeySecret(undefined), '');
+  assert.equal(privateKeySecret('   '), '');
 });
 
 test('writeStateFile: replaces the file whole, and reports a failure instead of throwing it', () => {

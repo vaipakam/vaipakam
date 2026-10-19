@@ -227,6 +227,9 @@ test('config: one file for every chain; every missing setting is named; mainnet 
   assert.deepEqual(withMainnet.chains.map((c) => c.id), [84532, 421614]);
   assert.deepEqual(withMainnet.ignoredMainnetRpcs, ['RPC_BASE', 'RPC_ETH']);
   assert.throws(() => readConfig({ RPC_BASE: 'https://mainnet', SANCTIONS_ADDER_PRIVATE_KEY: KEY, STATE_DIRECTORY: '/x' }), /an RPC for at least one chain/);
+  // The key without its 0x, as keeper.env may hold it, signs as the same key.
+  assert.equal(readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: ` ${KEY.slice(2)} ` }).privateKey, KEY);
+  assert.equal(cfg.privateKey, KEY);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: '0x12' }), /32-byte hex key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'0'.repeat(64)}` }), /not a valid secp256k1 key/);
   assert.throws(() => readConfig({ ...env, SANCTIONS_ADDER_PRIVATE_KEY: `0x${'f'.repeat(64)}` }), /not a valid secp256k1 key/);

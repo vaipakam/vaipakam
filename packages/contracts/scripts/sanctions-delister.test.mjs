@@ -573,6 +573,9 @@ test('configuration: one file for every chain, addresses from the release only',
   assert.deepEqual(cfg.chains.map((c) => c.id), [84532, 421614]);
   assert.deepEqual(cfg.ignoredMainnetRpcs, ['RPC_ETH']);
   assert.equal(cfg.stateDir, '/s');
+  assert.equal(cfg.privateKey, PK);
+  // The key without its 0x, as keeper.env may hold it, signs as the same key.
+  assert.equal(readConfig({ SANCTIONS_DELISTER_PRIVATE_KEY: ` ${PK.slice(2)} `, RPC_BASE_SEPOLIA: 'x', STATE_DIRECTORY: '/s' }).privateKey, PK);
   assert.throws(() => readConfig({ SANCTIONS_DELISTER_PRIVATE_KEY: '0x1', RPC_BASE_SEPOLIA: 'x', STATE_DIRECTORY: '/s' }), /32-byte hex key/);
   const plan = planChains(cfg.chains, { 84532: { sanctionsList: LIST, sanctionsDelistingTimelock: TL }, 421614: { sanctionsList: LIST } });
   assert.equal(plan[0].timelock, TL);
