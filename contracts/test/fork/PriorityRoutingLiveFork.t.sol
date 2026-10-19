@@ -69,6 +69,9 @@ interface IDiamondForProof {
         external
         view
         returns (IntentPreview memory);
+    function getCapacityCurve(uint8) external view returns (LibVaipakam.CapacityCurve memory);
+    function getRiskAccessGateEnabled() external view returns (bool);
+    function setRiskAccessGateEnabled(bool) external;
 }
 
 struct IntentPreview {
@@ -104,12 +107,17 @@ contract PriorityRoutingLiveFork is Test {
 
     uint256 internal constant PRINCIPAL = 1000 ether;
     uint256 internal constant MIN_RATE_BPS = 500;
-    uint32 internal constant MAX_DURATION = 30;
+    /// @dev The floor every deployment's duration cap admits (`setMaxOfferDurationDays`
+    ///      accepts nothing below 7), so the fixture term never depends on the
+    ///      deployment's own cap (Codex #2582 r2).
+    uint32 internal constant MAX_DURATION = 7;
 
     bytes32 internal constant T_PRIORITY_FILL =
         keccak256("IntentPriorityFill(address,address,address,uint256,address,uint256)");
     bytes32 internal constant T_CREDIT_CONSUMED = keccak256("PerkCreditConsumed(address,uint256,uint256)");
     bytes32 internal constant T_CAPACITY_SPENT = keccak256("CapacitySpent(uint8,address,uint256,uint256)");
+    bytes32 internal constant T_PERK_ARMED = keccak256("PriorityRoutingPerkArmed(uint256)");
+    bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,bool)");
 
     uint8 internal constant CAPACITY_EXHAUSTED = 22; // LibOfferMatch.IntentError.CapacityExhausted
     uint8 internal constant KYC_TIER2 = 2; // LibVaipakam.KYCTier.Tier2
@@ -151,6 +159,11 @@ contract PriorityRoutingLiveFork is Test {
         d.updateRiskParams(collAsset, 8000, 300, 1000);
         vm.stopPrank();
         vm.startPrank(admin);
+        // The progressive risk-access gate is an onboarding posture orthogonal to
+        // routing; fresh fork actors cannot climb it without its cooldowns, so it
+        // is switched off ON THE FORK when a deployment has it on, and only then
+        // (Codex #2582 r2). Nothing here reaches the live chain.
+        if (d.getRiskAccessGateEnabled()) d.setRiskAccessGateEnabled(false);
         d.setPartialFillEnabled(true);
         d.setLenderIntentEnabled(true);
         vm.stopPrank();
@@ -265,21 +278,44 @@ contract PriorityRoutingLiveFork is Test {
             return;
         }
         // 1. Light the limiter, then arm the perk: the arming write is the price.
+        //    The proof is of the FIRST-TIME arming (Codex #2582 r2): the perk is
+        //    unpriced and has never sold, and the price write emits the one-time
+        //    arming event.
+        (uint256 price0,, uint256 sold0) = d.getPerkConfig(PERK);
+        assertEq(price0, 0, "pre-state: unpriced");
+        assertEq(sold0, 0, "pre-state: no unit ever sold");
         vm.startPrank(admin);
         d.setCapacityCurve(SOLVER, FREE, RATE, AT4X, COST);
+        vm.recordLogs();
         d.setPerkConfig(PERK, PRICE, 0);
+        Vm.Log[] memory armLogs = vm.getRecordedLogs();
         vm.stopPrank();
+        assertEq(_count(armLogs, T_PERK_ARMED), 1, "the price write arms the perk, once");
+        for (uint256 i = 0; i < armLogs.length; i++) {
+            if (armLogs[i].emitter == address(d) && armLogs[i].topics.length > 0 && armLogs[i].topics[0] == T_PERK_ARMED) {
+                assertEq(abi.decode(armLogs[i].data, (uint256)), PRICE, "armed at the configured price");
+            }
+        }
         (uint256 price, uint32 duration,) = d.getPerkConfig(PERK);
         assertEq(price, PRICE, "configured price reads back");
         assertEq(duration, 0, "counted, not timed");
+        // Every field of the stored curve, so the proposed figures are what the
+        // limiter runs on (Codex #2582 r2).
+        LibVaipakam.CapacityCurve memory curve = d.getCapacityCurve(SOLVER);
+        assertEq(curve.freeTier, FREE, "curve: freeTier");
+        assertEq(curve.freeRatePerSec, RATE, "curve: freeRatePerSec");
+        assertEq(curve.bondAt4x, AT4X, "curve: bondAt4x");
+        assertEq(curve.classCost, COST, "curve: classCost");
 
         // 2. BOTH owners buy one credit each, at exactly the price; only the
         //    flagged owner opts the intent in. The control therefore differs from
         //    the flagged intent in the opt-in alone (Codex #2582 r1).
         _buyCredit(flagged);
         _buyCredit(plain);
+        vm.recordLogs();
         vm.prank(flagged);
         d.setLenderIntentPriority(lendAsset, collAsset, true);
+        _assertOptIn(vm.getRecordedLogs());
 
         // 3. Exhaust the solver's bucket through the Diamond-gated charge the
         //    gated routes use, until the limiter refuses. A bucket seen for the
@@ -294,7 +330,7 @@ contract PriorityRoutingLiveFork is Test {
         }
         assertGt(charged, 0, "fixture-live: at least one free action was spent");
         (uint256 accrued,,,) = d.previewCapacity(SOLVER, solver);
-        assertLt(accrued, COST, "fixture-live: the solver cannot afford a fill");
+        assertLt(accrued, curve.classCost, "fixture-live: the solver cannot afford a fill at the deployed cost");
         (, , bool covers, bool unlocks) = d.getLenderIntentPriority(flagged, lendAsset, collAsset, solver, solver);
         assertFalse(covers, "capacity does not cover");
         assertTrue(unlocks, "the credit unlocks the flagged intent");
@@ -330,6 +366,20 @@ contract PriorityRoutingLiveFork is Test {
         vm.expectPartialRevert(bytes4(keccak256("ServiceCapacityExhausted(uint8,address,uint256,uint256)")));
         d.matchIntent(plain, lendAsset, collAsset, cp2, PRINCIPAL);
         assertEq(_credits(plain), 1, "the control's credit was not spent");
+    }
+
+    /// @dev The consent record of the opt-in, decoded (Codex #2582 r2): the
+    ///      design requires it on every write so a paid credit's consent history
+    ///      can be rebuilt.
+    function _assertOptIn(Vm.Log[] memory logs) internal view {
+        assertEq(_count(logs, T_PRIORITY_SET), 1, "LenderIntentPrioritySet once");
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter != address(d) || logs[i].topics.length == 0 || logs[i].topics[0] != T_PRIORITY_SET) continue;
+            assertEq(address(uint160(uint256(logs[i].topics[1]))), flagged, "opt-in: owner");
+            assertEq(address(uint160(uint256(logs[i].topics[2]))), lendAsset, "opt-in: lendingAsset");
+            assertEq(address(uint160(uint256(logs[i].topics[3]))), collAsset, "opt-in: collateralAsset");
+            assertTrue(abi.decode(logs[i].data, (bool)), "opt-in: enabled");
+        }
     }
 
     /// @dev Every field of the two priority records (Codex #2582 r1): they are
