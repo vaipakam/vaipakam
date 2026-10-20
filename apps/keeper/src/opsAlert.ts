@@ -114,7 +114,16 @@ export async function sendOpsAlertDigest(
     return 'unconfigured';
   }
   try {
-    const prior = await getOpsAlertsSentAt(env.KEEPER_DB, entries.map((e) => e.key));
+    // De-duplication only ever SUPPRESSES a repeat, so when its state cannot
+    // be read every entry is due, and when the delivery cannot be recorded it
+    // was still delivered (Codex #2599 r6): a repeat is the cost, never a
+    // dropped alert.
+    let prior = new Map<string, number>();
+    try {
+      prior = await getOpsAlertsSentAt(env.KEEPER_DB, entries.map((e) => e.key));
+    } catch (err) {
+      console.error(`[keeper] ops alert digest: sent-state unread, sending every entry: ${String(err)}`);
+    }
     const due = entries.filter((e) => {
       const at = prior.get(e.key);
       return at === undefined || nowSec - at >= minIntervalSec;
@@ -123,7 +132,11 @@ export async function sendOpsAlertDigest(
     if (chainId !== null) await assertEpochsHold();
     const ok = await postToTelegram(token, chatId, digestText(header(due.length), due.map(entryLine), footer));
     if (!ok) return 'failed';
-    await recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId);
+    try {
+      await recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId);
+    } catch (err) {
+      console.error(`[keeper] ops alert digest delivered but not recorded; it may repeat: ${String(err)}`);
+    }
     return 'sent';
   } catch (err) {
     if (err instanceof EpochFenceRefusal) {

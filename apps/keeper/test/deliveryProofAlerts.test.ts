@@ -16,6 +16,7 @@ import {
   awaitingDeliveries,
   classifyRevert,
   actionScope,
+  dayRuns,
   minedRevertOutcome,
   outcomeOf,
   receiptTimeoutMs,
@@ -332,6 +333,17 @@ describe('refusal digest (Codex #2599 r4)', () => {
     expect(last.text, 'a key still inside its interval is not repeated, nor counted').toBe('1 refused:\nB — y\nf');
   });
 
+  it('sends every entry when its sent-state cannot be read, and reports a post it could not record as sent (Codex #2599 r6)', async () => {
+    const k = createKeeperD1();
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const down = { ...k.d1, prepare: () => { throw new Error('d1 down'); }, batch: () => { throw new Error('d1 down'); } };
+    const e = { DB: createSharedD1().d1, KEEPER_DB: down, TG_OPS_BOT_TOKEN: 'tok', TG_OPS_CHAT_ID: '-100' } as unknown as Env;
+    expect(await sendOpsAlertDigest(e, () => 'h', [{ key: 'a', id: 'A', detail: 'x' }], 'f', 600, NOW)).toBe('sent');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('records nothing when the post fails, so the next run tries again', async () => {
     const k = createKeeperD1();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
@@ -386,9 +398,17 @@ describe('outcomeOf (Codex #2599 r4)', () => {
   });
 });
 
+describe('dayRuns (Codex #2599 r6)', () => {
+  it('collapses only contiguous runs', () => {
+    expect(dayRuns([15n, 10n, 11n, 12n, 20n, 21n])).toBe('10–12, 15, 20–21');
+    expect(dayRuns([7n])).toBe('7');
+  });
+});
+
 describe('actionScope (Codex #2599 r4)', () => {
   it('names only the chunk a chunked proof refused, and every later page for a paged index', () => {
     expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 2, dayIds: [12n, 10n, 11n], proof: [] })).toBe('chunk 2, 3 days (days 10–12)');
+    expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 0, dayIds: [10n, 12n], proof: [] }), 'a gap is never covered').toBe('chunk 0, 2 days (days 10, 12)');
     expect(actionScope({ kind: 'indexPage', batchId: P1 as never, dayIds: [5n, 6n, 7n, 8n], indexedFrom: 2 }), 'only the days not yet indexed').toBe(
       'the days its epoch has not indexed yet, 2 days (days 7–8), from the next page on',
     );

@@ -463,7 +463,9 @@ async function proveOnMirror(
   // budget never reached, a re-read that did not land, a slice that is not the
   // whole queue — can raise the alert but never clear it.
   const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, finished, notWhole, moved, remeasured, nowSec });
-  // A run whose work ended early has not measured what is awaiting.
+  // A run whose work ended early has not measured everything awaiting: what it
+  // did read is still reported, as a lower bound, and it clears nothing
+  // (Codex #2599 r6).
   const measured = workErr === null;
   // A delivery this run measured whole has nothing a refusal could be holding
   // back (another caller finished it, say): no revert alert for it (Codex
@@ -473,12 +475,27 @@ async function proveOnMirror(
     failures,
     cleared: new Set([...clean, ...finished]),
     openWork,
-    awaiting: measured ? awaiting : [],
+    awaiting,
     awaitingMeasured: measured && unreadPackets.size === 0 && undetermined === 0 && !overflow && unreadRows === 0,
     nowSec,
     deadline: alertDeadline,
   });
   if (workErr !== null) throw workErr;
+}
+
+/** Day ids as their contiguous runs — `10–12, 15` — so a list with a gap
+ *  never reads as covering the days in the gap (Codex #2599 r6). Pure;
+ *  exported for the tests. */
+export function dayRuns(ids: readonly bigint[]): string {
+  const sorted = [...new Set(ids)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const runs: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1n) j++;
+    runs.push(j === i ? `${sorted[i]}` : `${sorted[i]}–${sorted[j]}`);
+    i = j + 1;
+  }
+  return runs.join(', ');
 }
 
 /** Which days a call covers, for an alert that names a refusal (Codex #2599
@@ -488,8 +505,7 @@ async function proveOnMirror(
 export function actionScope(a: ProofAction): string {
   const span = (ids: readonly bigint[]): string => {
     const n = ids.length;
-    const range = n === 0 ? '' : ` (days ${ids.reduce((x, y) => (y < x ? y : x))}–${ids.reduce((x, y) => (y > x ? y : x))})`;
-    return `${n} day${n === 1 ? '' : 's'}${range}`;
+    return `${n} day${n === 1 ? '' : 's'}${n === 0 ? '' : ` (days ${dayRuns(ids)})`}`;
   };
   switch (a.kind) {
     case 'indexChunk':
