@@ -757,6 +757,25 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   vulnerable claim path live. Assert the deployment, per chain, the same way the
   other code-slice gates in this section are asserted.
 
+  **Deployed code is necessary, not sufficient: the custody cutover must also
+  have run on every chain whose reward role is active.** On a fresh Diamond,
+  `rewardCustodyActivated()` reads **false** until the per-chain ceremony
+  (`contracts/script/ActivateRewardCustody.s.sol`, design §5d) calls
+  `activateRewardCustody`. The deploy only stamps the cutover record. Until
+  activation, `fundRewardPool` reverts `RewardCustodyNotActivated`. Once the
+  reward role is `Canonical` or `Mirror`, the delivered bound reads zero, so
+  every fresh claim is unfundable. Arming such a chain makes the
+  irreversible `D*` cutover over a pool nobody can fund.
+
+  Before arming, read back on each chain whose role is `Canonical` or `Mirror`:
+  - `getRewardRole()`;
+  - `rewardCustodyActivated()` = true, with the ceremony record that
+    activation leaves;
+  - that the holder is bound.
+
+  An `Unconfigured` single-chain deployment never runs the ceremony. Its column
+  stays at Diamond custody by design.
+
   **And on the ACTIVE-MIRROR branch, deployment is not the gate — the per-day
   funding property is.** Step 5 forbids propagation while any reachable mirror
   lacks that property, and a mirror learns `D*` only through propagation. So

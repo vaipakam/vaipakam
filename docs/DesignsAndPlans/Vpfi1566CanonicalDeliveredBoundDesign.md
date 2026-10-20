@@ -5252,8 +5252,13 @@ chain that has one.
 >   recorded commit plus that delta. `deploy-testnet.sh` permits a dirty tree.
 >   Ten of its facets were re-cut on 2026-10-19 from the clean `dc72b36`
 >   (#2581).
-> - **Arbitrum Sepolia `0x50199e30…`**, 2026-10-17 (#2545), from the clean
->   `4edfa02`, which descends from #2521.
+> - **Arbitrum Sepolia `0x50199e30…`**, 2026-10-17 (#2545). Its source record
+>   names the clean `4edfa02`, a commit on #2545's branch. The squash merge did
+>   not carry that commit into `main`'s history, so this repository cannot show
+>   its ancestry. On 2026-10-20 GitHub still served it, two commits ahead of
+>   #2521's merge commit. That is an observation from outside the repository,
+>   not a retained attestation. Ten of its facets were also re-cut on
+>   2026-10-19 from `dc72b36`.
 > - **BNB testnet `0xfa7685Eb…`**, 2026-10-18 (#2551), from the clean `872545d`.
 >
 > The RETIRED Diamonds keep whatever custody they hold. That covers the earlier
@@ -5296,8 +5301,8 @@ chain that has one.
 > - **The prospective isolation.** Slices 2–3 and the delivered bound are
 >   shipped behaviour, and the ⚠️ paragraph below still holds.
 > - **The arming gate's deployment assertion.** Before arming a Diamond, assert
->   per chain that it runs the fixed code (`docs/ops/GovernanceRunbook.md`,
->   Gate A).
+>   per chain that it runs the fixed code and that its reward-custody cutover
+>   has run (`docs/ops/GovernanceRunbook.md`, Gate A).
 >
 > **What stays as history, not as a live gate.**
 >

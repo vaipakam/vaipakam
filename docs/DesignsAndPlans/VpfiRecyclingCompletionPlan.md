@@ -24,6 +24,22 @@
 > (§M6) — the owner settled its gate on 2026-08-31 ("configurable by
 > admin, later governance"), and it is ARMED, not pending.
 >
+> **Superseded for #1566 on 2026-10-20 — read this before the paragraph
+> below, which is kept as the 2026-09 record.**
+>
+> - **Code.** #1566's code is complete on `main`. Closure 2, slice 4 and
+>   slices 2–3 all landed in the build-first programme (#2459, #2489, #2521);
+>   the dated #1956 status of 2026-10-19 lists nothing else on #1566 except the
+>   census.
+> - **Census.** The census is RETIRED, not certified (owner decision
+>   2026-10-20). Every Diamond the programme runs on is a fresh deploy (O1 =
+>   A), so the migration half of slices 0–3 has nothing to move. The reasoning
+>   and what it does not retire are in the "RETIRED" note at the head of the
+>   census in `Vpfi1566CanonicalDeliveredBoundDesign.md`.
+> - **Arming.** Arming is still gated per Diamond: deployed code, custody
+>   activation, and on an active-mirror mesh the per-day funding property.
+>   See `GovernanceRunbook.md`, Gate A.
+>
 > **#1566 is no longer owner-gated** (ratified 2026-09-07: census first, then
 > closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
 > read 215 loans across all **twenty retained deployments** (live plus
@@ -1322,7 +1338,7 @@ GovernanceRunbook gains a recycling section, executed in order:
    funded VPFI payroll streams (plus the grandfathered LIF term; the Full
    tariff's `C*` is covered since it credits the bucket). **Two of those are USER COLLATERAL**, which makes
    this a fund-safety item rather than an accounting one — a reward payout
-   drawing on them spends a borrower's collateral. **That half is now #1566. Its code is complete on `main` (#2459, #2489, #2521); the gate is satisfied per Diamond only once that code is deployed there.**
+   drawing on them spends a borrower's collateral. **That half is now #1566. Its code is complete on `main` (#2459, #2489, #2521); the gate is satisfied per Diamond only once that code is deployed there and its reward-custody cutover has run (`GovernanceRunbook.md`, Gate A).**
    #1498 reads `closed / completed` and is NOT evidence of anything: it was
    auto-closed by #1555's `Closes #1498` when #1555 landed only the
    de-duplication half, and #1498's own last comment records that close as wrong
