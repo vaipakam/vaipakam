@@ -73,6 +73,18 @@
  * one file supports, or that RedStone flags, is left for the Safe and named
  * in the report. It never lists, never delists by itself, never lifts a veto.
  *
+ * Which oracle answered is stated, never assumed. On a test network, where
+ * RedStone has no deployment, the clearance may be read from
+ * `TestnetSanctionsOracleStandIn`, which flags only what its owner flags.
+ * Every run asks the oracle it reads whether it is that stand-in, when it last
+ * updated and, for the stand-in, who owns it and whether a transfer is
+ * pending, and each note, action and report line names the answer: "the testnet stand-in for RedStone" when the oracle itself says so,
+ * and "the clearance oracle" otherwise (see {@link identifyOracle},
+ * {@link clearanceOracleName}). No run names an oracle RedStone: this release
+ * runs on test networks only, where RedStone has no deployment, so nothing it
+ * could read would establish it. The attestor chain's own report says the
+ * same of the oracle it reads.
+ *
  * Configuration is environment only, one file for every chain
  * (ops/sanctions/sanctions-delister.env.example):
  *   SANCTIONS_DELISTER_PRIVATE_KEY  the proposer key; nothing else may hold it
@@ -135,6 +147,7 @@ const CLOCK_SKEW_S = 600n;
 /** The timelock's enums, by position. */
 export const ROUTE = Object.freeze(['Unavailable', 'Local', 'CrossChain']);
 const CROSS_CHAIN = ROUTE.indexOf('CrossChain');
+const LOCAL = ROUTE.indexOf('Local');
 const STATUS_PENDING = 1;
 
 /** The compiled ABIs — never hand-typed. */
@@ -144,7 +157,158 @@ export function timelockAbi() {
 export function attestorAbi() {
   return JSON.parse(readFileSync(join(HERE, '..', 'src', 'abis', 'SanctionsClearanceAttestor.json'), 'utf8'));
 }
+export function standInAbi() {
+  return JSON.parse(readFileSync(join(HERE, '..', 'src', 'abis', 'TestnetSanctionsOracleStandIn.json'), 'utf8'));
+}
+/** RedStone's oracle has no compiled ABI here; this is the one read both it
+ *  and the stand-in answer, as the contracts call it (`ISanctionsList`). */
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
+
+/** The two reads every `Ownable2Step` contract answers, for the contracts on
+ *  a delisting's path this service has no compiled ABI for (the messengers). */
+const OWNABLE_ABI = parseAbi(['function owner() view returns (address)', 'function pendingOwner() view returns (address)']);
+
+/** `address`'s owner and pending owner, each null when it cannot be read or
+ *  is not an address. Never throws: an unreadable controller is judged by
+ *  {@link keyControls}, not lost with the rest of a reading. */
+async function readControl(client, address) {
+  const one = (functionName) =>
+    client.readContract({ address, abi: OWNABLE_ABI, functionName }).then(
+      (v) => {
+        try {
+          return getAddress(v);
+        } catch {
+          return null;
+        }
+      },
+      () => null,
+    );
+  const [owner, pendingOwner] = await Promise.all([one('owner'), one('pendingOwner')]);
+  return { owner, pendingOwner };
+}
+
+/** How a report names the testnet stand-in. */
+export const STAND_IN_NAME = 'the testnet stand-in for RedStone';
+
+/** What {@link identifyOracle} can establish about an oracle: the stand-in,
+ *  on its own answer, or nothing. There is deliberately no RedStone value —
+ *  see {@link identifyOracle}. */
+export const ORACLE_IDENTITY = Object.freeze({ STAND_IN: 'stand-in', UNKNOWN: 'unknown' });
+
+/**
+ * The name every note, action and report line gives the oracle a chain's
+ * clearance is read from, from what this run established about it
+ * (`snap.clearanceOracle.identity`, see {@link identifyOracle}) — never a
+ * name the run did not establish.
+ */
+export function clearanceOracleName(snap) {
+  const identity = snap?.clearanceOracle?.identity;
+  if (identity === ORACLE_IDENTITY.STAND_IN) return STAND_IN_NAME;
+  return 'the clearance oracle';
+}
+
+/**
+ * Who controls the stand-in, from its owner and pending owner read this run
+ * (see {@link identifyOracle}) — never an assumed admin. `flags` and `stale`
+ * describe it in a report line; `refresh` is the step that re-publishes it,
+ * or null when nobody can, and then `blocked` says what moves it on instead.
+ *
+ * The two reads are reported independently: what one established is never
+ * dropped because the other failed, so a known pending owner is named even
+ * when the current owner could not be read. Nothing is inferred beyond them:
+ * "nobody can re-publish it" is said only when the owner reads as renounced
+ * AND no transfer reads as pending.
+ */
+export function standInControl(o) {
+  const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
+  const pendingTo = typeof o.pendingOwner === 'string' && !isZero(o.pendingOwner) ? o.pendingOwner : null;
+  const pending = pendingTo
+    ? `; an ownership transfer to ${pendingTo} is pending, and that account controls it once it accepts`
+    : o.pendingOwner === null
+      ? '; whether an ownership transfer is pending could not be read'
+      : '';
+  if (o.owner === null || o.owner === undefined) {
+    return {
+      flags: `its owner could not be read this run, so who controls its flags is not known${pending}`,
+      stale: 'it goes stale unless its owner re-publishes it',
+      refresh: 'its owner (not read this run) re-publishes it with markUpdated',
+      blocked: null,
+    };
+  }
+  if (isZero(o.owner) && pendingTo) {
+    return {
+      flags: `it has no owner now${pending}`,
+      stale: 'it goes stale unless its pending owner accepts and re-publishes it',
+      refresh: `its pending owner ${pendingTo} accepts ownership and re-publishes it with markUpdated`,
+      blocked: null,
+    };
+  }
+  if (isZero(o.owner) && o.pendingOwner === null) {
+    return {
+      flags: `it has no owner${pending}, so whether anyone can still change its flags is not known`,
+      stale: 'once stale it stays stale unless someone can still re-publish it',
+      refresh: null,
+      blocked: 'its ownership was given up and whether a transfer is pending could not be read, so nobody may be able to re-publish it; a new clearance source on the timelock moves this on',
+    };
+  }
+  if (isZero(o.owner)) {
+    return {
+      flags: 'it has no owner (ownership renounced), so its flags can no longer change',
+      stale: 'nobody can re-publish it, so once stale it stays stale',
+      refresh: null,
+      blocked: "its ownership was renounced, so nobody can re-publish it; only a new clearance source on the timelock moves this on",
+    };
+  }
+  return {
+    flags: `it flags only what its owner ${o.owner} flags${pending}`,
+    stale: 'it goes stale unless its owner re-publishes it',
+    refresh: `its owner ${o.owner} re-publishes it with markUpdated`,
+    blocked: null,
+  };
+}
+
+/** A chain time in seconds as an ISO string. Never throws: a report is
+ *  written whatever a chain returned, so a value no date can hold reads as
+ *  unreadable instead of aborting the run. */
+const isoAt = (seconds) => {
+  const at = new Date(Number(seconds) * 1000);
+  return Number.isNaN(at.getTime()) ? `an unreadable time (${seconds})` : at.toISOString();
+};
+
+/**
+ * Why a matured proposal reads `OracleStale`, and what — if anything — moves
+ * it on, from what this run observed. On the local route the timelock judged
+ * the oracle's freshness at this block, so the oracle itself is stale. On the
+ * cross-chain route it judged the update time the attestor's ANSWER carried,
+ * which is older than the oracle may be now: the oracle's current update
+ * time decides whether it needs refreshing at all, or only a new request,
+ * which this bot sends once the current one expires. Only the stand-in is
+ * refreshed by anyone here: its owner as read this run, with `markUpdated`
+ * ({@link standInControl}).
+ */
+function staleWhy(snap, p, who) {
+  const o = snap.clearanceOracle ?? {};
+  const control = o.identity === ORACLE_IDENTITY.STAND_IN ? standInControl(o) : null;
+  const refresh = control?.refresh ?? null;
+  const blocked = control?.blocked ?? 'nothing here can move it on until it updates';
+  const wait = refresh ? `; ${refresh}` : `; ${blocked}`;
+  const current = o.updatedAt === null || o.updatedAt === undefined ? null : BigInt(o.updatedAt);
+  if (snap.route !== CROSS_CHAIN) {
+    return `${who}${current !== null ? ` was last updated ${isoAt(current)},` : ' is'} older than the timelock accepts${wait}`;
+  }
+  const answered = BigInt(p.clearance?.oracleUpdatedAt ?? 0n);
+  const head = `its clearance answer carries ${answered > 0n ? `an update time of ${isoAt(answered)}` : 'no readable update time'} for ${who}, older than the timelock accepts`;
+  const next = 'the next clearance request, which this bot sends once this one expires';
+  if (current === null) {
+    return `${head}; the current update time of ${who} could not be read${o.detail ? ` (${o.detail})` : ''}, so whether it has updated since is not known${refresh ? `; if it has not, ${refresh}` : control?.blocked ? `; if it has not, ${control.blocked}` : ''}, and ${next}, carries whatever it holds then`;
+  }
+  const maxAge = snap.oracleMaxAge === null || snap.oracleMaxAge === undefined ? null : BigInt(snap.oracleMaxAge);
+  // The timelock's own rule: stale once its clock passes updatedAt + maxAge.
+  if (maxAge !== null && BigInt(snap.now) <= current + maxAge) {
+    return `${head}; ${who} has updated since (${isoAt(current)}), and ${next}, carries that`;
+  }
+  return `${head}; ${who} itself was last updated ${isoAt(current)}, also too old${refresh ? `: ${refresh}, and ${next}, carries the new time` : `; ${blocked}`}`;
+}
 
 /** selector → error name, for reading `readiness`'s reason. */
 export function errorNames(abi) {
@@ -172,16 +336,87 @@ export function fingerprint(snap) {
   return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, snap.proposals.map((p) => `${p.id}:${stage(snap, p)}`).join(',')].join('|');
 }
 
+/**
+ * What the signing key controls, or may come to control, among the contracts
+ * a delisting's outcome depends on. The key must be a proposer and nothing
+ * else: a key that can also decide the clearance — the oracle's flags and
+ * freshness, a messenger carrying the request or the answer — or steer the
+ * timelock could push a delisting through with only the Safe's veto in the
+ * way, so a stolen copy would need nothing else.
+ *
+ * `controllers` is `[{ what, owner, pendingOwner, why }]`, the owner and
+ * pending owner as read this run (null when unreadable or not read), and
+ * `why` the reason a contract could not be read at all, when known. A
+ * pending owner is control too: it takes the contract whenever it accepts.
+ * `holds` names each such role the key has; `unknown` names each contract
+ * whose controller could not be read, since the key is not used where its
+ * control is unknown, and `reasons` gives each distinct `why` among them. There is no exemption: every contract on the path, the clearance
+ * oracle included, must answer `owner()` and `pendingOwner()`. On the test
+ * networks this release runs on, the only clearance oracle is the stand-in,
+ * which answers both; a mainnet release that reads RedStone identifies it
+ * positively (see {@link identifyOracle}) and decides then how its control
+ * is established — never by exempting an answer that did not come.
+ */
+export function keyControls(controllers, key) {
+  const holds = [];
+  const unknown = [];
+  const reasons = [];
+  for (const c of controllers) {
+    if (sameAddress(c.owner, key)) holds.push(`${c.what}'s owner`);
+    if (sameAddress(c.pendingOwner, key)) holds.push(`${c.what}'s pending owner`);
+    if (c.owner == null || c.pendingOwner == null) {
+      unknown.push(c.what);
+      if (c.why && !reasons.includes(c.why)) reasons.push(c.why);
+    }
+  }
+  return { holds, unknown, reasons };
+}
+
+/**
+ * Every contract with an owner that a delisting on this chain depends on, for
+ * {@link keyControls}. WHICH contracts those are follows from the route
+ * alone, never from what this run managed to read: the timelock; on the
+ * local or cross-chain route, the oracle the clearance is read from (the
+ * list's secondary, or the attestor's oracle); and on the cross-chain route
+ * the messenger at each end, which carry the request and the answer. A
+ * dependency this run could not read — an unreadable secondary, an
+ * unreachable attestor chain — is still listed, with its controller unknown,
+ * so the chain is refused for the run instead of being judged on the part
+ * that was readable: a clearance answer already delivered would otherwise
+ * let a proposal execute while the key's control of the far side was never
+ * checked.
+ */
+export function delistingControllers({ route, timelock, clearanceOracle, clearanceMessenger, relayPath }) {
+  const entry = (what, read, why) => ({ what, owner: read?.owner ?? null, pendingOwner: read?.pendingOwner ?? null, ...(read ? {} : { why }) });
+  const controllers = [entry('the timelock', timelock)];
+  if (route === LOCAL || route === CROSS_CHAIN) {
+    const read = clearanceOracle?.address ? clearanceOracle : null;
+    controllers.push(entry(clearanceOracleName({ clearanceOracle }), read, clearanceOracle?.detail ?? 'it was not read this run'));
+  }
+  if (route === CROSS_CHAIN) {
+    controllers.push(entry("this chain's clearance messenger", clearanceMessenger));
+    controllers.push(entry("the attestor chain's messenger", relayPath?.ok ? relayPath.messenger : null, relayPath?.detail ?? 'the attestor chain was not read this run'));
+  }
+  return controllers;
+}
+
 /** The reasons a snapshot rules out acting at all, as a refusal message.
  *  The key's roles on the list are not here: they are checked on every chain
- *  the key is used on, before any use (see {@link listRoleRefusal}). */
+ *  the key is used on, before any use (see {@link listRoleRefusal}). What it
+ *  controls on the delisting path is (see {@link keyControls}). */
 export function refusal(snap) {
   if (!sameAddress(snap.timelockList, snap.list.address)) {
     return `the recorded timelock serves list ${snap.timelockList}, not the recorded list ${snap.list.address} — fix the release's deployments.json`;
   }
   const r = snap.roles;
   if (!r.proposer) return 'the signing key is not a proposer of this timelock — the owner appoints it with setProposer';
-  if (r.timelockOwner) return "the signing key is also the timelock's owner — an unattended key must be the proposer alone; move ownership before it runs again";
+  if (r.controls.holds.length) {
+    return `the signing key is also ${r.controls.holds.join(' and ')} — an unattended key must be the proposer alone, so that it cannot also decide a clearance or steer the timelock; move that control before it runs again`;
+  }
+  if (r.controls.unknown.length) {
+    const why = r.controls.reasons.length ? ` (${r.controls.reasons.join('; ')})` : '';
+    return `who controls ${r.controls.unknown.join(' and ')} could not be read${why}, so the key is not used on this chain this run`;
+  }
   return null;
 }
 
@@ -194,8 +429,8 @@ export function refusal(snap) {
  * chain and a chain that only hosts an attestor alike — in one place, the
  * client lookup ({@link createClientLookup}), before any read or send.
  */
-export function listRoleRefusal({ adder, remover, owner }) {
-  const extra = [adder && "the list's adder", remover && "the list's remover", owner && "the list's owner"].filter(Boolean);
+export function listRoleRefusal({ adder, remover, owner, pendingOwner = false }) {
+  const extra = [adder && "the list's adder", remover && "the list's remover", owner && "the list's owner", pendingOwner && "the list's pending owner"].filter(Boolean);
   if (!extra.length) return null;
   return `the signing key is also ${extra.join(' and ')} on this chain — an unattended key must be a proposer alone; remove the extra role before it runs again`;
 }
@@ -249,19 +484,16 @@ function stage(snap, p) {
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
   const next = p.ready ? 'ready' : p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
   if (!ADVANCING.has(next)) return next;
-  // Two things close every step toward a delisting, whatever the proposal:
-  // a timelock that is no longer a remover can complete none (`readiness`
-  // does not check the list's own authorization, so this is the one place
-  // that does; revoking it is the owner's one-call shutdown of the route),
-  // and a cross-chain request, a paid CCIP message, with no proven way back
-  // for its answer would be paid for again at every expiry.
+  // A timelock that is no longer a remover can complete no proposal
+  // (`readiness` does not check the list's own authorization, so this is the
+  // one place that does; revoking it is the owner's one-call shutdown of the
+  // route). A cross-chain route whose attestor chain cannot be read never
+  // reaches here: the far side's controllers are then unknown, so the whole
+  // chain is refused for the run (`refusal`, {@link delistingControllers}),
+  // a request, a relay and an execute alike.
   if (!snap.timelockIsRemover) return `${next}:closed`;
-  if (NEEDS_REQUEST.has(next) && snap.route === CROSS_CHAIN && !snap.relayPath?.ok) return `${next}:no-relay`;
   return next;
 }
-
-/** The readiness reasons whose next step is a (paid) clearance request. */
-const NEEDS_REQUEST = new Set(['ClearanceNotRequested', 'ClearanceExpired']);
 
 /** The stages with a step that moves a proposal toward a delisting:
  *  executing, requesting the clearance, relaying RedStone's answer. */
@@ -366,6 +598,7 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
   const notes = [];
   const review = [];
   const route = ROUTE[snap.route] ?? `route ${snap.route}`;
+  const who = clearanceOracleName(snap);
   const gate = publicationGate(snap);
   if (!gate) notes.push(`the list is at version ${snap.list.latestVersion} but the finalized block shows ${snap.list.version}; proposing, reconfirming, requesting, relaying and executing wait for it to be final`);
   const ready = evaluation.status === 'ready';
@@ -407,11 +640,11 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       continue;
     }
     if (at === 'window') {
-      notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${new Date(Number(p.eta) * 1000).toISOString()}`);
+      notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${isoAt(p.eta)}`);
       continue;
     }
     if (ADVANCING.has(at)) {
-      const step = p.ready ? 'executing' : at === 'ClearanceNotAnswered:owed' ? "relaying RedStone's answer" : 'requesting the clearance';
+      const step = p.ready ? 'executing' : at === 'ClearanceNotAnswered:owed' ? `relaying the answer from ${who}` : 'requesting the clearance';
       if (waitReason) {
         notes.push(`${tag}: ${step} waits: ${waitReason}`);
         waitedOnReading ||= gate;
@@ -431,28 +664,22 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       if (p.ready) actions.push({ kind: 'execute', id: p.id });
       else if (at === 'ClearanceNotAnswered:owed') {
         const r = p.relay;
-        actions.push({ kind: 'reply', id: p.id, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload });
+        actions.push({ kind: 'reply', id: p.id, oracle: who, sourceChainId: r.sourceChainId, attestor: r.attestor, messageId: r.messageId, payload: r.payload });
         if (r.balance !== undefined && BigInt(r.balance) < LOW_BALANCE_WEI) {
           review.push(`the delister key holds ${formatEther(r.balance)} of native gas on chain ${r.sourceChainId}, where it pays the reply's CCIP fee — top it up.`);
         }
-      } else actions.push({ kind: 'request', id: p.id });
+      } else actions.push({ kind: 'request', id: p.id, oracle: who });
       continue;
     }
     if (at.endsWith(':closed')) {
       notes.push(`${tag} is not moved on: the timelock is not a remover of the list, so it cannot complete any proposal`);
       continue;
     }
-    if (at.endsWith(':no-relay')) {
-      const why = `its clearance is not requested, because RedStone's answer could not be relayed back: ${snap.relayPath?.detail ?? 'the way back was not checked'}`;
-      notes.push(`${tag}: ${why}`);
-      review.push(`${tag}: ${why}. A request costs a CCIP fee, so none is sent until the attestor's chain is reachable from here.`);
-      continue;
-    }
     switch (p.reason) {
       case 'ClearanceNotAnswered': {
         const r = p.relay ?? { status: 'unknown', detail: 'no relay reading' };
         if (r.status === 'in-flight') notes.push(`${tag}: its clearance request is on its way to the attestor`);
-        else if (r.status === 'sent') notes.push(`${tag}: RedStone's answer is on its way back`);
+        else if (r.status === 'sent') notes.push(`${tag}: the answer from ${who} is on its way back`);
         else {
           notes.push(`${tag}: its clearance answer cannot be relayed: ${r.detail}`);
           review.push(`${tag}: the clearance answer cannot be relayed: ${r.detail}.`);
@@ -466,12 +693,18 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
         const why = {
           Vetoed: 'the Safe vetoed an address in it',
           ExceedsPendingDelistings: 'the list now declares fewer delistings outstanding than it names',
-          ClearanceFlagged: 'RedStone flags an address in it',
-          StillSanctioned: 'RedStone flags an address in it',
+          ClearanceFlagged: `${who} flags an address in it`,
+          StillSanctioned: `${who} flags an address in it`,
         }[p.reason];
         if (mine) actions.push({ kind: 'withdraw', id: p.id, why });
         else notes.push(`${tag} (another proposer's) cannot execute: ${why}`);
         if (p.reason === 'ClearanceFlagged' || p.reason === 'StillSanctioned') review.push(`${tag}: ${why} (${p.accounts.join(', ')}); it is left for the Safe.`);
+        break;
+      }
+      case 'OracleStale': {
+        const why = staleWhy(snap, p, who);
+        notes.push(`${tag} is matured but not executable: ${why}`);
+        review.push(`${tag} is matured but not executable: ${why}.`);
         break;
       }
       case 'AdditionsOutstanding':
@@ -491,12 +724,12 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
   if (!snap.timelockIsRemover) {
     notes.push('the timelock is not a remover of the list, so the automated route is closed; the owner appoints it with setRemover');
   } else if (snap.route === 0) {
-    if (snap.list.pendingDelistings > 0) notes.push(`no RedStone check is configured (clearance route Unavailable), so automated delisting is closed; ${snap.list.pendingDelistings} delisting(s) await the Safe`);
+    if (snap.list.pendingDelistings > 0) notes.push(`no clearance check is configured (clearance route Unavailable), so automated delisting is closed; ${snap.list.pendingDelistings} delisting(s) await the Safe`);
   } else if (gate && ready) {
     for (const a of evaluation.stillMentioned) review.push(`${a}: the advanced file delists it but SDN.XML still mentions it, so it is not proposed; it is left for the Safe.`);
     if (free > 0 && factsError) {
-      notes.push(`nothing proposed: the candidates' veto and RedStone state could not be read: ${factsError}`);
-      review.push(`no delisting was proposed: the candidates' veto and RedStone state could not be read (${factsError}).`);
+      notes.push(`nothing proposed: the candidates' veto state and their reading by ${who} could not be read: ${factsError}`);
+      review.push(`no delisting was proposed: the candidates' veto state and their reading by ${who} could not be read (${factsError}).`);
     } else if (free > 0) {
       const candidates = [];
       for (const a of evaluation.absent) {
@@ -504,8 +737,8 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
         if (!f) continue;
         if (f.proposalOf && f.proposalOf !== 0n && f.proposalOf !== 0) continue;
         if (f.vetoed) notes.push(`${a} is vetoed by the Safe and is not proposed`);
-        else if (f.flagged === null) notes.push(`${a}: RedStone could not be read, so it is not proposed this run`);
-        else if (f.flagged) review.push(`${a}: OFAC delisted it but RedStone flags it, so it is not proposed; it is left for the Safe.`);
+        else if (f.flagged === null) notes.push(`${a}: ${who} could not be read, so it is not proposed this run`);
+        else if (f.flagged) review.push(`${a}: OFAC delisted it but ${who} flags it, so it is not proposed; it is left for the Safe.`);
         else candidates.push(a);
       }
       const take = candidates.slice(0, free);
@@ -546,9 +779,9 @@ export function describeAction(a) {
     case 'execute':
       return `execute proposal ${a.id}`;
     case 'request':
-      return `request RedStone's clearance for proposal ${a.id}`;
+      return `request the clearance from ${a.oracle ?? 'the clearance oracle'} for proposal ${a.id}`;
     case 'reply':
-      return `relay RedStone's answer for proposal ${a.id} from chain ${a.sourceChainId}`;
+      return `relay the answer from ${a.oracle ?? 'the clearance oracle'} for proposal ${a.id} from chain ${a.sourceChainId}`;
     default:
       return a.kind;
   }
@@ -609,13 +842,22 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
     }
   }
   // A configured chain with no timelock may still host another chain's
-  // clearance attestor; say so rather than calling it idle.
+  // clearance attestor; say so rather than calling it idle, and say which
+  // oracle that attestor reads, as each timelock chain's snapshot found it.
   const attestorFor = new Map();
   for (const { c, snap } of read) {
-    if (snap?.route === 2) {
-      const id = Number(snap.clearanceSourceChainId);
-      attestorFor.set(id, [...(attestorFor.get(id) ?? []), c.name]);
-    }
+    if (snap?.route !== CROSS_CHAIN) continue;
+    const id = Number(snap.clearanceSourceChainId);
+    const hosted = attestorFor.get(id) ?? new Map();
+    const key = String(snap.clearanceAttestor).toLowerCase();
+    const entry = hosted.get(key) ?? { attestor: snap.clearanceAttestor, for: [], clearanceOracle: null };
+    entry.for.push(c.name);
+    const o = oracleReport(snap);
+    // Keep the most that any reading established: an identified oracle over
+    // one a failed read left unknown.
+    if (!entry.clearanceOracle || (entry.clearanceOracle.identity === ORACLE_IDENTITY.UNKNOWN && o.identity !== ORACLE_IDENTITY.UNKNOWN)) entry.clearanceOracle = o;
+    hosted.set(key, entry);
+    attestorFor.set(id, hosted);
   }
   const nextCache = { ...cache };
   // One timelock chain's run, after its snapshot was read. `sent` is the
@@ -686,13 +928,14 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
     // disagree, a stale copy, counts that differ) is this kind.
     const deferred = [];
     if (wants.get(c.id) && evaluation.status === 'refused') deferred.push(`this chain needed OFAC's files and has no conclusive reading of them: ${evaluation.reason}`);
-    if (factsError) deferred.push(`the candidates' veto and RedStone state could not be read: ${factsError}`);
+    if (factsError) deferred.push(`the candidates' veto state and their reading by ${clearanceOracleName(snap)} could not be read: ${factsError}`);
     return [
       c.slug,
       {
         ...head,
         status: failed.length || deferred.length ? 'partial' : 'ok',
         route: plan.route,
+        clearanceOracle: oracleReport(snap),
         list: listReport(head, snap),
         reservedDelistings: snap.reservedDelistings,
         publication: evaluation.status,
@@ -707,13 +950,14 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
     read.map(async ({ c, snap, error }) => {
       const head = { name: c.name, chainId: c.id, timelock: c.timelock ?? null, list: c.list ?? null };
       if (c.skipped) {
-        const hosts = attestorFor.get(c.id);
+        const attestors = [...(attestorFor.get(c.id)?.values() ?? [])];
+        const names = attestors.flatMap((a) => a.for);
         if (error) {
-          const relays = hosts ? `; it hosts the clearance attestor for ${hosts.join(', ')}, and no answer is relayed from here until this is fixed` : '';
-          return [c.slug, { ...head, status: 'refused', error: `${error}${relays}`, actions: [] }];
+          const relays = names.length ? `; it hosts the clearance attestor for ${names.join(', ')}, and no answer is relayed from here until this is fixed` : '';
+          return [c.slug, { ...head, status: 'refused', error: `${error}${relays}`, actions: [], ...(attestors.length && { attestors }) }];
         }
-        const reason = hosts ? `no timelock is recorded here; it hosts the clearance attestor for ${hosts.join(', ')}, whose answers are relayed from here` : c.skipped;
-        return [c.slug, { ...head, status: 'skipped', reason }];
+        const reason = names.length ? `no timelock is recorded here; it hosts the clearance attestor for ${names.join(', ')}, whose answers are relayed from here` : c.skipped;
+        return [c.slug, { ...head, status: 'skipped', reason, ...(attestors.length && { attestors }) }];
       }
       if (error) return [c.slug, { ...head, status: 'refused', error, actions: [] }];
       // Everything a chain's run sent is reported, whatever stops it: an
@@ -731,6 +975,7 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
             status: 'partial',
             // Read defensively: this report must not throw in its turn.
             route: ROUTE[snap?.route] ?? `route ${snap?.route}`,
+            clearanceOracle: oracleReport(snap),
             list: listReport(head, snap),
             reservedDelistings: snap?.reservedDelistings,
             actions: sent,
@@ -758,6 +1003,37 @@ export async function runDelister({ chains, key, loadPublication, cache = {}, no
   };
 }
 
+/** A chain report's view of the oracle its clearance is read from, or null
+ *  when the route reads none (Unavailable). */
+function oracleReport(snap) {
+  if (!snap || snap.route === 0) return null;
+  const o = snap.clearanceOracle ?? {};
+  return {
+    address: o.address ?? null,
+    identity: o.identity ?? ORACLE_IDENTITY.UNKNOWN,
+    name: clearanceOracleName(snap),
+    // A number while exact (every time the source rule accepts is), else the
+    // digits as text, so the report never states a rounded value.
+    updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number.isSafeInteger(Number(o.updatedAt)) ? Number(o.updatedAt) : String(o.updatedAt),
+    // The stand-in's owner and pending owner as read this run (null when
+    // unreadable); absent for an oracle that is not the stand-in.
+    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null }),
+    ...(o.detail && { detail: o.detail }),
+  };
+}
+
+/** The line a person reads about the oracle a clearance is read from: what
+ *  it is, when it last updated, and — for the stand-in — what it is not. */
+function oracleLine(o) {
+  const at = o.address ? ` at ${o.address}` : '';
+  const when = o.updatedAt ? isoAt(o.updatedAt) : 'unknown';
+  if (o.identity === ORACLE_IDENTITY.STAND_IN) {
+    const c = standInControl(o);
+    return `clearance read from ${o.name}${at}: NOT RedStone — ${c.flags}; last published ${when}, and ${c.stale}.`;
+  }
+  return `clearance oracle not identified this run${at}${o.detail ? ` (${o.detail})` : ''}${o.updatedAt ? `; it reports a last update of ${when}` : ''}.`;
+}
+
 /** A chain report's view of its list. */
 function listReport(head, snap) {
   const l = snap?.list;
@@ -776,9 +1052,11 @@ function sendState(entry, e) {
 
 /** The lines a person reads for one chain. */
 export function summarizeChain(c) {
-  if (c.status === 'skipped') return `skipped: ${c.reason}`;
-  if (c.status === 'refused') return `REFUSED, nothing sent: ${c.error}`;
+  const hosted = (c.attestors ?? []).map((a) => `attestor ${a.attestor} (for ${a.for.join(', ')}): ${oracleLine(a.clearanceOracle)}`);
+  if (c.status === 'skipped') return [`skipped: ${c.reason}`, ...hosted].join('\n  ');
+  if (c.status === 'refused') return [`REFUSED, nothing sent: ${c.error}`, ...hosted].join('\n  ');
   const lines = [`route ${c.route}; ${c.list?.pendingDelistings ?? 0} delisting(s) outstanding, ${c.reservedDelistings ?? 0} proposed.`];
+  if (c.clearanceOracle) lines.push(oracleLine(c.clearanceOracle));
   const word = {
     included: 'included',
     failed: 'FAILED, not sent',
@@ -960,7 +1238,8 @@ export function createClientLookup(clientsByChain, vet = async () => null) {
 
 /**
  * The lookup's vet for this service: on a chain whose list this release
- * records, the key's adder, remover and owner roles there, judged by
+ * records, the key's adder, remover, owner and pending-owner roles there
+ * (a pending owner takes the list whenever it accepts), judged by
  * {@link listRoleRefusal}. A list that cannot be read refuses too — the key
  * is not used on a chain where its roles are unknown.
  */
@@ -970,12 +1249,69 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
     if (!at) return null;
     try {
       const read = (functionName, args = []) => client.readContract({ address: at, abi, functionName, args });
-      const [adder, remover, owner] = await Promise.all([read('isAdder', [key]), read('isRemover', [key]), read('owner')]);
-      return listRoleRefusal({ adder, remover, owner: sameAddress(owner, key) });
+      const [adder, remover, owner, pendingOwner] = await Promise.all([read('isAdder', [key]), read('isRemover', [key]), read('owner'), read('pendingOwner')]);
+      return listRoleRefusal({ adder, remover, owner: sameAddress(owner, key), pendingOwner: sameAddress(pendingOwner, key) });
     } catch (e) {
       return `the key's roles on list ${at} could not be read, so the key is not used on this chain: ${e?.shortMessage ?? e?.message ?? e}`;
     }
   };
+}
+
+/**
+ * What `address`, the oracle a clearance is read from, is and when it last
+ * updated, asked on the chain it lives on (`client`). `identity` is
+ * `stand-in` only when the contract answers `isTestnetStandIn()` with true,
+ * and `unknown` otherwise, with `detail` stating what happened — an answer of
+ * false, or a call that returned no answer (a revert, an RPC failure, no
+ * contract there) — and inferring nothing from it.
+ *
+ * Nothing is ever identified as RedStone. Its oracle carries no marker of its
+ * own, so naming it would mean inferring it from a call that did not answer,
+ * and an RPC failure can look like a revert — which would call the stand-in
+ * RedStone. This release runs on test networks only (`SERVICE_CHAINS`), where
+ * RedStone has no deployment, so no oracle it reads is RedStone; a mainnet
+ * release (#2443) must establish RedStone positively, from the address it is
+ * recorded under, rather than revive an inference.
+ *
+ * `updatedAt` is its `getLastUpdateBlockTimestamp()` now, judged by the
+ * contracts' own rule (`LibOracleFreshness.lastUpdate`): null — unknown —
+ * when it is unreadable, zero, or later than its chain's latest block, and
+ * null too when that block cannot be read to judge it.
+ *
+ * `owner` and `pendingOwner` are read now too, whatever the oracle is (null
+ * when unreadable or not an address). For the stand-in whoever holds them
+ * controls its flags and its freshness, and a report names them rather than
+ * assuming the chain's admin still does ({@link standInControl}). For any
+ * oracle they are what {@link keyControls} judges: the signing key must
+ * control no oracle a clearance is read from.
+ */
+export async function identifyOracle(client, address, abi) {
+  const at = getAddress(address);
+  const read = (functionName) => client.readContract({ address: at, abi, functionName }).then((value) => ({ value }), (error) => ({ error }));
+  const [marker, freshness, block, owner, pendingOwner] = await Promise.all([
+    read('isTestnetStandIn'),
+    read('getLastUpdateBlockTimestamp'),
+    client.getBlock().then((b) => b, () => null),
+    read('owner'),
+    read('pendingOwner'),
+  ]);
+  const ts = freshness.error || freshness.value === undefined || freshness.value === null ? 0n : BigInt(freshness.value);
+  const updatedAt = ts === 0n || !block || ts > BigInt(block.timestamp) ? null : ts;
+  const addressOrNull = (r) => {
+    try {
+      return 'error' in r ? null : getAddress(r.value);
+    } catch {
+      return null;
+    }
+  };
+  if (marker.value === true) {
+    return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
+  }
+  const detail =
+    'error' in marker
+      ? `asking ${at} whether it is the testnet stand-in returned no answer: ${marker.error?.shortMessage ?? marker.error?.message ?? marker.error}`
+      : `${at} answers isTestnetStandIn() with ${marker.value}, so it is not the stand-in; nothing this run read says what it is`;
+  return { address: at, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt, detail, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
 }
 
 /** `fn` over `items`, at most `n` at a time, results in order. */
@@ -997,7 +1333,7 @@ const READ_CONCURRENCY = 8;
  * one's entries.
  */
 function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
-  const { tl, list, att, errors } = abis;
+  const { tl, list, att, standIn: standInDef, errors } = abis;
   const own = async () => (await clientFor(c.id)) ?? Promise.reject(new Error(`no RPC is configured for chain ${c.id}`));
   const requestKey = (requestId) => `${c.id}:${lower(c.timelock)}:${requestId}`;
 
@@ -1014,16 +1350,23 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
     return logs[0].args.messageId;
   }
 
-  /** Whether RedStone's answer could come back from here: the attestor's
+  /** Whether the clearance answer could come back from here: the attestor's
    *  chain has an RPC that serves that chain, and the attestor answers on
-   *  it. Read once per run on a cross-chain route; a clearance request (a
-   *  paid CCIP message) is sent only when it holds. */
+   *  it. Read once per run on a cross-chain route; when it does not hold,
+   *  the far side's oracle and messenger go unread, so the chain is refused
+   *  for the run ({@link delistingControllers}) and no paid CCIP request is
+   *  sent for an answer that could not come back. Also identifies the
+   *  oracle the attestor reads (`oracle`, see {@link identifyOracle}) and
+   *  reads who controls the messenger its answers leave through
+   *  (`messenger`), both judged by {@link keyControls}. */
   async function relayPath(sourceChainId, attestor) {
     try {
       const src = await clientFor(sourceChainId);
       if (!src) return { ok: false, detail: `no RPC is configured for chain ${sourceChainId}, where its attestor runs` };
-      await src.client.readContract({ address: attestor, abi: att, functionName: 'oracle' });
-      return { ok: true };
+      const readAtt = (functionName) => src.client.readContract({ address: attestor, abi: att, functionName });
+      const [oracle, messenger] = await Promise.all([readAtt('oracle'), readAtt('messenger')]);
+      const [identified, control] = await Promise.all([identifyOracle(src.client, oracle, standInDef), readControl(src.client, messenger)]);
+      return { ok: true, oracle: identified, messenger: { address: getAddress(messenger), ...control } };
     } catch (e) {
       // An unreadable attestor, an RPC serving another chain, or a key that
       // holds a role on that chain's list (createClientLookup) all land here.
@@ -1059,21 +1402,43 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       const { client } = await own();
       const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
       const current = await readCurrentFromChain(client, c.list, list, BigInt(c.id));
-      const [latestVersion, block, tlList, owner, isProposer, route, reserved, count, sourceChainId, attestor, tlIsRemover, balance] = await Promise.all([
+      const [latestVersion, block, tlList, owner, tlPendingOwner, isProposer, route, reserved, count, sourceChainId, attestor, clearanceMessenger, oracleMaxAge, tlIsRemover, balance] = await Promise.all([
         client.readContract({ address: c.list, abi: list, functionName: 'listVersion' }),
         client.getBlock(),
         readTl('list'),
         readTl('owner'),
+        readTl('pendingOwner'),
         readTl('isProposer', [account.address]),
         readTl('clearanceRoute'),
         readTl('reservedDelistings'),
         readTl('proposalCount'),
         readTl('clearanceSourceChainId'),
         readTl('clearanceAttestor'),
+        readTl('clearanceMessenger'),
+        readTl('oracleMaxAge'),
         client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [c.timelock] }),
         client.getBalance({ address: account.address }),
       ]);
       const crossChain = Number(route) === CROSS_CHAIN ? await relayPath(sourceChainId, attestor) : null;
+      // The oracle the clearance is read from, read once: the report names
+      // it, and readFacts asks the same address.
+      let clearanceOracle = null;
+      if (crossChain) clearanceOracle = crossChain.oracle ?? { address: null, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt: null, detail: crossChain.detail };
+      else if (Number(route) === LOCAL) {
+        try {
+          const secondary = await client.readContract({ address: c.list, abi: list, functionName: 'secondary' });
+          clearanceOracle = await identifyOracle(client, secondary, standInDef);
+        } catch (e) {
+          clearanceOracle = { address: null, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt: null, detail: `the list's secondary oracle could not be read: ${e?.shortMessage ?? e?.message ?? e}` };
+        }
+      }
+      const controllers = delistingControllers({
+        route: Number(route),
+        timelock: { owner, pendingOwner: tlPendingOwner },
+        clearanceOracle,
+        clearanceMessenger: Number(route) === CROSS_CHAIN ? await readControl(client, clearanceMessenger) : null,
+        relayPath: crossChain,
+      });
       // The timelock keeps no index of pending proposals, so every one ever
       // made is read; delistings are rare, so the count stays small.
       const proposals = [];
@@ -1116,11 +1481,12 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         timelockIsRemover: tlIsRemover,
         // The key's roles on the list were checked before this chain's
         // clients were handed out (createClientLookup).
-        roles: { proposer: isProposer, timelockOwner: sameAddress(owner, account.address) },
+        roles: { proposer: isProposer, controls: keyControls(controllers, account.address) },
         route: Number(route),
         clearanceSourceChainId: sourceChainId,
         clearanceAttestor: attestor,
-        relayPath: crossChain,
+        clearanceOracle,
+        oracleMaxAge: Number(oracleMaxAge),
         reservedDelistings: Number(reserved),
         proposalCount: Number(count),
         now: block.timestamp,
@@ -1139,29 +1505,28 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       };
     },
 
-    /** Each candidate's veto and proposal on this timelock, and whether
-     *  RedStone flags it, read where the snapshot's route says RedStone is.
-     *  Throws when the timelock cannot be read: no proposal is built on a
-     *  partial reading. */
+    /** Each candidate's veto and proposal on this timelock, and whether the
+     *  clearance oracle flags it — the oracle the snapshot identified and
+     *  the report names, so the name and the reading are one address.
+     *  Throws when the timelock cannot be read, or the list's own secondary
+     *  could not be on a local route: no proposal is built on a partial
+     *  reading. */
     async readFacts(addresses, snap) {
       const { client } = await own();
       const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
-      let oracle = null;
+      const known = snap.clearanceOracle?.address ?? null;
       let oracleClient = null;
-      if (snap.route === 1) {
-        oracle = await client.readContract({ address: c.list, abi: list, functionName: 'secondary' });
+      if (snap.route === LOCAL) {
+        if (!known) throw new Error(snap.clearanceOracle?.detail ?? "the list's secondary oracle was not read");
         oracleClient = client;
-      } else if (snap.route === 2) {
+      } else if (snap.route === CROSS_CHAIN && known) {
         try {
-          const src = await clientFor(snap.clearanceSourceChainId);
-          if (src) {
-            oracle = await src.client.readContract({ address: snap.clearanceAttestor, abi: att, functionName: 'oracle' });
-            oracleClient = src.client;
-          }
+          oracleClient = (await clientFor(snap.clearanceSourceChainId))?.client ?? null;
         } catch {
-          // RedStone unreadable: every candidate is skipped this run.
+          // The attestor's chain unusable: every candidate is skipped this run.
         }
       }
+      const oracle = oracleClient ? known : null;
       const rows = await mapLimited(addresses, READ_CONCURRENCY, async (a) => {
         const [vetoed, proposalOf] = await Promise.all([readTl('vetoed', [a]), readTl('proposalOf', [a])]);
         let flagged = null;
@@ -1241,7 +1606,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
  * `current` to a new release.
  */
 async function check() {
-  for (const [name, abi, fn] of [['SanctionsDelistingTimelock', timelockAbi(), 'propose'], ['SanctionsClearanceAttestor', attestorAbi(), 'sendReply'], ['SanctionsList', sanctionsListAbi(), 'listedByOwnList']]) {
+  for (const [name, abi, fn] of [['SanctionsDelistingTimelock', timelockAbi(), 'propose'], ['SanctionsClearanceAttestor', attestorAbi(), 'sendReply'], ['SanctionsList', sanctionsListAbi(), 'listedByOwnList'], ['TestnetSanctionsOracleStandIn', standInAbi(), 'isTestnetStandIn']]) {
     if (!abi.some((e) => e.name === fn)) throw new Error(`the ${name} ABI has no ${fn}`);
   }
   const { parsed: adv } = await parseSdnAdvancedFile(new URL('./fixtures/sdn_advanced.sample.xml', import.meta.url));
@@ -1299,7 +1664,7 @@ async function main() {
   const plan = planChains(cfg.chains, loadDeployments());
   const account = privateKeyToAccount(cfg.privateKey);
   const tl = timelockAbi();
-  const abis = { tl, list: sanctionsListAbi(), att: attestorAbi(), errors: errorNames(tl) };
+  const abis = { tl, list: sanctionsListAbi(), att: attestorAbi(), standIn: standInAbi(), errors: errorNames(tl) };
   const vet = listRoleKeyVet({ listByChain: new Map(plan.filter((c) => c.list).map((c) => [c.id, c.list])), key: account.address, abi: abis.list });
   const clientFor = createClientLookup(new Map(cfg.chains.map((c) => [c.id, chainClients(c, account)])), vet);
   const queues = createSendQueues();

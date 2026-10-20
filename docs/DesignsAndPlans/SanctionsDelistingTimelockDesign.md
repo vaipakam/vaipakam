@@ -1,7 +1,10 @@
 # Sanctions delisting — bot proposes, Safe vetoes, RedStone agrees (#2443)
 
 Status: built (contracts, tests, testnet deploy script, delister bot). The
-CCIP clearance wiring is the remaining follow-up, listed in §7.
+CCIP clearance wiring is built for TESTNETS as a rehearsal against a labelled
+stand-in for RedStone (D-G, §7); running it on the live testnets waits on the
+owner's go-ahead for each chain. A mainnet clearance route waits on RedStone's
+terms.
 
 Testnet deployments (2026-10-19, recorded in each chain's deployment artifact
 as `sanctionsDelistingTimelock`): Base Sepolia and Arbitrum Sepolia, one
@@ -9,7 +12,7 @@ timelock each for that chain's rehearsal list. On both the admin owns the
 timelock, the delister bot key is its only proposer, the delay is the default
 48 hours, and the timelock is a remover of the list beside the existing one
 (the Safe on Base Sepolia, the admin on Arbitrum Sepolia). Neither has a
-RedStone check, so every execution refuses until the clearance wiring lands;
+RedStone check, so every execution refuses until the clearance wiring is run;
 delistings meanwhile stay with each list's existing remover.
 
 ## 1. Decisions this records
@@ -42,6 +45,11 @@ All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:
 - **D-F — A Safe veto sticks** (2026-10-18, after asking whether the bot would
   re-propose a vetoed wallet): the bot cannot propose a vetoed wallet again
   until the Safe or the owner lifts the veto.
+- **D-G — Rehearse the cross-chain route on testnets with a stand-in**
+  (2026-10-20, after RedStone's oracle was found only on Ethereum mainnet):
+  a testnet-only contract answers in RedStone's place so request, reading and
+  reply run on live testnet contracts. It is named as a stand-in on-chain and
+  in every report, and each live deploy waits on the owner's go-ahead.
 
 ## 2. Why a separate contract
 
@@ -231,11 +239,26 @@ Both accept native value only as their messenger's fee refund.
 - **Delister bot — built** (`packages/contracts/scripts/sanctions-delister.mjs`,
   installed with the adder from `ops/sanctions/`). An hourly oneshot with its
   own key, which must be the timelock's proposer and nothing else (not the
-  timelock's owner, nor the adder, remover or owner of the list recorded on
-  any chain the bot has an RPC for — the attestor's chain included, checked
-  in the one client lookup every read and send goes through, before the key
-  is used there), and a timelock that serves the list the release records; a
-  chain failing either is refused. Per chain, each run:
+  timelock's owner, nor the adder, remover, owner or pending owner of the
+  list recorded on any chain the bot has an RPC for — the attestor's chain
+  included, checked in the one client lookup every read and send goes
+  through, before the key is used there), and a timelock that serves the
+  list the release records; a chain failing either is refused. Nor may the
+  key control anything else a delisting's outcome depends on: the owner or
+  pending owner of the timelock, of the oracle the clearance is read from,
+  or, on the cross-chain route, of the messenger at either end. A key that
+  could also decide the clearance would leave only the Safe's veto between a
+  stolen copy and a delisting. Which contracts are judged follows from the
+  route alone, never from what a run managed to read, and any whose
+  controller cannot be read refuses the chain for that run — request, relay
+  and execution alike. That includes an attestor chain the bot cannot read
+  (no RPC, an RPC serving another chain, a key holding a role on that
+  chain's list): a clearance answer already delivered would otherwise let a
+  proposal execute while the far side's control was never checked. There is
+  no exemption for an oracle that does not identify itself: on the test
+  networks the only clearance oracle is the stand-in, which answers both
+  reads, and a mainnet release that reads RedStone decides how its control
+  is established when it identifies RedStone. Per chain, each run:
   - discards a removed proposer's proposals; withdraws its own proposals that
     can no longer complete (vetoed, flagged by RedStone, already delisted
     another way, beyond the outstanding count, or no longer called for by a
@@ -291,9 +314,116 @@ Both accept native value only as their messenger's fee refund.
   chain's report, with every send it already made, and a state file that cannot be written is
   reported and fails the run; neither can stop the report of what was sent. The key needs native
   gas on both chains of a cross-chain route, for the two CCIP fees.
-- **CCIP clearance wiring** (next): deploy the attestor where RedStone
-  runs; register it as the clearance channel's handler there with the
-  timelock as peer, and the timelock as handler on its own chain with the
-  attestor as peer (both directions now carry a message); call
-  `setClearanceSource`.
+- **CCIP clearance wiring — built for testnets (D-G)**,
+  `contracts/script/ConfigureSanctionsClearance.s.sol`, run once per chain,
+  attestor chain first. On the attestor chain it deploys (or reuses) a
+  `TestnetSanctionsOracleStandIn` owned by the admin and a
+  `SanctionsClearanceAttestor` reading it, wires a CCIP lane to each timelock
+  chain, registers the attestor as the handler of the clearance channel
+  (`keccak256("vaipakam.ccip.channel.sanctions-clearance")`) and sets each
+  timelock as that channel's peer for its chain. On each timelock chain it
+  wires the lane back, registers the timelock as the channel's handler with
+  the attestor as peer, and calls `setClearanceSource` only when the source
+  differs (each call voids requests in flight). Every step reads first and is
+  skipped when already in place; a handler, peer or lane already set to
+  something else stops the run, since re-pointing one needs the messenger's
+  drain. Both new addresses are recorded in the attestor chain's artifact
+  (`sanctionsOracleStandIn`, `sanctionsClearanceAttestor`).
+
+  The testnet rehearsal hosts both on **BNB testnet** (97) for the Base
+  Sepolia and Arbitrum Sepolia timelocks; Base↔BNB already has a lane, and
+  the run adds Arbitrum↔BNB on both messengers. Three properties of the
+  stand-in carry the honesty of the rehearsal:
+  - **No mainnet.** Its constructor refuses any chain outside the testnet
+    allowlist, and the wiring script refuses a mainnet before reading
+    anything.
+  - **It says what it is.** `isTestnetStandIn()` answers true and
+    `STAND_IN_FOR` names RedStone's oracle. The delister asks every oracle it
+    reads, through either route, whether it is the stand-in, and names the
+    answer in every action, note and report line: "the testnet stand-in for
+    RedStone" (with "NOT RedStone" on the report's oracle line) when the
+    oracle itself answers that it is, and "the clearance oracle" for any
+    other, whether it answers false or gives no answer. It never names an
+    oracle RedStone: the delister runs on test networks only, where RedStone
+    has no deployment, and RedStone's oracle carries no marker a run could
+    read, so the only way to name it would be to infer it from a call that
+    failed, which an RPC fault can imitate. A mainnet release must identify
+    RedStone from the address it is recorded under. The attestor chain's own
+    report names the oracle its attestor reads, even though no timelock lives
+    there. Facts are read from the same address the report names. Who
+    controls the stand-in is read too, never assumed: each run reads its
+    owner and any pending owner, and the report names the owner as the one
+    who flags and re-publishes, states a pending transfer, and says when
+    ownership was renounced and nobody can re-publish it. The wiring and
+    deploy scripts print a timelock's clearance check the same way, through
+    one library (`script/lib/SanctionsClearanceReport.sol`): "clearance
+    check", never "RedStone check"; the stand-in only on its own answer; and
+    on a cross-chain route, that the attestor's oracle lives on another chain
+    the run does not read, plus what that chain's artifact records.
+  - **Its freshness is its owner's.** `getLastUpdateBlockTimestamp()` is the
+    owner's last write (deploy, a flag change, or `markUpdated`), never the
+    block's time. Left alone longer than a timelock's `oracleMaxAge`
+    (default 7 days) it closes that timelock's automated route exactly as a
+    frozen RedStone would, and the delister names the remedy. On the
+    cross-chain route a stale clearance carries the oracle's update time as
+    of the request, so the remedy is judged from the oracle's update time
+    NOW: a fresh request alone when it has updated since, its owner (as read)
+    re-publishing the stand-in when it has not, and a conditional
+    instruction when the current time could not be read.
+  - **Only the admin's stand-in is reused, nothing is wired through a
+    contract another account could take over, and nothing is replaced while
+    it still holds a role.** The wiring script reuses a recorded stand-in
+    only while it answers as the stand-in, the admin owns it, and no
+    ownership transfer is pending (one rule, `script/lib/AdminControl.sol`,
+    shared by every sanctions deploy and configure script). An attestor
+    binds its oracle for good, so binding one another account could take
+    over would hand that account the clearance. The same rule gates every
+    recorded contract a script writes through: the wiring script's messenger
+    and timelock, and `DeploySanctionsDelisting`'s list. A pending owner
+    there could accept and re-point whatever the run just wired, so the run
+    refuses until the transfer is cancelled or completed. Failing the rule
+    means "do not reuse", never "replace silently": when a replacement
+    attestor would be needed while the old one still handles the clearance
+    channel, the run stops,
+    at the script's read of the channel or else at the messenger's own
+    check. Nothing a refused run deployed is recorded: every sanctions
+    deploy and configure script writes its artifact only after every step
+    of the run has succeeded, because Forge executes the whole script
+    before broadcasting and sends nothing when a step reverts, while an
+    artifact written during that execution would survive the revert. The
+    script does not copy the messenger's rules into an up-front check of
+    its own; a copy could never be complete, and the messenger's refusals
+    bind either way. `DeploySanctionsDelisting` applies the same rule to
+    the timelock: it never deploys a second timelock beside a recorded one that
+    is still a remover of the list, so a list never has two automated
+    delisting routes. A list itself is never replaced: it holds the
+    listings every consumer reads, with its adder, removers and timelock
+    attached, so `DeploySanctionsList` refuses an unfit recorded list
+    (another owner, a pending transfer, a secondary) instead of deploying an
+    empty one, and starting a new list is the operator's deliberate act
+    (remove the list record and the timelock record that serves it). A
+    chain's records stay one bound set (`script/lib/SanctionsRecords.sol`):
+    a timelock is bound to its list for good, so `DeploySanctionsList` never
+    starts a new list while a timelock is still recorded, and the wiring
+    script wires only a timelock that serves the recorded list, as the
+    delister already refuses one that does not. Every route report (the two scripts, the delister)
+    also says whether automated delisting is open at all: it is closed
+    while the timelock is not a remover of its list, the owner's one-step
+    shutdown, whatever clearance check is wired.
+
+  A fork test (`contracts/test/fork/SanctionsClearanceLiveForkTest.t.sol`,
+  gated on `FORK_URL_BNB_TESTNET` plus each timelock chain's URL) runs the
+  script against forks of the three live testnets and drives a drill
+  proposal through request, reading, reply and execution on each timelock
+  chain, plus a stand-in flag that refuses the delisting. It delivers each
+  CCIP message from the source router's captured `ccipSend` to the
+  destination messenger as that chain's router, after checking the router
+  lists an off-ramp for the source lane: Chainlink's local fork simulator
+  cannot parse these lanes' newer on-ramp event. A live delisting on the
+  testnets still needs an OFAC delisting to propose, so until one appears
+  the fork drill is the end-to-end proof.
+
+  For the bot on a cross-chain route: its key needs native gas on the
+  attestor chain (tBNB on the rehearsal) for the reply's CCIP fee as well as
+  on each timelock chain, and the attestor chain needs an RPC in its env.
 - **Mainnet:** follows the adder host decision.

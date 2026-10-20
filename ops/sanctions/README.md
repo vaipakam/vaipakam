@@ -71,9 +71,10 @@ Every hour it, for every configured chain with a timelock recorded:
    execute (an address vetoed, flagged by RedStone, already delisted another
    way, or no longer delisted by OFAC's newer file); reconfirms one of its own
    onto a newer publication (the window is kept); after the window, on the
-   cross-chain route, requests RedStone's answer (only once the attestor's
-   chain is reachable from here, since a request costs a CCIP fee and its
-   answer must be relayed back) and relays it back; and
+   cross-chain route, requests RedStone's answer and relays it back (a chain
+   whose attestor chain cannot be read from here is refused for the run, see
+   below, so no CCIP fee is paid for a request whose answer could not be
+   relayed); and
    executes it once the timelock reports it ready. Each of those steps, for
    anyone's proposal, needs a reading of OFAC's files made in that same state
    that supports delisting every address the proposal names: with a failed,
@@ -93,11 +94,16 @@ Every hour it, for every configured chain with a timelock recorded:
    sent or failed or needs a person, repeated once a day while it lasts.
 
 It refuses, and leaves for a person: a key that is not the timelock's
-proposer alone — the timelock's owner, or the adder, remover or owner of the
-list recorded on ANY chain it has an RPC for, the attestor's chain included,
-checked before the key is used on that chain at all (a chain with no
-timelock whose list it holds a role on is reported refused, and fails the
-run); a recorded timelock that serves another list; publication work against
+proposer alone — the timelock's owner or pending owner, or the adder,
+remover, owner or pending owner of the list recorded on ANY chain it has an
+RPC for, the attestor's chain included, checked before the key is used on
+that chain at all (a chain with no timelock whose list it holds a role on is
+reported refused, and fails the run), or the owner or pending owner of the
+clearance oracle or of either clearance messenger, so the key can never also
+decide a clearance; for the run, a chain where it cannot read who controls
+any of these — which ones follows from the route, so an unreachable attestor
+chain, whose oracle and messenger then go unread, refuses it too, every step
+included; a recorded timelock that serves another list; publication work against
 a file the list does not record, a delisting the advanced file still
 witnesses, a count that differs from what the list declares outstanding, two
 OFAC files that disagree, or a digital-currency value in either file that is
@@ -116,6 +122,47 @@ route the delister's key pays both CCIP fees (the request on the timelock's
 chain, the reply on the attestor's), so it needs native gas on both, and the
 attestor's chain needs an RPC in the env file even when no timelock lives
 there.
+
+**On a testnet the cross-chain check reads a stand-in, never RedStone.**
+RedStone's Sanctions Oracle has no testnet deployment, so the rehearsal
+attestor on BNB testnet reads a `TestnetSanctionsOracleStandIn`, which flags
+only what its owner flags (the chain's admin, when the wiring script deploys
+it). The delister asks the oracle it reads
+whether it is that stand-in, and says so in every line: actions read "request
+the clearance from the testnet stand-in for RedStone", and the report adds
+"clearance read from the testnet stand-in for RedStone at 0x…: NOT RedStone".
+Any other oracle is "the clearance oracle", whatever it answered: the
+delister never calls an oracle RedStone, since RedStone has no testnet
+deployment and its oracle carries no marker a run could read. The BNB testnet
+section of the report, which hosts the
+attestor rather than a timelock, names the oracle the same way. Each run also
+reads the stand-in's owner and any pending owner, and the report names them
+as read: who flags, who can re-publish, a pending transfer, or that the
+ownership was renounced and nobody can. It never assumes the admin still
+holds it. The stand-in is only as fresh as its owner's last write to it:
+unless the owner calls `markUpdated` within a timelock's `oracleMaxAge`
+(default 7 days) of an execution, the clearance comes back stale. The
+delister then reads the oracle's update time as it is now, not as the stale
+answer recorded it: if the stand-in has been re-published since, it says the
+next request (which it sends once the stale one expires) carries the new
+time; if not, it names the owner it read as the one to re-publish it (or,
+renounced, that only a new clearance source moves it on); if it cannot read
+the time, it says so and makes the step conditional.
+
+The wiring and deploy scripts report a timelock's clearance check the same
+way (`script/lib/SanctionsClearanceReport.sol`): "Clearance check", never
+"RedStone check"; the stand-in only on its own answer, with its live owner;
+and on a cross-chain route, that the attestor's oracle lives on another
+chain and is not read by the run, plus what that chain's artifact records.
+They act on a list, messenger or timelock only while the admin owns it with
+no ownership transfer pending, and the report says automated delisting is
+CLOSED while the timelock is not a remover of its list. `DeploySanctionsList`
+never replaces a recorded list it cannot reuse: it refuses, and starting a
+new list means removing `.sanctionsList` and the `.sanctionsDelistingTimelock`
+that serves it from the artifact deliberately (it refuses a new list while a
+timelock is still recorded). The wiring script wires only a timelock that
+serves the recorded list. On this route the delister key needs tBNB on BNB
+testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
 
 On a testnet both services work against a **rehearsal** list:
 `DeploySanctionsList` deploys it beside the Diamond's
@@ -169,7 +216,22 @@ The first refuses an adder equal to the remover or the owner and records the
 list as `sanctionsList`. The second deploys the timelock for that list,
 appoints it a remover and the delister key its proposer, and records it as
 `sanctionsDelistingTimelock`; it configures no RedStone check. Both reuse what
-is already recorded. Then export deployments
+is already recorded.
+
+On a testnet, the cross-chain check is wired by
+`ConfigureSanctionsClearance.s.sol`, attestor chain first (it records the
+stand-in and the attestor there, and each timelock chain reads them from that
+chain's artifact):
+
+```bash
+export SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID=97 SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS=84532,421614
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BNB_TESTNET_RPC_URL"                 # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"                # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$ARB_SEPOLIA_RPC_URL"                 # dry run, then --broadcast --slow
+```
+
+It refuses a mainnet. Every step is skipped when already in place, and
+nothing already set to something else is re-pointed. Then export deployments
 (`bash contracts/script/exportFrontendDeployments.sh`), commit, and merge: the
 services read the addresses from the release they run, so a new contract
 reaches them with the next install.

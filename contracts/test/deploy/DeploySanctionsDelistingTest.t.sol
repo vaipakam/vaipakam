@@ -67,11 +67,72 @@ contract DeploySanctionsDelistingTest is Test {
         assertTrue(list.isRemover(address(tl)), "appointed remover");
         assertTrue(list.isRemover(safe), "the Safe keeps its direct delist");
         assertTrue(tl.isProposer(delister));
-        assertEq(tl.clearanceMessenger(), address(0), "no RedStone check configured by the script");
+        assertEq(tl.clearanceMessenger(), address(0), "no clearance check configured by the script");
 
         // A re-run reuses it.
         s.runWith(delister);
         assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock"), address(tl));
+        vm.removeDir(root, true);
+    }
+
+    function test_Testnet_NeverDeploysBesideATimelockThatStillHoldsTheRemoverRole() public {
+        (DeploySanctionsDelisting s, SanctionsList list) = _script(84532, "base-sepolia-pending", true);
+        s.runWith(delister);
+        address first = vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock");
+        address next = makeAddr("next owner");
+
+        // A pending transfer: the admin no longer alone controls it, and it is
+        // still a remover, so a replacement would be a second live route.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(next);
+        string memory before = _artifact();
+        vm.expectRevert(
+            bytes(
+                "DeploySanctionsDelisting: the recorded timelock is still a remover of this list, but the admin does not alone control it (another owner, or an ownership transfer pending) - cancel the transfer, or revoke it with setRemover(timelock, false), then re-run. Nothing was deployed or recorded"
+            )
+        );
+        s.runWith(delister);
+        assertEq(_artifact(), before, "nothing recorded");
+
+        // Cancelled, it is reused.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(address(0));
+        s.runWith(delister);
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock"), first, "reused once nothing is pending");
+
+        // Revoked deliberately, a replacement goes ahead and the old one holds no role.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(next);
+        vm.prank(admin);
+        list.setRemover(first, false);
+        s.runWith(delister);
+        address second = vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock");
+        assertTrue(second != first, "replaced");
+        assertTrue(list.isRemover(second));
+        assertFalse(list.isRemover(first), "one delisting route, not two");
+        vm.removeDir(root, true);
+    }
+
+    /// @dev The run writes the list's roles, so a pending owner on the list
+    ///      could take over the timelock's remover role the moment it is
+    ///      granted: the run refuses before anything is deployed or recorded.
+    function test_Testnet_ActsOnTheListOnlyWhileTheAdminAloneControlsIt() public {
+        (DeploySanctionsDelisting s, SanctionsList list) = _script(84532, "base-sepolia-list-pending", true);
+        vm.prank(admin);
+        list.transferOwnership(makeAddr("next owner"));
+        string memory before = _artifact();
+        vm.expectRevert(
+            bytes(
+                "DeploySanctionsDelisting: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending) - cancel or complete the transfer, then re-run. Nothing was sent or recorded"
+            )
+        );
+        s.runWith(delister);
+        assertEq(_artifact(), before, "nothing recorded");
+
+        vm.prank(admin);
+        list.transferOwnership(address(0));
+        s.runWith(delister);
+        assertTrue(vm.keyExistsJson(_artifact(), ".sanctionsDelistingTimelock"), "proceeds once nothing is pending");
         vm.removeDir(root, true);
     }
 

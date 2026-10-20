@@ -276,19 +276,78 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
-    /// @notice A live oracle that is NOT fit to reuse (here one someone else
-    ///         owns) is still replaced by the admin's test list.
-    function test_Testnet_LiveOverlayOwnedByAnother_IsReplaced() public {
+    /// @notice Codex #2601 r7 — the oracle the Diamond already screens
+    ///         against is NEVER replaced by this script when it is unfit to
+    ///         reuse: its flags are the live screen and live only in it, so a
+    ///         replacement would silently delist every wallet it flags. Each
+    ///         unfit case (another owner, a transfer pending, an upstream, not
+    ///         an overlay at all) is refused with the Diamond, its flags and
+    ///         the artifact untouched; once the cause is resolved, the same
+    ///         run keeps it.
+    function test_Testnet_AnUnfitLiveOracle_IsRefusedNeverReplaced() public {
+        vm.chainId(84532); // the overlays below refuse a mainnet
+        address flagged = makeAddr("flagged");
+        address[4] memory live;
+        live[0] = address(new TestnetSanctionsOverlay(makeAddr("someone"), address(0)));
+        TestnetSanctionsOverlay pending = new TestnetSanctionsOverlay(admin, address(0));
+        live[1] = address(pending);
+        live[2] = address(new TestnetSanctionsOverlay(admin, address(new FixedSanctionsList())));
+        live[3] = address(new FixedSanctionsList());
+        vm.startPrank(admin);
+        pending.setFlagged(flagged, true);
+        pending.transferOwnership(makeAddr("next"));
+        vm.stopPrank();
+
+        for (uint256 i; i < live.length; ++i) {
+            StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+            ConfigureSanctionsOracle s = _script(84532, string.concat("live-unfit-", vm.toString(i)), address(d));
+            vm.prank(admin);
+            d.setSanctionsOracle(live[i]);
+            string memory before = _artifact();
+
+            vm.expectRevert(
+                bytes(
+                    string.concat(
+                        "ConfigureSanctionsOracle: the Diamond screens against ",
+                        vm.toString(live[i]),
+                        ", which is not an overlay with no upstream that the admin alone controls (another owner, a transfer pending, an upstream, or not an overlay). Its flags are the live screen and do not carry over, so this script never replaces it: cancel or complete the transfer, or re-point the Diamond yourself with setSanctionsOracle, then re-run. Nothing was sent or recorded"
+                    )
+                )
+            );
+            s.run();
+
+            assertEq(d.getSanctionsOracle(), live[i], "the live oracle stays configured");
+            assertEq(_artifact(), before, "nothing is recorded");
+            _cleanup();
+        }
+
+        // Resolved deliberately (the transfer cancelled), the live overlay is
+        // kept, flags and all.
+        StubSanctionsDiamond resolved = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle again = _script(84532, "live-resolved", address(resolved));
+        vm.startPrank(admin);
+        resolved.setSanctionsOracle(address(pending));
+        pending.transferOwnership(address(0));
+        vm.stopPrank();
+        again.run();
+        assertEq(resolved.getSanctionsOracle(), address(pending), "kept once the transfer is cancelled");
+        assertTrue(resolved.isSanctionedAddress(flagged), "its flags stay in force");
+        _cleanup();
+    }
+
+    /// @notice A live oracle address with no code holds no flags and answers
+    ///         no screen, so it is replaced by the admin's test list.
+    function test_Testnet_ALiveOracleWithNoCode_IsReplaced() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(84532, "live-foreign", address(d));
-        TestnetSanctionsOverlay foreign = new TestnetSanctionsOverlay(makeAddr("someone"), address(0));
+        ConfigureSanctionsOracle s = _script(84532, "live-no-code", address(d));
+        address empty = makeAddr("no code");
         vm.prank(admin);
-        d.setSanctionsOracle(address(foreign));
+        d.setSanctionsOracle(empty);
 
         s.run();
 
         address configured = d.getSanctionsOracle();
-        assertTrue(configured != address(foreign), "an overlay someone else owns is not kept");
+        assertTrue(configured != empty, "an address with no code is replaced");
         assertEq(TestnetSanctionsOverlay(configured).owner(), admin);
         _cleanup();
     }

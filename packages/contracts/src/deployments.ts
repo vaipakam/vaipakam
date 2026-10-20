@@ -351,6 +351,18 @@ export interface Deployment {
    *  deployed for `sanctionsList` on this chain: the bot-proposes,
    *  Safe-vetoes delisting route, appointed as one of the list's removers. */
   sanctionsDelistingTimelock?: HexAddress;
+  /** #2443 — the `SanctionsClearanceAttestor` `ConfigureSanctionsClearance`
+   *  deployed on the chain that hosts a timelock's cross-chain clearance
+   *  check: it reads `sanctionsOracleStandIn` (on a testnet) when a request
+   *  arrives over CCIP and owes the answer back. Absent on a chain that hosts
+   *  none. */
+  sanctionsClearanceAttestor?: HexAddress;
+  /** #2443 — TESTNET ONLY: the `TestnetSanctionsOracleStandIn` the attestor
+   *  on this chain reads in place of RedStone's Sanctions Oracle, which has
+   *  no testnet deployment. It is NOT RedStone: it flags only what this
+   *  network's admin flags, and its freshness is the admin's last write.
+   *  Never present on a mainnet (its constructor refuses one). */
+  sanctionsOracleStandIn?: HexAddress;
 
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven

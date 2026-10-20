@@ -10,6 +10,8 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {TestnetSanctionsOverlay} from "../src/compliance/TestnetSanctionsOverlay.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {AdminControl} from "./lib/AdminControl.sol";
+import {TotalRead} from "./lib/TotalRead.sol";
 
 /**
  * @title  ConfigureSanctionsOracle
@@ -35,9 +37,13 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  *           — so this script still refuses every mainnet, and it never
  *           configures Chainalysis's oracle.
  *         - **Testnet** (`TestnetChains`): a `TestnetSanctionsOverlay` with no
- *           upstream — the network admin's test list, the whole screen. An
- *           overlay already recorded for the chain is reused while it is still
- *           fit (see {_reusable}).
+ *           upstream — the network admin's test list, the whole screen. The
+ *           oracle the Diamond already screens against is kept while it is
+ *           fit (see {_reusable}) and otherwise REFUSED, never replaced: its
+ *           flags are the live screen and live only in it. With no live
+ *           oracle, an overlay already recorded for the chain is reused while
+ *           it is fit, and a fresh one is deployed otherwise (see
+ *           {_overlayFor}).
  *
  *         Keys: `DEPLOYER_PRIVATE_KEY` deploys an overlay; `ADMIN_PRIVATE_KEY`
  *         must be the Diamond's owner to set the oracle. On a Diamond owned
@@ -71,7 +77,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         address owner = IERC173(diamond).owner();
 
         address current = ProfileFacet(diamond).getSanctionsOracle();
-        address target = _overlayFor(current, admin, writes);
+        (address target, bool recordOverlay) = _overlayFor(current, admin);
 
         if (current != target) {
             if (owner != admin) {
@@ -83,6 +89,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
                 // is deployed and recorded, and the oracle is reported as NOT
                 // configured: the configured-oracle record is written only
                 // once the Diamond reports `target`.
+                if (writes && recordOverlay) Deployments.writeSanctionsTestnetOverlay(target);
                 console.log("NOT CONFIGURED: the Diamond owner is not the ADMIN key (timelock?).");
                 console.log("  owner  :", owner);
                 console.log("  Schedule through it, then re-run this script to record:");
@@ -97,6 +104,10 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
 
         _verify(diamond, target, admin);
 
+        // Recorded last, once every step has succeeded: an artifact write
+        // survives a later revert in a `--broadcast` run's simulation, which
+        // would leave it naming an overlay that was never sent.
+        if (writes && recordOverlay) Deployments.writeSanctionsTestnetOverlay(target);
         // One object, replaced whole: no field from an earlier configuration
         // can outlive it (Codex #2442 r3).
         if (writes) Deployments.writeSanctionsRecord(target, KIND_TESTNET_OVERLAY);
@@ -106,31 +117,50 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         console.log("  previous:", current);
     }
 
-    /// @dev The overlay to configure, in order of preference:
-    ///      1. the one the Diamond ALREADY screens against, when it is fit to
-    ///         reuse (see {_reusable}) — its flags are the live screen, so
-    ///         replacing it would silently delist every wallet it flags. The
-    ///         record is backfilled to it if missing or stale (a manual setup,
-    ///         a restored artifact);
-    ///      2. the recorded overlay, when it is fit to reuse;
-    ///      3. a fresh one, owned by the chain's admin and recorded under
-    ///         `.sanctionsTestnetOverlay` as soon as it is deployed — a separate
-    ///         fact from which oracle the Diamond is configured with, so a run
-    ///         that cannot configure (a timelock owner) still lets the next run
-    ///         reuse the overlay instead of deploying another.
-    function _overlayFor(address current, address admin, bool writes) internal returns (address) {
+    /// @dev The overlay to configure:
+    ///      1. whenever the Diamond ALREADY screens against an oracle (one
+    ///         with code), that one or nothing. Its flags are the live screen
+    ///         and live only in it, so replacing it would silently delist
+    ///         every wallet it flags. When it is fit to reuse (see
+    ///         {_reusable}) it is kept and the record is backfilled to it if
+    ///         missing or stale (a manual setup, a restored artifact); when it
+    ///         is not — another owner, a transfer pending, an upstream, not an
+    ///         overlay at all — the run is REFUSED, never replaced. Dropping
+    ///         the live screen is the operator's deliberate act: resolve the
+    ///         transfer, or re-point the Diamond with `setSanctionsOracle`,
+    ///         then re-run. (The same rule as `DeploySanctionsList`: a
+    ///         contract whose state consumers read is never replaced by a
+    ///         script.)
+    ///      Otherwise (no oracle set, or one with no code, which holds no
+    ///      flags and answers no screen):
+    ///      2. the recorded overlay, when it is fit to reuse — it is not the
+    ///         live screen, so an unfit one keeps no role and a fresh one
+    ///         replaces it;
+    ///      3. a fresh one, owned by the chain's admin.
+    ///      `recordOverlay` says the `.sanctionsTestnetOverlay` record must be
+    ///      written (a fresh overlay, or a backfill), which the caller does at
+    ///      the END of the run — a separate fact from which oracle the Diamond
+    ///      is configured with, so a run that cannot configure (a timelock
+    ///      owner) still records it and lets the next run reuse the overlay
+    ///      instead of deploying another.
+    function _overlayFor(address current, address admin) internal returns (address, bool recordOverlay) {
         address recorded = Deployments.readSanctionsTestnetOverlayOptional();
-        if (current != address(0) && current.code.length != 0) {
-            if (_reusable(TestnetSanctionsOverlay(current), admin)) {
-                console.log("Keeping the overlay the Diamond already screens against:", current);
-                if (writes && recorded != current) Deployments.writeSanctionsTestnetOverlay(current);
-                return current;
-            }
+        if (current.code.length != 0) {
+            require(
+                _reusable(current, admin),
+                string.concat(
+                    "ConfigureSanctionsOracle: the Diamond screens against ",
+                    vm.toString(current),
+                    ", which is not an overlay with no upstream that the admin alone controls (another owner, a transfer pending, an upstream, or not an overlay). Its flags are the live screen and do not carry over, so this script never replaces it: cancel or complete the transfer, or re-point the Diamond yourself with setSanctionsOracle, then re-run. Nothing was sent or recorded"
+                )
+            );
+            console.log("Keeping the overlay the Diamond already screens against:", current);
+            return (current, recorded != current);
         }
         if (recorded != address(0) && recorded.code.length != 0) {
-            if (_reusable(TestnetSanctionsOverlay(recorded), admin)) {
+            if (_reusable(recorded, admin)) {
                 console.log("Reusing the recorded overlay:", recorded);
-                return recorded;
+                return (recorded, false);
             }
             console.log("Recorded overlay not reusable (upstream, owner or pending owner differs):", recorded);
         }
@@ -138,32 +168,19 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         TestnetSanctionsOverlay overlay = new TestnetSanctionsOverlay(admin, address(0));
         vm.stopBroadcast();
         console.log("Deployed TestnetSanctionsOverlay:", address(overlay));
-        if (writes) Deployments.writeSanctionsTestnetOverlay(address(overlay));
-        return address(overlay);
+        return (address(overlay), true);
     }
 
     /// @dev True iff `overlay` has no upstream (so it is the whole screen, not
-    ///      a layer over a list this script no longer configures), is owned by
-    ///      `admin`, and has no pending ownership transfer — the owner decides
-    ///      who is flagged, so an overlay anyone else controls or is about to
-    ///      control is never configured. Any read that fails — not an overlay
-    ///      at all — is a no.
-    function _reusable(TestnetSanctionsOverlay overlay, address admin) internal view returns (bool) {
-        try overlay.upstream() returns (ISanctionsList up) {
-            if (address(up) != address(0)) return false;
-        } catch {
-            return false;
-        }
-        try overlay.owner() returns (address o) {
-            if (o != admin) return false;
-        } catch {
-            return false;
-        }
-        try overlay.pendingOwner() returns (address pending) {
-            return pending == address(0);
-        } catch {
-            return false;
-        }
+    ///      a layer over a list this script no longer configures) and `admin`
+    ///      alone controls it ({AdminControl.aloneControls}: owner, nothing
+    ///      pending) — the owner decides who is flagged, so an overlay anyone
+    ///      else controls or is about to control is never configured. Every
+    ///      read is a {TotalRead}: any that fails — not an overlay at all, a
+    ///      malformed answer — is a no.
+    function _reusable(address overlay, address admin) internal view returns (bool) {
+        (bool read, address up) = TotalRead.addressOf(overlay, TestnetSanctionsOverlay.upstream.selector);
+        return read && up == address(0) && AdminControl.aloneControls(overlay, admin);
     }
 
     /// @dev The Diamond now routes to `target`, and both the oracle and the

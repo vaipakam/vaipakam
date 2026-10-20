@@ -6,6 +6,7 @@ import {DeploySanctionsList} from "../../script/DeploySanctionsList.s.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
 import {ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/ArtifactRoot.sol";
 import {SanctionsList} from "../../src/compliance/SanctionsList.sol";
+import {SanctionsDelistingTimelock} from "../../src/compliance/SanctionsDelistingTimelock.sol";
 
 /**
  * @title  DeploySanctionsListTest
@@ -67,14 +68,82 @@ contract DeploySanctionsListTest is Test {
         vm.removeDir(root, true);
     }
 
-    function test_Testnet_RecordedListOwnedByAnother_IsReplaced() public {
-        DeploySanctionsList s = _script(84532, "base-sepolia-foreign");
+    /// @dev A list holds the listings every consumer reads, so an unfit
+    ///      recorded list is refused, never replaced by a fresh empty one —
+    ///      another owner, a pending transfer, or a secondary alike. Removing
+    ///      the record is the deliberate way to start a new list.
+    function test_Testnet_AnUnfitRecordedList_IsRefusedNeverReplaced() public {
+        DeploySanctionsList s = _script(84532, "base-sepolia-unfit");
+        string memory path = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        string memory notControlled =
+            "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded";
+
         SanctionsList foreign = new SanctionsList(makeAddr("someoneElse"), address(0));
-        vm.writeJson(vm.toString(address(foreign)), string.concat(root, "/", Deployments.chainSlug(), "/addresses.json"), ".sanctionsList");
+        vm.writeJson(vm.toString(address(foreign)), path, ".sanctionsList");
+        string memory before = _artifact();
+        vm.expectRevert(bytes(notControlled));
         s.run();
-        address now_ = vm.parseJsonAddress(_artifact(), ".sanctionsList");
-        assertTrue(now_ != address(foreign), "a list the admin does not own is not reused");
-        assertEq(SanctionsList(now_).owner(), admin);
+        assertEq(_artifact(), before, "another owner's list: nothing recorded");
+
+        SanctionsList mine = new SanctionsList(admin, address(0));
+        vm.writeJson(vm.toString(address(mine)), path, ".sanctionsList");
+        vm.prank(admin);
+        mine.transferOwnership(makeAddr("next owner"));
+        before = _artifact();
+        vm.expectRevert(bytes(notControlled));
+        s.run();
+        assertEq(_artifact(), before, "a pending transfer: nothing recorded");
+        vm.prank(admin);
+        mine.transferOwnership(address(0));
+        s.run();
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsList"), address(mine), "reused once nothing is pending");
+
+        SanctionsList composed = new SanctionsList(admin, address(new SanctionsList(admin, address(0))));
+        vm.writeJson(vm.toString(address(composed)), path, ".sanctionsList");
+        vm.expectRevert(
+            bytes(
+                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+            )
+        );
+        s.run();
+
+        // The deliberate path: with the record removed, a new list is deployed.
+        vm.writeJson(string.concat("{\"chainId\":", vm.toString(uint256(84532)), "}"), path);
+        s.run();
+        address fresh = vm.parseJsonAddress(_artifact(), ".sanctionsList");
+        assertTrue(fresh != address(composed) && fresh != address(mine) && fresh != address(foreign));
+        assertEq(SanctionsList(fresh).owner(), admin);
+        vm.removeDir(root, true);
+    }
+
+    /// @dev A timelock is bound to its list for good, so a new list is never
+    ///      recorded beside a recorded timelock: the artifact would pair the
+    ///      new list with another list's timelock, and the clearance wiring
+    ///      and the delister would act on it. Removing that record too is the
+    ///      deliberate way on.
+    function test_Testnet_NeverStartsANewListBesideARecordedTimelock() public {
+        DeploySanctionsList s = _script(84532, "base-sepolia-stale-timelock");
+        string memory path = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        string memory refused =
+            "DeploySanctionsList: the artifact records a sanctionsDelistingTimelock but no list this script can reuse. A timelock is bound to its list for good, so a new list recorded beside it would be paired with another list's timelock: remove .sanctionsDelistingTimelock as well (it stays with its own list), then re-run. Nothing was sent or recorded";
+        SanctionsDelistingTimelock oldTimelock =
+            new SanctionsDelistingTimelock(admin, new SanctionsList(admin, address(0)));
+        vm.writeJson(vm.toString(address(oldTimelock)), path, ".sanctionsDelistingTimelock");
+        string memory before = _artifact();
+        vm.expectRevert(bytes(refused));
+        s.run();
+        assertEq(_artifact(), before, "no list recorded: nothing recorded");
+
+        // A list record naming no contract counts as no list, and is refused too.
+        vm.writeJson(vm.toString(makeAddr("no code")), path, ".sanctionsList");
+        before = _artifact();
+        vm.expectRevert(bytes(refused));
+        s.run();
+        assertEq(_artifact(), before, "a list record with no code: nothing recorded");
+
+        vm.writeJson(string.concat("{\"chainId\":", vm.toString(uint256(84532)), "}"), path);
+        s.run();
+        assertTrue(vm.parseJsonAddress(_artifact(), ".sanctionsList").code.length != 0, "a new list once both records are gone");
         vm.removeDir(root, true);
     }
 
@@ -93,7 +162,9 @@ contract DeploySanctionsListTest is Test {
         uint256[6] memory mainnets = [uint256(1), 8453, 42161, 10, 137, 56];
         for (uint256 i; i < mainnets.length; ++i) {
             DeploySanctionsList s = _script(mainnets[i], string.concat("mainnet-", vm.toString(mainnets[i])));
-            vm.expectRevert(bytes("DeploySanctionsList: mainnet refused - the SanctionsList adder host is undecided (#2443)"));
+            vm.expectRevert(
+                bytes("DeploySanctionsList: mainnet refused - the SanctionsList adder host is undecided (#2443)")
+            );
             s.run();
             assertFalse(vm.keyExistsJson(_artifact(), ".sanctionsList"));
             vm.removeDir(root, true);

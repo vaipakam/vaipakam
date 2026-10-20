@@ -392,6 +392,11 @@ FACETS=(
   # NOT diamond facets; the delister bot calls them by named ABI export.
   "SanctionsDelistingTimelock"
   "SanctionsClearanceAttestor"
+  # #2443 — the TESTNET stand-in for RedStone's Sanctions Oracle, read by a
+  # SanctionsClearanceAttestor on a test network where RedStone has no
+  # deployment. NOT a diamond facet; the delister bot asks the oracle it reads
+  # `isTestnetStandIn()` so every report names the stand-in as such.
+  "TestnetSanctionsOracleStandIn"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined
