@@ -66,6 +66,7 @@ import {
   parseSdnAdvancedFile,
   parseUintArg,
   readCurrentFromChain,
+  samePublication,
   sanctionsListAbi,
 } from './ofac-sanctions-diff.mjs';
 import {
@@ -130,24 +131,27 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  *
  * Finality is a fact about the LIST, never about a transaction: the chain is
  * `applied` when one reading of the list at the finalized block holds exactly
- * the update this run planned (see {@link awaitFinality}). No reading of the
- * list can say which transaction produced its state, so the report names the
- * transactions sent and the reading that holds the update, and claims no
- * more.
+ * the update this run planned (see {@link awaitFinality}), however its sends
+ * ended. No reading of the list can say which transaction produced its
+ * state, so the report names the transactions sent and the reading that
+ * holds the update, and claims no more.
  *
  * Returns the chain's report; throws on any refusal, before anything is sent
- * if the refusal is the tool's. Whatever it throws carries `chainContext`:
- * the last finalized reading of the list, the finality outcome when the wait
- * ran, and the delistings this run computed together with the list state
- * they were computed from, so the failure report still states what the list
- * declares outstanding (see {@link failureReport}).
+ * if the refusal is the tool's, and on any outcome short of `applied` after
+ * a broadcast. Whatever it throws carries `chainContext`: the last finalized
+ * reading of the list (null when none could be taken after the last
+ * broadcast), the finality outcome when the wait ran, this publication, and
+ * the delistings this run computed together with the list state they were
+ * computed from, so the failure report still states what the list declares
+ * outstanding (see {@link failureReport}).
  */
 export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
+  const thisPublication = { date: parsed.publicationDate, hash: sourceHash };
   const current = await readCurrent();
   // `withheld` stays null until the update is computed: no delistings are
   // known for any reading before then.
-  const context = { list: current, sourceHash, withheld: null, computedFrom: stateOf(current) };
+  const context = { list: current, publication: thisPublication, withheld: null, computedFrom: stateOf(current) };
   try {
     // The update is computed from the finalized state and sent at the latest
     // block. If the list has moved in between — another update not yet final —
@@ -183,30 +187,9 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       publicationOrder: update.order,
       added: update.add,
       sent: progress,
-      ...outstandingFrom(list, sourceHash, update.withheldRemovals),
+      ...outstandingFrom(list, thisPublication, update.withheldRemovals),
     });
     if (update.calls.length === 0) return { status: 'up-to-date', ...report(current) };
-
-    for (const call of update.calls) {
-      const entry = { expectedVersion: call.expectedVersion.toString(), add: call.add, tx: null, state: 'submitting' };
-      progress.push(entry);
-      let included;
-      try {
-        included = await send(call, {
-          onSubmitted: (hash) => {
-            entry.tx = hash;
-            entry.state = 'submitted';
-          },
-        });
-      } catch (e) {
-        // What the send is known to have done (sanctions-service SEND_OUTCOMES):
-        // signed but refused by the node, or included and reverted.
-        if (e?.sendOutcome === 'refused') entry.state = 'rejected';
-        else if (e?.sendOutcome === 'reverted') entry.state = 'reverted';
-        throw e;
-      }
-      Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
-    }
 
     // The state the list holds once every call has applied, from the reading
     // the calls were built on: the adder never delists, and the last call
@@ -220,30 +203,73 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       pendingAdditions: last.additionsLeft,
       pendingDelistings: last.delistingsLeft,
     };
-    let confirmed;
-    try {
-      confirmed = await awaitFinality({ target, readCurrent, ...finality });
-    } catch (e) {
-      if (e?.list) context.list = e.list;
-      if (e?.finality) context.finality = e.finality;
-      throw e;
-    }
-    return { status: 'applied', finalizedAt: confirmed.finalizedBlock, listAfter: summary(confirmed.list), ...report(confirmed.list) };
-  } catch (e) {
-    // Once anything was broadcast, the list may have moved on from the
-    // reading the update was built on. Unless the finality wait already read
-    // it again, the report reads it once more, and says it is unknown when
-    // that read fails, rather than stating the older reading as current.
-    if (context.list === current && progress.some((p) => p.tx && p.state !== 'rejected')) {
+    const applied = (list, finalizedBlock) => ({ status: 'applied', finalizedAt: finalizedBlock, listAfter: summary(list), ...report(list) });
+
+    let sendError = null;
+    for (const call of update.calls) {
+      const entry = { expectedVersion: call.expectedVersion.toString(), add: call.add, tx: null, state: 'submitting' };
+      progress.push(entry);
+      let included;
       try {
-        context.list = await readCurrent();
-      } catch {
-        context.list = null;
+        included = await send(call, {
+          onSubmitted: (hash) => {
+            entry.tx = hash;
+            entry.state = 'submitted';
+          },
+        });
+      } catch (e) {
+        // What the send is known to have done (sanctions-service SEND_OUTCOMES):
+        // signed but refused by the node, or included and reverted. Later
+        // calls are built on this one's version, so none is sent after it.
+        if (e?.sendOutcome === 'refused') entry.state = 'rejected';
+        else if (e?.sendOutcome === 'reverted') entry.state = 'reverted';
+        sendError = e;
+        break;
       }
+      Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
     }
+    if (sendError && !progress.some(broadcast)) throw sendError;
+
+    // From the first broadcast on, the list decides what this run did, not the
+    // send path: no reading of the list can say which transaction produced
+    // its state, and a receipt is not consulted (see {@link awaitFinality}).
+    // When every call was broadcast and none is known to have failed — the
+    // last one's receipt may simply never have come — its transaction may
+    // still land, so the run waits for finality exactly as when every receipt
+    // came. Otherwise a call was never sent, or is known to have listed
+    // nothing, and the update cannot apply as sent: one reading of the list
+    // says what it holds. Either way a finalized reading that holds exactly
+    // the planned update makes the chain applied, however its sends ended.
+    const lastEntry = progress[progress.length - 1];
+    const mayStillApply = progress.length === update.calls.length && (lastEntry.state === 'included' || lastEntry.state === 'submitted');
+    if (mayStillApply) {
+      let confirmed;
+      try {
+        confirmed = await awaitFinality({ target, readCurrent, ...finality });
+      } catch (e) {
+        // A wait that never read the list leaves what it holds unknown; the
+        // reading the update was built on is not stated as current.
+        context.list = e?.list ?? null;
+        if (e?.finality) context.finality = e.finality;
+        if (sendError) e.message = `${sendError.message ?? sendError}; then ${e.message}`;
+        throw e;
+      }
+      return applied(confirmed.list, confirmed.finalizedBlock);
+    }
+    let reading = null;
+    try {
+      reading = await readCurrent();
+    } catch {}
+    context.list = reading;
+    if (reading && finalityOf(reading, target) === 'applied') return applied(reading, { number: reading.blockNumber?.toString(), hash: reading.blockHash });
+    throw sendError;
+  } catch (e) {
     throw Object.assign(e instanceof Error ? e : new Error(String(e)), { chainContext: context });
   }
 }
+
+/** Whether a send entry reached the network: signed, and not refused. */
+const broadcast = (e) => e.tx && e.state !== 'rejected';
 
 /** A finalized reading of the list, as the report states it. */
 function summary(l) {
@@ -265,20 +291,35 @@ const lower = (x) => String(x).toLowerCase();
  * named only for a reading they were computed for, and `delistingsNamed`
  * says whether they were.
  */
-export function outstandingFrom(list, sourceHash, withheld) {
-  const ofThisPublication = lower(list.recordedHash) === lower(sourceHash);
+export function outstandingFrom(list, publication, withheld) {
+  const ofThisPublication = samePublication(publicationOf(list), publication);
   const named = ofThisPublication && Array.isArray(withheld);
   return {
     outstandingAt: {
       finalizedBlock: list.blockNumber?.toString(),
       atVersion: list.version.toString(),
-      publication: ofThisPublication ? 'this' : /^0x0{64}$/.test(lower(list.recordedHash)) ? 'none' : { date: Number(list.recordedDate), sha256: list.recordedHash },
+      publication: ofThisPublication
+        ? 'this'
+        : /^0x0{64}$/.test(lower(list.recordedHash))
+          ? 'none'
+          : {
+              date: Number(list.recordedDate),
+              sha256: list.recordedHash,
+              // This file's hash recorded under another date: a conflicting
+              // record, which the summary names as such.
+              ...(lower(list.recordedHash) === lower(publication.hash) ? { sameFileHash: true } : {}),
+            },
     },
     pendingAdditions: Number(list.recordedPendingAdditions),
     pendingDelistings: Number(list.recordedPendingDelistings),
     delistingsForRemover: named ? withheld : [],
     delistingsNamed: named,
   };
+}
+
+/** The publication a reading records, as {@link samePublication} takes it. */
+function publicationOf(reading) {
+  return { date: reading.recordedDate, hash: reading.recordedHash };
 }
 
 /** The list state a reading records, in the shape {@link holds} compares. */
@@ -309,8 +350,7 @@ function holds(s, state) {
   return (
     held.size === expected.size &&
     [...expected].every((a) => held.has(a)) &&
-    lower(s.recordedHash) === lower(state.sourceHash) &&
-    Number(s.recordedDate) === Number(state.publicationDate) &&
+    samePublication(publicationOf(s), { date: state.publicationDate, hash: state.sourceHash }) &&
     Number(s.recordedPendingAdditions) === Number(state.pendingAdditions) &&
     Number(s.recordedPendingDelistings) === Number(state.pendingDelistings)
   );
@@ -456,7 +496,7 @@ export function needsAlert(report) {
  * failed run still reports the work someone owes (see {@link outstandingFrom}).
  */
 export function failureReport(reason, progress, context = {}) {
-  const sent = progress.filter((e) => e.tx && e.state !== 'rejected');
+  const sent = progress.filter(broadcast);
   return {
     status: sent.length ? 'stopped' : 'refused',
     error: reason,
@@ -465,7 +505,7 @@ export function failureReport(reason, progress, context = {}) {
     // The delistings this run computed describe the list state they were
     // computed from, and no other.
     ...(context.list
-      ? outstandingFrom(context.list, context.sourceHash, context.computedFrom && holds(context.list, context.computedFrom) ? context.withheld : null)
+      ? outstandingFrom(context.list, context.publication, context.computedFrom && holds(context.list, context.computedFrom) ? context.withheld : null)
       : {}),
   };
 }
@@ -505,7 +545,9 @@ export function summarizeFailure(report, sourceFile) {
         ? 'this publication'
         : at.publication === 'none'
           ? 'no publication yet (the list has never been updated)'
-          : `another publication (dated ${at.publication.date}, sha256 ${String(at.publication.sha256).slice(0, 18)}…), not this one`;
+          : at.publication.sameFileHash
+            ? `a record carrying this file's sha256 under another date (${at.publication.date}), which is not this publication — investigate before updating`
+            : `another publication (dated ${at.publication.date}, sha256 ${String(at.publication.sha256).slice(0, 18)}…), not this one`;
     lines.push(`  As last read (finalized block ${at.finalizedBlock}, version ${at.atVersion}), the list declares ${report.pendingAdditions} addition(s) and ${report.pendingDelistings} delisting(s) outstanding, for ${whose}.`);
     if (at.publication === 'this' && report.pendingDelistings > 0) lines.push(`  ${removerLine(report, sourceFile)}`);
   }
@@ -518,7 +560,12 @@ export function summarizeChain(c, sourceFile) {
   if (c.status === 'refused' || c.status === 'stopped') return summarizeFailure(c, sourceFile);
   const lines = [];
   if (c.status === 'applied') {
-    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s): ${c.sent.map((e) => e.tx).join(', ')}. Final: the list at finalized block ${c.finalizedAt.number} holds exactly this update.`);
+    // The list decides, not the receipts: a send that ended without one, or
+    // reverted, is still named, beside the reading that holds the update.
+    const word = { submitted: 'no receipt seen', reverted: 'reverted' };
+    const unconfirmed = c.sent.filter((e) => e.state !== 'included');
+    const note = unconfirmed.length ? ` Not confirmed by their own receipts: ${unconfirmed.map((e) => `${e.tx} (${word[e.state] ?? e.state})`).join(', ')}; the list itself shows the update.` : '';
+    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s): ${c.sent.map((e) => e.tx).join(', ')}. Final: the list at finalized block ${c.finalizedAt.number} holds exactly this update.${note}`);
   } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
   if (c.pendingAdditions > 0) {
     // After this run sent every missing address, a non-zero count means the

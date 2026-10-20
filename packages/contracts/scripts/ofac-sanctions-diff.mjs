@@ -637,6 +637,18 @@ export async function downloadToFile(url, path, { maxBytes = DEFAULT_MAX_SOURCE_
 }
 
 /**
+ * Whether two records name the same OFAC publication: the same date AND the
+ * same file hash, the pair the list records with every update. The one test
+ * of publication identity for this tool and the services that share it — a
+ * matching hash under another date is another record, never this
+ * publication, since the list's own publication-order rule compares the pair.
+ * Each side is `{ date, hash }`.
+ */
+export function samePublication(a, b) {
+  return Number(a.date) === Number(b.date) && String(a.hash).toLowerCase() === String(b.hash).toLowerCase();
+}
+
+/**
  * The contract's publication-order rule, applied before calldata is built:
  * a newer date passes; the same publication (identical date and hash) passes
  * again only to finish what it declared outstanding — adding no more than
@@ -657,7 +669,7 @@ export function checkPublicationOrder({
   allowRollback = false,
 }) {
   if (date > recordedDate) return 'newer';
-  const sameFile = date === recordedDate && hash.toLowerCase() === String(recordedHash).toLowerCase();
+  const sameFile = samePublication({ date, hash }, { date: recordedDate, hash: recordedHash });
   if (sameFile && additions <= pendingAdditions && removals <= pendingDelistings) return 'same-publication';
   if (allowRollback) return 'rollback';
   if (sameFile) {

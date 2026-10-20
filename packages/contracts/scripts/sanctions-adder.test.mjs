@@ -195,9 +195,11 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
       onSubmitted(`0x${'d'.repeat(64)}`);
       throw new Error('socket hang up');
     },
+    finality: fakeClock(),
   }));
   assert.equal(chain.status, 'stopped', 'an unknown broadcast is never reported as nothing sent');
   assert.equal(chain.sent[0].tx, `0x${'d'.repeat(64)}`);
+  assert.match(chain.error, /^socket hang up; then no finalized reading of the list held this update/);
 
   // Broadcast, then the receipt wait timed out: the hash is known, the outcome is not.
   ({ chain } = await run({ version: 7n, addresses: [C] }, {
@@ -205,6 +207,7 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
       onSubmitted(`0x${'e'.repeat(64)}`);
       throw new Error('receipt timeout');
     },
+    finality: fakeClock(),
   }));
   assert.equal(chain.status, 'stopped');
   assert.equal(chain.sent[0].tx, `0x${'e'.repeat(64)}`);
@@ -449,22 +452,71 @@ test('finality: a stopped chain still reports what the last finalized reading de
   assert.match(summarizeFailure(chain), /As last read \(finalized block 100, version 7\), the list declares 0 addition\(s\) and 0 delisting\(s\) outstanding, for no publication yet/);
 });
 
-test('finality: a send that fails after a broadcast reports the list as read again, or as unknown', async () => {
-  // Broadcast, then the receipt wait failed: the list is read once more for the report.
+test('finality: after a broadcast the list decides, however the sends ended', async () => {
+  const F1 = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
+  const F2 = getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce');
+  // The planned update on BASE: the fixture's two addresses added, C's delisting declared.
+  const planned = (block = 310n) => snap(8n, [C, F1, F2], { block });
+
+  // The last call was broadcast and its receipt never came: its transaction may
+  // still land, so the run waits for finality as usual, and a reading that holds
+  // exactly the planned update makes the chain applied.
   const timeout = async (call, { onSubmitted }) => {
     onSubmitted(`0x${'e'.repeat(64)}`);
     throw new Error('receipt timeout');
   };
-  let readCurrent = reads([BASE, snap(8n, [C, A1], { block: 310n })]);
-  let { chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent });
+  let readCurrent = reads([BASE, snap(7n, [C], { block: 305n }), planned()]);
+  let { chain, report } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent, finality: fakeClock() });
+  assert.equal(chain.status, 'applied');
+  assert.equal(report.status, 'ok');
+  assert.equal(readCurrent.count(), 3, 'it polled until a reading held the update');
+  assert.equal(chain.sent[0].state, 'submitted', 'the receipt is still reported as not seen');
+  assert.equal(chain.finalizedAt.number, '310');
+  assert.deepEqual(chain.delistingsForRemover, [C], 'the planned outcome is the state the delistings were computed for');
+  let text = summarize(report);
+  assert.match(text, /Final: the list at finalized block 310 holds exactly this update\. Not confirmed by their own receipts: 0xe+ \(no receipt seen\); the list itself shows the update/);
+
+  // The same, with the list then holding something else at that version: stopped,
+  // naming both the send error and what the list shows.
+  readCurrent = reads([BASE, snap(8n, [C, A1], { block: 310n })]);
+  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent, finality: fakeClock() }));
   assert.equal(chain.status, 'stopped');
-  assert.equal(readCurrent.count(), 2, 'read again after the failed send');
+  assert.equal(chain.finality.state, 'displaced');
+  assert.match(chain.error, /^receipt timeout; then the list at finalized block 310 is at version 8, this update's last, but does not hold the planned update/);
   assert.deepEqual(chain.outstandingAt, { finalizedBlock: '310', atVersion: '8', publication: 'this' });
   assert.equal(chain.delistingsNamed, false, 'not the state the delistings were computed from');
-  // The read after it fails: what the list declares is unknown, not the older reading.
-  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent: reads([BASE, new Error('RPC down')]) }));
+  // ... and with every read failing: what the list declares is unknown, not the older reading.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent: reads([BASE, new Error('RPC down')]), finality: fakeClock() }));
+  assert.equal(chain.status, 'stopped');
+  assert.deepEqual(chain.finality, { state: 'unread' });
   assert.equal(chain.outstandingAt, undefined);
   assert.match(summarizeFailure(chain), /What the list declares outstanding is UNKNOWN: it could not be read/);
+
+  // A call known to have listed nothing (reverted): the update cannot apply as
+  // sent, so there is no wait, only one reading — and a reading that holds the
+  // planned update (another run of this adder applied it) is still applied.
+  const reverted = async (call, { onSubmitted }) => {
+    onSubmitted(`0x${'d'.repeat(64)}`);
+    throw Object.assign(new Error('applyUpdate reverted'), { sendOutcome: 'reverted' });
+  };
+  readCurrent = reads([BASE, planned(320n)]);
+  ({ chain, report } = await run({ version: 7n, addresses: [C] }, { send: reverted, readCurrent }));
+  assert.equal(chain.status, 'applied');
+  assert.equal(readCurrent.count(), 2, 'one reading, no wait');
+  assert.equal(chain.finalizedAt.number, '320');
+  assert.match(summarize(report), /Not confirmed by their own receipts: 0xd+ \(reverted\); the list itself shows the update/);
+  // ... and one that does not hold it reports the list as read again.
+  readCurrent = reads([BASE, snap(8n, [C, A1], { block: 310n })]);
+  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: reverted, readCurrent }));
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.error, 'applyUpdate reverted');
+  assert.equal(readCurrent.count(), 2);
+  assert.deepEqual(chain.outstandingAt, { finalizedBlock: '310', atVersion: '8', publication: 'this' });
+  // ... or as unknown when that read fails.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: reverted, readCurrent: reads([BASE, new Error('RPC down')]) }));
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.outstandingAt, undefined);
+
   // Nothing broadcast (the node refused it): the reading it was built on still stands, unread again.
   readCurrent = reads([BASE]);
   ({ chain } = await run({ version: 7n, addresses: [C] }, {
@@ -477,6 +529,24 @@ test('finality: a send that fails after a broadcast reports the list as read aga
   assert.equal(chain.status, 'refused');
   assert.equal(readCurrent.count(), 1);
   assert.equal(chain.outstandingAt.atVersion, '7');
+});
+
+test('publication identity: this file under another date is not this publication', async () => {
+  // A reading recording this file's hash under another date (a conflicting record):
+  // its counts are never attributed to this publication, nor paired with this file.
+  const { chain } = await run({ version: 7n, addresses: [C] }, {
+    readCurrent: reads([BASE, snap(9n, [C], { date: 20260308, pendingDelistings: 2 })]),
+    finality: fakeClock(),
+  });
+  assert.equal(chain.finality.state, 'overtaken');
+  assert.deepEqual(chain.outstandingAt.publication, { date: 20260308, sha256: HASH, sameFileHash: true });
+  assert.equal(chain.delistingsNamed, false);
+  const text = summarizeFailure(chain, 'sdn.xml');
+  assert.match(text, /for a record carrying this file's sha256 under another date \(20260308\), which is not this publication — investigate before updating/);
+  assert.doesNotMatch(text, /await the remover/);
+  // At the planned version, a reading of this file under another date does not hold the update.
+  const err = await wait(target(), reads([snap(8n, [C, A1], { date: 20260308 })])).catch((e) => e);
+  assert.equal(err.finality.state, 'displaced');
 });
 
 test('finality: what a stopped chain says of each transaction it sent', async () => {

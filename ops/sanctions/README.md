@@ -247,9 +247,19 @@ the installed release).
   can say which transaction produced the list's state, so the report names
   the transactions it sent and the reading that holds the update. No
   transaction receipt decides it, since a load-balanced RPC can answer a
-  receipt and the finalized block from replicas on different forks. A failed
-  read is read again every 15 seconds, for up to 40 minutes. A chain that
-  stops part-way is `stopped`: it lists each transaction it broadcast as
+  receipt and the finalized block from replicas on different forks. So from
+  the first broadcast the list decides, however the sends ended: when every
+  transaction was broadcast and none is known to have failed (the last
+  receipt may simply never have come), the run waits for finality just as
+  when every receipt came; otherwise one transaction was never sent or is
+  known to have listed nothing, and one reading of the list says what it
+  holds. A reading that holds exactly the planned update makes the chain
+  `applied` either way, and the report still names the transactions no
+  receipt confirmed. A failed read is read again every 15 seconds, for up to
+  40 minutes. "This publication" means the same date AND file hash, the pair
+  the list records; this file's hash recorded under another date is a
+  conflicting record, reported as such and never as this publication. A
+  chain that stops part-way is `stopped`: it lists each transaction it broadcast as
   included (not confirmed final), included and reverted, or broadcast with
   no receipt (it may still land), and says why it stopped: the list at the
   update's last version holds something else (other updates took its
@@ -258,9 +268,9 @@ the installed release).
   never reached it (it may still land), or the list could not be read
   (unknown). Check those before acting. Every report, a refused or stopped
   one included, states what the last finalized reading of the list declares
-  outstanding and for which publication; a run that stopped after
-  broadcasting reads the list again for this, and says it is unknown when
-  that read fails. This run's delistings are named
+  outstanding and for which publication, from the reading taken after its
+  last broadcast, and says it is unknown when no such reading could be
+  taken. This run's delistings are named
   only for the reading they were computed from or the update's planned
   outcome; for any other state of the list, even of the same publication,
   the report gives the count and the command that works them out from the
