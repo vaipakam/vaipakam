@@ -38,7 +38,8 @@ import { runRewardSanctionsHold } from '../../src/rewardSanctionsHold';
 import { listOpenSanctionsChains, listSanctionsWatch } from '../../src/db';
 import { OVERLAY_ABI, openScenario, type ScenarioChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
-import { collectOpsAlerts, type OpsAlertLog } from '../harness/opsAlerts';
+import type { Env } from '../../src/env';
+import { opsBotSink, type OpsBotSink } from '../harness/opsAlerts';
 import { openLoan, repayInFull } from '../harness/lending';
 import { finalizeThrough } from '../harness/rewardDays';
 
@@ -54,12 +55,15 @@ const FORFEITED_REWARD = 0;
 
 let sc: ScenarioChain;
 let k: KeeperHarness;
-let alerts: OpsAlertLog;
+/** The operators' chat, stood in: what they were actually posted. */
+let sink: OpsBotSink;
+let env: Env;
 
 beforeAll(async () => {
   sc = await openScenario();
   k = await keeperEnvFor(sc, ['REWARD_SANCTIONS_KEEPER_ENABLED'], { indexer: true });
-  alerts = collectOpsAlerts();
+  sink = opsBotSink();
+  env = { ...k.env, ...sink.env } as Env;
 });
 
 afterAll(async () => {
@@ -80,7 +84,7 @@ async function hour(): Promise<void> {
   await finalizeThrough(sc, today - 1);
   await k.indexer!.index();
   await sc.syncClock();
-  await runRewardSanctionsHold(k.env, tickNow());
+  await runRewardSanctionsHold(env, tickNow());
 }
 
 interface Status {
@@ -133,7 +137,7 @@ describe('rewardSanctionsHold on a canonical Anvil chain', () => {
 
     // A clean run: nothing flagged, nothing sent.
     await sc.syncClock();
-    await runRewardSanctionsHold(k.env, tickNow());
+    await runRewardSanctionsHold(env, tickNow());
     expect(await sc.pub.getTransactionCount({ address: sc.address('keeper') })).toBe(0);
 
     // The overlay's owner flags the lender. No evidence exists yet.
@@ -222,9 +226,10 @@ describe('rewardSanctionsHold on a canonical Anvil chain', () => {
     // What the operators were told: exactly one notice, the settlement's own
     // amounts, and no fault alert (no lapsed chain, no deadline at risk, no
     // failed settlement) across the whole run.
-    expect(alerts.texts).toHaveLength(1);
-    expect(alerts.texts[0]).toContain('settleSanctionedInteractionRewards');
-    expect(alerts.texts[0]).toContain(`${formatEther(heldApart)} VPFI set apart`);
-    expect(alerts.texts[0]).toContain(`credited ${formatEther(forfeited)} VPFI to the recycle bucket as forfeited reward`);
+    // ONE post, the run's notice digest: each figure its own line.
+    expect(sink.posts).toHaveLength(1);
+    expect(sink.posts[0]).toContain('settleSanctionedInteractionRewards');
+    expect(sink.posts[0]).toContain(`${formatEther(heldApart)} VPFI set apart`);
+    expect(sink.posts[0]).toContain(`credited ${formatEther(forfeited)} VPFI to the recycle bucket as forfeited reward`);
   });
 });
