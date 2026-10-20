@@ -1322,7 +1322,7 @@ GovernanceRunbook gains a recycling section, executed in order:
    funded VPFI payroll streams (plus the grandfathered LIF term; the Full
    tariff's `C*` is covered since it credits the bucket). **Two of those are USER COLLATERAL**, which makes
    this a fund-safety item rather than an accounting one — a reward payout
-   drawing on them spends a borrower's collateral. **That half is now #1566, and it is OPEN.**
+   drawing on them spends a borrower's collateral. **That half is now #1566. Its code is complete on `main` (#2459, #2489, #2521); the gate is satisfied per Diamond only once that code is deployed there.**
    #1498 reads `closed / completed` and is NOT evidence of anything: it was
    auto-closed by #1555's `Closes #1498` when #1555 landed only the
    de-duplication half, and #1498's own last comment records that close as wrong
@@ -1339,12 +1339,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    inlined copies of the headroom arithmetic into the one definition the
    owning library exports, since the copies agreed on the arithmetic and had
    drifted on the prose, which is what produced the stale claim.
-   **The `BACKING --> ARM` edge in §4 stays, and it is NOT satisfied.** An
-   earlier revision of this line called it "discharged, not deleted", which
-   read as permission to arm. Only the claim-time half is done; the
-   fund-safety half is #1566 and open, so the edge is live and arming is
-   blocked by it. Arming while it is open lets a reward payout draw on
-   borrower collateral.
+   **The `BACKING --> ARM` edge in §4 stays, and it is satisfied only per
+   Diamond.** An earlier revision of this line called it "discharged, not
+   deleted", which read as permission to arm. The claim-time half is done, and
+   the fund-safety half (#1566) is code-complete on `main`. But a merged fix on
+   a Diamond that does not run it leaves the edge live for that Diamond.
+   Arming such a Diamond lets a reward payout draw on borrower collateral.
+   Assert the deployment per chain (`GovernanceRunbook.md`, Gate A).
 
    > **#1434 P1-a (delivered-fresh RECEIPTS) — design record.** The first
    > attempt built the bound out of two lifetime cumulatives and ONE baseline
@@ -1736,7 +1737,7 @@ flowchart LR
   MODEBRES{{"#1434 R4 arrival reservation<br/>+ claim-exclusion slice"}} --> SETTLE
   SHAREDWIRE{{"#1568 shared return transport<br/>(channel cut once)"}} --> MODEBWIRE{{"#1434 R4 return wire<br/>(Mode B kind + ladder)"}}
   MODEBWIRE -.-> ARMGATE
-  BACKING{{"#1460 claim-time separation DONE<br/>#1499 horizon alignment DONE<br/>#1566 fund-safety half OPEN<br/>gate NOT satisfied"}} --> ARM
+  BACKING{{"#1460 claim-time separation DONE<br/>#1499 horizon alignment DONE<br/>#1566 fund-safety half CODE COMPLETE<br/>gate: assert deployed per Diamond"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]

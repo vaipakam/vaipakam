@@ -5214,6 +5214,65 @@ chain that has one.
 
 ### Sequencing
 
+> **RETIRED — owner decision 2026-10-20: the census is not finished, and is not
+> needed.** The census exists to answer one question: is there grandfathered
+> custody to MOVE on a Diamond this programme will run on? Under O1 = A
+> (2026-10-07, under "Owner decisions" in slice 2), every such Diamond is a
+> fresh deploy, and on a fresh Diamond the answer is "nothing", by
+> construction, for all four classes:
+>
+> - **`vpfiHeld` and `rebateAmount`.** No source path writes a non-zero
+>   `vpfiHeld`. Every assignment in `contracts/src` clears it
+>   (`LibVPFIDiscount.sol` 996, 1013 and 1164). A non-zero `rebateAmount` is
+>   only ever derived from a non-zero `vpfiHeld` at settlement (1014). The path
+>   that charged the LIF into `vpfiHeld` was retired by #1352, so a Diamond
+>   deployed after it can hold neither row.
+> - **Fallback custody and live intent lots.** From slices 2–3 both are
+>   vault-held from the first loan. A pre-slice row fails closed by name
+>   (`FallbackCustodyNotVaultHeld`, `IntentCustodyNotVaultHeld`) instead of being
+>   paid from the Diamond.
+>
+> The Diamonds the programme runs on are these:
+>
+> - Base Sepolia `0x2535baC8…` and Arbitrum Sepolia `0x50199e30…`, deployed
+>   2026-10-17 (#2545).
+> - BNB testnet `0xfa7685Eb…`, deployed 2026-10-18 (#2551).
+>
+> All three come from `main` after slices 2–3 merged (#2521, 2026-10-16). Mainnet
+> Diamonds will be fresh deploys from committed trees, which the deploy scripts
+> enforce. Only RETIRED Diamonds are left for the census to certify. The
+> earlier Base Sepolia and Arbitrum Sepolia stacks, the archives, and the
+> Ethereum Sepolia and OP Sepolia stacks no longer in use will never run the
+> slices or be armed. Their custody, if any, stays where it is.
+>
+> **What this retires.**
+>
+> - PR #2095 (the calibrated, era-complete storage read, closed unmerged at
+>   review round 28).
+> - The census items still listed as outstanding below: the calibrated read,
+>   the artifact corrections, and the authoritative arb-sepolia scope.
+> - The archive-RPC rerun.
+> - The migration halves of slices 0–3 for every class, and with them the
+>   slice-0 shortfall disposition, which could only arise from a found row.
+>
+> **What it does NOT retire.**
+>
+> - **The prospective isolation.** Slices 2–3 and the delivered bound are
+>   shipped behaviour, and the ⚠️ paragraph below still holds.
+> - **The arming gate's deployment assertion.** Before arming a Diamond, assert
+>   per chain that it runs the fixed code (`docs/ops/GovernanceRunbook.md`,
+>   Gate A).
+>
+> **Two records stay as history.**
+>
+> - The committed artifact (`census/grandfathered-custody-census.json`, run 26
+>   and later): zero rows in every class wherever rows could be read.
+> - The tooling that produced it.
+>
+> Neither is a live gate. If an in-place upgrade of a pre-slice Diamond is ever
+> proposed again, that would reverse O1 = A, and the census question comes back
+> with it.
+
 **RATIFIED 2026-09-07: a read-only GRANDFATHERED CENSUS runs FIRST, before
 any migration machinery is written.** Slices 0–3 exist only to move four
 GRANDFATHERED custody classes; the path that creates `vpfiHeld` was retired
