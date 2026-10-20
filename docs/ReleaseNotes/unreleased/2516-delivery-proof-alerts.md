@@ -1,4 +1,4 @@
-## Thread — Delivery-proof alerts on every mirror (PR #<n>)
+## Thread — Delivery-proof alerts on every mirror (PR #2599)
 
 The keeper's delivery-proof pass, which indexes or proves each reward budget delivery on every mirror so the day-delivery gate never holds a funded day for a manual step, now tells the operator when that work is not getting done. It already runs on the two testnet mirrors (Arbitrum Sepolia and BNB Testnet) but reported only to its log, and the governance runbook said to watch the log because the alerts were not built.
 
