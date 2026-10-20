@@ -198,7 +198,7 @@ describe('rewardSanctionsHold on a canonical Anvil chain', () => {
       .filter((e) => e.eventName === 'RewardSanctionsHeldApart' && String(e.args.user).toLowerCase() === lender().toLowerCase())
       .reduce((a, e) => a + BigInt(e.args.amount as bigint), 0n);
     const forfeited = evs
-      .filter((e) => e.eventName === 'VpfiRecycled' && Number(e.args.source) === FORFEITED_REWARD)
+      .filter((e) => (e.eventName === 'VpfiRecycled' || e.eventName === 'VpfiRecycledPreLaunch') && Number(e.args.source) === FORFEITED_REWARD)
       .reduce((a, e) => a + BigInt(e.args.amount as bigint), 0n);
     console.log(`[keeper-e2e] sanctions: held apart ${heldApart} wei, forfeited ${forfeited} wei`);
     expect(heldApart).toBeGreaterThan(0n);
@@ -225,6 +225,6 @@ describe('rewardSanctionsHold on a canonical Anvil chain', () => {
     expect(alerts.texts).toHaveLength(1);
     expect(alerts.texts[0]).toContain('settleSanctionedInteractionRewards');
     expect(alerts.texts[0]).toContain(`${formatEther(heldApart)} VPFI set apart`);
-    expect(alerts.texts[0]).toContain(`${formatEther(forfeited)} VPFI forfeited`);
+    expect(alerts.texts[0]).toContain(`credited ${formatEther(forfeited)} VPFI to the recycle bucket as forfeited reward`);
   });
 });
