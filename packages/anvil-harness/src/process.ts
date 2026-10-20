@@ -111,21 +111,40 @@ export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil>
   if (opts.dumpStatePath) args.push('--dump-state', opts.dumpStatePath);
   if (!opts.verbose) args.push('--silent');
   const child = spawn('anvil', args, { stdio: ['ignore', 'inherit', 'inherit'], detached: false });
-  const exited = new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? -1)));
+  // `close` is the one event Node emits on every way a child ends, including a
+  // spawn that never started (no binary on PATH: `error` then `close`, and no
+  // `exit`). Keying on `exit` left a failed launch looking alive until the
+  // readiness deadline, and an `error` with no listener would have crashed the
+  // runner (Codex #2604 r3).
+  let launchError: Error | undefined;
+  child.on('error', (err) => {
+    launchError ??= err;
+  });
+  const exited = new Promise<number>((resolve) => child.once('close', (code) => resolve(code ?? -1)));
   live.add(child);
   exitOf.set(child, exited);
   void exited.then(() => live.delete(child));
   const control = anvilControl(opts.url);
+  // The readiness wait ends with the race: a child that exits first must not
+  // leave the probe loop polling a dead port until its own deadline.
+  const waiting = new AbortController();
+  const ready = control.waitForChainId(opts.chainId, 60_000, waiting.signal).then(() => 'ready' as const);
+  ready.catch(() => {}); // a wait cancelled after the child won the race rejects unobserved
   let outcome: 'ready' | number;
   try {
-    outcome = await Promise.race([control.waitForChainId(opts.chainId, 60_000).then(() => 'ready' as const), exited]);
+    outcome = await Promise.race([ready, exited]);
   } catch (err) {
     // Alive but never ready (a slow state load, a wrong chain id): it is
     // stopped here, since the caller never receives a handle to stop it.
     await stopChild(child, exited);
     throw err;
+  } finally {
+    waiting.abort();
   }
-  if (outcome !== 'ready') throw new Error(`anvil exited with code ${outcome} before it was ready at ${opts.url}`);
+  if (outcome !== 'ready') {
+    const why = launchError ? `could not start (${launchError.message})` : `exited with code ${outcome}`;
+    throw new Error(`anvil ${why} before it was ready at ${opts.url}`);
+  }
   return {
     url: opts.url,
     child,

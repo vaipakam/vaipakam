@@ -21,9 +21,13 @@ export interface AnvilControl {
   mine(blocks?: number): Promise<void>;
   /** The latest block's timestamp, in unix seconds. */
   latestTimestamp(): Promise<number>;
-  /** Wait until the node answers `eth_chainId` with `chainId`. */
-  waitForChainId(chainId: number, timeoutMs?: number): Promise<void>;
+  /** Wait until the node answers `eth_chainId` with `chainId`. `cancel`
+   *  stops the wait (rejecting) as soon as it aborts. */
+  waitForChainId(chainId: number, timeoutMs?: number, cancel?: AbortSignal): Promise<void>;
 }
+
+/** The longest a single readiness probe may wait for an answer. */
+const PROBE_TIMEOUT_MS = 2_000;
 
 /** The hosts a disposable node may be reached on: this machine only. */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
@@ -49,16 +53,18 @@ export function assertLoopbackUrl(url: string): void {
 export function anvilControl(url: string): AnvilControl {
   assertLoopbackUrl(url);
   let rpcId = 1;
-  const rpc = async <T = unknown>(method: string, params: unknown[] = []): Promise<T> => {
+  const call = async <T = unknown>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> => {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
+      signal,
     });
     const body = (await res.json()) as { result?: T; error?: { message: string } };
     if (body.error) throw new Error(`${method}: ${body.error.message}`);
     return body.result as T;
   };
+  const rpc = <T = unknown>(method: string, params: unknown[] = []): Promise<T> => call<T>(method, params);
   return {
     url,
     rpc,
@@ -76,17 +82,24 @@ export function anvilControl(url: string): AnvilControl {
       const block = await rpc<{ timestamp: string }>('eth_getBlockByNumber', ['latest', false]);
       return Number(BigInt(block.timestamp));
     },
-    async waitForChainId(chainId, timeoutMs = 60_000) {
+    async waitForChainId(chainId, timeoutMs = 60_000, cancel) {
       const deadline = Date.now() + timeoutMs;
       let lastErr: unknown = null;
       while (Date.now() < deadline) {
+        if (cancel?.aborted) throw new Error(`stopped waiting for anvil at ${url}`);
         try {
-          const id = await rpc<string>('eth_chainId');
+          // Each probe is bounded by what is left of the deadline (Codex #2604
+          // r3): a node that accepts the connection and never answers would
+          // otherwise hold the loop past it, and the caller's cleanup with it.
+          const bound = AbortSignal.timeout(Math.max(1, Math.min(PROBE_TIMEOUT_MS, deadline - Date.now())));
+          const probe = cancel ? AbortSignal.any([bound, cancel]) : bound;
+          const id = await call<string>('eth_chainId', [], probe);
           if (Number(id) === chainId) return;
           lastErr = new Error(`unexpected chainId ${id}`);
         } catch (e) {
           lastErr = e;
         }
+        if (cancel?.aborted) throw new Error(`stopped waiting for anvil at ${url}`);
         await new Promise((r) => setTimeout(r, 500));
       }
       throw new Error(`anvil not ready at ${url}: ${String(lastErr)}`);
