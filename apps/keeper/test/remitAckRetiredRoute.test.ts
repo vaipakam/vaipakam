@@ -170,6 +170,10 @@ type Book = {
   dstById?: Record<number, number>;
   /** Hold the mirror's receipt read for this reservation this long. */
   slowReceipt?: { id: number; ms: number };
+  /** A released reservation's stamped stranded share is zero. */
+  zeroStranded?: boolean;
+  /** Make the compensation-gate read revert. */
+  failGate?: boolean;
 };
 
 function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; restore: () => void } {
@@ -187,7 +191,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       return { ok: enc(F.cfg, ['0x0000000000000000000000000000000000000000', BASE, 0, rpc === BASE_RPC, 0n]) };
     }
     if (s === SEL.nonce) return { ok: enc(F.nonce, BigInt(book.nonce ?? 1)) };
-    if (s === SEL.gate) return { ok: `0x${'0'.repeat(64)}` };
+    if (s === SEL.gate) return book.failGate ? { revert: '0x' } : { ok: `0x${'0'.repeat(64)}` };
     if (s === SEL.reservation) {
       const { args } = decodeFunctionData({ abi: [F.reservation] as Abi, data: data as `0x${string}` });
       const id = Number((args as readonly bigint[])[0]);
@@ -195,7 +199,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       return {
         ok: tupleOut(F.reservation, {
           status,
-          strandedRecycled: status === 3 ? 10n ** 18n : 0n,
+          strandedRecycled: status === 3 && !book.zeroStranded ? 10n ** 18n : 0n,
           dstChainId: book.dstById?.[id] ?? ARB,
           ccipMessageId: MESSAGE_ID,
           total: 5n * 10n ** 18n,
@@ -464,6 +468,26 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts[0]).not.toContain('remit 2');
   });
 
+  it('a released remittance whose gate is unread is reported with the gate unknown, and not sent', async () => {
+    // Reservation 2 is released, its stamped stranded share is zero, and the
+    // compensation-gate read fails. It may hold the gate, so it is classified
+    // and reported with the gate stated as unknown, never dropped as settled;
+    // and no ack is paid for on the unread gate (Codex #2607 r9).
+    const t = await tick({
+      status: 2,
+      statusById: { 2: 3, 3: 3 },
+      lateOpenIds: [2, 3],
+      receiptIds: [3],
+      zeroStranded: true,
+      failGate: true,
+      route: { sent: OLD, live: NEW },
+    });
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('remit 2');
+    expect(t.alerts[0]).toMatch(/whether it holds chain 421614's compensation gate is not known/);
+    expect(t.quotes).toBe(0);
+  });
+
   it('alerts a remittance to a chain the keeper has no RPC for, and reads no route for it', async () => {
     // Reservation 1 went to BNB Testnet, which this keeper is not configured
     // for. It is reported as unobservable rather than dropped (Codex #2607 r6).
@@ -642,6 +666,14 @@ describe('undelivered alert keys and text (#2561)', () => {
     expect(footer).not.toMatch(/old mirror/);
     expect(footer).toMatch(/holds its receipt/);
     expect(footer).toMatch(/has not executed, no mirror can acknowledge it yet/);
+  });
+
+  it('an unread gate on a zero stranded share is stated as unknown, never as nothing outstanding', () => {
+    expect(lateOutstanding({ strandedRecycled: 0n, strandedStamped: true }, 'unread')).toEqual({ kind: 'gate-unread' });
+    // A known share or an unstamped one is stated as it is, gate read or not.
+    expect(lateOutstanding({ strandedRecycled: 3n, strandedStamped: true }, 'unread')).toEqual({ kind: 'stranded', wei: 3n });
+    expect(lateOutstanding({ strandedRecycled: 0n, strandedStamped: false }, 'unread')).toEqual({ kind: 'unstamped' });
+    expect(undeliveredAlertDetail({ ...base, outstanding: { kind: 'gate-unread' } })).toMatch(/compensation gate is not known \(the gate could not be read this run\)/);
   });
 
   it('the Pending text offers forced finalization only on consumption evidence, and says what it books', () => {

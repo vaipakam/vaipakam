@@ -47,7 +47,9 @@ are. Each is listed with its destination, its age, the adapter it was sent to
 and the one the lane names now (or that Base has no record of it), the CCIP
 message id and the amount. A released remittance also shows what it still
 waits on: its stranded share, the fact that the share is not stamped yet, or
-the compensation gate it holds. The post says that settling it is an operator
+the compensation gate it holds. When the gate could not be read that run, the
+alert says whether it holds the gate is not known, and the keeper sends no
+acknowledgement on that unread value. The post says that settling it is an operator
 decision. For a Pending remittance that means manual execution, finalizing it only
 when the destination receipt shows it consumed (forced finalization records
 consumption with a zero received figure and clears any compensation gate, so a

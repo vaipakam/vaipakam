@@ -181,7 +181,11 @@ export type LateOutstanding =
   | { kind: 'unstamped' }
   /** It holds its destination's compensation gate: a fresh-only remittance,
    *  with no recycled share stranded. */
-  | { kind: 'gate' };
+  | { kind: 'gate' }
+  /** Its stamped stranded share is zero, and its destination's compensation
+   *  gate could not be read this run, so whether it holds it is not known
+   *  (Codex #2607 r9): reported as unknown, never as settled. */
+  | { kind: 'gate-unread' };
 
 /** One reported reservation, as the alert states it. */
 export interface UndeliveredEvidence {
@@ -253,6 +257,8 @@ export function undeliveredAlertDetail(e: UndeliveredEvidence): string {
         ? `; stranded share ${o.wei} VPFI wei still unresolved`
         : o.kind === 'unstamped'
           ? '; its stranded share is not stamped on Base yet, so its size is not known'
-          : `; holds chain ${e.dstChainId}'s compensation gate (fresh-only, no recycled share stranded)`;
+          : o.kind === 'gate-unread'
+            ? `; no recycled share stranded, and whether it holds chain ${e.dstChainId}'s compensation gate is not known (the gate could not be read this run)`
+            : `; holds chain ${e.dstChainId}'s compensation gate (fresh-only, no recycled share stranded)`;
   return `to chain ${e.dstChainId}; sent ${hours(e.ageSec)} ago; ${route}; CCIP message ${e.ccipMessageId}; total ${e.totalWei} VPFI wei${outstanding}.`;
 }

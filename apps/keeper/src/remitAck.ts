@@ -328,7 +328,9 @@ interface AckPlan {
   late: boolean;
   /** `mirrorCfg` is absent for a destination this keeper has no RPC or
    *  deployment for: such a reservation is reported, never dropped. */
-  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg?: ChainConfig }[];
+  /** `sendable: false` marks one classified on an unread value: reported,
+   *  never paid for (Codex #2607 r9). */
+  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg?: ChainConfig; sendable?: boolean }[];
   receipts: ReadonlyMap<number, MirrorReceipt | null>;
   /** `null` when the attempt log could not be read: classification and alerts
    *  still run, and this run's broadcasts are skipped (Codex #2607 r6). */
@@ -397,7 +399,7 @@ async function sendPlanned(
     if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
     const c = byId.get(remitId)!;
     const receipt = plan.receipts.get(remitId);
-    if (!receipt || !c.mirrorCfg) continue;
+    if (!receipt || !c.mirrorCfg || c.sendable === false) continue;
     const prior = attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
     const dst = Number(c.v.dstChainId);
@@ -789,9 +791,12 @@ async function planLateDeliveries(
   const open = await listOpenWork<{ remitId: number }>(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, LATE_OPEN_SLICE);
   if (open.length === 0) return undefined;
   const ids = open.map((o) => o.payload.remitId);
-  // The release ledger and the gates feed the receipt reads, which feed the
-  // route reads: each stage leaves the next its reserve (Codex #2607 r8).
-  const ledgerCutoff = priorStageCutoffMs(priorStageCutoffMs(deadline));
+  // The release ledger feeds the gate read, which feeds the receipt reads,
+  // which feed the route reads: each stage leaves the next its reserve (Codex
+  // #2607 r8/r9).
+  const receiptCutoff = priorStageCutoffMs(deadline);
+  const gateCutoff = priorStageCutoffMs(receiptCutoff);
+  const ledgerCutoff = priorStageCutoffMs(gateCutoff);
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
@@ -820,7 +825,7 @@ async function planLateDeliveries(
     publicClient as never,
     dsts.map((d) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getCompensationOutstanding' as const, args: [d] as const })),
     'remitAck compensation gates',
-    ledgerCutoff,
+    gateCutoff,
   );
   const gateOf = new Map(dsts.map((d, i) => [d, gates[i]?.status === 'success' ? BigInt(gates[i].result as bigint) : null]));
   /** `unreadIsHeld`: for RETIREMENT an unread gate counts as held (never
@@ -853,28 +858,37 @@ async function planLateDeliveries(
     const r = res[i];
     if (!r || r.status !== 'success') return [];
     const v = r.result as RemitReservationView;
-    if (!isLateDeliveryCandidate(v, holdsGate(id, v, false))) return [];
+    // An UNREAD gate is unknown (Codex #2607 r9): the reservation is still
+    // classified, and reported with the gate stated as unknown, but no ack is
+    // paid for on an unread value.
+    if (!isLateDeliveryCandidate(v, holdsGate(id, v, true))) return [];
+    const sendable = isLateDeliveryCandidate(v, holdsGate(id, v, false));
+    const gate = gateOf.get(Number(v.dstChainId));
     const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), id, 'late');
-    return [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }];
+    return [{ remitId: id, v, mirrorCfg, sendable, outstanding: lateOutstanding(v, gate === null || gate === undefined ? 'unread' : gate === BigInt(id)) }];
   });
   // The receipts leave the route reads that follow them a reserve (Codex
   // #2607 r8): a mirror stalled until the receipt cutoff is abandoned there,
   // and the healthy mirrors' missing receipts are still classified.
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, priorStageCutoffMs(deadline));
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, receiptCutoff);
   const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);
   return { late: true, candidates, receipts, attempts, undelivered };
 }
 
 /** What a released candidate still waits on, as Base shows it (#2561 r2): the
- *  compensation gate it holds, else its stamped stranded share, else that the
- *  share is not stamped yet (a default zero is not a resolved share). */
+ *  compensation gate it holds, else that the share is not stamped yet (a
+ *  default zero is not a resolved share), else its stamped stranded share, or
+ *  — when that share is zero and the gate was unread — that the gate is not
+ *  known (Codex #2607 r9). */
 export function lateOutstanding(
   v: { strandedRecycled?: bigint; strandedStamped?: boolean },
-  holdsCompensationGate: boolean,
+  holdsCompensationGate: boolean | 'unread',
 ): LateOutstanding {
-  if (holdsCompensationGate) return { kind: 'gate' };
+  if (holdsCompensationGate === true) return { kind: 'gate' };
   if (v.strandedStamped !== true) return { kind: 'unstamped' };
-  return { kind: 'stranded', wei: BigInt(v.strandedRecycled ?? 0n) };
+  const wei = BigInt(v.strandedRecycled ?? 0n);
+  if (wei === 0n && holdsCompensationGate === 'unread') return { kind: 'gate-unread' };
+  return { kind: 'stranded', wei };
 }
 
 /** #2561 — clear the late-path undelivered alerts of the releases that just
