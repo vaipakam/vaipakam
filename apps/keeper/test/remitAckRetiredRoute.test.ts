@@ -156,14 +156,21 @@ type Book = {
   telegramDelayMs?: number;
   /** Make the keeper database's alert-key listing fail. */
   failAlertList?: boolean;
+  /** Make the keeper database's acknowledgement-attempt read fail. */
+  failAttempts?: boolean;
+  /** Per-reservation destination chain, overriding Arbitrum Sepolia. */
+  dstById?: Record<number, number>;
+  /** Hold the mirror's receipt read for this reservation this long. */
+  slowReceipt?: { id: number; ms: number };
 };
 
-function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; quotes: () => number; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
   const routeIds: number[] = [];
   /** When each ops post began, in ms since install, beside each route read's. */
   const posts: number[] = [];
+  const postTexts: string[] = [];
   let quotes = 0;
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
@@ -181,7 +188,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
         ok: tupleOut(F.reservation, {
           status,
           strandedRecycled: status === 3 ? 10n ** 18n : 0n,
-          dstChainId: ARB,
+          dstChainId: book.dstById?.[id] ?? ARB,
           ccipMessageId: MESSAGE_ID,
           total: 5n * 10n ** 18n,
           sentAt: BigInt(Math.floor(Date.now() / 1000) - (book.ageSec ?? 60)),
@@ -212,12 +219,17 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
     const rpc = String(input);
     if (new URL(rpc).hostname === 'api.telegram.org') {
       posts.push(routeIds.length);
+      postTexts.push(String(JSON.parse(init?.body ?? '{}').text ?? ''));
       await new Promise((r) => setTimeout(r, book.telegramDelayMs ?? 0));
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     const body = JSON.parse(init?.body ?? '{}');
     const reqs = Array.isArray(body) ? body : [body];
     if (JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) quotes += 1;
+    const wire = JSON.stringify(reqs).toLowerCase();
+    if (book.slowReceipt && wire.includes(SEL.received.slice(2)) && wire.includes(book.slowReceipt.id.toString(16).padStart(64, '0'))) {
+      await new Promise((r) => setTimeout(r, book.slowReceipt!.ms));
+    }
     if (book.slowQuoteMs && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
       await new Promise((r) => setTimeout(r, book.slowQuoteMs));
     }
@@ -251,16 +263,16 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, routeIds, posts, quotes: () => quotes, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, posts, postTexts, quotes: () => quotes, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
  *  records every statement with its binds. */
-function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList = false) {
+function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList = false, failAttempts = false) {
   const bound: { sql: string; binds: unknown[] }[] = [];
   const handle = {
     prepare: (q: string) => {
-      const stmt: Record<string, unknown> = {};
+      const stmt: Record<string, unknown> = { sql: q };
       let binds: unknown[] = [];
       stmt.bind = (...b: unknown[]) => {
         binds = b;
@@ -281,16 +293,19 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
       stmt.run = async () => ({ results: [], success: true, meta: {} });
       return stmt;
     },
-    batch: async () => [],
+    batch: async (stmts: { sql?: string }[]) => {
+      if (failAttempts && stmts.some((x) => x.sql?.includes('FROM keeper_remit_ack'))) throw new Error('D1 unavailable');
+      return [];
+    },
     exec: async () => ({}),
   };
   return { handle, bound };
 }
 
 async function tick(book: Book) {
-  const { routeReads, routeIds, posts, quotes, restore } = install(book);
+  const { routeReads, routeIds, posts, postTexts, quotes, restore } = install(book);
   const shared = d1();
-  const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList);
+  const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList, book.failAttempts);
   const warns: string[] = [];
   const errors: string[] = [];
   const spies = [
@@ -320,7 +335,7 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, quotes: quotes() };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes() };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -366,11 +381,11 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts[0]).not.toContain('remit 1');
   });
 
-  it('classifies the late path before any alert is posted, so a slow ops channel cannot starve it', async () => {
+  it('a slow ops channel on one path cannot starve the other path', async () => {
     // Reservation 1 is Pending and reservation 2 is Released and open on the
     // late queue; neither has a receipt, both were sent to a retired adapter.
-    // Each ops post outlives the deadline. Both routes must be read before the
-    // first post (Codex #2607 r4).
+    // Each ops post outlives the deadline. Neither path's post may hold up the
+    // other path's classification or its alert (Codex #2607 r4, r6).
     const t = await tick({
       status: 1,
       statusById: { 2: 3 },
@@ -380,8 +395,47 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
       deadlineInMs: 1_000,
     });
     expect([...t.routeIds].sort()).toEqual([1, 2]);
-    expect(t.posts.length).toBeGreaterThan(0);
-    expect(t.posts.every((readsBefore) => readsBefore === 2)).toBe(true);
+    expect(t.postTexts.some((a) => a.includes('remit 1'))).toBe(true);
+    expect(t.postTexts.some((a) => a.includes('remit 2'))).toBe(true);
+  });
+
+  it('a slow late-path mirror read does not hold up the Pending acknowledgements', async () => {
+    // Reservation 1 is Pending and its receipt is on the mirror, so its ack is
+    // due. Reservation 2 is released and open on the late queue, and its
+    // receipt read outlives the deadline. The Pending send must still start
+    // (Codex #2607 r6).
+    const t = await tick({
+      status: 1,
+      statusById: { 2: 3 },
+      lateOpenIds: [2],
+      receiptIds: [1],
+      route: { sent: NEW, live: NEW },
+      slowReceipt: { id: 2, ms: 1_500 },
+      deadlineInMs: 1_000,
+    });
+    expect(t.quotes).toBeGreaterThan(0);
+  });
+
+  it('alerts a remittance to a chain the keeper has no RPC for, and reads no route for it', async () => {
+    // Reservation 1 went to BNB Testnet, which this keeper is not configured
+    // for. It is reported as unobservable rather than dropped (Codex #2607 r6).
+    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, dstById: { 1: 97 } });
+    expect(t.routeIds).toEqual([]);
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('no RPC or deployment for');
+    expect(t.alerts[0]).toContain('remit 1');
+    expect(t.alerts[0]).toContain('Give the keeper an RPC and a deployment entry');
+  });
+
+  it('still alerts when the attempt log is unreadable, and sends nothing that run', async () => {
+    // Reservation 1 has no receipt behind a retired adapter; reservation 2 has
+    // its receipt. The attempt log fails: 1 is still alerted, 2 is not sent
+    // (Codex #2607 r6).
+    const t = await tick({ status: 1, nonce: 2, receiptIds: [2], route: { sent: OLD, live: NEW }, failAttempts: true });
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('remit 1');
+    expect(t.quotes).toBe(0);
+    expect(t.errors.some((e) => e.includes('attempt log unread'))).toBe(true);
   });
 
   it('still sends acknowledgements while every alert post stalls', async () => {
@@ -540,6 +594,17 @@ describe('undelivered alert keys and text (#2561)', () => {
     expect(footer).not.toMatch(/old mirror/);
     expect(footer).toMatch(/holds its receipt/);
     expect(footer).toMatch(/has not executed, no mirror can acknowledge it yet/);
+  });
+
+  it('the Pending text offers forced finalization only on consumption evidence, and says what it books', () => {
+    const footer = undeliveredAlertFooter('pending', 'retired');
+    // Execution alone is not the evidence: forced finalization attests
+    // consumption with a zero received figure (Codex #2607 r6).
+    expect(footer).toMatch(/Only if the destination receipt shows the remittance CONSUMED/);
+    expect(footer).toMatch(/zero received figure/);
+    expect(footer).toMatch(/clears any compensation gate/);
+    expect(footer).toMatch(/quarantined or provisional receipt is not that evidence/);
+    expect(footer).not.toMatch(/If it executed, finalizeRemitReservation/);
   });
 
   it('a released compensation remittance names the gate it holds, never a zero stranded share', () => {

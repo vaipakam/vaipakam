@@ -22,7 +22,7 @@
 //
 // This module states which case a reservation is in. It decides nothing about
 // funds: each case is reported to the operator with its evidence, and the
-// terminal (`finalizeRemitReservation` on proven delivery,
+// terminal (`finalizeRemitReservation` on proven consumption,
 // `releaseRemitReservation` when it will never execute, or for a released one
 // a late acknowledgement or a recovery record) stays an operator decision. See
 // the DeploymentRunbook, "drain the remittances".
@@ -117,9 +117,12 @@ export type UndeliveredReason =
   | 'retired'
   /** Pending, past {@link REMIT_OVERDUE_SEC}, on the current or an unrecorded
    *  route: the cause is not known to the keeper. */
-  | 'overdue';
+  | 'overdue'
+  /** Sent to a chain this keeper has no RPC or deployment for, so it can
+   *  neither read the receipt nor acknowledge it (Codex #2607 r6). */
+  | 'unobservable';
 
-const REASONS: readonly UndeliveredReason[] = ['retired', 'overdue'];
+const REASONS: readonly UndeliveredReason[] = ['retired', 'overdue', 'unobservable'];
 
 /**
  * Whether a reservation the configured mirror holds no receipt for is reported,
@@ -184,8 +187,9 @@ export type LateOutstanding =
 export interface UndeliveredEvidence {
   remitId: number;
   dstChainId: number;
-  /** The route verdict: `retired`, `current` or `unrecorded` (never unread). */
-  route: Exclude<RemitRouteVerdict, { kind: 'unread' }>;
+  /** The route verdict: `retired`, `current` or `unrecorded` (never unread).
+   *  Absent for an unobservable reservation, whose route is not the issue. */
+  route?: Exclude<RemitRouteVerdict, { kind: 'unread' }>;
   /** Seconds since the send. */
   ageSec: number;
   ccipMessageId: string;
@@ -196,6 +200,10 @@ export interface UndeliveredEvidence {
 
 /** The digest heading for `count` reservations of one path and reason. */
 export function undeliveredAlertHeader(path: RemitPath, reason: UndeliveredReason, baseChainId: number, count: number): string {
+  if (reason === 'unobservable') {
+    const which = path === 'late' ? 'released remittance(s) still waiting on a late acknowledgement' : 'remittance(s) still Pending on Base';
+    return `[chain ${baseChainId}] ${count} ${which} went to a chain this keeper has no RPC or deployment for, so it can neither read their receipts nor acknowledge them:`;
+  }
   if (path === 'late') {
     return `[chain ${baseChainId}] ${count} released remittance(s) still wait on a late acknowledgement, and were sent through a remote adapter the lane no longer names. The mirror the keeper reads holds no receipt for them:`;
   }
@@ -208,8 +216,15 @@ export function undeliveredAlertHeader(path: RemitPath, reason: UndeliveredReaso
  *  decision. */
 export function undeliveredAlertFooter(path: RemitPath, reason: UndeliveredReason): string {
   const runbook = 'An operator decision on evidence; see DeploymentRunbook, "drain the remittances".';
+  // finalizeRemitReservation is the operator's CONSUMPTION attestation: it
+  // stamps the reservation consumed with a zero received figure, books its
+  // recycled share and clears a compensation gate (Codex #2607 r6). Execution
+  // alone is not that evidence.
   const valves =
-    'If it executed, finalizeRemitReservation(remitId) records it as delivered; if it never will, releaseRemitReservation(remitId) (seven days after the send) releases it.';
+    "Only if the destination receipt shows the remittance CONSUMED (not quarantined, not still provisional) may finalizeRemitReservation(remitId) be used: it attests consumption with a zero received figure, books the recycled share and clears any compensation gate. A quarantined or provisional receipt is not that evidence and must not be finalized this way: it is acknowledged from the Diamond that holds it, which Base accepts only from the lane's current peers (the runbook says how to restore one for the purpose). If it never executes, releaseRemitReservation(remitId) (seven days after the send) releases it.";
+  if (reason === 'unobservable') {
+    return `Give the keeper an RPC and a deployment entry for that chain; it then checks and acknowledges these by itself. ${runbook}`;
+  }
   if (path === 'late') {
     return `A late acknowledgement resolves each, from the mirror Diamond that holds its receipt: the receiver its adapter had registered when the message executed, which the destination transaction shows (find it by CCIP message id). If the message has not executed, no mirror can acknowledge it yet. Recovery records also resolve each: recordRecoveryCeremony books value a governance ceremony brought back to the Diamond, and recordRecoveryTerminalLoss books governance-evidenced loss of the rest; a compensation gate clears once the two cover the remittance's total. ${runbook}`;
   }
@@ -223,11 +238,13 @@ const hours = (sec: number) => `${Math.floor(sec / 3600)}h`;
 /** One reservation's line in the digest: what is known about it. */
 export function undeliveredAlertDetail(e: UndeliveredEvidence): string {
   const route =
-    e.route.kind === 'retired'
-      ? `sent to adapter ${e.route.sent}, lane now names ${same(e.route.live, ZERO) ? 'no adapter' : e.route.live}`
-      : e.route.kind === 'current'
-        ? 'sent to the adapter the lane still names'
-        : 'Base holds no record of the adapter it was sent to';
+    e.route === undefined
+      ? `the keeper has no RPC or deployment for chain ${e.dstChainId}, so it cannot read the receipt`
+      : e.route.kind === 'retired'
+        ? `sent to adapter ${e.route.sent}, lane now names ${same(e.route.live, ZERO) ? 'no adapter' : e.route.live}`
+        : e.route.kind === 'current'
+          ? 'sent to the adapter the lane still names'
+          : 'Base holds no record of the adapter it was sent to';
   const o = e.outstanding;
   const outstanding =
     o === undefined

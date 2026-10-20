@@ -174,11 +174,11 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
-    const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
-    const alerts = deliverUndelivered(env, baseChainId, diamond, [late?.undelivered], deadline);
-    await clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
-    await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
-    await alerts;
+    const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+    await Promise.all([
+      clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set()),
+      alertAndSend(env, baseChainId, diamond, Promise.resolve(undefined), late, mirrorClients, ackBudget, deadline),
+    ]);
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -260,23 +260,51 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  // CLASSIFY EVERYTHING, THEN ALERT AND SEND SIDE BY SIDE (Codex #2607
-  // r3–r5). Both paths are read and classified before anything is posted or
-  // broadcast, so neither a slow ops channel nor a slow send can spend the
-  // deadline a path's reads needed; every step before them is a batched,
-  // bounded read. The alert posts then run concurrently with the
-  // acknowledgement sends, so neither waits on the other.
-  // PENDING FIRST, late after (#2497 r13): the Pending acks are the ordinary
-  // work — a reservation stays reserved on Base until acked — and the late path
-  // is a backlog that can be large, so it gets only what the Pending acks left
-  // of the tick's one budget, never the other way round.
-  const pending = await planPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
-  const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
-  const alerts = deliverUndelivered(env, baseChainId, diamond, [pending?.undelivered, late?.undelivered], deadline);
-  await clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow);
-  await sendPlanned(env, pending, mirrorClients, baseChainId, diamond, ackBudget);
-  await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
-  await alerts;
+  // ONE PIPELINE PER PATH, the two side by side (Codex #2607 r3–r6). Each
+  // path is read and classified, then its alerts post concurrently with its
+  // acknowledgement sends, so no slow ops channel, slow send or slow mirror
+  // spends the deadline another step needed. The late path is a backlog that
+  // can reach unhealthy destinations, so its planning never sits in front of
+  // the Pending sends.
+  // PENDING SENDS FIRST, late after (#2497 r13): the Pending acks are the
+  // ordinary work — a reservation stays reserved on Base until acked — so the
+  // late sends get only what the Pending sends left of the tick's one budget,
+  // never the other way round.
+  const pending = planPendingContained(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
+  const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+  await Promise.all([
+    clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow),
+    alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline),
+  ]);
+}
+
+/**
+ * Deliver each path's alerts and broadcasts as soon as THAT path is planned
+ * (Codex #2607 r6). Each path's alerts start the moment its own plan is ready,
+ * whatever the other path is doing. The Pending sends start as soon as the
+ * Pending plan is ready; the late sends wait for the Pending sends to finish,
+ * which keeps the budget priority and keeps one mirror's broadcasts in
+ * sequence (one signer, one nonce). Both plans are contained, so this never
+ * rejects.
+ */
+async function alertAndSend(
+  env: Env,
+  baseChainId: number,
+  diamond: Address,
+  pendingPlan: Promise<AckPlan | undefined>,
+  latePlan: Promise<AckPlan | undefined>,
+  mirrorClients: Map<number, PublicClient>,
+  ackBudget: { remaining: number; deadline: number },
+  deadline: number,
+): Promise<void> {
+  const alert = (plan: Promise<AckPlan | undefined>) =>
+    plan.then((p) => deliverUndelivered(env, baseChainId, diamond, [p?.undelivered], deadline));
+  const send = (plan: Promise<AckPlan | undefined>, after: Promise<unknown>, path: RemitPath) =>
+    Promise.all([plan, after])
+      .then(([p]) => sendPlanned(env, p, mirrorClients, baseChainId, diamond, ackBudget))
+      .catch((err) => console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} sends failed this tick: ${(err as Error).message}`));
+  const pendingSent = send(pendingPlan, Promise.resolve(), 'pending');
+  await Promise.all([alert(pendingPlan), alert(latePlan), pendingSent, send(latePlan, pendingSent, 'late')]);
 }
 
 /** The rotation order for acknowledgements: never attempted first, then the
@@ -290,10 +318,26 @@ export function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, {
  *  alert delivery and the broadcast. */
 interface AckPlan {
   late: boolean;
-  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg: ChainConfig }[];
+  /** `mirrorCfg` is absent for a destination this keeper has no RPC or
+   *  deployment for: such a reservation is reported, never dropped. */
+  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg?: ChainConfig }[];
   receipts: ReadonlyMap<number, MirrorReceipt | null>;
-  attempts: Awaited<ReturnType<typeof getRemitAckAttempts>>;
+  /** `null` when the attempt log could not be read: classification and alerts
+   *  still run, and this run's broadcasts are skipped (Codex #2607 r6). */
+  attempts: Awaited<ReturnType<typeof getRemitAckAttempts>> | null;
   undelivered?: UndeliveredReport;
+}
+
+/** The attempt log for `ids`, or `null` when it cannot be read. The log only
+ *  paces broadcasts, so an unread one must never stop the classification or
+ *  the alerts (Codex #2607 r6); the sends wait for a run that can read it. */
+async function readAttempts(env: Env, baseChainId: number, diamond: Address, ids: number[], path: RemitPath) {
+  try {
+    return await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
+  } catch (err) {
+    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} attempt log unread; this run classifies and alerts but sends nothing: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 async function planPending(
@@ -308,14 +352,13 @@ async function planPending(
   deadline: number,
 ): Promise<AckPlan | undefined> {
   if (pendingIds.length === 0) return undefined;
-  const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
+  const attempts = await readAttempts(env, baseChainId, diamond, [...pendingIds], 'pending');
   // CLASSIFY first (Codex #2607 r2): every Pending reservation in the window
   // has its receipt read, whatever the send budget, so the report below covers
   // them all; the budget gates only the broadcast.
   const candidates = pendingIds.flatMap((remitId) => {
     const v = reservations.get(remitId);
-    const mirrorCfg = v && mirrorFor(mirrorConfigs, v.dstChainId, remitId);
-    return v && mirrorCfg ? [{ remitId, v, mirrorCfg }] : [];
+    return v ? [{ remitId, v, mirrorCfg: mirrorFor(mirrorConfigs, v.dstChainId, remitId) }] : [];
   });
   const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
   const undelivered = await classifyUndelivered(publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline);
@@ -335,15 +378,16 @@ async function sendPlanned(
   diamond: Address,
   ackBudget: { remaining: number; deadline: number },
 ): Promise<void> {
-  if (!plan) return;
+  if (!plan || !plan.attempts) return;
+  const attempts = plan.attempts;
   const now = Math.floor(Date.now() / 1000);
   const byId = new Map(plan.candidates.map((c) => [c.remitId, c]));
-  for (const remitId of ackOrder([...byId.keys()], plan.attempts)) {
+  for (const remitId of ackOrder([...byId.keys()], attempts)) {
     if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
     const c = byId.get(remitId)!;
     const receipt = plan.receipts.get(remitId);
-    if (!receipt) continue;
-    const prior = plan.attempts.get(remitId);
+    if (!receipt || !c.mirrorCfg) continue;
+    const prior = attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
     const dst = Number(c.v.dstChainId);
     try {
@@ -384,7 +428,7 @@ const RECEIPT_READ_CHUNK = 100;
  * to `null`; an unread one is absent, and nothing is decided about it this run.
  */
 async function readReceipts(
-  candidates: readonly { remitId: number; mirrorCfg: ChainConfig }[],
+  candidates: readonly { remitId: number; mirrorCfg?: ChainConfig }[],
   clients: Map<number, PublicClient>,
   baseDiamond: Address,
   deadline: number,
@@ -392,11 +436,14 @@ async function readReceipts(
   const out = new Map<number, MirrorReceipt | null>();
   const byMirror = new Map<number, { cfg: ChainConfig; ids: number[] }>();
   for (const c of candidates) {
+    if (!c.mirrorCfg) continue;
     const g = byMirror.get(c.mirrorCfg.id) ?? { cfg: c.mirrorCfg, ids: [] };
     g.ids.push(c.remitId);
     byMirror.set(c.mirrorCfg.id, g);
   }
-  for (const { cfg, ids } of byMirror.values()) {
+  // One mirror's reads never wait on another's: a slow destination RPC delays
+  // only its own reservations.
+  await Promise.all([...byMirror.values()].map(async ({ cfg, ids }) => {
     const client = mirrorClient(clients, cfg, deadline);
     for (let i = 0; i < ids.length; i += RECEIPT_READ_CHUNK) {
       const chunk = ids.slice(i, i + RECEIPT_READ_CHUNK);
@@ -419,7 +466,7 @@ async function readReceipts(
         out.set(id, receipt.receivedAt === 0n ? null : receipt);
       });
     }
-  }
+  }));
   return out;
 }
 
@@ -445,28 +492,29 @@ async function classifyUndelivered(
   path: RemitPath,
   baseChainId: number,
   diamond: Address,
-  candidates: readonly { remitId: number; v: RemitReservationView; outstanding?: LateOutstanding }[],
+  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg?: ChainConfig; outstanding?: LateOutstanding }[],
   receipts: ReadonlyMap<number, MirrorReceipt | null>,
   deadline: number,
 ): Promise<UndeliveredReport | undefined> {
   if (candidates.length === 0 || Date.now() >= deadline) return undefined;
   try {
     const noReceipt = candidates.filter((c) => receipts.get(c.remitId) === null);
+    const unobservable = candidates.filter((c) => !c.mirrorCfg);
     const routes = await readRemitRoutes(publicClient, diamond, noReceipt.map((c) => c.remitId), deadline);
     const nowSec = Math.floor(Date.now() / 1000);
     const holding = new Map<number, UndeliveredReason | undefined>();
     for (const c of candidates) if (receipts.get(c.remitId)) holding.set(c.remitId, undefined);
     const entries = new Map<UndeliveredReason, OpsAlertEntry[]>();
-    for (const { remitId, v, outstanding } of noReceipt) {
-      const route = routes.get(remitId);
-      if (!route || route.kind === 'unread') continue;
-      const reason = undeliveredReason(path, route, v.sentAt, nowSec);
+    for (const { remitId, v, outstanding, mirrorCfg } of [...noReceipt, ...unobservable]) {
+      const route = mirrorCfg ? routes.get(remitId) : undefined;
+      if (mirrorCfg && (!route || route.kind === 'unread')) continue;
+      const reason = mirrorCfg && route && route.kind !== 'unread' ? undeliveredReason(path, route, v.sentAt, nowSec) : 'unobservable';
       holding.set(remitId, reason);
       if (!reason) continue;
       const detail = undeliveredAlertDetail({
         remitId,
         dstChainId: Number(v.dstChainId),
-        route,
+        route: route && route.kind !== 'unread' ? route : undefined,
         ageSec: Math.max(0, nowSec - Number(v.sentAt)),
         ccipMessageId: v.ccipMessageId,
         totalWei: BigInt(v.total),
@@ -689,6 +737,17 @@ function mirrorFor(
 /** The late path, CONTAINED (#2497 r5): it is auxiliary to the Pending acks,
  *  so a failure of its own (the release ledger unreadable, say) is reported and
  *  never unwinds the tick before the Pending reservations are acknowledged. */
+/** The Pending path, CONTAINED (Codex #2607 r6): it runs beside the late
+ *  path, so a failure of its own is reported and never unwinds the other. */
+async function planPendingContained(...args: Parameters<typeof planPending>): Promise<AckPlan | undefined> {
+  try {
+    return await planPending(...args);
+  } catch (err) {
+    console.error(`[keeper] remitAck pending plan failed this tick (late deliveries continue): ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
 async function planLateDeliveriesContained(...args: Parameters<typeof planLateDeliveries>): Promise<AckPlan | undefined> {
   try {
     return await planLateDeliveries(...args);
@@ -771,7 +830,7 @@ async function planLateDeliveries(
   );
   // The attempts feed the same rotation rule as the Pending acks (#2497 r17),
   // applied in `sendPlanned`.
-  const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
+  const attempts = await readAttempts(env, baseChainId, diamond, ids, 'late');
   // CLASSIFY first (Codex #2607 r2), as on the Pending path: every candidate
   // read this run has its receipt read, whatever the send budget.
   const candidates = ids.flatMap((id, i) => {
@@ -780,7 +839,7 @@ async function planLateDeliveries(
     const v = r.result as RemitReservationView;
     if (!isLateDeliveryCandidate(v, holdsGate(id, v, false))) return [];
     const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), id, 'late');
-    return mirrorCfg ? [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }] : [];
+    return [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }];
   });
   const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
   const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);

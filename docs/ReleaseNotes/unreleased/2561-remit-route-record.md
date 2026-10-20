@@ -22,11 +22,17 @@ Base can name. The keeper still acknowledges any remittance whose receipt the
 configured mirror holds. Each run it now reads the receipt of every
 reservation in that run's slice, which is up to 200 in-flight reservations and
 300 released ones, rotating through any larger backlog over later runs. It
-classifies both kinds before it posts any alert or sends any acknowledgement,
-then posts its alerts alongside its acknowledgements. So neither a backlog of
-ordinary acknowledgements, nor a slow send, nor a slow alert channel can hide a
-remittance it cannot make or hold up one it can.
-An alert is still sent when the keeper cannot read its record of open alerts. A reservation with no
+works the two kinds side by side. Each kind's alerts go out as soon as that
+kind is classified, alongside its acknowledgements, and the released backlog
+never holds up the in-flight acknowledgements, which keep first call on the
+run's send budget. So neither a backlog, nor a slow destination, nor a slow
+send, nor a slow alert channel can hide a remittance it cannot make or hold up
+one it can. An alert is still sent when the keeper cannot read its record of
+open alerts, or its record of past acknowledgement attempts; in that second
+case the run sends no acknowledgements, since that record is what paces them.
+A remittance sent to a chain the keeper has no RPC or deployment for is
+reported as one it can neither read nor acknowledge, rather than dropped with
+a log line. A reservation with no
 receipt is reported to ops, never left waiting in silence, in two cases. The
 first is a remittance sent through an adapter the lane no longer names. The
 second is a Pending remittance still without a receipt more than 8 hours after
@@ -40,8 +46,11 @@ and the one the lane names now (or that Base has no record of it), the CCIP
 message id and the amount. A released remittance also shows what it still
 waits on: its stranded share, the fact that the share is not stamped yet, or
 the compensation gate it holds. The post says that settling it is an operator
-decision. For a Pending remittance that means manual execution, finalizing on
-proven delivery or releasing it when it will never execute. For a released
+decision. For a Pending remittance that means manual execution, finalizing it only
+when the destination receipt shows it consumed (forced finalization records
+consumption with a zero received figure and clears any compensation gate, so a
+quarantined or provisional receipt is acknowledged from its Diamond instead),
+or releasing it when it will never execute. For a released
 one, a late acknowledgement or a recovery record. Each alert re-posts daily
 and clears once its remittance is settled, its receipt appears or its reason
 no longer holds. The deployment

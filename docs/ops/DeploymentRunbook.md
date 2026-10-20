@@ -743,6 +743,10 @@ the keeper reads more than 8 hours after its send (CCIP's usual
 smart-execution window) is reported as "N remittance(s) still Pending on Base
 have no receipt on the mirror the keeper reads … The keeper does not know
 why", with the same evidence. Check the message on the CCIP explorer first.
+A remittance sent to a chain the keeper has no RPC secret or deployment entry
+for gets a third alert, "… went to a chain this keeper has no RPC or
+deployment for": give the keeper both and it checks and acknowledges those
+by itself.
 
 A released remittance that waits for a late acknowledgement gets the
 retired-route alert from the late path. That alert names what is still
@@ -764,9 +768,13 @@ options, on the evidence:
    peer"). For a receiver replaced behind the same messenger, that means
    registering the old receiver's channel again. While the old adapter is
    restored the retired-route alert clears; the overdue alert stays while the
-   receipt is missing. Or finalize it on Base with
-   `finalizeRemitReservation(remitId)`, which records it as delivered without
-   a received figure.
+   receipt is missing. Or, only when the destination receipt shows the
+   remittance CONSUMED, finalize it on Base with
+   `finalizeRemitReservation(remitId)`. That is the operator's consumption
+   attestation: it records a zero received figure, books the reservation's
+   recycled share and clears any compensation gate it holds. A quarantined or
+   provisional receipt is not that evidence; acknowledge it from its Diamond
+   as above, so Base sees its real classification.
 3. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
    sooner than seven days after the send.
 4. Released, with its stranded share or compensation gate unresolved: a late
