@@ -1,4 +1,4 @@
-## Keeper — sanctions settlement and chain-lapse notices (PR #<n>)
+## Keeper — sanctions settlement and chain-lapse notices (PR #2602)
 
 The keeper's sanctions-hold pass now tells operators, on the ops Telegram chat,
 about two events that previously left no trace outside the chain. When one of
