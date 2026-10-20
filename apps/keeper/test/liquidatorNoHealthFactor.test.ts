@@ -26,6 +26,17 @@ import { decodeFunctionData, encodeFunctionResult, toFunctionSelector } from 'vi
 import { isAggregateRejection } from '../src/batchRead';
 import { runLiquidator } from '../src/liquidator';
 
+/** What happened, in order: a liquidation submit, or a finality read. */
+const events = vi.hoisted(() => [] as string[]);
+vi.mock('../src/keeper', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/keeper')>()),
+  // A submit is recorded, never sent: these tests are about the reads.
+  maybeAutonomousLiquidate: vi.fn(async (_env: unknown, _chain: unknown, id: bigint) => {
+    events.push(`submit ${id}`);
+    return true;
+  }),
+}));
+
 const AGGREGATE3 = {
   type: 'function',
   name: 'aggregate3',
@@ -72,6 +83,7 @@ const uint = (name: string, value: bigint) =>
     result: value,
   });
 const HF_HEALTHY = uint('calculateHealthFactor', 2n * 10n ** 18n);
+const HF_UNDERWATER = uint('calculateHealthFactor', 9n * 10n ** 17n);
 
 type Book = {
   loans: bigint[];
@@ -81,6 +93,8 @@ type Book = {
    *  exist there yet (`InvalidLoan`). Defaults to all of `illiquid`. */
   final?: Set<bigint>;
   rejectAggregate?: boolean;
+  /** Liquid loans below the liquidation line. */
+  underwater?: Set<bigint>;
   /** The RPC cannot serve the finalized block. */
   noFinalizedBlock?: boolean;
 };
@@ -106,6 +120,7 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
       if (req.method === 'eth_chainId') return ok('0x14a34');
       if (req.method === 'eth_blockNumber') return ok(LATEST_BLOCK);
       if (req.method === 'eth_getBlockByNumber' && req.params?.[0] === 'finalized') {
+        events.push('finalized block');
         if (book.noFinalizedBlock) {
           return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32000, message: 'finalized not supported' } };
         }
@@ -147,6 +162,7 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
         const calls = args[0] as readonly { callData: string }[];
         const ids = calls.map((c) => loanIdOf(c.callData.toLowerCase()));
         (atFinalized ? traffic.finalityChecks : traffic.aggregates).push(ids);
+        if (atFinalized) events.push('finality check');
         if (book.rejectAggregate) {
           return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32000, message: 'upstream unavailable' } };
         }
@@ -158,7 +174,7 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
               const revert = revertOf(id);
               return revert
                 ? { success: false, returnData: revert as `0x${string}` }
-                : { success: true, returnData: HF_HEALTHY };
+                : { success: true, returnData: book.underwater?.has(id) ? HF_UNDERWATER : HF_HEALTHY };
             }),
           }),
         );
@@ -289,6 +305,14 @@ describe('liquidator and loans with no health factor (#2579)', () => {
 
     const second = await tick(book);
     expect(second.aggregates).toEqual([[61n]]);
+  });
+
+  it('the finality check runs after the liquidations, never before them', async () => {
+    // Loan 81 is underwater; loan 82 is newly seen illiquid. The finality read
+    // is bookkeeping and must not spend the time reserved for the submit.
+    events.length = 0;
+    await tick({ loans: [81n, 82n], illiquid: new Set([82n]), underwater: new Set([81n]) });
+    expect(events).toEqual(['submit 81', 'finalized block', 'finality check']);
   });
 
   it('an empty book forgets every remembered loan', async () => {

@@ -343,15 +343,17 @@ async function liquidatePassForChain(
       `[keeper] liquidator chain=${chain.name} ${unevaluated}/${ids.length} loan(s) unevaluated (HF read failed) — scan incomplete`,
     );
   }
-  // Only while the read window lasts: a loan not remembered now is simply
-  // read again next run.
-  if (Date.now() < readCutoff) {
-    await rememberIlliquidAtFinality(client, chain, diamond, seenIlliquid, illiquid);
-  }
+  // Remembering what this run saw is bookkeeping, so it runs AFTER the
+  // liquidations, never between the scan and them (#2579 r2): a slow
+  // finality read must not spend the time reserved for sending. Past the run's
+  // deadline it is skipped, and the loans are simply read again next run.
+  const remember = () =>
+    rememberIlliquidAtFinality(client, chain, diamond, seenIlliquid, illiquid, deadlineMs);
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
   if (atRisk.length === 0) {
     if (pagesComplete && unevaluated === 0) logScanComplete(chain, readings.length, 0, 0, noHealthFactor);
+    await remember();
     return readings;
   }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
@@ -381,6 +383,7 @@ async function liquidatePassForChain(
   if (pagesComplete && unevaluated === 0) {
     logScanComplete(chain, readings.length, atRisk.length, submits, noHealthFactor);
   }
+  await remember();
   return readings;
 }
 
@@ -395,6 +398,10 @@ async function liquidatePassForChain(
  * after the finalized block reverts `InvalidLoan` there and is not remembered;
  * it is confirmed on a later run. Any failure here remembers nothing, which
  * only means the loan is read again next run.
+ *
+ * Bounded (#2579 r2): it starts no request past `deadline`, and a rejected
+ * batch is not retried loan by loan, so it costs at most one block read and
+ * one batch per chunk however the RPC behaves.
  */
 async function rememberIlliquidAtFinality(
   client: ReturnType<typeof createPublicClient>,
@@ -402,8 +409,9 @@ async function rememberIlliquidAtFinality(
   diamond: Address,
   seen: readonly bigint[],
   memory: Set<bigint>,
+  deadline: number,
 ): Promise<void> {
-  if (seen.length === 0) return;
+  if (seen.length === 0 || Date.now() >= deadline) return;
   let finalized: bigint;
   try {
     const block = await client.getBlock({ blockTag: 'finalized' });
@@ -416,6 +424,7 @@ async function rememberIlliquidAtFinality(
     return;
   }
   for (let i = 0; i < seen.length; i += HF_MULTICALL_CHUNK) {
+    if (Date.now() >= deadline) return;
     const chunk = seen.slice(i, i + HF_MULTICALL_CHUNK);
     const results = await batchedRead(
       client,
@@ -427,6 +436,7 @@ async function rememberIlliquidAtFinality(
       })),
       `liquidator chain=${chain.name} finality check ${i}/${seen.length}`,
       finalized,
+      'unread',
     );
     for (let j = 0; j < chunk.length; j++) {
       const r = results[j];
