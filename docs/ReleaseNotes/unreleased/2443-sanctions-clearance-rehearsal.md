@@ -17,14 +17,17 @@ the clearance attestor and opens the CCIP lanes to Base Sepolia and Arbitrum
 Sepolia; on each of those it points the delisting timelock at that attestor.
 Every step is skipped when already in place, nothing already set elsewhere is
 re-pointed, and the script refuses a mainnet. Every sanctions deploy and
-configure script now reuses a recorded contract only while the admin owns it
-with no ownership transfer pending, and none of them replaces a contract that
+configure script now reuses, configures or binds to a recorded contract only
+while the admin owns it with no ownership transfer pending, and none of them
+replaces a contract that
 still holds a role: the wiring script stops when a replacement attestor would
 leave the old one answering, and the timelock deploy script never deploys a
 second timelock while the recorded one can still delist, so a list never has
 two automated delisting routes. Each of these scripts records its addresses
 only after every step of the run has succeeded, so a run that stops sends
-nothing and records nothing. No list, proposer, waiting
+nothing and records nothing. When they report a timelock's clearance check
+they call it a clearance check, not a RedStone check, and name the stand-in
+only when it says it is one. No list, proposer, waiting
 window or Safe power changes. A fork test runs the script against forks of
 the three live testnets and drives a drill proposal through request,
 reading, reply and execution, plus a stand-in flag that blocks the delisting.
@@ -34,7 +37,8 @@ each chain.
 The delister bot now states which oracle answered. It asks the oracle it
 reads whether it is the stand-in, and when it last updated, and names it
 accordingly in every action, note and report line, adding that the stand-in
-is not RedStone. Any other oracle is "the clearance oracle", and the bot
+is not RedStone. For the stand-in it also reads who owns it and whether a
+transfer is pending, and names that owner rather than assuming the admin. Any other oracle is "the clearance oracle", and the bot
 never calls an oracle RedStone, since RedStone has no deployment on the test
 networks it runs on and nothing it could read would establish it. The
 attestor chain's
@@ -42,7 +46,7 @@ own report says the same of the oracle its attestor reads. It reads
 candidates from the same oracle the report names, and when a clearance comes
 back stale it judges the remedy from the oracle's current update time rather
 than from the old answer: a new request alone when the oracle has updated
-since, the admin re-publishing the stand-in when it has not, and a
+since, the stand-in's owner re-publishing it when it has not, and a
 conditional instruction when the current time could not be read. An oracle
 time later than its chain's latest block counts as unknown, as the contracts
 count it, and no time a chain returns can stop the report being written. Part of

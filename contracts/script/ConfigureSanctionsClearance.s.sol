@@ -14,6 +14,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
+import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
 
 /**
  * @title  ConfigureSanctionsClearance
@@ -59,14 +60,19 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         sends nothing if any step reverts, but an artifact write made
  *         during that execution survives the revert, so a write before a step
  *         that can still refuse could name contracts that were never sent.
- *         Nothing is ever re-pointed: a channel handler, a channel peer or a lane already set
- *         to something else stops the run, because rotating any of them
- *         needs the drain `CcipMessenger.registerChannel` / `setChannelPeer`
- *         describe. `setClearanceSource` is called only when the source
- *         differs, since every call voids requests already in flight.
+ *         Nothing is ever re-pointed: a channel handler, a channel peer or a
+ *         lane already set to something else stops the run, because rotating
+ *         any of them needs the drain `CcipMessenger.registerChannel` /
+ *         `setChannelPeer` describe. `setClearanceSource` is called only when
+ *         the source differs, since every call voids requests already in
+ *         flight. The route it reports is read from the timelock and names
+ *         the oracle only from what it reads ({SanctionsClearanceReport}).
  *
  *         Keys: `ADMIN_PRIVATE_KEY` owns the messengers, the timelocks and
- *         the stand-in, and makes every configuration write;
+ *         the stand-in, and makes every configuration write. The run acts on
+ *         a messenger or timelock only while the admin alone controls it
+ *         ({AdminControl}: owner, nothing pending), since a pending owner
+ *         could take over whatever the run just wired;
  *         `DEPLOYER_PRIVATE_KEY` deploys. Topology:
  *         `SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID` (the testnet rehearsal uses
  *         BNB testnet, 97) and `SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS`
@@ -118,7 +124,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         _requireTopology(attestorChainId, timelockChainIds);
         bool writes = Deployments.artifactWritesEnabled();
         CcipMessenger m = CcipMessenger(payable(Deployments.readAddressForChain(block.chainid, ".ccipMessenger")));
-        require(m.owner() == admin, "ConfigureSanctionsClearance: this chain's CcipMessenger is not owned by the admin");
+        AdminControl.requireAloneControls(address(m), admin, "ConfigureSanctionsClearance: this chain's CcipMessenger");
 
         if (block.chainid == attestorChainId) {
             _wireAttestorChain(m, admin, deployer, timelockChainIds, writes);
@@ -211,12 +217,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     ///      owner could accept it would hand the clearance answers — flags and
     ///      freshness — to someone other than the admin.
     function _reusableStandIn(address candidate, address admin) internal view returns (bool) {
-        if (!AdminControl.aloneControls(candidate, admin)) return false;
-        try TestnetSanctionsOracleStandIn(candidate).isTestnetStandIn() returns (bool yes) {
-            return yes;
-        } catch {
-            return false;
-        }
+        return AdminControl.aloneControls(candidate, admin) && SanctionsClearanceReport.isStandIn(candidate);
     }
 
     /// @dev The recorded attestor while it reads `standIn_` (a reused
@@ -255,7 +256,7 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         SanctionsDelistingTimelock tl = SanctionsDelistingTimelock(
             payable(Deployments.readAddressForChain(block.chainid, ".sanctionsDelistingTimelock"))
         );
-        require(tl.owner() == admin, "ConfigureSanctionsClearance: this chain's timelock is not owned by the admin");
+        AdminControl.requireAloneControls(address(tl), admin, "ConfigureSanctionsClearance: this chain's timelock");
         address a = Deployments.readSanctionsClearanceAttestorOptionalForChain(attestorChainId);
         require(
             a != address(0),
@@ -277,22 +278,13 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         console.log("SanctionsDelistingTimelock:", address(tl));
         console.log("  clearance source: attestor", a, "on chain", attestorChainId);
         console.log("  epoch           :", uint256(tl.clearanceEpoch()));
-        SanctionsDelistingTimelock.Route route = tl.clearanceRoute();
-        if (route == SanctionsDelistingTimelock.Route.CrossChain) {
-            console.log("  RedStone check: CROSS-CHAIN, answered by the attestor chain's oracle.");
-            address recordedStandIn = Deployments.readSanctionsOracleStandInOptionalForChain(attestorChainId);
-            if (recordedStandIn != address(0)) {
-                console.log(
-                    "    That chain's artifact records it as the TESTNET STAND-IN (not RedStone):", recordedStandIn
-                );
-            }
-        } else if (route == SanctionsDelistingTimelock.Route.Local) {
-            // The list's own secondary wins; the source above is configured
-            // but unused while it is set.
-            console.log("  RedStone check: LOCAL - the list's secondary takes precedence over this source.");
-        } else {
-            revert("ConfigureSanctionsClearance: the timelock reports no clearance route after wiring");
-        }
+        // A LOCAL route means the list's own secondary wins; the source above
+        // is configured but unused while it is set.
+        SanctionsDelistingTimelock.Route route = SanctionsClearanceReport.logRoute(tl);
+        require(
+            route != SanctionsDelistingTimelock.Route.Unavailable,
+            "ConfigureSanctionsClearance: the timelock reports no clearance route after wiring"
+        );
     }
 
     // ── Shared steps (inside the admin's broadcast) ────────────────────

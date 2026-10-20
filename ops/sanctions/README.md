@@ -120,7 +120,8 @@ there.
 **On a testnet the cross-chain check reads a stand-in, never RedStone.**
 RedStone's Sanctions Oracle has no testnet deployment, so the rehearsal
 attestor on BNB testnet reads a `TestnetSanctionsOracleStandIn`, which flags
-only what that chain's admin flags. The delister asks the oracle it reads
+only what its owner flags (the chain's admin, when the wiring script deploys
+it). The delister asks the oracle it reads
 whether it is that stand-in, and says so in every line: actions read "request
 the clearance from the testnet stand-in for RedStone", and the report adds
 "clearance read from the testnet stand-in for RedStone at 0x…: NOT RedStone".
@@ -128,15 +129,27 @@ Any other oracle is "the clearance oracle", whatever it answered: the
 delister never calls an oracle RedStone, since RedStone has no testnet
 deployment and its oracle carries no marker a run could read. The BNB testnet
 section of the report, which hosts the
-attestor rather than a timelock, names the oracle the same way. The stand-in
-is only as fresh as the admin's last write to it: unless the admin calls
-`markUpdated` within a timelock's `oracleMaxAge` (default 7 days) of an
-execution, the clearance comes back stale. The delister then reads the
-oracle's update time as it is now, not as the stale answer recorded it: if
-the stand-in has been re-published since, it says the next request (which it
-sends once the stale one expires) carries the new time; if not, it says the
-admin must re-publish it; if it cannot read the time, it says both,
-conditionally. On this route the delister key needs tBNB on BNB
+attestor rather than a timelock, names the oracle the same way. Each run also
+reads the stand-in's owner and any pending owner, and the report names them
+as read: who flags, who can re-publish, a pending transfer, or that the
+ownership was renounced and nobody can. It never assumes the admin still
+holds it. The stand-in is only as fresh as its owner's last write to it:
+unless the owner calls `markUpdated` within a timelock's `oracleMaxAge`
+(default 7 days) of an execution, the clearance comes back stale. The
+delister then reads the oracle's update time as it is now, not as the stale
+answer recorded it: if the stand-in has been re-published since, it says the
+next request (which it sends once the stale one expires) carries the new
+time; if not, it names the owner it read as the one to re-publish it (or,
+renounced, that only a new clearance source moves it on); if it cannot read
+the time, it says so and makes the step conditional.
+
+The wiring and deploy scripts report a timelock's clearance check the same
+way (`script/lib/SanctionsClearanceReport.sol`): "Clearance check", never
+"RedStone check"; the stand-in only on its own answer, with its live owner;
+and on a cross-chain route, that the attestor's oracle lives on another
+chain and is not read by the run, plus what that chain's artifact records.
+They act on a list, messenger or timelock only while the admin owns it with
+no ownership transfer pending. On this route the delister key needs tBNB on BNB
 testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
 
 On a testnet both services work against a **rehearsal** list:

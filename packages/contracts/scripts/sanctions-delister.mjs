@@ -75,10 +75,10 @@
  *
  * Which oracle answered is stated, never assumed. On a test network, where
  * RedStone has no deployment, the clearance may be read from
- * `TestnetSanctionsOracleStandIn`, which flags only what that chain's admin
- * flags. Every run asks the oracle it reads whether it is that stand-in, and
- * when it last updated, and each note, action and report line names the
- * answer: "the testnet stand-in for RedStone" when the oracle itself says so,
+ * `TestnetSanctionsOracleStandIn`, which flags only what its owner flags.
+ * Every run asks the oracle it reads whether it is that stand-in, when it last
+ * updated and, for the stand-in, who owns it and whether a transfer is
+ * pending, and each note, action and report line names the answer: "the testnet stand-in for RedStone" when the oracle itself says so,
  * and "the clearance oracle" otherwise (see {@link identifyOracle},
  * {@link clearanceOracleName}). No run names an oracle RedStone: this release
  * runs on test networks only, where RedStone has no deployment, so nothing it
@@ -184,6 +184,39 @@ export function clearanceOracleName(snap) {
   return 'the clearance oracle';
 }
 
+/**
+ * Who controls the stand-in, from its owner and pending owner read this run
+ * (see {@link identifyOracle}) — never an assumed admin. `flags` and `stale`
+ * describe it in a report line; `refresh` is the step that re-publishes it,
+ * or null when nobody can, and then `blocked` says what moves it on instead.
+ */
+export function standInControl(o) {
+  const pending = o.pendingOwner && !/^0x0{40}$/i.test(o.pendingOwner) ? `; an ownership transfer to ${o.pendingOwner} is pending, and that account controls it once it accepts` : '';
+  const pendingUnknown = o.pendingOwner === null ? '; whether an ownership transfer is pending could not be read' : '';
+  if (o.owner === null || o.owner === undefined) {
+    return {
+      flags: `its owner could not be read this run, so who controls its flags is not known${pendingUnknown}`,
+      stale: 'it goes stale unless its owner re-publishes it',
+      refresh: 'its owner (not read this run) re-publishes it with markUpdated',
+      blocked: null,
+    };
+  }
+  if (/^0x0{40}$/i.test(o.owner)) {
+    return {
+      flags: 'it has no owner (ownership renounced), so its flags can no longer change',
+      stale: 'nobody can re-publish it, so once stale it stays stale',
+      refresh: null,
+      blocked: "its ownership was renounced, so nobody can re-publish it; only a new clearance source on the timelock moves this on",
+    };
+  }
+  return {
+    flags: `it flags only what its owner ${o.owner} flags${pending}${pendingUnknown}`,
+    stale: 'it goes stale unless its owner re-publishes it',
+    refresh: `its owner ${o.owner} re-publishes it with markUpdated`,
+    blocked: null,
+  };
+}
+
 /** A chain time in seconds as an ISO string. Never throws: a report is
  *  written whatever a chain returned, so a value no date can hold reads as
  *  unreadable instead of aborting the run. */
@@ -200,12 +233,15 @@ const isoAt = (seconds) => {
  * which is older than the oracle may be now: the oracle's current update
  * time decides whether it needs refreshing at all, or only a new request,
  * which this bot sends once the current one expires. Only the stand-in is
- * refreshed by anyone here (its admin, with `markUpdated`).
+ * refreshed by anyone here: its owner as read this run, with `markUpdated`
+ * ({@link standInControl}).
  */
 function staleWhy(snap, p, who) {
   const o = snap.clearanceOracle ?? {};
-  const refresh = o.identity === ORACLE_IDENTITY.STAND_IN ? "this test network's admin re-publishes it with markUpdated" : null;
-  const wait = refresh ? `; ${refresh}` : '; nothing here can move it on until it updates';
+  const control = o.identity === ORACLE_IDENTITY.STAND_IN ? standInControl(o) : null;
+  const refresh = control?.refresh ?? null;
+  const blocked = control?.blocked ?? 'nothing here can move it on until it updates';
+  const wait = refresh ? `; ${refresh}` : `; ${blocked}`;
   const current = o.updatedAt === null || o.updatedAt === undefined ? null : BigInt(o.updatedAt);
   if (snap.route !== CROSS_CHAIN) {
     return `${who}${current !== null ? ` was last updated ${isoAt(current)},` : ' is'} older than the timelock accepts${wait}`;
@@ -214,14 +250,14 @@ function staleWhy(snap, p, who) {
   const head = `its clearance answer carries ${answered > 0n ? `an update time of ${isoAt(answered)}` : 'no readable update time'} for ${who}, older than the timelock accepts`;
   const next = 'the next clearance request, which this bot sends once this one expires';
   if (current === null) {
-    return `${head}; the current update time of ${who} could not be read${o.detail ? ` (${o.detail})` : ''}, so whether it has updated since is not known${refresh ? `; if it has not, ${refresh}` : ''}, and ${next}, carries whatever it holds then`;
+    return `${head}; the current update time of ${who} could not be read${o.detail ? ` (${o.detail})` : ''}, so whether it has updated since is not known${refresh ? `; if it has not, ${refresh}` : control?.blocked ? `; if it has not, ${control.blocked}` : ''}, and ${next}, carries whatever it holds then`;
   }
   const maxAge = snap.oracleMaxAge === null || snap.oracleMaxAge === undefined ? null : BigInt(snap.oracleMaxAge);
   // The timelock's own rule: stale once its clock passes updatedAt + maxAge.
   if (maxAge !== null && BigInt(snap.now) <= current + maxAge) {
     return `${head}; ${who} has updated since (${isoAt(current)}), and ${next}, carries that`;
   }
-  return `${head}; ${who} itself was last updated ${isoAt(current)}, also too old${refresh ? `: ${refresh}, and ${next}, carries the new time` : '; nothing here can move it on until it updates'}`;
+  return `${head}; ${who} itself was last updated ${isoAt(current)}, also too old${refresh ? `: ${refresh}, and ${next}, carries the new time` : `; ${blocked}`}`;
 }
 
 /** selector → error name, for reading `readiness`'s reason. */
@@ -867,6 +903,9 @@ function oracleReport(snap) {
     // A number while exact (every time the source rule accepts is), else the
     // digits as text, so the report never states a rounded value.
     updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number.isSafeInteger(Number(o.updatedAt)) ? Number(o.updatedAt) : String(o.updatedAt),
+    // The stand-in's owner and pending owner as read this run (null when
+    // unreadable); absent for an oracle that is not the stand-in.
+    ...(o.identity === ORACLE_IDENTITY.STAND_IN && { owner: o.owner ?? null, pendingOwner: o.pendingOwner ?? null }),
     ...(o.detail && { detail: o.detail }),
   };
 }
@@ -876,7 +915,10 @@ function oracleReport(snap) {
 function oracleLine(o) {
   const at = o.address ? ` at ${o.address}` : '';
   const when = o.updatedAt ? isoAt(o.updatedAt) : 'unknown';
-  if (o.identity === ORACLE_IDENTITY.STAND_IN) return `clearance read from ${o.name}${at}: NOT RedStone — it flags only what this test network's admin flags; last published ${when}, and it goes stale unless the admin re-publishes it.`;
+  if (o.identity === ORACLE_IDENTITY.STAND_IN) {
+    const c = standInControl(o);
+    return `clearance read from ${o.name}${at}: NOT RedStone — ${c.flags}; last published ${when}, and ${c.stale}.`;
+  }
   return `clearance oracle not identified this run${at}${o.detail ? ` (${o.detail})` : ''}${o.updatedAt ? `; it reports a last update of ${when}` : ''}.`;
 }
 
@@ -1122,18 +1164,34 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
  * contracts' own rule (`LibOracleFreshness.lastUpdate`): null — unknown —
  * when it is unreadable, zero, or later than its chain's latest block, and
  * null too when that block cannot be read to judge it.
+ *
+ * For the stand-in, `owner` and `pendingOwner` are read now too (null when
+ * unreadable): whoever holds them controls its flags and its freshness, and
+ * a report names them rather than assuming the chain's admin still does
+ * ({@link standInControl}).
  */
 export async function identifyOracle(client, address, abi) {
   const at = getAddress(address);
   const read = (functionName) => client.readContract({ address: at, abi, functionName }).then((value) => ({ value }), (error) => ({ error }));
-  const [marker, freshness, block] = await Promise.all([
+  const [marker, freshness, block, owner, pendingOwner] = await Promise.all([
     read('isTestnetStandIn'),
     read('getLastUpdateBlockTimestamp'),
     client.getBlock().then((b) => b, () => null),
+    read('owner'),
+    read('pendingOwner'),
   ]);
   const ts = freshness.error || freshness.value === undefined || freshness.value === null ? 0n : BigInt(freshness.value);
   const updatedAt = ts === 0n || !block || ts > BigInt(block.timestamp) ? null : ts;
-  if (marker.value === true) return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt };
+  const addressOrNull = (r) => {
+    try {
+      return 'error' in r ? null : getAddress(r.value);
+    } catch {
+      return null;
+    }
+  };
+  if (marker.value === true) {
+    return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
+  }
   const detail =
     'error' in marker
       ? `asking ${at} whether it is the testnet stand-in returned no answer: ${marker.error?.shortMessage ?? marker.error?.message ?? marker.error}`

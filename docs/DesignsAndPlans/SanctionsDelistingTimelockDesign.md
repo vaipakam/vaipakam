@@ -335,24 +335,38 @@ Both accept native value only as their messenger's fee refund.
     failed, which an RPC fault can imitate. A mainnet release must identify
     RedStone from the address it is recorded under. The attestor chain's own
     report names the oracle its attestor reads, even though no timelock lives
-    there. Facts are read from the same address the report names.
-  - **Its freshness is the admin's.** `getLastUpdateBlockTimestamp()` is the
-    admin's last write (deploy, a flag change, or `markUpdated`), never the
+    there. Facts are read from the same address the report names. Who
+    controls the stand-in is read too, never assumed: each run reads its
+    owner and any pending owner, and the report names the owner as the one
+    who flags and re-publishes, states a pending transfer, and says when
+    ownership was renounced and nobody can re-publish it. The wiring and
+    deploy scripts print a timelock's clearance check the same way, through
+    one library (`script/lib/SanctionsClearanceReport.sol`): "clearance
+    check", never "RedStone check"; the stand-in only on its own answer; and
+    on a cross-chain route, that the attestor's oracle lives on another chain
+    the run does not read, plus what that chain's artifact records.
+  - **Its freshness is its owner's.** `getLastUpdateBlockTimestamp()` is the
+    owner's last write (deploy, a flag change, or `markUpdated`), never the
     block's time. Left alone longer than a timelock's `oracleMaxAge`
     (default 7 days) it closes that timelock's automated route exactly as a
     frozen RedStone would, and the delister names the remedy. On the
     cross-chain route a stale clearance carries the oracle's update time as
     of the request, so the remedy is judged from the oracle's update time
-    NOW: a fresh request alone when it has updated since, the admin
+    NOW: a fresh request alone when it has updated since, its owner (as read)
     re-publishing the stand-in when it has not, and a conditional
     instruction when the current time could not be read.
-  - **Only the admin's stand-in is reused, and nothing is replaced while it
-    still holds a role.** The wiring script reuses a recorded stand-in only
-    while it answers as the stand-in, the admin owns it, and no ownership
-    transfer is pending (one rule, `script/lib/AdminControl.sol`, shared by
-    every sanctions deploy and configure script). An attestor binds its
-    oracle for good, so binding one another account could take over would
-    hand that account the clearance. Failing the rule means "do not reuse",
+  - **Only the admin's stand-in is reused, nothing is wired through a
+    contract another account could take over, and nothing is replaced while
+    it still holds a role.** The wiring script reuses a recorded stand-in
+    only while it answers as the stand-in, the admin owns it, and no
+    ownership transfer is pending (one rule, `script/lib/AdminControl.sol`,
+    shared by every sanctions deploy and configure script). An attestor
+    binds its oracle for good, so binding one another account could take
+    over would hand that account the clearance. The same rule gates every
+    recorded contract a script writes through: the wiring script's messenger
+    and timelock, and `DeploySanctionsDelisting`'s list. A pending owner
+    there could accept and re-point whatever the run just wired, so the run
+    refuses until the transfer is cancelled or completed. Failing the rule means "do not reuse",
     never "replace silently": when a replacement attestor would be needed
     while the old one still handles the clearance channel, the run stops,
     at the script's read of the channel or else at the messenger's own

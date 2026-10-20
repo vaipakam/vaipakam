@@ -16,10 +16,30 @@ contract AdminControlOneStep is Ownable {
     constructor(address owner_) Ownable(owner_) {}
 }
 
+/// @dev Answers every call with nothing: a decoding failure, not a revert,
+///      for a caller that expects an address back.
+contract AdminControlSilent {
+    fallback() external {}
+}
+
+/// @dev Answers every call with a word too wide for an address.
+contract AdminControlWide {
+    fallback() external {
+        assembly {
+            mstore(0, not(0))
+            return(0, 32)
+        }
+    }
+}
+
 /// @dev Exposes the library to `expect`-free calls from the test.
 contract AdminControlHarness {
     function aloneControls(address target, address admin) external view returns (bool) {
         return AdminControl.aloneControls(target, admin);
+    }
+
+    function requireAloneControls(address target, address admin, string memory what) external view {
+        AdminControl.requireAloneControls(target, admin, what);
     }
 }
 
@@ -66,5 +86,21 @@ contract AdminControlTest is Test {
         assertFalse(h.aloneControls(address(h), admin), "no owner()");
         AdminControlOneStep one = new AdminControlOneStep(admin);
         assertFalse(h.aloneControls(address(one), admin), "no pendingOwner() to rule a transfer out");
+        // Neither stops the caller: a malformed answer is a no, never a revert.
+        assertFalse(h.aloneControls(address(new AdminControlSilent()), admin), "an empty answer");
+        assertFalse(h.aloneControls(address(new AdminControlWide()), admin), "a word no address fits");
+    }
+
+    function test_TheRequiringFormNamesTheContractAndTheRemedy() public {
+        AdminControlTwoStep c = new AdminControlTwoStep(admin);
+        h.requireAloneControls(address(c), admin, "X: the thing");
+        vm.prank(admin);
+        c.transferOwnership(other);
+        vm.expectRevert(
+            bytes(
+                "X: the thing is not one the admin alone controls (another owner, or an ownership transfer pending) - cancel or complete the transfer, then re-run. Nothing was sent or recorded"
+            )
+        );
+        h.requireAloneControls(address(c), admin, "X: the thing");
     }
 }

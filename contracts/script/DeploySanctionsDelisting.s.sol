@@ -9,6 +9,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
+import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
 
 /**
  * @title  DeploySanctionsDelisting
@@ -18,7 +19,7 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *
  * @dev    #2443, owner decision 2026-10-18 ("bot proposes, Safe vetoes").
  *         What this does NOT do, stated so nobody infers it:
- *         - It configures no RedStone check. The rehearsal list composes no
+ *         - It configures no clearance check. The rehearsal list composes no
  *           secondary, and the cross-chain clearance route needs an attestor
  *           on a chain where RedStone runs plus CCIP channel wiring on both
  *           messengers. Until one of the two exists the timelock refuses
@@ -29,7 +30,10 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *           2026-10-20), as a separate, later run. The
  *           summary it prints reads the timelock's actual route
  *           (`clearanceRoute`), so a reused timelock that has since been
- *           given a source is reported as enabled, not as closed.
+ *           given a source is reported as enabled, not as closed, and names
+ *           the oracle only from what it reads
+ *           ({SanctionsClearanceReport}): never RedStone, the stand-in only
+ *           on its own answer.
  *         - It does not touch the Safe's powers: the Safe stays a remover of
  *           the list and may veto any proposal.
  *         - It refuses every mainnet, like `DeploySanctionsList`.
@@ -38,7 +42,9 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         one key per role, so losing one never bypasses another.
  *
  *         Keys: `DEPLOYER_PRIVATE_KEY` deploys; `ADMIN_PRIVATE_KEY` owns the
- *         list and the timelock and appoints the roles. Address:
+ *         list and the timelock and appoints the roles. The run acts on the
+ *         recorded list only while the admin alone controls it
+ *         ({AdminControl}: owner, nothing pending). Address:
  *         `SANCTIONS_DELISTER_ADDRESS`. A timelock already recorded for the
  *         same list is reused while the admin alone controls it (no transfer
  *         pending); a re-run only adds a missing role. One the admin does not
@@ -68,7 +74,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         address listAddr = Deployments.readSanctionsListOptional();
         require(listAddr.code.length != 0, "DeploySanctionsDelisting: no SanctionsList recorded - run DeploySanctionsList first");
         SanctionsList list = SanctionsList(listAddr);
-        require(list.owner() == admin, "DeploySanctionsDelisting: the recorded SanctionsList is not owned by the admin");
+        AdminControl.requireAloneControls(listAddr, admin, "DeploySanctionsDelisting: the recorded SanctionsList");
 
         require(proposer != address(0), "DeploySanctionsDelisting: a proposer is required");
         require(proposer != admin, "DeploySanctionsDelisting: the proposer must not be the owner");
@@ -96,24 +102,10 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         console.log("  owner   :", admin);
         console.log("  proposer:", proposer);
         console.log("  delay   :", uint256(tl.delay()));
-        _logRoute(tl);
-    }
-
-    /// @dev Reports the RedStone check the timelock actually has, read from
-    ///      the contract rather than assumed: a reused timelock may already
-    ///      have a clearance source, or its list a local secondary.
-    function _logRoute(SanctionsDelistingTimelock tl) internal view {
-        SanctionsDelistingTimelock.Route route = tl.clearanceRoute();
-        if (route == SanctionsDelistingTimelock.Route.Local) {
-            console.log("  RedStone check: LOCAL - the list's secondary, read live:", address(tl.list().secondary()));
-            console.log("    Automated delisting is ENABLED once a proposal matures and RedStone clears it.");
-        } else if (route == SanctionsDelistingTimelock.Route.CrossChain) {
-            console.log("  RedStone check: CROSS-CHAIN via messenger", tl.clearanceMessenger());
-            console.log("    attestor", tl.clearanceAttestor(), "on chain", tl.clearanceSourceChainId());
-            console.log("    Automated delisting is ENABLED once a proposal matures and the attestor clears it.");
-        } else {
-            console.log("  RedStone check: none configured - executions refuse until one is (ClearanceUnavailable).");
-        }
+        // The timelock's actual route, read rather than assumed: a reused
+        // timelock may already have a clearance source, or its list a local
+        // secondary.
+        SanctionsClearanceReport.logRoute(tl);
     }
 
     /// @dev The recorded timelock while it serves this list and the admin

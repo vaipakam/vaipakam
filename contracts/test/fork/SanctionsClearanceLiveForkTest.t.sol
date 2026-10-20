@@ -172,6 +172,55 @@ contract SanctionsClearanceLiveForkTest is Test {
         vm.removeDir(root, true);
     }
 
+    /// @dev Everything the run wires on a timelock chain answers to the
+    ///      messenger's and the timelock's owner, so a pending owner on either
+    ///      could take over the route the moment it accepts. The run refuses
+    ///      before anything is sent or recorded, and proceeds once the
+    ///      transfer is cancelled.
+    function test_BaseSepolia_APendingOwnerOnTheMessengerOrTimelockStopsTheRun() public {
+        string memory baseUrl = vm.envOr("FORK_URL_BASE_SEPOLIA", string(""));
+        if (bytes(baseUrl).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(baseUrl);
+        string memory root = _scratchRoot("base-pending");
+        string memory artifactPath = string.concat(root, "/base-sepolia/addresses.json");
+        string memory artifact = vm.readFile(artifactPath);
+        admin = vm.parseJsonAddress(artifact, ".admin");
+        CcipMessenger m = CcipMessenger(payable(vm.parseJsonAddress(artifact, ".ccipMessenger")));
+        SanctionsDelistingTimelock t =
+            SanctionsDelistingTimelock(payable(vm.parseJsonAddress(artifact, ".sanctionsDelistingTimelock")));
+        uint256[] memory timelockChains = new uint256[](2);
+        timelockChains[0] = BASE;
+        timelockChains[1] = ARB;
+        address next = makeAddr("next owner");
+        ConfigureSanctionsClearance run = new ConfigureSanctionsClearance();
+        run.setArtifactRootOverride(root);
+
+        vm.prank(admin);
+        m.transferOwnership(next);
+        vm.expectRevert(
+            bytes(
+                "ConfigureSanctionsClearance: this chain's CcipMessenger is not one the admin alone controls (another owner, or an ownership transfer pending) - cancel or complete the transfer, then re-run. Nothing was sent or recorded"
+            )
+        );
+        run.runWith(admin, makeAddr("deployer"), BNB, timelockChains);
+        vm.prank(admin);
+        m.transferOwnership(address(0));
+
+        vm.prank(admin);
+        t.transferOwnership(next);
+        vm.expectRevert(
+            bytes(
+                "ConfigureSanctionsClearance: this chain's timelock is not one the admin alone controls (another owner, or an ownership transfer pending) - cancel or complete the transfer, then re-run. Nothing was sent or recorded"
+            )
+        );
+        run.runWith(admin, makeAddr("deployer"), BNB, timelockChains);
+        assertEq(vm.readFile(artifactPath), artifact, "nothing recorded");
+        vm.removeDir(root, true);
+    }
+
     // ── Cells ─────────────────────────────────────────────────────────
 
     function _clearsAndExecutes() internal {
