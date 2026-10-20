@@ -1,7 +1,8 @@
 # apps/keeper Anvil scenario coverage
 
 One row per keeper pass that has, or ought to have, an end-to-end scenario on a
-local Anvil chain. The scenarios live under `e2e/scenarios/`. Each one drives
+local Anvil chain. The scenarios live under `e2e/scenarios/` (one chain) and
+`e2e/mesh/scenarios/` (a canonical chain and a mirror). Each one drives
 the keeper's REAL pass, called exactly as the scheduler calls it, against the
 repository's CURRENT contracts deployed from source.
 
@@ -20,16 +21,30 @@ export PATH=/opt/node22/bin:$PATH        # Node 22 + pnpm
 pnpm --filter @vaipakam/keeper run e2e:anvil
 ```
 
-- **Global setup builds a fixture once.** It deploys the Diamond from source
-  (the app's deploy, `packages/anvil-harness`). It then runs
-  `contracts/script/e2e/ConfigureKeeperRewardsFixture.s.sol`, which turns the
-  Diamond into a canonical reward chain. Finally it dumps the chain state into
-  `e2e/.state/`, which is gitignored.
+`e2e:anvil` runs two suites in turn, each with its own config and its own
+fixture: the single-chain scenarios (`e2e:anvil:single`,
+`e2e/vitest.config.ts`, under `e2e/scenarios/`) and the two-chain ones
+(`e2e:anvil:mesh`, `e2e/vitest.mesh.config.ts`, under `e2e/mesh/scenarios/`).
+They are separate because the keeper's deployments import is redirected to
+ONE bundle per run, and the two suites' bundles name different Diamonds for
+84532.
+
+- **The single-chain global setup builds a fixture once.** It deploys the
+  Diamond from source (the app's deploy, `packages/anvil-harness`). It then
+  runs `contracts/script/e2e/ConfigureKeeperRewardsFixture.s.sol`, which turns
+  the Diamond into a canonical reward chain. Finally it dumps the chain state
+  into `e2e/.state/`, which is gitignored.
+- **The two-chain global setup** (`e2e/mesh/fixture.ts`) builds two nodes the
+  same way, one presenting Base Sepolia (84532) and one Sepolia (11155111),
+  and wires them by running the operator scripts themselves — see "The
+  two-chain harness" below. Its dumps go to `e2e/.state/mesh/`.
 - **Each scenario starts its own node from that dump**, so no scenario sees
   another's transactions or time travel.
-- **To reuse a fixture already built**, set `KEEPER_E2E_REUSE_FIXTURE=1`.
+- **To reuse a fixture already built**, set `KEEPER_E2E_REUSE_FIXTURE=1`
+  (either suite).
 - **The node's port** defaults to 8645 and is set with
-  `KEEPER_E2E_ANVIL_PORT`.
+  `KEEPER_E2E_ANVIL_PORT`; the two-chain suite's start at 8745
+  (`KEEPER_E2E_MESH_ANVIL_PORT`).
 - **This suite is NOT part of the keeper's default `vitest run`.** That run's
   config does not include `e2e/`.
 - **CI runs it in `.github/workflows/keeper-e2e.yml`** (job `keeper anvil
@@ -44,7 +59,8 @@ pnpm --filter @vaipakam/keeper run e2e:anvil
 | Keeper's private database and the shared database | **Real migrations**, built in memory. |
 | Indexer | **The real per-chain indexer pass** (`runChainIndexerForChain`), wherever a pass takes its candidates from indexer rows. Its network access is narrowed to the scenario node. |
 | Clock | Only the process's `Date` is faked, and it is pinned to the chain head after every warp. |
-| Ops alerts | **Captured.** No Telegram token is set, so they are logged as "not delivered" and asserted from that log. |
+| Ops alerts | **Captured.** No Telegram token is set, so they are logged as "not delivered" and asserted from that log. The one scenario that must see an alert RECORDED and then CLEARED (`mesh/scenarios/deliveryAwaiting.scenario.ts`) configures a placeholder bot token instead, and answers the keeper's one request to the Telegram API in-process (`opsBotSink`); no request leaves the machine. |
+| Cross-chain lane (two-chain suite) | **Real CCIP contracts** on each node — `Router`, `RMNRemote` behind `RMNProxy`, `TokenAdminRegistry` with `RegistryModuleOwnerCustom`, the VPFI lock/release and burn/mint pools — wired by the operator scripts. **Supplied:** the two ramps where Chainlink's DONs sit (`contracts/script/e2e/E2ELocalCcip.sol`) and the relay that moves a message between nodes (`packages/anvil-harness/src/ccipLane.ts`). The relay delivers only a message a source on-ramp EMITTED, unchanged; it decides when a message lands, never what it says. |
 
 ## Matrix
 
@@ -52,17 +68,34 @@ pnpm --filter @vaipakam/keeper run e2e:anvil
 | --- | --- | --- | --- |
 | Claim-horizon heartbeat (#2517 item 5) | **Covered** | `scenarios/rewardHorizonHeartbeat.scenario.ts` | **While the horizon is off:** the pass discovers both entries of a repaid loan into its private queue and sends nothing.<br><br>**Once an operator sets a 180-day horizon:** the next heartbeat starts each entry's clock (`RewardEntryHorizonStamped`). Heartbeats every 6 days, inside the 7-day observation gap, then reach `RewardEntryExpiryArmed`. Its notice start is exactly 180 days after the stamp, so no interval was dropped. They go on to `RewardEntryExpiryBegun` at least 90 days later, and then to `RewardEntryExpired`, with the value credited to the recycle bucket.<br><br>**Throughout:** every one of those transactions is sent by the keeper. The settled entries leave the queue, and no ops alert is raised. |
 | Sanctions-hold observer (#2515 item 6) | **Covered** | `scenarios/rewardSanctionsHold.scenario.ts` | **Discovery:** a lender has two clean reward days. Then the overlay's owner flags them. The pass finds the lender only through its screen over the loan parties the real indexer recorded, puts them on its watch list, and starts the evidence chain (`RewardSanctionsEvidenceRecorded`, sent by the keeper). The indexer projects that evidence back as an open chain.<br><br>**Observation:** hourly runs keep the chain unbroken, with the same `flaggedAt`. The loan is repaid along the way. The status reaches Confirmed only after the three-day window has been observed whole.<br><br>**Settlement:** in that same run the keeper settles. The two days earned before the flag are set apart (`RewardSanctionsHeldApart`, equal to `getSanctionsHeldReward`). The three days earned while flagged are forfeited to the recycle bucket (`VpfiRecycled`, ForfeitedReward), and `rewardSanctionsDayForfeited` agrees day by day. The borrower forfeits nothing. Exactly one ops notice goes out, naming the settlement's amounts, and no fault alert. |
-| Sanctions-hold staging retry, `resolveStagedDayPage` (#2515 item 6, optional part) | **Not covered** | — | A staging record exists only when a claim is delivered to ANOTHER chain's venue. A single canonical chain cannot create one, so a scenario here would have to write the staging rows by hand, which tests the keeper against an invented record. It needs the two-chain harness described in the next row. Until then the keeper's unit tests (`test/rewardSanctionsHold.test.ts`, `test/rewardSanctionsNotices.test.ts`) remain its coverage. |
-| Delivery proof (#2516 item 5) | **Blocked: needs a two-chain harness** | — | The pass works only on a MIRROR (`isCanonical` false). It proves or indexes reward-budget deliveries that a Base remit sent through CCIP, and it reads Base to rebuild a rooted day list. Canonical versus mirror is decided by `block.chainid`, so one node cannot host both. A faithful scenario needs everything listed below this table. Faking the delivery by impersonating the router with a hand-built packet would test the pass against invented packet contents, which is what `MeshThreeChainE2ETest`'s header warns against, so it was not done. |
+| Sanctions-hold staging retry, `resolveStagedDayPage` (#2515 item 6, optional part) | **Not covered** | — | A staging record exists only when a claim is delivered to ANOTHER chain's venue, so a single canonical chain cannot create one, and writing the staging rows by hand would test the keeper against an invented record. The two-chain harness below now exists and can carry such a claim; the scenario itself has not been written yet. Until it is, the keeper's unit tests (`test/rewardSanctionsHold.test.ts`, `test/rewardSanctionsNotices.test.ts`) remain its coverage. |
+| Delivery proof (#2516 item 5) | **Covered** | `mesh/scenarios/deliveryProof.scenario.ts` | **The real cycle, two chains:** a loan on the mirror; the mirror closes days 0 and 1 and the relay lands both reports on Base; Base finalizes both on full coverage; the keeper's own remit pass sends `remitRewardBudget` (its only transaction, signed by the keeper). Base's pool locks exactly the remitted VPFI, the lane carries it as one token leg, and the mirror pool mints exactly that — the mirror token's whole supply, resting in the mirror's reward-custody holder. The mirror's ingress records the packet, from Base, in a transport epoch not yet indexed.<br><br>**The pass:** the real indexer runs on both chains into the one shared database, then `runDeliveryProof`. It discovers the delivery from the indexer's rows, rebuilds the rooted day list from Base's reservation, and indexes it; the chain then shows the delivery WHOLE (every chunk landed, the epoch's index complete). Every transaction is the keeper's, to the mirror Diamond, and no ops alert is raised.<br><br>**Idempotence:** the next run sends nothing, and the delivery has left the open-work queue. |
+| Delivery proof — the awaiting alert (#2516) | **Covered** | `mesh/scenarios/deliveryAwaiting.scenario.ts` | The same cycle, with the keeper run WITHOUT an RPC binding for Base, so it cannot rebuild the rooted list (it logs "cannot rebuild its list" for the packet) — a real misconfiguration, not a doctored chain. **Within ten minutes** of arrival nothing is raised. **Past ten minutes** (`AWAITING_ALERT_SEC`) `delivery-awaiting:11155111:all` is posted once, naming the packet, and recorded in the keeper's database; the keeper sent nothing. **With Base's binding restored** the next run indexes the delivery (whole on chain, every transaction the keeper's) and the alert's record is cleared without a new post. |
 
-**What a faithful delivery-proof scenario needs:**
+## The two-chain harness
 
-- **Two Anvil nodes:** Base Sepolia (84532) and one mirror id.
-- **On each node:**
-  - `DeployDiamond` plus `DeployCrosschain` (CcipMessenger, the VPFI pools, and on the mirror `VPFIMirrorToken` and `RewardRemittanceReceiver`);
-  - a local CCIP router, RMN proxy and token-admin registry (`contracts/lib/chainlink-local`; its simulator delivers within one chain, so it does not bridge two nodes as it stands);
-  - `ConfigureCcip` and `ConfigureRewardReporter`, wiring the lane in both directions.
-- **A relay in TypeScript.** It watches each router's send event and executes the message on the other node: the payload, plus the pool's lock/release and burn/mint.
-- **The full remit cycle driven:** mirror `closeDay` → report relayed to Base → `finalizeDay` → the keeper's own `rewardBudgetRemit` → delivery relayed to the mirror.
-- **Indexers for both chains**, then `runDeliveryProof` on the mirror.
-- **The same harness would also unblock the staging-retry row.**
+`e2e/mesh/fixture.ts` builds it once per run:
+
+1. Two nodes, each deployed from source (`deployFromSource`), presenting
+   84532 and 11155111. Each chain's artifact lives under the gitignored
+   `contracts/deployments/.forge-test/e2e-keeper-mesh/<slug>/`.
+2. A local CCIP lane on each (`DeployE2ELocalCcip.s.sol`).
+3. The operator scripts, unchanged (`E2EOperatorScripts.s.sol` only
+   redirects where each writes its artifact): `DeployVPFIToken` on Base;
+   `DeployCrosschain` and `ConfigureVPFIToken` on both; `ConfigureCcip` on
+   both, each naming the other as its one lane; `ConfigureRewardReporter` on
+   both (Base expecting reports from both chains, the mirror reporting to
+   Base); `SetInteractionLaunch` on both with one shared day 0.
+4. The admin steps no script performs (`ConfigureKeeperMeshFixture.s.sol`):
+   reward custody activated on both; on Base, the reward pool funded and the
+   keeper authorized to remit.
+
+Each scenario then starts both nodes from the dumps (`e2e/mesh/mesh.ts`),
+moves both clocks to one shared timestamp on every warp, and pins the
+keeper's `Date` to it.
+
+What it does NOT model: CCIP's commit and execution latency and its fee
+market (the lane's fee is fixed, and a message lands when the scenario
+relays it), RMN cursing, and a failed message's manual re-execution. A
+relayed message that reverts on the destination fails the scenario rather
+than sitting as a failed message.

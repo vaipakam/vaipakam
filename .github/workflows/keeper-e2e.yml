@@ -8,8 +8,11 @@
 #
 # Scenarios today: the claim-horizon heartbeat (#2517) and the sanctions-hold
 # observer (#2515), the latter with the real indexer projecting the chain
-# into the shared database it reads. The delivery-proof pass (#2516) needs a
-# second chain and is not here yet — see apps/keeper/e2e/COVERAGE.md.
+# into the shared database it reads; and, on a TWO-chain mesh (a canonical
+# node presenting Base Sepolia and a mirror presenting Sepolia, joined by a
+# local CCIP lane of real CCIP contracts and a relay, apps/keeper/e2e/mesh),
+# the delivery-proof pass (#2516) and its awaiting alert. See
+# apps/keeper/e2e/COVERAGE.md.
 #
 # Modelled on app-e2e.yml's `fork-tier scenarios` job, with its own forge
 # cache key (the keeper's seed script is compiled on top of the fixture).
@@ -61,7 +64,7 @@ jobs:
   scenarios:
     name: keeper anvil scenarios
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -87,8 +90,8 @@ jobs:
           restore-keys: |
             forge-keeper-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
 
-      # Both scripts as their own steps, so compile time and any compile
-      # error stay out of the scenarios' log. The global setup compiles them
+      # The scripts as their own steps, so compile time and any compile
+      # error stay out of the scenarios' log. The global setups compile them
       # again, which is then a cache hit.
       - name: Compile the e2e fixture and the keeper's reward seed (current contracts)
         working-directory: contracts
@@ -97,6 +100,15 @@ jobs:
         run: |
           forge build script/e2e/DeployE2EFixture.s.sol
           forge build script/e2e/ConfigureKeeperRewardsFixture.s.sol
+
+      - name: Compile the two-chain mesh (local CCIP lane, operator-script wrappers, mesh seed)
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: default
+        run: |
+          forge build script/e2e/DeployE2ELocalCcip.s.sol
+          forge build script/e2e/E2EOperatorScripts.s.sol
+          forge build script/e2e/ConfigureKeeperMeshFixture.s.sol
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4

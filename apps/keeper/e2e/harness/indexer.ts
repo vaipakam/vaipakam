@@ -27,7 +27,7 @@ import { runChainIndexerForChain } from '../../../indexer/src/chainIndexer';
 import type { Env as IndexerEnv } from '../../../indexer/src/env';
 import { INDEXER_MIGRATIONS_DIR } from '../../test/helpers/schemas';
 import type { SqliteD1 } from '../../test/helpers/sqliteD1';
-import { SETTLED_DEPTH, type ScenarioChain } from './chain';
+import { SETTLED_DEPTH, type AnyScenarioChain } from './chain';
 
 /** Record every indexer migration as applied, the way wrangler does. */
 export function recordAppliedMigrations(shared: SqliteD1): void {
@@ -58,14 +58,30 @@ export interface ScenarioIndexer {
   index(): Promise<string>;
 }
 
-export function scenarioIndexer(sc: ScenarioChain, shared: SqliteD1): ScenarioIndexer {
+/** The indexer's own RPC binding and display name for each chain id a
+ *  scenario node presents (`apps/indexer/src/env.ts`). */
+export const SCENARIO_CHAIN_BINDINGS: Readonly<Record<number, { rpcKey: 'RPC_BASE_SEPOLIA' | 'RPC_SEPOLIA'; name: string }>> = {
+  84532: { rpcKey: 'RPC_BASE_SEPOLIA', name: 'Base Sepolia' },
+  11155111: { rpcKey: 'RPC_SEPOLIA', name: 'Sepolia' },
+};
+
+export function bindingFor(chainId: number): { rpcKey: 'RPC_BASE_SEPOLIA' | 'RPC_SEPOLIA'; name: string } {
+  const b = SCENARIO_CHAIN_BINDINGS[chainId];
+  if (!b) throw new Error(`keeper-e2e: no RPC binding is known for chain ${chainId}`);
+  return b;
+}
+
+/** One chain's indexer. A scenario spanning two chains runs one per chain,
+ *  all writing the SAME shared database — as the deployed indexer does. */
+export function scenarioIndexer(sc: AnyScenarioChain, shared: SqliteD1): ScenarioIndexer {
   recordAppliedMigrations(shared);
+  const binding = bindingFor(sc.chain.id);
   const env = {
     DB: shared.d1,
-    RPC_BASE_SEPOLIA: sc.url,
+    [binding.rpcKey]: sc.url,
     fetchFn: nodeOnlyFetch(sc.url),
   } as unknown as IndexerEnv;
-  const chain = { id: sc.chain.id, name: 'Base Sepolia', rpc: sc.url, diamond: sc.diamond };
+  const chain = { id: sc.chain.id, name: binding.name, rpc: sc.url, diamond: sc.diamond };
   return {
     async index() {
       // A first pass on an empty database adopts the Diamond (reporting an

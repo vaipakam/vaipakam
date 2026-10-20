@@ -38,21 +38,10 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { SpawnedAnvil } from '@vaipakam/anvil-harness/process';
+import { ANVIL_DEV_KEYS } from './devKeys';
 import { E2E_CHAIN_ID, loadFixture, startScenarioChain, type KeeperFixture } from './fixture';
 
-/**
- * Anvil's well-known development keys (the `test test … junk` mnemonic,
- * indices 1–4). Public by design and funded with 10,000 ETH at every Anvil
- * genesis — no secret, and meaningless on any real chain. Index 0 is left
- * alone: nothing here needs it, and leaving it out keeps the scenarios clear
- * of whatever else a developer's local tooling does with it.
- */
-export const ANVIL_DEV_KEYS = {
-  lender: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
-  borrower: '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
-  keeper: '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6',
-  other: '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a',
-} as const satisfies Record<string, Hex>;
+export { ANVIL_DEV_KEYS } from './devKeys';
 
 export type Party = keyof typeof ANVIL_DEV_KEYS | 'admin';
 
@@ -79,7 +68,20 @@ export interface DecodedEvent {
   blockNumber: bigint;
 }
 
-export class ScenarioChain {
+/**
+ * What a scenario chain needs of the fixture that built it. The single-chain
+ * fixture's {@link KeeperFixture} carries it; the two-chain fixture
+ * (`e2e/mesh/fixture.ts`) carries one per chain.
+ */
+export interface ChainFixture {
+  diamond: Address;
+  adminKey: Hex;
+  /** Every address the chain's artifact records (mocks under `testnetMocks`). */
+  artifact: Record<string, unknown>;
+  rewards: { interactionLaunchTimestamp: number };
+}
+
+export class ScenarioChain<F extends ChainFixture = KeeperFixture> {
   readonly chain: Chain;
   readonly pub: PublicClient;
   readonly diamond: Address;
@@ -87,11 +89,12 @@ export class ScenarioChain {
 
   constructor(
     readonly node: SpawnedAnvil,
-    readonly fixture: KeeperFixture,
+    readonly fixture: F,
+    chainId: number = E2E_CHAIN_ID,
   ) {
     this.chain = {
-      id: E2E_CHAIN_ID,
-      name: 'keeper-e2e',
+      id: chainId,
+      name: `keeper-e2e-${chainId}`,
       nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
       rpcUrls: { default: { http: [node.url] } },
     };
@@ -181,7 +184,9 @@ export class ScenarioChain {
   }
 
   async blockNumber(): Promise<bigint> {
-    return this.pub.getBlockNumber();
+    // Never viem's cached head: a scenario reads the head just before and
+    // just after a pass, often inside one polling interval.
+    return this.pub.getBlockNumber({ cacheTime: 0 });
   }
 
   async now(): Promise<number> {
@@ -225,6 +230,10 @@ export class ScenarioChain {
     await this.node.stop();
   }
 }
+
+/** A scenario chain built from either fixture — what the helpers that work
+ *  on any chain of a scenario take. */
+export type AnyScenarioChain = ScenarioChain<ChainFixture>;
 
 /**
  * Start a scenario: a fresh node from the fixture state, with the process's

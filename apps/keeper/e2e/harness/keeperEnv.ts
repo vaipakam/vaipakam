@@ -8,8 +8,10 @@
  *     the keeper's unit tests use (`test/helpers/schemas.ts`);
  *   - `RPC_BASE_SEPOLIA`: the scenario's node, which presents 84532 and whose
  *     Diamond the redirected deployments bundle names — so the keeper's own
- *     `getChainConfigs` resolves exactly one chain, the local one;
- *   - `KEEPER_ENABLED` + the pass's arming flag + `KEEPER_PRIVATE_KEY`: an
+ *     `getChainConfigs` resolves exactly one chain, the local one. A
+ *     two-chain scenario (`e2e/mesh`) binds each of its nodes the same way,
+ *     the mirror under `RPC_SEPOLIA`;
+ *   - `KEEPER_ENABLED` + each pass's arming flag + `KEEPER_PRIVATE_KEY`: an
  *     Anvil well-known development key (`chain.ts`), never a real one.
  *
  * The keeper's epoch fence (`src/epochFence.ts`) refuses every send until the
@@ -25,13 +27,14 @@ import type { PassTick } from '../../src/passSchedule';
 import { bindings, createKeeperD1, createSharedD1 } from '../../test/helpers/schemas';
 import { armHeldFence, settleIndexer } from '../../test/helpers/epochFence';
 import type { SqliteD1 } from '../../test/helpers/sqliteD1';
-import { ANVIL_DEV_KEYS, type ScenarioChain } from './chain';
-import { scenarioIndexer, type ScenarioIndexer } from './indexer';
+import { ANVIL_DEV_KEYS, type AnyScenarioChain } from './chain';
+import { bindingFor, scenarioIndexer, type ScenarioIndexer } from './indexer';
 
 export type PassFlag =
   | 'REWARD_HORIZON_HEARTBEAT_ENABLED'
   | 'REWARD_SANCTIONS_KEEPER_ENABLED'
-  | 'REWARD_DELIVERY_PROOF_ENABLED';
+  | 'REWARD_DELIVERY_PROOF_ENABLED'
+  | 'REWARD_REMIT_ENABLED';
 
 export interface KeeperHarness {
   env: Env;
@@ -43,32 +46,46 @@ export interface KeeperHarness {
 }
 
 export async function keeperEnvFor(
-  sc: ScenarioChain,
+  scs: AnyScenarioChain | readonly AnyScenarioChain[],
   flags: readonly PassFlag[],
   opts: { indexer?: boolean } = {},
 ): Promise<KeeperHarness> {
+  // One chain, or every chain of a two-chain scenario: each node is bound
+  // under the RPC secret the keeper reads for the chain id it presents.
+  const chains: readonly AnyScenarioChain[] = Array.isArray(scs) ? scs : [scs as AnyScenarioChain];
   const shared = createSharedD1();
   const keeperDb = createKeeperD1();
   const env = {
     ...bindings(shared, keeperDb),
-    RPC_BASE_SEPOLIA: sc.url,
+    ...Object.fromEntries(chains.map((sc) => [bindingFor(sc.chain.id).rpcKey, sc.url])),
     KEEPER_ENABLED: 'true',
     KEEPER_PRIVATE_KEY: ANVIL_DEV_KEYS.keeper,
     ...Object.fromEntries(flags.map((f) => [f, 'true'])),
   } as unknown as Env;
   if (!opts.indexer) {
-    settleIndexer(shared, sc.chain.id, sc.diamond);
+    for (const sc of chains) settleIndexer(shared, sc.chain.id, sc.diamond);
+    // `settleIndexer` arms the fence for its own chain alone; arm it for all.
+    armHeldFence(chains.map((sc) => ({ id: sc.chain.id, diamond: sc.diamond })));
     return { env, shared, keeperDb, indexer: null };
   }
-  const indexer = scenarioIndexer(sc, shared);
+  const perChain = chains.map((sc) => scenarioIndexer(sc, shared));
+  const indexer: ScenarioIndexer = {
+    async index() {
+      let last = '';
+      for (const ix of perChain) last = await ix.index(); // eslint-disable-line no-await-in-loop
+      return last;
+    },
+  };
   await indexer.index();
-  const adopted = shared.db
-    .prepare('SELECT diamond FROM indexer_deployment WHERE chain_id = ?')
-    .get(sc.chain.id) as { diamond: string } | undefined;
-  if (adopted?.diamond.toLowerCase() !== sc.diamond.toLowerCase()) {
-    throw new Error(`keeper-e2e: the indexer adopted ${adopted?.diamond ?? 'nothing'}, not the scenario Diamond ${sc.diamond}`);
+  for (const sc of chains) {
+    const adopted = shared.db
+      .prepare('SELECT diamond FROM indexer_deployment WHERE chain_id = ?')
+      .get(sc.chain.id) as { diamond: string } | undefined;
+    if (adopted?.diamond.toLowerCase() !== sc.diamond.toLowerCase()) {
+      throw new Error(`keeper-e2e: the indexer adopted ${adopted?.diamond ?? 'nothing'} on chain ${sc.chain.id}, not the scenario Diamond ${sc.diamond}`);
+    }
   }
-  armHeldFence([{ id: sc.chain.id, diamond: sc.diamond }]);
+  armHeldFence(chains.map((sc) => ({ id: sc.chain.id, diamond: sc.diamond })));
   return { env, shared, keeperDb, indexer };
 }
 

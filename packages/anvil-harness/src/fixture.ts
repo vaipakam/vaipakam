@@ -40,7 +40,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, createWalletClient, http, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, http, type Abi, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { anvilControl, type AnvilControl } from './rpc';
 
@@ -235,6 +235,24 @@ function compiledArtifact(
   };
 }
 
+/** The ABI of a contract the fixture compile (or a {@link compileScript})
+ *  built, read from its artifact under `out/` — for a harness that drives a
+ *  script-side contract (the local CCIP lane's ramps) with no TypeScript ABI
+ *  of its own. `source` is relative to `contracts/`. */
+export function compiledAbi(source: string, contract: string): Abi {
+  const file = path.join(CONTRACTS_DIR, 'out', path.basename(source), `${contract}.json`);
+  const art = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+    abi?: Abi;
+    metadata?: { settings?: { compilationTarget?: Record<string, string> } };
+  };
+  const target = art.metadata?.settings?.compilationTarget ?? {};
+  if (target[source] !== contract) {
+    throw new Error(`${file} was compiled from ${JSON.stringify(target)}, not ${source}:${contract}`);
+  }
+  if (!art.abi) throw new Error(`${file} carries no ABI`);
+  return art.abi;
+}
+
 /** Put `c` at its canonical address — see `CANONICAL` for why the two
  *  install kinds differ. */
 async function installCanonical(anvil: AnvilControl, c: Canonical, deployerKey: `0x${string}`): Promise<void> {
@@ -323,8 +341,16 @@ export function compileScript(relative: string): void {
  * same isolation as the fixture deploy: an empty working directory, the
  * ambient allowlist plus `env`, no `.env`. Returns the script's stdout.
  */
-export function runForgeScript(relative: string, url: string, env: Record<string, string>): string {
-  return foundry(['forge', 'script', contractsPath(relative), '--rpc-url', url, '--broadcast', '--slow'], env);
+export function runForgeScript(
+  relative: string,
+  url: string,
+  env: Record<string, string>,
+  opts: { targetContract?: string } = {},
+): string {
+  // `--tc` picks one contract of a file that declares several (the e2e
+  // wrappers of the operator scripts, `script/e2e/E2EOperatorScripts.s.sol`).
+  const target = opts.targetContract ? ['--tc', opts.targetContract] : [];
+  return foundry(['forge', 'script', contractsPath(relative), ...target, '--rpc-url', url, '--broadcast', '--slow'], env);
 }
 
 /** A file the scripts wrote under `contracts/` (e.g. under the gitignored
@@ -335,11 +361,17 @@ export function readContractsJson<T = Record<string, unknown>>(relative: string)
 
 /**
  * Deploy the repository's current contracts onto the bare anvil at `url`
- * (which must present Anvil's own id, 31337) and switch it to present 84532.
+ * (which must present Anvil's own id, 31337) and switch it to present
+ * `opts.presentAs` — 84532 unless a caller building a second chain names
+ * another (the keeper's two-chain scenarios present one node as Sepolia).
  * Steps 1–4 of the header; the caller publishes the result.
  */
-export async function deployFromSource(url: string, opts: { log?: (line: string) => void } = {}): Promise<FixtureDeployment> {
+export async function deployFromSource(
+  url: string,
+  opts: { log?: (line: string) => void; presentAs?: number } = {},
+): Promise<FixtureDeployment> {
   const log = opts.log ?? ((line: string) => console.log(line));
+  const presentAs = opts.presentAs ?? E2E_CHAIN_ID;
   const anvil = anvilControl(url);
   const chainId = Number(await anvil.rpc<string>('eth_chainId'));
   if (chainId !== DEPLOY_CHAIN_ID) {
@@ -383,7 +415,7 @@ export async function deployFromSource(url: string, opts: { log?: (line: string)
     throw new Error(`the fixture artifact names ${diamond} as the Diamond, but it has no code on this chain`);
   }
 
-  await anvil.rpc('anvil_setChainId', [E2E_CHAIN_ID]);
+  await anvil.rpc('anvil_setChainId', [presentAs]);
 
   return { diamond, admin: artifact.admin as `0x${string}`, adminKey, deployerKey, artifact };
 }
@@ -394,11 +426,26 @@ export async function deployFromSource(url: string, opts: { log?: (line: string)
  * `@vaipakam/contracts/deployments` in that tier resolves the local chain.
  */
 export function bundleWith(artifact: Record<string, unknown>): Record<string, unknown> {
+  return bundleWithChains({ [E2E_CHAIN_ID]: artifact });
+}
+
+/** The committed slug of each chain id a local node can present — the slug
+ *  `contracts/script/lib/Deployments.sol` files that chain's artifact under. */
+export const PRESENTED_CHAIN_SLUGS: Readonly<Record<number, string>> = {
+  84532: 'base-sepolia',
+  11155111: 'sepolia',
+};
+
+/** {@link bundleWith} for several local chains at once: each entry of
+ *  `artifacts` (keyed by the chain id its node presents) replaces that
+ *  chain's entry in the committed bundle. */
+export function bundleWithChains(artifacts: Readonly<Record<number, Record<string, unknown>>>): Record<string, unknown> {
   const bundle = JSON.parse(fs.readFileSync(COMMITTED_BUNDLE, 'utf8')) as Record<string, unknown>;
-  bundle[String(E2E_CHAIN_ID)] = {
-    ...artifact,
-    chainId: E2E_CHAIN_ID,
-    chainSlug: 'base-sepolia',
-  };
+  for (const [id, artifact] of Object.entries(artifacts)) {
+    const chainId = Number(id);
+    const chainSlug = PRESENTED_CHAIN_SLUGS[chainId];
+    if (!chainSlug) throw new Error(`no committed slug is known for chain ${chainId}`);
+    bundle[String(chainId)] = { ...artifact, chainId, chainSlug };
+  }
   return bundle;
 }

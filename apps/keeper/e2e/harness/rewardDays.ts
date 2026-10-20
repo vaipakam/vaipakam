@@ -10,7 +10,7 @@
  * scenario finalizes through the day before "today" before asking the keeper
  * to act.
  */
-import type { ScenarioChain } from './chain';
+import type { AnyScenarioChain } from './chain';
 
 /** `isDayReadyToFinalize`'s reason for a day already finalized. */
 const ALREADY_FINALIZED = 1;
@@ -20,7 +20,7 @@ const ALREADY_FINALIZED = 1;
  * yet. `lastDay` must be strictly before the chain's current reward day (the
  * contract refuses to close a day still accruing).
  */
-export async function finalizeThrough(sc: ScenarioChain, lastDay: number): Promise<void> {
+export async function finalizeThrough(sc: AnyScenarioChain, lastDay: number): Promise<void> {
   const today = await sc.rewardDay();
   if (lastDay >= today) throw new Error(`day ${lastDay} has not elapsed (today is day ${today})`);
   for (let d = 0; d <= lastDay; d++) {

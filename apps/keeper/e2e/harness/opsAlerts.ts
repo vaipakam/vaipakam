@@ -31,3 +31,42 @@ export function collectOpsAlerts(): OpsAlertLog {
     },
   };
 }
+
+/** What a scenario's stand-in ops bot was asked to post. */
+export interface OpsBotSink {
+  /** The env entries that configure the keeper's ops bot to post to the sink. */
+  readonly env: { TG_OPS_BOT_TOKEN: string; TG_OPS_CHAT_ID: string };
+  /** The texts posted, in order. */
+  readonly posts: string[];
+  clear(): void;
+}
+
+const TELEGRAM_ORIGIN = 'https://api.telegram.org';
+
+/**
+ * A stand-in for the operators' Telegram chat, for a scenario that must see
+ * an alert RECORDED and then CLEARED — which only a configured bot does: an
+ * unconfigured one ({@link collectOpsAlerts}) logs each alert and records
+ * nothing, so it has nothing to clear. The keeper is configured with a
+ * placeholder bot token and chat, and its one request to the Telegram API
+ * is answered here with success and recorded; every other request (the
+ * nodes' RPC) goes through untouched. No request leaves the machine.
+ */
+export function opsBotSink(): OpsBotSink {
+  const posts: string[] = [];
+  const realFetch = globalThis.fetch;
+  vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (!url.startsWith(`${TELEGRAM_ORIGIN}/`)) return realFetch(input, init);
+    const body = JSON.parse(String(init?.body ?? '{}')) as { text?: string };
+    posts.push(String(body.text ?? ''));
+    return new Response(JSON.stringify({ ok: true, result: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch);
+  return {
+    env: { TG_OPS_BOT_TOKEN: 'keeper-e2e-placeholder-token', TG_OPS_CHAT_ID: 'keeper-e2e-ops-chat' },
+    posts,
+    clear() {
+      posts.length = 0;
+    },
+  };
+}

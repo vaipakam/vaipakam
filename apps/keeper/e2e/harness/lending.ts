@@ -13,7 +13,7 @@
  * the numeraire.
  */
 import { encodeAbiParameters, keccak256, parseEther, type Address, type Hex } from 'viem';
-import { TOKEN_ABI, type Party, type ScenarioChain } from './chain';
+import { TOKEN_ABI, type Party, type AnyScenarioChain } from './chain';
 
 export const WETH: Address = '0x4200000000000000000000000000000000000006';
 const ZERO: Address = '0x0000000000000000000000000000000000000000';
@@ -78,13 +78,13 @@ export interface OpenedLoan {
   acceptBlock: bigint;
 }
 
-function tliq(sc: ScenarioChain): Address {
+function tliq(sc: AnyScenarioChain): Address {
   return (sc.fixture.artifact.testnetMocks as Record<string, Address>).liquidToken;
 }
 
 /** The lender posts a lender offer; the borrower accepts it with a signed
  *  AcceptTerms. Returns the loan the accept initiated. */
-export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedLoan> {
+export async function openLoan(sc: AnyScenarioChain, t: LoanTerms): Promise<OpenedLoan> {
   const principal = parseEther(t.principalWeth);
   const collateral = parseEther(t.collateralTliq);
   const collateralAsset = tliq(sc);
@@ -185,7 +185,7 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
 
 /** The borrower repays in full (the contract's own settlement figure, padded
  *  for per-second accrual; only the owed amount moves). */
-export async function repayInFull(sc: ScenarioChain, who: Party, loanId: bigint): Promise<void> {
+export async function repayInFull(sc: AnyScenarioChain, who: Party, loanId: bigint): Promise<void> {
   const owed = await sc.read<bigint>('calculateRepaymentAmount', [loanId]);
   const pad = owed * 2n;
   await sc.write(who, WETH, TOKEN_ABI, 'deposit', [], pad);
