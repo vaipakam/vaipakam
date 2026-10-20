@@ -15,8 +15,9 @@
  *      (the final notice) is emitted for both entries, and its notice start
  *      lies 180 days of executable time after the stamp.
  *   4. Heartbeats across the 90-day notice then reach removal:
- *      `RewardEntryExpiryBegun` and `RewardEntryExpired`, with the expired
- *      value credited to the recycle bucket, and the entries settled
+ *      `RewardEntryExpiryBegun` and `RewardEntryExpired`. The recycle
+ *      bucket moves by exactly the ExpiredReward credits the accounting
+ *      events record (`VpfiRecycled`), and the entries are settled
  *      (processed on chain, gone from the keeper's queue).
  *   5. Nothing went wrong along the way: the pass raised no operator alert.
  *
@@ -36,6 +37,8 @@ const HORIZON_DAYS = 180;
 const NOTICE_DAYS = 90;
 /** Inside the contract's maximum observation gap (7 days), with margin. */
 const STEP_SEC = 6 * DAY;
+/** `LibVpfiRecycle.RecycleSource.ExpiredReward`. */
+const EXPIRED_REWARD = 8;
 
 let sc: ScenarioChain;
 let k: KeeperHarness;
@@ -120,6 +123,7 @@ describe('rewardHorizonHeartbeat on a canonical Anvil chain', () => {
   it('arms the final notice once the horizon of executable time has accrued, then removes the entries after the notice', async () => {
     const stamped = byEntry(await sc.diamondEvents('RewardEntryHorizonStamped', startBlock));
     const bucketBefore = await sc.read<bigint>('getRecycleBucket');
+    const sweepFrom = (await sc.blockNumber()) + 1n;
     let armed = new Map<number, DecodedEvent>();
     let begun = new Map<number, DecodedEvent>();
     // Bounded: horizon + notice in STEP_SEC steps, plus slack.
@@ -155,14 +159,28 @@ describe('rewardHorizonHeartbeat on a canonical Anvil chain', () => {
       }
     }
 
-    // The expired value went to the recycle bucket, accounted as an expired
-    // reward (VpfiRecycled source ExpiredReward).
+    // The expired value went to the recycle bucket. `RewardEntryExpired` is
+    // the entry's face value and is deliberately non-accounting; the amount
+    // the bucket was credited is what the accounting events say, so the
+    // bucket's movement over the sweep must equal exactly the ExpiredReward
+    // credits those events record, and no other credit class may appear.
     const expired = await sc.diamondEvents('RewardEntryExpired', startBlock);
     expect(new Set(expired.map((e) => Number(e.args.entryId as bigint)))).toEqual(new Set(entryIds));
     const expiredTotal = expired.reduce((a, e) => a + BigInt(e.args.total as bigint), 0n);
-    expect(expiredTotal).toBeGreaterThan(0n);
+    const credits = [
+      ...(await sc.diamondEvents('VpfiRecycled', sweepFrom)),
+      ...(await sc.diamondEvents('VpfiRecycledPreLaunch', sweepFrom)),
+    ];
+    expect(credits.length).toBeGreaterThan(0);
+    for (const c of credits) expect(Number(c.args.source)).toBe(EXPIRED_REWARD);
+    const credited = credits.reduce((a, e) => a + BigInt(e.args.amount as bigint), 0n);
+    expect(await sc.diamondEvents('VpfiRecycleConsumed', sweepFrom)).toHaveLength(0);
     const bucketAfter = await sc.read<bigint>('getRecycleBucket');
-    expect(bucketAfter).toBeGreaterThan(bucketBefore);
+    console.log(`[keeper-e2e] horizon: expired face value ${expiredTotal} wei, credited to the bucket ${credited} wei`);
+    expect(credited).toBeGreaterThan(0n);
+    expect(bucketAfter - bucketBefore).toBe(credited);
+    // The credit is the fresh share of what expired; it cannot exceed the face value.
+    expect(credited).toBeLessThanOrEqual(expiredTotal);
 
     // One more heartbeat reads the settled entries and drops them from the queue.
     await sc.warp(12 * 3600);

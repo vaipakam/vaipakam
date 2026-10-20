@@ -2,7 +2,7 @@
  * Spawning a local anvil node and knowing whether it is still running.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { anvilControl, type AnvilControl } from './rpc';
+import { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
 
 /**
  * Has the spawned anvil already exited? (#2019 round 1 P2.)
@@ -98,6 +98,9 @@ export async function stopAllAnvils(): Promise<void> {
 /** Spawn anvil and resolve once it answers with `chainId`; rejects if it exits
  *  first, and stops it before rejecting if it never becomes ready. */
 export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil> {
+  // Before anything reaches the URL: the listener probe and the spawn both
+  // act on it, and a node started on a non-local address would have no handle.
+  assertLoopbackUrl(opts.url);
   const endpoint = new URL(opts.url);
   await assertNothingListening(opts.url, 'anvil');
   const args = [
