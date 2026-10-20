@@ -51,6 +51,7 @@ function packet(over: Partial<PacketState> = {}): PacketState {
     chunkCount: 0,
     chunksIndexed: 0n,
     disposed: 0n,
+    arrivedAt: 0,
     dayCount: 0,
     freshShare: 0n,
     recycledShare: 0n,
