@@ -28,6 +28,7 @@ export default defineConfig({
     environment: 'node',
     include: ['e2e/scenarios/**/*.scenario.ts'],
     globalSetup: [path.join(HERE, 'harness', 'globalSetup.ts')],
+    setupFiles: [path.join(HERE, 'harness', 'setup.ts')],
     // One scenario at a time: each spawns its own node, and the keeper's
     // epoch fence and submission queue are process-wide.
     fileParallelism: false,

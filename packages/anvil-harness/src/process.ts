@@ -67,7 +67,36 @@ export interface SpawnedAnvil {
   stop(): Promise<void>;
 }
 
-/** Spawn anvil and resolve once it answers with `chainId`; rejects if it exits first. */
+/**
+ * Every node this process spawned that has not exited (Codex #2604 r2). The
+ * harness OWNS its nodes: a scenario whose setup fails part-way — the second
+ * of two nodes cannot start, a readiness wait times out — never got a handle
+ * to stop what it had already started, so per-path cleanup cannot reach them.
+ * One registry and {@link stopAllAnvils} can.
+ */
+const live = new Set<ChildProcess>();
+
+/** Kill `child` and wait for it to exit. Idempotent. */
+async function stopChild(child: ChildProcess, exited: Promise<unknown>): Promise<void> {
+  if (childHasExited(child)) return;
+  child.kill('SIGTERM');
+  await exited;
+}
+
+const exitOf = new WeakMap<ChildProcess, Promise<number>>();
+
+/**
+ * Stop every node this process spawned and has not stopped, whatever state its
+ * scenario reached. Suites call it from one `afterAll` (the keeper's e2e
+ * setup file), so no failure path leaves a node holding a port or keeping the
+ * runner alive.
+ */
+export async function stopAllAnvils(): Promise<void> {
+  await Promise.all([...live].map((c) => stopChild(c, exitOf.get(c) ?? Promise.resolve())));
+}
+
+/** Spawn anvil and resolve once it answers with `chainId`; rejects if it exits
+ *  first, and stops it before rejecting if it never becomes ready. */
 export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil> {
   const endpoint = new URL(opts.url);
   await assertNothingListening(opts.url, 'anvil');
@@ -83,17 +112,24 @@ export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil>
   if (!opts.verbose) args.push('--silent');
   const child = spawn('anvil', args, { stdio: ['ignore', 'inherit', 'inherit'], detached: false });
   const exited = new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? -1)));
+  live.add(child);
+  exitOf.set(child, exited);
+  void exited.then(() => live.delete(child));
   const control = anvilControl(opts.url);
-  const outcome = await Promise.race([control.waitForChainId(opts.chainId, 60_000).then(() => 'ready' as const), exited]);
+  let outcome: 'ready' | number;
+  try {
+    outcome = await Promise.race([control.waitForChainId(opts.chainId, 60_000).then(() => 'ready' as const), exited]);
+  } catch (err) {
+    // Alive but never ready (a slow state load, a wrong chain id): it is
+    // stopped here, since the caller never receives a handle to stop it.
+    await stopChild(child, exited);
+    throw err;
+  }
   if (outcome !== 'ready') throw new Error(`anvil exited with code ${outcome} before it was ready at ${opts.url}`);
   return {
     url: opts.url,
     child,
     control,
-    async stop() {
-      if (childHasExited(child)) return;
-      child.kill('SIGTERM');
-      await exited;
-    },
+    stop: () => stopChild(child, exited),
   };
 }
