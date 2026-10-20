@@ -38,6 +38,13 @@ import {
 } from '../src/remitRoute';
 import { lateOutstanding, runRemitAck } from '../src/remitAck';
 
+// The ops-channel tests post through a configured channel; the epoch fence
+// (armed by a real tick's indexer read) is not what they exercise.
+vi.mock('../src/epochFence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/epochFence')>()),
+  assertEpochsHold: async () => {},
+}));
+
 const AGGREGATE3 = {
   type: 'function',
   name: 'aggregate3',
@@ -141,12 +148,22 @@ type Book = {
   slowQuoteMs?: number;
   /** The tick's deadline, from now (default 60 s). */
   deadlineInMs?: number;
+  /** Per-reservation status, overriding `status` (3 = Released). */
+  statusById?: Record<number, number>;
+  /** Released reservations open on the late-delivery queue. */
+  lateOpenIds?: number[];
+  /** Configure the ops channel, and hold each post this long. */
+  telegramDelayMs?: number;
+  /** Make the keeper database's alert-key listing fail. */
+  failAlertList?: boolean;
 };
 
-function install(book: Book): { routeReads: () => number; routeIds: number[]; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
   const routeIds: number[] = [];
+  /** When each ops post began, in ms since install, beside each route read's. */
+  const posts: number[] = [];
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
     if (s === SEL.cfg) {
@@ -156,9 +173,13 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; re
     if (s === SEL.nonce) return { ok: enc(F.nonce, BigInt(book.nonce ?? 1)) };
     if (s === SEL.gate) return { ok: `0x${'0'.repeat(64)}` };
     if (s === SEL.reservation) {
+      const { args } = decodeFunctionData({ abi: [F.reservation] as Abi, data: data as `0x${string}` });
+      const id = Number((args as readonly bigint[])[0]);
+      const status = book.statusById?.[id] ?? book.status;
       return {
         ok: tupleOut(F.reservation, {
-          status: book.status,
+          status,
+          strandedRecycled: status === 3 ? 10n ** 18n : 0n,
           dstChainId: ARB,
           ccipMessageId: MESSAGE_ID,
           total: 5n * 10n ** 18n,
@@ -188,6 +209,11 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; re
 
   globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
     const rpc = String(input);
+    if (rpc.includes('api.telegram.org')) {
+      posts.push(routeIds.length);
+      await new Promise((r) => setTimeout(r, book.telegramDelayMs ?? 0));
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
     const body = JSON.parse(init?.body ?? '{}');
     const reqs = Array.isArray(body) ? body : [body];
     if (book.slowQuoteMs && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
@@ -223,12 +249,12 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; re
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, routeIds, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, posts, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
  *  records every statement with its binds. */
-function d1(openAlerts: string[] = []) {
+function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList = false) {
   const bound: { sql: string; binds: unknown[] }[] = [];
   const handle = {
     prepare: (q: string) => {
@@ -240,7 +266,11 @@ function d1(openAlerts: string[] = []) {
         return stmt;
       };
       const rows = () => {
+        if (q.includes('FROM keeper_work_open')) {
+          return lateOpenIds.map((id) => ({ item: String(id), block: 1, payload: JSON.stringify({ remitId: id }) }));
+        }
         if (!q.includes('FROM keeper_ops_alert WHERE alert_key LIKE')) return [];
+        if (failAlertList) throw new Error('D1 unavailable');
         const prefix = String(binds[0]).replace(/%$/, '');
         return openAlerts.filter((k) => k.startsWith(prefix)).map((alert_key) => ({ alert_key }));
       };
@@ -256,9 +286,9 @@ function d1(openAlerts: string[] = []) {
 }
 
 async function tick(book: Book) {
-  const { routeReads, routeIds, restore } = install(book);
+  const { routeReads, routeIds, posts, restore } = install(book);
   const shared = d1();
-  const keeper = d1(book.openAlerts);
+  const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList);
   const warns: string[] = [];
   const errors: string[] = [];
   const spies = [
@@ -276,6 +306,7 @@ async function tick(book: Book) {
         KEEPER_PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: BASE_RPC,
         RPC_ARB_SEPOLIA: ARB_RPC,
+        ...(book.telegramDelayMs === undefined ? {} : { TG_OPS_BOT_TOKEN: 'test-token', TG_OPS_CHAT_ID: '-1' }),
       } as never,
       { scheduledTimeMs: undefined, deadlineMs: Date.now() + (book.deadlineInMs ?? 60_000) },
     );
@@ -287,7 +318,7 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -331,6 +362,31 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts).toHaveLength(1);
     expect(t.alerts[0]).toContain('remit 2');
     expect(t.alerts[0]).not.toContain('remit 1');
+  });
+
+  it('classifies the late path before any alert is posted, so a slow ops channel cannot starve it', async () => {
+    // Reservation 1 is Pending and reservation 2 is Released and open on the
+    // late queue; neither has a receipt, both were sent to a retired adapter.
+    // Each ops post outlives the deadline. Both routes must be read before the
+    // first post (Codex #2607 r4).
+    const t = await tick({
+      status: 1,
+      statusById: { 2: 3 },
+      lateOpenIds: [2],
+      route: { sent: OLD, live: NEW },
+      telegramDelayMs: 1_500,
+      deadlineInMs: 1_000,
+    });
+    expect([...t.routeIds].sort()).toEqual([1, 2]);
+    expect(t.posts.length).toBeGreaterThan(0);
+    expect(t.posts.every((readsBefore) => readsBefore === 2)).toBe(true);
+  });
+
+  it('still sends a new alert when the open-alert list cannot be read', async () => {
+    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, failAlertList: true });
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('remit 1');
+    expect(t.errors.join('\n')).toMatch(/alert reconciliation failed this run \(new alerts were still sent\)/);
   });
 
   it('says nothing while a delivery on the current route is still in flight', async () => {

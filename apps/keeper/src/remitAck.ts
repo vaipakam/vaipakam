@@ -175,6 +175,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
     const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+    await deliverUndelivered(env, baseChainId, diamond, [late?.undelivered], deadline);
     await clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
     await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
     return;
@@ -258,17 +259,18 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  // REPORT EVERYTHING, THEN SEND (Codex #2607 r3). Both paths are read,
-  // classified and reported before any acknowledgement is broadcast, so a slow
-  // or failing send can never spend the deadline an undelivered remittance's
-  // alert needed. Broadcasts are the only open-ended step; every read before
-  // them is batched and bounded.
+  // CLASSIFY EVERYTHING, THEN ALERT, THEN SEND (Codex #2607 r3/r4). Both
+  // paths are read and classified before any alert is posted, and every alert
+  // is posted before any acknowledgement is broadcast, so neither a slow ops
+  // channel nor a slow send can spend the deadline the other path's reads
+  // needed. Every step before the posts is a batched, bounded read.
   // PENDING FIRST, late after (#2497 r13): the Pending acks are the ordinary
   // work — a reservation stays reserved on Base until acked — and the late path
   // is a backlog that can be large, so it gets only what the Pending acks left
   // of the tick's one budget, never the other way round.
   const pending = await planPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
   const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+  await deliverUndelivered(env, baseChainId, diamond, [pending?.undelivered, late?.undelivered], deadline);
   await clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow);
   await sendPlanned(env, pending, mirrorClients, baseChainId, diamond, ackBudget);
   await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
@@ -280,14 +282,15 @@ export function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, {
   return [...ids].sort((a, b) => (attempts.get(a)?.lastAttemptAt ?? 0) - (attempts.get(b)?.lastAttemptAt ?? 0) || a - b);
 }
 
-/** One path's classified work (#2561, Codex #2607 r3): every candidate with
- *  its receipt read and its undelivered state already reported, waiting only
- *  on the broadcast. */
+/** One path's classified work (#2561, Codex #2607 r3/r4): every candidate
+ *  with its receipt read and its undelivered state classified, waiting on the
+ *  alert delivery and the broadcast. */
 interface AckPlan {
   late: boolean;
   candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg: ChainConfig }[];
   receipts: ReadonlyMap<number, MirrorReceipt | null>;
   attempts: Awaited<ReturnType<typeof getRemitAckAttempts>>;
+  undelivered?: UndeliveredReport;
 }
 
 async function planPending(
@@ -312,8 +315,8 @@ async function planPending(
     return v && mirrorCfg ? [{ remitId, v, mirrorCfg }] : [];
   });
   const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
-  await reportUndelivered(env, publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline);
-  return { late: false, candidates, receipts, attempts };
+  const undelivered = await classifyUndelivered(publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline);
+  return { late: false, candidates, receipts, attempts, undelivered };
 }
 
 /** Broadcast a plan's acknowledgements within the tick's one budget. Only a
@@ -417,21 +420,24 @@ async function readReceipts(
   return out;
 }
 
+/** What one path's classification found (#2561): the reason that holds for
+ *  each reservation classified this run (none when its receipt is held or it
+ *  is not yet due), and the alert entries that reason produces. */
+interface UndeliveredReport {
+  path: RemitPath;
+  holding: Map<number, UndeliveredReason | undefined>;
+  entries: Map<UndeliveredReason, OpsAlertEntry[]>;
+}
+
 /**
- * #2561 — report the reservations this path classified whose configured mirror
- * holds no receipt, with the evidence, and reconcile their open alerts.
- *
- * One digest post per reason per run however many are due (each reservation
- * keeps its own key, so each re-posts daily and clears on its own), so a
- * redeploy that strands many remittances costs a bounded number of posts. For
- * every reservation classified this run, an open alert whose reason no longer
- * holds (the receipt appeared, the adapter is the lane's again) is cleared, so
- * a recurrence alerts at once. A reservation whose receipt or route was not
- * read keeps its alerts. Contained: a failure here is logged and never unwinds
- * the pass.
+ * #2561 — classify the reservations this path read whose configured mirror
+ * holds no receipt: read their routes and decide, with the evidence, which are
+ * undelivered and why. Reads only; nothing is posted here, so every path is
+ * classified before any alert or acknowledgement is sent (Codex #2607 r3/r4).
+ * A reservation whose receipt or route was not read is left out, so it keeps
+ * its alerts. Contained: a failure is logged and classifies nothing.
  */
-async function reportUndelivered(
-  env: Env,
+async function classifyUndelivered(
   publicClient: PublicClient,
   path: RemitPath,
   baseChainId: number,
@@ -439,13 +445,12 @@ async function reportUndelivered(
   candidates: readonly { remitId: number; v: RemitReservationView; outstanding?: LateOutstanding }[],
   receipts: ReadonlyMap<number, MirrorReceipt | null>,
   deadline: number,
-): Promise<void> {
-  if (candidates.length === 0 || Date.now() >= deadline) return;
+): Promise<UndeliveredReport | undefined> {
+  if (candidates.length === 0 || Date.now() >= deadline) return undefined;
   try {
     const noReceipt = candidates.filter((c) => receipts.get(c.remitId) === null);
     const routes = await readRemitRoutes(publicClient, diamond, noReceipt.map((c) => c.remitId), deadline);
     const nowSec = Math.floor(Date.now() / 1000);
-    /** What holds for each reservation classified this run: a reason, or none. */
     const holding = new Map<number, UndeliveredReason | undefined>();
     for (const c of candidates) if (receipts.get(c.remitId)) holding.set(c.remitId, undefined);
     const entries = new Map<UndeliveredReason, OpsAlertEntry[]>();
@@ -469,28 +474,67 @@ async function reportUndelivered(
       list.push({ key: undeliveredAlertKey(path, baseChainId, diamond, reason, remitId), id: `remit ${remitId}`, detail });
       entries.set(reason, list);
     }
-    const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern(path, baseChainId, diamond));
-    for (const key of open) {
-      const k = parseUndeliveredAlertKey(key);
-      if (!k || !holding.has(k.remitId) || holding.get(k.remitId) === k.reason) continue;
-      // eslint-disable-next-line no-await-in-loop
-      await resolveOpsAlert(env, key);
-    }
-    for (const [reason, list] of entries) {
-      if (Date.now() >= deadline) return;
-      // eslint-disable-next-line no-await-in-loop
-      await sendOpsAlertDigest(
-        env,
-        (count) => undeliveredAlertHeader(path, reason, baseChainId, count),
-        list,
-        undeliveredAlertFooter(path, reason),
-        UNDELIVERED_ALERT_REPEAT_SEC,
-        nowSec,
-        baseChainId,
-      );
-    }
+    return { path, holding, entries };
   } catch (err) {
-    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} undelivered report failed this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} undelivered classification failed this run: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
+/**
+ * #2561 — deliver what {@link classifyUndelivered} found, for every path at
+ * once, after all of them are classified. One digest post per path and reason
+ * however many are due (each reservation keeps its own key, so each re-posts
+ * daily and clears on its own), so a redeploy that strands many remittances
+ * costs a bounded number of posts. The posts start from a random digest, so no
+ * fixed order can leave one digest behind a slow channel every run.
+ *
+ * Then, for every reservation classified this run, an open alert whose reason
+ * no longer holds (the receipt appeared, the adapter is the lane's again) is
+ * cleared, so a recurrence alerts at once. That reconciliation is contained on
+ * its own (Codex #2607 r4): an unreadable alert list never withholds a new
+ * alert, since the digest itself fails open on unread sent-state. It never
+ * clears a key this run posts, so it can follow the posts.
+ */
+async function deliverUndelivered(
+  env: Env,
+  baseChainId: number,
+  diamond: Address,
+  reports: readonly (UndeliveredReport | undefined)[],
+  deadline: number,
+): Promise<void> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const posts = reports.flatMap((r) => (r ? [...r.entries].map(([reason, list]) => ({ path: r.path, reason, list })) : []));
+  const first = Math.floor(Math.random() * posts.length);
+  for (let i = 0; i < posts.length; i++) {
+    if (Date.now() >= deadline) break;
+    const { path, reason, list } = posts[(first + i) % posts.length];
+    // Contained by the digest itself: a failed post is logged and stays due.
+    // eslint-disable-next-line no-await-in-loop
+    await sendOpsAlertDigest(
+      env,
+      (count) => undeliveredAlertHeader(path, reason, baseChainId, count),
+      list,
+      undeliveredAlertFooter(path, reason),
+      UNDELIVERED_ALERT_REPEAT_SEC,
+      nowSec,
+      baseChainId,
+    );
+  }
+  for (const r of reports) {
+    if (!r || Date.now() >= deadline) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern(r.path, baseChainId, diamond));
+      for (const key of open) {
+        const k = parseUndeliveredAlertKey(key);
+        if (!k || !r.holding.has(k.remitId) || r.holding.get(k.remitId) === k.reason) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await resolveOpsAlert(env, key);
+      }
+    } catch (err) {
+      console.error(`[keeper] remitAck${r.path === 'late' ? ' late' : ''} alert reconciliation failed this run (new alerts were still sent): ${(err as Error).message}`);
+    }
   }
 }
 
@@ -499,8 +543,8 @@ async function reportUndelivered(
  * the scan already proves and with no read: every id below the frontier is
  * terminal by construction (the frontier is the contiguous terminal prefix),
  * and so is every id this window read as acknowledged or released. A terminal
- * reservation never returns to Pending. Contained like
- * {@link reportUndelivered}.
+ * reservation never returns to Pending. Contained: a failure is logged and
+ * never unwinds the pass.
  */
 async function clearSettledPendingAlerts(
   env: Env,
@@ -735,8 +779,8 @@ async function planLateDeliveries(
     return mirrorCfg ? [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }] : [];
   });
   const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
-  await reportUndelivered(env, publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);
-  return { late: true, candidates, receipts, attempts };
+  const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);
+  return { late: true, candidates, receipts, attempts, undelivered };
 }
 
 /** What a released candidate still waits on, as Base shows it (#2561 r2): the
