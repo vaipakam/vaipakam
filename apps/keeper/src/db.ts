@@ -1000,6 +1000,22 @@ export async function listOpenWork<T>(
   kind: WorkKind,
   limit: number,
 ): Promise<WorkItem<T>[]> {
+  return (await listOpenWorkPage<T>(db, chainId, diamond, kind, limit)).items;
+}
+
+/**
+ * {@link listOpenWork}, with how many rows the page READ (`rows`) beside the
+ * items it could parse. A row whose payload is unreadable is left queued and
+ * skipped, so `rows > items.length` tells a caller that measures the whole
+ * queue that it did not see all of it (Codex #2599 r3).
+ */
+export async function listOpenWorkPage<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  limit: number,
+): Promise<{ items: WorkItem<T>[]; rows: number }> {
   const rows = await db
     .prepare(
       `SELECT item, block, payload FROM keeper_work_open
@@ -1008,15 +1024,16 @@ export async function listOpenWork<T>(
     )
     .bind(chainId, diamond.toLowerCase(), kind, limit)
     .all<{ item: string; block: number; payload: string }>();
-  const out: WorkItem<T>[] = [];
-  for (const r of rows.results ?? []) {
+  const items: WorkItem<T>[] = [];
+  const read = rows.results ?? [];
+  for (const r of read) {
     try {
-      out.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+      items.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
     } catch {
       console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
     }
   }
-  return out;
+  return { items, rows: read.length };
 }
 
 /** Stamp `items` as checked now, moving them to the back of the rotation. */
@@ -1029,6 +1046,25 @@ export async function touchOpenWork(db: KeeperD1, chainId: number, diamond: stri
       .bind(...c.binds)
       .run();
   }
+}
+
+/** Which of `items` are still OPEN work of `kind` on `(chainId, diamond)`. */
+export async function openWorkAmong(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  items: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    const rows = await db
+      .prepare(`SELECT item FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .all<{ item: string }>();
+    for (const r of rows.results ?? []) out.add(r.item);
+  }
+  return out;
 }
 
 /** Retire `items` — only on an on-chain read that shows them finished. */
@@ -1249,6 +1285,32 @@ export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: numb
     )
     .bind(key, nowSec, chainId)
     .run();
+}
+
+/** When each of `keys` was last delivered, for the keys that have been (#2599
+ *  r4: one read for a digest, not one per key). */
+export async function getOpsAlertsSentAt(db: KeeperD1, keys: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const c of chunkD1InList(keys)) {
+    const rows = await db
+      .prepare(`SELECT alert_key, last_sent_at FROM keeper_ops_alert WHERE alert_key IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .all<{ alert_key: string; last_sent_at: number }>();
+    for (const r of rows.results ?? []) out.set(r.alert_key, r.last_sent_at);
+  }
+  return out;
+}
+
+/** Record several DELIVERED ops alerts in one batch — the keys a single digest
+ *  post carried (first delivery keeps `first_seen_at`). */
+export async function recordOpsAlertsSent(db: KeeperD1, keys: readonly string[], nowSec: number, chainId: number | null = null): Promise<void> {
+  if (keys.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
+     VALUES (?1, ?2, ?2, ?3)
+     ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
+  );
+  await db.batch(keys.map((k) => stmt.bind(k, nowSec, chainId)));
 }
 
 /** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key

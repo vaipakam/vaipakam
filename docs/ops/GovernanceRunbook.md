@@ -1846,9 +1846,13 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   pass is the keeper's `deliveryProof`. It discovers every budget delivery
   from the indexer's event ledger, takes the three routes, and applies the
   bitmap reconstruction rule below. It ships with #2497's re-cut and runs only
-  with `REWARD_DELIVERY_PROOF_ENABLED` set. Its operator alerts are not built
-  yet (#2516), so watch its journal lines. Until it is deployed AND verified on
-  that mirror, leave the gate dark — the arm is irreversible and its
+  with `REWARD_DELIVERY_PROOF_ENABLED` set. Its operator alerts (#2516) go to
+  the ops chat per mirror: a delivery still not whole ten minutes after it
+  arrived, and a proof or index call refused for anything but "already done".
+  "Verified" on a mirror means: deliveries that arrived there were indexed or
+  proven within those ten minutes (the journal's `deliveryProof` lines, and the
+  delivery's chunks reading as landed on chain), and neither alert is open.
+  Until it is deployed AND verified on that mirror, leave the gate dark — the arm is irreversible and its
   precondition is that pass running there (Codex #2489 r13). A mirror past custody era 0 may arm:
   Base stamps every remittance with the destination's own reported era and a
   retired era's delivery opens its epoch (the custody-era revision), so no

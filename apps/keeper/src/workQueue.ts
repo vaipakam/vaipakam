@@ -38,11 +38,11 @@ export async function discoverWork<T>(
   kind: WorkKind,
   floor: number,
   readPage: (from: number, through: number, limit: number) => Promise<{ items: WorkItem<T>[]; next: number }>,
-): Promise<number> {
+): Promise<{ found: number; caughtUp: boolean }> {
   let from = Math.max(floor, await getWorkCursor(env.KEEPER_DB, chainId, diamond, kind));
   // Read ONCE, before any page: everything at or below it is already written.
   const through = await indexedThrough(env.DB, chainId);
-  if (through === null) return 0;
+  if (through === null) return { found: 0, caughtUp: false };
   let found = 0;
   for (let i = 0; i < DISCOVER_PAGES_PER_TICK && from <= through; i++) {
     // eslint-disable-next-line no-await-in-loop
@@ -54,5 +54,8 @@ export async function discoverWork<T>(
     found += page.items.length;
     from = page.next;
   }
-  return found;
+  // Caught up: every event the indexer had recorded when this run started is
+  // now in the queue (or was not work). A pass that alerts on "every open
+  // item" reads this before it treats the queue as the whole set.
+  return { found, caughtUp: from > through };
 }

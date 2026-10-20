@@ -51,6 +51,7 @@ function packet(over: Partial<PacketState> = {}): PacketState {
     chunkCount: 0,
     chunksIndexed: 0n,
     disposed: 0n,
+    arrivedAt: 0,
     dayCount: 0,
     freshShare: 0n,
     recycledShare: 0n,
@@ -124,7 +125,7 @@ describe('planDelivery — flat', () => {
   it('indexes one page while the epoch index is short of whole, then stops (straddle)', () => {
     const base = { packetHash: H, packet: packet({ dayListHash: H, batchId: BATCH }), flatDays: list, rootedDays: null, flatAllLanded: false };
     expect(planDelivery({ ...base, batch: { dayCount: 3, indexedDays: 2 } })).toEqual([
-      { kind: 'indexPage', batchId: BATCH, dayIds: list },
+      { kind: 'indexPage', batchId: BATCH, dayIds: list, indexedFrom: 2 },
     ]);
     expect(planDelivery({ ...base, batch: { dayCount: 3, indexedDays: 3 } }), 'whole: the writer would refuse').toEqual([]);
   });
