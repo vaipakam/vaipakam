@@ -2371,7 +2371,10 @@ chain, from the keeper machine's journal:
 2. after arming the knob, the next due run shows `touch=N landed=N` with no
    `reverted`, and the indexer files `RewardEntryHorizonStamped` for the
    claimable entries it touched;
-3. no `horizon-unlanded` or `horizon-refused` ops alert open for the chain.
+3. no `horizon-overdue` or `horizon-refused` ops alert open for the chain.
+   `horizon-overdue` names entries not reached for 24 hours, whether their
+   touches are not landing or the chain has more live entries than the pass
+   reaches (about 3,600 per 12-hour heartbeat; the alert states the figure).
 
 A `horizon-paused` alert after arming is not by itself a fault: it names
 entries whose clock did not advance across two landed touches, which is what an

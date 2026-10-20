@@ -224,7 +224,7 @@ const CLASSIFICATION = {
   },
   keeper_horizon_entry: {
     class: 'decision-needed',
-    reason: "keeper claim-horizon heartbeat queue (#2517), keeper-private; disposable ONLY together with keeper_horizon_cursor — clearing both re-discovers from entry id 1 and drops each settled entry after one on-chain read, at the cost of the stuck-clock and unlanded-touch history; clearing this one alone loses the entries behind the cursor — #1481",
+    reason: "keeper claim-horizon heartbeat queue (#2517), keeper-private; disposable ONLY together with keeper_horizon_cursor — clearing both re-discovers from entry id 1 and drops each settled entry after one on-chain read, at the cost of the stuck-clock and overdue history; clearing this one alone loses the entries behind the cursor — #1481",
   },
   keeper_horizon_cursor: {
     class: 'decision-needed',

@@ -19,14 +19,14 @@ import {
   MAX_WRITES_PER_RUN,
   PAUSED_ALERT_RUNS,
   SWEEP_BATCH,
-  UNLANDED_AFTER_SEC,
+  DUE_SLICE,
+  OVERDUE_AFTER_SEC,
   heartbeatOnce,
   isSettled,
   isTouchable,
   isUnallocated,
   pausedRunsAfter,
   planHeartbeat,
-  unlandedEntries,
   type RewardEntryView,
 } from '../src/rewardHorizonHeartbeat';
 import type { HorizonEntryRow } from '../src/db';
@@ -85,19 +85,25 @@ describe('the pure rules', () => {
 
   describe('pausedRunsAfter — the removal estimate across two landed touches', () => {
     const prev = { touchedAt: 1_000, expiresAt: 50_000_000, pausedRuns: 1 };
+    const now = 1_000 + HEARTBEAT_SEC;
     it('an estimate that held still means the clock advanced: the count resets', () => {
-      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 })).toBe(0);
-      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_010 })).toBe(0);
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 }, now)).toBe(0);
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_010 }, now)).toBe(0);
     });
-    it('an estimate that moved forward by the interval means it paused: the count grows', () => {
-      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 + HEARTBEAT_SEC })).toBe(2);
+    it('an estimate that moved forward by the time between the reads means it paused: the count grows', () => {
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 + HEARTBEAT_SEC }, now)).toBe(2);
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 + HEARTBEAT_SEC - 600 }, now), 'within the tolerance').toBe(2);
+    });
+    it('a horizon retune moves the estimate by days, not by the interval: never a pause (Codex #2596 r1)', () => {
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 + 30 * 86_400 }, now)).toBe(0);
+      expect(pausedRunsAfter(prev, { firstClaimableAt: 500, expiresAt: 50_000_000 - 30 * 86_400 }, now)).toBe(0);
     });
     it('is not comparable without a previous landed touch, a previous countdown, or a started clock', () => {
       const later = { firstClaimableAt: 500, expiresAt: 50_000_000 + HEARTBEAT_SEC };
-      expect(pausedRunsAfter({ ...prev, touchedAt: 0 }, later)).toBe(0);
-      expect(pausedRunsAfter({ ...prev, expiresAt: 0 }, later)).toBe(0);
-      expect(pausedRunsAfter(prev, { ...later, firstClaimableAt: 0 })).toBe(0);
-      expect(pausedRunsAfter(prev, { ...later, expiresAt: 0 })).toBe(0);
+      expect(pausedRunsAfter({ ...prev, touchedAt: 0 }, later, now)).toBe(0);
+      expect(pausedRunsAfter({ ...prev, expiresAt: 0 }, later, now)).toBe(0);
+      expect(pausedRunsAfter(prev, { ...later, firstClaimableAt: 0 }, now)).toBe(0);
+      expect(pausedRunsAfter(prev, { ...later, expiresAt: 0 }, now)).toBe(0);
     });
   });
 
@@ -109,26 +115,13 @@ describe('the pure rules', () => {
       [2, { entry: entry(), expiry: { firstClaimableAt: 5, expiresAt: 99 } }],
       [3, null],
     ]);
-    expect(planHeartbeat(rows, reads, 365)).toEqual({
+    expect(planHeartbeat(rows, reads, 365, 10_000)).toEqual({
       settled: [1],
       idle: [],
       touch: [{ entryId: 2, expiresAt: 99, pausedRuns: 0 }],
       unread: [3, 4],
     });
-    expect(planHeartbeat(rows, reads, 0).idle).toEqual([2]);
-  });
-
-  it('unlandedEntries names only due touches that did not land and have waited two heartbeats', () => {
-    const now = 10_000_000;
-    const old = now - UNLANDED_AFTER_SEC - 1;
-    const rows = [
-      row({ entryId: 1, touchedAt: old }),
-      row({ entryId: 2, touchedAt: now - 60 }),
-      row({ entryId: 3, touchedAt: 0, addedAt: old }),
-      row({ entryId: 4, touchedAt: old }),
-      row({ entryId: 5, touchedAt: old }),
-    ];
-    expect(unlandedEntries(rows, new Set([1, 2, 3, 4]), new Set([4]), now)).toEqual([1, 3]);
+    expect(planHeartbeat(rows, reads, 0, 10_000).idle).toEqual([2]);
   });
 });
 
@@ -155,6 +148,9 @@ class FakeChain {
   refuse: string | null = null;
   /** Make every receipt revert. */
   receiptReverts = false;
+  /** A batch of more than this many entries reverts as a WHOLE (a pool limit
+   *  on the batch's total), though each entry goes through alone. */
+  maxTogether = Number.POSITIVE_INFINITY;
   sent: number[][] = [];
 
   readContract = async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
@@ -186,6 +182,7 @@ class FakeChain {
     const ids = (args[0] as bigint[]).map(Number);
     const bad = ids.find((id) => this.failing.has(id));
     if (bad !== undefined) throw Object.assign(new Error('raw message, never printed'), { shortMessage: `entry ${bad} boom` });
+    if (ids.length > this.maxTogether) throw revert('InteractionPoolReservedShortfall');
     return { result: 0n };
   };
 
@@ -302,14 +299,14 @@ describe('a run', () => {
     for (let id = 1; id <= 3; id++) chain.entries.set(id, entry());
     chain.failing.add(2);
     await run();
-    expect(chain.sent).toEqual([[1, 3]]);
+    expect(chain.sent, 'halved until the bad entry is alone').toEqual([[1], [3]]);
     expect(alerts(/touch of reward entry 2 reverts \(entry 2 boom\)/)).toHaveLength(1);
 
     // The alert as the ops bot would have recorded it.
     keeper.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id) VALUES (?, ?, ?, ?)`).run(`horizon-revert:${CHAIN}:2`, 1, 1, CHAIN);
     chain.failing.clear();
     await run();
-    expect(chain.sent[1], 'the failed entry stayed due and is retried next run').toEqual([2]);
+    expect(chain.sent.at(-1), 'the failed entry stayed due and is retried next run').toEqual([2]);
     expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get()).toEqual({ n: 0 });
   });
 
@@ -324,16 +321,48 @@ describe('a run', () => {
     expect(alerts(/every touch on this chain is refused \(VPFITokenNotSet\)/)).toHaveLength(1);
   });
 
-  it('says when due touches have not landed for two heartbeats', async () => {
+  it('never resends a combination that fails together: the group is halved and each part re-simulated (Codex #2596 r1)', async () => {
+    for (let id = 1; id <= 4; id++) chain.entries.set(id, entry());
+    chain.maxTogether = 2;
+    await run();
+    expect(chain.sent).toEqual([[1, 2], [3, 4]]);
+    expect(alerts(/reverts/), 'no entry is at fault').toHaveLength(0);
+  });
+
+  it('says when entries have not been reached for two heartbeats, with the capacity', async () => {
     chain.entries.set(1, entry());
     await run();
     chain.receiptReverts = true;
     later(DUE_AFTER_SEC);
     await run();
-    expect(alerts(/no landed touch/), 'one failed heartbeat is not yet two').toHaveLength(0);
-    later(UNLANDED_AFTER_SEC);
+    expect(alerts(/not been reached/), 'one failed heartbeat is not yet two').toHaveLength(0);
+    later(OVERDUE_AFTER_SEC);
     await run();
-    expect(alerts(/1 due reward entry has had no landed touch for more than 24h \(id 1\)/)).toHaveLength(1);
+    const [line] = alerts(/not been reached/);
+    expect(line).toMatch(/1 of 1 queued reward entry has not been reached for more than 24h \(id 1\)/);
+    expect(line).toContain(`at most ${DUE_SLICE} an hour`);
+  });
+
+  it('counts an entry never reached at all, not only one whose touch failed', async () => {
+    chain.entries.set(1, entry());
+    await run();
+    // Queued but never finished with (here: more live entries than reached).
+    keeper.db.prepare('UPDATE keeper_horizon_entry SET checked_at = 0, added_at = 0').run();
+    chain.entries.set(1, entry());
+    chain.refuse = 'VPFITokenNotSet';
+    await run();
+    expect(alerts(/1 of 1 queued reward entry has not been reached/)).toHaveLength(1);
+  });
+
+  it('a deliberate pause raises no overdue alert, and clears none', async () => {
+    chain.entries.set(1, entry());
+    await run();
+    keeper.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id) VALUES (?, ?, ?, ?)`).run(`horizon-overdue:${CHAIN}:all`, 1, 1, CHAIN);
+    chain.refuse = 'EnforcedPause';
+    later(OVERDUE_AFTER_SEC + DUE_AFTER_SEC);
+    await run();
+    expect(alerts(/not been reached/)).toHaveLength(0);
+    expect(keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert').all()).toEqual([{ alert_key: `horizon-overdue:${CHAIN}:all` }]);
   });
 
   it('reports a clock that did not advance across two landed touches, and not one that did', async () => {

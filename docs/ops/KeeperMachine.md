@@ -186,7 +186,7 @@ a commit. The template documents each line. In short:
   and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
   and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
   sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
-  here, and the horizon heartbeat its revert, unlanded-touch and paused-clock
+  here, and the horizon heartbeat its revert, overdue-entry and paused-clock
   alerts. With either value unset, every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming `REWARD_SANCTIONS_KEEPER_ENABLED`.

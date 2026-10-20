@@ -16,10 +16,18 @@ nothing. While the horizon is off, the pass only keeps its list current and
 finishes the settlement of any reward whose removal had already begun; so it can
 be armed first and the horizon switched on afterwards, and clocks start at once.
 It reports to the operations chat when a touch is refused (naming the reward and
-why), when due touches have not landed for two rounds, and when a reward's clock
-did not advance across two landed touches, saying both readings: an owner who
-could not claim in that time (expected), or touches landing without being
-credited (a fault). Its moves of value go only to the recycle bucket, never to
+why); when a reward on its list has not been reached for two rounds, which
+covers both touches that are not landing and more rewards than the pass can
+reach (it handles at most 300 an hour per chain, about 3,600 per 12-hour round,
+and the message says so); and when a reward's clock did not advance across two
+landed touches, saying both readings: an owner who could not claim in that time
+(expected), or touches landing without being credited (a fault). A stalled
+clock is recognised by its removal estimate moving forward by exactly the time
+between two readings, so a change to the horizon setting, which restarts the
+notice and moves the estimate by days, is not mistaken for one. A deliberate
+protocol pause raises none of these reports. Each transaction carries exactly
+the rewards just simulated together, so a batch that only fails as a whole is
+split rather than resent. Its moves of value go only to the recycle bucket, never to
 the keeper.
 
 The pass ships disarmed behind its own flag, `REWARD_HORIZON_HEARTBEAT_ENABLED`,

@@ -184,7 +184,7 @@ then deploy.
    — never empty one without the other), the claim-horizon heartbeat's
    queue and cursor (`keeper_horizon_entry`, `keeper_horizon_cursor`; both
    empty, the heartbeat re-discovers from entry id 1 and loses only its
-   stuck-clock and unlanded-touch history — again never one without the
+   stuck-clock and overdue history — again never one without the
    other) and the cutover's completion record,
    which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a

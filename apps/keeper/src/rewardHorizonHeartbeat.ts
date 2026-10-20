@@ -30,13 +30,17 @@
 //      cannot advance is a cheap no-op on chain, so every live entry is
 //      touched each heartbeat while the horizon is armed; while it is dark,
 //      only an entry whose removal has begun is (it still needs its
-//      settlement finished). Every batch is SIMULATED first; a batch that
-//      would revert is split so one bad entry costs only itself.
+//      settlement finished). Every transaction carries exactly the entries
+//      just simulated together on the current state; a group that would
+//      revert is halved until each part goes through or one bad entry is left
+//      on its own, so one bad entry costs only itself.
 //   4. ALERT — the OPS channel, for an entry whose touch reverts for a reason
 //      other than the protocol being paused (named, with the reason); for
-//      due entries whose touches have not landed for two heartbeats; and,
-//      while the horizon is armed, for entries whose clock did not advance
-//      across two consecutive landed touches (see {@link pausedRunsAfter}).
+//      queued entries the pass has not finished with for two heartbeats
+//      (whatever the cause: touches not landing, or more live entries than a
+//      heartbeat can reach — the alert states the capacity); and, while the
+//      horizon is armed, for entries whose clock did not advance across two
+//      consecutive landed touches (see {@link pausedRunsAfter}).
 //
 // The pass needs no notification code: the indexer files the free final
 // notice and the removal rows from `RewardEntryExpiryArmed` /
@@ -64,6 +68,7 @@ import {
   getHorizonCursor,
   listDueHorizonEntries,
   listOpsAlertKeys,
+  listOverdueHorizonEntries,
   listPausedHorizonEntries,
   putHorizonCursor,
   recordHorizonTouches,
@@ -87,16 +92,18 @@ export const PASS_CADENCE_SEC = 60 * 60;
  *  with it: one cadence short of the heartbeat, so the hourly run that falls
  *  due first takes it rather than the one after. */
 export const DUE_AFTER_SEC = HEARTBEAT_SEC - PASS_CADENCE_SEC;
-/** Due entries whose last LANDED touch is older than this are reported: two
- *  heartbeats without one is no longer a run that failed once. */
-export const UNLANDED_AFTER_SEC = 2 * HEARTBEAT_SEC;
+/** Queued entries the pass has not finished with for this long are reported
+ *  OVERDUE: two heartbeats is no longer a run that failed once, and it stays
+ *  far inside the contract's seven-day maximum observation gap. */
+export const OVERDUE_AFTER_SEC = 2 * HEARTBEAT_SEC;
 /** Consecutive landed touches across which a clock did not advance before the
  *  pass says so (the issue's "two heartbeats"). */
 export const PAUSED_ALERT_RUNS = 2;
-/** How far the removal estimate may move between two touches and still count
- *  as a clock that advanced. An advancing clock holds the estimate still to the
- *  second; a paused one moves it by the whole interval (eleven hours or more),
- *  so any margin between the two reads the same. */
+/** How closely the removal estimate's forward move must match the time
+ *  between its two reads for the clock to count as NOT advancing. An advancing
+ *  clock holds the estimate still; a stalled one moves it by exactly the time
+ *  between the reads (eleven hours or more), give or take the minutes between
+ *  a read and its touch landing. */
 export const ADVANCE_TOLERANCE_SEC = PASS_CADENCE_SEC;
 
 /** Entries one discovery page reads (the lens clamps at 500). */
@@ -104,7 +111,9 @@ const DISCOVER_PAGE = 200n;
 /** Discovery pages one run reads, so a long history is caught up over a few
  *  runs instead of one run reading it all. */
 const DISCOVER_PAGES_PER_RUN = 5;
-/** Due entries one run reads and may touch. */
+/** Due entries one run reads and may touch. With the hourly cadence this is
+ *  the pass's capacity: about DUE_SLICE × 12 live entries per chain keep a
+ *  12-hour heartbeat; beyond that the overdue alert says so. */
 export const DUE_SLICE = 300;
 /** Entries per read aggregate (two reads each). */
 const READ_CHUNK = 50;
@@ -186,15 +195,19 @@ export function isTouchable(e: RewardEntryView, horizonDays: number): boolean {
  * Comparable only when both reads carry a countdown and the clock had started
  * at the earlier one; otherwise the count restarts at 0.
  */
-export function pausedRunsAfter(row: Pick<HorizonEntryRow, 'touchedAt' | 'expiresAt' | 'pausedRuns'>, now: EntryExpiry): number {
+export function pausedRunsAfter(
+  row: Pick<HorizonEntryRow, 'touchedAt' | 'expiresAt' | 'pausedRuns'>,
+  now: EntryExpiry,
+  nowSec: number,
+): number {
   if (row.touchedAt === 0 || row.expiresAt === 0 || now.firstClaimableAt === 0 || now.expiresAt === 0) return 0;
-  return now.expiresAt > row.expiresAt + ADVANCE_TOLERANCE_SEC ? row.pausedRuns + 1 : 0;
-}
-
-/** When an entry was last known reached: its last landed touch, or when it was
- *  queued if it was never touched. */
-function lastReached(row: Pick<HorizonEntryRow, 'touchedAt' | 'addedAt'>): number {
-  return row.touchedAt > 0 ? row.touchedAt : row.addedAt;
+  // A stalled clock moves the estimate by the time between the reads, not by
+  // some other amount: a horizon RETUNE re-baselines the notice and moves it by
+  // whole days (or back), and must not read as a pause (Codex #2596 r1).
+  const between = nowSec - row.touchedAt;
+  const moved = now.expiresAt - row.expiresAt;
+  const stalled = between > ADVANCE_TOLERANCE_SEC && Math.abs(moved - between) <= ADVANCE_TOLERANCE_SEC;
+  return stalled ? row.pausedRuns + 1 : 0;
 }
 
 /** What one run does with the due entries it read. Pure. */
@@ -213,6 +226,7 @@ export function planHeartbeat(
   rows: readonly HorizonEntryRow[],
   reads: ReadonlyMap<number, { entry: RewardEntryView; expiry: EntryExpiry } | null>,
   horizonDays: number,
+  nowSec: number,
 ): HeartbeatPlan {
   const plan: HeartbeatPlan = { settled: [], idle: [], touch: [], unread: [] };
   for (const row of rows) {
@@ -223,22 +237,9 @@ export function planHeartbeat(
     }
     if (isSettled(r.entry)) plan.settled.push(row.entryId);
     else if (!isTouchable(r.entry, horizonDays)) plan.idle.push(row.entryId);
-    else plan.touch.push({ entryId: row.entryId, expiresAt: r.expiry.expiresAt, pausedRuns: pausedRunsAfter(row, r.expiry) });
+    else plan.touch.push({ entryId: row.entryId, expiresAt: r.expiry.expiresAt, pausedRuns: pausedRunsAfter(row, r.expiry, nowSec) });
   }
   return plan;
-}
-
-/** Entries due a touch this run that did not get one landed, and whose last
- *  landed touch (or queueing) is older than {@link UNLANDED_AFTER_SEC}. Pure. */
-export function unlandedEntries(
-  rows: readonly HorizonEntryRow[],
-  touchedIds: ReadonlySet<number>,
-  landedIds: ReadonlySet<number>,
-  nowSec: number,
-): number[] {
-  return rows
-    .filter((r) => touchedIds.has(r.entryId) && !landedIds.has(r.entryId) && nowSec - lastReached(r) > UNLANDED_AFTER_SEC)
-    .map((r) => r.entryId);
 }
 
 export async function runRewardHorizonHeartbeat(env: Env, tick: PassTick): Promise<void> {
@@ -302,7 +303,7 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   const rows = await listDueHorizonEntries(env.KEEPER_DB, chainId, diamond, dueBefore, DUE_SLICE);
   const dueTotal = rows.length < DUE_SLICE ? rows.length : await countDueHorizonEntries(env.KEEPER_DB, chainId, diamond, dueBefore);
   const reads = await readEntries(deps.readClient, diamond, rows.map((r) => r.entryId), deps.sendDeadline, chainId);
-  const plan = planHeartbeat(rows, reads, horizonDays);
+  const plan = planHeartbeat(rows, reads, horizonDays, nowSec);
 
   await finishHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.settled);
   await checkHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.idle, nowSec);
@@ -328,11 +329,9 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
     horizonDays,
     reverted: outcome.reverted,
     clearedIds: new Set([...outcome.landed, ...plan.settled]),
-    unlanded: unlandedEntries(rows, new Set(plan.touch.map((t) => t.entryId)), outcome.landed, nowSec),
-    // A run that could not read every due entry it listed cannot say none is
-    // stale, so it never clears that alert. (Without a signing key nothing
-    // lands, and the stale entries are reported as exactly that.)
-    unlandedMeasured: plan.unread.length === 0,
+    // A deliberate pause refuses every touch and is not a fault: the overdue
+    // report is neither raised nor cleared while it stands (Codex #2596 r1).
+    measureOverdue: outcome.refused !== PAUSED_REFUSAL,
     refused: outcome.attempted ? outcome.refused : 'unmeasured',
     nowSec,
     deadline: deps.runDeadline,
@@ -421,40 +420,41 @@ interface TouchOutcome {
   attempted: boolean;
 }
 
-/** Sweep `ids` in batches, simulated first; a batch that would revert is split
- *  into single-entry simulations so one bad entry costs only itself. */
+/** Sweep `ids` in batches of {@link SWEEP_BATCH}. Every transaction carries
+ *  exactly the group just simulated on the current state (after the previous
+ *  send landed): a group that would revert is halved and each half simulated
+ *  again, so a constraint only the COMBINATION breaks — a pool limit on the
+ *  batch's total, say — splits the group instead of resending it (Codex #2596
+ *  r1), and one bad entry is left on its own with its reason. */
 async function touchAll(ctx: KeeperContext, ids: readonly number[]): Promise<TouchOutcome> {
   const out: TouchOutcome = { landed: new Set(), reverted: new Map(), refused: null, attempted: false };
   let writes = MAX_WRITES_PER_RUN;
-  for (let i = 0; i < ids.length && writes > 0; i += SWEEP_BATCH) {
+  const pending: number[][] = [];
+  for (let i = 0; i < ids.length; i += SWEEP_BATCH) pending.push(ids.slice(i, i + SWEEP_BATCH));
+  while (pending.length > 0 && writes > 0) {
     if (Date.now() >= ctx.notAfterMs) break;
-    let batch = ids.slice(i, i + SWEEP_BATCH);
+    const group = pending.shift()!;
     out.attempted = true;
     // eslint-disable-next-line no-await-in-loop
-    const sim = await simulate(ctx, batch);
+    const sim = await simulate(ctx, group);
     if (sim === 'deadline') break;
     if (sim !== 'ok') {
       if (CHAIN_WIDE_REFUSALS.has(sim)) {
         out.refused = sim;
         break;
       }
-      // Isolate: each entry on its own, so the rest of the batch still goes.
-      const ok: number[] = [];
-      for (const id of batch) {
-        // eslint-disable-next-line no-await-in-loop
-        const one = await simulate(ctx, [id]);
-        if (one === 'deadline') break;
-        if (one === 'ok') ok.push(id);
-        else out.reverted.set(id, one);
+      if (group.length === 1) out.reverted.set(group[0], sim);
+      else {
+        const mid = Math.ceil(group.length / 2);
+        pending.unshift(group.slice(0, mid), group.slice(mid));
       }
-      batch = ok;
-      if (batch.length === 0) continue;
+      continue;
     }
     writes -= 1;
     // eslint-disable-next-line no-await-in-loop
-    const sent = await send(ctx, batch);
-    if (sent.kind === 'landed') batch.forEach((id) => out.landed.add(id));
-    else if (sent.kind === 'reverted') batch.forEach((id) => out.reverted.set(id, sent.reason));
+    const sent = await send(ctx, group);
+    if (sent.kind === 'landed') group.forEach((id) => out.landed.add(id));
+    else if (sent.kind === 'reverted') group.forEach((id) => out.reverted.set(id, sent.reason));
     else if (sent.kind === 'stop') break;
   }
   return out;
@@ -522,10 +522,9 @@ export interface HeartbeatAlertInput {
   reverted: ReadonlyMap<number, string>;
   /** Entries whose earlier revert alert this run disproves (landed or settled). */
   clearedIds: ReadonlySet<number>;
-  /** Due entries without a landed touch for two heartbeats. */
-  unlanded: readonly number[];
-  /** False when the run could not look at every due entry it listed. */
-  unlandedMeasured: boolean;
+  /** False when the overdue report must be neither raised nor cleared (a
+   *  deliberate pause refused this run's touches). */
+  measureOverdue: boolean;
   /** A chain-wide refusal; null when the sends ran; 'unmeasured' when none was tried. */
   refused: string | null | 'unmeasured';
   nowSec: number;
@@ -570,10 +569,20 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     );
   }
 
-  if (m.unlanded.length > 0 || m.unlandedMeasured) {
-    await toggle(`horizon-unlanded:${chainId}:all`, m.unlanded.length > 0, () =>
-      `${tag}: ${m.unlanded.length} due reward entr${m.unlanded.length === 1 ? 'y has' : 'ies have'} had no landed touch for more than ${UNLANDED_AFTER_SEC / 3600}h (${names(m.unlanded)}). ` +
-        `An interval between two touches longer than the contract's maximum observation gap (seven days) is not counted toward expiry — the safe direction, but the clocks stop being measured. Check the keeper's sends and its gas on this chain.`,
+  // The overdue report reads the queue as the run left it, so it covers every
+  // queued entry — those this run never reached as well as those it touched.
+  if (m.measureOverdue) {
+    let overdue: { ids: number[]; total: number; queued: number };
+    try {
+      overdue = await listOverdueHorizonEntries(env.KEEPER_DB, chainId, diamond, m.nowSec - OVERDUE_AFTER_SEC, ALERT_NAMES);
+    } catch (err) {
+      console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: overdue count unread: ${shortErr(err)}`);
+      return;
+    }
+    await toggle(`horizon-overdue:${chainId}:all`, overdue.total > 0, () =>
+      `${tag}: ${overdue.total} of ${overdue.queued} queued reward entr${overdue.queued === 1 ? 'y' : 'ies'} ha${overdue.total === 1 ? 's' : 've'} not been reached for more than ${OVERDUE_AFTER_SEC / 3600}h (${names(overdue.ids, overdue.total)}): no landed touch, and no read showing nothing to send. ` +
+        `Either their touches are not landing (check this chain's sends and gas, and any revert alert), or there are more live entries than the pass reaches: it handles at most ${DUE_SLICE} an hour, about ${DUE_SLICE * (HEARTBEAT_SEC / 3600)} per ${HEARTBEAT_SEC / 3600}h heartbeat. ` +
+        `An interval between two touches longer than the contract's maximum observation gap (seven days) is not counted toward expiry — the safe direction, but those clocks stop being measured.`,
     );
   }
 

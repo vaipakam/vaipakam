@@ -1479,3 +1479,37 @@ export async function listPausedHorizonEntries(
     .all<{ entry_id: number }>();
   return { ids: (rows.results ?? []).map((r) => Number(r.entry_id)), total: Number(total?.n ?? 0) };
 }
+
+/** The heartbeat's OVERDUE entries (#2517): queued, live entries the pass has
+ *  not finished with — a landed touch, or a read showing nothing to send —
+ *  since before `before` (an entry never finished with counts from when it was
+ *  queued). Oldest first, at most `limit` ids, with their total and the size of
+ *  the whole queue. */
+export async function listOverdueHorizonEntries(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  before: number,
+  limit: number,
+): Promise<{ ids: number[]; total: number; queued: number }> {
+  const d = diamond.toLowerCase();
+  const counts = await db
+    .prepare(
+      'SELECT COUNT(*) AS queued, COALESCE(SUM(CASE WHEN MAX(checked_at, added_at) < ?3 THEN 1 ELSE 0 END), 0) AS overdue ' +
+        'FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2',
+    )
+    .bind(chainId, d, before)
+    .first<{ queued: number; overdue: number }>();
+  const rows = await db
+    .prepare(
+      'SELECT entry_id FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND MAX(checked_at, added_at) < ?3 ' +
+        'ORDER BY MAX(checked_at, added_at), entry_id LIMIT ?4',
+    )
+    .bind(chainId, d, before, limit)
+    .all<{ entry_id: number }>();
+  return {
+    ids: (rows.results ?? []).map((r) => Number(r.entry_id)),
+    total: Number(counts?.overdue ?? 0),
+    queued: Number(counts?.queued ?? 0),
+  };
+}
