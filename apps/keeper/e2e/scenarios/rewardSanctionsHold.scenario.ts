@@ -23,7 +23,9 @@
  *   3. SETTLEMENT: in the run that finds it Confirmed, the pass settles the
  *      owner's reward (`settleSanctionedInteractionRewards`): the days earned
  *      while flagged are forfeited to the recycle bucket (`VpfiRecycled`,
- *      source ForfeitedReward) and the days earned before are set apart for
+ *      source ForfeitedReward; over the settling pass the bucket moves by
+ *      exactly that credit and nothing else) and the days earned before are
+ *      set apart for
  *      the owner (`RewardSanctionsHeldApart`), which
  *      `getSanctionsHeldReward` then reports. The borrower, never flagged,
  *      forfeits nothing.
@@ -42,6 +44,7 @@ import type { Env } from '../../src/env';
 import { opsBotSink, type OpsBotSink } from '../harness/opsAlerts';
 import { openLoan, repayInFull } from '../harness/lending';
 import { finalizeThrough } from '../harness/rewardDays';
+import { openRecycleWindow, type RecycleReconciliation } from '../harness/recycle';
 
 const DAY = 86_400;
 const HOUR = 3_600;
@@ -78,13 +81,22 @@ async function warpToDay(day: number, hour = 1): Promise<void> {
   await sc.warp(target - now);
 }
 
+/**
+ * The recycle bucket reconciled over the most recent keeper pass alone: its
+ * window opens after the hour's day closes and indexing, immediately before
+ * the pass, so every credit or debit in it is the pass's own.
+ */
+let lastPass: RecycleReconciliation | null = null;
+
 /** One scheduled hour: the indexer catches up, then the keeper pass runs. */
 async function hour(): Promise<void> {
   const today = await sc.rewardDay();
   await finalizeThrough(sc, today - 1);
   await k.indexer!.index();
   await sc.syncClock();
+  const pass = await openRecycleWindow(sc);
   await runRewardSanctionsHold(env, tickNow());
+  lastPass = await pass.close();
 }
 
 interface Status {
@@ -207,6 +219,17 @@ describe('rewardSanctionsHold on a canonical Anvil chain', () => {
     console.log(`[keeper-e2e] sanctions: held apart ${heldApart} wei, forfeited ${forfeited} wei`);
     expect(heldApart).toBeGreaterThan(0n);
     expect(forfeited).toBeGreaterThan(0n);
+
+    // The bucket agrees with the settlement's accounting events. The window
+    // is the settling pass alone (see `lastPass`): its only credits are the
+    // settlement's ForfeitedReward ones, nothing is consumed, and the bucket
+    // moved by exactly the forfeited amount.
+    const pass = lastPass!;
+    expect([...pass.creditTxs]).toEqual([heldApartTx]);
+    expect([...pass.creditedBySource.keys()]).toEqual([FORFEITED_REWARD]);
+    expect(pass.credited).toBe(forfeited);
+    expect(pass.debits).toHaveLength(0);
+    expect(pass.bucketDelta).toBe(forfeited);
 
     // Chain state agrees with the events.
     const [held, heldTotal] = await sc.read<readonly [bigint, bigint]>('getSanctionsHeldReward', [lender()]);

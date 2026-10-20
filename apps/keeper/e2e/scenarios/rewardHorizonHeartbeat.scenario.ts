@@ -31,6 +31,7 @@ import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv'
 import { collectOpsAlerts, type OpsAlertLog } from '../harness/opsAlerts';
 import { openLoan, repayInFull } from '../harness/lending';
 import { finalizeThrough } from '../harness/rewardDays';
+import { openRecycleWindow } from '../harness/recycle';
 
 const DAY = 86_400;
 const HORIZON_DAYS = 180;
@@ -122,8 +123,8 @@ describe('rewardHorizonHeartbeat on a canonical Anvil chain', () => {
 
   it('arms the final notice once the horizon of executable time has accrued, then removes the entries after the notice', async () => {
     const stamped = byEntry(await sc.diamondEvents('RewardEntryHorizonStamped', startBlock));
-    const bucketBefore = await sc.read<bigint>('getRecycleBucket');
-    const sweepFrom = (await sc.blockNumber()) + 1n;
+    // The sweep's window: only heartbeats and clock moves happen in it.
+    const sweep = await openRecycleWindow(sc);
     let armed = new Map<number, DecodedEvent>();
     let begun = new Map<number, DecodedEvent>();
     // Bounded: horizon + notice in STEP_SEC steps, plus slack.
@@ -167,20 +168,15 @@ describe('rewardHorizonHeartbeat on a canonical Anvil chain', () => {
     const expired = await sc.diamondEvents('RewardEntryExpired', startBlock);
     expect(new Set(expired.map((e) => Number(e.args.entryId as bigint)))).toEqual(new Set(entryIds));
     const expiredTotal = expired.reduce((a, e) => a + BigInt(e.args.total as bigint), 0n);
-    const credits = [
-      ...(await sc.diamondEvents('VpfiRecycled', sweepFrom)),
-      ...(await sc.diamondEvents('VpfiRecycledPreLaunch', sweepFrom)),
-    ];
-    expect(credits.length).toBeGreaterThan(0);
-    for (const c of credits) expect(Number(c.args.source)).toBe(EXPIRED_REWARD);
-    const credited = credits.reduce((a, e) => a + BigInt(e.args.amount as bigint), 0n);
-    expect(await sc.diamondEvents('VpfiRecycleConsumed', sweepFrom)).toHaveLength(0);
-    const bucketAfter = await sc.read<bigint>('getRecycleBucket');
-    console.log(`[keeper-e2e] horizon: expired face value ${expiredTotal} wei, credited to the bucket ${credited} wei`);
-    expect(credited).toBeGreaterThan(0n);
-    expect(bucketAfter - bucketBefore).toBe(credited);
+    const r = await sweep.close();
+    console.log(`[keeper-e2e] horizon: expired face value ${expiredTotal} wei, credited to the bucket ${r.credited} wei`);
+    expect([...r.creditedBySource.keys()]).toEqual([EXPIRED_REWARD]);
+    expect(r.consumed).toBe(0n);
+    expect(r.debits).toHaveLength(0);
+    expect(r.credited).toBeGreaterThan(0n);
+    expect(r.bucketDelta).toBe(r.credited);
     // The credit is the fresh share of what expired; it cannot exceed the face value.
-    expect(credited).toBeLessThanOrEqual(expiredTotal);
+    expect(r.credited).toBeLessThanOrEqual(expiredTotal);
 
     // One more heartbeat reads the settled entries and drops them from the queue.
     await sc.warp(12 * 3600);
