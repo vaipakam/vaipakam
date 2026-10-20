@@ -54,16 +54,9 @@ export async function batchedRead(
     // runs and every entry silently reads as unevaluated. Verified against the
     // installed viem: a chunk-level error returns `["failure"]`, it does not
     // throw. This is the liquidator's #1965 finding, and the watcher's
-    // fallback would have been dead code without it.
-    //
-    // `batchSize: 0` means one batch per call, so "every result failed AND
-    // they share one error object identity" is exactly the aggregate-level
-    // case; per-entry reverts carry their own decoded errors.
-    const aggregateFailed =
-      results.length > 0 &&
-      results.every(
-        (r) => r.status === 'failure' && r.error === results[0].error && r.error !== undefined,
-      );
+    // fallback would have been dead code without it. Which results mean that
+    // is {@link isAggregateRejection}'s rule.
+    const aggregateFailed = isAggregateRejection(results);
     if (aggregateFailed) {
       console.error(
         `[keeper] ${label} aggregate3 rejected: ${String(results[0].error).slice(0, 200)} — ${
@@ -81,6 +74,43 @@ export async function batchedRead(
     );
     return degrade(err);
   }
+}
+
+/**
+ * Did the `aggregate3` call ITSELF fail, rather than the reads inside it?
+ *
+ * viem answers both with one `failure` per entry, so the results have to say
+ * which. Two facts tell them apart, and the rule needs both (#2579):
+ *
+ *   - **One error object shared by every entry.** On a rejected aggregate viem
+ *     pushes the same `result.reason` for each call in the batch, while each
+ *     entry's own revert is decoded into a fresh error of its own. With
+ *     `batchSize: 0` there is one batch per call, so two or more entries
+ *     sharing one object can only be the aggregate's rejection.
+ *   - **An error that names `aggregate3`.** With ONE entry, "every entry
+ *     shares the first entry's error" is true of any failure, so identity
+ *     proves nothing: a single loan's own revert used to read as a rejected
+ *     aggregate and was retried serially, logged as an RPC fault. The
+ *     rejection is the error viem's `readContract` raised for the `aggregate3`
+ *     call, and it carries that function's name; an entry's own error carries
+ *     the entry's function name. So a one-entry chunk is a rejection only when
+ *     its error names `aggregate3`, and a genuine RPC rejection of a one-entry
+ *     chunk is still retried.
+ */
+export function isAggregateRejection(results: readonly BatchResult[]): boolean {
+  const first = results[0]?.error;
+  if (first === undefined) return false;
+  if (!results.every((r) => r.status === 'failure' && r.error === first)) return false;
+  return results.length > 1 || namesAggregateCall(first);
+}
+
+/** The error was raised for the `aggregate3` call itself (viem's `functionName` on it). */
+function namesAggregateCall(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { functionName?: unknown }).functionName === 'aggregate3'
+  );
 }
 
 /** One read per contract — the degraded path, kept out of `batchedRead` so both entries share it. */

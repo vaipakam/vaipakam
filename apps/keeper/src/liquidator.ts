@@ -21,7 +21,9 @@
  *   3. **Batch-read `calculateHealthFactor` via Multicall3** — one
  *      eth_call per page of ids instead of N sequential eth_calls.
  *      Cuts the per-chain HF scan from `N × RPC_RTT` to one or two
- *      RPC roundtrips even on busy chains.
+ *      RPC roundtrips even on busy chains. Loans already seen to be
+ *      illiquid are left out: they have no health factor and never
+ *      gain one (#2579).
  *   4. Filter loans with `hf < 1e18` (autonomously liquidatable),
  *      sort ascending by HF — the most at-risk goes first when the
  *      per-tick submit cap is hit, so a thinner cushion still gets
@@ -40,7 +42,7 @@ import { classifyHfReadFailure, hasNoHealthFactorByDesign } from './hfRevert';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
-import { MULTICALL3_ADDRESS } from './multicall3';
+import { batchedRead } from './batchRead';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import { getChainConfigs } from './env';
 import { readCutoffMs, runIndex } from './runWindow';
@@ -64,6 +66,36 @@ const MAX_LIQUIDATIONS_PER_TICK = 12;
 /** HF below which the loan is autonomously liquidatable on-chain. Defined
  *  in `hfLine.ts`, which every pass that must agree on it imports. */
 export { HF_LIQUIDATION_THRESHOLD } from './hfLine';
+
+/**
+ * Active loans this process has seen revert `IlliquidLoanNoRiskMath`, per
+ * chain and Diamond (#2579).
+ *
+ * Such a loan has no health factor and never will: `calculateHealthFactor`
+ * refuses it from the liquidity of its two assets as STAMPED on the loan when
+ * it opened (`collateralLiquidity` / `principalLiquidity`), and nothing writes
+ * those stamps afterwards. So reading it again every tick only spends a read
+ * on an answer already known, and the scan leaves it out once it has said so.
+ *
+ * Keyed by Diamond as well as chain because loan ids restart on a fresh
+ * Diamond. Pruned to the active list whenever the whole list was read, so a
+ * closed loan is forgotten. A restart forgets everything, and the first scan
+ * after it learns the set again with one read per illiquid loan. A
+ * zero-collateral rental (`InvalidLoan`) is NOT remembered: it, too, has no
+ * health factor, but its reason is the loan's current collateral amount rather
+ * than a stamp, so it is read each tick.
+ */
+const knownIlliquid = new Map<string, Set<bigint>>();
+
+function knownIlliquidLoans(chainId: number, diamond: Address): Set<bigint> {
+  const key = `${chainId}:${diamond.toLowerCase()}`;
+  let set = knownIlliquid.get(key);
+  if (set === undefined) {
+    set = new Set();
+    knownIlliquid.set(key, set);
+  }
+  return set;
+}
 
 export async function runLiquidator(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'liquidator')) return;
@@ -166,7 +198,7 @@ async function liquidatePassForChain(
     // from an unscanned one and strand manual coverage indefinitely. The
     // count-read FAILURE above stays silent on purpose — that one genuinely
     // did not scan.
-    logScanComplete(chain, 0, 0, 0);
+    logScanComplete(chain, 0, 0, 0, 0);
     return [];
   }
 
@@ -213,14 +245,24 @@ async function liquidatePassForChain(
     ids.push(...page);
   }
   if (ids.length === 0) {
-    if (pagesComplete) logScanComplete(chain, 0, 0, 0);
+    if (pagesComplete) logScanComplete(chain, 0, 0, 0, 0);
     return [];
   }
 
+  // Loans with no health factor by design are left out of the reads once this
+  // process has seen them say so (#2579). See `knownIlliquidLoans`.
+  const illiquid = knownIlliquidLoans(chain.id, diamond);
+  if (pagesComplete) {
+    // The whole active list was read, so a remembered id missing from it has
+    // closed. Forget it, which keeps the memory the size of the live book.
+    const active = new Set(ids);
+    for (const id of illiquid) if (!active.has(id)) illiquid.delete(id);
+  }
+  const candidates = ids.filter((id) => !illiquid.has(id));
+
   // Batch-read HF via Multicall3 (deployed at the canonical address on
-  // every viem-known chain). Falls back to a serial read if multicall
-  // errors so a chain without Multicall3 (rare on production EVM) still
-  // gets scanned, just slower.
+  // every viem-known chain), through the keeper's one batched reader, which
+  // falls back to serial reads when the aggregate call itself is rejected.
   //
   // EVERY successful reading is kept (`readings`), not just the
   // liquidatable subset: the HF-band inbox pass (#1213 PR 2b) reuses
@@ -228,6 +270,10 @@ async function liquidatePassForChain(
   // loans revert `IlliquidLoanNoRiskMath` and land in the failure
   // bucket — exactly the design split (calendar rows cover them).
   const readings: HfReading[] = [];
+  // Loans in the scan that have no health factor by design: the remembered
+  // illiquid ones skipped above, plus any read this run that reverted for that
+  // reason. Stated on the completion line so it accounts for every active loan.
+  let noHealthFactor = ids.length - candidates.length;
   // Loans whose HF could not be evaluated for a reason that is NOT the
   // by-design illiquid revert. A short `readings` alone does not mean a gap —
   // illiquid loans revert `IlliquidLoanNoRiskMath` and are meant to land in
@@ -236,116 +282,47 @@ async function liquidatePassForChain(
   // loan went unevaluated, and the completion marker must not claim the chain
   // was scanned (Codex #1924 r19).
   let unevaluated = 0;
-  for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
+  for (let i = 0; i < candidates.length; i += HF_MULTICALL_CHUNK) {
     if (Date.now() >= readCutoff) {
       // Unread rather than failed, so not counted as unevaluated; the scan
       // is simply not complete, and the moving walk start reaches them later.
       pagesComplete = false;
       console.log(
-        `[keeper] liquidator chain=${chain.name} read cutoff reached during HF reads; ${ids.length - i} loan(s) left for the next run`,
+        `[keeper] liquidator chain=${chain.name} read cutoff reached during HF reads; ${candidates.length - i} loan(s) left for the next run`,
       );
       break;
     }
-    const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
+    const chunk = candidates.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
       address: diamond,
       abi: RISK_ABI,
       functionName: 'calculateHealthFactor' as const,
       args: [id] as const,
     }));
-    let results: { status: 'success' | 'failure'; result?: unknown; error?: Error }[];
-    try {
-      results = (await client.multicall({
-        contracts,
-        allowFailure: true,
-        blockNumber: pinnedBlock,
-        // REQUIRED, not optional. This client is chainless, so without an
-        // explicit address viem throws `client chain not configured` locally,
-        // the catch below swallows it, and every chunk falls through to the
-        // serial fallback — one subrequest per loan, on every chain, forever.
-        // See src/multicall3.ts (#1946).
-        multicallAddress: MULTICALL3_ADDRESS,
-        // Disable viem's SECOND, size-based split (#1965 r2). Without this the
-        // default is 1024 BYTES (`multicall.js:57`), and each encoded HF call is
-        // 36 bytes — so this already-bounded 100-loan chunk is re-split into
-        // four `aggregate3` requests. Four subrequests per 100 loans, on top of
-        // pagination and the other passes sharing the same per-invocation
-        // ceiling, is most of the saving this change exists to make. The chunk
-        // is bounded by HF_MULTICALL_CHUNK above; viem does not need to bound it
-        // again. `0` disables the split outright (`batchSize > 0` guards it).
-        batchSize: 0,
-      })) as typeof results;
-    } catch (err) {
-      console.error(
-        `[keeper] liquidator chain=${chain.name} multicall chunk ${i}/${ids.length} failed: ${String(err).slice(0, 200)}`,
-      );
-      // Fallback: serial reads for this chunk only.
-      results = [];
-      for (const id of chunk) {
-        try {
-          const hf = (await client.readContract({
-            address: diamond,
-            abi: RISK_ABI,
-            functionName: 'calculateHealthFactor',
-            args: [id],
-            blockNumber: pinnedBlock,
-          })) as bigint;
-          results.push({ status: 'success', result: hf });
-        } catch (subErr) {
-          results.push({ status: 'failure', error: subErr as Error });
-        }
-      }
-    }
-    // THE CATCH ABOVE CANNOT SEE AN AGGREGATE FAILURE (#1965 r2). With
-    // `allowFailure: true`, viem converts a REJECTED `aggregate3` into one
-    // failure result per contract instead of throwing — its own source says so:
-    // "If an error occurred in a `readContract` invocation (ie. network error),
-    // then append the failure reason to each contract result"
-    // (`multicall.js:160-172`). So a chain without this Multicall3 deployment,
-    // or an RPC that rejects the aggregate call, does NOT reach the serial
-    // fallback: every loan in the chunk is silently marked unevaluated and no
-    // liquidation is attempted. That is the exact failure the fallback was
-    // written for, and it was unreachable.
-    //
-    // Detected by IDENTITY, not by guesswork: on an aggregate rejection viem
-    // pushes the SAME `result.reason` object for every call in the batch. With
-    // `batchSize: 0` there is exactly one batch per chunk, so "every result
-    // failed and they all carry the identical error object" is precisely the
-    // aggregate-level case — and cannot be produced by per-loan reverts, which
-    // carry their own decoded errors.
-    const aggregateFailed =
-      results.length === chunk.length &&
-      results.length > 0 &&
-      results.every(
-        (r) => r.status === 'failure' && r.error === results[0].error && r.error !== undefined,
-      );
-    if (aggregateFailed) {
-      console.error(
-        `[keeper] liquidator chain=${chain.name} aggregate3 rejected for chunk ${i}/${ids.length}: ${String(results[0].error).slice(0, 200)} — retrying serially`,
-      );
-      results = [];
-      for (const id of chunk) {
-        try {
-          const hf = (await client.readContract({
-            address: diamond,
-            abi: RISK_ABI,
-            functionName: 'calculateHealthFactor',
-            args: [id],
-            blockNumber: pinnedBlock,
-          })) as bigint;
-          results.push({ status: 'success', result: hf });
-        } catch (subErr) {
-          results.push({ status: 'failure', error: subErr as Error });
-        }
-      }
-    }
+    // `batchedRead` owns the batching rules this pass used to carry inline
+    // (#2579): the explicit Multicall3 address a chainless client needs
+    // (#1946), one `aggregate3` per chunk (`batchSize: 0`, #1965 r2), and
+    // telling a rejected aggregate from the entries' own reverts, including in
+    // a one-entry chunk.
+    const results = await batchedRead(
+      client,
+      contracts,
+      `liquidator chain=${chain.name} chunk ${i}/${candidates.length}`,
+      pinnedBlock,
+    );
     for (let j = 0; j < chunk.length; j++) {
       const r = results[j];
-      if (r.status !== 'success' || typeof r.result !== 'bigint') {
-        if (!isIlliquidRevert(r?.error)) unevaluated += 1;
+      if (r.status === 'success' && typeof r.result === 'bigint') {
+        readings.push({ id: chunk[j], hf: r.result });
         continue;
       }
-      readings.push({ id: chunk[j], hf: r.result as bigint });
+      const kind = classifyHfReadFailure(r?.error);
+      if (kind === 'illiquid') illiquid.add(chunk[j]);
+      // Illiquid, or a zero-collateral rental: no health factor by design,
+      // so its absence from `readings` is the design working. Only the rest
+      // is a gap in the scan.
+      if (hasNoHealthFactorByDesign(kind)) noHealthFactor += 1;
+      else unevaluated += 1;
     }
   }
   if (unevaluated > 0) {
@@ -356,7 +333,7 @@ async function liquidatePassForChain(
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
   if (atRisk.length === 0) {
-    if (pagesComplete && unevaluated === 0) logScanComplete(chain, readings.length, 0, 0);
+    if (pagesComplete && unevaluated === 0) logScanComplete(chain, readings.length, 0, 0, noHealthFactor);
     return readings;
   }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
@@ -384,26 +361,9 @@ async function liquidatePassForChain(
     if (submitted) submits += 1;
   }
   if (pagesComplete && unevaluated === 0) {
-    logScanComplete(chain, readings.length, atRisk.length, submits);
+    logScanComplete(chain, readings.length, atRisk.length, submits, noHealthFactor);
   }
   return readings;
-}
-
-/**
- * Is this HF-read failure an EXPECTED no-health-factor revert rather than a
- * gap? Illiquid loans, and zero-collateral NFT rentals (`InvalidLoan` on an
- * active id), have none by design (src/hfRevert.ts).
- *
- * Illiquid loans have no oracle and deliberately revert
- * `IlliquidLoanNoRiskMath`; they are covered by calendar rows, not by HF
- * math, so their absence from `readings` is the design working. Treating
- * every failed entry as a scan gap would suppress the completion marker on
- * healthy chains that simply hold illiquid collateral — the false-red half of
- * the r18 finding, in a new place. Only unrecognised failures count.
- */
-function isIlliquidRevert(err: unknown): boolean {
-  // Illiquid, or a zero-collateral rental: no health factor by design.
-  return hasNoHealthFactorByDesign(classifyHfReadFailure(err));
 }
 
 /**
@@ -429,10 +389,13 @@ function logScanComplete(
   scanned: number,
   atRisk: number,
   submitted: number,
+  /** Active loans with no health factor by design (illiquid, or a
+   *  zero-collateral rental), so `scanned + noHealthFactor` is the whole book. */
+  noHealthFactor: number,
 ): void {
   // eslint-disable-next-line no-console
   console.log(
-    `[keeper] liquidator chain=${chain.name} scan complete: scanned=${scanned} atRisk=${atRisk} submitted=${submitted}`,
+    `[keeper] liquidator chain=${chain.name} scan complete: scanned=${scanned} atRisk=${atRisk} submitted=${submitted} noHealthFactor=${noHealthFactor}`,
   );
 }
 
