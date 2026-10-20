@@ -6,7 +6,7 @@ import { copyFileSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TransactionReceiptNotFoundError, decodeFunctionData, getAddress } from 'viem';
+import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
 import { awaitFinality, failureReport, needsAlert, planChains, readConfig, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
 import { SERVICE_CHAINS, loadDeployments } from './sanctions-service.mjs';
@@ -18,7 +18,9 @@ const C = getAddress('0x00000000000000000000000000000000000000c0');
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 const KEY = `0x${'1'.repeat(64)}`;
 
-/** {@link runChain}'s effects against a fake list in state `list`; `sent` collects what was sent. */
+/** {@link runChain}'s effects against a fake list in state `list`; `sent`
+ *  collects what was sent. A sent call is applied to the list, so the next
+ *  finalized read shows it, unless `list.applies` is false. */
 function fakeChain(list, sent, overrides = {}) {
   return {
     readCurrent: async () => ({
@@ -28,7 +30,8 @@ function fakeChain(list, sent, overrides = {}) {
       recordedHash: list.hash ?? ZERO_HASH,
       recordedPendingAdditions: list.pendingAdditions ?? 0,
       recordedPendingDelistings: list.pendingDelistings ?? 0,
-      blockNumber: 100n,
+      blockNumber: list.finalizedBlock ?? 100n,
+      blockHash: `0x${'c'.repeat(64)}`,
     }),
     latestVersion: async () => list.latest ?? list.version,
     roles: async () => ({ adder: list.isAdder ?? true, remover: list.isRemover ?? false, owner: list.isOwner ?? false }),
@@ -36,10 +39,18 @@ function fakeChain(list, sent, overrides = {}) {
       sent.push(call);
       const hash = `0x${String(sent.length).padStart(64, '0')}`;
       onSubmitted(hash);
+      if (list.applies !== false) {
+        Object.assign(list, {
+          version: call.expectedVersion + 1n,
+          addresses: [...list.addresses, ...call.add],
+          hash: HASH,
+          pendingAdditions: call.additionsLeft,
+          pendingDelistings: call.delistingsLeft,
+          finalizedBlock: 300n,
+        });
+      }
       return { hash, blockNumber: 200n + BigInt(sent.length), blockHash: `0x${'b'.repeat(64)}` };
     },
-    // Final where each was included.
-    confirmFinal: async (entries) => entries.map((e) => ({ state: 'final', blockNumber: BigInt(e.blockNumber), blockHash: e.blockHash })),
     ...overrides,
   };
 }
@@ -166,7 +177,7 @@ test('run: one parse feeds every chain, and one chain failing never stops anothe
 
 test('run: a stop part-way keeps what was already sent, and says what may still land', async () => {
   // Not final: the transaction is included, and the report says so.
-  let { chain } = await run({ version: 7n, addresses: [C] }, { confirmFinal: async () => { throw new Error('not final after 40 minutes'); } });
+  let { chain } = await run({ version: 7n, addresses: [C], applies: false }, { finality: fakeClock() });
   assert.equal(chain.status, 'stopped');
   assert.equal(chain.sent.length, 1);
   assert.equal(chain.sent[0].state, 'included');
@@ -261,159 +272,98 @@ test('env template: names every setting the runner reads', () => {
 });
 
 
-// ── Finality: read from the chain's settled history, never decided by one read ──
+// ── Finality: what the list shows at the finalized block, never a receipt ──
 
+/** A fake clock for awaitFinality: `wait` advances `now`. */
+function fakeClock(timeoutMs = 60_000) {
+  let t = 0;
+  return { timeoutMs, pollMs: 15_000, now: () => t, wait: async (ms) => { t += ms; } };
+}
+
+const A1 = getAddress('0x00000000000000000000000000000000000000a1');
+const A2 = getAddress('0x00000000000000000000000000000000000000a2');
 const TX1 = `0x${'1'.repeat(64)}`;
 const TX2 = `0x${'2'.repeat(64)}`;
-const BLOCK_A = `0x${'a'.repeat(64)}`;
-const BLOCK_B = `0x${'b'.repeat(64)}`;
-
-/**
- * A fake chain read as a sequence of polls. `polls[n]` describes poll n (the
- * last one repeats): `head` is the finalized block number (or an Error),
- * `receipts[hash]` a receipt (or an Error), and `blocks[number]` the block
- * hash the chain answers at that height (or an Error). Returns the client and
- * a fake clock that `wait` advances.
- */
-function fakeFinality(polls) {
-  let poll = 0;
-  let t = 0;
-  let headReads = 0;
-  const at = () => polls[Math.min(poll, polls.length - 1)];
-  const answer = (v) => (v instanceof Error ? Promise.reject(v) : Promise.resolve(v));
-  const client = {
-    getBlock: async ({ blockTag, blockNumber }) => {
-      if (blockTag === 'finalized') {
-        // The head is read first in every poll; it marks the poll boundary.
-        if (headReads++ > 0) poll++;
-        return answer(at().head instanceof Error ? at().head : { number: at().head });
-      }
-      const h = at().blocks?.[String(blockNumber)];
-      return answer(h instanceof Error ? h : { hash: h ?? `0x${'f'.repeat(64)}` });
-    },
-    getTransactionReceipt: async ({ hash }) => {
-      const r = at().receipts?.[hash];
-      if (r === undefined) throw new TransactionReceiptNotFoundError({ hash });
-      return answer(r);
-    },
+const entry = (expectedVersion, add, tx = TX1) => ({ expectedVersion: String(expectedVersion), add, tx, blockNumber: '201', state: 'included' });
+const snap = (version, addresses, { hash = HASH, block = 300n } = {}) => ({ version, addresses, recordedHash: hash, blockNumber: block, blockHash: `0x${'c'.repeat(64)}` });
+/** A readCurrent answering `answers` in turn (the last repeats); an Error is thrown. */
+function reads(answers) {
+  let n = 0;
+  const fn = async () => {
+    const a = answers[Math.min(n++, answers.length - 1)];
+    if (a instanceof Error) throw a;
+    return a;
   };
-  return {
-    client,
-    now: () => t,
-    wait: async (ms) => {
-      t += ms;
-    },
-    polls: () => headReads,
-  };
+  fn.count = () => n;
+  return fn;
 }
-const receipt = (blockNumber, blockHash, status = 'success') => ({ blockNumber, blockHash, status });
 
-test('finality: a transaction a reorg included again, at the same height with a new hash, is final in the new block', async () => {
-  // The Base Sepolia case: first seen in block 100 with hash A; at finality
-  // the same transaction is in block 100 with hash B, which is canonical.
-  const f = fakeFinality([{ head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_B) }, blocks: { 100: BLOCK_B } }]);
-  const outcomes = await awaitFinality({ client: f.client, hashes: [TX1], now: f.now, wait: f.wait });
-  assert.deepEqual(outcomes, [{ state: 'final', blockNumber: 100n, blockHash: BLOCK_B }]);
-
-  // Through the run: the chain is applied, the entry names the final block and keeps the first.
-  const { chain, report } = await run({ version: 7n, addresses: [C] }, {
-    send: async (call, { onSubmitted }) => {
-      onSubmitted(TX1);
-      return { hash: TX1, blockNumber: 100n, blockHash: BLOCK_A };
-    },
-    confirmFinal: (entries) => awaitFinality({ client: f.client, hashes: entries.map((e) => e.tx), now: f.now, wait: f.wait }),
-  });
-  assert.equal(report.status, 'ok');
+test('finality: applied means the list at the finalized block shows every call', async () => {
+  const { chain, report } = await run({ version: 7n, addresses: [C] });
   assert.equal(chain.status, 'applied');
   assert.equal(chain.sent[0].state, 'final');
-  assert.equal(chain.sent[0].blockHash, BLOCK_B);
-  assert.deepEqual(chain.sent[0].firstIncludedIn, { blockNumber: '100', blockHash: BLOCK_A });
-  assert.match(summarize(report), /1 of them became final in a different block/);
+  assert.deepEqual(chain.sent[0].finalizedBlock, { number: '300', hash: `0x${'c'.repeat(64)}` });
+  assert.match(summarize(report), /all final \(the list at finalized block 300 shows them\)/);
 });
 
-test('finality: a failed read, a missing receipt, a receipt above the head or a mismatched block is "not yet", never a verdict', async () => {
-  const f = fakeFinality([
-    // The RPC fails outright.
-    { head: new Error('429 Too Many Requests'), receipts: { [TX1]: new Error('429 Too Many Requests') } },
-    // A lagging node has no receipt.
-    { head: 150n, receipts: {} },
-    // Included above the finalized head.
-    { head: 90n, receipts: { [TX1]: receipt(100n, BLOCK_A) } },
-    // Below the head, but the node answers another block at that height.
-    { head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_A) }, blocks: { 100: BLOCK_B } },
-    // The block read fails.
-    { head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_A) }, blocks: { 100: new Error('timeout') } },
-    // Settled.
-    { head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_A) }, blocks: { 100: BLOCK_A } },
-  ]);
-  const outcomes = await awaitFinality({ client: f.client, hashes: [TX1], now: f.now, wait: f.wait });
-  assert.deepEqual(outcomes, [{ state: 'final', blockNumber: 100n, blockHash: BLOCK_A }]);
-  assert.equal(f.polls(), 6);
+test('finality: a failed read or a list not yet past the call is "not yet", never a verdict', async () => {
+  const readCurrent = reads([new Error('429 Too Many Requests'), snap(7n, []), snap(8n, [A1])]);
+  const outcomes = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() });
+  assert.deepEqual(outcomes, [{ state: 'final', finalizedBlock: { number: '300', hash: `0x${'c'.repeat(64)}` } }]);
+  assert.equal(readCurrent.count(), 3);
 });
 
-test('finality: a final transaction is not read again, so a later bad answer cannot unsettle it', async () => {
-  const f = fakeFinality([
-    { head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_A) }, blocks: { 100: BLOCK_A } },
-    // TX1's receipt now fails to read; TX2 lands.
-    { head: 150n, receipts: { [TX1]: new Error('boom'), [TX2]: receipt(120n, BLOCK_B) }, blocks: { 100: new Error('boom'), 120: BLOCK_B } },
-  ]);
-  const outcomes = await awaitFinality({ client: f.client, hashes: [TX1, TX2], now: f.now, wait: f.wait });
+test('finality: a call once shown final stays final, whatever a later read says', async () => {
+  // Call 1 is shown at the first read; a later read reports another publication; call 2 is shown after.
+  const readCurrent = reads([snap(8n, [A1]), snap(8n, [A1], { hash: `0x${'9'.repeat(64)}` }), snap(9n, [A1, A2])]);
+  const outcomes = await awaitFinality({ entries: [entry(7, [A1]), entry(8, [A2], TX2)], readCurrent, sourceHash: HASH, ...fakeClock() });
   assert.deepEqual(outcomes.map((o) => o.state), ['final', 'final']);
-  assert.equal(outcomes[1].blockNumber, 120n);
 });
 
-test('finality: final and reverted stops at once; a deadline reports what is known of each', async () => {
-  let f = fakeFinality([{ head: 150n, receipts: { [TX1]: receipt(100n, BLOCK_A, 'reverted') }, blocks: { 100: BLOCK_A } }]);
-  let err = await awaitFinality({ client: f.client, hashes: [TX1], now: f.now, wait: f.wait }).catch((e) => e);
-  assert.match(err.message, /final in block 100 and REVERTED/);
-  assert.equal(f.polls(), 1, 'conclusive: no further polls');
-  assert.equal(err.outcomes[0].state, 'reverted');
+test('finality: a list past the call without showing it is conclusive; a deadline reports what is unknown', async () => {
+  // Another update took version 7: the list is at 8 and does not list A1.
+  let readCurrent = reads([snap(8n, [A2])]);
+  let err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() }).catch((e) => e);
+  assert.match(err.message, /past version 7 but does not show 0x1+: another update took that version/);
+  assert.equal(readCurrent.count(), 1, 'conclusive: no further reads');
+  assert.equal(err.outcomes[0].state, 'displaced');
+  // Past the version, listing the addresses, but recording another publication: not this call either.
+  err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent: reads([snap(8n, [A1], { hash: `0x${'9'.repeat(64)}` })]), sourceHash: HASH, ...fakeClock() }).catch((e) => e);
+  assert.equal(err.outcomes[0].state, 'displaced');
 
-  // A reverted receipt that is NOT yet final is waited on: a reorg may change it.
-  f = fakeFinality([
-    { head: 90n, receipts: { [TX1]: receipt(100n, BLOCK_A, 'reverted') } },
-    { head: 150n, receipts: { [TX1]: receipt(101n, BLOCK_B) }, blocks: { 101: BLOCK_B } },
-  ]);
-  assert.deepEqual(await awaitFinality({ client: f.client, hashes: [TX1], now: f.now, wait: f.wait }), [{ state: 'final', blockNumber: 101n, blockHash: BLOCK_B }]);
-
-  // Never settled: one never found, one never readable, one above the head.
-  f = fakeFinality([{ head: 90n, receipts: { [TX2]: new Error('503'), [C]: receipt(100n, BLOCK_A) } }]);
-  err = await awaitFinality({ client: f.client, hashes: [TX1, TX2, C], timeoutMs: 60_000, pollMs: 15_000, now: f.now, wait: f.wait }).catch((e) => e);
-  assert.match(err.message, /not final after 1 minutes \(finalized block 90\)/);
-  assert.match(err.message, new RegExp(`${TX1} has no receipt .*it may still land`));
-  assert.match(err.message, new RegExp(`${TX2} could not be read \\(RPC error\\)`));
-  assert.match(err.message, /is in block 100, not yet shown final/);
-  assert.deepEqual(err.outcomes.map((o) => o.state), ['unseen', 'unread', 'included']);
-  assert.ok(f.polls() >= 4 && f.polls() <= 6, 'it polled until the deadline');
+  // Never shown: the list stays behind, then the last read fails.
+  readCurrent = reads([snap(7n, []), snap(7n, []), snap(7n, []), snap(7n, []), new Error('503')]);
+  err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() }).catch((e) => e);
+  assert.match(err.message, /not shown final after 1 minutes: 0x1+ is unknown: the finalized list could not be read/);
+  assert.equal(err.outcomes[0].state, 'unread');
+  readCurrent = reads([snap(7n, [])]);
+  err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() }).catch((e) => e);
+  assert.match(err.message, /\(included in block 201 when sent\) is not shown by the finalized list yet; it may still land/);
+  assert.equal(err.outcomes[0].state, 'included');
+  assert.equal(readCurrent.count(), 5, 'it read until the deadline');
 });
 
 test('finality: what a stopped chain reports for each outcome the check could establish', async () => {
-  for (const [outcome, words] of [
-    [{ state: 'unseen' }, /NO receipt was found when last read — reorganized out or dropped; it may still land/],
-    [{ state: 'unread' }, /receipt could NOT be read .* whether it is final is unknown/],
-    [{ state: 'reverted', blockNumber: 201n, blockHash: `0x${'b'.repeat(64)}` }, /included but REVERTED/],
-    [{ state: 'included', blockNumber: 205n, blockHash: BLOCK_A }, /included, NOT yet final/],
-  ]) {
-    const { chain, report } = await run({ version: 7n, addresses: [C] }, {
-      confirmFinal: async () => {
-        throw Object.assign(new Error('not final'), { outcomes: [outcome] });
-      },
-    });
-    assert.equal(report.status, 'failed');
-    assert.equal(chain.status, 'stopped');
-    assert.equal(chain.sent[0].state, outcome.state);
-    assert.match(summarizeFailure(chain), words);
-  }
-  // The included-elsewhere case keeps the first block next to the one last seen.
-  const { chain } = await run({ version: 7n, addresses: [C] }, {
-    confirmFinal: async () => {
-      throw Object.assign(new Error('not final'), { outcomes: [{ state: 'included', blockNumber: 205n, blockHash: BLOCK_A }] });
-    },
+  // Displaced: another update takes the version before this call lands.
+  let { chain, report } = await run({ version: 7n, addresses: [C], applies: false }, {
+    readCurrent: reads([
+      { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n },
+      snap(8n, [C]),
+    ]),
+    finality: fakeClock(),
   });
-  assert.equal(chain.sent[0].blockNumber, '205');
-  assert.deepEqual(chain.sent[0].firstIncludedIn, { blockNumber: '201', blockHash: `0x${'b'.repeat(64)}` });
-  // A check that returns without confirming every transaction never yields "applied".
-  const short = await run({ version: 7n, addresses: [C] }, { confirmFinal: async () => [] });
-  assert.equal(short.chain.status, 'stopped');
-  assert.match(short.chain.error, /not confirmed final/);
+  assert.equal(report.status, 'failed');
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.sent[0].state, 'displaced');
+  assert.match(summarizeFailure(chain), /NOT applied — the finalized list moved past its version without it/);
+  // Unknown: the list could not be read again after the send.
+  ({ chain } = await run({ version: 7n, addresses: [C], applies: false }, {
+    readCurrent: reads([
+      { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n },
+      new Error('RPC down'),
+    ]),
+    finality: fakeClock(),
+  }));
+  assert.equal(chain.sent[0].state, 'unread');
+  assert.match(summarizeFailure(chain), /whether it is final is UNKNOWN/);
 });

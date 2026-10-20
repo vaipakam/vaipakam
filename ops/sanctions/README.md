@@ -235,20 +235,20 @@ the installed release).
   check), reported as NOT DONE; work that waits by design (a
   window, RedStone's answer, the adder recording a newer publication) does
   not fail it.
-- **The adder** marks a chain `applied` only once every transaction it sent
-  is final: its receipt is in a block at or below the chain's finalized
-  block, and that is the chain's block at that height. It need not be the
-  block the run first saw: a reorg of the unsafe head can include a
-  transaction again at the same height under a new block hash, and the report
-  then records both blocks. No single read decides. A failed RPC read, a node
-  with no receipt yet, or one answering a different block at that height is
-  read again every 15 seconds, for up to 40 minutes. A chain that stops
-  part-way is `stopped`, and lists each transaction it broadcast as final,
-  included but not final, included and reverted, no receipt found when last
-  read (reorganized out or dropped; it may still land), receipt unreadable
-  (unknown), or broadcast with no receipt (it may still land); check those
-  before acting. Every run rebuilds from the list at the finalized block, so
-  the next run follows whatever really happened.
+- **The adder** marks a chain `applied` only once the list, read at the
+  finalized block, shows every call it sent: the list is past the call's
+  version, records the publication and lists every address the call added.
+  That is the same reading every update is computed from (one snapshot, every
+  read pinned to the finalized block's hash). No transaction receipt decides
+  it, since a load-balanced RPC can answer a receipt and the finalized block
+  from replicas on different forks. A failed read is read again every 15
+  seconds, for up to 40 minutes. A chain that stops part-way is `stopped`, and
+  lists each transaction it broadcast as final, included but not yet shown by
+  the finalized list (it may still land), not applied (the list moved past its
+  version without it, so it can never apply), unknown (the list could not be
+  read), included and reverted, or broadcast with no receipt (it may still
+  land); check those before acting. Every run rebuilds from the list at the
+  finalized block, so the next run follows whatever really happened.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
   its outcome unknown, and every pending proposal's state. "Refused" needs
