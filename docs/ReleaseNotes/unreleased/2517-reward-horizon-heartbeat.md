@@ -1,4 +1,4 @@
-## Keeper — the reward claim-horizon heartbeat (PR #<n>)
+## Keeper — the reward claim-horizon heartbeat (PR #2596)
 
 The reward claim horizon (RL-3, #1956) lets a reward that its owner never
 claims be reaped into the recycle bucket, but only after the reward has stayed
