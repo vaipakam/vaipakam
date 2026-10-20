@@ -324,8 +324,12 @@
   //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
   //     observer (every reward chain; its ops-alert table is in the keeper's
   //     private `vaipakam-keeper-db`).
-  //     Both added after the 2026-07-30 readback above, so that readback says
-  //     nothing about them.
+  //   - REWARD_HORIZON_HEARTBEAT_ENABLED — 'true' arms the #2517 reward
+  //     claim-horizon heartbeat (every reward chain; its entry queue and
+  //     cursor are in the keeper's private `vaipakam-keeper-db`). Arm it on a
+  //     chain BEFORE `setRewardClaimHorizonDays` (GovernanceRunbook, M7.2).
+  //     All three added after the 2026-07-30 readback above, so that
+  //     readback says nothing about them.
   //
   //   The ops alert channel those passes report to — TG_OPS_BOT_TOKEN and
   //   TG_OPS_CHAT_ID — is likewise a secret / machine env value (the delivery

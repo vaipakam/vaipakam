@@ -222,6 +222,14 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: "keeper open-work discovery cursor (#2497 r8), keeper-private; disposable — an empty table re-discovers from the active Diamond's deploy block, and re-queuing an item is a no-op — #1481",
   },
+  keeper_horizon_entry: {
+    class: 'decision-needed',
+    reason: "keeper claim-horizon heartbeat queue (#2517), keeper-private; disposable ONLY together with keeper_horizon_cursor — clearing both re-discovers from entry id 1 and drops each settled entry after one on-chain read, at the cost of the stuck-clock and overdue history; clearing this one alone loses the entries behind the cursor — #1481",
+  },
+  keeper_horizon_cursor: {
+    class: 'decision-needed',
+    reason: 'keeper claim-horizon discovery cursor (#2517), keeper-private; disposable — an empty table re-discovers from entry id 1, and re-queuing an entry is a no-op — #1481',
+  },
   keeper_runner_lease: {
     class: 'decision-needed',
     reason: 'one-runner keeper lease (#2503); self-expires within 10 min, so restore needs no step either way — moves to the keeper DB with #2497',

@@ -181,7 +181,11 @@ then deploy.
    open-work queue and its discovery cursor (`keeper_work_open`,
    `keeper_work_cursor`; both empty, the passes re-discover from the active
    Diamond's deploy block and drop each finished item after one on-chain read
-   — never empty one without the other) and the cutover's completion record,
+   — never empty one without the other), the claim-horizon heartbeat's
+   queue and cursor (`keeper_horizon_entry`, `keeper_horizon_cursor`; both
+   empty, the heartbeat re-discovers from entry id 1 and loses only its
+   stuck-clock and overdue history — again never one without the
+   other) and the cutover's completion record,
    which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
    restore it starts EMPTY, exactly as these tables always did (none was
@@ -540,6 +544,7 @@ then deploy.
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
+      | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
       captured the same way: while unset the observer's operator alerts reach
@@ -1809,7 +1814,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    from the offline record. Either way, BEFORE starting, set
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
-   `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`) empty — by editing the
+   `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
+   `REWARD_HORIZON_HEARTBEAT_ENABLED`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

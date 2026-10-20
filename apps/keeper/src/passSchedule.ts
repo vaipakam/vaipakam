@@ -40,6 +40,7 @@ import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runRewardSanctionsHold } from './rewardSanctionsHold';
 import { runDeliveryProof } from './deliveryProof';
+import { runRewardHorizonHeartbeat } from './rewardHorizonHeartbeat';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
 import { runGraceDefault } from './graceDefault';
@@ -228,6 +229,15 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 1,
     why: 'a delivered day waits on its proof before a gated mirror may price it — minutes, not hours; the scan is bounded and idempotent (#1944)',
     run: runDeliveryProof,
+  },
+  {
+    name: 'rewardHorizonHeartbeat',
+    cadenceMinutes: 60,
+    // :44 — clear of every staggered pass (the 5-minute ones sit on :01–:03
+    // modulo 5, preGraceWatcher on :04/:19/:34/:49, rewardSanctionsHold on :14).
+    offsetMinutes: 44,
+    why: 'touches every live reward entry about every 12 h, far inside the 7-day observation gap; hourly spreads the batches and retries a failed touch within the hour (#2517)',
+    run: runRewardHorizonHeartbeat,
   },
 ];
 

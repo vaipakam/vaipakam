@@ -850,7 +850,8 @@ artifacts and stay in their respective env / config:
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
-  `GRACE_DEFAULT_ENABLED`, `RPC_*`, `TG_BOT_TOKEN`,
+  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `RPC_*`,
+  `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
   `ONEINCH_API_KEY`. Every arming flag is `secret_text`, not an
@@ -860,7 +861,8 @@ artifacts and stay in their respective env / config:
   `remitAck` both gate on `REWARD_REMIT_ENABLED`, `commitmentReport` on
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
   `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
-  `REWARD_DELIVERY_PROOF_ENABLED` and `graceDefault` (#2483) on
+  `REWARD_DELIVERY_PROOF_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
+  `REWARD_HORIZON_HEARTBEAT_ENABLED` and `graceDefault` (#2483) on
   `GRACE_DEFAULT_ENABLED`, all added after it. `graceDefault` submits
   `triggerDefault` for past-grace loans; it ships unset, so that pass is
   dark until an owner arms it. All are provisioned the same way when
@@ -956,7 +958,8 @@ deliberate dashboard action.
 - `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
   (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-warm`
   (nightly backup outcomes + weekly healthcheck verdicts) + `apps/keeper`'s
-  reward passes (the #2450 sanctions-hold observer's operator alerts). Posts to a
+  reward passes (the #2450 sanctions-hold observer's and the #2517 horizon
+  heartbeat's operator alerts). Posts to a
   single operator chat (`TG_OPS_CHAT_ID`). The retired `ops/lz-watcher`
   used it too before #1440 removed that Worker and its source.
 

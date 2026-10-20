@@ -186,7 +186,8 @@ a commit. The template documents each line. In short:
   and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
   and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
   sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
-  here. With either value unset, every such alert goes only to the journal,
+  here, and the horizon heartbeat its revert, overdue-entry and paused-clock
+  alerts. With either value unset, every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming `REWARD_SANCTIONS_KEEPER_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
@@ -298,13 +299,16 @@ journalctl -u vaipakam-keeper -f
 3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
    (`graceDefault`), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
    `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
-   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`) and
-   `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly). Arm one at a time and
+   `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
+   `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
+   `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44). Arm one at a time and
    validate that pass's own cadence: its `<pass> done in …` line on the
    minutes `src/passSchedule.ts` gives it, with no error line. A pass left
    unarmed logs that it skipped, so it is never silently off. Leaving the
    delivery-proof pass unarmed leaves mirror-funded days gated. Leaving the
-   sanctions pass unarmed lets held owners' evidence chains lapse.
+   sanctions pass unarmed lets held owners' evidence chains lapse. Leaving the
+   horizon heartbeat unarmed means no reward's claim-horizon clock is ever
+   observed, so an armed horizon expires nothing.
 
 Rollback at any point: set `KEEPER_ENABLED=false` and restart, or stop the
 service (§6). The Worker side needs no change, because its schedule stayed
