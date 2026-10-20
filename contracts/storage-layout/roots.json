@@ -1,0 +1,27 @@
+{
+  "_readme": "Every storage layout that survives an in-place upgrade (#1274 / #2092). `namespaces` are the Diamond's ERC-7201 / hashed-position storage structs: each names the probe contract in src/storage-layout/StorageLayoutProbes.sol that makes the compiler report the struct, the source file that declares the position, and the constant's name. `uups` are the implementation contracts behind UUPS proxies, whose own state variables are the layout. contracts/script/storage-layout-guard.mjs builds layout.golden.json from these and refuses a tree whose namespaced storage or UUPS contracts are not all listed here.",
+  "namespaces": [
+    { "id": "vaipakam", "probe": "StorageLayoutProbeVaipakam", "positionFile": "src/libraries/LibVaipakam.sol", "positionConstant": "VANGKI_STORAGE_POSITION" },
+    { "id": "erc721", "probe": "StorageLayoutProbeERC721", "positionFile": "src/libraries/LibERC721.sol", "positionConstant": "ERC721_STORAGE_POSITION" },
+    { "id": "access-control", "probe": "StorageLayoutProbeAccessControl", "positionFile": "src/libraries/LibAccessControl.sol", "positionConstant": "ACCESS_CONTROL_STORAGE_POSITION" },
+    { "id": "pausable", "probe": "StorageLayoutProbePausable", "positionFile": "src/libraries/LibPausable.sol", "positionConstant": "PAUSABLE_STORAGE_POSITION" },
+    { "id": "reentrancy-guard", "probe": "StorageLayoutProbeReentrancyGuard", "positionFile": "src/libraries/LibReentrancyGuard.sol", "positionConstant": "REENTRANCY_GUARD_STORAGE_POSITION" },
+    { "id": "diamond", "probe": "StorageLayoutProbeDiamond", "positionFile": "lib/diamond-3-hardhat/contracts/libraries/LibDiamond.sol", "positionConstant": "DIAMOND_STORAGE_POSITION" },
+    { "id": "guardian", "probe": "StorageLayoutProbeGuardian", "positionFile": "src/crosschain/GuardianPausable.sol", "positionConstant": "GUARDIAN_STORAGE_LOCATION" }
+  ],
+  "uups": [
+    "VaipakamVaultImplementation",
+    "BackstopVaultImplementation",
+    "AggregatorAdapterImplementation",
+    "CollateralListingExecutor",
+    "VPFIToken",
+    "VPFIMirrorToken",
+    "VpfiPoolRateGovernor",
+    "CcipMessenger",
+    "VaipakamRewardMessenger",
+    "RewardRemittanceReceiver",
+    "BuybackRemittanceReceiver",
+    "VpfiReturnSender",
+    "VpfiReturnReceiver"
+  ]
+}

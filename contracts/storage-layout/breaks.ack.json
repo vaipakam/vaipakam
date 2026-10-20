@@ -1,0 +1,4 @@
+{
+  "_readme": "Acknowledged storage-layout breaks (#1274 / #2092). An entry { baseSha256, lines, reason } accepts exactly the listed ledger lines, and only when compared against the base golden file whose sha256 it names, so it goes inert once that base changes; delete inert entries. Only CI honours an acknowledgement: it records that NO chain may be upgraded in place across the change, and the deploy-time check never reads this file. See docs/DesignsAndPlans/StorageLayoutGuardDesign.md.",
+  "acks": []
+}
