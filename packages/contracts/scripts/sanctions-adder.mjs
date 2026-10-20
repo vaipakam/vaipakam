@@ -230,6 +230,17 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
     }
     return { status: 'applied', finalizedAt: confirmed.finalizedBlock, listAfter: summary(confirmed.list), ...report(confirmed.list) };
   } catch (e) {
+    // Once anything was broadcast, the list may have moved on from the
+    // reading the update was built on. Unless the finality wait already read
+    // it again, the report reads it once more, and says it is unknown when
+    // that read fails, rather than stating the older reading as current.
+    if (context.list === current && progress.some((p) => p.tx && p.state !== 'rejected')) {
+      try {
+        context.list = await readCurrent();
+      } catch {
+        context.list = null;
+      }
+    }
     throw Object.assign(e instanceof Error ? e : new Error(String(e)), { chainContext: context });
   }
 }

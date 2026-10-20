@@ -449,6 +449,36 @@ test('finality: a stopped chain still reports what the last finalized reading de
   assert.match(summarizeFailure(chain), /As last read \(finalized block 100, version 7\), the list declares 0 addition\(s\) and 0 delisting\(s\) outstanding, for no publication yet/);
 });
 
+test('finality: a send that fails after a broadcast reports the list as read again, or as unknown', async () => {
+  // Broadcast, then the receipt wait failed: the list is read once more for the report.
+  const timeout = async (call, { onSubmitted }) => {
+    onSubmitted(`0x${'e'.repeat(64)}`);
+    throw new Error('receipt timeout');
+  };
+  let readCurrent = reads([BASE, snap(8n, [C, A1], { block: 310n })]);
+  let { chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent });
+  assert.equal(chain.status, 'stopped');
+  assert.equal(readCurrent.count(), 2, 'read again after the failed send');
+  assert.deepEqual(chain.outstandingAt, { finalizedBlock: '310', atVersion: '8', publication: 'this' });
+  assert.equal(chain.delistingsNamed, false, 'not the state the delistings were computed from');
+  // The read after it fails: what the list declares is unknown, not the older reading.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent: reads([BASE, new Error('RPC down')]) }));
+  assert.equal(chain.outstandingAt, undefined);
+  assert.match(summarizeFailure(chain), /What the list declares outstanding is UNKNOWN: it could not be read/);
+  // Nothing broadcast (the node refused it): the reading it was built on still stands, unread again.
+  readCurrent = reads([BASE]);
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    readCurrent,
+    send: async (call, { onSubmitted }) => {
+      onSubmitted(`0x${'f'.repeat(64)}`);
+      throw Object.assign(new Error('the node refused it'), { sendOutcome: 'refused' });
+    },
+  }));
+  assert.equal(chain.status, 'refused');
+  assert.equal(readCurrent.count(), 1);
+  assert.equal(chain.outstandingAt.atVersion, '7');
+});
+
 test('finality: what a stopped chain says of each transaction it sent', async () => {
   // Unknown: the list could not be read again after the send.
   const { chain } = await run({ version: 7n, addresses: [C], applies: false }, {
@@ -458,5 +488,5 @@ test('finality: what a stopped chain says of each transaction it sent', async ()
   assert.equal(chain.sent[0].state, 'included');
   assert.deepEqual(chain.finality, { state: 'unread' });
   assert.match(summarizeFailure(chain), /whether this update applied is unknown/);
-  assert.match(summarizeFailure(chain), /As last read \(finalized block 100, version 7\)/, 'the reading before the send is the last one there is');
+  assert.match(summarizeFailure(chain), /What the list declares outstanding is UNKNOWN/, 'the reading before the send is not reported as current');
 });

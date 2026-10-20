@@ -258,7 +258,9 @@ the installed release).
   never reached it (it may still land), or the list could not be read
   (unknown). Check those before acting. Every report, a refused or stopped
   one included, states what the last finalized reading of the list declares
-  outstanding and for which publication. This run's delistings are named
+  outstanding and for which publication; a run that stopped after
+  broadcasting reads the list again for this, and says it is unknown when
+  that read fails. This run's delistings are named
   only for the reading they were computed from or the update's planned
   outcome; for any other state of the list, even of the same publication,
   the report gives the count and the command that works them out from the
