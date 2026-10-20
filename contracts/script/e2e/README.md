@@ -28,12 +28,13 @@ which calls it). The steps it runs around this script:
    its `decimals` lives in storage its constructor writes; the other two keep
    no constructor state, so their runtime is copied as is.
 2. Run the script on Anvil's own chain id, 31337. A script may redirect
-   its artifact only on 31337, under `forge test`, or on a node that answers
-   `anvil_nodeInfo` (a local Anvil, whatever id it presents — which is what
-   lets the keeper's two-chain scenarios run the operator scripts unchanged
-   on nodes presenting 84532 and 11155111).
-3. Switch the chain id to 84532, so the app's Base Sepolia wiring applies
-   unchanged. Every contract reads `block.chainid` at call time.
+   its artifact only on 31337, under `forge test`, or on a node carrying the
+   harness's local-node marker (code at a keyless address that only
+   `anvil_setCode` can place, so no real chain can carry it). That marker is
+   what lets the keeper's two-chain scenarios run the operator scripts
+   unchanged on nodes presenting 84532 and 11155111.
+3. Put the local-node marker in place and switch the chain id to 84532, so
+   the app's Base Sepolia wiring applies unchanged. Every contract reads `block.chainid` at call time.
 4. Write the e2e deployments bundle that the app, the harness and the
    indexer stub all read. (The keeper fixture writes its own bundle, under
    `apps/keeper/e2e/.state/`, after running `ConfigureKeeperRewardsFixture`.)

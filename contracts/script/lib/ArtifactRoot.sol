@@ -155,16 +155,21 @@ abstract contract ArtifactRootBase {
     ///         artifact NOWHERE anyone reads, which on a live broadcast is the
     ///         #2070 failure wearing a different hat.
     ///
-    ///         "A local Anvil node" is either chain id 31337 or a node that
-    ///         answers Anvil's own `anvil_nodeInfo` method (see
-    ///         {_isAnvilNode}). The second form exists for the e2e harnesses
-    ///         (#2516): a two-chain scenario runs one Anvil node PRESENTING
-    ///         Base Sepolia and one presenting Sepolia, and the operator
-    ///         scripts it runs on them (`DeployCrosschain`, `ConfigureCcip`,
+    ///         "A local node" is either chain id 31337 or a node carrying the
+    ///         harness's local-node marker (see {_carriesLocalNodeMarker}).
+    ///         The second form exists for the e2e harnesses (#2516): a
+    ///         two-chain scenario runs one Anvil node PRESENTING Base Sepolia
+    ///         and one presenting Sepolia, and the operator scripts it runs on
+    ///         them (`DeployCrosschain`, `ConfigureCcip`,
     ///         `ConfigureRewardReporter`) decide canonical-versus-mirror and
     ///         read every chain's artifact by `block.chainid`. Without this
     ///         they could run there only by writing the COMMITTED per-chain
     ///         artifact, which is the one thing a redirect exists to prevent.
+    ///
+    ///         The marker is chain STATE that a real chain cannot hold, not an
+    ///         RPC method's answer: an endpoint that answers a dev-node method
+    ///         says nothing about where its transactions land (Codex #2604 r6
+    ///         P1 retired an `anvil_nodeInfo` probe for exactly that reason).
     ///
     ///         The refusal is a `require`, not a silent ignore: a test that
     ///         believes it redirected a live deploy and did not would assert
@@ -173,8 +178,8 @@ abstract contract ArtifactRootBase {
         require(
             block.chainid == 31337 ||
                 CHEATS.isContext(VmSafe.ForgeContext.TestGroup) ||
-                _isAnvilNode(),
-            "ArtifactRootBase: the artifact root may only be redirected on a local Anvil node or under forge test - a deployment that reaches a real chain must publish its artifact where the census inventory reads it"
+                _carriesLocalNodeMarker(),
+            "ArtifactRootBase: the artifact root may only be redirected on Anvil (31337), on a harness node carrying the local-node marker, or under forge test - a deployment that reaches a real chain must publish its artifact where the census inventory reads it"
         );
         require(
             bytes(newRoot).length != 0,
@@ -191,18 +196,24 @@ abstract contract ArtifactRootBase {
         artifactRootState().rootOverride = newRoot;
     }
 
-    /// @dev TRUE when the node this script runs against is an Anvil node: it
-    ///      answers `anvil_nodeInfo`, a method only Anvil serves. A live
-    ///      chain's RPC rejects the unknown method, and a script run with no
-    ///      RPC at all has nothing to ask; `vm.rpc` reverts in both cases and
-    ///      the answer is FALSE. Asked only after the two cheaper tests above
-    ///      have failed, so a 31337 or `forge test` run never makes the call.
-    function _isAnvilNode() private returns (bool) {
-        try CHEATS.rpc("anvil_nodeInfo", "[]") returns (bytes memory info) {
-            return info.length != 0;
-        } catch {
-            return false;
-        }
+    /// @notice Where the e2e harness puts its local-node marker, and the code it
+    ///         puts there (`packages/anvil-harness`, `LOCAL_NODE_MARKER`).
+    /// @dev    The address is a hash, so nobody holds its key, and no CREATE or
+    ///         CREATE2 can be steered to it short of a 160-bit preimage: on a
+    ///         real chain it never has code. Only a dev node's `anvil_setCode`
+    ///         can place code there. The code opens with INVALID (0xfe), so a
+    ///         call to it reverts. The two must match the harness's copies byte
+    ///         for byte; a mismatch fails closed (the redirect is refused).
+    address internal constant LOCAL_NODE_MARKER =
+        address(uint160(uint256(keccak256("vaipakam.e2e.local-node-marker"))));
+    bytes32 internal constant LOCAL_NODE_MARKER_CODEHASH =
+        keccak256(hex"fe76616970616b616d20653265206c6f63616c206e6f6465");
+
+    /// @dev TRUE when the chain this script runs against carries the harness's
+    ///      local-node marker. Read only after the two cheaper tests above have
+    ///      failed, so a 31337 or `forge test` run never reads it.
+    function _carriesLocalNodeMarker() private view returns (bool) {
+        return LOCAL_NODE_MARKER.codehash == LOCAL_NODE_MARKER_CODEHASH;
     }
 
     /// @dev Total test: does `s` begin with `prefix`?

@@ -40,7 +40,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, createWalletClient, http, type Abi, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, getAddress, http, keccak256, toBytes, type Abi, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
 
@@ -56,6 +56,19 @@ const FIXTURE_ARTIFACT_DIR = path.join(CONTRACTS_DIR, 'deployments', '.forge-tes
 const FIXTURE_ARTIFACT = path.join(FIXTURE_ARTIFACT_DIR, 'anvil', 'addresses.json');
 /** The committed deployments bundle every app reads in production. */
 export const COMMITTED_BUNDLE = path.join(REPO_ROOT, 'packages', 'contracts', 'src', 'deployments.json');
+
+/**
+ * The local-node marker: code at a keyless address that only a dev node's
+ * `anvil_setCode` can place, so no real chain can carry it. A script may
+ * redirect its artifact on a node presenting a real chain id only when the
+ * marker is there (`contracts/script/lib/ArtifactRoot.sol`,
+ * `LOCAL_NODE_MARKER`; the two copies must match byte for byte, and a
+ * mismatch fails closed). It opens with INVALID, so a call to it reverts.
+ */
+export const LOCAL_NODE_MARKER = {
+  address: getAddress(`0x${keccak256(toBytes('vaipakam.e2e.local-node-marker')).slice(-40)}`),
+  code: '0xfe76616970616b616d20653265206c6f63616c206e6f6465' as Hex,
+} as const;
 
 /** The id the deploy runs on, and the id the chain presents afterwards. */
 export const DEPLOY_CHAIN_ID = 31337;
@@ -417,6 +430,9 @@ export async function deployFromSource(
     throw new Error(`the fixture artifact names ${diamond} as the Diamond, but it has no code on this chain`);
   }
 
+  // The node is about to present a real chain id: mark it as local first, so
+  // the operator scripts later run on it may redirect their artifacts.
+  await anvil.rpc('anvil_setCode', [LOCAL_NODE_MARKER.address, LOCAL_NODE_MARKER.code]);
   await anvil.rpc('anvil_setChainId', [presentAs]);
 
   return { diamond, admin: artifact.admin as `0x${string}`, adminKey, deployerKey, artifact };

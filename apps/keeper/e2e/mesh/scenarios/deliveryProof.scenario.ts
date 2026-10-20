@@ -70,6 +70,9 @@ describe('deliveryProof across a Base/mirror pair on Anvil', () => {
     expect(d.remitTxs.map((t) => t.from.toLowerCase())).toEqual([keeper]);
     expect(d.remitTxs[0].hash).toBe(d.remitted.tx);
     expect(d.remitTxs[0].to?.toLowerCase()).toBe(m.base.diamond.toLowerCase());
+    // The lane carried the message the remit announced, from that transaction.
+    expect(d.relayed.messageId.toLowerCase()).toBe(d.remitted.messageId.toLowerCase());
+    expect(d.relayed.sourceTx.toLowerCase()).toBe(d.remitted.tx.toLowerCase());
 
     // Base's pool locked the remitted amount; the lane carried it as one
     // token leg; the mirror pool minted exactly that (the mirror token's

@@ -105,7 +105,8 @@ export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil>
   await assertNothingListening(opts.url, 'anvil');
   const args = [
     '--chain-id', String(opts.chainId),
-    '--host', endpoint.hostname,
+    // `--host` takes a bare IP address; a URL writes IPv6 in brackets.
+    '--host', endpoint.hostname.replace(/^\[(.*)\]$/, '$1'),
     '--port', endpoint.port || '8545',
     '--gas-limit', String(opts.gasLimit ?? 60_000_000),
   ];

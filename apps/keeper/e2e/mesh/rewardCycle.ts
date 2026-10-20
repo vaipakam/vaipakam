@@ -141,6 +141,15 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   const delivered = await relay.deliver(BASE_ID, MIRROR_ID);
   if (delivered.length !== 1) throw new Error(`the relay landed ${delivered.length} remittances on the mirror, not 1`);
   const relayed = delivered[0];
+  // The message the lane carried must be the one the remit announced: the
+  // event's id is what an operator traces across chains, so it is checked
+  // against the ramp, and the ramp's source transaction against the remit's.
+  if (relayed.messageId.toLowerCase() !== remitted.messageId.toLowerCase()) {
+    throw new Error(`the relay carried message ${relayed.messageId}, but the remit announced ${remitted.messageId}`);
+  }
+  if (relayed.sourceTx.toLowerCase() !== remitted.tx.toLowerCase()) {
+    throw new Error(`the relayed message came from ${relayed.sourceTx}, not the remit transaction ${remitted.tx}`);
+  }
   const after = await balances();
   const vpfiTotalSupply = (await mirror.pub.readContract({ address: vpfi, abi: SUPPLY_ABI, functionName: 'totalSupply' })) as bigint;
   const receipt = await mirror.pub.getTransactionReceipt({ hash: relayed.destinationTx });
