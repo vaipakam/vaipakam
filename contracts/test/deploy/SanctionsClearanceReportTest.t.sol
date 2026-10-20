@@ -38,6 +38,10 @@ contract ReportHarness {
     function logRoute(SanctionsDelistingTimelock tl) external view returns (SanctionsDelistingTimelock.Route) {
         return SanctionsClearanceReport.logRoute(tl);
     }
+
+    function logAutomation(SanctionsDelistingTimelock tl) external view returns (bool) {
+        return SanctionsClearanceReport.logAutomation(tl, tl.clearanceRoute());
+    }
 }
 
 /**
@@ -79,5 +83,26 @@ contract SanctionsClearanceReportTest is Test {
         }
         SanctionsDelistingTimelock none = new SanctionsDelistingTimelock(admin, new SanctionsList(admin, address(0)));
         assertEq(uint8(h.logRoute(none)), uint8(SanctionsDelistingTimelock.Route.Unavailable));
+    }
+
+    /// @dev Open only while the timelock is a remover of its list AND has a
+    ///      clearance check: revoking the role is the owner's one-step
+    ///      shutdown, and no wired check reopens it.
+    function test_AutomationIsOpenOnlyWithTheRemoverRoleAndACheck() public {
+        SanctionsList list = new SanctionsList(admin, address(new TestnetSanctionsOracleStandIn(admin)));
+        SanctionsDelistingTimelock tl = new SanctionsDelistingTimelock(admin, list);
+        assertFalse(h.logAutomation(tl), "a check but no remover role: closed");
+        vm.prank(admin);
+        list.setRemover(address(tl), true);
+        assertTrue(h.logAutomation(tl), "the role and a check: open");
+        vm.prank(admin);
+        list.setRemover(address(tl), false);
+        assertFalse(h.logAutomation(tl), "revoked: closed again");
+
+        SanctionsList bare = new SanctionsList(admin, address(0));
+        SanctionsDelistingTimelock unwired = new SanctionsDelistingTimelock(admin, bare);
+        vm.prank(admin);
+        bare.setRemover(address(unwired), true);
+        assertFalse(h.logAutomation(unwired), "the role but no check: closed");
     }
 }

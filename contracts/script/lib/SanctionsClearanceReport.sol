@@ -12,7 +12,7 @@ import {Deployments} from "./Deployments.sol";
  * @title  SanctionsClearanceReport
  * @notice How every sanctions script names the oracle a delisting clearance
  *         is read from, and the one report of which clearance check a
- *         timelock has.
+ *         timelock has and whether automated delisting is open at all.
  * @dev    #2443. The scripts name an oracle only from what they read, the
  *         same rule the delister bot follows (`identifyOracle`):
  *
@@ -50,7 +50,6 @@ library SanctionsClearanceReport {
             address secondary = address(tl.list().secondary());
             console.log("  Clearance check: LOCAL - the list's secondary oracle, read live:", secondary);
             logOracle(secondary);
-            console.log("    Automated delisting is ENABLED once a proposal matures and that oracle clears it.");
         } else if (route == SanctionsDelistingTimelock.Route.CrossChain) {
             uint256 source = tl.clearanceSourceChainId();
             address attestor = tl.clearanceAttestor();
@@ -69,9 +68,37 @@ library SanctionsClearanceReport {
                     );
                 }
             }
-            console.log("    Automated delisting is ENABLED once a proposal matures and the attestor clears it.");
         } else {
-            console.log("  Clearance check: none configured - executions refuse until one is (ClearanceUnavailable).");
+            console.log("  Clearance check: none configured.");
+        }
+        logAutomation(tl, route);
+    }
+
+    /// @notice Logs whether automated delisting can happen at all, from the
+    ///         two facts that close it for every proposal: the timelock must
+    ///         be a remover of its list (revoking that role is the owner's
+    ///         one-step shutdown, and the list then refuses every execution
+    ///         with `NotRemover`), and it must have a clearance check. Never
+    ///         claims more: each proposal must still pass every check
+    ///         `execute` makes. Returns whether it reported the route open.
+    function logAutomation(SanctionsDelistingTimelock tl, SanctionsDelistingTimelock.Route route)
+        internal
+        view
+        returns (bool open)
+    {
+        if (!tl.list().isRemover(address(tl))) {
+            console.log(
+                "  Automated delisting: CLOSED - the timelock is not a remover of its list (the owner's one-step shutdown); every execution reverts NotRemover."
+            );
+        } else if (route == SanctionsDelistingTimelock.Route.Unavailable) {
+            console.log(
+                "  Automated delisting: CLOSED - no clearance check is configured; every execution reverts ClearanceUnavailable."
+            );
+        } else {
+            open = true;
+            console.log(
+                "  Automated delisting: OPEN - the timelock is a remover of its list and has a clearance check; a proposal executes only once it passes every check execute makes, a current clearance included."
+            );
         }
     }
 

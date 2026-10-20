@@ -366,9 +366,10 @@ Both accept native value only as their messenger's fee refund.
     recorded contract a script writes through: the wiring script's messenger
     and timelock, and `DeploySanctionsDelisting`'s list. A pending owner
     there could accept and re-point whatever the run just wired, so the run
-    refuses until the transfer is cancelled or completed. Failing the rule means "do not reuse",
-    never "replace silently": when a replacement attestor would be needed
-    while the old one still handles the clearance channel, the run stops,
+    refuses until the transfer is cancelled or completed. Failing the rule
+    means "do not reuse", never "replace silently": when a replacement
+    attestor would be needed while the old one still handles the clearance
+    channel, the run stops,
     at the script's read of the channel or else at the messenger's own
     check. Nothing a refused run deployed is recorded: every sanctions
     deploy and configure script writes its artifact only after every step
@@ -380,7 +381,15 @@ Both accept native value only as their messenger's fee refund.
     bind either way. `DeploySanctionsDelisting` applies the same rule to
     the timelock: it never deploys a second timelock beside a recorded one that
     is still a remover of the list, so a list never has two automated
-    delisting routes.
+    delisting routes. A list itself is never replaced: it holds the
+    listings every consumer reads, with its adder, removers and timelock
+    attached, so `DeploySanctionsList` refuses an unfit recorded list
+    (another owner, a pending transfer, a secondary) instead of deploying an
+    empty one, and starting a new list is the operator's deliberate act
+    (remove the record). Every route report (the two scripts, the delister)
+    also says whether automated delisting is open at all: it is closed
+    while the timelock is not a remover of its list, the owner's one-step
+    shutdown, whatever clearance check is wired.
 
   A fork test (`contracts/test/fork/SanctionsClearanceLiveForkTest.t.sol`,
   gated on `FORK_URL_BNB_TESTNET` plus each timelock chain's URL) runs the

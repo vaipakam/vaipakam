@@ -23,11 +23,15 @@ replaces a contract that
 still holds a role: the wiring script stops when a replacement attestor would
 leave the old one answering, and the timelock deploy script never deploys a
 second timelock while the recorded one can still delist, so a list never has
-two automated delisting routes. Each of these scripts records its addresses
+two automated delisting routes. The list deploy script no longer replaces a
+recorded list it cannot reuse with a new, empty one: it refuses and says how
+to resolve it, since a list's listings are what every consumer reads. Each
+of these scripts records its addresses
 only after every step of the run has succeeded, so a run that stops sends
 nothing and records nothing. When they report a timelock's clearance check
-they call it a clearance check, not a RedStone check, and name the stand-in
-only when it says it is one. No list, proposer, waiting
+they call it a clearance check, not a RedStone check, name the stand-in
+only when it says it is one, and say automated delisting is closed while the
+timelock is not a remover of its list. No list, proposer, waiting
 window or Safe power changes. A fork test runs the script against forks of
 the three live testnets and drives a drill proposal through request,
 reading, reply and execution, plus a stand-in flag that blocks the delisting.

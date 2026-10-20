@@ -36,8 +36,12 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         Keys: `DEPLOYER_PRIVATE_KEY` deploys; `ADMIN_PRIVATE_KEY` is the
  *         list's owner and appoints the roles. Addresses:
  *         `SANCTIONS_ADDER_ADDRESS`, `SANCTIONS_REMOVER_ADDRESS`. A list
- *         already recorded for the chain is reused while the admin owns it;
- *         a re-run only adds a role it is missing.
+ *         already recorded for the chain is reused while the admin alone
+ *         controls it (owner, no transfer pending) and it composes no
+ *         secondary; a re-run only adds a role it is missing. Any other
+ *         recorded list is refused, never replaced: its listings and the
+ *         roles attached to it are state a replacement would fork (see
+ *         {_listFor}).
  *
  *         Artifact writes follow `Deployments.artifactWritesEnabled()`.
  *
@@ -88,23 +92,37 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         console.log("  The Diamond is NOT pointed at it; it is the adder service's rehearsal target.");
     }
 
-    /// @dev The recorded list while the admin alone controls it
-    ///      ({AdminControl.aloneControls}) and it composes no secondary;
-    ///      otherwise a new one (`deployed`), which the caller records once
-    ///      the run has succeeded.
+    /// @dev The recorded list, which must be one the admin alone controls
+    ///      ({AdminControl.aloneControls}) composing no secondary; a new one
+    ///      (`deployed`, recorded by the caller once the run has succeeded)
+    ///      only when no list is recorded, or the record names an address
+    ///      with no code on this chain.
+    ///
+    ///      A recorded list that fails either test is REFUSED, never
+    ///      replaced. A list holds the listings every consumer reads, and its
+    ///      adder, removers and timelock stay attached to it: a fresh, empty
+    ///      replacement would fork that state (the services follow the
+    ///      record, the timelock stays bound to the old list) and silently
+    ///      drop every listing for anyone reading the record. Starting a new
+    ///      list is the operator's deliberate act: resolve the transfer, or
+    ///      remove `.sanctionsList` from the artifact and re-run.
     function _listFor(address admin) internal returns (SanctionsList, bool deployed) {
         address recorded = Deployments.readSanctionsListOptional();
         if (recorded.code.length != 0) {
-            SanctionsList existing = SanctionsList(recorded);
-            if (AdminControl.aloneControls(recorded, admin)) {
-                try existing.secondary() returns (ISanctionsList secondary) {
-                    if (address(secondary) == address(0)) {
-                        console.log("Reusing the recorded SanctionsList");
-                        return (existing, false);
-                    }
-                } catch {}
-            }
-            console.log("The recorded SanctionsList is not one the admin alone controls with no secondary; deploying a new one");
+            require(
+                AdminControl.aloneControls(recorded, admin),
+                "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+            );
+            bool noSecondary;
+            try SanctionsList(recorded).secondary() returns (ISanctionsList secondary) {
+                noSecondary = address(secondary) == address(0);
+            } catch {}
+            require(
+                noSecondary,
+                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+            );
+            console.log("Reusing the recorded SanctionsList");
+            return (SanctionsList(recorded), false);
         }
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsList list = new SanctionsList(admin, address(0));

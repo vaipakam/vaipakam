@@ -149,7 +149,10 @@ way (`script/lib/SanctionsClearanceReport.sol`): "Clearance check", never
 and on a cross-chain route, that the attestor's oracle lives on another
 chain and is not read by the run, plus what that chain's artifact records.
 They act on a list, messenger or timelock only while the admin owns it with
-no ownership transfer pending. On this route the delister key needs tBNB on BNB
+no ownership transfer pending, and the report says automated delisting is
+CLOSED while the timelock is not a remover of its list. `DeploySanctionsList`
+never replaces a recorded list it cannot reuse: it refuses, and starting a
+new list means removing `.sanctionsList` from the artifact deliberately. On this route the delister key needs tBNB on BNB
 testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
 
 On a testnet both services work against a **rehearsal** list:
