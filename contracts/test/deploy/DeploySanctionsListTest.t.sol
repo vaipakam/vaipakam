@@ -6,6 +6,7 @@ import {DeploySanctionsList} from "../../script/DeploySanctionsList.s.sol";
 import {Deployments} from "../../script/lib/Deployments.sol";
 import {ARTIFACT_SCRATCH_PREFIX} from "../../script/lib/ArtifactRoot.sol";
 import {SanctionsList} from "../../src/compliance/SanctionsList.sol";
+import {SanctionsDelistingTimelock} from "../../src/compliance/SanctionsDelistingTimelock.sol";
 
 /**
  * @title  DeploySanctionsListTest
@@ -75,7 +76,7 @@ contract DeploySanctionsListTest is Test {
         DeploySanctionsList s = _script(84532, "base-sepolia-unfit");
         string memory path = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
         string memory notControlled =
-            "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded";
+            "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded";
 
         SanctionsList foreign = new SanctionsList(makeAddr("someoneElse"), address(0));
         vm.writeJson(vm.toString(address(foreign)), path, ".sanctionsList");
@@ -101,7 +102,7 @@ contract DeploySanctionsListTest is Test {
         vm.writeJson(vm.toString(address(composed)), path, ".sanctionsList");
         vm.expectRevert(
             bytes(
-                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
             )
         );
         s.run();
@@ -112,6 +113,37 @@ contract DeploySanctionsListTest is Test {
         address fresh = vm.parseJsonAddress(_artifact(), ".sanctionsList");
         assertTrue(fresh != address(composed) && fresh != address(mine) && fresh != address(foreign));
         assertEq(SanctionsList(fresh).owner(), admin);
+        vm.removeDir(root, true);
+    }
+
+    /// @dev A timelock is bound to its list for good, so a new list is never
+    ///      recorded beside a recorded timelock: the artifact would pair the
+    ///      new list with another list's timelock, and the clearance wiring
+    ///      and the delister would act on it. Removing that record too is the
+    ///      deliberate way on.
+    function test_Testnet_NeverStartsANewListBesideARecordedTimelock() public {
+        DeploySanctionsList s = _script(84532, "base-sepolia-stale-timelock");
+        string memory path = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        string memory refused =
+            "DeploySanctionsList: the artifact records a sanctionsDelistingTimelock but no list this script can reuse. A timelock is bound to its list for good, so a new list recorded beside it would be paired with another list's timelock: remove .sanctionsDelistingTimelock as well (it stays with its own list), then re-run. Nothing was sent or recorded";
+        SanctionsDelistingTimelock oldTimelock =
+            new SanctionsDelistingTimelock(admin, new SanctionsList(admin, address(0)));
+        vm.writeJson(vm.toString(address(oldTimelock)), path, ".sanctionsDelistingTimelock");
+        string memory before = _artifact();
+        vm.expectRevert(bytes(refused));
+        s.run();
+        assertEq(_artifact(), before, "no list recorded: nothing recorded");
+
+        // A list record naming no contract counts as no list, and is refused too.
+        vm.writeJson(vm.toString(makeAddr("no code")), path, ".sanctionsList");
+        before = _artifact();
+        vm.expectRevert(bytes(refused));
+        s.run();
+        assertEq(_artifact(), before, "a list record with no code: nothing recorded");
+
+        vm.writeJson(string.concat("{\"chainId\":", vm.toString(uint256(84532)), "}"), path);
+        s.run();
+        assertTrue(vm.parseJsonAddress(_artifact(), ".sanctionsList").code.length != 0, "a new list once both records are gone");
         vm.removeDir(root, true);
     }
 

@@ -9,6 +9,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
+import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
 import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
 
 /**
@@ -125,19 +126,16 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
     {
         address recorded = Deployments.readSanctionsDelistingTimelockOptional();
         if (recorded.code.length != 0) {
-            SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(payable(recorded));
-            try existing.list() returns (SanctionsList l) {
-                if (address(l) == address(list)) {
-                    if (AdminControl.aloneControls(recorded, admin)) {
-                        console.log("Reusing the recorded SanctionsDelistingTimelock");
-                        return (existing, false);
-                    }
-                    require(
-                        !list.isRemover(recorded),
-                        "DeploySanctionsDelisting: the recorded timelock is still a remover of this list, but the admin does not alone control it (another owner, or an ownership transfer pending) - cancel the transfer, or revoke it with setRemover(timelock, false), then re-run. Nothing was deployed or recorded"
-                    );
+            if (SanctionsRecords.serves(recorded, address(list))) {
+                if (AdminControl.aloneControls(recorded, admin)) {
+                    console.log("Reusing the recorded SanctionsDelistingTimelock");
+                    return (SanctionsDelistingTimelock(payable(recorded)), false);
                 }
-            } catch {}
+                require(
+                    !list.isRemover(recorded),
+                    "DeploySanctionsDelisting: the recorded timelock is still a remover of this list, but the admin does not alone control it (another owner, or an ownership transfer pending) - cancel the transfer, or revoke it with setRemover(timelock, false), then re-run. Nothing was deployed or recorded"
+                );
+            }
             console.log("The recorded timelock serves another list, or the admin does not alone control it; deploying a new one");
         }
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));

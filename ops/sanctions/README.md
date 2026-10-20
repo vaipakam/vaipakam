@@ -93,11 +93,13 @@ Every hour it, for every configured chain with a timelock recorded:
    sent or failed or needs a person, repeated once a day while it lasts.
 
 It refuses, and leaves for a person: a key that is not the timelock's
-proposer alone — the timelock's owner, or the adder, remover or owner of the
-list recorded on ANY chain it has an RPC for, the attestor's chain included,
-checked before the key is used on that chain at all (a chain with no
-timelock whose list it holds a role on is reported refused, and fails the
-run); a recorded timelock that serves another list; publication work against
+proposer alone — the timelock's owner or pending owner, or the adder,
+remover, owner or pending owner of the list recorded on ANY chain it has an
+RPC for, the attestor's chain included, checked before the key is used on
+that chain at all (a chain with no timelock whose list it holds a role on is
+reported refused, and fails the run), or the owner or pending owner of the
+clearance oracle or of either clearance messenger, so the key can never also
+decide a clearance; a recorded timelock that serves another list; publication work against
 a file the list does not record, a delisting the advanced file still
 witnesses, a count that differs from what the list declares outstanding, two
 OFAC files that disagree, or a digital-currency value in either file that is
@@ -152,7 +154,10 @@ They act on a list, messenger or timelock only while the admin owns it with
 no ownership transfer pending, and the report says automated delisting is
 CLOSED while the timelock is not a remover of its list. `DeploySanctionsList`
 never replaces a recorded list it cannot reuse: it refuses, and starting a
-new list means removing `.sanctionsList` from the artifact deliberately. On this route the delister key needs tBNB on BNB
+new list means removing `.sanctionsList` and the `.sanctionsDelistingTimelock`
+that serves it from the artifact deliberately (it refuses a new list while a
+timelock is still recorded). The wiring script wires only a timelock that
+serves the recorded list. On this route the delister key needs tBNB on BNB
 testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
 
 On a testnet both services work against a **rehearsal** list:

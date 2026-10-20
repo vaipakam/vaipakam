@@ -14,6 +14,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
+import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
 import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
 
 /**
@@ -50,6 +51,9 @@ import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
  *         - On each TIMELOCK chain: wire a CCIP lane to the attestor chain,
  *           register the timelock as the channel's handler, set the attestor
  *           as its peer, and point the timelock at it (`setClearanceSource`).
+ *           Only the timelock of the chain's recorded list is wired: a
+ *           timelock record that serves another list stops the run
+ *           ({SanctionsRecords}).
  *         Run the attestor chain FIRST: a timelock chain reads the attestor's
  *         address from that chain's artifact and refuses while it is absent.
  *
@@ -253,9 +257,10 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     // ── Timelock chain ─────────────────────────────────────────────────
 
     function _wireTimelockChain(CcipMessenger m, address admin, uint256 attestorChainId) internal {
-        SanctionsDelistingTimelock tl = SanctionsDelistingTimelock(
-            payable(Deployments.readAddressForChain(block.chainid, ".sanctionsDelistingTimelock"))
-        );
+        // The timelock of the recorded list, never a stale record beside it:
+        // registering a timelock that serves another list would give the
+        // clearance channel to a set-up the current list does not use.
+        SanctionsDelistingTimelock tl = SanctionsRecords.requireRecordedTimelock("ConfigureSanctionsClearance");
         AdminControl.requireAloneControls(address(tl), admin, "ConfigureSanctionsClearance: this chain's timelock");
         address a = Deployments.readSanctionsClearanceAttestorOptionalForChain(attestorChainId);
         require(

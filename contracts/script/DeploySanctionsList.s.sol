@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {SanctionsList} from "../src/compliance/SanctionsList.sol";
-import {ISanctionsList} from "../src/interfaces/ISanctionsList.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
@@ -41,7 +40,8 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         secondary; a re-run only adds a role it is missing. Any other
  *         recorded list is refused, never replaced: its listings and the
  *         roles attached to it are state a replacement would fork (see
- *         {_listFor}).
+ *         {_listFor}). Nor is a new list started while the artifact still
+ *         records a delisting timelock, which is bound to another list.
  *
  *         Artifact writes follow `Deployments.artifactWritesEnabled()`.
  *
@@ -105,25 +105,36 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
     ///      record, the timelock stays bound to the old list) and silently
     ///      drop every listing for anyone reading the record. Starting a new
     ///      list is the operator's deliberate act: resolve the transfer, or
-    ///      remove `.sanctionsList` from the artifact and re-run.
+    ///      remove `.sanctionsList` from the artifact, together with the
+    ///      `.sanctionsDelistingTimelock` that serves it, and re-run.
+    ///
+    ///      A new list is also never started while a timelock is still
+    ///      recorded. A timelock is bound to its list for good, so it serves
+    ///      another list, and recording a new list beside it would pair the
+    ///      two in the artifact ({SanctionsRecords}): the clearance wiring and
+    ///      the delister would then act on a set-up the new list does not use.
     function _listFor(address admin) internal returns (SanctionsList, bool deployed) {
         address recorded = Deployments.readSanctionsListOptional();
         if (recorded.code.length != 0) {
             require(
                 AdminControl.aloneControls(recorded, admin),
-                "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+                "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
             );
-            bool noSecondary;
-            try SanctionsList(recorded).secondary() returns (ISanctionsList secondary) {
-                noSecondary = address(secondary) == address(0);
-            } catch {}
+            // A total read: any answer but one zero word (a secondary, a
+            // revert, a malformed reply) is "not the rehearsal list".
+            (bool ok, bytes memory ret) =
+                recorded.staticcall(abi.encodeWithSelector(SanctionsList.secondary.selector));
             require(
-                noSecondary,
-                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
+                ok && ret.length == 32 && abi.decode(ret, (uint256)) == 0,
+                "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
             );
             console.log("Reusing the recorded SanctionsList");
             return (SanctionsList(recorded), false);
         }
+        require(
+            Deployments.readSanctionsDelistingTimelockOptional() == address(0),
+            "DeploySanctionsList: the artifact records a sanctionsDelistingTimelock but no list this script can reuse. A timelock is bound to its list for good, so a new list recorded beside it would be paired with another list's timelock: remove .sanctionsDelistingTimelock as well (it stays with its own list), then re-run. Nothing was sent or recorded"
+        );
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsList list = new SanctionsList(admin, address(0));
         vm.stopBroadcast();

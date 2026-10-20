@@ -25,7 +25,10 @@ leave the old one answering, and the timelock deploy script never deploys a
 second timelock while the recorded one can still delist, so a list never has
 two automated delisting routes. The list deploy script no longer replaces a
 recorded list it cannot reuse with a new, empty one: it refuses and says how
-to resolve it, since a list's listings are what every consumer reads. Each
+to resolve it, since a list's listings are what every consumer reads. Nor
+does it start a new list while a delisting timelock is still recorded, since
+a timelock belongs to its list for good, and the wiring script wires only the
+timelock of the recorded list. Each
 of these scripts records its addresses
 only after every step of the run has succeeded, so a run that stops sends
 nothing and records nothing. When they report a timelock's clearance check
@@ -42,7 +45,12 @@ The delister bot now states which oracle answered. It asks the oracle it
 reads whether it is the stand-in, and when it last updated, and names it
 accordingly in every action, note and report line, adding that the stand-in
 is not RedStone. For the stand-in it also reads who owns it and whether a
-transfer is pending, and names that owner rather than assuming the admin. Any other oracle is "the clearance oracle", and the bot
+transfer is pending, and names that owner rather than assuming the admin;
+a pending owner is named even when the current owner could not be read.
+The bot also refuses to run on a chain where its key controls, or is about
+to control, anything a delisting depends on beyond its proposer role: the
+timelock, the list, the oracle a clearance is read from, or a messenger
+carrying the request or the answer. Any other oracle is "the clearance oracle", and the bot
 never calls an oracle RedStone, since RedStone has no deployment on the test
 networks it runs on and nothing it could read would establish it. The
 attestor chain's

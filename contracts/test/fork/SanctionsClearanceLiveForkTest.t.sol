@@ -221,6 +221,39 @@ contract SanctionsClearanceLiveForkTest is Test {
         vm.removeDir(root, true);
     }
 
+    /// @dev A timelock is bound to its list for good, so a timelock record
+    ///      that does not serve the recorded list is a stale set-up: wiring it
+    ///      would give the clearance channel to a timelock the current list
+    ///      does not use. The run refuses before anything is sent or recorded.
+    function test_BaseSepolia_ATimelockOfAnotherListStopsTheRun() public {
+        string memory baseUrl = vm.envOr("FORK_URL_BASE_SEPOLIA", string(""));
+        if (bytes(baseUrl).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(baseUrl);
+        string memory root = _scratchRoot("base-other-list");
+        string memory artifactPath = string.concat(root, "/base-sepolia/addresses.json");
+        admin = vm.parseJsonAddress(vm.readFile(artifactPath), ".admin");
+        uint256[] memory timelockChains = new uint256[](2);
+        timelockChains[0] = BASE;
+        timelockChains[1] = ARB;
+        ConfigureSanctionsClearance run = new ConfigureSanctionsClearance();
+        run.setArtifactRootOverride(root);
+
+        // A new list recorded while the old timelock record stays.
+        vm.writeJson(vm.toString(address(new SanctionsList(admin, address(0)))), artifactPath, ".sanctionsList");
+        string memory artifact = vm.readFile(artifactPath);
+        vm.expectRevert(
+            bytes(
+                "ConfigureSanctionsClearance: this chain's recorded sanctionsDelistingTimelock does not serve its recorded sanctionsList (or one of them is not recorded, or has no code). A timelock is bound to its list for good, so the route is wired only to the timelock of the recorded list - run DeploySanctionsDelisting for that list first. Nothing was sent or recorded"
+            )
+        );
+        run.runWith(admin, makeAddr("deployer"), BNB, timelockChains);
+        assertEq(vm.readFile(artifactPath), artifact, "nothing recorded");
+        vm.removeDir(root, true);
+    }
+
     // ── Cells ─────────────────────────────────────────────────────────
 
     function _clearsAndExecutes() internal {

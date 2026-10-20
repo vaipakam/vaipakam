@@ -17,10 +17,12 @@ import {
   alertDigest,
   clearanceOracleName,
   createClientLookup,
+  delistingControllers,
   describeAction,
   evaluatePublication,
   fingerprint,
   identifyOracle,
+  keyControls,
   listRoleKeyVet,
   listRoleRefusal,
   planChain,
@@ -30,6 +32,7 @@ import {
   readState,
   runDelister,
   shouldAlert,
+  standInControl,
   summarize,
   wantsPublication,
 } from './sanctions-delister.mjs';
@@ -77,7 +80,7 @@ function snapOf(o = {}) {
     timelock: TL,
     timelockList: LIST,
     timelockIsRemover: true,
-    roles: { proposer: true, timelockOwner: false },
+    roles: { proposer: true, controls: { holds: [], unknown: [] } },
     route: 2,
     reservedDelistings: 0,
     proposalCount: 0,
@@ -311,7 +314,9 @@ test('refuses a key that is not the proposer alone, and a timelock serving anoth
   const load = async () => assert.fail('nothing may be downloaded');
   for (const [snap, re] of [
     [snapOf({ roles: { proposer: false } }), /not a proposer of this timelock/],
-    [snapOf({ roles: { proposer: true, timelockOwner: true } }), /also the timelock's owner/],
+    [snapOf({ roles: { proposer: true, controls: { holds: ["the timelock's owner"], unknown: [] } } }), /also the timelock's owner — an unattended key must be the proposer alone/],
+    [snapOf({ roles: { proposer: true, controls: { holds: [`${STAND_IN_NAME}'s pending owner`], unknown: [] } } }), /also the testnet stand-in for RedStone's pending owner/],
+    [snapOf({ roles: { proposer: true, controls: { holds: [], unknown: ["this chain's clearance messenger"] } } }), /who controls this chain's clearance messenger could not be read, so the key is not used on this chain this run/],
     [snapOf({ timelockList: OTHER }), /serves list/],
   ]) {
     const { report } = await runDelister({ chains: [chain(snap)], key: KEY, loadPublication: load });
@@ -681,17 +686,19 @@ test('a value the files cannot read stops every unattended delisting, and a chai
 test("the key's roles on a list are checked on every chain it is used on, before any use", async () => {
   assert.equal(listRoleRefusal({ adder: false, remover: false, owner: false }), null);
   assert.match(listRoleRefusal({ adder: true, remover: false, owner: true }), /also the list's adder and the list's owner on this chain/);
+  assert.match(listRoleRefusal({ adder: false, remover: false, owner: false, pendingOwner: true }), /also the list's pending owner on this chain/);
   const listClient = (roles, fail = false) => ({
     readContract: async ({ functionName, args }) => {
       if (fail) throw new Error('rpc down');
-      if (functionName !== 'owner') assert.deepEqual(args, [KEY]);
-      return { isAdder: roles.adder ?? false, isRemover: roles.remover ?? false, owner: roles.owner ?? OTHER }[functionName];
+      if (functionName !== 'owner' && functionName !== 'pendingOwner') assert.deepEqual(args, [KEY]);
+      return { isAdder: roles.adder ?? false, isRemover: roles.remover ?? false, owner: roles.owner ?? OTHER, pendingOwner: roles.pendingOwner ?? ZERO }[functionName];
     },
   });
   const vet = listRoleKeyVet({ listByChain: new Map([[84532, LIST]]), key: KEY, abi: [] });
   assert.equal(await vet(84532, { client: listClient({}) }), null);
   assert.match(await vet(84532, { client: listClient({ remover: true }) }), /also the list's remover/);
   assert.match(await vet(84532, { client: listClient({ owner: KEY }) }), /also the list's owner/);
+  assert.match(await vet(84532, { client: listClient({ pendingOwner: KEY }) }), /also the list's pending owner/, 'a pending owner takes the list whenever it accepts');
   assert.match(await vet(84532, { client: listClient({}, true) }), /roles on list .* could not be read, so the key is not used on this chain: rpc down/);
   assert.equal(await vet(421614, { client: listClient({}, true) }), null, 'no list recorded there: nothing to check');
 
@@ -855,6 +862,50 @@ test('the report names the clearance oracle, and says the stand-in is not RedSto
   assert.match(summarize(absurd), /last published an unreadable time \(18446744073709551615\)/, 'a time no date can hold never aborts the report');
 });
 
+test("the stand-in's control is reported from both reads independently", () => {
+  // A known pending owner is named even when the current owner is unreadable.
+  assert.match(standInControl({ owner: null, pendingOwner: OTHER }).flags, new RegExp(`its owner could not be read this run, so who controls its flags is not known; an ownership transfer to ${OTHER} is pending, and that account controls it once it accepts`));
+  assert.match(standInControl({ owner: null, pendingOwner: null }).flags, /not known; whether an ownership transfer is pending could not be read/);
+  // "Nobody can re-publish it" only when renounced AND no transfer reads as pending.
+  const renounced = standInControl({ owner: ZERO, pendingOwner: ZERO });
+  assert.equal(renounced.refresh, null);
+  assert.match(renounced.stale, /nobody can re-publish it/);
+  const handedOver = standInControl({ owner: ZERO, pendingOwner: OTHER });
+  assert.match(handedOver.flags, new RegExp(`it has no owner now; an ownership transfer to ${OTHER} is pending`));
+  assert.equal(handedOver.refresh, `its pending owner ${OTHER} accepts ownership and re-publishes it with markUpdated`);
+  const unsure = standInControl({ owner: ZERO, pendingOwner: null });
+  assert.equal(unsure.refresh, null);
+  assert.match(unsure.flags, /whether anyone can still change its flags is not known/);
+  assert.ok(!/nobody can re-publish it/.test(unsure.stale), 'not claimed without the pending read');
+  assert.match(standInControl({ owner: STAND_IN_OWNER, pendingOwner: KEY }).flags, new RegExp(`its owner ${STAND_IN_OWNER} flags; an ownership transfer to ${KEY} is pending`));
+});
+
+test('the key may control nothing a delisting depends on, an oracle or a messenger included', () => {
+  const none = { owner: OTHER, pendingOwner: ZERO };
+  // Owner and pending owner are both control; a contract known to have an
+  // owner whose controller cannot be read is unknown.
+  assert.deepEqual(keyControls([{ what: 'the timelock', ...none, ownable: true }], KEY), { holds: [], unknown: [] });
+  assert.deepEqual(keyControls([{ what: 'the timelock', owner: KEY, pendingOwner: ZERO, ownable: true }], KEY).holds, ["the timelock's owner"]);
+  assert.deepEqual(keyControls([{ what: 'x', owner: OTHER, pendingOwner: KEY.toLowerCase(), ownable: true }], KEY).holds, ["x's pending owner"]);
+  assert.deepEqual(keyControls([{ what: 'x', owner: null, pendingOwner: ZERO, ownable: true }], KEY).unknown, ['x']);
+  // An oracle of unknown interface: no answer is not judged, the key's address is.
+  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: null, pendingOwner: null, ownable: false }], KEY), { holds: [], unknown: [] });
+  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: KEY, pendingOwner: null, ownable: false }], KEY).holds, ["the clearance oracle's owner"]);
+
+  const standIn = { address: ORACLE, identity: 'stand-in', updatedAt: 1n, owner: STAND_IN_OWNER, pendingOwner: KEY };
+  const relay = { ok: true, messenger: { address: OTHER, owner: KEY, pendingOwner: ZERO } };
+  const cross = delistingControllers({ route: 2, timelock: none, clearanceOracle: standIn, clearanceMessenger: none, relayPath: relay });
+  assert.deepEqual(cross.map((c) => c.what), ['the timelock', STAND_IN_NAME, "this chain's clearance messenger", "the attestor chain's messenger"]);
+  assert.deepEqual(keyControls(cross, KEY).holds, [`${STAND_IN_NAME}'s pending owner`, "the attestor chain's messenger's owner"]);
+  // An unreadable messenger on this chain refuses; an unreachable attestor
+  // chain lists nothing for that side (nothing that needs it is sent).
+  assert.deepEqual(keyControls(delistingControllers({ route: 2, timelock: none, clearanceOracle: null, clearanceMessenger: { owner: null, pendingOwner: null }, relayPath: { ok: false } }), KEY), { holds: [], unknown: ["this chain's clearance messenger"] });
+  // The local route: the list's secondary, no messengers.
+  const local = delistingControllers({ route: 1, timelock: none, clearanceOracle: { ...standIn, pendingOwner: ZERO, owner: null }, clearanceMessenger: null, relayPath: null });
+  assert.deepEqual(local.map((c) => c.what), ['the timelock', STAND_IN_NAME]);
+  assert.deepEqual(keyControls(local, KEY).unknown, [STAND_IN_NAME], "the stand-in has an owner, so an unreadable one is unknown");
+});
+
 test('an oracle is the stand-in only on its own answer, and never RedStone', async () => {
   const answering = (marker, updatedAt = 123n, blockTime = 1_000n, owners = { owner: STAND_IN_OWNER.toLowerCase(), pendingOwner: ZERO }) => ({
     readContract: async ({ functionName }) => {
@@ -876,6 +927,7 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
   // An explicit false says only that it is not the stand-in.
   const no = await identifyOracle(answering(false), ORACLE, []);
   assert.equal(no.identity, 'unknown');
+  assert.equal(no.owner, STAND_IN_OWNER, 'any oracle carries its controller as read, for keyControls');
   assert.match(no.detail, /answers isTestnetStandIn\(\) with false, so it is not the stand-in; nothing this run read says what it is/);
   // A revert is not an identity: RedStone's oracle has no such function, but
   // an RPC fault can surface the same way, so nothing is inferred from it.

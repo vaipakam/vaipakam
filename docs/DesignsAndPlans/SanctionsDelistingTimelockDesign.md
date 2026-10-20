@@ -239,11 +239,18 @@ Both accept native value only as their messenger's fee refund.
 - **Delister bot — built** (`packages/contracts/scripts/sanctions-delister.mjs`,
   installed with the adder from `ops/sanctions/`). An hourly oneshot with its
   own key, which must be the timelock's proposer and nothing else (not the
-  timelock's owner, nor the adder, remover or owner of the list recorded on
-  any chain the bot has an RPC for — the attestor's chain included, checked
-  in the one client lookup every read and send goes through, before the key
-  is used there), and a timelock that serves the list the release records; a
-  chain failing either is refused. Per chain, each run:
+  timelock's owner, nor the adder, remover, owner or pending owner of the
+  list recorded on any chain the bot has an RPC for — the attestor's chain
+  included, checked in the one client lookup every read and send goes
+  through, before the key is used there), and a timelock that serves the
+  list the release records; a chain failing either is refused. Nor may the
+  key control anything else a delisting's outcome depends on: the owner or
+  pending owner of the timelock, of the oracle the clearance is read from,
+  or, on the cross-chain route, of the messenger at either end. A key that
+  could also decide the clearance would leave only the Safe's veto between a
+  stolen copy and a delisting. A contract known to have an owner whose
+  controller cannot be read refuses the chain for that run; for an oracle of
+  unknown interface, only an owner read that answers with the key refuses. Per chain, each run:
   - discards a removed proposer's proposals; withdraws its own proposals that
     can no longer complete (vetoed, flagged by RedStone, already delisted
     another way, beyond the outstanding count, or no longer called for by a
@@ -386,7 +393,12 @@ Both accept native value only as their messenger's fee refund.
     attached, so `DeploySanctionsList` refuses an unfit recorded list
     (another owner, a pending transfer, a secondary) instead of deploying an
     empty one, and starting a new list is the operator's deliberate act
-    (remove the record). Every route report (the two scripts, the delister)
+    (remove the list record and the timelock record that serves it). A
+    chain's records stay one bound set (`script/lib/SanctionsRecords.sol`):
+    a timelock is bound to its list for good, so `DeploySanctionsList` never
+    starts a new list while a timelock is still recorded, and the wiring
+    script wires only a timelock that serves the recorded list, as the
+    delister already refuses one that does not. Every route report (the two scripts, the delister)
     also says whether automated delisting is open at all: it is closed
     while the timelock is not a remover of its list, the owner's one-step
     shutdown, whatever clearance check is wired.

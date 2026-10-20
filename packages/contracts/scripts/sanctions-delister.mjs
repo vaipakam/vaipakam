@@ -164,6 +164,29 @@ export function standInAbi() {
  *  and the stand-in answer, as the contracts call it (`ISanctionsList`). */
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
+/** The two reads every `Ownable2Step` contract answers, for the contracts on
+ *  a delisting's path this service has no compiled ABI for (the messengers). */
+const OWNABLE_ABI = parseAbi(['function owner() view returns (address)', 'function pendingOwner() view returns (address)']);
+
+/** `address`'s owner and pending owner, each null when it cannot be read or
+ *  is not an address. Never throws: an unreadable controller is judged by
+ *  {@link keyControls}, not lost with the rest of a reading. */
+async function readControl(client, address) {
+  const one = (functionName) =>
+    client.readContract({ address, abi: OWNABLE_ABI, functionName }).then(
+      (v) => {
+        try {
+          return getAddress(v);
+        } catch {
+          return null;
+        }
+      },
+      () => null,
+    );
+  const [owner, pendingOwner] = await Promise.all([one('owner'), one('pendingOwner')]);
+  return { owner, pendingOwner };
+}
+
 /** How a report names the testnet stand-in. */
 export const STAND_IN_NAME = 'the testnet stand-in for RedStone';
 
@@ -189,19 +212,46 @@ export function clearanceOracleName(snap) {
  * (see {@link identifyOracle}) — never an assumed admin. `flags` and `stale`
  * describe it in a report line; `refresh` is the step that re-publishes it,
  * or null when nobody can, and then `blocked` says what moves it on instead.
+ *
+ * The two reads are reported independently: what one established is never
+ * dropped because the other failed, so a known pending owner is named even
+ * when the current owner could not be read. Nothing is inferred beyond them:
+ * "nobody can re-publish it" is said only when the owner reads as renounced
+ * AND no transfer reads as pending.
  */
 export function standInControl(o) {
-  const pending = o.pendingOwner && !/^0x0{40}$/i.test(o.pendingOwner) ? `; an ownership transfer to ${o.pendingOwner} is pending, and that account controls it once it accepts` : '';
-  const pendingUnknown = o.pendingOwner === null ? '; whether an ownership transfer is pending could not be read' : '';
+  const isZero = (a) => typeof a === 'string' && /^0x0{40}$/i.test(a);
+  const pendingTo = typeof o.pendingOwner === 'string' && !isZero(o.pendingOwner) ? o.pendingOwner : null;
+  const pending = pendingTo
+    ? `; an ownership transfer to ${pendingTo} is pending, and that account controls it once it accepts`
+    : o.pendingOwner === null
+      ? '; whether an ownership transfer is pending could not be read'
+      : '';
   if (o.owner === null || o.owner === undefined) {
     return {
-      flags: `its owner could not be read this run, so who controls its flags is not known${pendingUnknown}`,
+      flags: `its owner could not be read this run, so who controls its flags is not known${pending}`,
       stale: 'it goes stale unless its owner re-publishes it',
       refresh: 'its owner (not read this run) re-publishes it with markUpdated',
       blocked: null,
     };
   }
-  if (/^0x0{40}$/i.test(o.owner)) {
+  if (isZero(o.owner) && pendingTo) {
+    return {
+      flags: `it has no owner now${pending}`,
+      stale: 'it goes stale unless its pending owner accepts and re-publishes it',
+      refresh: `its pending owner ${pendingTo} accepts ownership and re-publishes it with markUpdated`,
+      blocked: null,
+    };
+  }
+  if (isZero(o.owner) && o.pendingOwner === null) {
+    return {
+      flags: `it has no owner${pending}, so whether anyone can still change its flags is not known`,
+      stale: 'once stale it stays stale unless someone can still re-publish it',
+      refresh: null,
+      blocked: 'its ownership was given up and whether a transfer is pending could not be read, so nobody may be able to re-publish it; a new clearance source on the timelock moves this on',
+    };
+  }
+  if (isZero(o.owner)) {
     return {
       flags: 'it has no owner (ownership renounced), so its flags can no longer change',
       stale: 'nobody can re-publish it, so once stale it stays stale',
@@ -210,7 +260,7 @@ export function standInControl(o) {
     };
   }
   return {
-    flags: `it flags only what its owner ${o.owner} flags${pending}${pendingUnknown}`,
+    flags: `it flags only what its owner ${o.owner} flags${pending}`,
     stale: 'it goes stale unless its owner re-publishes it',
     refresh: `its owner ${o.owner} re-publishes it with markUpdated`,
     blocked: null,
@@ -286,16 +336,79 @@ export function fingerprint(snap) {
   return [l.sourceHash, l.publicationDate, l.version, l.pendingDelistings, snap.reservedDelistings, snap.proposalCount, snap.route, snap.timelockIsRemover, snap.proposals.map((p) => `${p.id}:${stage(snap, p)}`).join(',')].join('|');
 }
 
+/**
+ * What the signing key controls, or may come to control, among the contracts
+ * a delisting's outcome depends on. The key must be a proposer and nothing
+ * else: a key that can also decide the clearance — the oracle's flags and
+ * freshness, a messenger carrying the request or the answer — or steer the
+ * timelock could push a delisting through with only the Safe's veto in the
+ * way, so a stolen copy would need nothing else.
+ *
+ * `controllers` is `[{ what, owner, pendingOwner, ownable }]`, the owner and
+ * pending owner as read this run (null when unreadable). A pending owner is
+ * control too: it takes the contract whenever it accepts. `holds` names each
+ * such role the key has; `unknown` names each contract known to have an
+ * owner (`ownable`) whose controller could not be read, since the key is not
+ * used where its control is unknown. For an oracle of unknown interface
+ * (`ownable` false) an owner read that does not answer is not judged — but
+ * one that answers with the key is.
+ */
+export function keyControls(controllers, key) {
+  const holds = [];
+  const unknown = [];
+  for (const c of controllers) {
+    if (sameAddress(c.owner, key)) holds.push(`${c.what}'s owner`);
+    if (sameAddress(c.pendingOwner, key)) holds.push(`${c.what}'s pending owner`);
+    if (c.ownable && (c.owner == null || c.pendingOwner == null)) unknown.push(c.what);
+  }
+  return { holds, unknown };
+}
+
+/**
+ * Every contract with an owner that a delisting on this chain depends on, as
+ * read this run, for {@link keyControls}: the timelock; the oracle the
+ * clearance is read from (the list's secondary, or the attestor's oracle);
+ * and on the cross-chain route the messenger at each end, which carry the
+ * request and the answer. On a cross-chain route whose attestor chain could
+ * not be read this run (`relayPath` not ok), that side is not listed — and
+ * nothing that depends on it, a request or a relay, is sent (see
+ * {@link planChain}).
+ */
+export function delistingControllers({ route, timelock, clearanceOracle, clearanceMessenger, relayPath }) {
+  const controllers = [{ what: 'the timelock', owner: timelock.owner ?? null, pendingOwner: timelock.pendingOwner ?? null, ownable: true }];
+  if (clearanceOracle?.address) {
+    controllers.push({
+      what: clearanceOracleName({ clearanceOracle }),
+      owner: clearanceOracle.owner ?? null,
+      pendingOwner: clearanceOracle.pendingOwner ?? null,
+      ownable: clearanceOracle.identity === ORACLE_IDENTITY.STAND_IN,
+    });
+  }
+  if (route === CROSS_CHAIN) {
+    controllers.push({ what: "this chain's clearance messenger", owner: clearanceMessenger?.owner ?? null, pendingOwner: clearanceMessenger?.pendingOwner ?? null, ownable: true });
+    if (relayPath?.ok) {
+      controllers.push({ what: "the attestor chain's messenger", owner: relayPath.messenger?.owner ?? null, pendingOwner: relayPath.messenger?.pendingOwner ?? null, ownable: true });
+    }
+  }
+  return controllers;
+}
+
 /** The reasons a snapshot rules out acting at all, as a refusal message.
  *  The key's roles on the list are not here: they are checked on every chain
- *  the key is used on, before any use (see {@link listRoleRefusal}). */
+ *  the key is used on, before any use (see {@link listRoleRefusal}). What it
+ *  controls on the delisting path is (see {@link keyControls}). */
 export function refusal(snap) {
   if (!sameAddress(snap.timelockList, snap.list.address)) {
     return `the recorded timelock serves list ${snap.timelockList}, not the recorded list ${snap.list.address} — fix the release's deployments.json`;
   }
   const r = snap.roles;
   if (!r.proposer) return 'the signing key is not a proposer of this timelock — the owner appoints it with setProposer';
-  if (r.timelockOwner) return "the signing key is also the timelock's owner — an unattended key must be the proposer alone; move ownership before it runs again";
+  if (r.controls.holds.length) {
+    return `the signing key is also ${r.controls.holds.join(' and ')} — an unattended key must be the proposer alone, so that it cannot also decide a clearance or steer the timelock; move that control before it runs again`;
+  }
+  if (r.controls.unknown.length) {
+    return `who controls ${r.controls.unknown.join(' and ')} could not be read, so the key is not used on this chain this run`;
+  }
   return null;
 }
 
@@ -308,8 +421,8 @@ export function refusal(snap) {
  * chain and a chain that only hosts an attestor alike — in one place, the
  * client lookup ({@link createClientLookup}), before any read or send.
  */
-export function listRoleRefusal({ adder, remover, owner }) {
-  const extra = [adder && "the list's adder", remover && "the list's remover", owner && "the list's owner"].filter(Boolean);
+export function listRoleRefusal({ adder, remover, owner, pendingOwner = false }) {
+  const extra = [adder && "the list's adder", remover && "the list's remover", owner && "the list's owner", pendingOwner && "the list's pending owner"].filter(Boolean);
   if (!extra.length) return null;
   return `the signing key is also ${extra.join(' and ')} on this chain — an unattended key must be a proposer alone; remove the extra role before it runs again`;
 }
@@ -1126,7 +1239,8 @@ export function createClientLookup(clientsByChain, vet = async () => null) {
 
 /**
  * The lookup's vet for this service: on a chain whose list this release
- * records, the key's adder, remover and owner roles there, judged by
+ * records, the key's adder, remover, owner and pending-owner roles there
+ * (a pending owner takes the list whenever it accepts), judged by
  * {@link listRoleRefusal}. A list that cannot be read refuses too — the key
  * is not used on a chain where its roles are unknown.
  */
@@ -1136,8 +1250,8 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
     if (!at) return null;
     try {
       const read = (functionName, args = []) => client.readContract({ address: at, abi, functionName, args });
-      const [adder, remover, owner] = await Promise.all([read('isAdder', [key]), read('isRemover', [key]), read('owner')]);
-      return listRoleRefusal({ adder, remover, owner: sameAddress(owner, key) });
+      const [adder, remover, owner, pendingOwner] = await Promise.all([read('isAdder', [key]), read('isRemover', [key]), read('owner'), read('pendingOwner')]);
+      return listRoleRefusal({ adder, remover, owner: sameAddress(owner, key), pendingOwner: sameAddress(pendingOwner, key) });
     } catch (e) {
       return `the key's roles on list ${at} could not be read, so the key is not used on this chain: ${e?.shortMessage ?? e?.message ?? e}`;
     }
@@ -1165,10 +1279,12 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
  * when it is unreadable, zero, or later than its chain's latest block, and
  * null too when that block cannot be read to judge it.
  *
- * For the stand-in, `owner` and `pendingOwner` are read now too (null when
- * unreadable): whoever holds them controls its flags and its freshness, and
- * a report names them rather than assuming the chain's admin still does
- * ({@link standInControl}).
+ * `owner` and `pendingOwner` are read now too, whatever the oracle is (null
+ * when unreadable or not an address). For the stand-in whoever holds them
+ * controls its flags and its freshness, and a report names them rather than
+ * assuming the chain's admin still does ({@link standInControl}). For any
+ * oracle they are what {@link keyControls} judges: the signing key must
+ * control no oracle a clearance is read from.
  */
 export async function identifyOracle(client, address, abi) {
   const at = getAddress(address);
@@ -1196,7 +1312,7 @@ export async function identifyOracle(client, address, abi) {
     'error' in marker
       ? `asking ${at} whether it is the testnet stand-in returned no answer: ${marker.error?.shortMessage ?? marker.error?.message ?? marker.error}`
       : `${at} answers isTestnetStandIn() with ${marker.value}, so it is not the stand-in; nothing this run read says what it is`;
-  return { address: at, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt, detail };
+  return { address: at, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt, detail, owner: addressOrNull(owner), pendingOwner: addressOrNull(pendingOwner) };
 }
 
 /** `fn` over `items`, at most `n` at a time, results in order. */
@@ -1239,13 +1355,17 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
    *  chain has an RPC that serves that chain, and the attestor answers on
    *  it. Read once per run on a cross-chain route; a clearance request (a
    *  paid CCIP message) is sent only when it holds. Also identifies the
-   *  oracle the attestor reads (`oracle`, see {@link identifyOracle}). */
+   *  oracle the attestor reads (`oracle`, see {@link identifyOracle}) and
+   *  reads who controls the messenger its answers leave through
+   *  (`messenger`), both judged by {@link keyControls}. */
   async function relayPath(sourceChainId, attestor) {
     try {
       const src = await clientFor(sourceChainId);
       if (!src) return { ok: false, detail: `no RPC is configured for chain ${sourceChainId}, where its attestor runs` };
-      const oracle = await src.client.readContract({ address: attestor, abi: att, functionName: 'oracle' });
-      return { ok: true, oracle: await identifyOracle(src.client, oracle, standInDef) };
+      const readAtt = (functionName) => src.client.readContract({ address: attestor, abi: att, functionName });
+      const [oracle, messenger] = await Promise.all([readAtt('oracle'), readAtt('messenger')]);
+      const [identified, control] = await Promise.all([identifyOracle(src.client, oracle, standInDef), readControl(src.client, messenger)]);
+      return { ok: true, oracle: identified, messenger: { address: getAddress(messenger), ...control } };
     } catch (e) {
       // An unreadable attestor, an RPC serving another chain, or a key that
       // holds a role on that chain's list (createClientLookup) all land here.
@@ -1281,17 +1401,19 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
       const { client } = await own();
       const readTl = (functionName, args = []) => client.readContract({ address: c.timelock, abi: tl, functionName, args });
       const current = await readCurrentFromChain(client, c.list, list, BigInt(c.id));
-      const [latestVersion, block, tlList, owner, isProposer, route, reserved, count, sourceChainId, attestor, oracleMaxAge, tlIsRemover, balance] = await Promise.all([
+      const [latestVersion, block, tlList, owner, tlPendingOwner, isProposer, route, reserved, count, sourceChainId, attestor, clearanceMessenger, oracleMaxAge, tlIsRemover, balance] = await Promise.all([
         client.readContract({ address: c.list, abi: list, functionName: 'listVersion' }),
         client.getBlock(),
         readTl('list'),
         readTl('owner'),
+        readTl('pendingOwner'),
         readTl('isProposer', [account.address]),
         readTl('clearanceRoute'),
         readTl('reservedDelistings'),
         readTl('proposalCount'),
         readTl('clearanceSourceChainId'),
         readTl('clearanceAttestor'),
+        readTl('clearanceMessenger'),
         readTl('oracleMaxAge'),
         client.readContract({ address: c.list, abi: list, functionName: 'isRemover', args: [c.timelock] }),
         client.getBalance({ address: account.address }),
@@ -1309,6 +1431,13 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
           clearanceOracle = { address: null, identity: ORACLE_IDENTITY.UNKNOWN, updatedAt: null, detail: `the list's secondary oracle could not be read: ${e?.shortMessage ?? e?.message ?? e}` };
         }
       }
+      const controllers = delistingControllers({
+        route: Number(route),
+        timelock: { owner, pendingOwner: tlPendingOwner },
+        clearanceOracle,
+        clearanceMessenger: Number(route) === CROSS_CHAIN ? await readControl(client, clearanceMessenger) : null,
+        relayPath: crossChain,
+      });
       // The timelock keeps no index of pending proposals, so every one ever
       // made is read; delistings are rare, so the count stays small.
       const proposals = [];
@@ -1351,7 +1480,7 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         timelockIsRemover: tlIsRemover,
         // The key's roles on the list were checked before this chain's
         // clients were handed out (createClientLookup).
-        roles: { proposer: isProposer, timelockOwner: sameAddress(owner, account.address) },
+        roles: { proposer: isProposer, controls: keyControls(controllers, account.address) },
         route: Number(route),
         clearanceSourceChainId: sourceChainId,
         clearanceAttestor: attestor,
