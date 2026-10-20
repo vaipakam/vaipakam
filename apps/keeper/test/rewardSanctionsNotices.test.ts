@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseUnits, type Abi, type AbiEvent, type Address, type Hex, type Log } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { restartedLapse, sendSanctionsNotices, storedChainLapsed, valueMoveLine, valueMovesOf, type OwnerSanctionsStatus, type ValueMove } from '../src/rewardSanctionsHold';
+import { restartedLapse, sendSanctionsNotices, settlePending, storedChainLapsed, valueMoveLine, valueMovesOf, type OwnerSanctionsStatus, type ValueMove } from '../src/rewardSanctionsHold';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 
@@ -140,6 +140,34 @@ describe('restartedLapse', () => {
   });
 });
 
+describe('settlePending', () => {
+  const p = (fn: string, tx: Hex) => ({ owner: OWNER.toLowerCase(), fn, tx });
+  const TX2 = `0x${'8'.repeat(64)}` as Hex;
+  const TX3 = `0x${'9'.repeat(64)}` as Hex;
+  it('a late receipt is read like any other; a reverted one moved nothing; an unseen one stays UNKNOWN', async () => {
+    const receipts: Record<string, { status: string; logs: Log[] }> = {
+      [TX]: { status: 'success', logs: [log(DIAMOND, 'RewardSanctionsHeldApart', { user: OWNER, amount: v('3'), heldBalance: v('3') })] },
+      [TX2]: { status: 'reverted', logs: [] },
+    };
+    const out = await settlePending(
+      [p('settleSanctionedInteractionRewards', TX), p('resolveStagedDayPage', TX2), p('resolveStagedDayPage', TX3)],
+      async (tx) => {
+        const r = receipts[tx];
+        if (!r) throw new Error('receipt not found');
+        return r;
+      },
+      DIAMOND,
+      Number.POSITIVE_INFINITY,
+    );
+    expect(out.moves).toEqual([expect.objectContaining({ tx: TX, heldApart: v('3') })]);
+    expect(out.unknown).toEqual([p('resolveStagedDayPage', TX3)]);
+  });
+  it('past the deadline, every pending send stays unknown', async () => {
+    const out = await settlePending([p('resolveStagedDayPage', TX)], async () => ({ status: 'success', logs: [] }), DIAMOND, 0);
+    expect(out.unknown).toHaveLength(1);
+  });
+});
+
 describe('sendSanctionsNotices', () => {
   let logged: string[];
   let warned: string[];
@@ -169,6 +197,17 @@ describe('sendSanctionsNotices', () => {
     await sendSanctionsNotices(env, CHAIN, [move({ heldApart: 1n })], [], new Map(), 0);
     expect(logged).toHaveLength(1);
     expect(warned).toEqual([expect.stringContaining('not posted, past the run\'s alert window')]);
+  });
+
+  it('says a value-moving send whose outcome is unknown, but not an observation', async () => {
+    const unknown = [
+      { owner: OWNER.toLowerCase(), fn: 'settleSanctionedInteractionRewards', tx: TX },
+      { owner: OWNER.toLowerCase(), fn: 'recordRewardSanctionsEvidence', tx: TX },
+    ];
+    await sendSanctionsNotices(env, CHAIN, [], [], new Map(), Number.POSITIVE_INFINITY, unknown);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(`settleSanctionedInteractionRewards for ${OWNER.toLowerCase()} (tx ${TX}): its receipt was not seen`);
+    expect(logged[0]).toContain('UNKNOWN');
   });
 
   it('a run with nothing to tell says nothing', async () => {

@@ -566,7 +566,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // The run's deadline is honoured at each send's turn in the queue too
   // (`SendPastDeadline`), not only before the send joins it.
   const ctx = buildKeeperContext(env, chain, client as never, { notAfterMs: deadline });
-  const budget = { writes: plan.writes, touched: new Set<string>(), deadline, moves: [] as ValueMove[] };
+  const budget = { writes: plan.writes, touched: new Set<string>(), deadline, moves: [] as ValueMove[], pending: [] as PendingSend[] };
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
@@ -650,7 +650,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // deep backlog cannot take the whole phase run after run.
     const hourIndex = Math.floor(nowSec / 3600);
     const resolveCapped = async (owner: Address) => {
-      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline, moves: budget.moves };
+      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline, moves: budget.moves, pending: budget.pending };
       const before = share.writes;
       const r = await resolveOwnerRecords(env, ctx, share, owner);
       budget.writes -= before - share.writes;
@@ -720,13 +720,56 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // bounded post after them, so however many a run has they cannot spend the
   // window the alerts need.
   await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: stagingRead === null ? undefined : new Set(stagingOwners.map((o) => o.toLowerCase())) });
-  await sendSanctionsNotices(env, chain.id, budget.moves, statuses, freshBy, deadline + PASS_ALERT_WINDOW_MS);
+  const settled = await settlePending(budget.pending, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, diamondAddr, deadline + PASS_ALERT_WINDOW_MS);
+  await sendSanctionsNotices(env, chain.id, [...budget.moves, ...settled.moves], statuses, freshBy, deadline + PASS_ALERT_WINDOW_MS, settled.unknown);
+}
+
+/** A sent write whose receipt was not seen within its wait. */
+export interface PendingSend {
+  owner: string;
+  fn: string;
+  tx: Hex;
+}
+
+/**
+ * Settle the run's unknown sends before its notices (Codex #2602 r2): each
+ * one's receipt is asked for once more, so a transaction that mined after its
+ * wait is told with the amounts its own events state, like any other. One that
+ * is still unseen, unreadable or past `deadline` stays UNKNOWN and is returned
+ * as such, to be said — its value movement is never silently dropped. A
+ * reverted one moved nothing. Exported for tests.
+ */
+export async function settlePending(
+  pending: readonly PendingSend[],
+  receiptOf: (tx: Hex) => Promise<{ status: string; logs: readonly Log[] }>,
+  diamond: string,
+  deadline: number,
+): Promise<{ moves: ValueMove[]; unknown: PendingSend[] }> {
+  const moves: ValueMove[] = [];
+  const unknown: PendingSend[] = [];
+  for (const p of pending) {
+    if (Date.now() >= deadline) {
+      unknown.push(p);
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await receiptOf(p.tx);
+      if (r.status !== 'success') continue;
+      const m = valueMovesOf(r.logs, diamond, p.owner);
+      if (movedValue(m)) moves.push({ ...p, ...m });
+    } catch {
+      unknown.push(p);
+    }
+  }
+  return { moves, unknown };
 }
 
 /** The run's one-off notices (#2515), on the OPS channel, as ONE bounded post
  *  (Codex #2602 r1): each landed settlement or staging resolution that moved
  *  value, with the amounts its receipt's events state ({@link valueMoveLine}),
- *  and each lapsed evidence chain this run saw restart. Every line is
+ *  each such send whose outcome is still unknown, and each lapsed evidence
+ *  chain this run saw restart. Every line is
  *  journaled first, so one the post cannot carry — or a post not made, past
  *  `deadline` — is still named. Exported for tests. */
 export async function sendSanctionsNotices(
@@ -736,9 +779,20 @@ export async function sendSanctionsNotices(
   before: readonly OwnerSanctionsStatus[],
   after: ReadonlyMap<string, OwnerSanctionsStatus | null>,
   deadline: number,
+  /** Sends whose outcome is still unknown ({@link settlePending}). */
+  unknown: readonly PendingSend[] = [],
 ): Promise<void> {
   const iso = (t: number) => new Date(t * 1000).toISOString();
   const lines = moves.map(valueMoveLine);
+  for (const p of unknown) {
+    // An observation moves no value (its call emits none of the value
+    // events), so only a settlement or a resolution page is worth saying.
+    if (p.fn === 'recordRewardSanctionsEvidence') continue;
+    lines.push(
+      `${p.fn} for ${p.owner} (tx ${p.tx}): its receipt was not seen by the end of this run, so whether it landed and what it moved are UNKNOWN here; ` +
+        `that transaction's own events on chain are the record.`,
+    );
+  }
   for (const pre of before) {
     const post = after.get(pre.owner.toLowerCase());
     if (!post) continue;
@@ -1187,7 +1241,7 @@ export type SendOutcome = 'landed' | 'failed' | 'unknown' | 'skipped';
 
 async function send(
   ctx: KeeperContext,
-  budget: { writes: number; touched?: Set<string>; deadline?: number; moves?: ValueMove[] },
+  budget: { writes: number; touched?: Set<string>; deadline?: number; moves?: ValueMove[]; pending?: PendingSend[] },
   fn: string,
   args: readonly unknown[],
   owner: Address,
@@ -1243,6 +1297,9 @@ async function send(
   } catch (err) {
     console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} receipt not seen in time: ${shortErr(err)}`);
     budget.writes = 0;
+    // Its outcome is settled before the run's notices (Codex #2602 r2): a
+    // late receipt is read then, and one still unseen is SAID, never dropped.
+    budget.pending?.push({ owner: owner.toLowerCase(), fn, tx: hash });
     return 'unknown';
   }
 }

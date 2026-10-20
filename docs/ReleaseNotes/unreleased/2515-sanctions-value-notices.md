@@ -12,6 +12,9 @@ transaction's own events, not computed by the keeper, and each says whose it
 is. The recycle credit names no wallet on chain, so it is reported as the
 transaction's, and where part of a forfeited staged payout sits inside it the
 notice says the two figures overlap instead of letting them read as two moves.
+A transaction whose receipt arrives after the keeper stopped waiting is checked
+again before the notices go out; if its outcome is still unknown, the notice
+says so rather than leaving the movement untold.
 
 When a held claimant's observation chain had lapsed and was then started again,
 a notice names the wallet and when the new chain began. The lapse is judged from
