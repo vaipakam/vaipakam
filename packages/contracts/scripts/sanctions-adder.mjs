@@ -137,14 +137,17 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  *
  * Returns the chain's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's. Whatever it throws carries `chainContext`:
- * the last finalized reading of the list, and the finality outcome when the
- * wait ran, so the failure report still states what the list declares
- * outstanding (see {@link failureReport}).
+ * the last finalized reading of the list, the finality outcome when the wait
+ * ran, and the delistings this run computed together with the version of the
+ * reading they were computed from, so the failure report still states what
+ * the list declares outstanding (see {@link failureReport}).
  */
 export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const current = await readCurrent();
-  const context = { list: current, sourceHash, withheld: [] };
+  // `withheld` stays null until the update is computed: no delistings are
+  // known for any reading before then.
+  const context = { list: current, sourceHash, withheld: null, computedAt: current.version };
   try {
     // The update is computed from the finalized state and sent at the latest
     // block. If the list has moved in between — another update not yet final —
@@ -240,14 +243,20 @@ const lower = (x) => String(x).toLowerCase();
 
 /**
  * What one finalized reading of the list declares outstanding, and for which
- * publication. The delistings this run computed belong to this run's
- * publication, so they are named only when the reading records it; a
- * reading that records another publication (one applied since, or the older
- * one this run's update has not replaced) says which instead of pairing its
- * counts with this run's addresses. A list never updated records none.
+ * publication. A reading that records another publication (one applied since,
+ * or the older one this run's update has not replaced) says which, and a list
+ * never updated records none.
+ *
+ * `withheld` is the delistings this run computed, valid for exactly the list
+ * state they were computed from or the update's planned outcome; the caller
+ * passes `null` for any other reading. Even of the same publication, another
+ * state may differ (a remover may have applied some of them), so they are
+ * named only for a reading they were computed for, and `delistingsNamed`
+ * says whether they were.
  */
-export function outstandingFrom(list, sourceHash, withheld = []) {
+export function outstandingFrom(list, sourceHash, withheld) {
   const ofThisPublication = lower(list.recordedHash) === lower(sourceHash);
+  const named = ofThisPublication && Array.isArray(withheld);
   return {
     outstandingAt: {
       finalizedBlock: list.blockNumber?.toString(),
@@ -256,7 +265,8 @@ export function outstandingFrom(list, sourceHash, withheld = []) {
     },
     pendingAdditions: Number(list.recordedPendingAdditions),
     pendingDelistings: Number(list.recordedPendingDelistings),
-    delistingsForRemover: ofThisPublication ? withheld : [],
+    delistingsForRemover: named ? withheld : [],
+    delistingsNamed: named,
   };
 }
 
@@ -415,14 +425,23 @@ export function failureReport(reason, progress, context = {}) {
     error: reason,
     sent,
     ...(context.finality ? { finality: context.finality } : {}),
-    ...(context.list ? outstandingFrom(context.list, context.sourceHash, context.withheld) : {}),
+    // The delistings this run computed hold for the reading they were
+    // computed from; a reading at another version is another state.
+    ...(context.list
+      ? outstandingFrom(context.list, context.sourceHash, BigInt(context.list.version) === BigInt(context.computedAt) ? context.withheld : null)
+      : {}),
   };
 }
 
 /** The line naming the delistings the remover owes, and how to send them. */
 function removerLine(c, sourceFile) {
+  const which = c.delistingsNamed
+    ? c.delistingsForRemover?.length
+      ? `: ${c.delistingsForRemover.join(', ')}`
+      : ''
+    : ' (not named here: this run did not work them out for this state of the list; the command below does, from the list itself)';
   return (
-    `${c.pendingDelistings} delisting(s) await the remover (the Safe)${c.delistingsForRemover?.length ? `: ${c.delistingsForRemover.join(', ')}` : ''}. ` +
+    `${c.pendingDelistings} delisting(s) await the remover (the Safe)${which}. ` +
     `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${sourceFile ?? '<the publication file this run kept>'} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`
   );
 }

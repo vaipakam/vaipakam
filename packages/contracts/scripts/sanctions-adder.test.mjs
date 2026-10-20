@@ -389,11 +389,22 @@ test('finality: a stopped chain still reports what the last finalized reading de
   assert.equal(chain.status, 'stopped');
   assert.equal(chain.finality.state, 'displaced');
   assert.equal(chain.pendingDelistings, 1);
-  assert.deepEqual(chain.delistingsForRemover, [C], 'the reading records this publication, so its delistings are named');
+  // The reading records this publication, but it is not the state this run's
+  // delistings were computed from (another update made it), so they are not named.
+  assert.deepEqual(chain.delistingsForRemover, []);
+  assert.equal(chain.delistingsNamed, false);
   let text = summarizeFailure(chain, 'sdn.xml');
   assert.match(text, /can never apply as planned/);
   assert.match(text, /As last read \(finalized block 300, version 8\), the list declares 0 addition\(s\) and 1 delisting\(s\) outstanding, for this publication/);
-  assert.match(text, new RegExp(`1 delisting\\(s\\) await the remover \\(the Safe\\): ${C}`));
+  assert.match(text, /1 delisting\(s\) await the remover \(the Safe\) \(not named here: this run did not work them out for this state of the list; the command below does, from the list itself\)/);
+
+  // Still at the reading the update was built on (its transaction never landed):
+  // that is the state the delistings were computed from, so they are named.
+  const F1 = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
+  ({ chain } = await run({ version: 8n, addresses: [C, F1], date: DATE, hash: HASH, pendingAdditions: 1, pendingDelistings: 1, applies: false }, { finality: fakeClock() }));
+  assert.equal(chain.finality.state, 'pending');
+  assert.deepEqual(chain.delistingsForRemover, [C]);
+  assert.match(summarizeFailure(chain, 'sdn.xml'), new RegExp(`1 delisting\\(s\\) await the remover \\(the Safe\\): ${C}\\. Confirm`));
 
   // Overtaken by a NEWER publication before the first poll: its counts are reported as
   // that publication's, never paired with this run's delistings or file.
