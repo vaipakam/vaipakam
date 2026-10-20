@@ -410,8 +410,9 @@ NO secrets — the frontend bundle is static.
   as `KEEPER_DB` — and `hf_band_state`, the `keeper_commitment_scan` /
   `keeper_commitment_day` pair, the `keeper_remit_ack*` pair,
   `keeper_ops_alert`, `keeper_sanctions_screen` + `keeper_sanctions_watch`,
-  `keeper_work_open` + `keeper_work_cursor`, `keeper_deployment` and
-  `keeper_cutover` live there, with their schema in
+  `keeper_work_open` + `keeper_work_cursor`, the claim-horizon heartbeat's
+  `keeper_horizon_entry` + `keeper_horizon_cursor` (#2517),
+  `keeper_deployment` and `keeper_cutover` live there, with their schema in
   `apps/keeper/migrations/`. The rest of the list above stays on the
   shared binding. (`apps/keeper/README.md` carries the current split.)
 

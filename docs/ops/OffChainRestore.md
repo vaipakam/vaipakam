@@ -181,7 +181,11 @@ then deploy.
    open-work queue and its discovery cursor (`keeper_work_open`,
    `keeper_work_cursor`; both empty, the passes re-discover from the active
    Diamond's deploy block and drop each finished item after one on-chain read
-   — never empty one without the other) and the cutover's completion record,
+   — never empty one without the other), the claim-horizon heartbeat's
+   queue and cursor (`keeper_horizon_entry`, `keeper_horizon_cursor`; both
+   empty, the heartbeat re-discovers from entry id 1 and loses only its
+   stuck-clock and unlanded-touch history — again never one without the
+   other) and the cutover's completion record,
    which nothing else reads. **The archive does not carry
    it** — the backup Worker binds only the shared database — so after a
    restore it starts EMPTY, exactly as these tables always did (none was
