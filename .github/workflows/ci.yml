@@ -1015,6 +1015,9 @@ jobs:
       - name: Typecheck — apps/keeper
         run: pnpm --filter @vaipakam/keeper typecheck
 
+      - name: Typecheck — packages/anvil-harness
+        run: pnpm --filter @vaipakam/anvil-harness typecheck
+
       - name: Typecheck — apps/indexer (incl. check-event-coverage)
         run: pnpm --filter @vaipakam/indexer typecheck
 

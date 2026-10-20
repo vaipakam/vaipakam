@@ -49,6 +49,10 @@
 # own, consumed by the apps via workspace `:` protocol:
 #   - packages/contracts  ABI JSONs + deployments + ChainConfig
 #   - packages/lib        shared utilities (formatters, multicall, ...)
+#   - packages/anvil-harness  TEST-ONLY: the local Anvil node + deploy-
+#                         from-source fixture the app's Playwright tier and
+#                         the keeper's Anvil scenarios share (#2496). A
+#                         devDependency only — no Worker or bundle imports it.
 #   (packages/ui, five shared React primitives, was RETIRED in #1963.
 #    #1854 deleted apps/defi, its last consumer, leaving a package that
 #    nothing imported and nothing typechecked. Recover from git history
