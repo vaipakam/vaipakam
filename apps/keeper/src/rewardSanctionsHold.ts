@@ -700,17 +700,9 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // observation that restarted a lapsed chain, a settlement that moved value.
   await reconcileSent(budget.sent, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, Math.min(Date.now() + RECONCILE_MS, deadline + PASS_ALERT_WINDOW_MS));
   const ledger = readLedger(budget.sent, diamondAddr);
-  // A send that mined REVERTED after its wait is a failure like any other
-  // (Codex #2602 r4): it reaches the same failure maps the alerts read.
-  for (const t of ledger.lateReverted) {
-    if (t.fn === 'settleSanctionedInteractionRewards') {
-      settleFailed.set(t.owner, `the settlement transaction reverted on chain (tx ${t.tx}, its receipt seen after the keeper's wait)`);
-      settleOk.delete(t.owner);
-    } else if (t.fn === 'resolveStagedDayPage' || t.fn === 'resolveDomainPage') {
-      stagingStuck.set(t.owner, (stagingStuck.get(t.owner) ?? 0) + 1);
-      stagingClear.delete(t.owner);
-    }
-  }
+  // A receipt seen only now is an outcome like any other (Codex #2602 r4,
+  // r5): applied by the same rule the send's own wait applies.
+  for (const t of ledger.late) applyLateOutcome({ settleFailed, settleOk, stagingStuck, stagingClear }, t);
   // Alerts reflect the state AFTER this tick's writes (#2497 r2): an owner this
   // tick sent anything for is classified again, so an observation that
   // started a chain or recorded a clean result does not raise an alert for the
@@ -809,8 +801,8 @@ export interface Ledger {
   /** Owners whose evidence chain a landed send STARTED, with its start time:
    *  the receipt's own `RewardSanctionsEvidenceRecorded`, never a later read. */
   restarts: Map<string, number>;
-  /** Sends whose receipt, seen late, shows a revert. */
-  lateReverted: SentTx[];
+  /** Sends whose receipt was seen only at reconciliation, either outcome. */
+  late: SentTx[];
   /** Sends still without a receipt. */
   unknown: SentTx[];
 }
@@ -818,16 +810,14 @@ export interface Ledger {
 /** Read the run's ledger. Pure; pinned by the tests. */
 export function readLedger(sent: readonly SentTx[], diamond: string): Ledger {
   const d = diamond.toLowerCase();
-  const out: Ledger = { moves: [], restarts: new Map(), lateReverted: [], unknown: [] };
+  const out: Ledger = { moves: [], restarts: new Map(), late: [], unknown: [] };
   for (const t of sent) {
     if (!t.receipt) {
       out.unknown.push(t);
       continue;
     }
-    if (t.receipt.status !== 'success') {
-      if (t.late) out.lateReverted.push(t);
-      continue;
-    }
+    if (t.late) out.late.push(t);
+    if (t.receipt.status !== 'success') continue;
     const m = valueMovesOf(t.receipt.logs, diamond, t.owner);
     if (movedValue(m)) out.moves.push({ owner: t.owner, fn: t.fn, tx: t.tx, ...m });
     const own = t.receipt.logs.filter((l) => l.address.toLowerCase() === d) as Log[];
@@ -837,6 +827,45 @@ export function readLedger(sent: readonly SentTx[], diamond: string): Ledger {
     }
   }
   return out;
+}
+
+/** The per-owner outcome state the run's alerts read ({@link raiseAlerts}). */
+export interface OutcomeMaps {
+  settleFailed: Map<string, string>;
+  settleOk: Set<string>;
+  stagingStuck: Map<string, number>;
+  stagingClear: Set<string>;
+}
+
+/**
+ * Apply a receipt seen only at reconciliation ({@link reconcileSent}) by the
+ * rule the send's own wait applies (Codex #2602 r4, r5), so a late receipt
+ * neither leaves a disproven failure standing nor hides a real one:
+ *  - a settlement that LANDED may clear its failure alert, as a landed
+ *    settlement does in {@link runOwnerSettlement}; one that REVERTED is a
+ *    failure, named with its transaction;
+ *  - a resolution page that REVERTED is a wedged record, counted as
+ *    {@link resolveOwnerRecords} counts one; one that LANDED changes nothing
+ *    by itself, because the run stopped sending at that page, so the owner's
+ *    records were not offered whole this run and its staging alert is judged
+ *    on the next run's measurement — exactly as for an unknown page.
+ * An observation's receipt moves no alert state: the fresh status read after
+ * reconciliation is what judges it. Pure on its inputs; pinned by the tests.
+ */
+export function applyLateOutcome(maps: OutcomeMaps, t: SentTx): void {
+  if (!t.receipt) return;
+  const landed = t.receipt.status === 'success';
+  if (t.fn === 'settleSanctionedInteractionRewards') {
+    if (landed) {
+      maps.settleOk.add(t.owner);
+    } else {
+      maps.settleFailed.set(t.owner, `the settlement transaction reverted on chain (tx ${t.tx}, its receipt seen after the keeper's wait)`);
+      maps.settleOk.delete(t.owner);
+    }
+  } else if ((t.fn === 'resolveStagedDayPage' || t.fn === 'resolveDomainPage') && !landed) {
+    maps.stagingStuck.set(t.owner, (maps.stagingStuck.get(t.owner) ?? 0) + 1);
+    maps.stagingClear.delete(t.owner);
+  }
 }
 
 /** The run's one-off notices (#2515), on the OPS channel, as ONE bounded post

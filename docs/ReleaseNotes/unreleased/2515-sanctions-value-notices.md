@@ -14,8 +14,9 @@ transaction's, and where part of a forfeited staged payout sits inside it the
 notice says the two figures overlap instead of letting them read as two moves.
 A transaction whose receipt arrives after the keeper stopped waiting is checked
 again, all at once and within a short bound, before the alerts and notices go
-out. A late receipt is told like any other, a late revert is reported as a
-failure, and one whose outcome is still unknown is said to be unknown rather
+out. A late receipt counts exactly as one seen in time: a late revert is
+reported as a failure, a late successful settlement can clear a failure alert
+the run had open, and a transaction whose outcome is still unknown is said to be unknown rather
 than left untold.
 
 When a held claimant's observation chain had lapsed and was then started again,

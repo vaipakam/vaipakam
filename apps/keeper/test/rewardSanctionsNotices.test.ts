@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseUnits, type Abi, type AbiEvent, type Address, type Hex, type Log } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { lapseRestartLine, readLedger, reconcileSent, sendSanctionsNotices, storedChainLapsed, valueMoveLines, valueMovesOf, type OwnerSanctionsStatus, type SentTx, type ValueMove } from '../src/rewardSanctionsHold';
+import { applyLateOutcome, lapseRestartLine, readLedger, reconcileSent, sendSanctionsNotices, storedChainLapsed, valueMoveLines, valueMovesOf, type OutcomeMaps, type OwnerSanctionsStatus, type SentTx, type ValueMove } from '../src/rewardSanctionsHold';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 
@@ -152,9 +152,43 @@ describe('readLedger', () => {
     );
     expect(ledger.moves).toEqual([expect.objectContaining({ tx: TX, heldApart: v('3') })]);
     expect([...ledger.restarts]).toEqual([[OWNER.toLowerCase(), RESTART]]);
-    // A revert seen in the send's own wait was already counted there.
-    expect(ledger.lateReverted.map((t) => t.fn)).toEqual(['resolveStagedDayPage']);
+    // Only receipts seen at reconciliation are late; one seen in the send's
+    // own wait was already applied there.
+    expect(ledger.late.map((t) => t.fn)).toEqual(['recordRewardSanctionsEvidence', 'resolveStagedDayPage']);
     expect(ledger.unknown.map((t) => t.fn)).toEqual(['resolveStagedDayPage']);
+  });
+});
+
+describe('applyLateOutcome', () => {
+  const maps = (): OutcomeMaps => ({ settleFailed: new Map(), settleOk: new Set(), stagingStuck: new Map(), stagingClear: new Set() });
+  const o = OWNER.toLowerCase();
+  it('a late LANDED settlement may clear its failure alert, as an immediate one does', () => {
+    const m = maps();
+    applyLateOutcome(m, sent('settleSanctionedInteractionRewards', TX, { status: 'success', logs: [] }, true));
+    expect([...m.settleOk]).toEqual([o]);
+    expect(m.settleFailed.size).toBe(0);
+  });
+  it('a late REVERTED settlement is a named failure', () => {
+    const m = maps();
+    m.settleOk.add(o);
+    applyLateOutcome(m, sent('settleSanctionedInteractionRewards', TX, { status: 'reverted', logs: [] }, true));
+    expect(m.settleFailed.get(o)).toContain(TX);
+    expect(m.settleOk.has(o)).toBe(false);
+  });
+  it('a late reverted page is wedged; a late landed page clears nothing by itself', () => {
+    const m = maps();
+    applyLateOutcome(m, sent('resolveDomainPage', TX, { status: 'success', logs: [] }, true));
+    expect(m.stagingClear.size + m.stagingStuck.size).toBe(0);
+    m.stagingClear.add(o);
+    applyLateOutcome(m, sent('resolveStagedDayPage', TX, { status: 'reverted', logs: [] }, true));
+    expect(m.stagingStuck.get(o)).toBe(1);
+    expect(m.stagingClear.has(o)).toBe(false);
+  });
+  it('an observation, or a send still without a receipt, moves no alert state', () => {
+    const m = maps();
+    applyLateOutcome(m, sent('recordRewardSanctionsEvidence', TX, { status: 'reverted', logs: [] }, true));
+    applyLateOutcome(m, sent('settleSanctionedInteractionRewards', TX));
+    expect(m).toEqual(maps());
   });
 });
 
