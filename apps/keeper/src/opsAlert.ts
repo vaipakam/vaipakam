@@ -181,6 +181,25 @@ export function digestText(header: string, lines: readonly string[], footer: str
   return `${header}\n${shown.join('\n')}${more}\n${footer}`;
 }
 
+/**
+ * A one-off NOTICE: something happened, rather than a condition that holds
+ * (#2515 — a settlement that moved value, an evidence chain that lapsed).
+ * Sent once under `key`, then its record is cleared at once, so the next such
+ * event is told too and no row lingers for a condition that has no "cleared".
+ * Best-effort like every ops alert: the chain's own events are the record.
+ */
+export async function sendOpsNotice(
+  env: Env,
+  key: string,
+  text: string,
+  nowSec: number = Math.floor(Date.now() / 1000),
+  chainId: number | null = null,
+): Promise<OpsAlertOutcome> {
+  const out = await sendOpsAlert(env, key, text, 0, nowSec, chainId);
+  if (out === 'sent') await resolveOpsAlert(env, key);
+  return out;
+}
+
 /** The condition behind `key` has cleared: the next occurrence alerts at once. */
 export async function resolveOpsAlert(env: Env, key: string): Promise<void> {
   try {
