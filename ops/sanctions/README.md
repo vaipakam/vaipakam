@@ -255,18 +255,20 @@ the installed release).
   known to have listed nothing, and one reading of the list says what it
   holds. A reading that holds exactly the planned update makes the chain
   `applied` either way, and the report still names the transactions no
-  receipt confirmed. A failed read is read again every 15 seconds, for up to
-  40 minutes. "This publication" means the same date AND file hash, the pair
+  receipt confirmed. Only a reading that holds the update ends the wait
+  early: any other reading, or a failed read, is one server's view that
+  another's may contradict, so the list is read again every 15 seconds, for
+  up to 40 minutes. "This publication" means the same date AND file hash, the pair
   the list records; this file's hash recorded under another date is a
   conflicting record, reported as such and never as this publication. A
   chain that stops part-way is `stopped`: it lists each transaction it broadcast as
   included (not confirmed final), included and reverted, or broadcast with
-  no receipt (it may still land), and says why it stopped: the list at the
-  update's last version holds something else (other updates took its
-  versions, so it can never apply as planned), the list had already moved
-  past it before a reading showed it (its outcome is unknown), the list
-  never reached it (it may still land), or the list could not be read
-  (unknown). Check those before acting. Every report, a refused or stopped
+  no receipt (it may still land), and says what the last reading showed
+  when the wait ran out: the list at the update's last version holding
+  something else (other updates took its versions, so on that reading it
+  can never apply as planned), the list already past it (its outcome is
+  unknown), the list not there yet (it may still land), or the list could
+  not be read (unknown). Check those before acting. Every report, a refused or stopped
   one included, states what the last finalized reading of the list declares
   outstanding and for which publication, from the reading taken after its
   last broadcast, and says it is unknown when no such reading could be

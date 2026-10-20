@@ -375,12 +375,16 @@ function holds(s, state) {
  *               addresses (the reading the calls were built on plus every
  *               addition, nothing more and nothing removed), recording this
  *               publication and declaring the planned outstanding counts.
- *   displaced — at the target version, holding anything else: other updates
- *               took the versions the calls were built for, and the list
- *               takes an update only at the version it was computed
- *               against, so the planned update can never be what it holds.
- *   overtaken — past the target version: later updates followed, and the
- *               list no longer records whether the planned update applied.
+ *   displaced — at the target version, holding anything else: by this
+ *               reading other updates took the versions the calls were
+ *               built for, and the list takes an update only at the version
+ *               it was computed against.
+ *   overtaken — past the target version: by this reading later updates
+ *               followed, and the list no longer records whether the
+ *               planned update applied.
+ * Only `applied` is a verdict. The others describe one reading, which
+ * another server's reading of the finalized chain may contradict, so none
+ * of them ends the wait.
  */
 function finalityOf(s, target) {
   const version = BigInt(s.version);
@@ -389,17 +393,14 @@ function finalityOf(s, target) {
   return holds(s, target) ? 'applied' : 'displaced';
 }
 
-/** Why a reading stops the wait at once, for the error it throws. */
-const STOPPED = {
-  displaced: (s, t) =>
-    `the list at finalized block ${s.blockNumber} is at version ${s.version}, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so it can never apply as planned`,
-  overtaken: (s, t) =>
-    `the list at finalized block ${s.blockNumber} is already at version ${s.version}, past this update's last version ${t.version}, so it no longer records whether this update applied: its outcome is unknown`,
-};
-
-/** Why the wait ran out, for the error it throws. */
+/** What the last reading showed when the wait ran out, for the error it
+ *  throws. */
 const NOT_FINAL = {
   pending: (s, t) => `the list at finalized block ${s.blockNumber} is at version ${s.version}, not yet at this update's last version ${t.version}; its transactions may still land, or have been reorganized out`,
+  displaced: (s, t) =>
+    `the list at finalized block ${s.blockNumber} is at version ${s.version}, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so on that reading it can never apply as planned`,
+  overtaken: (s, t) =>
+    `the list at finalized block ${s.blockNumber} is already at version ${s.version}, past this update's last version ${t.version}, so that reading no longer records whether this update applied: its outcome is unknown`,
   unread: () => 'the finalized list could not be read, so whether this update applied is unknown',
 };
 
@@ -418,12 +419,13 @@ const NOT_FINAL = {
  * is carried from one reading to the next, since two may come from different
  * replicas. See {@link finalityOf} for what a reading can show.
  *
- * Throws with `finality` ({ state, finalizedBlock, version } of the last
- * reading; `state` alone when none was read) and `list` (the last reading,
- * when there is one): at once when the update is displaced (conclusive) or
- * overtaken (no later reading can say more); otherwise at the deadline, as
- * `pending` or `unread`. A failed read is never a verdict: the next poll
- * reads again.
+ * Only a reading that holds the update ends the wait early. Any other
+ * reading — not there yet, another state at the update's last version, the
+ * list already past it — or a failed read describes one server's view, which
+ * another's may contradict, so the next poll reads again. At the deadline it
+ * throws with `finality` ({ state, finalizedBlock, version } of the last
+ * reading; `state` alone when that read failed) and `list` (the last
+ * reading, when there is one).
  */
 export async function awaitFinality({ target, readCurrent, timeoutMs = FINALITY_TIMEOUT_MS, pollMs = FINALITY_POLL_MS, now = Date.now, wait = sleep }) {
   const deadline = now() + timeoutMs;
@@ -438,7 +440,6 @@ export async function awaitFinality({ target, readCurrent, timeoutMs = FINALITY_
       list = reading;
       finality = { state: finalityOf(reading, target), finalizedBlock: { number: reading.blockNumber?.toString(), hash: reading.blockHash }, version: reading.version.toString() };
       if (finality.state === 'applied') return { list, finalizedBlock: finality.finalizedBlock, version: finality.version };
-      if (STOPPED[finality.state]) throw Object.assign(new Error(STOPPED[finality.state](reading, target)), { finality, list });
     } else finality = { state: 'unread' };
     if (now() >= deadline) {
       throw Object.assign(new Error(`no finalized reading of the list held this update within ${timeoutMs / 60_000} minutes: ${NOT_FINAL[finality.state](list, target)}`), { finality, list });

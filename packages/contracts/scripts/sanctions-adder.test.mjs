@@ -342,7 +342,7 @@ test('finality: a failed read or a list not yet at the update\'s last version is
   assert.equal(two.version, '9');
 });
 
-test('finality: at the last version, anything but exactly the planned update is conclusive', async () => {
+test('finality: at the last version, anything but exactly the planned update is never applied', async () => {
   const cases = {
     'an extra address': snap(8n, [C, A1, A2]),
     'an address removed': snap(8n, [A1]),
@@ -355,9 +355,9 @@ test('finality: at the last version, anything but exactly the planned update is 
     const readCurrent = reads([reading]);
     const err = await wait(target(), readCurrent).catch((e) => e);
     assert.equal(err.finality?.state, 'displaced', why);
-    assert.match(err.message, /at version 8, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so it can never apply as planned/, why);
-    assert.equal(err.list, reading, `${why}: the reading travels with the verdict`);
-    assert.equal(readCurrent.count(), 1, `${why}: conclusive, no further reads`);
+    assert.match(err.message, /^no finalized reading of the list held this update within 1 minutes: the list at finalized block 300 is at version 8, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so on that reading it can never apply as planned/, why);
+    assert.equal(err.list, reading, `${why}: the reading travels with the outcome`);
+    assert.equal(readCurrent.count(), 5, `${why}: one server's view, so it reads again until the deadline`);
   }
 });
 
@@ -365,8 +365,21 @@ test('finality: a list already past the update no longer records it, so its outc
   const readCurrent = reads([snap(9n, [C, A1], { pendingDelistings: 0 })]);
   const err = await wait(target(), readCurrent).catch((e) => e);
   assert.equal(err.finality.state, 'overtaken');
-  assert.match(err.message, /already at version 9, past this update's last version 8, so it no longer records whether this update applied: its outcome is unknown/);
-  assert.equal(readCurrent.count(), 1, 'no later reading can say more');
+  assert.match(err.message, /already at version 9, past this update's last version 8, so that reading no longer records whether this update applied: its outcome is unknown/);
+  assert.equal(readCurrent.count(), 5, 'one server\'s view: it reads again until the deadline');
+});
+
+test('finality: another server\'s reading that holds the update outweighs one that does not', async () => {
+  // Replicas serving conflicting views of the finalized chain: a displaced or
+  // overtaken reading never ends the wait, so a later reading holding exactly
+  // the planned update is still seen, and is the verdict.
+  for (const [why, first] of Object.entries({ displaced: snap(8n, [C, A2]), overtaken: snap(9n, [C, A1], { pendingDelistings: 0 }) })) {
+    const readCurrent = reads([first, snap(8n, [C, A1], { block: 299n })]);
+    const ok = await wait(target(), readCurrent);
+    assert.equal(ok.version, '8', why);
+    assert.deepEqual(ok.finalizedBlock, { number: '299', hash: `0x${'c'.repeat(64)}` }, why);
+    assert.equal(readCurrent.count(), 2, why);
+  }
 });
 
 test('finality: the deadline reports what is unknown', async () => {
@@ -482,7 +495,7 @@ test('finality: after a broadcast the list decides, however the sends ended', as
   ({ chain } = await run({ version: 7n, addresses: [C] }, { send: timeout, readCurrent, finality: fakeClock() }));
   assert.equal(chain.status, 'stopped');
   assert.equal(chain.finality.state, 'displaced');
-  assert.match(chain.error, /^receipt timeout; then the list at finalized block 310 is at version 8, this update's last, but does not hold the planned update/);
+  assert.match(chain.error, /^receipt timeout; then no finalized reading of the list held this update within 1 minutes: the list at finalized block 310 is at version 8, this update's last, but does not hold the planned update/);
   assert.deepEqual(chain.outstandingAt, { finalizedBlock: '310', atVersion: '8', publication: 'this' });
   assert.equal(chain.delistingsNamed, false, 'not the state the delistings were computed from');
   // ... and with every read failing: what the list declares is unknown, not the older reading.
