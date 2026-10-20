@@ -270,11 +270,16 @@ the installed release).
   one included, states what the last finalized reading of the list declares
   outstanding and for which publication, from the reading taken after its
   last broadcast, and says it is unknown when no such reading could be
-  taken. This run's delistings are named
-  only for the reading they were computed from or the update's planned
-  outcome; for any other state of the list, even of the same publication,
+  taken. A run whose publication cannot be downloaded or read still reports
+  every chain, as refused, with what its list declares outstanding and for
+  which recorded publication (or unknown). The transactions a report lists
+  as sent are only those that reached the network. This run's delistings
+  are named only for the reading they were computed from or the update's
+  planned outcome, and only when they account for the whole count the list
+  declares; for any other state of the list, even of the same publication,
   the report gives the count and the command that works them out from the
-  list itself. Every run rebuilds from
+  list itself, and a declared count larger than the publication accounts
+  for is reported as a disagreement for a person to reconcile. Every run rebuilds from
   the list at the finalized block, so the next run follows whatever really
   happened.
 - **The delister** lists each transaction it sent as included, reverted,

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeFunctionData, getAddress } from 'viem';
 import { sanctionsListAbi, sourceHash } from './ofac-sanctions-diff.mjs';
-import { awaitFinality, failureReport, needsAlert, planChains, readConfig, runAdder, summarize, summarizeFailure } from './sanctions-adder.mjs';
+import { awaitFinality, failureReport, hasOutstanding, loadPublication, needsAlert, planChains, readConfig, runAdder, runChain, summarize, summarizeFailure } from './sanctions-adder.mjs';
 import { SERVICE_CHAINS, loadDeployments } from './sanctions-service.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -92,7 +92,7 @@ test('run: a new publication lists its additions and declares its delistings for
   // The publication is kept under its date and hash; the download name is gone.
   assert.deepEqual(readdirSync(stateDir), [`sdn-20260307-${HASH.slice(2, 14)}.xml`]);
   const text = summarize(report);
-  assert.match(text, /Base Sepolia: listed 2 new/);
+  assert.match(text, /Base Sepolia: final: the list at finalized block 300 holds exactly this update, including its 2 new address\(es\)\. Transactions sent: 0x0+1\./);
   assert.match(text, /1 delisting\(s\) await the remover/);
   assert.match(text, new RegExp(`--chain-id 84532 --list ${C}`));
   assert.ok(needsAlert(report));
@@ -327,7 +327,7 @@ test('finality: applied means one finalized reading holds exactly the planned up
   assert.deepEqual(chain.finalizedAt, { number: '300', hash: `0x${'c'.repeat(64)}` });
   assert.deepEqual(chain.listAfter, { atVersion: '8', finalizedBlock: '300', count: 3 });
   assert.deepEqual(chain.outstandingAt, { finalizedBlock: '300', atVersion: '8', publication: 'this' });
-  assert.match(summarize(report), /Final: the list at finalized block 300 holds exactly this update/);
+  assert.match(summarize(report), /final: the list at finalized block 300 holds exactly this update/);
 });
 
 test('finality: a failed read or a list not yet at the update\'s last version is "not yet", never a verdict', async () => {
@@ -429,7 +429,7 @@ test('finality: a stopped chain still reports what the last finalized reading de
     finality: fakeClock(),
   }));
   assert.equal(chain.finality.state, 'overtaken');
-  assert.deepEqual(chain.outstandingAt.publication, { date: 20260401, sha256: OTHER_HASH });
+  assert.deepEqual(chain.outstandingAt.publication, { date: 20260401, sha256: OTHER_HASH, relation: 'another' });
   assert.deepEqual(chain.delistingsForRemover, []);
   text = summarizeFailure(chain, 'sdn.xml');
   assert.match(text, /whether this update applied: its outcome is unknown/);
@@ -474,7 +474,7 @@ test('finality: after a broadcast the list decides, however the sends ended', as
   assert.equal(chain.finalizedAt.number, '310');
   assert.deepEqual(chain.delistingsForRemover, [C], 'the planned outcome is the state the delistings were computed for');
   let text = summarize(report);
-  assert.match(text, /Final: the list at finalized block 310 holds exactly this update\. Not confirmed by their own receipts: 0xe+ \(no receipt seen\); the list itself shows the update/);
+  assert.match(text, /final: the list at finalized block 310 holds exactly this update, including its 2 new address\(es\)\. Transactions sent: 0xe+\. Not confirmed by their own receipts: 0xe+ \(no receipt seen\); the list itself shows the update/);
 
   // The same, with the list then holding something else at that version: stopped,
   // naming both the send error and what the list shows.
@@ -539,7 +539,7 @@ test('publication identity: this file under another date is not this publication
     finality: fakeClock(),
   });
   assert.equal(chain.finality.state, 'overtaken');
-  assert.deepEqual(chain.outstandingAt.publication, { date: 20260308, sha256: HASH, sameFileHash: true });
+  assert.deepEqual(chain.outstandingAt.publication, { date: 20260308, sha256: HASH, relation: 'conflicting' });
   assert.equal(chain.delistingsNamed, false);
   const text = summarizeFailure(chain, 'sdn.xml');
   assert.match(text, /for a record carrying this file's sha256 under another date \(20260308\), which is not this publication — investigate before updating/);
@@ -559,4 +559,93 @@ test('finality: what a stopped chain says of each transaction it sent', async ()
   assert.deepEqual(chain.finality, { state: 'unread' });
   assert.match(summarizeFailure(chain), /whether this update applied is unknown/);
   assert.match(summarizeFailure(chain), /What the list declares outstanding is UNKNOWN/, 'the reading before the send is not reported as current');
+});
+
+test('delistings: named only when they account for the whole count the list declares', async () => {
+  const F1 = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
+  const F2 = getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce');
+  // This publication, fully added, yet the list declares 2 delistings where the
+  // publication accounts for 1 (C): an earlier update misstated the count.
+  const { report, chain, sent } = await run({ version: 8n, addresses: [C, F1, F2], date: DATE, hash: HASH, pendingDelistings: 2 });
+  assert.equal(chain.status, 'up-to-date');
+  assert.equal(sent.length, 0);
+  assert.equal(chain.delistingsNamed, false, 'one address is not the whole of a declared count of 2');
+  assert.deepEqual(chain.delistingsForRemover, []);
+  assert.deepEqual(chain.delistingsDisagree, { accountedFor: [C] });
+  assert.ok(hasOutstanding(chain));
+  assert.ok(needsAlert({ ...report, malformedValues: [] }), 'a count the publication does not account for is alerted');
+  const text = summarize(report);
+  assert.match(text, new RegExp(`2 delisting\\(s\\) are declared outstanding, but this publication accounts for 1 \\(${C}\\): the declared count and the publication disagree`));
+  assert.doesNotMatch(text, /await the remover/);
+  // The same reading with a count it matches: named, as the remover's whole work.
+  const ok = await run({ version: 8n, addresses: [C, F1, F2], date: DATE, hash: HASH, pendingDelistings: 1 });
+  assert.equal(ok.chain.delistingsNamed, true);
+  assert.deepEqual(ok.chain.delistingsForRemover, [C]);
+  assert.equal(ok.chain.delistingsDisagree, undefined);
+});
+
+test('sent: an applied chain lists only the transactions that reached the network', async () => {
+  const F1 = '0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB';
+  const F2 = getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce');
+  const stateDir = mkdtempSync(join(tmpdir(), 'adder-'));
+  const publication = await loadPublication({
+    stateDir,
+    fetchSource: async () => {
+      const p = join(stateDir, 'download.xml');
+      copyFileSync(FIXTURE_PATH, p);
+      return p;
+    },
+  });
+  // Two calls (one address each): the first is included, the second is refused
+  // before it is signed, and another run of this adder completes the update.
+  let n = 0;
+  const readCurrent = reads([BASE, snap(9n, [C, F1, F2], { block: 330n })]);
+  const result = await runChain({
+    publication,
+    readCurrent,
+    latestVersion: async () => 7n,
+    roles: async () => ({ adder: true, remover: false, owner: false }),
+    maxChangesPerCall: 1,
+    send: async (call, { onSubmitted }) => {
+      n += 1;
+      if (n === 2) throw Object.assign(new Error('simulation reverted'), { sendOutcome: 'not-sent' });
+      const hash = `0x${'a'.repeat(64)}`;
+      onSubmitted(hash);
+      return { hash, blockNumber: 201n, blockHash: `0x${'b'.repeat(64)}` };
+    },
+  });
+  assert.equal(result.status, 'applied');
+  assert.equal(readCurrent.count(), 2, 'one reading, no wait: the second call was never sent');
+  assert.deepEqual(result.sent.map((e) => e.tx), [`0x${'a'.repeat(64)}`], 'the unsent attempt is not reported as sent');
+});
+
+test('run: a publication that cannot be loaded still reports every chain, from its list', async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'adder-'));
+  const report = await runAdder({
+    stateDir,
+    fetchSource: async () => {
+      throw new Error('download failed');
+    },
+    chains: [
+      { slug: 'base-sepolia', name: 'Base Sepolia', id: 84532, list: C, effects: { readCurrent: reads([snap(9n, [C], { date: 20260301, pendingDelistings: 2 })]) } },
+      { slug: 'arb-sepolia', name: 'Arbitrum Sepolia', id: 421614, list: C, effects: { readCurrent: reads([new Error('RPC down')]) } },
+      { slug: 'sepolia', name: 'Sepolia', id: 11155111, skipped: 'no SanctionsList' },
+    ],
+  });
+  assert.equal(report.status, 'refused');
+  assert.match(report.error, /the OFAC publication could not be loaded: download failed/);
+  const base = report.chains['base-sepolia'];
+  assert.equal(base.status, 'refused');
+  assert.equal(base.pendingDelistings, 2);
+  assert.deepEqual(base.outstandingAt.publication, { date: 20260301, sha256: HASH, relation: 'unknown' });
+  assert.equal(base.delistingsNamed, false);
+  assert.equal(report.chains['arb-sepolia'].outstandingAt, undefined);
+  assert.equal(report.chains.sepolia.status, 'skipped');
+  assert.ok(needsAlert(report));
+  const text = summarize(report);
+  assert.match(text, /^REFUSED, nothing sent on any chain: the OFAC publication could not be loaded: download failed\./);
+  assert.match(text, /Base Sepolia: REFUSED, nothing sent: the OFAC publication could not be loaded/);
+  assert.match(text, /declares 0 addition\(s\) and 2 delisting\(s\) outstanding, for the publication dated 20260301 \(sha256 0x[0-9a-f]{16}…\); this run loaded no publication to compare it with/);
+  assert.match(text, /Arbitrum Sepolia: REFUSED, nothing sent: .*\n  What the list declares outstanding is UNKNOWN/);
+  assert.match(text, /Sepolia: skipped: no SanctionsList/);
 });

@@ -59,6 +59,7 @@ import { getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { isEntryPoint } from './entry-point.mjs';
 import {
+  DEFAULT_MAX_CHANGES_PER_CALL,
   DEFAULT_MAX_REMOVE,
   OFAC_SDN_ADVANCED_URL,
   buildUpdate,
@@ -145,7 +146,7 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  * computed from, so the failure report still states what the list declares
  * outstanding (see {@link failureReport}).
  */
-export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, maxChangesPerCall = DEFAULT_MAX_CHANGES_PER_CALL, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const thisPublication = { date: parsed.publicationDate, hash: sourceHash };
   const current = await readCurrent();
@@ -179,6 +180,7 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       recordedPendingDelistings: current.recordedPendingDelistings,
       signers: 'adder',
       maxRemove,
+      maxChangesPerCall,
       abi,
     });
     context.withheld = update.withheldRemovals;
@@ -186,7 +188,9 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
       list: summary(current),
       publicationOrder: update.order,
       added: update.add,
-      sent: progress,
+      // What reached the network, and nothing else: an attempt never sent, or
+      // refused by the node, did not touch the list.
+      sent: progress.filter(broadcast),
       ...outstandingFrom(list, thisPublication, update.withheldRemovals),
     });
     if (update.calls.length === 0) return { status: 'up-to-date', ...report(current) };
@@ -280,20 +284,29 @@ const lower = (x) => String(x).toLowerCase();
 
 /**
  * What one finalized reading of the list declares outstanding, and for which
- * publication. A reading that records another publication (one applied since,
- * or the older one this run's update has not replaced) says which, and a list
- * never updated records none.
+ * publication. `publication` is this run's (`{ date, hash }`), or null when
+ * the run loaded none. The reading's publication is `this`, `none` (a list
+ * never updated), or `{ date, sha256, relation }`, where `relation` says how
+ * it stands to this run's: `another` publication, `conflicting` (this file's
+ * hash under another date, which the list's order rule never treats as this
+ * publication), or `unknown` (this run has no publication to compare).
  *
  * `withheld` is the delistings this run computed, valid for exactly the list
  * state they were computed from or the update's planned outcome; the caller
  * passes `null` for any other reading. Even of the same publication, another
  * state may differ (a remover may have applied some of them), so they are
- * named only for a reading they were computed for, and `delistingsNamed`
- * says whether they were.
+ * named only for a reading they were computed for — and only when they
+ * account for the whole count the list declares. A larger count than they
+ * account for (an earlier update overstated it; a smaller one is refused
+ * when the update is built) is reported as `delistingsDisagree`, with what
+ * this publication accounts for, never as a complete list of the remover's
+ * work. `delistingsNamed` says whether they were named.
  */
 export function outstandingFrom(list, publication, withheld) {
-  const ofThisPublication = samePublication(publicationOf(list), publication);
-  const named = ofThisPublication && Array.isArray(withheld);
+  const ofThisPublication = Boolean(publication) && samePublication(publicationOf(list), publication);
+  const computed = ofThisPublication && Array.isArray(withheld);
+  const named = computed && withheld.length === Number(list.recordedPendingDelistings);
+  const relation = !publication ? 'unknown' : lower(list.recordedHash) === lower(publication.hash) ? 'conflicting' : 'another';
   return {
     outstandingAt: {
       finalizedBlock: list.blockNumber?.toString(),
@@ -302,18 +315,13 @@ export function outstandingFrom(list, publication, withheld) {
         ? 'this'
         : /^0x0{64}$/.test(lower(list.recordedHash))
           ? 'none'
-          : {
-              date: Number(list.recordedDate),
-              sha256: list.recordedHash,
-              // This file's hash recorded under another date: a conflicting
-              // record, which the summary names as such.
-              ...(lower(list.recordedHash) === lower(publication.hash) ? { sameFileHash: true } : {}),
-            },
+          : { date: Number(list.recordedDate), sha256: list.recordedHash, relation },
     },
     pendingAdditions: Number(list.recordedPendingAdditions),
     pendingDelistings: Number(list.recordedPendingDelistings),
     delistingsForRemover: named ? withheld : [],
     delistingsNamed: named,
+    ...(computed && !named ? { delistingsDisagree: { accountedFor: withheld } } : {}),
   };
 }
 
@@ -443,17 +451,25 @@ export async function awaitFinality({ target, readCurrent, timeoutMs = FINALITY_
  * One run across every configured chain. `chains` is
  * `[{ slug, name, id, list, skipped?, effects }]`, where `effects` are
  * {@link runChain}'s injected effects and a chain carrying `skipped` (a
- * reason) is reported without being touched. The publication is loaded once;
- * a failure to load it throws, since no chain can proceed. Each chain then
- * runs concurrently, and a chain that throws is recorded as `refused` or
- * `stopped` (see {@link failureReport}) without affecting the others.
- * `redactError` cleans an error message before it is recorded.
+ * reason) is reported without being touched. The publication is loaded once.
+ * When it cannot be loaded no chain can be updated, yet every chain is still
+ * reported: `refused`, with what its list declares outstanding from one
+ * finalized reading (or unknown), so a failed download never hides the work
+ * someone owes. Otherwise each chain runs concurrently, and a chain that
+ * throws is recorded as `refused` or `stopped` (see {@link failureReport})
+ * without affecting the others. `redactError` cleans an error message before
+ * it is recorded.
  */
 export async function runAdder({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP_FILES, maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi(), chains, redactError = (m) => m }) {
-  const publication = await loadPublication({ fetchSource, stateDir, keepFiles });
+  let publication;
+  try {
+    publication = await loadPublication({ fetchSource, stateDir, keepFiles });
+  } catch (e) {
+    return unloadedReport(chains, redactError(String(e?.message ?? e)));
+  }
   const results = await Promise.all(
     chains.map(async (c) => {
-      const head = { name: c.name, chainId: c.id, listAddress: c.list ?? null };
+      const head = chainHead(c);
       if (c.skipped) return [c.slug, { ...head, status: 'skipped', reason: c.skipped }];
       const progress = [];
       try {
@@ -475,6 +491,33 @@ export async function runAdder({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP
   };
 }
 
+/** The fields every chain's section starts with. */
+function chainHead(c) {
+  return { name: c.name, chainId: c.id, listAddress: c.list ?? null };
+}
+
+/**
+ * The run's report when the publication could not be loaded: nothing was
+ * computed or sent anywhere, and each chain that would have run states what
+ * one finalized reading of its list declares outstanding, for the
+ * publication the list records — there is no publication of this run's to
+ * compare it with — or that the list could not be read.
+ */
+async function unloadedReport(chains, error) {
+  const results = await Promise.all(
+    chains.map(async (c) => {
+      const head = chainHead(c);
+      if (c.skipped) return [c.slug, { ...head, status: 'skipped', reason: c.skipped }];
+      let list = null;
+      try {
+        list = await c.effects.readCurrent();
+      } catch {}
+      return [c.slug, { ...head, ...failureReport('the OFAC publication could not be loaded, so nothing was computed or sent on this chain', [], { list, publication: null }) }];
+    }),
+  );
+  return { status: 'refused', error: `the OFAC publication could not be loaded: ${error}`, source: null, malformedValues: [], chains: Object.fromEntries(results) };
+}
+
 /** Whether a chain's list still declares part of its publication
  *  outstanding — additions or delistings — which someone owes. */
 export function hasOutstanding(c) {
@@ -493,7 +536,8 @@ export function needsAlert(report) {
  * `stopped`, and says per transaction what its send established. `context`
  * (runChain's `chainContext`) adds the finality outcome when the wait ran,
  * and what the last finalized reading of the list declares outstanding, so a
- * failed run still reports the work someone owes (see {@link outstandingFrom}).
+ * failed run still reports the work someone owes (see {@link outstandingFrom});
+ * its `publication` is null when the run loaded none.
  */
 export function failureReport(reason, progress, context = {}) {
   const sent = progress.filter(broadcast);
@@ -512,6 +556,15 @@ export function failureReport(reason, progress, context = {}) {
 
 /** The line naming the delistings the remover owes, and how to send them. */
 function removerLine(c, sourceFile) {
+  const file = sourceFile ?? '<the publication file this run kept>';
+  if (c.delistingsDisagree) {
+    const w = c.delistingsDisagree.accountedFor;
+    return (
+      `${c.pendingDelistings} delisting(s) are declared outstanding, but this publication accounts for ${w.length}${w.length ? ` (${w.join(', ')})` : ''}: ` +
+      `the declared count and the publication disagree (an earlier update overstated the count), so a person must reconcile them before the remover acts. ` +
+      `ofac-sanctions-diff.mjs --xml ${file} --chain-id ${c.chainId} --list ${c.listAddress} shows this publication's delistings against the list.`
+    );
+  }
   const which = c.delistingsNamed
     ? c.delistingsForRemover?.length
       ? `: ${c.delistingsForRemover.join(', ')}`
@@ -519,7 +572,7 @@ function removerLine(c, sourceFile) {
     : ' (not named here: this run did not work them out for this state of the list; the command below does, from the list itself)';
   return (
     `${c.pendingDelistings} delisting(s) await the remover (the Safe)${which}. ` +
-    `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${sourceFile ?? '<the publication file this run kept>'} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`
+    `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${file} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`
   );
 }
 
@@ -545,9 +598,11 @@ export function summarizeFailure(report, sourceFile) {
         ? 'this publication'
         : at.publication === 'none'
           ? 'no publication yet (the list has never been updated)'
-          : at.publication.sameFileHash
+          : at.publication.relation === 'conflicting'
             ? `a record carrying this file's sha256 under another date (${at.publication.date}), which is not this publication — investigate before updating`
-            : `another publication (dated ${at.publication.date}, sha256 ${String(at.publication.sha256).slice(0, 18)}…), not this one`;
+            : at.publication.relation === 'unknown'
+              ? `the publication dated ${at.publication.date} (sha256 ${String(at.publication.sha256).slice(0, 18)}…); this run loaded no publication to compare it with`
+              : `another publication (dated ${at.publication.date}, sha256 ${String(at.publication.sha256).slice(0, 18)}…), not this one`;
     lines.push(`  As last read (finalized block ${at.finalizedBlock}, version ${at.atVersion}), the list declares ${report.pendingAdditions} addition(s) and ${report.pendingDelistings} delisting(s) outstanding, for ${whose}.`);
     if (at.publication === 'this' && report.pendingDelistings > 0) lines.push(`  ${removerLine(report, sourceFile)}`);
   }
@@ -565,7 +620,7 @@ export function summarizeChain(c, sourceFile) {
     const word = { submitted: 'no receipt seen', reverted: 'reverted' };
     const unconfirmed = c.sent.filter((e) => e.state !== 'included');
     const note = unconfirmed.length ? ` Not confirmed by their own receipts: ${unconfirmed.map((e) => `${e.tx} (${word[e.state] ?? e.state})`).join(', ')}; the list itself shows the update.` : '';
-    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s): ${c.sent.map((e) => e.tx).join(', ')}. Final: the list at finalized block ${c.finalizedAt.number} holds exactly this update.${note}`);
+    lines.push(`final: the list at finalized block ${c.finalizedAt.number} holds exactly this update, including its ${c.added.length} new address(es). Transactions sent: ${c.sent.map((e) => e.tx).join(', ')}.${note}`);
   } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
   if (c.pendingAdditions > 0) {
     // After this run sent every missing address, a non-zero count means the
@@ -582,8 +637,8 @@ export function summarizeChain(c, sourceFile) {
  *  publication, then one section per chain. */
 export function summarize(report) {
   const s = report.source;
-  const lines = [`OFAC ${s.publicationId} (sha256 ${s.sha256.slice(0, 18)}…): ${s.evmAddressCount} EVM addresses.`];
-  for (const [slug, c] of Object.entries(report.chains)) lines.push(`${c.name ?? slug}: ${summarizeChain(c, s.file)}`);
+  const lines = [s ? `OFAC ${s.publicationId} (sha256 ${s.sha256.slice(0, 18)}…): ${s.evmAddressCount} EVM addresses.` : `REFUSED, nothing sent on any chain: ${report.error}.`];
+  for (const [slug, c] of Object.entries(report.chains)) lines.push(`${c.name ?? slug}: ${summarizeChain(c, s?.file)}`);
   if (report.malformedValues?.length) lines.push(`${report.malformedValues.length} malformed digital-currency value(s) need review: ${report.malformedValues.map((m) => JSON.stringify(m.value)).join(', ')}.`);
   return lines.join('\n');
 }
@@ -719,11 +774,15 @@ async function main() {
       chains: plan.map((c) => (c.skipped ? c : { ...c, effects: chainEffects(c, account, abi) })),
     });
   } catch (e) {
-    // Only the download, the parse or the setup gets here: each chain's own
-    // failure is recorded in its section instead. Nothing has been sent.
-    // The message has the RPC URLs, the key and the bot token removed.
-    const failed = { status: 'refused', error: clean(e.message), chains: {} };
-    return finish(failed, `REFUSED before any chain, nothing sent: ${failed.error}`, true);
+    // Only the setup gets here: a publication that cannot be loaded, and each
+    // chain's own failure, are reported per chain by runAdder. Nothing has
+    // been read or sent, and every chain is still named, its list's state
+    // unknown. The message has the RPC URLs, the key and the bot token removed.
+    const chains = Object.fromEntries(
+      plan.map((c) => [c.slug, { ...chainHead(c), ...(c.skipped ? { status: 'skipped', reason: c.skipped } : failureReport('the run could not be set up, so nothing was read or sent on this chain', [])) }]),
+    );
+    const failed = { status: 'refused', error: `the run could not be set up: ${clean(e.message)}`, source: null, malformedValues: [], chains };
+    return finish(failed, summarize(failed), true);
   }
   await finish(report, summarize(report), needsAlert(report));
 }
