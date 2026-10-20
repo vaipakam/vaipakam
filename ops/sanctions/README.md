@@ -235,22 +235,29 @@ the installed release).
   check), reported as NOT DONE; work that waits by design (a
   window, RedStone's answer, the adder recording a newer publication) does
   not fail it.
-- **The adder** marks a chain `applied` only once the list, read at the
-  finalized block, shows every call it sent: the list is past the call's
-  version, records the publication and lists every address the call added,
-  and while the call is still the list's latest update, its pending counts are
-  the ones the call declared. The pending counts the report gives come from
-  that same finalized list, not from the plan. That is the same reading every update is computed from (one snapshot, every
-  read pinned to the finalized block's hash). No transaction receipt decides
-  it, since a load-balanced RPC can answer a receipt and the finalized block
-  from replicas on different forks. A failed read is read again every 15
-  seconds, for up to 40 minutes. A chain that stops part-way is `stopped`, and
-  lists each transaction it broadcast as final, included but not yet shown by
-  the finalized list (it may still land), not applied (the list moved past its
-  version without it, so it can never apply), unknown (the list could not be
-  read), included and reverted, or broadcast with no receipt (it may still
-  land); check those before acting. Every run rebuilds from the list at the
-  finalized block, so the next run follows whatever really happened.
+- **The adder** marks a chain `applied` only once ONE reading of the list,
+  at one finalized block, shows every call it sent. That is the same reading
+  every update is computed from (one snapshot, every read pinned to the
+  finalized block's hash), and no verdict is carried from one reading to the
+  next, since two readings may come from different servers. The list keeps
+  the version at which each address was listed, and the publication and
+  pending counts of its latest update only. So a call is shown when every
+  address it added is recorded as listed at the version the call was built
+  for, and, while the call is still the latest update, the list also records
+  its publication and the pending counts it declared. The pending counts the
+  report gives come from that same reading, not from the plan. No
+  transaction receipt decides it, since a load-balanced RPC can answer a
+  receipt and the finalized block from replicas on different forks. A failed
+  read is read again every 15 seconds, for up to 40 minutes. A chain that
+  stops part-way is `stopped`, and lists each transaction it broadcast as
+  final, included but not yet shown by the finalized list (it may still
+  land), not applied (another update took its version, so it can never
+  apply), unknown because later updates moved the list on and it no longer
+  records the call (an address it added was delisted since, or it added
+  nothing), unknown because the list could not be read, included and
+  reverted, or broadcast with no receipt (it may still land); check those
+  before acting. Every run rebuilds from the list at the finalized block, so
+  the next run follows whatever really happened.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
   its outcome unknown, and every pending proposal's state. "Refused" needs
