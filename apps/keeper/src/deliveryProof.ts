@@ -980,7 +980,11 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     // unmined sends would race them for nonces. Every step here is
     // idempotent; one that does not land in time ends this pass's sends for
     // the tick and the next tick re-reads the packet.
-    const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    // Never past the run's send deadline (Codex #2599 r2): what is left of the
+    // run after it belongs to the re-read and the alerts, and a refusal held in
+    // memory would be lost if they ran out of time. A send not mined by then is
+    // `stopped`, and the next run re-reads its packet.
+    const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: receiptTimeoutMs(ctx.notAfterMs) });
     if (receipt.status !== 'success') {
       console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
       return await minedRevertOutcome(simulate, call, hash);
@@ -1013,6 +1017,14 @@ export async function minedRevertOutcome(simulate: (c: Call) => Promise<unknown>
     }
   }
   return { kind: 'failed', reason: `${call.functionName} reverted on chain (tx ${hash})` };
+}
+
+/** How long a send may wait for its receipt: {@link RECEIPT_TIMEOUT_MS}, cut
+ *  to what is left before the run's send deadline — never below 1 ms, because
+ *  viem reads a timeout of 0 as "no timeout" and would wait indefinitely.
+ *  Pure; exported for tests. */
+export function receiptTimeoutMs(notAfterMs: number, nowMs: number = Date.now()): number {
+  return Math.max(1, Math.min(RECEIPT_TIMEOUT_MS, notAfterMs - nowMs));
 }
 
 /** A refused simulation as a send outcome. A deadline refusal stops the run. */

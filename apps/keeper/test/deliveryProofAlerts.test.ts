@@ -16,6 +16,7 @@ import {
   awaitingDeliveries,
   classifyRevert,
   minedRevertOutcome,
+  receiptTimeoutMs,
   raiseDeliveryAlerts,
   type DeliveryAlertInput,
 } from '../src/deliveryProof';
@@ -213,5 +214,13 @@ describe('minedRevertOutcome', () => {
     const generic = { kind: 'failed', reason: `materializeTransportBatchChunk reverted on chain (tx ${TX})` };
     expect(await minedRevertOutcome(async () => undefined, call, TX)).toEqual(generic);
     expect(await minedRevertOutcome(async () => Promise.reject(new Error('request to https://rpc.example/KEY failed')), call, TX)).toEqual(generic);
+  });
+});
+
+describe('receiptTimeoutMs', () => {
+  it("never waits past the run's send deadline, and never asks viem for an unbounded wait", () => {
+    expect(receiptTimeoutMs(100_000, 0)).toBe(30_000);
+    expect(receiptTimeoutMs(5_000, 0)).toBe(5_000);
+    expect(receiptTimeoutMs(0, 5_000), 'a timeout of 0 would mean none at all').toBe(1);
   });
 });

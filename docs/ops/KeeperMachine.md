@@ -190,7 +190,8 @@ a commit. The template documents each line. In short:
   alerts, and the delivery-proof pass its not-yet-whole and refused-proof
   alerts (#2516). With either value unset, every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
-  before arming `REWARD_SANCTIONS_KEEPER_ENABLED`.
+  before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,
+  `REWARD_HORIZON_HEARTBEAT_ENABLED` or `REWARD_DELIVERY_PROOF_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
