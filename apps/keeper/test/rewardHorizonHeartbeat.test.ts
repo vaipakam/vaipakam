@@ -401,6 +401,16 @@ describe('a run', () => {
     expect(paused[0]).toContain(`removal estimate ${new Date((base + DUE_AFTER_SEC) * 1000).toISOString().slice(0, 16)}Z`);
   });
 
+  it('records discovery and landed touches past one statement\'s bind cap (Codex #2596 r3)', async () => {
+    const n = 250;
+    for (let id = 1; id <= n; id++) chain.entries.set(id, entry());
+    await run();
+    expect(queued()).toHaveLength(n);
+    const now = Math.floor(T0 / 1000);
+    const untouched = keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_horizon_entry WHERE touched_at != ?').get(now);
+    expect(untouched, 'every landed touch is recorded').toEqual({ n: 0 });
+  });
+
   it('rotates past entries that keep failing instead of retrying only them (Codex #2596 r2)', async () => {
     for (let id = 1; id <= DUE_SLICE + 5; id++) chain.entries.set(id, entry());
     for (let id = 1; id <= DUE_SLICE; id++) chain.failing.add(id);

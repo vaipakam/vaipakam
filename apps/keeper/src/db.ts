@@ -12,7 +12,7 @@
  */
 
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { chunkD1InList, maxD1InListWidth } from '@vaipakam/lib/d1Binds';
 import { encodeAbiParameters, keccak256, type Hex } from 'viem';
 import type { KeeperD1 } from './env';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
@@ -1363,17 +1363,22 @@ export async function putHorizonCursor(db: KeeperD1, chainId: number, diamond: s
     .run();
 }
 
-/** Queue live entries. Idempotent: an entry already queued keeps its row. */
+/** Queue live entries. Idempotent: an entry already queued keeps its row.
+ *  One multi-row statement per bind-cap chunk, not one statement per entry, so
+ *  a discovery page costs a handful of D1 queries whatever its size (Codex
+ *  #2596 r3). */
 export async function enqueueHorizonEntries(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[], nowSec: number): Promise<void> {
   if (entryIds.length === 0) return;
+  const chunks = chunkD1InList(entryIds, { before: [chainId, diamond.toLowerCase(), nowSec] });
   await db.batch(
-    entryIds.map((id) =>
+    chunks.map((c) =>
       db
         .prepare(
           `INSERT OR IGNORE INTO keeper_horizon_entry (chain_id, diamond, entry_id, checked_at, touched_at, expires_at, paused_runs, added_at)
-           VALUES (?1, ?2, ?3, 0, 0, 0, 0, ?4)`,
+           SELECT chain_id, diamond, v.column1, 0, 0, 0, 0, added_at
+             FROM (SELECT ? AS chain_id, ? AS diamond, ? AS added_at) AS k, (VALUES ${c.items.map(() => '(?)').join(', ')}) AS v`,
         )
-        .bind(chainId, diamond.toLowerCase(), id, nowSec),
+        .bind(...c.binds),
     ),
   );
 }
@@ -1462,17 +1467,27 @@ export async function recordHorizonTouches(
   nowSec: number,
 ): Promise<void> {
   if (touches.length === 0) return;
-  await db.batch(
-    touches.map((t) =>
+  // One multi-row statement per bind-cap chunk (Codex #2596 r3): three binds a
+  // row, after the statement's three fixed ones.
+  const fixed = [nowSec, chainId, diamond.toLowerCase()];
+  const rowsPer = Math.floor(maxD1InListWidth(fixed.length) / 3);
+  const statements = [];
+  for (let i = 0; i < touches.length; i += rowsPer) {
+    const part = touches.slice(i, i + rowsPer);
+    statements.push(
       db
         .prepare(
-          `UPDATE keeper_horizon_entry SET prev_touched_at = touched_at, prev_expires_at = expires_at,
-                  checked_at = ?1, touched_at = ?1, expires_at = ?2, paused_runs = ?3
-            WHERE chain_id = ?4 AND diamond = ?5 AND entry_id = ?6`,
+          `UPDATE keeper_horizon_entry
+              SET prev_touched_at = touched_at, prev_expires_at = expires_at,
+                  checked_at = k.now_sec, touched_at = k.now_sec, expires_at = v.column2, paused_runs = v.column3
+             FROM (SELECT ? AS now_sec, ? AS chain_id, ? AS diamond) AS k, (VALUES ${part.map(() => '(?, ?, ?)').join(', ')}) AS v
+            WHERE keeper_horizon_entry.chain_id = k.chain_id AND keeper_horizon_entry.diamond = k.diamond
+              AND keeper_horizon_entry.entry_id = v.column1`,
         )
-        .bind(nowSec, t.expiresAt, t.pausedRuns, chainId, diamond.toLowerCase(), t.entryId),
-    ),
-  );
+        .bind(...fixed, ...part.flatMap((t) => [t.entryId, t.expiresAt, t.pausedRuns])),
+    );
+  }
+  await db.batch(statements);
 }
 
 /** A paused clock's last comparison: the two landed touches and the removal
