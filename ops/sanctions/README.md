@@ -236,28 +236,32 @@ the installed release).
   window, RedStone's answer, the adder recording a newer publication) does
   not fail it.
 - **The adder** marks a chain `applied` only once ONE reading of the list,
-  at one finalized block, shows every call it sent. That is the same reading
-  every update is computed from (one snapshot, every read pinned to the
-  finalized block's hash), and no verdict is carried from one reading to the
-  next, since two readings may come from different servers. The list keeps
-  the version at which each address was listed, and the publication and
-  pending counts of its latest update only. So a call is shown when every
-  address it added is recorded as listed at the version the call was built
-  for, and, while the call is still the latest update, the list also records
-  its publication and the pending counts it declared. The pending counts the
-  report gives come from that same reading, not from the plan. No
+  at one finalized block, holds exactly the update it planned: at the
+  update's last version, the planned addresses (the reading the update was
+  built on plus every addition, nothing more and nothing removed), this
+  publication, and the outstanding counts the update declared. That is the
+  same reading every update is computed from (one snapshot, every read
+  pinned to the finalized block's hash), and nothing is carried from one
+  reading to the next, since two readings may come from different servers.
+  Finality is a fact about the list, never about a transaction: no reading
+  can say which transaction produced the list's state, so the report names
+  the transactions it sent and the reading that holds the update. No
   transaction receipt decides it, since a load-balanced RPC can answer a
   receipt and the finalized block from replicas on different forks. A failed
   read is read again every 15 seconds, for up to 40 minutes. A chain that
-  stops part-way is `stopped`, and lists each transaction it broadcast as
-  final, included but not yet shown by the finalized list (it may still
-  land), not applied (another update took its version, so it can never
-  apply), unknown because later updates moved the list on and it no longer
-  records the call (an address it added was delisted since, or it added
-  nothing), unknown because the list could not be read, included and
-  reverted, or broadcast with no receipt (it may still land); check those
-  before acting. Every run rebuilds from the list at the finalized block, so
-  the next run follows whatever really happened.
+  stops part-way is `stopped`: it lists each transaction it broadcast as
+  included (not confirmed final), included and reverted, or broadcast with
+  no receipt (it may still land), and says why it stopped: the list at the
+  update's last version holds something else (other updates took its
+  versions, so it can never apply as planned), the list had already moved
+  past it before a reading showed it (its outcome is unknown), the list
+  never reached it (it may still land), or the list could not be read
+  (unknown). Check those before acting. Every report, a refused or stopped
+  one included, states what the last finalized reading of the list declares
+  outstanding and for which publication; this run's delistings are named
+  only when that reading records this publication. Every run rebuilds from
+  the list at the finalized block, so the next run follows whatever really
+  happened.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
   its outcome unknown, and every pending proposal's state. "Refused" needs

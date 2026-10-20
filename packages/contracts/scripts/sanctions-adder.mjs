@@ -18,9 +18,9 @@
  *      list at the finalized block, builds the update in ADDER-ONLY mode
  *      (every addition, in batches, and for a new publication its delistings
  *      DECLARED outstanding on-chain but not applied), simulates and sends
- *      each call, then waits until the list read at the finalized block
- *      shows every one (see {@link awaitFinality}) — only then is that chain
- *      "applied";
+ *      each call, then waits until one reading of the list at the finalized
+ *      block holds exactly the planned update (see {@link awaitFinality}) —
+ *      only then is that chain "applied";
  *   4. reports once: the journal always, the ops Telegram chat when
  *      configured, and last-run.json, with one section per chain and whether
  *      the alert was delivered. A chain that stops part-way names what it
@@ -68,7 +68,6 @@ import {
   readCurrentFromChain,
   sanctionsListAbi,
 } from './ofac-sanctions-diff.mjs';
-import { callAtHash } from './census-grandfathered-custody.mjs';
 import {
   MAINNET_RPC_ENVS,
   SERVICE_CHAINS,
@@ -109,10 +108,6 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  * The update of ONE chain's list from an already-parsed publication, with
  * every effect injected so the rule is testable:
  *   readCurrent()   → the list at the finalized block (readCurrentFromChain)
- *   listedSince(snapshot, addresses)
- *                   → each address's `listedSinceVersion`, read at that
- *                     snapshot's own block (pinned by its hash), as a Map
- *                     keyed by the lower-cased address
  *   latestVersion() → `listVersion` at the latest block
  *   roles()         → the signing key's roles on the list:
  *                     { adder, remover, owner } (booleans)
@@ -124,236 +119,234 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  *                     the node accepted it) is still reported by hash; returns
  *                     { hash, blockNumber, blockHash }
  *   finality        → optional { timeoutMs, pollMs, now, wait } for
- *                     {@link awaitFinality}, which confirms the sent calls
- *                     through `readCurrent` and `listedSince`
+ *                     {@link awaitFinality}
  *
  * `progress` (an array the caller passes in and keeps) receives one entry per
- * call before it is broadcast, and each entry's `state` moves from
- * `submitted` (signed, broadcast attempted) to `included` to `final`, or to
- * whatever the finality check could establish instead. The caller reads it
- * after a failure, so a chain that stops part-way says what it already sent
- * and what may still land, rather than reporting a refusal as if nothing had
- * happened. The chain is `applied` only when every entry is `final`.
+ * call before it is broadcast, and each entry's `state` says what its send
+ * established: `submitted` (signed, broadcast attempted), `included`,
+ * `reverted` or `rejected`. The caller reads it after a failure, so a chain
+ * that stops part-way says what it already sent and what may still land,
+ * rather than reporting a refusal as if nothing had happened.
+ *
+ * Finality is a fact about the LIST, never about a transaction: the chain is
+ * `applied` when one reading of the list at the finalized block holds exactly
+ * the update this run planned (see {@link awaitFinality}). No reading of the
+ * list can say which transaction produced its state, so the report names the
+ * transactions sent and the reading that holds the update, and claims no
+ * more.
  *
  * Returns the chain's report; throws on any refusal, before anything is sent
- * if the refusal is the tool's.
+ * if the refusal is the tool's. Whatever it throws carries `chainContext`:
+ * the last finalized reading of the list, and the finality outcome when the
+ * wait ran, so the failure report still states what the list declares
+ * outstanding (see {@link failureReport}).
  */
-export async function runChain({ publication, readCurrent, listedSince, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const current = await readCurrent();
-  // The update is computed from the finalized state and sent at the latest
-  // block. If the list has moved in between — another update not yet final —
-  // the calls would be built on a stale version; wait for it to finalize.
-  const latest = await latestVersion();
-  if (BigInt(latest) !== BigInt(current.version)) {
-    throw new Error(`the list is at version ${latest} but the finalized block shows ${current.version}; an update is not yet final — the next run retries`);
-  }
-  // The key must hold the adder role and nothing more: the runbook's bound on
-  // a stolen key (it can list, never delist or appoint) holds only while
-  // that is true, so a role granted to it later stops the service.
-  const r = await roles();
-  if (!r.adder) throw new Error('the signing key is not an adder of this SanctionsList — the owner appoints it with setAdder');
-  if (r.remover || r.owner) {
-    throw new Error(`the signing key is also the list's ${[r.remover && 'remover', r.owner && 'owner'].filter(Boolean).join(' and ')} — an unattended key must be the adder alone; revoke the extra role (setRemover(key, false), or move ownership) before it runs again`);
-  }
-  const update = buildUpdate({
-    parsed,
-    sourceHash,
-    current: current.addresses,
-    currentVersion: current.version,
-    recordedDate: current.recordedDate,
-    recordedHash: current.recordedHash,
-    recordedPendingAdditions: current.recordedPendingAdditions,
-    recordedPendingDelistings: current.recordedPendingDelistings,
-    signers: 'adder',
-    maxRemove,
-    abi,
-  });
-  for (const call of update.calls) {
-    const entry = { expectedVersion: call.expectedVersion.toString(), add: call.add, additionsLeft: call.additionsLeft, delistingsLeft: call.delistingsLeft, tx: null, state: 'submitting' };
-    progress.push(entry);
-    let included;
-    try {
-      included = await send(call, {
-        onSubmitted: (hash) => {
-          entry.tx = hash;
-          entry.state = 'submitted';
-        },
-      });
-    } catch (e) {
-      // What the send is known to have done (sanctions-service SEND_OUTCOMES):
-      // signed but refused by the node, or included and reverted.
-      if (e?.sendOutcome === 'refused') entry.state = 'rejected';
-      else if (e?.sendOutcome === 'reverted') entry.state = 'reverted';
-      throw e;
+  const context = { list: current, sourceHash, withheld: [] };
+  try {
+    // The update is computed from the finalized state and sent at the latest
+    // block. If the list has moved in between — another update not yet final —
+    // the calls would be built on a stale version; wait for it to finalize.
+    const latest = await latestVersion();
+    if (BigInt(latest) !== BigInt(current.version)) {
+      throw new Error(`the list is at version ${latest} but the finalized block shows ${current.version}; an update is not yet final — the next run retries`);
     }
-    Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
-  }
-  // What the report states about the list afterwards is read from the
-  // finalized list, never from the plan: the snapshot that showed every call
-  // final, or — with nothing sent — the one the update was computed from.
-  let after = current;
-  if (progress.length) {
+    // The key must hold the adder role and nothing more: the runbook's bound on
+    // a stolen key (it can list, never delist or appoint) holds only while
+    // that is true, so a role granted to it later stops the service.
+    const r = await roles();
+    if (!r.adder) throw new Error('the signing key is not an adder of this SanctionsList — the owner appoints it with setAdder');
+    if (r.remover || r.owner) {
+      throw new Error(`the signing key is also the list's ${[r.remover && 'remover', r.owner && 'owner'].filter(Boolean).join(' and ')} — an unattended key must be the adder alone; revoke the extra role (setRemover(key, false), or move ownership) before it runs again`);
+    }
+    const update = buildUpdate({
+      parsed,
+      sourceHash,
+      current: current.addresses,
+      currentVersion: current.version,
+      recordedDate: current.recordedDate,
+      recordedHash: current.recordedHash,
+      recordedPendingAdditions: current.recordedPendingAdditions,
+      recordedPendingDelistings: current.recordedPendingDelistings,
+      signers: 'adder',
+      maxRemove,
+      abi,
+    });
+    context.withheld = update.withheldRemovals;
+    const report = (list) => ({
+      list: summary(current),
+      publicationOrder: update.order,
+      added: update.add,
+      sent: progress,
+      ...outstandingFrom(list, sourceHash, update.withheldRemovals),
+    });
+    if (update.calls.length === 0) return { status: 'up-to-date', ...report(current) };
+
+    for (const call of update.calls) {
+      const entry = { expectedVersion: call.expectedVersion.toString(), add: call.add, tx: null, state: 'submitting' };
+      progress.push(entry);
+      let included;
+      try {
+        included = await send(call, {
+          onSubmitted: (hash) => {
+            entry.tx = hash;
+            entry.state = 'submitted';
+          },
+        });
+      } catch (e) {
+        // What the send is known to have done (sanctions-service SEND_OUTCOMES):
+        // signed but refused by the node, or included and reverted.
+        if (e?.sendOutcome === 'refused') entry.state = 'rejected';
+        else if (e?.sendOutcome === 'reverted') entry.state = 'reverted';
+        throw e;
+      }
+      Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
+    }
+
+    // The state the list holds once every call has applied, from the reading
+    // the calls were built on: the adder never delists, and the last call
+    // declares what the publication leaves outstanding.
+    const last = update.calls[update.calls.length - 1];
+    const target = {
+      version: BigInt(current.version) + BigInt(update.calls.length),
+      addresses: [...current.addresses, ...update.add],
+      sourceHash,
+      publicationDate: parsed.publicationDate,
+      pendingAdditions: last.additionsLeft,
+      pendingDelistings: last.delistingsLeft,
+    };
     let confirmed;
     try {
-      confirmed = await awaitFinality({ entries: progress, readCurrent, listedSince, sourceHash, ...finality });
+      confirmed = await awaitFinality({ target, readCurrent, ...finality });
     } catch (e) {
-      settleEntries(progress, e?.outcomes);
+      if (e?.list) context.list = e.list;
+      if (e?.finality) context.finality = e.finality;
       throw e;
     }
-    settleEntries(progress, confirmed.outcomes);
-    after = confirmed.list;
+    return { status: 'applied', finalizedAt: confirmed.finalizedBlock, listAfter: summary(confirmed.list), ...report(confirmed.list) };
+  } catch (e) {
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { chainContext: context });
   }
-  const summary = (l) => ({ atVersion: l.version.toString(), finalizedBlock: l.blockNumber?.toString(), count: l.addresses.length });
+}
+
+/** A finalized reading of the list, as the report states it. */
+function summary(l) {
+  return { atVersion: l.version.toString(), finalizedBlock: l.blockNumber?.toString(), count: l.addresses.length };
+}
+
+const lower = (x) => String(x).toLowerCase();
+
+/**
+ * What one finalized reading of the list declares outstanding, and for which
+ * publication. The delistings this run computed belong to this run's
+ * publication, so they are named only when the reading records it; a
+ * reading that records another publication (one applied since, or the older
+ * one this run's update has not replaced) says which instead of pairing its
+ * counts with this run's addresses. A list never updated records none.
+ */
+export function outstandingFrom(list, sourceHash, withheld = []) {
+  const ofThisPublication = lower(list.recordedHash) === lower(sourceHash);
   return {
-    status: progress.length ? 'applied' : 'up-to-date',
-    list: summary(current),
-    ...(progress.length ? { listAfter: summary(after) } : {}),
-    publicationOrder: update.order,
-    added: update.add,
-    sent: progress,
-    // What the finalized list declares outstanding after this run.
-    pendingAdditions: Number(after.recordedPendingAdditions),
-    pendingDelistings: Number(after.recordedPendingDelistings),
-    delistingsForRemover: update.withheldRemovals,
+    outstandingAt: {
+      finalizedBlock: list.blockNumber?.toString(),
+      atVersion: list.version.toString(),
+      publication: ofThisPublication ? 'this' : /^0x0{64}$/.test(lower(list.recordedHash)) ? 'none' : { date: Number(list.recordedDate), sha256: list.recordedHash },
+    },
+    pendingAdditions: Number(list.recordedPendingAdditions),
+    pendingDelistings: Number(list.recordedPendingDelistings),
+    delistingsForRemover: ofThisPublication ? withheld : [],
   };
 }
 
-/** Record on each sent entry what the finality check established. */
-function settleEntries(entries, outcomes = []) {
-  entries.forEach((entry, i) => {
-    const o = outcomes[i];
-    if (!o) return;
-    entry.state = o.state;
-    if (o.finalizedBlock) entry.finalizedBlock = o.finalizedBlock;
-  });
-}
-
 /**
- * What one list snapshot `s`, read at the finalized block, shows of one sent
- * call. `since` holds, for each address the call added, the version the list
- * records it was listed at (`listedSinceVersion`; 0 when it is not listed),
- * read at the SAME block.
- *
- * The list keeps only one piece of per-update history: the version at which
- * each address was listed. The publication and the outstanding counts are
- * kept for the latest update alone. So what a snapshot can establish depends
- * on how far the list has moved past the call's version `v`:
- *   pending   — not past `v`: the call has not applied yet, here.
- *   final     — exactly at `v + 1`, the call is the latest update: every
- *               address it added is listed at `v + 1`, and the list records
- *               its publication and the outstanding counts it declared. Or
- *               further on, with later updates on top: every address it added
- *               is still recorded as listed at `v + 1`. Either way the update
- *               at the call's version made the call's change.
- *   displaced — exactly at `v + 1` and the latest update is not the call:
- *               another update took its version, and this call can never
- *               apply, since the list takes an update only at the version it
- *               was computed against.
- *   overtaken — further on, and the list no longer records the call's change
- *               at `v + 1`: the call added nothing (so only the publication
- *               and counts the later updates replaced could show it), or one
- *               of its addresses is not recorded at `v + 1` (a later update
- *               delisted it, or another update took the version). Whether it
- *               applied is unknown from the list.
+ * What one reading `s` of the list, at the finalized block, shows of the
+ * planned update `target`. The list keeps the publication and outstanding
+ * counts of its latest update only, so a reading can show the whole update
+ * only while that update is the latest — the list exactly at the target
+ * version:
+ *   pending   — not at the target version yet.
+ *   applied   — at the target version, holding exactly the planned
+ *               addresses (the reading the calls were built on plus every
+ *               addition, nothing more and nothing removed), recording this
+ *               publication and declaring the planned outstanding counts.
+ *   displaced — at the target version, holding anything else: other updates
+ *               took the versions the calls were built for, and the list
+ *               takes an update only at the version it was computed
+ *               against, so the planned update can never be what it holds.
+ *   overtaken — past the target version: later updates followed, and the
+ *               list no longer records whether the planned update applied.
  */
-function callOutcome(entry, s, sourceHash, since) {
+function finalityOf(s, target) {
   const version = BigInt(s.version);
-  const at = BigInt(entry.expectedVersion) + 1n;
-  if (version < at) return 'pending';
-  const addedAtCall = entry.add.every((a) => since.get(a.toLowerCase()) === at);
-  if (version > at) return entry.add.length > 0 && addedAtCall ? 'final' : 'overtaken';
-  const latestIsCall =
-    addedAtCall &&
-    String(s.recordedHash).toLowerCase() === String(sourceHash).toLowerCase() &&
-    Number(s.recordedPendingAdditions) === Number(entry.additionsLeft) &&
-    Number(s.recordedPendingDelistings) === Number(entry.delistingsLeft);
-  return latestIsCall ? 'final' : 'displaced';
+  if (version < target.version) return 'pending';
+  if (version > target.version) return 'overtaken';
+  const held = new Set(s.addresses.map(lower));
+  const planned = new Set(target.addresses.map(lower));
+  const exactly = held.size === planned.size && [...planned].every((a) => held.has(a));
+  const holdsUpdate =
+    exactly &&
+    lower(s.recordedHash) === lower(target.sourceHash) &&
+    Number(s.recordedDate) === Number(target.publicationDate) &&
+    Number(s.recordedPendingAdditions) === Number(target.pendingAdditions) &&
+    Number(s.recordedPendingDelistings) === Number(target.pendingDelistings);
+  return holdsUpdate ? 'applied' : 'displaced';
 }
 
-/** Why a snapshot stops the wait at once, for the error it throws. */
+/** Why a reading stops the wait at once, for the error it throws. */
 const STOPPED = {
-  displaced: (e, s) =>
-    `the list at finalized block ${s.blockNumber} took version ${BigInt(e.expectedVersion) + 1n} with another update than ${e.tx}, so this call can never apply`,
-  overtaken: (e, s) =>
-    `the list at finalized block ${s.blockNumber} is at version ${s.version}, past version ${BigInt(e.expectedVersion) + 1n}, and no longer records whether ${e.tx} applied (` +
-    (e.add.length ? 'an address it added is not recorded as listed at that version' : 'it added nothing, and later updates replaced the publication it recorded') +
-    '): its outcome is unknown',
+  displaced: (s, t) =>
+    `the list at finalized block ${s.blockNumber} is at version ${s.version}, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so it can never apply as planned`,
+  overtaken: (s, t) =>
+    `the list at finalized block ${s.blockNumber} is already at version ${s.version}, past this update's last version ${t.version}, so it no longer records whether this update applied: its outcome is unknown`,
 };
 
-/** What each outcome short of final means, for the error a timeout throws. */
+/** Why the wait ran out, for the error it throws. */
 const NOT_FINAL = {
-  included: (e) => `(included in block ${e.blockNumber} when sent) is not shown by the finalized list yet; it may still land, or have been reorganized out`,
-  unread: () => 'is unknown: the finalized list could not be read',
+  pending: (s, t) => `the list at finalized block ${s.blockNumber} is at version ${s.version}, not yet at this update's last version ${t.version}; its transactions may still land, or have been reorganized out`,
+  unread: () => 'the finalized list could not be read, so whether this update applied is unknown',
 };
 
 /**
- * Wait until ONE snapshot of the list, read at the finalized block, shows
- * every call in `entries` (runChain's progress entries: `expectedVersion`,
- * `add`, `additionsLeft`, `delistingsLeft`, `tx`), and return
- * `{ outcomes, list }`: per entry `{ state: 'final', finalizedBlock }`, and
- * that snapshot.
+ * Wait until one reading of the list at the finalized block holds exactly
+ * the planned update `target` (`version`, `addresses`, `sourceHash`,
+ * `publicationDate`, `pendingAdditions`, `pendingDelistings`), and return
+ * `{ list, finalizedBlock, version }`: that reading and where it was taken.
  *
- * "Final" is a fact about the list, read the way every update is computed:
- * `readCurrent` takes one snapshot at the finalized block, every read pinned
- * to that block's hash, and `listedSince` reads the calls' addresses at the
- * same hash. A transaction receipt is not consulted. A receipt and the
+ * Each reading is `readCurrent`'s: one snapshot at the finalized block, every
+ * read pinned to that block's hash — the same reading every update is
+ * computed from. A transaction receipt is not consulted: a receipt and the
  * finalized head come from separate RPC calls, which a load-balanced RPC may
- * answer from replicas on different forks; and a reorg can include a
- * transaction again in a block other than the one first seen. The list's own
- * state at one finalized block has neither problem, and it is what the
- * service exists to change.
+ * answer from replicas on different forks, and a reorg can include a
+ * transaction again elsewhere. And each poll's reading decides alone; nothing
+ * is carried from one reading to the next, since two may come from different
+ * replicas. See {@link finalityOf} for what a reading can show.
  *
- * Every poll judges every call against that poll's snapshot alone (see
- * {@link callOutcome}); no verdict is carried from one snapshot to the next,
- * because two polls may be answered by different replicas, and calls each
- * shown by a different snapshot are not shown together by any. Each
- * outcome's `state` is one of:
- *   final     — the snapshot shows the call's change at its version;
- *   displaced — the snapshot's latest update took the call's version and is
- *               not the call, which can never apply;
- *   overtaken — later updates have moved the list on, and it no longer
- *               records whether the call applied;
- *   included  — the snapshot is not past the call's version yet;
- *   unread    — the snapshot could not be read.
- *
- * Throws, with `outcomes` on the error saying what the last poll established
- * for each call: at once when a call is displaced (conclusive) or overtaken
- * (no later snapshot can say more); otherwise at the deadline, when no
- * snapshot has shown every call. A failed read is never a verdict: the next
- * poll reads again.
+ * Throws with `finality` ({ state, finalizedBlock, version } of the last
+ * reading; `state` alone when none was read) and `list` (the last reading,
+ * when there is one): at once when the update is displaced (conclusive) or
+ * overtaken (no later reading can say more); otherwise at the deadline, as
+ * `pending` or `unread`. A failed read is never a verdict: the next poll
+ * reads again.
  */
-export async function awaitFinality({ entries, readCurrent, listedSince, sourceHash, timeoutMs = FINALITY_TIMEOUT_MS, pollMs = FINALITY_POLL_MS, now = Date.now, wait = sleep }) {
+export async function awaitFinality({ target, readCurrent, timeoutMs = FINALITY_TIMEOUT_MS, pollMs = FINALITY_POLL_MS, now = Date.now, wait = sleep }) {
   const deadline = now() + timeoutMs;
-  let outcomes = entries.map(() => ({ state: 'included' }));
+  let list = null;
+  let finality = { state: 'pending' };
   for (;;) {
-    let snapshot = null;
-    let since;
+    let reading = null;
     try {
-      snapshot = await readCurrent();
-      // Only the calls the list is past need their addresses read.
-      const past = entries.filter((e) => BigInt(snapshot.version) > BigInt(e.expectedVersion)).flatMap((e) => e.add);
-      since = past.length ? await listedSince(snapshot, past) : new Map();
-    } catch {
-      snapshot = null;
-    }
-    if (snapshot) {
-      const finalizedBlock = { number: snapshot.blockNumber?.toString(), hash: snapshot.blockHash };
-      outcomes = entries.map((e) => {
-        const seen = callOutcome(e, snapshot, sourceHash, since);
-        return seen === 'pending' ? { state: 'included' } : { state: seen, finalizedBlock };
-      });
-      const stop = outcomes.findIndex((o) => o.state === 'displaced' || o.state === 'overtaken');
-      if (stop >= 0) throw Object.assign(new Error(STOPPED[outcomes[stop].state](entries[stop], snapshot)), { outcomes });
-      if (outcomes.every((o) => o.state === 'final')) return { outcomes, list: snapshot };
-    } else {
-      // What the last snapshot showed still stands for the report; what it
-      // did not show is now unknown.
-      outcomes = outcomes.map((o) => (o.state === 'final' ? o : { state: 'unread' }));
-    }
+      reading = await readCurrent();
+    } catch {}
+    if (reading) {
+      list = reading;
+      finality = { state: finalityOf(reading, target), finalizedBlock: { number: reading.blockNumber?.toString(), hash: reading.blockHash }, version: reading.version.toString() };
+      if (finality.state === 'applied') return { list, finalizedBlock: finality.finalizedBlock, version: finality.version };
+      if (STOPPED[finality.state]) throw Object.assign(new Error(STOPPED[finality.state](reading, target)), { finality, list });
+    } else finality = { state: 'unread' };
     if (now() >= deadline) {
-      const open = entries.flatMap((e, i) => (outcomes[i].state === 'final' ? [] : [`${e.tx} ${NOT_FINAL[outcomes[i].state](e)}`]));
-      throw Object.assign(new Error(`no finalized list showed every call within ${timeoutMs / 60_000} minutes: ${open.join('; ')}`), { outcomes });
+      throw Object.assign(new Error(`no finalized reading of the list held this update within ${timeoutMs / 60_000} minutes: ${NOT_FINAL[finality.state](list, target)}`), { finality, list });
     }
     await wait(pollMs);
   }
@@ -379,7 +372,7 @@ export async function runAdder({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP
       try {
         return [c.slug, { ...head, ...(await runChain({ publication, ...c.effects, progress, maxRemove, abi })) }];
       } catch (e) {
-        return [c.slug, { ...head, ...failureReport(redactError(String(e?.message ?? e)), progress) }];
+        return [c.slug, { ...head, ...failureReport(redactError(String(e?.message ?? e)), progress, e?.chainContext) }];
       }
     }),
   );
@@ -410,41 +403,66 @@ export function needsAlert(report) {
 /**
  * The report for a chain whose update threw, built from what it had already
  * sent. A chain that sent nothing is `refused`; one that broadcast anything is
- * `stopped`, and says per transaction whether it is final, included but not
- * yet final, included and reverted, or broadcast with no receipt seen (it
- * may still land).
+ * `stopped`, and says per transaction what its send established. `context`
+ * (runChain's `chainContext`) adds the finality outcome when the wait ran,
+ * and what the last finalized reading of the list declares outstanding, so a
+ * failed run still reports the work someone owes (see {@link outstandingFrom}).
  */
-export function failureReport(reason, progress) {
+export function failureReport(reason, progress, context = {}) {
   const sent = progress.filter((e) => e.tx && e.state !== 'rejected');
-  return { status: sent.length ? 'stopped' : 'refused', error: reason, sent };
+  return {
+    status: sent.length ? 'stopped' : 'refused',
+    error: reason,
+    sent,
+    ...(context.finality ? { finality: context.finality } : {}),
+    ...(context.list ? outstandingFrom(context.list, context.sourceHash, context.withheld) : {}),
+  };
+}
+
+/** The line naming the delistings the remover owes, and how to send them. */
+function removerLine(c, sourceFile) {
+  return (
+    `${c.pendingDelistings} delisting(s) await the remover (the Safe)${c.delistingsForRemover?.length ? `: ${c.delistingsForRemover.join(', ')}` : ''}. ` +
+    `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${sourceFile ?? '<the publication file this run kept>'} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`
+  );
 }
 
 /** The lines a person reads for one chain that did not complete. */
-export function summarizeFailure(report) {
-  if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
-  const word = {
-    final: 'final',
-    included: 'included, NOT yet final',
-    reverted: 'included but REVERTED — it listed nothing',
-    submitted: 'signed and broadcast attempted, no receipt seen — it may still land',
-    displaced: 'NOT applied — another update took its version in the finalized list, so it can never apply',
-    overtaken: 'whether it applied is UNKNOWN — later updates moved the finalized list on, and it no longer records this call',
-    unread: 'whether it is final is UNKNOWN — the finalized list could not be read',
-  };
-  const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
-  for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
-  lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');
+export function summarizeFailure(report, sourceFile) {
+  const lines = [];
+  if (report.status === 'refused') lines.push(`REFUSED, nothing sent: ${report.error}`);
+  else {
+    const word = {
+      included: 'included, NOT confirmed final',
+      reverted: 'included but REVERTED — it listed nothing',
+      submitted: 'signed and broadcast attempted, no receipt seen — it may still land',
+    };
+    lines.push(`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`);
+    for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
+    lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');
+  }
+  const at = report.outstandingAt;
+  if (!at) lines.push('  What the list declares outstanding is UNKNOWN: it could not be read.');
+  else {
+    const whose =
+      at.publication === 'this'
+        ? 'this publication'
+        : at.publication === 'none'
+          ? 'no publication yet (the list has never been updated)'
+          : `another publication (dated ${at.publication.date}, sha256 ${String(at.publication.sha256).slice(0, 18)}…), not this one`;
+    lines.push(`  As last read (finalized block ${at.finalizedBlock}, version ${at.atVersion}), the list declares ${report.pendingAdditions} addition(s) and ${report.pendingDelistings} delisting(s) outstanding, for ${whose}.`);
+    if (at.publication === 'this' && report.pendingDelistings > 0) lines.push(`  ${removerLine(report, sourceFile)}`);
+  }
   return lines.join('\n');
 }
 
 /** The lines a person reads for one chain. */
 export function summarizeChain(c, sourceFile) {
   if (c.status === 'skipped') return `skipped: ${c.reason}`;
-  if (c.status === 'refused' || c.status === 'stopped') return summarizeFailure(c);
+  if (c.status === 'refused' || c.status === 'stopped') return summarizeFailure(c, sourceFile);
   const lines = [];
   if (c.status === 'applied') {
-    const at = c.sent.reduce((m, e) => (e.finalizedBlock && BigInt(e.finalizedBlock.number) > m ? BigInt(e.finalizedBlock.number) : m), 0n);
-    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s), all final (the list at finalized block ${at} shows them): ${c.sent.map((e) => e.tx).join(', ')}.`);
+    lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s): ${c.sent.map((e) => e.tx).join(', ')}. Final: the list at finalized block ${c.finalizedAt.number} holds exactly this update.`);
   } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
   if (c.pendingAdditions > 0) {
     // After this run sent every missing address, a non-zero count means the
@@ -453,12 +471,7 @@ export function summarizeChain(c, sourceFile) {
     // needs the owner.
     lines.push(`the list still declares ${c.pendingAdditions} addition(s) outstanding that this publication does not supply — an earlier update overstated the count, and the list will not read as current until a person corrects it.`);
   }
-  if (c.pendingDelistings > 0) {
-    lines.push(
-      `${c.pendingDelistings} delisting(s) await the remover (the Safe)${c.delistingsForRemover.length ? `: ${c.delistingsForRemover.join(', ')}` : ''}. ` +
-        `Confirm each against OFAC's Recent Actions notice, then run ofac-sanctions-diff.mjs --xml ${sourceFile} --chain-id ${c.chainId} --list ${c.listAddress} --confirm-delist … and send its remover calls from the Safe.`,
-    );
-  }
+  if (c.pendingDelistings > 0) lines.push(removerLine(c, sourceFile));
   return lines.join('\n  ');
 }
 
@@ -531,16 +544,6 @@ function chainEffects(c, account, abi) {
   return {
     // Checks the RPC serves chain `c.id` before reading anything.
     readCurrent: () => readCurrentFromChain(client, c.list, abi, BigInt(c.id)),
-    // At the snapshot's own block, by its hash, so a verdict rests on one
-    // snapshot. One read at a time: a free-tier RPC refuses a burst.
-    listedSince: async (snapshot, addresses) => {
-      const block = { hash: snapshot.blockHash, number: snapshot.blockNumber };
-      const since = new Map();
-      for (const a of addresses) {
-        since.set(a.toLowerCase(), BigInt(await callAtHash(client, block, { address: c.list, abi, functionName: 'listedSinceVersion', args: [a] })));
-      }
-      return since;
-    },
     latestVersion: () => client.readContract({ address: c.list, abi, functionName: 'listVersion' }),
     roles: async () => {
       const [adder, remover, owner] = await Promise.all([

@@ -18,17 +18,11 @@ const C = getAddress('0x00000000000000000000000000000000000000c0');
 const ZERO_HASH = `0x${'0'.repeat(64)}`;
 const KEY = `0x${'1'.repeat(64)}`;
 
-/** A fake `listedSince`: the versions a snapshot's `since` records, by
- *  lower-cased address; 0 for an address it does not record. */
-const fakeSince = async (s, addresses) => new Map(addresses.map((a) => [a.toLowerCase(), BigInt(s.since?.[a.toLowerCase()] ?? 0)]));
-
 /** {@link runChain}'s effects against a fake list in state `list`; `sent`
- *  collects what was sent. A sent call is applied to the list, so the next
- *  finalized read shows it, unless `list.applies` is false. `list.since`
- *  records the version each address was listed at (an address the list
- *  starts with, at version 1). */
+ *  collects what was sent. A sent call is applied to the list (its additions,
+ *  publication and declared counts), so the next finalized read shows it,
+ *  unless `list.applies` is false. */
 function fakeChain(list, sent, overrides = {}) {
-  list.since ??= Object.fromEntries(list.addresses.map((a) => [a.toLowerCase(), 1n]));
   return {
     readCurrent: async () => ({
       version: list.version,
@@ -39,9 +33,7 @@ function fakeChain(list, sent, overrides = {}) {
       recordedPendingDelistings: list.pendingDelistings ?? 0,
       blockNumber: list.finalizedBlock ?? 100n,
       blockHash: `0x${'c'.repeat(64)}`,
-      since: { ...list.since },
     }),
-    listedSince: fakeSince,
     latestVersion: async () => list.latest ?? list.version,
     roles: async () => ({ adder: list.isAdder ?? true, remover: list.isRemover ?? false, owner: list.isOwner ?? false }),
     send: async (call, { onSubmitted }) => {
@@ -49,13 +41,14 @@ function fakeChain(list, sent, overrides = {}) {
       const hash = `0x${String(sent.length).padStart(64, '0')}`;
       onSubmitted(hash);
       if (list.applies !== false) {
-        for (const a of call.add) list.since[a.toLowerCase()] = call.expectedVersion + 1n;
+        const [expectedVersion, toAdd, , sourceHash_, publicationDate, additionsLeft, delistingsLeft] = decodeFunctionData({ abi: sanctionsListAbi(), data: call.calldata }).args;
         Object.assign(list, {
-          version: call.expectedVersion + 1n,
-          addresses: [...list.addresses, ...call.add],
-          hash: HASH,
-          pendingAdditions: call.additionsLeft,
-          pendingDelistings: call.delistingsLeft,
+          version: expectedVersion + 1n,
+          addresses: [...list.addresses, ...toAdd],
+          hash: sourceHash_,
+          date: publicationDate,
+          pendingAdditions: additionsLeft,
+          pendingDelistings: delistingsLeft,
           finalizedBlock: 300n,
         });
       }
@@ -87,7 +80,8 @@ test('run: a new publication lists its additions and declares its delistings for
   assert.equal(report.status, 'ok');
   assert.equal(chain.status, 'applied');
   assert.equal(sent.length, 1);
-  assert.equal(chain.sent[0].state, 'final', 'applied means final');
+  assert.equal(chain.sent[0].state, 'included', 'a transaction is reported as sent and included; finality is the list\'s');
+  assert.equal(chain.finalizedAt.number, '300');
   const args = decodeFunctionData({ abi: sanctionsListAbi(), data: sent[0].calldata }).args;
   assert.equal(args[0], 7n);
   assert.deepEqual(args[2], [], 'the adder never delists');
@@ -182,6 +176,7 @@ test('run: one parse feeds every chain, and one chain failing never stops anothe
   assert.equal(report.chains.sepolia.status, 'skipped');
   const text = summarize(report);
   assert.match(text, /Arbitrum Sepolia: REFUSED, nothing sent/);
+  assert.match(text, /What the list declares outstanding is UNKNOWN: it could not be read/);
   assert.match(text, /Sepolia: skipped: no SanctionsList/);
 });
 
@@ -191,7 +186,8 @@ test('run: a stop part-way keeps what was already sent, and says what may still 
   assert.equal(chain.status, 'stopped');
   assert.equal(chain.sent.length, 1);
   assert.equal(chain.sent[0].state, 'included');
-  assert.match(summarizeFailure(chain), /included, NOT yet final/);
+  assert.equal(chain.finality.state, 'pending');
+  assert.match(summarizeFailure(chain), /included, NOT confirmed final/);
 
   // Signed and recorded, then the broadcast's reply was lost: still reported by hash.
   ({ chain } = await run({ version: 7n, addresses: [C] }, {
@@ -282,7 +278,7 @@ test('env template: names every setting the runner reads', () => {
 });
 
 
-// ── Finality: what the list shows at the finalized block, never a receipt ──
+// ── Finality: one finalized reading holds exactly the planned update ──
 
 /** A fake clock for awaitFinality: `wait` advances `now`. */
 function fakeClock(timeoutMs = 60_000) {
@@ -290,24 +286,23 @@ function fakeClock(timeoutMs = 60_000) {
   return { timeoutMs, pollMs: 15_000, now: () => t, wait: async (ms) => { t += ms; } };
 }
 
+const DATE = 20260307;
 const A1 = getAddress('0x00000000000000000000000000000000000000a1');
 const A2 = getAddress('0x00000000000000000000000000000000000000a2');
-const TX1 = `0x${'1'.repeat(64)}`;
-const TX2 = `0x${'2'.repeat(64)}`;
-const entry = (expectedVersion, add, tx = TX1, { additionsLeft = 0, delistingsLeft = 1 } = {}) => ({ expectedVersion: String(expectedVersion), add, additionsLeft, delistingsLeft, tx, blockNumber: '201', state: 'included' });
-/** A finalized snapshot; `since` defaults to every address listed at `version`. */
-const snap = (version, addresses, { hash = HASH, block = 300n, pendingAdditions = 0, pendingDelistings = 1, since } = {}) => ({
+const OTHER_HASH = `0x${'9'.repeat(64)}`;
+/** The update planned on a list at version 7 holding C: A1 (and A2) added, one delisting declared. */
+const target = (version = 8n, addresses = [C, A1], { pendingAdditions = 0, pendingDelistings = 1 } = {}) => ({ version, addresses, sourceHash: HASH, publicationDate: DATE, pendingAdditions, pendingDelistings });
+/** A finalized reading of the list. */
+const snap = (version, addresses, { hash = HASH, date = DATE, block = 300n, pendingAdditions = 0, pendingDelistings = 1 } = {}) => ({
   version,
   addresses,
   recordedHash: hash,
+  recordedDate: date,
   recordedPendingAdditions: pendingAdditions,
   recordedPendingDelistings: pendingDelistings,
   blockNumber: block,
   blockHash: `0x${'c'.repeat(64)}`,
-  since: Object.fromEntries(Object.entries(since ?? Object.fromEntries(addresses.map((a) => [a, version]))).map(([a, v]) => [a.toLowerCase(), v])),
 });
-/** awaitFinality against `readCurrent`, with the fake `listedSince` and clock. */
-const wait = (entries, readCurrent, clock = fakeClock()) => awaitFinality({ entries, readCurrent, listedSince: fakeSince, sourceHash: HASH, ...clock });
 /** A readCurrent answering `answers` in turn (the last repeats); an Error is thrown. */
 function reads(answers) {
   let n = 0;
@@ -319,141 +314,125 @@ function reads(answers) {
   fn.count = () => n;
   return fn;
 }
+const wait = (t, readCurrent, clock = fakeClock()) => awaitFinality({ target: t, readCurrent, ...clock });
+/** The reading a run is planned on: version 7, holding C, no publication yet. */
+const BASE = { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n, blockHash: `0x${'c'.repeat(64)}` };
 
-test('finality: applied means the list at the finalized block shows every call', async () => {
+test('finality: applied means one finalized reading holds exactly the planned update', async () => {
   const { chain, report } = await run({ version: 7n, addresses: [C] });
   assert.equal(chain.status, 'applied');
-  assert.equal(chain.sent[0].state, 'final');
-  assert.deepEqual(chain.sent[0].finalizedBlock, { number: '300', hash: `0x${'c'.repeat(64)}` });
+  assert.deepEqual(chain.finalizedAt, { number: '300', hash: `0x${'c'.repeat(64)}` });
   assert.deepEqual(chain.listAfter, { atVersion: '8', finalizedBlock: '300', count: 3 });
-  assert.match(summarize(report), /all final \(the list at finalized block 300 shows them\)/);
+  assert.deepEqual(chain.outstandingAt, { finalizedBlock: '300', atVersion: '8', publication: 'this' });
+  assert.match(summarize(report), /Final: the list at finalized block 300 holds exactly this update/);
 });
 
-test('finality: what the report says is outstanding is read from the finalized list, never from the plan', async () => {
-  // After this run's call the remover applied the publication's delisting
-  // before the check: the finalized list is two versions on and owes nothing.
-  const sent = [];
-  const list = { version: 7n, addresses: [C] };
-  const effects = fakeChain(list, sent);
-  const fixtureAddrs = ['0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce')];
-  const { chain, report } = await run(list, {
-    send: async (call, opts) => {
-      const r = await effects.send(call, opts);
-      Object.assign(list, { version: 9n, addresses: fixtureAddrs, pendingDelistings: 0 });
-      return r;
-    },
-  });
-  assert.equal(chain.status, 'applied');
-  assert.equal(chain.pendingDelistings, 0);
-  assert.equal(chain.listAfter.atVersion, '9');
-  assert.doesNotMatch(summarize(report), /await the remover/);
-});
-
-test('finality: a failed read or a list not yet past the call is "not yet", never a verdict', async () => {
-  const readCurrent = reads([new Error('429 Too Many Requests'), snap(7n, []), snap(8n, [A1])]);
-  const { outcomes, list } = await wait([entry(7, [A1])], readCurrent);
-  assert.deepEqual(outcomes, [{ state: 'final', finalizedBlock: { number: '300', hash: `0x${'c'.repeat(64)}` } }]);
-  assert.equal(list.version, 8n, 'it returns the snapshot that showed it');
+test('finality: a failed read or a list not yet at the update\'s last version is "not yet", never a verdict', async () => {
+  const readCurrent = reads([new Error('429 Too Many Requests'), snap(7n, [C]), snap(8n, [C, A1])]);
+  const { list, finalizedBlock, version } = await wait(target(), readCurrent);
+  assert.equal(list.version, 8n, 'it returns the reading that holds the update');
+  assert.deepEqual(finalizedBlock, { number: '300', hash: `0x${'c'.repeat(64)}` });
+  assert.equal(version, '8');
   assert.equal(readCurrent.count(), 3);
-  // A failed read of the addresses at the snapshot's block is "not yet" too.
-  let n = 0;
-  const flaky = async (s, addrs) => {
-    if (n++ === 0) throw new Error('429');
-    return fakeSince(s, addrs);
+  // A two-call update is judged at its last version, by one reading.
+  const two = await wait(target(9n, [C, A1, A2]), reads([snap(8n, [C, A1], { pendingAdditions: 1 }), snap(9n, [C, A1, A2])]));
+  assert.equal(two.version, '9');
+});
+
+test('finality: at the last version, anything but exactly the planned update is conclusive', async () => {
+  const cases = {
+    'an extra address': snap(8n, [C, A1, A2]),
+    'an address removed': snap(8n, [A1]),
+    'a planned address missing': snap(8n, [C, A2]),
+    'another publication': snap(8n, [C, A1], { hash: OTHER_HASH }),
+    'another publication date': snap(8n, [C, A1], { date: 20260308 }),
+    'other outstanding counts': snap(8n, [C, A1], { pendingDelistings: 0 }),
   };
-  const again = await awaitFinality({ entries: [entry(7, [A1])], readCurrent: reads([snap(8n, [A1])]), listedSince: flaky, sourceHash: HASH, ...fakeClock() });
-  assert.equal(again.outcomes[0].state, 'final');
-  assert.equal(n, 2);
+  for (const [why, reading] of Object.entries(cases)) {
+    const readCurrent = reads([reading]);
+    const err = await wait(target(), readCurrent).catch((e) => e);
+    assert.equal(err.finality?.state, 'displaced', why);
+    assert.match(err.message, /at version 8, this update's last, but does not hold the planned update: other updates took the versions its transactions were built for, so it can never apply as planned/, why);
+    assert.equal(err.list, reading, `${why}: the reading travels with the verdict`);
+    assert.equal(readCurrent.count(), 1, `${why}: conclusive, no further reads`);
+  }
 });
 
-test('finality: the list keeps which version listed each address, so a call stays shown after later updates', async () => {
-  // A newer publication (or an authorized rollback) finalized on top of the call
-  // before the first read: the latest publication is not this one, but the list
-  // still records A1 as listed by the update at the call's version.
-  const { outcomes } = await wait([entry(7, [A1])], reads([snap(10n, [A1, A2], { hash: `0x${'9'.repeat(64)}`, pendingDelistings: 0, since: { [A1]: 8n, [A2]: 10n } })]));
-  assert.equal(outcomes[0].state, 'final');
-  // Two calls, each shown by its own version's record in one snapshot.
-  const two = await wait([entry(7, [A1]), entry(8, [A2], TX2)], reads([snap(8n, [A1]), snap(9n, [A1, A2], { since: { [A1]: 8n, [A2]: 9n } })]));
-  assert.deepEqual(two.outcomes.map((o) => o.state), ['final', 'final']);
+test('finality: a list already past the update no longer records it, so its outcome is unknown', async () => {
+  const readCurrent = reads([snap(9n, [C, A1], { pendingDelistings: 0 })]);
+  const err = await wait(target(), readCurrent).catch((e) => e);
+  assert.equal(err.finality.state, 'overtaken');
+  assert.match(err.message, /already at version 9, past this update's last version 8, so it no longer records whether this update applied: its outcome is unknown/);
+  assert.equal(readCurrent.count(), 1, 'no later reading can say more');
 });
 
-test('finality: every call must be shown by ONE snapshot; a verdict is never carried between snapshots', async () => {
-  // The first replica shows call 1 but not yet call 2. A second replica's
-  // snapshot shows call 2, but another update at call 1's version: no single
-  // finalized list holds both, so the run is not applied, and call 1's outcome
-  // is unknown.
-  const readCurrent = reads([snap(8n, [A1]), snap(9n, [A2], { since: { [A2]: 9n } })]);
-  const err = await wait([entry(7, [A1]), entry(8, [A2], TX2)], readCurrent).catch((e) => e);
-  assert.deepEqual(err.outcomes.map((o) => o.state), ['overtaken', 'final']);
-  assert.match(err.message, /at version 9, past version 8, and no longer records whether 0x1+ applied \(an address it added is not recorded as listed at that version\)/);
-  assert.equal(readCurrent.count(), 2, 'no later snapshot can say more, so it stops');
-  // A call that added nothing is shown only by the latest update's publication and counts.
-  const empty = await wait([entry(7, [])], reads([snap(9n, [A2], { since: { [A2]: 9n } })])).catch((e) => e);
-  assert.equal(empty.outcomes[0].state, 'overtaken');
-  assert.match(empty.message, /it added nothing, and later updates replaced the publication it recorded/);
-  assert.equal((await wait([entry(7, [])], reads([snap(8n, [])]))).outcomes[0].state, 'final');
-});
-
-test('finality: another update at the version a call was built for is conclusive; a deadline reports what is unknown', async () => {
-  // Another update took version 8: the list is there and does not list A1.
-  let readCurrent = reads([snap(8n, [A2])]);
-  let err = await wait([entry(7, [A1])], readCurrent).catch((e) => e);
-  assert.match(err.message, /took version 8 with another update than 0x1+, so this call can never apply/);
-  assert.equal(readCurrent.count(), 1, 'conclusive: no further reads');
-  assert.equal(err.outcomes[0].state, 'displaced');
-  // A1 listed, but at another version: not by this call.
-  err = await wait([entry(7, [A1])], reads([snap(8n, [A1], { since: { [A1]: 3n } })])).catch((e) => e);
-  assert.equal(err.outcomes[0].state, 'displaced');
-  // Listing the addresses at that version, but recording another publication: not this call either.
-  err = await wait([entry(7, [A1])], reads([snap(8n, [A1], { hash: `0x${'9'.repeat(64)}` })])).catch((e) => e);
-  assert.equal(err.outcomes[0].state, 'displaced');
-  // The same version, publication and addresses, but other outstanding counts: another update, not this call.
-  err = await wait([entry(7, [A1])], reads([snap(8n, [A1], { pendingDelistings: 0 })])).catch((e) => e);
-  assert.equal(err.outcomes[0].state, 'displaced');
-
-  // Never shown: the list stays behind, then the last read fails.
-  readCurrent = reads([snap(7n, []), snap(7n, []), snap(7n, []), snap(7n, []), new Error('503')]);
-  err = await wait([entry(7, [A1])], readCurrent).catch((e) => e);
-  assert.match(err.message, /no finalized list showed every call within 1 minutes: 0x1+ is unknown: the finalized list could not be read/);
-  assert.equal(err.outcomes[0].state, 'unread');
-  readCurrent = reads([snap(7n, [])]);
-  err = await wait([entry(7, [A1])], readCurrent).catch((e) => e);
-  assert.match(err.message, /\(included in block 201 when sent\) is not shown by the finalized list yet; it may still land/);
-  assert.equal(err.outcomes[0].state, 'included');
+test('finality: the deadline reports what is unknown', async () => {
+  let readCurrent = reads([snap(7n, [C]), snap(7n, [C]), snap(7n, [C]), snap(7n, [C]), new Error('503')]);
+  let err = await wait(target(), readCurrent).catch((e) => e);
+  assert.match(err.message, /no finalized reading of the list held this update within 1 minutes: the finalized list could not be read, so whether this update applied is unknown/);
+  assert.deepEqual(err.finality, { state: 'unread' });
+  assert.equal(err.list.version, 7n, 'the last reading still stands for what the list declares');
+  readCurrent = reads([snap(7n, [C])]);
+  err = await wait(target(), readCurrent).catch((e) => e);
+  assert.match(err.message, /at version 7, not yet at this update's last version 8; its transactions may still land/);
+  assert.equal(err.finality.state, 'pending');
   assert.equal(readCurrent.count(), 5, 'it read until the deadline');
 });
 
-test('finality: what a stopped chain reports for each outcome the check could establish', async () => {
-  // Displaced: another update takes the version before this call lands.
+test('finality: a stopped chain still reports what the last finalized reading declares outstanding', async () => {
+  // Displaced: another update took version 8 (it lists C's neighbours, not this publication's additions).
   let { chain, report } = await run({ version: 7n, addresses: [C], applies: false }, {
-    readCurrent: reads([
-      { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n },
-      snap(8n, [C]),
-    ]),
+    readCurrent: reads([BASE, snap(8n, [C], { pendingDelistings: 1 })]),
     finality: fakeClock(),
   });
   assert.equal(report.status, 'failed');
   assert.equal(chain.status, 'stopped');
-  assert.equal(chain.sent[0].state, 'displaced');
-  assert.match(summarizeFailure(chain), /NOT applied — another update took its version in the finalized list/);
+  assert.equal(chain.finality.state, 'displaced');
+  assert.equal(chain.pendingDelistings, 1);
+  assert.deepEqual(chain.delistingsForRemover, [C], 'the reading records this publication, so its delistings are named');
+  let text = summarizeFailure(chain, 'sdn.xml');
+  assert.match(text, /can never apply as planned/);
+  assert.match(text, /As last read \(finalized block 300, version 8\), the list declares 0 addition\(s\) and 1 delisting\(s\) outstanding, for this publication/);
+  assert.match(text, new RegExp(`1 delisting\\(s\\) await the remover \\(the Safe\\): ${C}`));
+
+  // Overtaken by a NEWER publication before the first poll: its counts are reported as
+  // that publication's, never paired with this run's delistings or file.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    readCurrent: reads([BASE, snap(9n, [A2], { hash: OTHER_HASH, date: 20260401, pendingDelistings: 2 })]),
+    finality: fakeClock(),
+  }));
+  assert.equal(chain.finality.state, 'overtaken');
+  assert.deepEqual(chain.outstandingAt.publication, { date: 20260401, sha256: OTHER_HASH });
+  assert.deepEqual(chain.delistingsForRemover, []);
+  text = summarizeFailure(chain, 'sdn.xml');
+  assert.match(text, /whether this update applied: its outcome is unknown/);
+  assert.match(text, /declares 0 addition\(s\) and 2 delisting\(s\) outstanding, for another publication \(dated 20260401/);
+  assert.doesNotMatch(text, /await the remover/);
+
+  // Overtaken by the remover's delisting for this publication: owed nothing more.
+  ({ chain } = await run({ version: 7n, addresses: [C] }, {
+    readCurrent: reads([BASE, snap(9n, [A1], { pendingDelistings: 0 })]),
+    finality: fakeClock(),
+  }));
+  assert.equal(chain.finality.state, 'overtaken');
+  assert.equal(chain.pendingDelistings, 0);
+  assert.doesNotMatch(summarizeFailure(chain), /await the remover/);
+
+  // Refused before sending: the reading it was refused on is reported, as a list with no publication yet.
+  ({ chain } = await run({ version: 7n, latest: 8n, addresses: [C] }));
+  assert.equal(chain.status, 'refused');
+  assert.equal(chain.outstandingAt.publication, 'none');
+  assert.match(summarizeFailure(chain), /As last read \(finalized block 100, version 7\), the list declares 0 addition\(s\) and 0 delisting\(s\) outstanding, for no publication yet/);
+});
+
+test('finality: what a stopped chain says of each transaction it sent', async () => {
   // Unknown: the list could not be read again after the send.
-  ({ chain } = await run({ version: 7n, addresses: [C], applies: false }, {
-    readCurrent: reads([
-      { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n },
-      new Error('RPC down'),
-    ]),
+  const { chain } = await run({ version: 7n, addresses: [C], applies: false }, {
+    readCurrent: reads([BASE, new Error('RPC down')]),
     finality: fakeClock(),
-  }));
-  assert.equal(chain.sent[0].state, 'unread');
-  assert.match(summarizeFailure(chain), /whether it is final is UNKNOWN/);
-  // Overtaken: two later updates moved the list on and delisted what the call added.
-  ({ chain } = await run({ version: 7n, addresses: [C], applies: false }, {
-    readCurrent: reads([
-      { version: 7n, addresses: [C], recordedDate: 0, recordedHash: ZERO_HASH, recordedPendingAdditions: 0, recordedPendingDelistings: 0, blockNumber: 100n },
-      snap(10n, [C], { since: { [C]: 1n } }),
-    ]),
-    finality: fakeClock(),
-  }));
-  assert.equal(chain.sent[0].state, 'overtaken');
-  assert.match(summarizeFailure(chain), /whether it applied is UNKNOWN — later updates moved the finalized list on/);
+  });
+  assert.equal(chain.sent[0].state, 'included');
+  assert.deepEqual(chain.finality, { state: 'unread' });
+  assert.match(summarizeFailure(chain), /whether this update applied is unknown/);
+  assert.match(summarizeFailure(chain), /As last read \(finalized block 100, version 7\)/, 'the reading before the send is the last one there is');
 });
