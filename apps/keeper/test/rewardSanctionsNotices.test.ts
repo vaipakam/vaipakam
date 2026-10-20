@@ -210,6 +210,17 @@ describe('sendSanctionsNotices', () => {
     expect(logged[0]).toContain('UNKNOWN');
   });
 
+  it('a lapsed chain whose observation is still unknown is said, since a late restart would go untold', async () => {
+    const unknown = [{ owner: OWNER.toLowerCase(), fn: 'recordRewardSanctionsEvidence', tx: TX }];
+    await sendSanctionsNotices(env, CHAIN, [], [LAPSED], new Map([[OWNER.toLowerCase(), LAPSED]]), Number.POSITIVE_INFINITY, unknown);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(`its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's observation (tx ${TX}) was not seen`);
+    // A lapsed owner nothing was sent for is left to the held-without-chain alert.
+    logged.length = 0;
+    await sendSanctionsNotices(env, CHAIN, [], [LAPSED], new Map(), Number.POSITIVE_INFINITY, []);
+    expect(logged).toEqual([]);
+  });
+
   it('a run with nothing to tell says nothing', async () => {
     await sendSanctionsNotices(env, CHAIN, [], [st()], new Map([[OWNER.toLowerCase(), st({ lastSeenAt: 9_000 })]]), Number.POSITIVE_INFINITY);
     expect(logged).toEqual([]);

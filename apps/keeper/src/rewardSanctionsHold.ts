@@ -681,6 +681,10 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
       `[keeper] rewardSanctionsHold chain=${chain.id}: ${plan.observe.length} to observe and ${plan.settle.length} to settle, but no keeper key — nothing sent`,
     );
   }
+  // The run's unknown sends are settled FIRST (Codex #2602 r2, r3), so the
+  // fresh read below already sees a write that mined after its wait: an
+  // observation that restarted a lapsed chain, a settlement that moved value.
+  const settled = await settlePending(budget.pending, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, diamondAddr, deadline + PASS_ALERT_WINDOW_MS);
   // Alerts reflect the state AFTER this tick's writes (#2497 r2): an owner this
   // tick sent anything for is classified again, so an observation that
   // started a chain or recorded a clean result does not raise an alert for the
@@ -720,7 +724,6 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // bounded post after them, so however many a run has they cannot spend the
   // window the alerts need.
   await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: stagingRead === null ? undefined : new Set(stagingOwners.map((o) => o.toLowerCase())) });
-  const settled = await settlePending(budget.pending, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, diamondAddr, deadline + PASS_ALERT_WINDOW_MS);
   await sendSanctionsNotices(env, chain.id, [...budget.moves, ...settled.moves], statuses, freshBy, deadline + PASS_ALERT_WINDOW_MS, settled.unknown);
 }
 
@@ -795,6 +798,20 @@ export async function sendSanctionsNotices(
   }
   for (const pre of before) {
     const post = after.get(pre.owner.toLowerCase());
+    if (pre.chainLapsed === true && (!post || post.flaggedAt === 0)) {
+      // Not read as restarted. If an observation for it is still UNKNOWN, it
+      // may have restarted the chain after the read: that is said, since the
+      // next run's read would take the new chain as its starting point. A
+      // lapsed owner nothing was sent for is the held-without-chain alert's.
+      const sentFor = unknown.find((p) => p.fn === 'recordRewardSanctionsEvidence' && p.owner === pre.owner.toLowerCase());
+      if (sentFor) {
+        lines.push(
+          `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's observation (tx ${sentFor.tx}) was not seen by the end of the run, ` +
+            `so whether it restarted the chain, and when, is UNKNOWN here; a restart would begin a new confirmation window.`,
+        );
+      }
+      continue;
+    }
     if (!post) continue;
     const lapse = restartedLapse(pre, post);
     if (!lapse) continue;
