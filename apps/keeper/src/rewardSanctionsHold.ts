@@ -96,6 +96,8 @@ const VALUE_MOVE_EVENTS = (DIAMOND_ABI_VIEM as Abi).filter(
     x.type === 'event' &&
     ['RewardSanctionsHeldApart', 'StagingDelivered', 'StagingClaimantForfeited', 'VpfiRecycled', 'VpfiRecycledPreLaunch'].includes(x.name),
 ) as Abi;
+/** The event an observation STARTS a chain with, from the compiled ABI. */
+const EVIDENCE_EVENTS = (DIAMOND_ABI_VIEM as Abi).filter((x) => x.type === 'event' && x.name === 'RewardSanctionsEvidenceRecorded') as Abi;
 /** `LibVpfiRecycle.RecycleSource.ForfeitedReward`. */
 const RECYCLE_FORFEITED_REWARD = 0;
 /** `LibVaipakam.RewardDelivery.Wallet` / `.Vault`. A `SanctionsHeld` delivery
@@ -165,26 +167,30 @@ export function movedValue(m: ValueFigures): boolean {
 
 const vpfi = (x: bigint) => `${formatUnits(x, 18)} VPFI`;
 
-/** One value move as a notice line: each figure says what it is and whose it
- *  is, and the one overlap — part of a forfeited staged payout sits inside the
- *  transaction's recycle credit — is stated rather than left to read as two
- *  moves (Codex #2602 r1). Pure; pinned by the tests. */
-export function valueMoveLine(m: ValueMove): string {
-  const parts: string[] = [];
-  if (m.heldApart > 0n) parts.push(`${vpfi(m.heldApart)} set apart for the owner (its first claim pays it once the owner is no longer barred)`);
-  if (m.paidWallet > 0n) parts.push(`${vpfi(m.paidWallet)} paid to the owner's wallet`);
-  if (m.paidVault > 0n) parts.push(`${vpfi(m.paidVault)} paid to the owner's vault`);
+/** One value move as notice lines, ONE PER FIGURE (Codex #2602 r4), each
+ *  naming the call, the owner and the transaction, so a digest that cuts a
+ *  long line loses at most that line's tail, never another figure. Each says
+ *  what it is and whose it is, and the one overlap — part of a forfeited
+ *  staged payout sits inside the transaction's recycle credit — is stated
+ *  rather than left to read as two moves (Codex #2602 r1). Pure; pinned by the
+ *  tests. */
+export function valueMoveLines(m: ValueMove): string[] {
+  const who = `${m.fn} for ${m.owner} (tx ${m.tx})`;
+  const lines: string[] = [];
+  if (m.heldApart > 0n) lines.push(`${who}: ${vpfi(m.heldApart)} set apart for the owner (its first claim pays it once the owner is no longer barred).`);
+  if (m.paidWallet > 0n) lines.push(`${who}: ${vpfi(m.paidWallet)} paid to the owner's wallet.`);
+  if (m.paidVault > 0n) lines.push(`${who}: ${vpfi(m.paidVault)} paid to the owner's vault.`);
   const staged = m.stagedForfeitFresh + m.stagedForfeitRecycled;
   if (staged > 0n) {
-    parts.push(
-      `the owner's staged payout of ${vpfi(staged)} forfeited (its event's split: ${vpfi(m.stagedForfeitFresh)} fresh, ${vpfi(m.stagedForfeitRecycled)} recycled)` +
+    lines.push(
+      `${who}: the owner's staged payout of ${vpfi(staged)} forfeited (its event's split: ${vpfi(m.stagedForfeitFresh)} fresh, ${vpfi(m.stagedForfeitRecycled)} recycled)` +
         (m.recycleCredit > 0n
-          ? ` — the recycle credit below includes whatever part of it entered the bucket in this transaction, so the two figures overlap and are not to be added`
-          : ` — this transaction made no forfeited-reward credit to the recycle bucket`),
+          ? ` — the same transaction's recycle credit includes whatever part of it entered the bucket, so the two figures overlap and are not to be added.`
+          : ` — this transaction made no forfeited-reward credit to the recycle bucket.`),
     );
   }
-  if (m.recycleCredit > 0n) parts.push(`the transaction credited ${vpfi(m.recycleCredit)} to the recycle bucket as forfeited reward (every such credit it made, not only this owner's)`);
-  return `${m.fn} for ${m.owner} (tx ${m.tx}): ${parts.join('; ')}.`;
+  if (m.recycleCredit > 0n) lines.push(`${who}: the transaction credited ${vpfi(m.recycleCredit)} to the recycle bucket as forfeited reward (every such credit it made, not only this owner's).`);
+  return lines;
 }
 
 /**
@@ -215,14 +221,22 @@ export function storedChainLapsed(
   );
 }
 
-/** A lapsed chain this run saw RESTART (#2515): lapsed before the run's
- *  writes, live after them. The lapsed chain's last observation is not
- *  readable once it lapses, so the gap is given as the bound the contract
- *  proves — more than its maximum gap, read from the new chain's own pair —
- *  never as a figure. Pure. */
-export function restartedLapse(pre: OwnerSanctionsStatus, post: OwnerSanctionsStatus): { restartedAt: number; maxGapSec: number } | null {
-  if (pre.chainLapsed !== true || post.flaggedAt === 0 || post.observeBy === 0 || post.lastSeenAt === 0) return null;
-  return { restartedAt: post.flaggedAt, maxGapSec: post.observeBy - post.lastSeenAt };
+/** The notice for a lapsed chain this run saw RESTART (#2515): lapsed before
+ *  the run's writes, and restarted at `restartedAt` by a landed send's own
+ *  event. The lapsed chain's last observation is not readable once it lapses,
+ *  so the gap is given as the bound the contract proves — more than its
+ *  maximum gap — with that gap as a figure only when the new chain's own pair
+ *  was read (`post`). Pure. */
+export function lapseRestartLine(owner: string, restartedAt: number, post: OwnerSanctionsStatus | null | undefined): string {
+  const gap =
+    post && post.flaggedAt === restartedAt && post.observeBy !== 0 && post.lastSeenAt !== 0
+      ? `more than ${((post.observeBy - post.lastSeenAt) / 3600).toFixed(1)}h (the contract's maximum gap)`
+      : `more than the contract's maximum observation gap`;
+  return (
+    `${owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap) and was observed again at ${new Date(restartedAt * 1000).toISOString()}, ` +
+    `which started a new chain, so its confirmation window restarted and its hold runs on. The lapsed chain's last observation is not readable once it lapses; ` +
+    `it was ${gap} before that observation.`
+  );
 }
 
 /** `LibRewardSanctions.Decision`. */
@@ -566,7 +580,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // The run's deadline is honoured at each send's turn in the queue too
   // (`SendPastDeadline`), not only before the send joins it.
   const ctx = buildKeeperContext(env, chain, client as never, { notAfterMs: deadline });
-  const budget = { writes: plan.writes, touched: new Set<string>(), deadline, moves: [] as ValueMove[], pending: [] as PendingSend[] };
+  const budget = { writes: plan.writes, touched: new Set<string>(), deadline, sent: [] as SentTx[] };
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time
    *  window ran out. Null when there is no key to send with. */
@@ -650,7 +664,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // deep backlog cannot take the whole phase run after run.
     const hourIndex = Math.floor(nowSec / 3600);
     const resolveCapped = async (owner: Address) => {
-      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline, moves: budget.moves, pending: budget.pending };
+      const share = { writes: Math.min(budget.writes, MAX_RESOLVE_WRITES_PER_OWNER), touched: budget.touched, deadline: budget.deadline, sent: budget.sent };
       const before = share.writes;
       const r = await resolveOwnerRecords(env, ctx, share, owner);
       budget.writes -= before - share.writes;
@@ -684,7 +698,19 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // The run's unknown sends are settled FIRST (Codex #2602 r2, r3), so the
   // fresh read below already sees a write that mined after its wait: an
   // observation that restarted a lapsed chain, a settlement that moved value.
-  const settled = await settlePending(budget.pending, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, diamondAddr, deadline + PASS_ALERT_WINDOW_MS);
+  await reconcileSent(budget.sent, (tx) => plainClient.getTransactionReceipt({ hash: tx }) as Promise<{ status: string; logs: Log[] }>, Math.min(Date.now() + RECONCILE_MS, deadline + PASS_ALERT_WINDOW_MS));
+  const ledger = readLedger(budget.sent, diamondAddr);
+  // A send that mined REVERTED after its wait is a failure like any other
+  // (Codex #2602 r4): it reaches the same failure maps the alerts read.
+  for (const t of ledger.lateReverted) {
+    if (t.fn === 'settleSanctionedInteractionRewards') {
+      settleFailed.set(t.owner, `the settlement transaction reverted on chain (tx ${t.tx}, its receipt seen after the keeper's wait)`);
+      settleOk.delete(t.owner);
+    } else if (t.fn === 'resolveStagedDayPage' || t.fn === 'resolveDomainPage') {
+      stagingStuck.set(t.owner, (stagingStuck.get(t.owner) ?? 0) + 1);
+      stagingClear.delete(t.owner);
+    }
+  }
   // Alerts reflect the state AFTER this tick's writes (#2497 r2): an owner this
   // tick sent anything for is classified again, so an observation that
   // started a chain or recorded a clean result does not raise an alert for the
@@ -724,53 +750,98 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   // bounded post after them, so however many a run has they cannot spend the
   // window the alerts need.
   await raiseAlerts(env, chain.id, alertStatuses, alertPlan, nowSec, screenMeasured ? screen.overCapacity : 'unmeasured', shortfall, deadline + PASS_ALERT_WINDOW_MS, { stuck: stagingStuck, clear: stagingClear, settleFailed, settleOk, openOwners: stagingRead === null ? undefined : new Set(stagingOwners.map((o) => o.toLowerCase())) });
-  await sendSanctionsNotices(env, chain.id, [...budget.moves, ...settled.moves], statuses, freshBy, deadline + PASS_ALERT_WINDOW_MS, settled.unknown);
+  await sendSanctionsNotices(env, chain.id, ledger, statuses, freshBy, deadline + PASS_ALERT_WINDOW_MS);
 }
 
-/** A sent write whose receipt was not seen within its wait. */
-export interface PendingSend {
+/** One write this run sent, with its receipt once seen. `late` marks a
+ *  receipt seen only by {@link reconcileSent}, after the send's own wait. */
+export interface SentTx {
   owner: string;
   fn: string;
   tx: Hex;
+  receipt?: { status: string; logs: readonly Log[] };
+  late?: boolean;
 }
 
+/** How long the run may spend asking again for the receipts its sends did not
+ *  see: all asked AT ONCE and bounded together, so however many there are it
+ *  costs this long at most, well inside the alert window (Codex #2602 r4). */
+export const RECONCILE_MS = 15_000;
+
 /**
- * Settle the run's unknown sends before its notices (Codex #2602 r2): each
- * one's receipt is asked for once more, so a transaction that mined after its
- * wait is told with the amounts its own events state, like any other. One that
- * is still unseen, unreadable or past `deadline` stays UNKNOWN and is returned
- * as such, to be said — its value movement is never silently dropped. A
- * reverted one moved nothing. Exported for tests.
+ * Ask once more, in parallel, for the receipt of every send that has none
+ * (Codex #2602 r2, r4). What arrives by `cutoffMs` is recorded on its entry as
+ * a late receipt; the rest stay without one, i.e. UNKNOWN. Never throws.
+ * Exported for tests.
  */
-export async function settlePending(
-  pending: readonly PendingSend[],
+export async function reconcileSent(
+  sent: SentTx[],
   receiptOf: (tx: Hex) => Promise<{ status: string; logs: readonly Log[] }>,
-  diamond: string,
-  deadline: number,
-): Promise<{ moves: ValueMove[]; unknown: PendingSend[] }> {
-  const moves: ValueMove[] = [];
-  const unknown: PendingSend[] = [];
-  for (const p of pending) {
-    if (Date.now() >= deadline) {
-      unknown.push(p);
+  cutoffMs: number,
+): Promise<void> {
+  const open = sent.filter((t) => !t.receipt);
+  const wait = cutoffMs - Date.now();
+  if (open.length === 0 || wait <= 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cutoff = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, wait);
+  });
+  const asks = Promise.all(
+    open.map(async (t) => {
+      try {
+        const r = await receiptOf(t.tx);
+        if (Date.now() > cutoffMs) return;
+        t.receipt = { status: r.status, logs: r.logs };
+        t.late = true;
+      } catch {
+        // Still unseen: it stays unknown.
+      }
+    }),
+  );
+  await Promise.race([asks, cutoff]);
+  clearTimeout(timer);
+}
+
+/** What the run's sends did, read from their receipts by ONE rule. */
+export interface Ledger {
+  /** Value moved, per landed send ({@link valueMovesOf}). */
+  moves: ValueMove[];
+  /** Owners whose evidence chain a landed send STARTED, with its start time:
+   *  the receipt's own `RewardSanctionsEvidenceRecorded`, never a later read. */
+  restarts: Map<string, number>;
+  /** Sends whose receipt, seen late, shows a revert. */
+  lateReverted: SentTx[];
+  /** Sends still without a receipt. */
+  unknown: SentTx[];
+}
+
+/** Read the run's ledger. Pure; pinned by the tests. */
+export function readLedger(sent: readonly SentTx[], diamond: string): Ledger {
+  const d = diamond.toLowerCase();
+  const out: Ledger = { moves: [], restarts: new Map(), lateReverted: [], unknown: [] };
+  for (const t of sent) {
+    if (!t.receipt) {
+      out.unknown.push(t);
       continue;
     }
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const r = await receiptOf(p.tx);
-      if (r.status !== 'success') continue;
-      const m = valueMovesOf(r.logs, diamond, p.owner);
-      if (movedValue(m)) moves.push({ ...p, ...m });
-    } catch {
-      unknown.push(p);
+    if (t.receipt.status !== 'success') {
+      if (t.late) out.lateReverted.push(t);
+      continue;
+    }
+    const m = valueMovesOf(t.receipt.logs, diamond, t.owner);
+    if (movedValue(m)) out.moves.push({ owner: t.owner, fn: t.fn, tx: t.tx, ...m });
+    const own = t.receipt.logs.filter((l) => l.address.toLowerCase() === d) as Log[];
+    for (const ev of parseEventLogs({ abi: EVIDENCE_EVENTS, logs: own, strict: false })) {
+      const a = ev.args as Record<string, unknown>;
+      if (ev.eventName === 'RewardSanctionsEvidenceRecorded') out.restarts.set(String(a.who).toLowerCase(), Number(a.flaggedAt));
     }
   }
-  return { moves, unknown };
+  return out;
 }
 
 /** The run's one-off notices (#2515), on the OPS channel, as ONE bounded post
  *  (Codex #2602 r1): each landed settlement or staging resolution that moved
- *  value, with the amounts its receipt's events state ({@link valueMoveLine}),
+ *  value, with the amounts its receipt's events state ({@link valueMoveLines}),
  *  each such send whose outcome is still unknown, and each lapsed evidence
  *  chain this run saw restart. Every line is
  *  journaled first, so one the post cannot carry — or a post not made, past
@@ -778,48 +849,40 @@ export async function settlePending(
 export async function sendSanctionsNotices(
   env: Env,
   chainId: number,
-  moves: readonly ValueMove[],
+  ledger: Ledger,
   before: readonly OwnerSanctionsStatus[],
   after: ReadonlyMap<string, OwnerSanctionsStatus | null>,
   deadline: number,
-  /** Sends whose outcome is still unknown ({@link settlePending}). */
-  unknown: readonly PendingSend[] = [],
 ): Promise<void> {
-  const iso = (t: number) => new Date(t * 1000).toISOString();
-  const lines = moves.map(valueMoveLine);
-  for (const p of unknown) {
+  const lines = ledger.moves.flatMap(valueMoveLines);
+  for (const t of ledger.unknown) {
     // An observation moves no value (its call emits none of the value
-    // events), so only a settlement or a resolution page is worth saying.
-    if (p.fn === 'recordRewardSanctionsEvidence') continue;
+    // events), so only a settlement or a resolution page is said here; an
+    // observation that may have restarted a lapsed chain is said below.
+    if (t.fn === 'recordRewardSanctionsEvidence') continue;
     lines.push(
-      `${p.fn} for ${p.owner} (tx ${p.tx}): its receipt was not seen by the end of this run, so whether it landed and what it moved are UNKNOWN here; ` +
+      `${t.fn} for ${t.owner} (tx ${t.tx}): its receipt was not seen by the end of this run, so whether it landed and what it moved are UNKNOWN here; ` +
         `that transaction's own events on chain are the record.`,
     );
   }
   for (const pre of before) {
-    const post = after.get(pre.owner.toLowerCase());
-    if (pre.chainLapsed === true && (!post || post.flaggedAt === 0)) {
-      // Not read as restarted. If an observation for it is still UNKNOWN, it
-      // may have restarted the chain after the read: that is said, since the
-      // next run's read would take the new chain as its starting point. A
-      // lapsed owner nothing was sent for is the held-without-chain alert's.
-      const sentFor = unknown.find((p) => p.fn === 'recordRewardSanctionsEvidence' && p.owner === pre.owner.toLowerCase());
-      if (sentFor) {
-        lines.push(
-          `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's observation (tx ${sentFor.tx}) was not seen by the end of the run, ` +
-            `so whether it restarted the chain, and when, is UNKNOWN here; a restart would begin a new confirmation window.`,
-        );
-      }
+    if (pre.chainLapsed !== true) continue;
+    const owner = pre.owner.toLowerCase();
+    const restartedAt = ledger.restarts.get(owner);
+    if (restartedAt !== undefined) {
+      lines.push(lapseRestartLine(pre.owner, restartedAt, after.get(owner)));
       continue;
     }
-    if (!post) continue;
-    const lapse = restartedLapse(pre, post);
-    if (!lapse) continue;
-    lines.push(
-      `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap) and was observed again at ${iso(lapse.restartedAt)}, ` +
-        `which started a new chain, so its confirmation window restarted and its hold runs on. The lapsed chain's last observation is not readable once it lapses; ` +
-        `it was more than ${(lapse.maxGapSec / 3600).toFixed(1)}h before that observation.`,
-    );
+    // No receipt shows a restart. One still UNKNOWN may have made it, which
+    // the next run's read would take as its starting point, so it is said. A
+    // lapsed owner nothing was sent for is the held-without-chain alert's.
+    const sentFor = ledger.unknown.find((t) => t.owner === owner);
+    if (sentFor) {
+      lines.push(
+        `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's ${sentFor.fn} (tx ${sentFor.tx}) was not seen by the end of the run, ` +
+          `so whether it restarted the chain, and when, is UNKNOWN here; a restart would begin a new confirmation window.`,
+      );
+    }
   }
   if (lines.length === 0) return;
   const header = `[chain ${chainId}] reward sanctions hold: ${lines.length} notice${lines.length === 1 ? '' : 's'} this run`;
@@ -1258,7 +1321,7 @@ export type SendOutcome = 'landed' | 'failed' | 'unknown' | 'skipped';
 
 async function send(
   ctx: KeeperContext,
-  budget: { writes: number; touched?: Set<string>; deadline?: number; moves?: ValueMove[]; pending?: PendingSend[] },
+  budget: { writes: number; touched?: Set<string>; deadline?: number; sent?: SentTx[] },
   fn: string,
   args: readonly unknown[],
   owner: Address,
@@ -1299,24 +1362,23 @@ async function send(
     // nonces. A send that does not land in time ends this pass's sends for
     // the tick; every call here is idempotent and the next tick re-reads the
     // contract's verdict before acting again.
+    // Every sent write joins the run's LEDGER (Codex #2602 r4), with its
+    // receipt when seen: the notices, the late-revert failures and the
+    // restarts are all read from it, by one rule ({@link readLedger}).
+    const entry: SentTx = { owner: owner.toLowerCase(), fn, tx: hash };
+    budget.sent?.push(entry);
     const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    entry.receipt = { status: receipt.status, logs: receipt.logs as Log[] };
     if (receipt.status !== 'success') {
       console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} reverted on chain: tx=${hash}`);
       return 'failed';
-    }
-    // Every landed write's receipt is read the same way: an observation's
-    // carries none of these events, so it adds nothing.
-    if (budget.moves) {
-      const m = valueMovesOf(receipt.logs as Log[], ctx.diamond, owner);
-      if (movedValue(m)) budget.moves.push({ owner: owner.toLowerCase(), fn, tx: hash, ...m });
     }
     return 'landed';
   } catch (err) {
     console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} receipt not seen in time: ${shortErr(err)}`);
     budget.writes = 0;
-    // Its outcome is settled before the run's notices (Codex #2602 r2): a
-    // late receipt is read then, and one still unseen is SAID, never dropped.
-    budget.pending?.push({ owner: owner.toLowerCase(), fn, tx: hash });
+    // Its receipt is asked for again before the run's alerts ({@link
+    // reconcileSent}); one still unseen is SAID, never dropped.
     return 'unknown';
   }
 }

@@ -13,12 +13,15 @@ is. The recycle credit names no wallet on chain, so it is reported as the
 transaction's, and where part of a forfeited staged payout sits inside it the
 notice says the two figures overlap instead of letting them read as two moves.
 A transaction whose receipt arrives after the keeper stopped waiting is checked
-again before the notices go out; if its outcome is still unknown, the notice
-says so rather than leaving the movement untold.
+again, all at once and within a short bound, before the alerts and notices go
+out. A late receipt is told like any other, a late revert is reported as a
+failure, and one whose outcome is still unknown is said to be unknown rather
+than left untold.
 
 When a held claimant's observation chain had lapsed and was then started again,
 a notice names the wallet and when the new chain began. The lapse is judged from
-the contract's own state read in a single block, so it is exact. The contract no
+the contract's own state read in a single block, and the restart from the
+observing transaction's own event, so both are exact. The contract no
 longer reports a lapsed chain's last observation, so the notice says so and
 gives the gap only as more than the maximum observation gap.
 

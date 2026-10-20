@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseUnits, type Abi, type AbiEvent, type Address, type Hex, type Log } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { restartedLapse, sendSanctionsNotices, settlePending, storedChainLapsed, valueMoveLine, valueMovesOf, type OwnerSanctionsStatus, type ValueMove } from '../src/rewardSanctionsHold';
+import { lapseRestartLine, readLedger, reconcileSent, sendSanctionsNotices, storedChainLapsed, valueMoveLines, valueMovesOf, type OwnerSanctionsStatus, type SentTx, type ValueMove } from '../src/rewardSanctionsHold';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 
@@ -75,23 +75,28 @@ const move = (over: Partial<ValueMove> = {}): ValueMove => ({
   ...over,
 });
 
-describe('valueMoveLine', () => {
-  it('states a forfeited staged payout and the recycle credit as OVERLAPPING, never as two moves', () => {
-    const line = valueMoveLine(move({ stagedForfeitFresh: v('2'), stagedForfeitRecycled: v('1'), recycleCredit: v('2') }));
-    expect(line).toContain(`resolveStagedDayPage for ${OWNER} (tx ${TX}): the owner's staged payout of 3 VPFI forfeited (its event's split: 2 VPFI fresh, 1 VPFI recycled)`);
-    expect(line).toContain('the two figures overlap and are not to be added');
-    expect(line).toContain("credited 2 VPFI to the recycle bucket as forfeited reward (every such credit it made, not only this owner's)");
+describe('valueMoveLines', () => {
+  it('one line per figure, each naming the call, owner and transaction; the forfeited payout and the credit stated as OVERLAPPING', () => {
+    const lines = valueMoveLines(move({ heldApart: v('1'), stagedForfeitFresh: v('2'), stagedForfeitRecycled: v('1'), recycleCredit: v('2') }));
+    expect(lines).toHaveLength(3);
+    for (const l of lines) {
+      expect(l.startsWith(`resolveStagedDayPage for ${OWNER} (tx ${TX}): `)).toBe(true);
+      // Inside the digest's per-line cap, so no figure is cut.
+      expect(l.length).toBeLessThanOrEqual(600);
+    }
+    expect(lines[1]).toContain("the owner's staged payout of 3 VPFI forfeited (its event's split: 2 VPFI fresh, 1 VPFI recycled)");
+    expect(lines[1]).toContain('the two figures overlap and are not to be added');
+    expect(lines[2]).toContain("credited 2 VPFI to the recycle bucket as forfeited reward (every such credit it made, not only this owner's)");
   });
 
   it('says so when a forfeited staged payout came with no bucket credit', () => {
-    expect(valueMoveLine(move({ stagedForfeitRecycled: v('1') }))).toContain('this transaction made no forfeited-reward credit to the recycle bucket');
+    expect(valueMoveLines(move({ stagedForfeitRecycled: v('1') }))[0]).toContain('this transaction made no forfeited-reward credit to the recycle bucket');
   });
 
-  it('names a set-apart and a payment as the owner\'s', () => {
-    const line = valueMoveLine(move({ fn: 'settleSanctionedInteractionRewards', heldApart: v('3'), paidWallet: v('1') }));
-    expect(line).toContain('3 VPFI set apart for the owner');
-    expect(line).toContain("1 VPFI paid to the owner's wallet");
-    expect(line).not.toContain('staged');
+  it("names a set-apart and a payment as the owner's", () => {
+    const lines = valueMoveLines(move({ fn: 'settleSanctionedInteractionRewards', heldApart: v('3'), paidWallet: v('1') }));
+    expect(lines[0]).toContain('3 VPFI set apart for the owner');
+    expect(lines[1]).toContain("1 VPFI paid to the owner's wallet");
   });
 });
 
@@ -128,43 +133,63 @@ const st = (over: Partial<OwnerSanctionsStatus> = {}): OwnerSanctionsStatus => (
 const LAPSED = st({ flaggedAt: 0, lastSeenAt: 0, forfeitableAt: 0, observeBy: 0, chainLapsed: true });
 const RESTART = 200_000;
 const RESTARTED = st({ flaggedAt: RESTART, lastSeenAt: RESTART, forfeitableAt: RESTART + 3 * 86_400, observeBy: RESTART + 86_400 });
+const restartLog = () => log(DIAMOND, 'RewardSanctionsEvidenceRecorded', { who: OWNER, oracle: ORACLE, flaggedAt: BigInt(RESTART), forfeitableAt: BigInt(RESTART + 3 * 86_400) });
+const TX2 = `0x${'8'.repeat(64)}` as Hex;
+const TX3 = `0x${'9'.repeat(64)}` as Hex;
+const sent = (fn: string, tx: Hex, receipt?: SentTx['receipt'], late?: boolean): SentTx => ({ owner: OWNER.toLowerCase(), fn, tx, receipt, late });
 
-describe('restartedLapse', () => {
-  it('a lapsed chain read live after the run restarted, with the gap bound from the new chain\'s own pair', () => {
-    expect(restartedLapse(LAPSED, RESTARTED)).toEqual({ restartedAt: RESTART, maxGapSec: 86_400 });
-  });
-  it('no lapse before, an unknown lapse, or no live chain after is not told', () => {
-    expect(restartedLapse(st(), RESTARTED)).toBeNull();
-    expect(restartedLapse({ ...LAPSED, chainLapsed: undefined }, RESTARTED)).toBeNull();
-    expect(restartedLapse(LAPSED, LAPSED)).toBeNull();
+describe('readLedger', () => {
+  it('reads value moves, restarts from the receipt\'s own event, late reverts and the unknown, by one rule', () => {
+    const ledger = readLedger(
+      [
+        sent('settleSanctionedInteractionRewards', TX, { status: 'success', logs: [log(DIAMOND, 'RewardSanctionsHeldApart', { user: OWNER, amount: v('3'), heldBalance: v('3') })] }),
+        sent('recordRewardSanctionsEvidence', TX2, { status: 'success', logs: [restartLog(), log(OTHER, 'RewardSanctionsEvidenceRecorded', { who: SOMEONE, oracle: ORACLE, flaggedAt: 1n, forfeitableAt: 2n })] }, true),
+        sent('resolveStagedDayPage', TX3, { status: 'reverted', logs: [] }, true),
+        sent('resolveDomainPage', TX3, { status: 'reverted', logs: [] }),
+        sent('resolveStagedDayPage', TX),
+      ],
+      DIAMOND,
+    );
+    expect(ledger.moves).toEqual([expect.objectContaining({ tx: TX, heldApart: v('3') })]);
+    expect([...ledger.restarts]).toEqual([[OWNER.toLowerCase(), RESTART]]);
+    // A revert seen in the send's own wait was already counted there.
+    expect(ledger.lateReverted.map((t) => t.fn)).toEqual(['resolveStagedDayPage']);
+    expect(ledger.unknown.map((t) => t.fn)).toEqual(['resolveStagedDayPage']);
   });
 });
 
-describe('settlePending', () => {
-  const p = (fn: string, tx: Hex) => ({ owner: OWNER.toLowerCase(), fn, tx });
-  const TX2 = `0x${'8'.repeat(64)}` as Hex;
-  const TX3 = `0x${'9'.repeat(64)}` as Hex;
-  it('a late receipt is read like any other; a reverted one moved nothing; an unseen one stays UNKNOWN', async () => {
-    const receipts: Record<string, { status: string; logs: Log[] }> = {
-      [TX]: { status: 'success', logs: [log(DIAMOND, 'RewardSanctionsHeldApart', { user: OWNER, amount: v('3'), heldBalance: v('3') })] },
-      [TX2]: { status: 'reverted', logs: [] },
-    };
-    const out = await settlePending(
-      [p('settleSanctionedInteractionRewards', TX), p('resolveStagedDayPage', TX2), p('resolveStagedDayPage', TX3)],
+describe('reconcileSent', () => {
+  it('asks again for every missing receipt at once, and marks what arrives as late', async () => {
+    const xs = [sent('settleSanctionedInteractionRewards', TX), sent('resolveStagedDayPage', TX2), sent('resolveDomainPage', TX3, { status: 'success', logs: [] })];
+    const asked: string[] = [];
+    await reconcileSent(
+      xs,
       async (tx) => {
-        const r = receipts[tx];
-        if (!r) throw new Error('receipt not found');
-        return r;
+        asked.push(tx);
+        if (tx === TX2) throw new Error('not found');
+        return { status: 'success', logs: [] };
       },
-      DIAMOND,
-      Number.POSITIVE_INFINITY,
+      Date.now() + 5_000,
     );
-    expect(out.moves).toEqual([expect.objectContaining({ tx: TX, heldApart: v('3') })]);
-    expect(out.unknown).toEqual([p('resolveStagedDayPage', TX3)]);
+    expect(asked).toEqual([TX, TX2]);
+    expect(xs[0]).toMatchObject({ receipt: { status: 'success' }, late: true });
+    expect(xs[1].receipt).toBeUndefined();
+    expect(xs[2].late).toBeUndefined();
   });
-  it('past the deadline, every pending send stays unknown', async () => {
-    const out = await settlePending([p('resolveStagedDayPage', TX)], async () => ({ status: 'success', logs: [] }), DIAMOND, 0);
-    expect(out.unknown).toHaveLength(1);
+
+  it('a stalled receipt read costs no more than the cutoff, and stays unknown', async () => {
+    const xs = [sent('settleSanctionedInteractionRewards', TX)];
+    const t0 = Date.now();
+    await reconcileSent(xs, () => new Promise(() => {}), Date.now() + 50);
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(xs[0].receipt).toBeUndefined();
+  });
+});
+
+describe('lapseRestartLine', () => {
+  it("states the gap as a bound, as a figure only when the new chain's own pair was read", () => {
+    expect(lapseRestartLine(OWNER, RESTART, RESTARTED)).toContain('more than 24.0h (the contract\'s maximum gap) before that observation');
+    expect(lapseRestartLine(OWNER, RESTART, null)).toContain("more than the contract's maximum observation gap before that observation");
   });
 });
 
@@ -180,49 +205,49 @@ describe('sendSanctionsNotices', () => {
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
   });
   afterEach(() => vi.restoreAllMocks());
+  const ledgerOf = (xs: SentTx[]) => readLedger(xs, DIAMOND);
 
-  it('journals every notice, the moves and the restarted lapse, and makes ONE post for them', async () => {
-    const after = new Map([[OWNER.toLowerCase(), RESTARTED]]);
-    await sendSanctionsNotices(env, CHAIN, [move({ heldApart: v('3') }), move({ paidVault: v('1') })], [LAPSED], after, Number.POSITIVE_INFINITY);
-    expect(logged).toHaveLength(3);
-    expect(logged[0]).toContain('3 notices this run');
-    expect(logged[2]).toMatch(new RegExp(`${OWNER}: its evidence chain had lapsed .* more than 24\\.0h before that observation`));
+  it('journals every notice — the moves and a restart its receipt proves, even with no post-write read — and makes ONE post', async () => {
+    const ledger = ledgerOf([
+      sent('settleSanctionedInteractionRewards', TX, { status: 'success', logs: [log(DIAMOND, 'RewardSanctionsHeldApart', { user: OWNER, amount: v('3'), heldBalance: v('3') })] }),
+      sent('recordRewardSanctionsEvidence', TX2, { status: 'success', logs: [restartLog()] }, true),
+    ]);
+    await sendSanctionsNotices(env, CHAIN, ledger, [LAPSED], new Map(), Number.POSITIVE_INFINITY);
+    expect(logged).toHaveLength(2);
+    expect(logged[0]).toContain('2 notices this run');
+    expect(logged[1]).toContain(`${OWNER}: its evidence chain had lapsed`);
+    expect(logged[1]).toContain("more than the contract's maximum observation gap");
     // The ops channel is unconfigured here: one undelivered post, not one per notice.
     expect(warned).toHaveLength(1);
     expect(warned[0]).toContain('ops notice NOT delivered');
-    expect(warned[0]).toContain('3 lines');
+    expect(warned[0]).toContain('2 lines');
   });
 
   it('past the deadline, still journals every notice and says it was not posted', async () => {
-    await sendSanctionsNotices(env, CHAIN, [move({ heldApart: 1n })], [], new Map(), 0);
+    const ledger = { ...ledgerOf([]), moves: [move({ heldApart: 1n })] };
+    await sendSanctionsNotices(env, CHAIN, ledger, [], new Map(), 0);
     expect(logged).toHaveLength(1);
-    expect(warned).toEqual([expect.stringContaining('not posted, past the run\'s alert window')]);
+    expect(warned).toEqual([expect.stringContaining("not posted, past the run's alert window")]);
   });
 
-  it('says a value-moving send whose outcome is unknown, but not an observation', async () => {
-    const unknown = [
-      { owner: OWNER.toLowerCase(), fn: 'settleSanctionedInteractionRewards', tx: TX },
-      { owner: OWNER.toLowerCase(), fn: 'recordRewardSanctionsEvidence', tx: TX },
-    ];
-    await sendSanctionsNotices(env, CHAIN, [], [], new Map(), Number.POSITIVE_INFINITY, unknown);
+  it('says a value-moving send whose outcome is unknown, but not a bare observation', async () => {
+    await sendSanctionsNotices(env, CHAIN, ledgerOf([sent('settleSanctionedInteractionRewards', TX), sent('recordRewardSanctionsEvidence', TX2)]), [], new Map(), Number.POSITIVE_INFINITY);
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain(`settleSanctionedInteractionRewards for ${OWNER.toLowerCase()} (tx ${TX}): its receipt was not seen`);
     expect(logged[0]).toContain('UNKNOWN');
   });
 
-  it('a lapsed chain whose observation is still unknown is said, since a late restart would go untold', async () => {
-    const unknown = [{ owner: OWNER.toLowerCase(), fn: 'recordRewardSanctionsEvidence', tx: TX }];
-    await sendSanctionsNotices(env, CHAIN, [], [LAPSED], new Map([[OWNER.toLowerCase(), LAPSED]]), Number.POSITIVE_INFINITY, unknown);
+  it('a lapsed chain whose observation is still unknown is said; one nothing was sent for is left to the alerts', async () => {
+    await sendSanctionsNotices(env, CHAIN, ledgerOf([sent('recordRewardSanctionsEvidence', TX)]), [LAPSED], new Map(), Number.POSITIVE_INFINITY);
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toContain(`its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's observation (tx ${TX}) was not seen`);
-    // A lapsed owner nothing was sent for is left to the held-without-chain alert.
+    expect(logged[0]).toContain(`its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's recordRewardSanctionsEvidence (tx ${TX}) was not seen`);
     logged.length = 0;
-    await sendSanctionsNotices(env, CHAIN, [], [LAPSED], new Map(), Number.POSITIVE_INFINITY, []);
+    await sendSanctionsNotices(env, CHAIN, ledgerOf([]), [LAPSED], new Map(), Number.POSITIVE_INFINITY);
     expect(logged).toEqual([]);
   });
 
   it('a run with nothing to tell says nothing', async () => {
-    await sendSanctionsNotices(env, CHAIN, [], [st()], new Map([[OWNER.toLowerCase(), st({ lastSeenAt: 9_000 })]]), Number.POSITIVE_INFINITY);
+    await sendSanctionsNotices(env, CHAIN, ledgerOf([]), [st()], new Map([[OWNER.toLowerCase(), st({ lastSeenAt: 9_000 })]]), Number.POSITIVE_INFINITY);
     expect(logged).toEqual([]);
     expect(warned).toEqual([]);
   });
