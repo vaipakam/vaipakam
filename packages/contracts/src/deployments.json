@@ -430,6 +430,8 @@
       "kind": "testnet-overlay",
       "oracle": "0x06fb141dbFC1c57d472Ab1eD098F3af8b57625d4"
     },
+    "sanctionsClearanceAttestor": "0x84B10c69144692EC67DE7BA105E09DEC5a483eF6",
+    "sanctionsOracleStandIn": "0x6be7DB253aD8e82F43e74f7B7b35B015FFbffaf0",
     "sanctionsTestnetOverlay": "0x06fb141dbFC1c57d472Ab1eD098F3af8b57625d4",
     "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
     "swapAdapters": {
