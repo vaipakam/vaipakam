@@ -1031,6 +1031,25 @@ export async function touchOpenWork(db: KeeperD1, chainId: number, diamond: stri
   }
 }
 
+/** Which of `items` are still OPEN work of `kind` on `(chainId, diamond)`. */
+export async function openWorkAmong(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  items: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    const rows = await db
+      .prepare(`SELECT item FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .all<{ item: string }>();
+    for (const r of rows.results ?? []) out.add(r.item);
+  }
+  return out;
+}
+
 /** Retire `items` — only on an on-chain read that shows them finished. */
 export async function finishWork(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, items: readonly string[]): Promise<void> {
   if (items.length === 0) return;

@@ -10,7 +10,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContractFunctionRevertedError, encodeErrorResult, type Abi } from 'viem';
 import { RewardEpochFacetABI } from '@vaipakam/contracts/abis';
-import { ALREADY_DONE, AWAITING_ALERT_SEC, classifyRevert, raiseDeliveryAlerts, type DeliveryAlertInput } from '../src/deliveryProof';
+import {
+  ALREADY_DONE,
+  AWAITING_ALERT_SEC,
+  awaitingDeliveries,
+  classifyRevert,
+  minedRevertOutcome,
+  raiseDeliveryAlerts,
+  type DeliveryAlertInput,
+} from '../src/deliveryProof';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { SqliteD1 } from './helpers/sqliteD1';
@@ -63,6 +71,7 @@ describe('raiseDeliveryAlerts', () => {
   const input = (over: Partial<DeliveryAlertInput> = {}): DeliveryAlertInput => ({
     failures: new Map(),
     cleared: new Set(),
+    openWork: async (ps) => new Set(ps),
     awaiting: [],
     awaitingMeasured: true,
     nowSec: NOW,
@@ -82,6 +91,39 @@ describe('raiseDeliveryAlerts', () => {
     recorded(`delivery-revert:${CHAIN}:${P2}`);
     await raiseDeliveryAlerts(env, CHAIN, input({ cleared: new Set([P1]) }));
     expect(keys(), 'only the delivery this run disproved is cleared').toEqual([`delivery-revert:${CHAIN}:${P2}`]);
+  });
+
+  it('clears a revert alert whose delivery is no longer open work, even on an empty queue', async () => {
+    recorded(`delivery-revert:${CHAIN}:${P1}`);
+    recorded(`delivery-revert:${CHAIN}:${P2}`);
+    await raiseDeliveryAlerts(env, CHAIN, input({ openWork: async () => new Set([P2]) }));
+    expect(keys(), 'P1 was retired by an earlier run whose clear never landed').toEqual([`delivery-revert:${CHAIN}:${P2}`]);
+    await raiseDeliveryAlerts(env, CHAIN, input({ openWork: async () => new Set() }));
+    expect(keys()).toEqual([]);
+  });
+
+  it('keeps undisproved revert alerts when the open work cannot be read', async () => {
+    recorded(`delivery-revert:${CHAIN}:${P1}`);
+    recorded(`delivery-revert:${CHAIN}:${P2}`);
+    await raiseDeliveryAlerts(
+      env,
+      CHAIN,
+      input({
+        cleared: new Set([P1]),
+        openWork: async () => {
+          throw new Error('d1 down');
+        },
+      }),
+    );
+    expect(keys()).toEqual([`delivery-revert:${CHAIN}:${P2}`]);
+  });
+
+  it('states a lower bound, not a count, when the run could not read every open delivery', async () => {
+    await raiseDeliveryAlerts(env, CHAIN, input({ awaiting: [{ packetHash: P1, arrivedAt: NOW - 3600 }], awaitingMeasured: false }));
+    const [line] = warned.filter((w) => w.includes('reward delivery proofs'));
+    expect(line).toContain('at least 1 deliveries are not yet whole');
+    expect(line).toContain('it could not look at every open delivery');
+    expect(line).not.toContain('oldest first');
   });
 
   it('says how many deliveries are not whole, oldest first, with when each arrived', async () => {
@@ -115,5 +157,61 @@ describe('raiseDeliveryAlerts', () => {
   it('sends nothing past the run deadline', async () => {
     await raiseDeliveryAlerts(env, CHAIN, input({ failures: new Map([[P1, 'x']]), awaiting: [{ packetHash: P1, arrivedAt: 0 }], deadline: 0 }));
     expect(warned).toEqual([]);
+  });
+});
+
+describe('awaitingDeliveries', () => {
+  const old = NOW - AWAITING_ALERT_SEC - 1;
+  const base = {
+    rows: [{ packetHash: P1 }],
+    packets: new Map([[P1, { arrivedAt: old }]]),
+    finished: new Set<string>(),
+    notWhole: new Set([P1]),
+    moved: new Set<string>(),
+    remeasured: new Set<string>(),
+    nowSec: NOW,
+  };
+
+  it('counts a delivery its calls went through as awaiting while a fresh read still finds it not whole', () => {
+    // e.g. a rollout admission: the call went through, but it only OPENS the
+    // epoch its days are indexed into on a later run.
+    expect(awaitingDeliveries({ ...base, moved: new Set([P1]), remeasured: new Set([P1]) })).toEqual({
+      awaiting: [{ packetHash: P1, arrivedAt: old }],
+      undetermined: 0,
+    });
+  });
+
+  it('leaves a moved delivery undetermined when its re-read did not land', () => {
+    expect(awaitingDeliveries({ ...base, moved: new Set([P1]) })).toEqual({ awaiting: [], undetermined: 1 });
+  });
+
+  it('counts a delivery the run never planned as undetermined, and a finished one as neither', () => {
+    expect(awaitingDeliveries({ ...base, notWhole: new Set() })).toEqual({ awaiting: [], undetermined: 1 });
+    expect(awaitingDeliveries({ ...base, finished: new Set([P1]) })).toEqual({ awaiting: [], undetermined: 0 });
+  });
+
+  it('does not report a delivery inside its first scan interval', () => {
+    expect(awaitingDeliveries({ ...base, packets: new Map([[P1, { arrivedAt: NOW - 60 }]]) })).toEqual({ awaiting: [], undetermined: 0 });
+  });
+});
+
+describe('minedRevertOutcome', () => {
+  const call = { functionName: 'materializeTransportBatchChunk', args: [] as const };
+  const TX = `0x${'a'.repeat(64)}` as const;
+
+  it('reads a race lost to another caller as done, not a failure', async () => {
+    const out = await minedRevertOutcome(async () => Promise.reject(revert('TransportChunkAlreadyIndexed', [P1, 2n])), call, TX);
+    expect(out).toEqual({ kind: 'ok' });
+  });
+
+  it("names the contract's reason for any other refusal", async () => {
+    const out = await minedRevertOutcome(async () => Promise.reject(revert('TransportChunkProofInvalid', [P1, 1n, P2])), call, TX);
+    expect(out).toEqual({ kind: 'failed', reason: `materializeTransportBatchChunk: TransportChunkProofInvalid (tx ${TX})` });
+  });
+
+  it('names the transaction when the call would now go through, or the re-check fails without a reason', async () => {
+    const generic = { kind: 'failed', reason: `materializeTransportBatchChunk reverted on chain (tx ${TX})` };
+    expect(await minedRevertOutcome(async () => undefined, call, TX)).toEqual(generic);
+    expect(await minedRevertOutcome(async () => Promise.reject(new Error('request to https://rpc.example/KEY failed')), call, TX)).toEqual(generic);
   });
 });

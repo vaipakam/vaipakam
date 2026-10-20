@@ -28,10 +28,14 @@
 // the packet's root before any proof is sent. Every write is simulated first.
 //
 // ALERTS (#2516) go to the OPS channel, per mirror, each raised and cleared on a
-// measurement: a delivery still not whole one full scan after the first scan
-// that could have reached it (its days fund nothing a claim can find, and an
-// armed day-delivery gate holds them), and a proof or index call that reverts
-// for any reason other than the work already being done (named, with why).
+// measurement, never on what a send is assumed to have done: a delivery still
+// not whole one full scan after the first scan that could have reached it (its
+// days fund nothing a claim can find, and an armed day-delivery gate holds
+// them) — a delivery this run worked on is READ AGAIN after its sends before it
+// counts as whole — and a proof or index call that reverts for any reason other
+// than the work already being done (named, with the contract's reason, a mined
+// revert included). A revert alert stands only while its delivery is still open
+// work on this Diamond.
 //
 // Gated by KEEPER_ENABLED + REWARD_DELIVERY_PROOF_ENABLED.
 
@@ -57,7 +61,7 @@ import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
-import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, listOpsAlertKeys, touchOpenWork, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
@@ -322,9 +326,19 @@ async function proveOnMirror(
   const overflow = listed.length > OPEN_SLICE;
   const open = listed.slice(0, OPEN_SLICE);
   const nowSec = Math.floor(Date.now() / 1000);
+  const openWork = (items: readonly string[]) => openWorkAmong(env.KEEPER_DB, chain.id, diamond, WORK_KIND, items);
   if (open.length === 0) {
-    // Nothing open: nothing is awaiting, measured.
-    await raiseDeliveryAlerts(env, chain.id, { failures: new Map(), cleared: new Set(), awaiting: [], awaitingMeasured: true, nowSec, deadline: alertDeadline });
+    // Nothing open: nothing is awaiting, measured, and no revert alert can
+    // stand (its delivery is no longer open work).
+    await raiseDeliveryAlerts(env, chain.id, {
+      failures: new Map(),
+      cleared: new Set(),
+      openWork,
+      awaiting: [],
+      awaitingMeasured: true,
+      nowSec,
+      deadline: alertDeadline,
+    });
     return;
   }
   const rows = open.map((o) => o.payload);
@@ -344,13 +358,20 @@ async function proveOnMirror(
    *  back. A row the budget never reached keeps its place, so the rotation
    *  moves through the whole queue instead of re-serving the slice's head. */
   const examined = new Set<string>();
+  /** Moved packets a fresh read after the sends found still not whole. */
+  const remeasured = new Set<string>();
   /** Packets whose call reverted this run, with why (#2516). */
   const failures = new Map<string, string>();
   /** Packets this run worked with every call going through: their revert
-   *  alert, if any, is disproved. */
+   *  alert, if any, is disproved. Says nothing about whether the delivery is
+   *  now whole — an admission, say, only opens the epoch its days are then
+   *  indexed into. */
   const clean = new Set<string>();
   /** Packets whose delivery this run read as NOT whole (a plan was built). */
   const notWhole = new Set<string>();
+  /** Of those, the ones at least one of whose calls landed or was already
+   *  done: their state may have moved, so they are read again before counting. */
+  const moved = new Set<string>();
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
@@ -389,9 +410,22 @@ async function proveOnMirror(
         const out = await send(ctx!, budget, a);
         if (out.kind === 'failed') failed ??= out.reason;
         else if (out.kind === 'stopped') reached = false;
+        else moved.add(key);
       }
       if (failed !== null) failures.set(key, failed);
       else if (reached && plan.actions.length > 0) clean.add(key);
+    }
+    // MEASURE what the sends did (Codex #2599 r1): a delivery counts as whole
+    // only on a fresh read, never because its calls went through. Bounded by
+    // a share of the alert window, so the alerts still go out; a delivery the
+    // re-read did not reach stays undetermined.
+    if (moved.size > 0) {
+      const verifyDeadline = deadline + Math.floor((alertDeadline - deadline) / 2);
+      const after = await measureWhole(env, chain, diamond, rows.filter((r) => moved.has(r.packetHash.toLowerCase())), verifyDeadline);
+      for (const [key, whole] of after) {
+        if (whole) finished.add(key);
+        else remeasured.add(key);
+      }
     }
   } finally {
     await finishWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...finished]);
@@ -399,34 +433,55 @@ async function proveOnMirror(
     await touchOpenWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...examined].filter((k) => !finished.has(k)));
   }
 
-  // A delivery this run READ as not whole and did not make whole, by its own
-  // packet's arrival time (a packet not yet arrived awaits nothing on this
-  // mirror; one whose every call this run went through is taken as whole, and
-  // the next run's read confirms it). A run that could not settle every open
-  // delivery — a packet or plan unread, a row the run's budget never reached,
-  // a slice that is not the whole queue — can raise the alert but never clear it.
-  const awaiting: { packetHash: string; arrivedAt: number }[] = [];
-  let undetermined = 0;
-  for (const row of rows) {
-    const key = row.packetHash.toLowerCase();
-    if (finished.has(key)) continue;
-    const p = packets.get(key);
-    if (!p) continue; // not arrived, or unread (counted below)
-    if (!notWhole.has(key)) {
-      undetermined += 1;
-      continue;
-    }
-    if (clean.has(key)) continue;
-    if (nowSec - p.arrivedAt > AWAITING_ALERT_SEC) awaiting.push({ packetHash: key, arrivedAt: p.arrivedAt });
-  }
+  // A delivery this run READ as not whole — and, if its sends may have moved
+  // it, read again as still not whole — by its own packet's arrival time (a
+  // packet not yet arrived awaits nothing on this mirror). A run that could not
+  // settle every open delivery — a packet or plan unread, a row the run's
+  // budget never reached, a re-read that did not land, a slice that is not the
+  // whole queue — can raise the alert but never clear it.
+  const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, finished, notWhole, moved, remeasured, nowSec });
   await raiseDeliveryAlerts(env, chain.id, {
     failures,
     cleared: new Set([...clean, ...finished]),
+    openWork,
     awaiting,
     awaitingMeasured: unreadPackets.size === 0 && undetermined === 0 && !overflow,
     nowSec,
     deadline: alertDeadline,
   });
+}
+
+/**
+ * The overdue deliveries a run MEASURED as not whole, and how many open
+ * deliveries it could not settle either way. A delivery counts as not whole
+ * only on a read: its first read built a plan, and — when any of its calls
+ * landed or was already done — a fresh read after the sends still found it
+ * not whole. One whose re-read did not land is undetermined, as is one never
+ * read; an unread packet is the caller's to count. Pure; pinned by the tests.
+ */
+export function awaitingDeliveries(m: {
+  rows: readonly { packetHash: string }[];
+  packets: ReadonlyMap<string, { arrivedAt: number }>;
+  finished: ReadonlySet<string>;
+  notWhole: ReadonlySet<string>;
+  moved: ReadonlySet<string>;
+  remeasured: ReadonlySet<string>;
+  nowSec: number;
+}): { awaiting: { packetHash: string; arrivedAt: number }[]; undetermined: number } {
+  const awaiting: { packetHash: string; arrivedAt: number }[] = [];
+  let undetermined = 0;
+  for (const row of m.rows) {
+    const key = row.packetHash.toLowerCase();
+    if (m.finished.has(key)) continue;
+    const p = m.packets.get(key);
+    if (!p) continue; // not arrived, or unread (the caller counts those)
+    if (!m.notWhole.has(key) || (m.moved.has(key) && !m.remeasured.has(key))) {
+      undetermined += 1;
+      continue;
+    }
+    if (m.nowSec - p.arrivedAt > AWAITING_ALERT_SEC) awaiting.push({ packetHash: key, arrivedAt: p.arrivedAt });
+  }
+  return { awaiting, undetermined };
 }
 
 /** What a run measured, for its alerts. */
@@ -435,7 +490,12 @@ export interface DeliveryAlertInput {
   failures: ReadonlyMap<string, string>;
   /** Packets whose revert alert this run disproves (finished, or every call went through). */
   cleared: ReadonlySet<string>;
-  /** Open deliveries older than {@link AWAITING_ALERT_SEC}. */
+  /** Which of the given packets are still open work on this Diamond. A revert
+   *  alert whose delivery is not — retired by a run whose clear did not land,
+   *  or a Diamond since replaced — has nothing left to stand on. */
+  openWork: (packets: readonly string[]) => Promise<ReadonlySet<string>>;
+  /** Open deliveries older than {@link AWAITING_ALERT_SEC} — all of them when
+   *  `awaitingMeasured`, otherwise only those this run could read. */
   awaiting: readonly { packetHash: string; arrivedAt: number }[];
   /** False when the run could not look at every open delivery. */
   awaitingMeasured: boolean;
@@ -466,20 +526,91 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
       `${tag}: the proof for delivery ${packet} reverts (${why}). Until it goes through, that delivery's days fund nothing a claim can find, and an armed day-delivery gate holds them.`,
     );
   }
-  for (const key of open) {
-    if (!key.startsWith(prefix)) continue;
-    // eslint-disable-next-line no-await-in-loop
-    if (m.cleared.has(key.slice(prefix.length))) await toggle(key, false, () => '');
+  // Open revert alerts this run did not re-raise: cleared when this run
+  // disproved them, or when their delivery is no longer open work at all.
+  const standing = [...open].filter((k) => k.startsWith(prefix) && !m.failures.has(k.slice(prefix.length))).map((k) => k.slice(prefix.length));
+  if (standing.length > 0) {
+    let stillOpen: ReadonlySet<string> | null = null;
+    try {
+      stillOpen = await m.openWork(standing.filter((p) => !m.cleared.has(p)));
+    } catch (err) {
+      console.error(`[keeper] deliveryProof chain=${chainId}: open work unread, only disproved revert alerts cleared: ${shortErr(err)}`);
+    }
+    for (const packet of standing) {
+      const gone = m.cleared.has(packet) || (stillOpen !== null && !stillOpen.has(packet));
+      // eslint-disable-next-line no-await-in-loop
+      if (gone) await toggle(`${prefix}${packet}`, false, () => '');
+    }
   }
   if (m.awaiting.length > 0 || m.awaitingMeasured) {
     const shown = [...m.awaiting].sort((a, b) => a.arrivedAt - b.arrivedAt).slice(0, ALERT_NAMES);
     const more = m.awaiting.length - shown.length;
-    await toggle(`delivery-awaiting:${chainId}:all`, m.awaiting.length > 0, () =>
-      `${tag}: ${m.awaiting.length} deliver${m.awaiting.length === 1 ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (` +
+    const n = m.awaiting.length;
+    // A run that could not read every open delivery knows only a lower bound,
+    // and only the order of the ones it read: say so.
+    const count = m.awaitingMeasured ? `${n}` : `at least ${n}`;
+    const order = m.awaitingMeasured ? 'oldest first' : 'oldest of those this run could read first; it could not look at every open delivery';
+    await toggle(`delivery-awaiting:${chainId}:all`, n > 0, () =>
+      `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (${order}: ` +
       shown.map((a) => `${a.packetHash} arrived ${new Date(a.arrivedAt * 1000).toISOString()}`).join('; ') +
       `${more > 0 ? `; and ${more} more` : ''}). Their days fund nothing a claim can find until indexed or proven, and an armed day-delivery gate holds them.`,
     );
   }
+}
+
+/**
+ * Whether each of `rows`' deliveries is whole NOW, by a fresh read bounded by
+ * `deadline` (Codex #2599 r1). Read only for the deliveries a run's sends may
+ * have moved; the verdict is {@link deliveryComplete}'s on that read, so a
+ * rooted list with a chunk still out, or a rollout packet whose epoch was only
+ * admitted, reads not whole. A delivery whose read did not land is absent from
+ * the result: undetermined, not whole and not "not whole".
+ */
+async function measureWhole(
+  env: Env,
+  chain: ChainConfig,
+  diamond: Address,
+  rows: readonly BudgetDeliveryRow[],
+  deadline: number,
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (rows.length === 0 || Date.now() >= deadline) return out;
+  const client = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline) as PublicClient;
+  try {
+    const { packets } = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex), deadline);
+    for (const row of rows) {
+      const key = row.packetHash.toLowerCase();
+      const packet = packets.get(key);
+      if (!packet) continue;
+      try {
+        let batch: BatchProgress | null = null;
+        if (packetMayNeedWork(packet) && packet.dayListRoot === ZERO32 && packet.batchId !== ZERO32) {
+          // eslint-disable-next-line no-await-in-loop
+          const b = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getTransportBatch', args: [packet.batchId] })) as readonly [
+            Hex,
+            bigint,
+            bigint,
+            number,
+            number,
+            boolean,
+          ];
+          batch = { dayCount: Number(b[3]), indexedDays: Number(b[4]) };
+        }
+        const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
+        const flatAllLanded =
+          packetMayNeedWork(packet) && packet.batchId === ZERO32 && packet.dayListRoot === ZERO32 && !rolloutAdmissible(packet) && flatDays
+            ? // eslint-disable-next-line no-await-in-loop
+              await allLanded(client, diamond, flatDays, deadline)
+            : false;
+        out.set(key, deliveryComplete({ packet, batch, flatAllLanded }));
+      } catch (err) {
+        console.warn(`[keeper] deliveryProof packet=${row.packetHash} re-read failed, left undetermined: ${shortErr(err)}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[keeper] deliveryProof chain=${chain.id}: re-read after sends failed, left undetermined: ${shortErr(err)}`);
+  }
+  return out;
 }
 
 /** A client per remitting chain, made on first use. */
@@ -852,7 +983,7 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
     if (receipt.status !== 'success') {
       console.error(`[keeper] deliveryProof ${call.functionName} reverted on chain: tx=${hash}`);
-      return { kind: 'failed', reason: `${call.functionName} reverted on chain (tx ${hash})` };
+      return await minedRevertOutcome(simulate, call, hash);
     }
     return { kind: 'ok' };
   } catch (err) {
@@ -860,6 +991,28 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     budget.writes = 0;
     return { kind: 'stopped' };
   }
+}
+
+/**
+ * A MINED revert, classified by the same rule as a refused simulation (Codex
+ * #2599 r1): the call is simulated again on the state the revert left. Another
+ * caller finishing the same chunk or admission between this send's simulation
+ * and its inclusion reads "already done" now — no failure. Any other refusal is
+ * named with the contract's reason. A call that would now go through (the
+ * revert was not the contract's, say out of gas) or a re-check that cannot be
+ * made is a failure naming the transaction, so the operator can look it up.
+ */
+export async function minedRevertOutcome(simulate: (c: Call) => Promise<unknown>, call: Call, hash: Hex): Promise<SendOutcome> {
+  try {
+    await simulate(call);
+  } catch (err) {
+    if (!(err instanceof PastRunDeadline)) {
+      const c = classifyRevert(err);
+      if (c.kind === 'done') return { kind: 'ok' };
+      if (revertName(err) !== undefined) return { kind: 'failed', reason: `${call.functionName}: ${c.reason} (tx ${hash})` };
+    }
+  }
+  return { kind: 'failed', reason: `${call.functionName} reverted on chain (tx ${hash})` };
 }
 
 /** A refused simulation as a send outcome. A deadline refusal stops the run. */
