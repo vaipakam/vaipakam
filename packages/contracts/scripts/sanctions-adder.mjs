@@ -138,16 +138,16 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  * Returns the chain's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's. Whatever it throws carries `chainContext`:
  * the last finalized reading of the list, the finality outcome when the wait
- * ran, and the delistings this run computed together with the version of the
- * reading they were computed from, so the failure report still states what
- * the list declares outstanding (see {@link failureReport}).
+ * ran, and the delistings this run computed together with the list state
+ * they were computed from, so the failure report still states what the list
+ * declares outstanding (see {@link failureReport}).
  */
 export async function runChain({ publication, readCurrent, latestVersion, roles, send, finality = {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const current = await readCurrent();
   // `withheld` stays null until the update is computed: no delistings are
   // known for any reading before then.
-  const context = { list: current, sourceHash, withheld: null, computedAt: current.version };
+  const context = { list: current, sourceHash, withheld: null, computedFrom: stateOf(current) };
   try {
     // The update is computed from the finalized state and sent at the latest
     // block. If the list has moved in between — another update not yet final —
@@ -270,6 +270,41 @@ export function outstandingFrom(list, sourceHash, withheld) {
   };
 }
 
+/** The list state a reading records, in the shape {@link holds} compares. */
+function stateOf(reading) {
+  return {
+    version: BigInt(reading.version),
+    addresses: reading.addresses,
+    sourceHash: reading.recordedHash,
+    publicationDate: reading.recordedDate,
+    pendingAdditions: reading.recordedPendingAdditions,
+    pendingDelistings: reading.recordedPendingDelistings,
+  };
+}
+
+/**
+ * Whether reading `s` holds exactly the list state `state`: the same
+ * version, exactly the same addresses (nothing more, nothing missing), the
+ * same publication and the same outstanding counts. The one test of "the
+ * list is in this state", used both for finality (the planned update) and
+ * for whether this run's computed delistings still describe a reading (the
+ * state they were computed from); a version alone does not establish it,
+ * since two replicas may serve different lists at one version.
+ */
+function holds(s, state) {
+  if (BigInt(s.version) !== BigInt(state.version)) return false;
+  const held = new Set(s.addresses.map(lower));
+  const expected = new Set(state.addresses.map(lower));
+  return (
+    held.size === expected.size &&
+    [...expected].every((a) => held.has(a)) &&
+    lower(s.recordedHash) === lower(state.sourceHash) &&
+    Number(s.recordedDate) === Number(state.publicationDate) &&
+    Number(s.recordedPendingAdditions) === Number(state.pendingAdditions) &&
+    Number(s.recordedPendingDelistings) === Number(state.pendingDelistings)
+  );
+}
+
 /**
  * What one reading `s` of the list, at the finalized block, shows of the
  * planned update `target`. The list keeps the publication and outstanding
@@ -292,16 +327,7 @@ function finalityOf(s, target) {
   const version = BigInt(s.version);
   if (version < target.version) return 'pending';
   if (version > target.version) return 'overtaken';
-  const held = new Set(s.addresses.map(lower));
-  const planned = new Set(target.addresses.map(lower));
-  const exactly = held.size === planned.size && [...planned].every((a) => held.has(a));
-  const holdsUpdate =
-    exactly &&
-    lower(s.recordedHash) === lower(target.sourceHash) &&
-    Number(s.recordedDate) === Number(target.publicationDate) &&
-    Number(s.recordedPendingAdditions) === Number(target.pendingAdditions) &&
-    Number(s.recordedPendingDelistings) === Number(target.pendingDelistings);
-  return holdsUpdate ? 'applied' : 'displaced';
+  return holds(s, target) ? 'applied' : 'displaced';
 }
 
 /** Why a reading stops the wait at once, for the error it throws. */
@@ -425,10 +451,10 @@ export function failureReport(reason, progress, context = {}) {
     error: reason,
     sent,
     ...(context.finality ? { finality: context.finality } : {}),
-    // The delistings this run computed hold for the reading they were
-    // computed from; a reading at another version is another state.
+    // The delistings this run computed describe the list state they were
+    // computed from, and no other.
     ...(context.list
-      ? outstandingFrom(context.list, context.sourceHash, BigInt(context.list.version) === BigInt(context.computedAt) ? context.withheld : null)
+      ? outstandingFrom(context.list, context.sourceHash, context.computedFrom && holds(context.list, context.computedFrom) ? context.withheld : null)
       : {}),
   };
 }

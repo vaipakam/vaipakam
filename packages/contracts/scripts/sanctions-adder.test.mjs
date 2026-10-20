@@ -405,6 +405,19 @@ test('finality: a stopped chain still reports what the last finalized reading de
   assert.equal(chain.finality.state, 'pending');
   assert.deepEqual(chain.delistingsForRemover, [C]);
   assert.match(summarizeFailure(chain, 'sdn.xml'), new RegExp(`1 delisting\\(s\\) await the remover \\(the Safe\\): ${C}\\. Confirm`));
+  // Another replica at the SAME version, serving another list of this publication
+  // (the remover delisted C there): a version alone does not make it the state the
+  // delistings were computed from, so they are not named.
+  ({ chain } = await run({ version: 8n, addresses: [C, F1], date: DATE, hash: HASH, pendingAdditions: 1, pendingDelistings: 1, applies: false }, {
+    readCurrent: reads([
+      { version: 8n, addresses: [C, F1], recordedDate: DATE, recordedHash: HASH, recordedPendingAdditions: 1, recordedPendingDelistings: 1, blockNumber: 100n, blockHash: `0x${'c'.repeat(64)}` },
+      snap(8n, [F1], { pendingAdditions: 1, pendingDelistings: 0 }),
+    ]),
+    finality: fakeClock(),
+  }));
+  assert.equal(chain.finality.state, 'pending');
+  assert.equal(chain.delistingsNamed, false);
+  assert.deepEqual(chain.delistingsForRemover, []);
 
   // Overtaken by a NEWER publication before the first poll: its counts are reported as
   // that publication's, never paired with this run's delistings or file.
