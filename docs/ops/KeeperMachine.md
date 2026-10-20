@@ -186,8 +186,8 @@ a commit. The template documents each line. In short:
   and its single operator chat. This is a separate bot from `TG_BOT_TOKEN`,
   and the two tokens are never shared (CLAUDE.md, "Two Telegram bots"). The
   sanctions-hold pass sends its deadline, overdue, capacity and backlog alerts
-  here, plus one-off notices when its settlement moves reward value or a held
-  chain it tends restarts (#2515); the horizon heartbeat its revert,
+  here, plus one post per run of one-off notices when its settlement moves
+  reward value or a lapsed held chain restarts (#2515); the horizon heartbeat its revert,
   overdue-entry and paused-clock alerts; and the delivery-proof pass its
   not-yet-whole and refused-proof alerts (#2516). With either value unset,
   every such alert goes only to the journal,
