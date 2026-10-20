@@ -237,8 +237,10 @@ the installed release).
   not fail it.
 - **The adder** marks a chain `applied` only once the list, read at the
   finalized block, shows every call it sent: the list is past the call's
-  version, records the publication and lists every address the call added.
-  That is the same reading every update is computed from (one snapshot, every
+  version, records the publication and lists every address the call added,
+  and while the call is still the list's latest update, its pending counts are
+  the ones the call declared. The pending counts the report gives come from
+  that same finalized list, not from the plan. That is the same reading every update is computed from (one snapshot, every
   read pinned to the finalized block's hash). No transaction receipt decides
   it, since a load-balanced RPC can answer a receipt and the finalized block
   from replicas on different forks. A failed read is read again every 15

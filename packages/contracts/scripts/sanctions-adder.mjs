@@ -184,27 +184,32 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
     }
     Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
   }
+  // What the report states about the list afterwards is read from the
+  // finalized list, never from the plan: the snapshot that showed every call
+  // final, or — with nothing sent — the one the update was computed from.
+  let after = current;
   if (progress.length) {
-    let outcomes;
+    let confirmed;
     try {
-      outcomes = await awaitFinality({ entries: progress, readCurrent, sourceHash, ...finality });
+      confirmed = await awaitFinality({ entries: progress, readCurrent, sourceHash, ...finality });
     } catch (e) {
       settleEntries(progress, e?.outcomes);
       throw e;
     }
-    settleEntries(progress, outcomes);
+    settleEntries(progress, confirmed.outcomes);
+    after = confirmed.list;
   }
-  const last = update.calls[update.calls.length - 1];
+  const summary = (l) => ({ atVersion: l.version.toString(), finalizedBlock: l.blockNumber?.toString(), count: l.addresses.length });
   return {
     status: progress.length ? 'applied' : 'up-to-date',
-    list: { atVersion: current.version.toString(), finalizedBlock: current.blockNumber?.toString(), count: current.addresses.length },
+    list: summary(current),
+    ...(progress.length ? { listAfter: summary(after) } : {}),
     publicationOrder: update.order,
     added: update.add,
     sent: progress,
-    // What the list will show outstanding once these calls land: the last
-    // call's declaration, or — with nothing sent — what it records now.
-    pendingAdditions: last ? last.additionsLeft : Number(current.recordedPendingAdditions),
-    pendingDelistings: last ? last.delistingsLeft : Number(current.recordedPendingDelistings),
+    // What the finalized list declares outstanding after this run.
+    pendingAdditions: Number(after.recordedPendingAdditions),
+    pendingDelistings: Number(after.recordedPendingDelistings),
     delistingsForRemover: update.withheldRemovals,
   };
 }
@@ -222,15 +227,23 @@ function settleEntries(entries, outcomes = []) {
 /**
  * What the list snapshot `s` (read at the finalized block) shows of one sent
  * call: `pending` while the list is not past the version the call was built
- * for; once it is, `final` when it records the call's publication and lists
- * every address the call added, `displaced` when it does not. A displaced
- * call can never apply, since the list takes an update only at the version
- * it was computed against.
+ * for; once it is, `final` when it shows the call's effect, `displaced` when
+ * it does not. The effect is the publication recorded and every address the
+ * call added listed; and while the call is the list's latest update (the list
+ * is exactly one version past it), also the outstanding counts it declared,
+ * so a different update at the same version and publication is not taken
+ * for it. A displaced call can never apply, since the list takes an update
+ * only at the version it was computed against.
  */
 function callOutcome(entry, s, sourceHash) {
-  if (BigInt(s.version) <= BigInt(entry.expectedVersion)) return 'pending';
+  const version = BigInt(s.version);
+  const expected = BigInt(entry.expectedVersion);
+  if (version <= expected) return 'pending';
   const listed = new Set(s.addresses.map((a) => a.toLowerCase()));
-  const shown = String(s.recordedHash).toLowerCase() === String(sourceHash).toLowerCase() && entry.add.every((a) => listed.has(a.toLowerCase()));
+  const shown =
+    String(s.recordedHash).toLowerCase() === String(sourceHash).toLowerCase() &&
+    entry.add.every((a) => listed.has(a.toLowerCase())) &&
+    (version !== expected + 1n || (Number(s.recordedPendingAdditions) === Number(entry.additionsLeft) && Number(s.recordedPendingDelistings) === Number(entry.delistingsLeft)));
   return shown ? 'final' : 'displaced';
 }
 
@@ -242,9 +255,10 @@ const NOT_FINAL = {
 
 /**
  * Wait until the list, read at the finalized block, shows every call in
- * `entries` (runChain's progress entries: `expectedVersion`, `add`, `tx`),
- * and return per entry `{ state: 'final', finalizedBlock }`: the finalized
- * block whose list shows it.
+ * `entries` (runChain's progress entries: `expectedVersion`, `add`,
+ * `additionsLeft`, `delistingsLeft`, `tx`), and return `{ outcomes, list }`:
+ * per entry `{ state: 'final', finalizedBlock }`, the finalized block whose
+ * list shows it, and the snapshot that showed the last of them.
  *
  * "Final" is a fact about the list, read the way every update is computed:
  * `readCurrent` takes ONE snapshot at the finalized block, every read pinned
@@ -258,8 +272,8 @@ const NOT_FINAL = {
  * Each poll takes a snapshot and judges every call not already final (see
  * {@link callOutcome}); finality does not reverse, so a final call is not
  * judged again. Each outcome's `state` is one of:
- *   final     — the finalized list shows the call's publication and every
- *               address it added;
+ *   final     — the finalized list shows the call's effect (see
+ *               {@link callOutcome});
  *   displaced — the finalized list is past the call's version without
  *               showing it: another update took that version, and this call
  *               can never apply;
@@ -295,7 +309,7 @@ export async function awaitFinality({ entries, readCurrent, sourceHash, timeoutM
         { outcomes },
       );
     }
-    if (outcomes.every((o) => o.state === 'final')) return outcomes;
+    if (outcomes.every((o) => o.state === 'final')) return { outcomes, list: snapshot };
     if (now() >= deadline) {
       const open = entries.flatMap((e, i) => (outcomes[i].state === 'final' ? [] : [`${e.tx} ${NOT_FINAL[outcomes[i].state](e)}`]));
       throw Object.assign(new Error(`not shown final after ${timeoutMs / 60_000} minutes: ${open.join('; ')}`), { outcomes });

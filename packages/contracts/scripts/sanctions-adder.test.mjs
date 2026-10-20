@@ -284,8 +284,16 @@ const A1 = getAddress('0x00000000000000000000000000000000000000a1');
 const A2 = getAddress('0x00000000000000000000000000000000000000a2');
 const TX1 = `0x${'1'.repeat(64)}`;
 const TX2 = `0x${'2'.repeat(64)}`;
-const entry = (expectedVersion, add, tx = TX1) => ({ expectedVersion: String(expectedVersion), add, tx, blockNumber: '201', state: 'included' });
-const snap = (version, addresses, { hash = HASH, block = 300n } = {}) => ({ version, addresses, recordedHash: hash, blockNumber: block, blockHash: `0x${'c'.repeat(64)}` });
+const entry = (expectedVersion, add, tx = TX1, { additionsLeft = 0, delistingsLeft = 1 } = {}) => ({ expectedVersion: String(expectedVersion), add, additionsLeft, delistingsLeft, tx, blockNumber: '201', state: 'included' });
+const snap = (version, addresses, { hash = HASH, block = 300n, pendingAdditions = 0, pendingDelistings = 1 } = {}) => ({
+  version,
+  addresses,
+  recordedHash: hash,
+  recordedPendingAdditions: pendingAdditions,
+  recordedPendingDelistings: pendingDelistings,
+  blockNumber: block,
+  blockHash: `0x${'c'.repeat(64)}`,
+});
 /** A readCurrent answering `answers` in turn (the last repeats); an Error is thrown. */
 function reads(answers) {
   let n = 0;
@@ -303,20 +311,42 @@ test('finality: applied means the list at the finalized block shows every call',
   assert.equal(chain.status, 'applied');
   assert.equal(chain.sent[0].state, 'final');
   assert.deepEqual(chain.sent[0].finalizedBlock, { number: '300', hash: `0x${'c'.repeat(64)}` });
+  assert.deepEqual(chain.listAfter, { atVersion: '8', finalizedBlock: '300', count: 3 });
   assert.match(summarize(report), /all final \(the list at finalized block 300 shows them\)/);
+});
+
+test('finality: what the report says is outstanding is read from the finalized list, never from the plan', async () => {
+  // After this run's call the remover applied the publication's delisting
+  // before the check: the finalized list is two versions on and owes nothing.
+  const sent = [];
+  const list = { version: 7n, addresses: [C] };
+  const effects = fakeChain(list, sent);
+  const fixtureAddrs = ['0x1CAb8177ACe78b1B6B1c393371F4f2dCAE40CbEB', getAddress('0x252a8bd2319d8a555b872990601221b3a2053bce')];
+  const { chain, report } = await run(list, {
+    send: async (call, opts) => {
+      const r = await effects.send(call, opts);
+      Object.assign(list, { version: 9n, addresses: fixtureAddrs, pendingDelistings: 0 });
+      return r;
+    },
+  });
+  assert.equal(chain.status, 'applied');
+  assert.equal(chain.pendingDelistings, 0);
+  assert.equal(chain.listAfter.atVersion, '9');
+  assert.doesNotMatch(summarize(report), /await the remover/);
 });
 
 test('finality: a failed read or a list not yet past the call is "not yet", never a verdict', async () => {
   const readCurrent = reads([new Error('429 Too Many Requests'), snap(7n, []), snap(8n, [A1])]);
-  const outcomes = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() });
+  const { outcomes, list } = await awaitFinality({ entries: [entry(7, [A1])], readCurrent, sourceHash: HASH, ...fakeClock() });
   assert.deepEqual(outcomes, [{ state: 'final', finalizedBlock: { number: '300', hash: `0x${'c'.repeat(64)}` } }]);
+  assert.equal(list.version, 8n, 'it returns the snapshot that showed it');
   assert.equal(readCurrent.count(), 3);
 });
 
 test('finality: a call once shown final stays final, whatever a later read says', async () => {
   // Call 1 is shown at the first read; a later read reports another publication; call 2 is shown after.
   const readCurrent = reads([snap(8n, [A1]), snap(8n, [A1], { hash: `0x${'9'.repeat(64)}` }), snap(9n, [A1, A2])]);
-  const outcomes = await awaitFinality({ entries: [entry(7, [A1]), entry(8, [A2], TX2)], readCurrent, sourceHash: HASH, ...fakeClock() });
+  const { outcomes } = await awaitFinality({ entries: [entry(7, [A1]), entry(8, [A2], TX2)], readCurrent, sourceHash: HASH, ...fakeClock() });
   assert.deepEqual(outcomes.map((o) => o.state), ['final', 'final']);
 });
 
@@ -330,6 +360,12 @@ test('finality: a list past the call without showing it is conclusive; a deadlin
   // Past the version, listing the addresses, but recording another publication: not this call either.
   err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent: reads([snap(8n, [A1], { hash: `0x${'9'.repeat(64)}` })]), sourceHash: HASH, ...fakeClock() }).catch((e) => e);
   assert.equal(err.outcomes[0].state, 'displaced');
+  // The same version, publication and addresses, but other outstanding counts: another update, not this call.
+  err = await awaitFinality({ entries: [entry(7, [A1])], readCurrent: reads([snap(8n, [A1], { pendingDelistings: 0 })]), sourceHash: HASH, ...fakeClock() }).catch((e) => e);
+  assert.equal(err.outcomes[0].state, 'displaced');
+  // Once a later update has followed it, the counts are that update's to set, so they are not compared.
+  const later = await awaitFinality({ entries: [entry(7, [A1])], readCurrent: reads([snap(9n, [A1], { pendingDelistings: 0 })]), sourceHash: HASH, ...fakeClock() });
+  assert.equal(later.outcomes[0].state, 'final');
 
   // Never shown: the list stays behind, then the last read fails.
   readCurrent = reads([snap(7n, []), snap(7n, []), snap(7n, []), snap(7n, []), new Error('503')]);
