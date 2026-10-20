@@ -1,4 +1,4 @@
-## Keeper — end-to-end scenarios on a local chain for the reward passes (PR #<n>)
+## Keeper — end-to-end scenarios on a local chain for the reward passes (PR #2604)
 
 Three keeper reward passes are now exercised end to end against a real chain
 instead of only against unit-test doubles. The new scenarios start a local
