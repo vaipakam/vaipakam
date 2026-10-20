@@ -33,6 +33,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { compiledAbi, compileScript, readContractsJson, REPO_ROOT, runForgeScript } from './fixture';
+import { assertLoopbackUrl } from './rpc';
 
 const LANE_SCRIPT = 'script/e2e/DeployE2ELocalCcip.s.sol';
 const RAMPS_SOURCE = 'script/e2e/E2ELocalCcip.sol';
@@ -163,6 +164,8 @@ export class CcipRelay {
     this.ends = new Map(ends.map((e) => [e.chainId, e]));
     const relayer = privateKeyToAccount(relayerKey).address.toLowerCase();
     for (const e of ends) {
+      // The relay signs and sends on every end it holds: local nodes only.
+      assertLoopbackUrl(e.url);
       if (e.lane.relayer.toLowerCase() !== relayer) {
         throw new Error(`the off-ramp on chain ${e.chainId} accepts ${e.lane.relayer}, not this relay's key (${relayer})`);
       }

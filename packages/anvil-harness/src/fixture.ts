@@ -42,7 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, createWalletClient, http, type Abi, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { anvilControl, type AnvilControl } from './rpc';
+import { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** The monorepo root (this file is packages/anvil-harness/src/fixture.ts). */
@@ -350,6 +350,8 @@ export function runForgeScript(
   // `--tc` picks one contract of a file that declares several (the e2e
   // wrappers of the operator scripts, `script/e2e/E2EOperatorScripts.s.sol`).
   const target = opts.targetContract ? ['--tc', opts.targetContract] : [];
+  // A broadcast signs with the scenario's keys: local nodes only.
+  assertLoopbackUrl(url);
   return foundry(['forge', 'script', contractsPath(relative), ...target, '--rpc-url', url, '--broadcast', '--slow'], env);
 }
 
