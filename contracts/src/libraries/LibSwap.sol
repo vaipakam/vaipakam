@@ -35,7 +35,9 @@ import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
  *  - #2472 — every committed attempt is MEASURED on the Diamond's side:
  *    the input balance must have fallen by what the sale spent, and the
  *    recipient's output balance must have risen by at least what the
- *    adapter reported (`SwapOutputShortDelivered` otherwise). The spend
+ *    adapter reported (`SwapOutputShortDelivered` otherwise), and the
+ *    attempt returns those MEASURED figures, never the adapter's report,
+ *    so every caller settles on what moved. The spend
  *    rule is the CALLER's, declared by which entry it uses:
  *      - {swapWithFailover} and {swapWithSplit} are EXACT: an attempt
  *        must spend the whole input (`SwapInputSpendMismatch`
@@ -350,7 +352,8 @@ library LibSwap {
     ///                   events (the host resolves it again from storage).
     /// @param data       The caller's per-route payload for it.
     /// @return ok           True iff the attempt committed.
-    /// @return outputAmount Proceeds the adapter reported, delivery-checked.
+    /// @return outputAmount Proceeds measured at `sale.recipient` (never less
+    ///                      than the adapter reported).
     /// @return inputSpent   Input the attempt spent, measured on the Diamond.
     function attempt(
         Sale memory sale,
@@ -394,11 +397,17 @@ library LibSwap {
     ///      caller's frame decides what a revert means: the attempt host's
     ///      frame (a failed route) or the split's (the whole split fails).
     ///      Measures the Diamond's input balance and the recipient's output
-    ///      balance against snapshots taken before the call:
+    ///      balance against snapshots taken before the call, and BOOKS WHAT IT
+    ///      MEASURED on both sides — the adapter's report is a floor the
+    ///      delivery must meet, never the figure a caller settles on:
     ///      - output: the recipient must have received at least the reported
-    ///        amount, else `SwapOutputShortDelivered`;
+    ///        amount, else `SwapOutputShortDelivered`; the returned
+    ///        `outputAmount` is what it received, so proceeds an adapter
+    ///        under-reports are settled to the loan rather than left in the
+    ///        recipient's balance with no ledger naming them;
     ///      - input: an exact sale must have spent exactly `inputAmount`, an
-    ///        up-to sale at most `inputAmount`, else `SwapInputSpendMismatch`.
+    ///        up-to sale at most `inputAmount`, else `SwapInputSpendMismatch`;
+    ///        the returned `inputSpent` is what left the Diamond.
     ///      Both deltas saturate at zero, so a balance that moved the "wrong"
     ///      way reads as nothing spent / nothing received and fails the check
     ///      rather than underflowing.
@@ -427,6 +436,7 @@ library LibSwap {
         if (received < outputAmount) {
             revert SwapOutputShortDelivered(sale.loanId, adapterIdx, received, outputAmount);
         }
+        outputAmount = received;
         uint256 inAfter = input.balanceOf(address(this));
         inputSpent = inBefore > inAfter ? inBefore - inAfter : 0;
         if (sale.exactInput ? inputSpent != sale.inputAmount : inputSpent > sale.inputAmount) {
@@ -530,8 +540,9 @@ library LibSwap {
     ///      failure path. Per-leg `minOutputAmount` is 0 (see the
     ///      {swapWithSplit} dev note); the leg is held to the exact-input
     ///      delivery rule on its own `splitAmount` (#2472).
-    /// @return out_ The leg's reported (and delivery-checked) output; 0 for
-    ///              a zero-amount leg, which no-ops cleanly.
+    /// @return out_ The leg's output measured at the recipient (never less
+    ///              than it reported); 0 for a zero-amount leg, which
+    ///              no-ops cleanly.
     function _splitLeg(
         LibVaipakam.Storage storage s,
         Sale memory leg,

@@ -1018,6 +1018,53 @@ contract SwapAdapterTest is Test {
         assertEq(fotOut.balanceOf(address(a)), 10_000 ether, "venue float untouched");
     }
 
+    /// @notice An adapter that pays more than it reports (a conservative or
+    ///         buggy return value) is booked at what ARRIVED: the surplus is
+    ///         settled to the sale rather than left on the recipient's
+    ///         balance with no ledger naming it (#2472, Codex r1).
+    function test_Swap_UnderReportedOutputIsBookedAtWhatArrived() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        PartialFillSwapAdapter a = new PartialFillSwapAdapter();
+        tokenOut.mint(address(a), 10_000 ether);
+        a.setReportBps(9_000); // pays 1,000, reports 900
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(a);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        (bool ok, uint256 out_, ) =
+            h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, _seqCalls(1));
+
+        assertTrue(ok);
+        assertEq(out_, 1000 ether, "booked at what arrived, not at the report");
+        assertEq(tokenOut.balanceOf(recipient), out_, "every booked token is held");
+        assertEq(tokenIn.balanceOf(address(h)), 0, "whole input sold");
+    }
+
+    /// @notice The same rule per split leg: the split's total is the sum of
+    ///         what each leg delivered.
+    function test_Split_UnderReportedLegIsBookedAtWhatArrived() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("a");
+        PartialFillSwapAdapter b = new PartialFillSwapAdapter();
+        tokenOut.mint(address(a), 10_000 ether);
+        tokenOut.mint(address(b), 10_000 ether);
+        b.setReportBps(5_000); // pays 600, reports 300
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(a);
+        adapters[1] = address(b);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({adapterIdx: 0, splitAmount: 400 ether, data: ""});
+        splits[1] = LibSwap.SplitCall({adapterIdx: 1, splitAmount: 600 ether, data: ""});
+
+        uint256 total = h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, splits);
+        assertEq(total, 1000 ether, "split total is what the legs delivered");
+        assertEq(tokenOut.balanceOf(recipient), total, "every booked token is held");
+    }
+
     /// @notice A split leg that spends less than its share would leave the
     ///         rest on the caller after the loan is written down as sold; the
     ///         whole split reverts and every leg unwinds.

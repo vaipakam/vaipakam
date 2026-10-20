@@ -19,8 +19,8 @@ interface ISwapAttemptHost {
     /// @param sale       The sale's fixed terms, including its spend rule.
     /// @param adapterIdx Storage index of the adapter to try.
     /// @param data       The caller's per-route payload for that adapter.
-    /// @return outputAmount Proceeds the adapter reported; at least this much
-    ///                      reached `sale.recipient`.
+    /// @return outputAmount Proceeds measured at `sale.recipient`; never less
+    ///                      than the adapter reported.
     /// @return inputSpent   Input the attempt spent, measured on the Diamond.
     function swapAttempt(
         LibSwap.Sale calldata sale,

@@ -1,4 +1,4 @@
-## Thread — Forced sales sell exactly what they offer (PR #<n>)
+## Thread — Forced sales sell exactly what they offer (PR #2609)
 
 Every swap the protocol makes now measures what actually happened rather than
 trusting what the route reported. Before this change, a liquidation route that
@@ -7,7 +7,9 @@ unsold part stayed in the protocol's balance with nothing recording whose it
 was. Proceeds were also booked at the figure the route reported, even when
 fewer tokens arrived. Now, on every forced sale the protocol checks two things
 itself: how much collateral left its balance, and how much of the proceeds
-reached it. The forced sales are Health-Factor liquidation (full, partial and
+reached it. The sale is then booked at those measured figures, so proceeds a
+route under-reports are credited to the loan rather than left in the
+protocol's balance with no record of whose they are. The forced sales are Health-Factor liquidation (full, partial and
 split route), time-based default, periodic-interest auto-liquidation, the
 lender's fallback retry, and treasury asset conversion.
 

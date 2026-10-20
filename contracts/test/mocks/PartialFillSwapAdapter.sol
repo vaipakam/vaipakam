@@ -15,13 +15,16 @@ import {ISwapAdapter} from "../../src/interfaces/ISwapAdapter.sol";
  * `outputToken` (which it must already hold) to `recipient`, and hands the
  * unspent input back to `msg.sender` — exactly what `ISwapAdapter` requires
  * of a partial fill. Enforces `minOutputAmount` like every real adapter.
- * Never registered on a live chain.
+ * `reportBps` makes it RETURN less than it paid (a conservative or buggy
+ * report), so a test can show the protocol books what arrived rather than
+ * what the adapter said. Never registered on a live chain.
  */
 contract PartialFillSwapAdapter is ISwapAdapter {
     using SafeERC20 for IERC20;
 
     uint256 public spendBps = 10_000;
     uint256 public outputPerInputBps = 10_000;
+    uint256 public reportBps = 10_000;
 
     function setSpendBps(uint256 v) external {
         spendBps = v;
@@ -29,6 +32,10 @@ contract PartialFillSwapAdapter is ISwapAdapter {
 
     function setOutputPerInputBps(uint256 v) external {
         outputPerInputBps = v;
+    }
+
+    function setReportBps(uint256 v) external {
+        reportBps = v;
     }
 
     function adapterName() external pure override returns (string memory) {
@@ -51,5 +58,6 @@ contract PartialFillSwapAdapter is ISwapAdapter {
         if (inputAmount > spent) {
             IERC20(inputToken).safeTransfer(msg.sender, inputAmount - spent);
         }
+        outputAmount = (outputAmount * reportBps) / 10_000;
     }
 }
