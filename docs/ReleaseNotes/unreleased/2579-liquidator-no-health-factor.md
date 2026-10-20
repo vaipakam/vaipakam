@@ -1,4 +1,4 @@
-## Keeper — the liquidator stops re-reading illiquid loans (PR #<n>)
+## Keeper — the liquidator stops re-reading illiquid loans (PR #2605)
 
 On Base Sepolia, while the only active loan had illiquid collateral, every
 liquidator run logged "aggregate3 rejected … retrying serially" and then read
@@ -19,8 +19,14 @@ so there is one set of rules for every keeper pass that batches reads.
 The liquidator also stops asking for a health factor that cannot exist.
 Whether a loan is illiquid is fixed when the loan opens and never changes
 afterwards. So once the chain has answered "illiquid" for a loan, the keeper
-leaves that loan out of later scans for as long as it keeps running. The
-keeper forgets a remembered loan once the loan leaves the active list. After a
+leaves that loan out of later scans for as long as it keeps running. It takes
+that answer only from a finalized block. The scan itself reads the latest
+block, which a reorg can replace, and a replaced block can give the same loan
+number to a different, liquid loan; trusting the latest block alone could have
+hidden that loan from liquidation. So a loan the latest block calls illiquid is
+checked once more at the finalized block, and is read every run like any other
+until the finalized block agrees. The keeper forgets a remembered loan once the
+loan leaves the active list, including when the active list is empty. After a
 restart, it learns the list again with one read per illiquid loan. Rentals
 secured only by their prepayment also have no health factor, but they are
 still read each run, because in their case the reason is the loan's

@@ -10,12 +10,21 @@
  *   - a loan's own revert in a one-entry chunk is that loan's result: no serial
  *     retry, no rejection logged, while a genuine rejection of a one-entry
  *     chunk is still retried;
- *   - a loan that has said it is illiquid is not read again by the same
- *     process, and the completion line still accounts for it.
+ *   - a loan the FINALIZED block also says is illiquid is not read again by
+ *     the same process, and the completion line still accounts for it; one
+ *     only the latest block says so of (a reorg could replace it) is read
+ *     again every tick (#2579 r1).
+ *
+ * The liquidator's memory lives for the module, and every test here shares one
+ * import of it (a fresh import per test is slow enough on a cold runner to
+ * time out, #2579 r1). They stay independent because each test uses its own
+ * loan ids, and the first tick of each, reading a complete book, forgets every
+ * id not in it.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData, encodeFunctionResult, toFunctionSelector } from 'viem';
 import { isAggregateRejection } from '../src/batchRead';
+import { runLiquidator } from '../src/liquidator';
 
 const AGGREGATE3 = {
   type: 'function',
@@ -51,6 +60,10 @@ const COUNT_SELECTOR = fn('function getActiveLoansCount() view returns (uint256)
 const PAGE_SELECTOR = fn('function getActiveLoansPaginated(uint256,uint256) view returns (uint256[])');
 /** `IlliquidLoanNoRiskMath()` */
 const ILLIQUID_REVERT = '0x1fb202b3';
+/** `InvalidLoan()`: what the finalized block answers for a loan opened after it. */
+const INVALID_LOAN_REVERT = '0x045f33d1';
+const LATEST_BLOCK = '0x1312d00';
+const FINALIZED_BLOCK = '0x1312c00';
 
 const uint = (name: string, value: bigint) =>
   encodeFunctionResult({
@@ -60,12 +73,28 @@ const uint = (name: string, value: bigint) =>
   });
 const HF_HEALTHY = uint('calculateHealthFactor', 2n * 10n ** 18n);
 
-type Book = { loans: bigint[]; illiquid: Set<bigint>; rejectAggregate?: boolean };
-type Traffic = { aggregates: bigint[][]; directHf: bigint[] };
+type Book = {
+  loans: bigint[];
+  /** Illiquid at the latest block. */
+  illiquid: Set<bigint>;
+  /** Of `illiquid`, the ones the finalized block holds too; the rest do not
+   *  exist there yet (`InvalidLoan`). Defaults to all of `illiquid`. */
+  final?: Set<bigint>;
+  rejectAggregate?: boolean;
+  /** The RPC cannot serve the finalized block. */
+  noFinalizedBlock?: boolean;
+};
+type Traffic = {
+  /** Health-factor batches read at the scan's (latest) block. */
+  aggregates: bigint[][];
+  /** Health-factor batches read at the finalized block. */
+  finalityChecks: bigint[][];
+  directHf: bigint[];
+};
 
 /** An RPC answering the scan's reads for `book`, recording the HF reads it is asked for. */
 function rpc(book: Book): { traffic: Traffic; restore: () => void } {
-  const traffic: Traffic = { aggregates: [], directHf: [] };
+  const traffic: Traffic = { aggregates: [], finalityChecks: [], directHf: [] };
   const real = globalThis.fetch;
   const loanIdOf = (callData: string) => BigInt('0x' + callData.slice(10, 74));
 
@@ -75,10 +104,20 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
     const out = reqs.map((req: { method: string; params?: unknown[]; id?: unknown }) => {
       const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id ?? 1, result });
       if (req.method === 'eth_chainId') return ok('0x14a34');
-      if (req.method === 'eth_blockNumber') return ok('0x1312d00');
+      if (req.method === 'eth_blockNumber') return ok(LATEST_BLOCK);
+      if (req.method === 'eth_getBlockByNumber' && req.params?.[0] === 'finalized') {
+        if (book.noFinalizedBlock) {
+          return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32000, message: 'finalized not supported' } };
+        }
+        return ok({ number: FINALIZED_BLOCK, hash: '0x' + '11'.repeat(32), timestamp: '0x1', transactions: [] });
+      }
       if (req.method !== 'eth_call') return ok(null);
       const data = (((req.params?.[0] ?? {}) as { data?: string }).data ?? '0x').toLowerCase();
       const selector = data.slice(0, 10);
+      const atFinalized = req.params?.[1] === FINALIZED_BLOCK;
+      const final = book.final ?? book.illiquid;
+      const revertOf = (id: bigint) =>
+        !book.illiquid.has(id) ? undefined : !atFinalized || final.has(id) ? ILLIQUID_REVERT : INVALID_LOAN_REVERT;
 
       if (selector === COUNT_SELECTOR) return ok(uint('getActiveLoansCount', BigInt(book.loans.length)));
       if (selector === PAGE_SELECTOR) {
@@ -107,7 +146,7 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
         const { args } = decodeFunctionData({ abi: [AGGREGATE3], data: data as `0x${string}` });
         const calls = args[0] as readonly { callData: string }[];
         const ids = calls.map((c) => loanIdOf(c.callData.toLowerCase()));
-        traffic.aggregates.push(ids);
+        (atFinalized ? traffic.finalityChecks : traffic.aggregates).push(ids);
         if (book.rejectAggregate) {
           return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32000, message: 'upstream unavailable' } };
         }
@@ -115,19 +154,21 @@ function rpc(book: Book): { traffic: Traffic; restore: () => void } {
           encodeFunctionResult({
             abi: [AGGREGATE3],
             functionName: 'aggregate3',
-            result: ids.map((id) =>
-              book.illiquid.has(id)
-                ? { success: false, returnData: ILLIQUID_REVERT as `0x${string}` }
-                : { success: true, returnData: HF_HEALTHY },
-            ),
+            result: ids.map((id) => {
+              const revert = revertOf(id);
+              return revert
+                ? { success: false, returnData: revert as `0x${string}` }
+                : { success: true, returnData: HF_HEALTHY };
+            }),
           }),
         );
       }
       if (selector === CALC_HF_SELECTOR) {
         const id = loanIdOf(data);
         traffic.directHf.push(id);
-        if (book.illiquid.has(id)) {
-          return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: 3, message: 'execution reverted', data: ILLIQUID_REVERT } };
+        const revert = revertOf(id);
+        if (revert) {
+          return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: 3, message: 'execution reverted', data: revert } };
         }
         return ok(HF_HEALTHY);
       }
@@ -149,18 +190,15 @@ const ENV = {
   RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
 } as never;
 
-/** One liquidator tick against `book`, in the module instance `run` belongs to. */
-async function tick(
-  run: (env: never, t: never) => Promise<void>,
-  book: Book,
-): Promise<Traffic & { logs: string[]; errors: string[] }> {
+/** One liquidator tick against `book`. */
+async function tick(book: Book): Promise<Traffic & { logs: string[]; errors: string[] }> {
   const { traffic, restore } = rpc(book);
   const logs: string[] = [];
   const errors: string[] = [];
   const log = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.map(String).join(' ')));
   const err = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void errors.push(a.map(String).join(' ')));
   try {
-    await run(ENV, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 } as never);
+    await runLiquidator(ENV, { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 } as never);
   } finally {
     restore();
     log.mockRestore();
@@ -169,24 +207,15 @@ async function tick(
   return { ...traffic, logs, errors };
 }
 
-async function freshLiquidator() {
-  return (await import('../src/liquidator')).runLiquidator as never as (env: never, t: never) => Promise<void>;
-}
-
-beforeEach(() => {
-  // The illiquid memory is per process; each test starts from a new one.
-  vi.resetModules();
-});
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe('liquidator and loans with no health factor (#2579)', () => {
   it("a one-entry chunk's own revert is that loan's result, not a rejected aggregate", async () => {
-    const run = await freshLiquidator();
-    const t = await tick(run, { loans: [1n], illiquid: new Set([1n]) });
+    const t = await tick({ loans: [11n], illiquid: new Set([11n]) });
 
-    expect(t.aggregates).toEqual([[1n]]);
+    expect(t.aggregates).toEqual([[11n]]);
     // Before #2579: one serial retry per tick, logged as an RPC fault.
     expect(t.directHf).toEqual([]);
     expect(t.errors.join('\n')).not.toMatch(/aggregate3 rejected|multicall failed|unevaluated/);
@@ -194,40 +223,83 @@ describe('liquidator and loans with no health factor (#2579)', () => {
   });
 
   it('a genuine rejection of a one-entry chunk is still retried serially', async () => {
-    const run = await freshLiquidator();
-    const t = await tick(run, { loans: [1n], illiquid: new Set(), rejectAggregate: true });
+    const t = await tick({ loans: [21n], illiquid: new Set(), rejectAggregate: true });
 
-    expect(t.aggregates).toEqual([[1n]]);
-    expect(t.directHf).toEqual([1n]);
+    expect(t.aggregates).toEqual([[21n]]);
+    expect(t.directHf).toEqual([21n]);
     expect(t.errors.join('\n')).toMatch(/aggregate3 rejected/);
     expect(t.logs.join('\n')).toMatch(/scan complete: scanned=1 atRisk=0 submitted=0 noHealthFactor=0/);
   });
 
-  it('a loan that has said it is illiquid is not read again', async () => {
-    const run = await freshLiquidator();
-    const book: Book = { loans: [1n, 2n, 3n], illiquid: new Set([2n]) };
+  it('a loan the finalized block also says is illiquid is not read again', async () => {
+    const book: Book = { loans: [31n, 32n, 33n], illiquid: new Set([32n]) };
 
-    const first = await tick(run, book);
-    expect(first.aggregates.flat().sort()).toEqual([1n, 2n, 3n]);
+    const first = await tick(book);
+    expect(first.aggregates.flat().sort()).toEqual([31n, 32n, 33n]);
+    // Only the loan that reverted illiquid is checked at finality.
+    expect(first.finalityChecks).toEqual([[32n]]);
     expect(first.logs.join('\n')).toMatch(/scanned=2 atRisk=0 submitted=0 noHealthFactor=1/);
 
-    const second = await tick(run, book);
-    // Loan 2 is left out of the batch; 1 and 3 are still read every tick.
-    expect(second.aggregates.flat().sort()).toEqual([1n, 3n]);
+    const second = await tick(book);
+    // Loan 32 is left out of the batch; 31 and 33 are still read every tick.
+    expect(second.aggregates.flat().sort()).toEqual([31n, 33n]);
+    expect(second.finalityChecks).toEqual([]);
     expect(second.directHf).toEqual([]);
     // And still accounted for on the completion line.
     expect(second.logs.join('\n')).toMatch(/scanned=2 atRisk=0 submitted=0 noHealthFactor=1/);
   });
 
   it('a book holding only remembered illiquid loans issues no health-factor read', async () => {
-    const run = await freshLiquidator();
-    const book: Book = { loans: [1n], illiquid: new Set([1n]) };
-    await tick(run, book);
-    const second = await tick(run, book);
+    const book: Book = { loans: [41n], illiquid: new Set([41n]) };
+    await tick(book);
+    const second = await tick(book);
 
     expect(second.aggregates).toEqual([]);
+    expect(second.finalityChecks).toEqual([]);
     expect(second.directHf).toEqual([]);
     expect(second.logs.join('\n')).toMatch(/scan complete: scanned=0 atRisk=0 submitted=0 noHealthFactor=1/);
+  });
+
+  it('a loan only the latest block says is illiquid is read again every tick (a reorg could replace it)', async () => {
+    // Loan 51 is illiquid at the latest block but does not exist at the
+    // finalized one, which is what a recent loan, or one a reorg may yet
+    // remove, looks like.
+    const book: Book = { loans: [51n], illiquid: new Set([51n]), final: new Set() };
+
+    const first = await tick(book);
+    expect(first.finalityChecks).toEqual([[51n]]);
+
+    const second = await tick(book);
+    expect(second.aggregates).toEqual([[51n]]);
+    expect(second.finalityChecks).toEqual([[51n]]);
+
+    // Once the finalized block holds it too, it is remembered.
+    const third = await tick({ ...book, final: new Set([51n]) });
+    expect(third.finalityChecks).toEqual([[51n]]);
+    const fourth = await tick(book);
+    expect(fourth.aggregates).toEqual([]);
+  });
+
+  it('without a finalized block nothing is remembered, and the loan stays in the scan', async () => {
+    const book: Book = { loans: [61n], illiquid: new Set([61n]), noFinalizedBlock: true };
+
+    const first = await tick(book);
+    expect(first.finalityChecks).toEqual([]);
+    expect(first.logs.join('\n')).toMatch(/finalized block unavailable; 1 illiquid loan\(s\) stay in the scan/);
+
+    const second = await tick(book);
+    expect(second.aggregates).toEqual([[61n]]);
+  });
+
+  it('an empty book forgets every remembered loan', async () => {
+    await tick({ loans: [71n], illiquid: new Set([71n]) });
+    expect((await tick({ loans: [71n], illiquid: new Set([71n]) })).aggregates).toEqual([]);
+
+    await tick({ loans: [], illiquid: new Set() });
+    // The same id again, now a liquid loan: it is read.
+    const after = await tick({ loans: [71n], illiquid: new Set() });
+    expect(after.aggregates).toEqual([[71n]]);
+    expect(after.logs.join('\n')).toMatch(/scanned=1 atRisk=0 submitted=0 noHealthFactor=0/);
   });
 });
 

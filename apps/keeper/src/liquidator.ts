@@ -68,22 +68,32 @@ const MAX_LIQUIDATIONS_PER_TICK = 12;
 export { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 
 /**
- * Active loans this process has seen revert `IlliquidLoanNoRiskMath`, per
- * chain and Diamond (#2579).
+ * Active loans known to revert `IlliquidLoanNoRiskMath`, per chain and
+ * Diamond (#2579).
  *
  * Such a loan has no health factor and never will: `calculateHealthFactor`
  * refuses it from the liquidity of its two assets as STAMPED on the loan when
  * it opened (`collateralLiquidity` / `principalLiquidity`), and nothing writes
  * those stamps afterwards. So reading it again every tick only spends a read
- * on an answer already known, and the scan leaves it out once it has said so.
+ * on an answer already known, and the scan leaves it out once it is known.
+ *
+ * KNOWN MEANS FINAL (#2579 r1). The scan reads the latest block, which a
+ * reorg can replace, and with it the loan that owned an id: the id can then
+ * belong to a liquid loan. Skipping it on the strength of the orphaned
+ * reading would hide that loan from liquidation for as long as the process
+ * lives. So an id is remembered only once the chain's FINALIZED block also
+ * says it is illiquid ({@link rememberIlliquidAtFinality}). A finalized
+ * loan record cannot be replaced, and its stamps cannot change, so the fact
+ * then holds for the life of the loan. Until then the loan is read every tick
+ * like any other.
  *
  * Keyed by Diamond as well as chain because loan ids restart on a fresh
- * Diamond. Pruned to the active list whenever the whole list was read, so a
- * closed loan is forgotten. A restart forgets everything, and the first scan
- * after it learns the set again with one read per illiquid loan. A
- * zero-collateral rental (`InvalidLoan`) is NOT remembered: it, too, has no
- * health factor, but its reason is the loan's current collateral amount rather
- * than a stamp, so it is read each tick.
+ * Diamond. Pruned to the active list whenever the whole list was read
+ * (including an empty one), so a closed loan is forgotten. A restart forgets
+ * everything, and the first scan after it learns the set again with one read
+ * per illiquid loan. A zero-collateral rental (`InvalidLoan`) is NOT
+ * remembered: it, too, has no health factor, but its reason is the loan's
+ * current collateral amount rather than a stamp, so it is read each tick.
  */
 const knownIlliquid = new Map<string, Set<bigint>>();
 
@@ -198,6 +208,8 @@ async function liquidatePassForChain(
     // from an unscanned one and strand manual coverage indefinitely. The
     // count-read FAILURE above stays silent on purpose — that one genuinely
     // did not scan.
+    // No active loan, so nothing remembered can still be active.
+    knownIlliquidLoans(chain.id, diamond).clear();
     logScanComplete(chain, 0, 0, 0, 0);
     return [];
   }
@@ -244,19 +256,18 @@ async function liquidatePassForChain(
     if (page.length === 0) continue;
     ids.push(...page);
   }
-  if (ids.length === 0) {
-    if (pagesComplete) logScanComplete(chain, 0, 0, 0, 0);
-    return [];
-  }
-
-  // Loans with no health factor by design are left out of the reads once this
-  // process has seen them say so (#2579). See `knownIlliquidLoans`.
+  // Loans with no health factor by design are left out of the reads once
+  // they are known to have none (#2579). See `knownIlliquidLoans`.
   const illiquid = knownIlliquidLoans(chain.id, diamond);
   if (pagesComplete) {
     // The whole active list was read, so a remembered id missing from it has
     // closed. Forget it, which keeps the memory the size of the live book.
     const active = new Set(ids);
     for (const id of illiquid) if (!active.has(id)) illiquid.delete(id);
+  }
+  if (ids.length === 0) {
+    if (pagesComplete) logScanComplete(chain, 0, 0, 0, 0);
+    return [];
   }
   const candidates = ids.filter((id) => !illiquid.has(id));
 
@@ -282,6 +293,8 @@ async function liquidatePassForChain(
   // loan went unevaluated, and the completion marker must not claim the chain
   // was scanned (Codex #1924 r19).
   let unevaluated = 0;
+  // Read illiquid at the scan's block but not yet known to be so at finality.
+  const seenIlliquid: bigint[] = [];
   for (let i = 0; i < candidates.length; i += HF_MULTICALL_CHUNK) {
     if (Date.now() >= readCutoff) {
       // Unread rather than failed, so not counted as unevaluated; the scan
@@ -317,7 +330,7 @@ async function liquidatePassForChain(
         continue;
       }
       const kind = classifyHfReadFailure(r?.error);
-      if (kind === 'illiquid') illiquid.add(chunk[j]);
+      if (kind === 'illiquid') seenIlliquid.push(chunk[j]);
       // Illiquid, or a zero-collateral rental: no health factor by design,
       // so its absence from `readings` is the design working. Only the rest
       // is a gap in the scan.
@@ -329,6 +342,11 @@ async function liquidatePassForChain(
     console.error(
       `[keeper] liquidator chain=${chain.name} ${unevaluated}/${ids.length} loan(s) unevaluated (HF read failed) — scan incomplete`,
     );
+  }
+  // Only while the read window lasts: a loan not remembered now is simply
+  // read again next run.
+  if (Date.now() < readCutoff) {
+    await rememberIlliquidAtFinality(client, chain, diamond, seenIlliquid, illiquid);
   }
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
@@ -364,6 +382,59 @@ async function liquidatePassForChain(
     logScanComplete(chain, readings.length, atRisk.length, submits, noHealthFactor);
   }
   return readings;
+}
+
+/**
+ * Adds to `memory` the loans in `seen` that the chain's FINALIZED block also
+ * says are illiquid (#2579 r1; see {@link knownIlliquid} for why only final
+ * facts are kept).
+ *
+ * One block read and one batched health-factor read, and only for loans the
+ * scan has just seen revert illiquid and does not yet remember, so it costs a
+ * read per illiquid loan once per process rather than every tick. A loan opened
+ * after the finalized block reverts `InvalidLoan` there and is not remembered;
+ * it is confirmed on a later run. Any failure here remembers nothing, which
+ * only means the loan is read again next run.
+ */
+async function rememberIlliquidAtFinality(
+  client: ReturnType<typeof createPublicClient>,
+  chain: ChainConfig,
+  diamond: Address,
+  seen: readonly bigint[],
+  memory: Set<bigint>,
+): Promise<void> {
+  if (seen.length === 0) return;
+  let finalized: bigint;
+  try {
+    const block = await client.getBlock({ blockTag: 'finalized' });
+    if (block.number === null) return;
+    finalized = block.number;
+  } catch (err) {
+    console.log(
+      `[keeper] liquidator chain=${chain.name} finalized block unavailable; ${seen.length} illiquid loan(s) stay in the scan: ${String(err).slice(0, 200)}`,
+    );
+    return;
+  }
+  for (let i = 0; i < seen.length; i += HF_MULTICALL_CHUNK) {
+    const chunk = seen.slice(i, i + HF_MULTICALL_CHUNK);
+    const results = await batchedRead(
+      client,
+      chunk.map((id) => ({
+        address: diamond,
+        abi: RISK_ABI,
+        functionName: 'calculateHealthFactor' as const,
+        args: [id] as const,
+      })),
+      `liquidator chain=${chain.name} finality check ${i}/${seen.length}`,
+      finalized,
+    );
+    for (let j = 0; j < chunk.length; j++) {
+      const r = results[j];
+      if (r?.status === 'failure' && classifyHfReadFailure(r.error) === 'illiquid') {
+        memory.add(chunk[j]);
+      }
+    }
+  }
 }
 
 /**
