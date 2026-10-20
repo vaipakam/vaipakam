@@ -517,7 +517,10 @@ running.
 >      naming a blocking binding — `timedPass` logs `done` even for a
 >      pass that returned instantly from its gate.
 >   4. **One `liquidator chain=… scan complete: scanned=… atRisk=…
->      submitted=…` line per chain in (2).** Count them; the count must
+>      submitted=… noHealthFactor=…` line per chain in (2).** (`scanned`
+>      counts the loans whose health factor was read; `noHealthFactor`
+>      the illiquid loans and prepay-secured rentals, which have none by
+>      design and are closed by the time-based default, #2579.) Count them; the count must
 >      match. Do NOT substitute "I saw no error lines" — failures are
 >      caught at several depths (`getActiveLoansCount`, a page fetch, a
 >      multicall chunk, an HF read, and the per-chain catch), each with
