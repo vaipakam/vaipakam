@@ -1146,17 +1146,7 @@
         "internalType": "address"
       },
       {
-        "name": "sentRecipient",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "liveMessenger",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "liveRecipient",
         "type": "address",
         "internalType": "address"
       }

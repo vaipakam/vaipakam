@@ -691,12 +691,6 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "remoteRecipient",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -3803,16 +3797,6 @@
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "remoteMessenger",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remoteRecipient",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },
