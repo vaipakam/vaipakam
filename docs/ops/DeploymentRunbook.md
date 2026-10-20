@@ -717,7 +717,36 @@ So drain first, following the rule the #1566 design sets for every transition
 
 This applies to the canonical chain and, as #2561 explains, to a mirror
 redeployed on its own. A chain whose reservation nonce is 0 has nothing to
-drain. That was the case for Base Sepolia on 2026-10-17: both the retired
+drain.
+
+**What happens if a mirror is redeployed without the drain** (#2561, on a
+canonical Diamond that carries it). Base records, for every remittance, the
+remote messenger and reward-budget receiver it was sent to;
+`getRemitRoute(remitId)` returns that pair beside the pair the lane names now.
+A remittance sent before the lane was re-pointed landed at the OLD receiver,
+so the new mirror never holds its receipt. The keeper's ack pass then posts an
+ops alert, "Remittance N is still Pending on Base, and the keeper cannot
+acknowledge it", naming both routes, the CCIP message id and the amount, and
+re-posts it daily while the reservation stays Pending. A released remittance
+whose stranded share waits for a late acknowledgement gets the same alert from
+the late path. The keeper does not settle either. The operator's options, on
+the evidence:
+
+1. The message executed at the old receiver (check the CCIP explorer for the
+   message id): acknowledge it from the OLD mirror Diamond by hand. Base only
+   accepts acknowledgements from the lane's current peers, so this needs the
+   old remote messenger and channel peer restored on Base's `CcipMessenger`
+   for the duration, then the redeploy's values put back (the recovery shape
+   in AdminConfigurableKnobsAndSwitches, "Rotating a channel peer"). Or
+   finalize it on Base with `finalizeRemitReservation(remitId)`, which records
+   it as delivered without a received figure.
+2. It will never execute: `releaseRemitReservation(remitId)`, no sooner than
+   seven days after the send.
+
+Record whichever was done, by remit id, in the redeploy's release fragment.
+The alert clears on its own once the reservation leaves Pending. A canonical
+Diamond deployed before #2561 records no route, so for it the drain above is
+the only safeguard. That was the case for Base Sepolia on 2026-10-17: both the retired
 Diamond `0xd89fd7…b995` and the new one read nonce 0.
 
 ### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains, any order)

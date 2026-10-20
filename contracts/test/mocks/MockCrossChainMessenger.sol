@@ -43,6 +43,17 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
     /// @notice Every message captured by {sendMessage}, in send order.
     Sent[] public sent;
 
+    /// @notice What {destinationOf} reports per destination chain. Unset, it
+    ///         reports this mock as both legs (a declared route), so a test
+    ///         that does not care about routes dispatches as before.
+    struct Route {
+        address remoteMessenger;
+        address remotePeer;
+        bool set;
+    }
+
+    mapping(uint256 => Route) private _routes;
+
     event MessageSent(uint256 indexed index, uint256 indexed destinationChainId);
     event MessageRelayed(uint256 indexed index, address indexed recipient);
 
@@ -54,6 +65,12 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
 
     function setLocalChainId(uint256 chainId) external {
         _localChainId = chainId;
+    }
+
+    /// @notice #2561 — set the route {destinationOf} reports for `chainId`
+    ///         (zero legs model an undeclared route).
+    function setDestination(uint256 chainId, address remoteMessenger, address remotePeer) external {
+        _routes[chainId] = Route(remoteMessenger, remotePeer, true);
     }
 
     function sentCount() external view returns (uint256) {
@@ -111,6 +128,14 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
 
     function localChainId() external view override returns (uint256) {
         return _localChainId;
+    }
+
+    function destinationOf(
+        uint256 destinationChainId
+    ) external view override returns (address remoteMessenger, address remotePeer) {
+        Route memory r = _routes[destinationChainId];
+        if (!r.set) return (address(this), address(this));
+        return (r.remoteMessenger, r.remotePeer);
     }
 
     // ─── Test-driven delivery ───────────────────────────────────────────────

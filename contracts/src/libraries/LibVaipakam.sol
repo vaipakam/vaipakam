@@ -8146,6 +8146,12 @@ library LibVaipakam {
         ///      disarming (a zero price) stops sales, not credits already bought.
         ///      Appended — append-only.
         bool priorityRoutingPerkArmed;
+        /// @dev #2561 — per `remitId`, the route the remittance was dispatched
+        ///      on (`RemitRoute`). Kept beside the reservation rather than in
+        ///      `RemitReservation` so that struct's getter ABI is unchanged: a
+        ///      keeper reading a Diamond deployed before this field decodes the
+        ///      same reservation it always did. Appended — append-only.
+        mapping(uint256 => RemitRoute) remitRoutes;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -9366,6 +9372,22 @@ library LibVaipakam {
         ///      released before the field existed. Without it a zero share is
         ///      ambiguous — "resolved" and "never stamped" both read 0.
         bool strandedStamped;
+    }
+
+    /// @notice #2561 — the ROUTE one reward-budget remittance was dispatched
+    ///         on: the remote adapter the value-carrying messenger addressed
+    ///         and the remote contract it declared as the reward-budget
+    ///         channel's peer on the destination, both read from the messenger
+    ///         at the send. A mirror redeployed on its own afterwards gets a
+    ///         new adapter and receiver, so the record is what still says
+    ///         where the value went once the lane points elsewhere.
+    /// @dev Written once, by the one dispatch tail
+    ///      (`LibRewardRemitDispatch.dispatchRemitTail`), in the transaction
+    ///      that sends; never changed after. Zero only for a remit dispatched
+    ///      before the record existed.
+    struct RemitRoute {
+        address remoteMessenger;
+        address remoteRecipient;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

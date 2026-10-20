@@ -30,8 +30,44 @@ library LibRewardRemitDispatch {
     ///      identically wherever the revert originates.
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
     error RemittanceRefundFailed();
+    /// @dev #2561 — the messenger names no remote adapter, or no declared
+    ///      reward-budget receiver, on `dstChainId`. Refused BEFORE any value
+    ///      moves: a remittance must leave with a route Base can name.
+    error RemitRouteUndeclared(uint32 dstChainId, address remoteMessenger, address remoteRecipient);
+
+    /// @notice #2561 — the route remittance `remitId` was dispatched on, as
+    ///         the messenger reported it at the send. One per dispatch; the
+    ///         same pair is readable afterwards from
+    ///         `RewardRemittanceLensFacet.getRemitRoute`.
+    event RemitRouteRecorded(
+        uint256 indexed remitId,
+        uint32 indexed dstChainId,
+        address remoteMessenger,
+        address remoteRecipient
+    );
 
     using SafeERC20 for IERC20;
+
+    /**
+     * @notice #2561 — the route a remittance to `dstChainId` takes through
+     *         `messenger` right now: the remote adapter it addresses and the
+     *         reward-budget receiver it declares there.
+     * @dev    The ONE rule for "this remittance has a route Base can name".
+     *         The send ({dispatchRemitTail}) records what it returns, and the
+     *         strict fee dry run (`RewardRemittanceFacet.quoteRemittanceFee`)
+     *         reads it too, so a quote never prices a send this refuses.
+     *         Reverts {RemitRouteUndeclared} when either leg is zero.
+     */
+    function declaredRoute(
+        address messenger,
+        uint32 dstChainId
+    ) internal view returns (address remoteMessenger, address remoteRecipient) {
+        (remoteMessenger, remoteRecipient) =
+            ICrossChainMessenger(messenger).destinationOf(dstChainId);
+        if (remoteMessenger == address(0) || remoteRecipient == address(0)) {
+            revert RemitRouteUndeclared(dstChainId, remoteMessenger, remoteRecipient);
+        }
+    }
 
     /// @notice The gas a reward remittance asks the destination to run its
     ///         receiver with — the ONE constant the send and its quote both
@@ -98,6 +134,19 @@ library LibRewardRemitDispatch {
         uint256 remitId,
         LibRewardCustody.TransportDraw memory draw
     ) internal returns (bytes32 messageId) {
+        // #2561 — record WHERE the value goes before any of it moves. The lane
+        // can later be re-pointed at a redeployed mirror; the reservation's
+        // receipt and acknowledgement then live on the OLD one, and this
+        // record is what lets anyone see that. A route with an unnamed leg is
+        // refused rather than recorded as unknown.
+        (address remoteMessenger, address remoteRecipient) =
+            declaredRoute(messenger, dstChainId);
+        s.remitRoutes[remitId] = LibVaipakam.RemitRoute({
+            remoteMessenger: remoteMessenger,
+            remoteRecipient: remoteRecipient
+        });
+        emit RemitRouteRecorded(remitId, dstChainId, remoteMessenger, remoteRecipient);
+
         // #1566 slice 4 PR B — the tail takes the custody SOURCE as an
         // argument (design §5d): a `Live` draw is bounded and charged
         // against the delivered ledger by its fresh share FIRST (reject

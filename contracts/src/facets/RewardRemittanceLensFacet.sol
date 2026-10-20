@@ -7,6 +7,7 @@ import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
+import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -153,6 +154,49 @@ contract RewardRemittanceLensFacet {
         bytes32 messageId
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().remitIdByCcipMessageId[messageId];
+    }
+
+    /**
+     * @notice Where remit `remitId` was sent, beside where a remit to the same
+     *         destination would be sent now.
+     * @dev    #2561. `sent*` is the route recorded at dispatch: the remote
+     *         messenger the local messenger addressed and the reward-budget
+     *         channel peer it declared on the destination. `live*` is the
+     *         same pair read from the messenger as it is configured right
+     *         now. When they differ, the destination was redeployed after the
+     *         send, the ACK can only come from a mirror Base no longer
+     *         authenticates, and the reservation needs an operator decision
+     *         on evidence (`finalizeRemitReservation` when delivery is proven,
+     *         `releaseRemitReservation` when it will never execute).
+     *
+     *         All four are zero for a `remitId` never issued. `sent*` is also
+     *         zero for a remit dispatched before the route was recorded: the
+     *         route is then UNKNOWN, which is not the same as "unchanged".
+     *         `live*` is zero when no messenger is configured, or when a leg
+     *         is not declared for the destination.
+     */
+    function getRemitRoute(
+        uint256 remitId
+    )
+        external
+        view
+        returns (
+            address sentMessenger,
+            address sentRecipient,
+            address liveMessenger,
+            address liveRecipient
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitRoute storage route = s.remitRoutes[remitId];
+        sentMessenger = route.remoteMessenger;
+        sentRecipient = route.remoteRecipient;
+        uint32 dstChainId = s.remitReservations[remitId].dstChainId;
+        address messenger = s.crossChainMessenger;
+        if (dstChainId != 0 && messenger != address(0)) {
+            (liveMessenger, liveRecipient) =
+                ICrossChainMessenger(messenger).destinationOf(dstChainId);
+        }
     }
 
     /// @notice The highest `remitId` issued so far (reservations are dense:
