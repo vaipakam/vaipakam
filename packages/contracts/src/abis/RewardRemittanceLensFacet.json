@@ -1131,6 +1131,40 @@
   },
   {
     "type": "function",
+    "name": "getRemitRoute",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sentMessenger",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sentRecipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "liveMessenger",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "liveRecipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRewardBudgetReceivedTotal",
     "inputs": [],
     "outputs": [
