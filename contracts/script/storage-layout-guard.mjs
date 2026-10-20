@@ -73,7 +73,7 @@
  * checks it against viem's.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +88,16 @@ export const ACKS_FILE = join(LAYOUT_DIR, 'breaks.ack.json');
 export const RENAMES_FILE = join(LAYOUT_DIR, 'renames.json');
 export const FACETS_FILE = join(REPO_ROOT, 'packages', 'contracts', 'scripts', 'diamond-facets.json');
 export const GOLDEN_FORMAT = 2;
+
+/** The file's text, or `undefined` if it does not exist. One read, no separate existence check. */
+function readIfPresent(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return undefined;
+    throw e;
+  }
+}
 
 // ─── Ledger ──────────────────────────────────────────────────────────────
 
@@ -319,14 +329,18 @@ export function erc7201(id) {
   return `0x${(outer & ~0xffn).toString(16).padStart(64, '0')}`;
 }
 
-/** Every `.sol` file under `dir`, as `{repoRelativePath: source}`. */
+/**
+ * Every `.sol` file under `dir`, as `{repoRelativePath: source}`. Entry types
+ * come from the directory listing itself (no separate stat before the read),
+ * and symlinks are not followed: the guard reads the tree as committed.
+ */
 function readSources(dir, base = CONTRACTS_DIR) {
   const out = {};
   const walk = (d) => {
-    for (const name of readdirSync(d)) {
-      const p = join(d, name);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (name.endsWith('.sol')) out[relative(base, p)] = readFileSync(p, 'utf8');
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.endsWith('.sol')) out[relative(base, p)] = readFileSync(p, 'utf8');
     }
   };
   walk(dir);
@@ -394,10 +408,10 @@ export function uupsContracts(sources) {
 
 /** Every `<Contract>.json` at any depth under `dir`. */
 function findArtifacts(dir, file, found = []) {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) findArtifacts(p, file, found);
-    else if (name === file) found.push(p);
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) findArtifacts(p, file, found);
+    else if (e.isFile() && e.name === file) found.push(p);
   }
   return found;
 }
@@ -635,8 +649,9 @@ export function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  if (!existsSync(GOLDEN_FILE)) return fail(`${relative(REPO_ROOT, GOLDEN_FILE)} is missing — run \`node contracts/script/storage-layout-guard.mjs write\``);
-  const committed = JSON.parse(readFileSync(GOLDEN_FILE, 'utf8'));
+  const committedText = readIfPresent(GOLDEN_FILE);
+  if (committedText === undefined) return fail(`${relative(REPO_ROOT, GOLDEN_FILE)} is missing — run \`node contracts/script/storage-layout-guard.mjs write\``);
+  const committed = JSON.parse(committedText);
   let rc = 0;
 
   // 1. The committed golden describes the code being built. Without this, the
@@ -658,8 +673,10 @@ export function main(argv = process.argv.slice(2)) {
     if (base.format !== GOLDEN_FORMAT) {
       return fail(`the base golden is format ${base.format}, this guard reads format ${GOLDEN_FORMAT}. A format change must ship a translation of the old format, or no base can be compared.`);
     }
-    const acks = existsSync(ACKS_FILE) ? readAcks(readFileSync(ACKS_FILE, 'utf8')) : [];
-    const renames = existsSync(RENAMES_FILE) ? readRenames(readFileSync(RENAMES_FILE, 'utf8')) : [];
+    const acksText = readIfPresent(ACKS_FILE);
+    const renamesText = readIfPresent(RENAMES_FILE);
+    const acks = acksText === undefined ? [] : readAcks(acksText);
+    const renames = renamesText === undefined ? [] : readRenames(renamesText);
     const v = appendOnlyVerdict(base, golden, { baseSha256: sha256(baseText), acks, renames });
     if (v.breaks.length) {
       console.error(`storage-layout-guard: LAYOUT BREAK — ${v.breaks.length} line(s) of the base layout are gone. A proxy upgraded in place across this change would read existing state at the wrong place, or under the wrong field:`);
