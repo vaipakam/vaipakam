@@ -79,7 +79,7 @@ import {
   signTransaction,
   writeContract,
 } from 'viem/actions';
-import { HttpRequestError, TimeoutError } from 'viem';
+import { HttpRequestError, keccak256, TimeoutError, type Hex } from 'viem';
 import { SubrequestBudgetExhausted } from './subrequestBudget';
 import { assertEpochsHold } from './epochFence';
 
@@ -278,6 +278,29 @@ export function isDefinitiveRejection(err: unknown): boolean {
   });
 }
 
+/** The signed transaction a failed broadcast may still have relayed, by the
+ *  error it failed with (Codex #2602 r6). */
+const relayedHashes = new WeakMap<object, Hex>();
+
+/**
+ * The hash of the transaction `err`'s broadcast may have RELAYED, or
+ * undefined. A broadcast that fails after signing without a definitive node
+ * answer (a timeout, a lost response) may still reach the chain: the queue
+ * keeps its nonce reserved for exactly that reason ({@link withSubmissionSlot}).
+ * Its hash is the hash of the signed bytes, known before they left the
+ * process, so a caller can still look for its receipt instead of reading the
+ * send as one that moved nothing. The whole cause chain is read, because viem
+ * wraps a broadcast's error (`writeContract` → `sendTransaction`).
+ */
+export function possiblyRelayedHash(err: unknown): Hex | undefined {
+  let n = 0;
+  for (let e: unknown = err; e && typeof e === 'object' && n < 8; e = (e as { cause?: unknown }).cause, n++) {
+    const h = relayedHashes.get(e as object);
+    if (h) return h;
+  }
+  return undefined;
+}
+
 /**
  * `wallet`, with `sendTransaction` AND `writeContract` routed through the
  * queue. Both must be replaced: the wallet's own `writeContract` is a
@@ -328,7 +351,14 @@ export function queuedWallet(
           chain: null,
         } as never);
         signed();
-        return sendRawTransaction(base, { serializedTransaction: serialized });
+        try {
+          return await sendRawTransaction(base, { serializedTransaction: serialized });
+        } catch (err) {
+          // Possibly relayed: the same rule that keeps the nonce reserved
+          // ({@link withSubmissionSlot}) keeps the hash findable.
+          if (err && typeof err === 'object' && !isDefinitiveRejection(err)) relayedHashes.set(err, keccak256(serialized));
+          throw err;
+        }
       });
     };
     const routed = { ...base, sendTransaction: queuedSend };

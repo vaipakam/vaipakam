@@ -181,6 +181,44 @@ export function digestText(header: string, lines: readonly string[], footer: str
   return `${header}\n${shown.join('\n')}${more}\n${footer}`;
 }
 
+/**
+ * One-off NOTICES (#2515 — a settlement that moved value, an evidence chain
+ * that lapsed): things that HAPPENED, as opposed to conditions that hold, so
+ * there is nothing to de-duplicate and nothing is recorded. However many a run
+ * has, they go out as ONE bounded post (Codex #2602 r1), the same shape as
+ * {@link sendOpsAlertDigest}: as many lines as fit, then a count of the rest.
+ * The caller journals every line, so the journal names each one the post
+ * could not carry. Best-effort like every ops alert — the chain's own events
+ * are the record. Never throws.
+ */
+export async function sendOpsNoticeDigest(
+  env: Env,
+  header: string,
+  lines: readonly string[],
+  footer: string,
+  /** The chain the notices are about: they pass the epoch fence. */
+  chainId: number | null = null,
+): Promise<OpsAlertOutcome> {
+  if (lines.length === 0) return 'suppressed';
+  const token = env.TG_OPS_BOT_TOKEN;
+  const chatId = env.TG_OPS_CHAT_ID;
+  if (!token || !chatId) {
+    console.warn(`[keeper] ops notice NOT delivered (TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset): ${header} (${lines.length} lines, journaled above)`);
+    return 'unconfigured';
+  }
+  try {
+    if (chainId !== null) await assertEpochsHold();
+    return (await postToTelegram(token, chatId, digestText(header, lines, footer))) ? 'sent' : 'failed';
+  } catch (err) {
+    if (err instanceof EpochFenceRefusal) {
+      console.warn(`[keeper] ops notice digest refused: ${err.message}`);
+      return 'refused';
+    }
+    console.error(`[keeper] ops notice digest failed: ${redact(String(err), token)}`);
+    return 'failed';
+  }
+}
+
 /** The condition behind `key` has cleared: the next occurrence alerts at once. */
 export async function resolveOpsAlert(env: Env, key: string): Promise<void> {
   try {

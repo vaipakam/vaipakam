@@ -17,6 +17,7 @@ import { sendInSubmissionSlot } from '../src/keeperSend';
 import {
   FLOOR_TTL_MS,
   isDefinitiveRejection,
+  possiblyRelayedHash,
   queuedWallet,
   resetSubmissionQueues,
   SendPastDeadline,
@@ -242,6 +243,19 @@ describe('submission queue (#2486)', () => {
     await wallet.sendTransaction({ account, chain: null, to: TO, ...FEES } as never);
     expect(node.accepted).toEqual([0, 1]);
     expect(node.rejected).toEqual([]);
+  });
+
+  it('a broadcast whose answer was lost names the hash it may have relayed; a refused one does not (Codex #2602 r6)', async () => {
+    const node: Node = { accepted: [], rejected: [], loseAnswer: true };
+    const wallet = queuedWallet(nodeWallet(node), CHAIN_ID, FAR);
+    const lost = await wallet.writeContract({ account, chain: null, address: TO, abi: PING_ABI, functionName: 'ping', ...FEES } as never).catch((e: unknown) => e);
+    const hash = possiblyRelayedHash(lost);
+    expect(hash).toMatch(/^0x[0-9a-f]{64}$/);
+    node.refuseNext = true;
+    const refused = await wallet.writeContract({ account, chain: null, address: TO, abi: PING_ABI, functionName: 'ping', ...FEES } as never).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(Error);
+    expect(possiblyRelayedHash(refused)).toBeUndefined();
+    expect(possiblyRelayedHash(new Error('unrelated'))).toBeUndefined();
   });
 
   it('reads only a coded node answer that leaves the nonce free as definitive', () => {
