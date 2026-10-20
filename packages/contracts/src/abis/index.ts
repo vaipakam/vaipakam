@@ -159,6 +159,8 @@ import SanctionsListABI from './SanctionsList.json';
 // #2443 — the delisting timelock and its CCIP RedStone attestor (standalone).
 import SanctionsDelistingTimelockABI from './SanctionsDelistingTimelock.json';
 import SanctionsClearanceAttestorABI from './SanctionsClearanceAttestor.json';
+// #2443 — the testnet stand-in for RedStone's oracle (standalone, testnets only).
+import TestnetSanctionsOracleStandInABI from './TestnetSanctionsOracleStandIn.json';
 
 export {
   OfferCreateFacetABI,
@@ -265,6 +267,7 @@ export {
   SanctionsListABI,
   SanctionsDelistingTimelockABI,
   SanctionsClearanceAttestorABI,
+  TestnetSanctionsOracleStandInABI,
 };
 
 import type { Abi } from 'viem';

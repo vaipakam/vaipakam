@@ -6,17 +6,21 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getAddress } from 'viem';
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, getAddress } from 'viem';
 import { parseSdnAdvancedFile } from './ofac-sanctions-diff.mjs';
 import { parseSdnPlainFile } from './ofac-sdn-plain.mjs';
 import { SERVICE_CHAINS } from './sanctions-service.mjs';
 import {
   ALERT_REPEAT_MS,
   RE_EVALUATE_MS,
+  STAND_IN_NAME,
   alertDigest,
+  clearanceOracleName,
   createClientLookup,
+  describeAction,
   evaluatePublication,
   fingerprint,
+  identifyOracle,
   listRoleKeyVet,
   listRoleRefusal,
   planChain,
@@ -35,6 +39,7 @@ const KEY = getAddress('0x00000000000000000000000000000000000000aa');
 const OTHER = getAddress('0x00000000000000000000000000000000000000bb');
 const TL = getAddress('0x00000000000000000000000000000000000000c1');
 const LIST = getAddress('0x00000000000000000000000000000000000000c2');
+const ORACLE = getAddress('0x00000000000000000000000000000000000000c3');
 const PK = `0x${'1'.repeat(64)}`;
 
 // The fixtures list A1 and A2; 0x1111… is a False-reliability record in the
@@ -76,6 +81,7 @@ function snapOf(o = {}) {
     now: 1_000_000n,
     balance: 10n ** 18n,
     relayPath: { ok: true },
+    clearanceOracle: { address: ORACLE, standIn: false },
     proposals: [],
     ...o,
     list: {
@@ -229,9 +235,9 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   assert.equal(byId['4'].kind, 'withdraw');
   assert.match(byId['4'].why, /no longer supports delisting 0x1CAb/);
   assert.deepEqual(byId['5'], { kind: 'execute', id: 5n });
-  assert.deepEqual(byId['6'], { kind: 'request', id: 6n });
-  assert.deepEqual(byId['7'], { kind: 'request', id: 7n }, "another proposer's proposal moves on when OFAC supports every address in it");
-  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234' });
+  assert.deepEqual(byId['6'], { kind: 'request', id: 6n, oracle: 'RedStone' });
+  assert.deepEqual(byId['7'], { kind: 'request', id: 7n, oracle: 'RedStone' }, "another proposer's proposal moves on when OFAC supports every address in it");
+  assert.deepEqual(byId['8'], { kind: 'reply', id: 8n, oracle: 'RedStone', sourceChainId: 421614, attestor: OTHER, messageId: `0x${'e'.repeat(64)}`, payload: '0x1234' });
   assert.equal(byId['9'], undefined);
   assert.equal(byId['10'].kind, 'withdraw');
   assert.equal(byId['11'], undefined, "another proposer's proposal is never withdrawn");
@@ -248,7 +254,7 @@ test('moves pending proposals on: discard, withdraw, reconfirm, execute, request
   assert.ok(plan.review.some((r) => r.includes('proposal 15 (another proposer') && r.includes('holds back 1 of the outstanding delistings')));
   // A stale RedStone stops a proposal no step here can move: a person hears it.
   assert.equal(byId['16'], undefined);
-  assert.ok(plan.review.some((r) => r.includes('proposal 16 is matured but not executable: OracleStale')));
+  assert.ok(plan.review.some((r) => r.includes('proposal 16 is matured but not executable: RedStone has not updated within the age the timelock accepts')));
   // Same file, another date: the publication changed as far as execute is concerned.
   assert.equal(byId['17'].kind, 'reconfirm');
   // A proposal naming an address the publication does not support delisting
@@ -281,7 +287,7 @@ test('nothing moves a proposal on without a conclusive reading of OFAC\'s files'
   ]) {
     const plan = planChain(snap, KEY, ev, new Map());
     assert.deepEqual(plan.actions, [], label);
-    for (const step of ['proposal 1: executing waits', 'proposal 2: requesting the clearance waits', "proposal 3: relaying RedStone's answer waits"]) {
+    for (const step of ['proposal 1: executing waits', 'proposal 2: requesting the clearance waits', 'proposal 3: relaying the answer from RedStone waits']) {
       assert.ok(plan.notes.some((n) => n.startsWith(step)), `${label}: ${step}`);
     }
   }
@@ -739,4 +745,63 @@ test('a chain that stops on an unexpected error still reports what it sent', asy
   assert.deepEqual(report.chains.b.actions.map((e) => [e.kind, e.state, e.tx]), [['execute', 'included', '0xfeed']]);
   assert.match(report.chains.b.deferred[0], /stopped on an unexpected error after the sends listed: boom/);
   assert.match(summarize(report), /execute proposal 1: 0xfeed — included/);
+});
+
+test('the clearance oracle is named from what the run established: the stand-in, RedStone, or neither', () => {
+  assert.equal(clearanceOracleName(snapOf()), 'RedStone');
+  assert.equal(clearanceOracleName(snapOf({ clearanceOracle: { address: ORACLE, standIn: true } })), STAND_IN_NAME);
+  assert.equal(clearanceOracleName(snapOf({ clearanceOracle: { address: ORACLE, standIn: null, detail: 'rpc down' } })), 'the clearance oracle');
+  assert.equal(clearanceOracleName(snapOf({ clearanceOracle: null })), 'the clearance oracle', 'an unread oracle is never called RedStone');
+
+  // On the stand-in, every action, note and review line says so.
+  const standIn = snapOf({
+    clearanceOracle: { address: ORACLE, standIn: true },
+    reservedDelistings: 4,
+    proposals: [
+      proposal({ id: 1n, reason: 'ClearanceNotRequested' }),
+      proposal({ id: 2n, reason: 'ClearanceNotAnswered', relay: { status: 'owed', messageId: `0x${'e'.repeat(64)}`, payload: '0x1234', sourceChainId: 97, attestor: OTHER } }),
+      proposal({ id: 3n, reason: 'ClearanceFlagged', proposer: OTHER }),
+      proposal({ id: 4n, reason: 'OracleStale', proposer: OTHER }),
+    ],
+  });
+  const plan = planChain(standIn, KEY, evaluatePublication(standIn, PUBLICATION), facts({ [D4]: { flagged: true } }));
+  const byId = Object.fromEntries(plan.actions.filter((a) => a.id).map((a) => [a.id.toString(), a]));
+  assert.equal(describeAction(byId['1']), `request the clearance from ${STAND_IN_NAME} for proposal 1`);
+  assert.equal(describeAction(byId['2']), `relay the answer from ${STAND_IN_NAME} for proposal 2 from chain 97`);
+  assert.ok(plan.notes.some((n) => n === `proposal 3 (another proposer's) cannot execute: ${STAND_IN_NAME} flags an address in it`));
+  assert.ok(plan.review.some((r) => r.includes(`proposal 4 is matured but not executable: ${STAND_IN_NAME} was last published longer ago than the timelock accepts; this test network's admin re-publishes it with markUpdated, and the next clearance request`)));
+  assert.ok(plan.review.some((r) => r.includes(`${D4}: OFAC delisted it but ${STAND_IN_NAME} flags it`)));
+  const said = JSON.stringify([plan.notes, plan.review, plan.actions.map(describeAction)]).replaceAll(STAND_IN_NAME, '');
+  assert.ok(!said.includes('RedStone'), 'RedStone is named only as what the stand-in stands in for');
+});
+
+test('the report names the clearance oracle, and says the stand-in is not RedStone', async () => {
+  const run = (snap) =>
+    runDelister({
+      chains: [{ slug: 'b', name: 'Base Sepolia', id: 84532, timelock: TL, list: LIST, effects: { readSnapshot: async () => snap, readFacts: async () => new Map(), send: async () => assert.fail('no send') } }],
+      key: KEY,
+      loadPublication: async () => assert.fail('no download'),
+      nowMs: 1,
+    });
+  const quiet = { list: { pendingDelistings: 0, addresses: [A1, A2] } };
+  const stand = (await run(snapOf({ ...quiet, clearanceOracle: { address: ORACLE, standIn: true } }))).report;
+  assert.deepEqual(stand.chains.b.clearanceOracle, { address: ORACLE, standIn: true, name: STAND_IN_NAME });
+  assert.match(summarize(stand), new RegExp(`clearance read from ${STAND_IN_NAME} at ${ORACLE}: NOT RedStone`));
+  assert.match(summarize((await run(snapOf(quiet))).report), new RegExp(`clearance read from RedStone at ${ORACLE}\\.`));
+  const unknown = (await run(snapOf({ ...quiet, clearanceOracle: { address: null, standIn: null, detail: 'chain 97 cannot be used from here' } }))).report;
+  assert.match(summarize(unknown), /clearance oracle not identified this run \(chain 97 cannot be used from here\)\./);
+  assert.equal((await run(snapOf({ ...quiet, route: 0, clearanceOracle: null }))).report.chains.b.clearanceOracle, null, 'no route, no oracle to name');
+});
+
+test('an oracle is the stand-in only on its own answer; a failed read names nothing', async () => {
+  const answering = (result) => ({ readContract: async ({ functionName }) => (assert.equal(functionName, 'isTestnetStandIn'), result) });
+  assert.deepEqual(await identifyOracle(answering(true), ORACLE.toLowerCase(), []), { address: ORACLE, standIn: true });
+  assert.deepEqual(await identifyOracle(answering(false), ORACLE, []), { address: ORACLE, standIn: false });
+  // RedStone has no such function: the call reverts, and the contract answered.
+  const reverted = new ContractFunctionExecutionError(new ContractFunctionRevertedError({ abi: [], functionName: 'isTestnetStandIn', data: '0x' }), { abi: [], functionName: 'isTestnetStandIn', contractAddress: ORACLE });
+  assert.deepEqual(await identifyOracle({ readContract: async () => Promise.reject(reverted) }, ORACLE, []), { address: ORACLE, standIn: false });
+  // An RPC that failed told us nothing about the contract.
+  const down = await identifyOracle({ readContract: async () => Promise.reject(new Error('fetch failed')) }, ORACLE, []);
+  assert.equal(down.standIn, null);
+  assert.match(down.detail, /whether it is the testnet stand-in failed: fetch failed/);
 });

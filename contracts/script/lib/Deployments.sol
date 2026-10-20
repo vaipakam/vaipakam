@@ -423,6 +423,26 @@ library Deployments {
     ///         `DeploySanctionsDelisting` last deployed on this chain. Zero
     ///         where none was deployed.
     function readSanctionsDelistingTimelockOptional() internal view returns (address) { return _tryReadAddr(".sanctionsDelistingTimelock"); }
+    /// @notice #2443 — optional, non-reverting read of
+    ///         `.sanctionsOracleStandIn`, the testnet stand-in for RedStone's
+    ///         Sanctions Oracle `ConfigureSanctionsClearance` last deployed on
+    ///         this chain. Zero where none was deployed.
+    function readSanctionsOracleStandInOptional() internal view returns (address) { return _tryReadAddr(".sanctionsOracleStandIn"); }
+    /// @notice #2443 — optional, non-reverting read of
+    ///         `.sanctionsClearanceAttestor`, the clearance attestor
+    ///         `ConfigureSanctionsClearance` last deployed on this chain. Zero
+    ///         where none was deployed.
+    function readSanctionsClearanceAttestorOptional() internal view returns (address) { return _tryReadAddr(".sanctionsClearanceAttestor"); }
+    /// @notice #2443 — {readSanctionsClearanceAttestorOptional} for another
+    ///         chain's artifact: zero when that artifact or its key is absent.
+    function readSanctionsClearanceAttestorOptionalForChain(uint256 chainId) internal view returns (address) {
+        return _tryReadAddrAt(pathForChainId(chainId), ".sanctionsClearanceAttestor");
+    }
+    /// @notice #2443 — {readSanctionsOracleStandInOptional} for another
+    ///         chain's artifact: zero when that artifact or its key is absent.
+    function readSanctionsOracleStandInOptionalForChain(uint256 chainId) internal view returns (address) {
+        return _tryReadAddrAt(pathForChainId(chainId), ".sanctionsOracleStandIn");
+    }
     /// #2548 — one key of the faucet mock rig `DeployTestnetMocks` records
     /// under `.testnetMocks` (e.g. "feedRegistry"); `address(0)` when the
     /// chain carries no mock rig or the key is absent.
@@ -562,6 +582,10 @@ library Deployments {
     /// @notice #2443 — the `SanctionsDelistingTimelock` deployed on this
     ///         chain for the recorded `SanctionsList`.
     function writeSanctionsDelistingTimelock(address a) internal { _writeAddr(".sanctionsDelistingTimelock", a); }
+    /// @notice #2443 — record the testnet stand-in for RedStone's oracle.
+    function writeSanctionsOracleStandIn(address a) internal { _writeAddr(".sanctionsOracleStandIn", a); }
+    /// @notice #2443 — record the clearance attestor.
+    function writeSanctionsClearanceAttestor(address a) internal { _writeAddr(".sanctionsClearanceAttestor", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
@@ -1085,7 +1109,16 @@ library Deployments {
         view
         returns (address)
     {
-        string memory p = path();
+        return _tryReadAddrAt(path(), jsonKey);
+    }
+
+    /// @dev {_tryReadAddr} for the artifact at `p`: zero when the file, its
+    ///      content or the key is absent.
+    function _tryReadAddrAt(string memory p, string memory jsonKey)
+        private
+        view
+        returns (address)
+    {
         if (!_fileExists(p)) return address(0);
         // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory file = CHEATS.readFile(p);

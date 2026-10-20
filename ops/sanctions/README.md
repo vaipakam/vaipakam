@@ -117,6 +117,21 @@ chain, the reply on the attestor's), so it needs native gas on both, and the
 attestor's chain needs an RPC in the env file even when no timelock lives
 there.
 
+**On a testnet the cross-chain check reads a stand-in, never RedStone.**
+RedStone's Sanctions Oracle has no testnet deployment, so the rehearsal
+attestor on BNB testnet reads a `TestnetSanctionsOracleStandIn`, which flags
+only what that chain's admin flags. The delister asks the oracle it reads
+whether it is that stand-in, and says so in every line: actions read "request
+the clearance from the testnet stand-in for RedStone", and the report adds
+"clearance read from the testnet stand-in for RedStone at 0x…: NOT RedStone".
+It writes "RedStone" only when the oracle answered without the stand-in's
+function, and "the clearance oracle" when it could not tell. The stand-in is
+only as fresh as the admin's last write to it: unless the admin calls
+`markUpdated` within a timelock's `oracleMaxAge` (default 7 days) of an
+execution, the clearance comes back stale and the delister reports that the
+admin must re-publish it. On this route the delister key needs tBNB on BNB
+testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
+
 On a testnet both services work against a **rehearsal** list:
 `DeploySanctionsList` deploys it beside the Diamond's
 `TestnetSanctionsOverlay`, and the Diamond does not screen against it. Nothing
@@ -169,7 +184,22 @@ The first refuses an adder equal to the remover or the owner and records the
 list as `sanctionsList`. The second deploys the timelock for that list,
 appoints it a remover and the delister key its proposer, and records it as
 `sanctionsDelistingTimelock`; it configures no RedStone check. Both reuse what
-is already recorded. Then export deployments
+is already recorded.
+
+On a testnet, the cross-chain check is wired by
+`ConfigureSanctionsClearance.s.sol`, attestor chain first (it records the
+stand-in and the attestor there, and each timelock chain reads them from that
+chain's artifact):
+
+```bash
+export SANCTIONS_CLEARANCE_ATTESTOR_CHAIN_ID=97 SANCTIONS_CLEARANCE_TIMELOCK_CHAIN_IDS=84532,421614
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BNB_TESTNET_RPC_URL"                 # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL"                # dry run, then --broadcast --slow
+forge script script/ConfigureSanctionsClearance.s.sol --rpc-url "$ARB_SEPOLIA_RPC_URL"                 # dry run, then --broadcast --slow
+```
+
+It refuses a mainnet. Every step is skipped when already in place, and
+nothing already set to something else is re-pointed. Then export deployments
 (`bash contracts/script/exportFrontendDeployments.sh`), commit, and merge: the
 services read the addresses from the release they run, so a new contract
 reaches them with the next install.

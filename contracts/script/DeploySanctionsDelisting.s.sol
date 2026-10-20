@@ -22,7 +22,10 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
  *           on a chain where RedStone runs plus CCIP channel wiring on both
  *           messengers. Until one of the two exists the timelock refuses
  *           every execution (`ClearanceUnavailable`): proposals and vetoes
- *           work, delistings stay with the Safe's own direct delist. The
+ *           work, delistings stay with the Safe's own direct delist. On a
+ *           testnet `ConfigureSanctionsClearance` wires the cross-chain route
+ *           against a labelled stand-in for RedStone (owner decision
+ *           2026-10-20), as a separate, later run. The
  *           summary it prints reads the timelock's actual route
  *           (`clearanceRoute`), so a reused timelock that has since been
  *           given a source is reported as enabled, not as closed.

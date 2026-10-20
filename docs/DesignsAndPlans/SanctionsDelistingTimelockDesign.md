@@ -1,7 +1,10 @@
 # Sanctions delisting — bot proposes, Safe vetoes, RedStone agrees (#2443)
 
 Status: built (contracts, tests, testnet deploy script, delister bot). The
-CCIP clearance wiring is the remaining follow-up, listed in §7.
+CCIP clearance wiring is built for TESTNETS as a rehearsal against a labelled
+stand-in for RedStone (D-G, §7); running it on the live testnets waits on the
+owner's go-ahead for each chain. A mainnet clearance route waits on RedStone's
+terms.
 
 Testnet deployments (2026-10-19, recorded in each chain's deployment artifact
 as `sanctionsDelistingTimelock`): Base Sepolia and Arbitrum Sepolia, one
@@ -9,7 +12,7 @@ timelock each for that chain's rehearsal list. On both the admin owns the
 timelock, the delister bot key is its only proposer, the delay is the default
 48 hours, and the timelock is a remover of the list beside the existing one
 (the Safe on Base Sepolia, the admin on Arbitrum Sepolia). Neither has a
-RedStone check, so every execution refuses until the clearance wiring lands;
+RedStone check, so every execution refuses until the clearance wiring is run;
 delistings meanwhile stay with each list's existing remover.
 
 ## 1. Decisions this records
@@ -42,6 +45,11 @@ All from the owner, 2026-10-18, in the "Open GitHub issues plan" thread:
 - **D-F — A Safe veto sticks** (2026-10-18, after asking whether the bot would
   re-propose a vetoed wallet): the bot cannot propose a vetoed wallet again
   until the Safe or the owner lifts the veto.
+- **D-G — Rehearse the cross-chain route on testnets with a stand-in**
+  (2026-10-20, after RedStone's oracle was found only on Ethereum mainnet):
+  a testnet-only contract answers in RedStone's place so request, reading and
+  reply run on live testnet contracts. It is named as a stand-in on-chain and
+  in every report, and each live deploy waits on the owner's go-ahead.
 
 ## 2. Why a separate contract
 
@@ -291,9 +299,56 @@ Both accept native value only as their messenger's fee refund.
   chain's report, with every send it already made, and a state file that cannot be written is
   reported and fails the run; neither can stop the report of what was sent. The key needs native
   gas on both chains of a cross-chain route, for the two CCIP fees.
-- **CCIP clearance wiring** (next): deploy the attestor where RedStone
-  runs; register it as the clearance channel's handler there with the
-  timelock as peer, and the timelock as handler on its own chain with the
-  attestor as peer (both directions now carry a message); call
-  `setClearanceSource`.
+- **CCIP clearance wiring — built for testnets (D-G)**,
+  `contracts/script/ConfigureSanctionsClearance.s.sol`, run once per chain,
+  attestor chain first. On the attestor chain it deploys (or reuses) a
+  `TestnetSanctionsOracleStandIn` owned by the admin and a
+  `SanctionsClearanceAttestor` reading it, wires a CCIP lane to each timelock
+  chain, registers the attestor as the handler of the clearance channel
+  (`keccak256("vaipakam.ccip.channel.sanctions-clearance")`) and sets each
+  timelock as that channel's peer for its chain. On each timelock chain it
+  wires the lane back, registers the timelock as the channel's handler with
+  the attestor as peer, and calls `setClearanceSource` only when the source
+  differs (each call voids requests in flight). Every step reads first and is
+  skipped when already in place; a handler, peer or lane already set to
+  something else stops the run, since re-pointing one needs the messenger's
+  drain. Both new addresses are recorded in the attestor chain's artifact
+  (`sanctionsOracleStandIn`, `sanctionsClearanceAttestor`).
+
+  The testnet rehearsal hosts both on **BNB testnet** (97) for the Base
+  Sepolia and Arbitrum Sepolia timelocks; Base↔BNB already has a lane, and
+  the run adds Arbitrum↔BNB on both messengers. Three properties of the
+  stand-in carry the honesty of the rehearsal:
+  - **No mainnet.** Its constructor refuses any chain outside the testnet
+    allowlist, and the wiring script refuses a mainnet before reading
+    anything.
+  - **It says what it is.** `isTestnetStandIn()` answers true and
+    `STAND_IN_FOR` names RedStone's oracle. The delister asks every oracle it
+    reads, through either route, whether it is the stand-in, and names the
+    answer in every action, note and report line: "the testnet stand-in for
+    RedStone" (with "NOT RedStone" on the report's oracle line), "RedStone"
+    only when the oracle answered without the stand-in's function, and "the
+    clearance oracle" when the run could not tell. Facts are read from the
+    same address the report names.
+  - **Its freshness is the admin's.** `getLastUpdateBlockTimestamp()` is the
+    admin's last write (deploy, a flag change, or `markUpdated`), never the
+    block's time. Left alone longer than a timelock's `oracleMaxAge`
+    (default 7 days) it closes that timelock's automated route exactly as a
+    frozen RedStone would, and the delister names the remedy.
+
+  A fork test (`contracts/test/fork/SanctionsClearanceLiveForkTest.t.sol`,
+  gated on `FORK_URL_BNB_TESTNET` plus each timelock chain's URL) runs the
+  script against forks of the three live testnets and drives a drill
+  proposal through request, reading, reply and execution on each timelock
+  chain, plus a stand-in flag that refuses the delisting. It delivers each
+  CCIP message from the source router's captured `ccipSend` to the
+  destination messenger as that chain's router, after checking the router
+  lists an off-ramp for the source lane: Chainlink's local fork simulator
+  cannot parse these lanes' newer on-ramp event. A live delisting on the
+  testnets still needs an OFAC delisting to propose, so until one appears
+  the fork drill is the end-to-end proof.
+
+  For the bot on a cross-chain route: its key needs native gas on the
+  attestor chain (tBNB on the rehearsal) for the reply's CCIP fee as well as
+  on each timelock chain, and the attestor chain needs an RPC in its env.
 - **Mainnet:** follows the adder host decision.

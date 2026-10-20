@@ -108,6 +108,7 @@
     "TestnetSanctionsOverlay",
     "SanctionsList",
     "SanctionsDelistingTimelock",
-    "SanctionsClearanceAttestor"
+    "SanctionsClearanceAttestor",
+    "TestnetSanctionsOracleStandIn"
   ]
 }
