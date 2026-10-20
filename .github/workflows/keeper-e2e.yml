@@ -1,0 +1,117 @@
+# keeper e2e — the keeper's Anvil scenarios (#2496): the REAL keeper passes,
+# exactly as the scheduler calls them, against the repository's CURRENT
+# contracts deployed from source onto a local anvil and configured as a
+# single-chain canonical reward deployment (apps/keeper/e2e/harness). No
+# secrets, no live RPC: every key is an Anvil well-known development key or
+# one minted for the run, and the ops bot is unconfigured, so an alert is
+# logged rather than sent.
+#
+# Scenarios today: the claim-horizon heartbeat (#2517) and the sanctions-hold
+# observer (#2515), the latter with the real indexer projecting the chain
+# into the shared database it reads. The delivery-proof pass (#2516) needs a
+# second chain and is not here yet — see apps/keeper/e2e/COVERAGE.md.
+#
+# Modelled on app-e2e.yml's `fork-tier scenarios` job, with its own forge
+# cache key (the keeper's seed script is compiled on top of the fixture).
+# NOT a required check yet: it is new, and a red here should inform rather
+# than block until it has a run history.
+
+name: keeper e2e (anvil)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/keeper/**'
+      - 'apps/indexer/**'
+      - 'packages/contracts/**'
+      - 'packages/lib/**'
+      - 'packages/anvil-harness/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
+      - '.github/workflows/keeper-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/keeper/**'
+      - 'apps/indexer/**'
+      - 'packages/contracts/**'
+      - 'packages/lib/**'
+      - 'packages/anvil-harness/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
+      - '.github/workflows/keeper-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keeper-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scenarios:
+    name: keeper anvil scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with submodules — the fixture compiles the contracts)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry (forge + anvil)
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: stable
+
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        working-directory: contracts
+        run: git submodule status --recursive > .submodule-state
+
+      - name: Cache forge artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-keeper-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/mocks/**/*.sol') }}
+          restore-keys: |
+            forge-keeper-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+
+      # Both scripts as their own steps, so compile time and any compile
+      # error stay out of the scenarios' log. The global setup compiles them
+      # again, which is then a cache hit.
+      - name: Compile the e2e fixture and the keeper's reward seed (current contracts)
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: default
+        run: |
+          forge build script/e2e/DeployE2EFixture.s.sol
+          forge build script/e2e/ConfigureKeeperRewardsFixture.s.sol
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck the keeper (incl. the e2e surface)
+        run: pnpm --filter @vaipakam/keeper typecheck
+
+      - name: Run the scenarios
+        run: pnpm --filter @vaipakam/keeper run e2e:anvil

@@ -1,0 +1,3 @@
+# Built per run by the scenarios' global setup (fixture chain state, the
+# redirected deployments bundle, the run's ephemeral admin key).
+.state/

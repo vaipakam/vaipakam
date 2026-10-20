@@ -1,17 +1,22 @@
-# `script/e2e/` — the connected app's e2e chain
+# `script/e2e/` — the e2e chains
 
 The app's e2e suite (`apps/app/e2e/`, the `fork-tier scenarios` CI job) runs
 against the repository's **current** contracts, deployed from source onto a
 bare local Anvil for every run (#2334). It no longer forks live Base Sepolia.
+The keeper's Anvil scenarios (`apps/keeper/e2e/`, the `keeper anvil
+scenarios` CI job, #2496) start from the same deploy and then configure it as
+a canonical reward chain.
 
 | File | What it is |
 | --- | --- |
 | `DeployE2EFixture.s.sol` | Deploys the Diamond (`DeployDiamond.runWith`) and the faucet + oracle mocks (`DeployTestnetMocks._deployTestnetMocks`) in one script. It writes its artifact to the gitignored `deployments/.forge-test/e2e/`, never to a committed per-chain file. |
 | `Permit2.runtime.hex` | The runtime bytecode of Uniswap's canonical Permit2. The harness installs it at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. |
 | `Multicall3.runtime.hex` | The runtime bytecode of the canonical Multicall3. The harness installs it at `0xcA11bde05977b3631167028862bE2a173976CA11`. |
+| `ConfigureKeeperRewardsFixture.s.sol` | Keeper scenarios only. Run after the deploy, once the chain presents 84532, it makes the Diamond a canonical reward chain: a VPFI token with the Diamond as minter, the interaction-reward launch, reward custody activated, the reward pool funded, and a `TestnetSanctionsOverlay` set as the sanctions oracle. It writes `deployments/.forge-test/e2e/keeper/rewards.json`. |
 
-The harness side is `apps/app/e2e/lib/fixture.ts`, which is the entry point
-to read first. The steps it runs around this script:
+The harness side is `packages/anvil-harness/src/fixture.ts` (shared by both
+suites since #2496; the app's entry point is still `apps/app/e2e/lib/fixture.ts`,
+which calls it). The steps it runs around this script:
 
 1. Install WETH9, Multicall3 and Permit2 at their canonical addresses. A bare
    chain has none of the three, and the script refuses to run without them.
@@ -23,7 +28,8 @@ to read first. The steps it runs around this script:
 3. Switch the chain id to 84532, so the app's Base Sepolia wiring applies
    unchanged. Every contract reads `block.chainid` at call time.
 4. Write the e2e deployments bundle that the app, the harness and the
-   indexer stub all read.
+   indexer stub all read. (The keeper fixture writes its own bundle, under
+   `apps/keeper/e2e/.state/`, after running `ConfigureKeeperRewardsFixture`.)
 
 ## Permit2 provenance
 
