@@ -28,11 +28,13 @@ hash of its code to the build of one of those layout eras; a Diamond with a
 facet that matches none is not certified on any class. That last rule is
 what moves the census's headline from seventeen of twenty deployments proven
 empty to ten: the live testnet Diamonds of base-sepolia and arb-sepolia have
-run facets built from working trees no commit reproduces, and whether the
-routed reads alone may certify such a Diamond is a decision the design puts
-to the owner, with each withheld verdict recorded beside its refusal; the
-standard is a recorded switch on the census, so ratifying either is a flag
-rather than a change of evidence. The archive manifest now carries each
+run facets built from working trees no commit reproduces. Whether the
+routed reads alone may certify such a Diamond was put to the owner, and the
+owner ratified the provenance standard on 2026-09-12 for every deployment:
+those two Diamonds stay indeterminate until a fresh deploy from a committed
+tree starts an attributable history, and each withheld verdict is recorded
+beside its refusal. The standard is a recorded switch on the census, so the
+ratification is a flag rather than a change of evidence. The archive manifest now carries each
 archived record's facet set, so a clean checkout attributes the same
 population the operator's checkout does.
 A bare shell is settled the same way from its loan counter, whose slot never

@@ -500,7 +500,7 @@ function recordBuildCandidates(candidates) {
  * the loupe's current facets, every local record naming this Diamond, and
  * the cut history (refutation-only). Empty code never wrote (EIP-6780).
  */
-async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who, manifestEntry = null, scopeSelectors = null }) {
+async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, readFacetAddress = null, who, manifestEntry = null, scopeSelectors = null }) {
   result.scanned.sourceRecord = sourceRecordFor(slug, label);
   result.proofStandard = PROOF_STANDARD;
   if (result.scanned.notADiamond) {
@@ -527,6 +527,23 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
       loupe = null;
       loupeReadFailed = true;
       result.scanned.layoutProvenanceLoupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
+    }
+  }
+  // #2095 r27 — VaipakamDiamond's constructor installs the diamondCut selector
+  // by writing storage directly (r13 P1), and `facets()` does NOT list that
+  // host on every deployment: run 43 found `facetAddresses()` one short of
+  // the record on four Diamonds, the missing one being the recorded
+  // `diamondCutFacet`. Resolving the host from `facets()` alone therefore
+  // left the exemption empty, and the population gate refused every
+  // fully-read history for "1 facet the records name was never added". The
+  // per-selector lookup reads the same storage the constructor wrote, so it
+  // names the host whether or not `facets()` enumerates it.
+  if (Array.isArray(loupe) && !cutFacetHost && readFacetAddress) {
+    try {
+      const host = await readFacetAddress(DIAMOND_CUT_SELECTOR);
+      if (typeof host === 'string' && host.toLowerCase() !== ZERO_ADDRESS) cutFacetHost = host.toLowerCase();
+    } catch (err) {
+      result.scanned.layoutProvenanceCutHostError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
     }
   }
   const cut = await facetsFromCutHistory(client, diamond, deployBlock, atBlock);
@@ -1201,6 +1218,14 @@ function loadTargetSnapshot(targetPath) {
     }
   }
 }
+/**
+ * A refusal that ends the RUN, not one deployment: thrown when the walk
+ * pronounces a terminal ancestry verdict at block choice (#2095 r27). The
+ * per-deployment handler rethrows it instead of recording a failure and
+ * moving to the next record — every later read would be discarded at
+ * publication anyway.
+ */
+export class CensusRunAbort extends Error {}
 /** Longest numbered range the ancestry walk will fetch; beyond it ancestry is unverifiable and a higher snapshot is refused. */
 const ANCESTRY_WALK_MAX = BigInt(arg('--ancestry-walk-max', '250000'));
 /**
@@ -1212,6 +1237,17 @@ const ANCESTRY_WALK_MAX = BigInt(arg('--ancestry-walk-max', '250000'));
  * at ~2/s everywhere, so batching is what makes a long walk feasible.
  */
 const ANCESTRY_BATCH = Number(arg('--ancestry-batch', '25'));
+/**
+ * #2095 r27 — how many consecutive `unknown` failures at single-block reads
+ * the walk tolerates before it gives up. Run 43 lost both bnb-testnet cells
+ * eight hours in: after the batch had shrunk to one, publicnode answered a
+ * few requests with an opaque error and the walk threw on the first, though
+ * the same walk had completed on the same endpoint the run before. A
+ * transient at batch size one is retried with the same growing pause the
+ * rate path uses; `rate` and `range` keep their own handling, and a
+ * `pruned` answer still propagates at once (nothing a retry can change).
+ */
+const ANCESTRY_UNKNOWN_RETRIES = Number(arg('--ancestry-unknown-retries', '8'));
 const ANCESTRY_BATCH_PAUSE_MS = Number(arg('--ancestry-batch-pause-ms', '100'));
 const ANCESTRY_RATE_HITS_MAX = 40;
 /** Batched requests in flight at once during the walk (links are checked in order afterwards); failures shrink the batch, never the concurrency. */
@@ -1228,20 +1264,30 @@ const ANCESTRY_GROW_AFTER = 20;
  * independent lookup of "which hash do you serve at height N" proved nothing
  * about the relationship, which is what an earlier revision relied on.
  */
+/*
+ * Contract of the result (#2095 r27): every `verified: false` RETURN carries
+ * `terminal: true` — the span cap, a committed block above the proposed one, a
+ * different hash at the committed height, a broken parent-hash link, a walk
+ * that ends elsewhere. None of those can change before publication within one
+ * run, so a caller that sees one may abort at once. Transient failures (the
+ * rate budget exhausted, a non-rate error at batch size 1) THROW instead, and
+ * the publication re-walk in `ensureAncestryFor` is the retry for those.
+ */
 export async function verifyAncestryByWalk(rpc, committed, proposed, who) {
   if (committed.height === proposed.number) {
     return committed.hash === String(proposed.hash).toLowerCase()
       ? { verified: true, method: 'same-height', span: 1 }
-      : { verified: false, reason: `same height ${committed.height} but a different hash (${committed.hash} vs ${proposed.hash})` };
+      : { verified: false, terminal: true, reason: `same height ${committed.height} but a different hash (${committed.hash} vs ${proposed.hash})` };
   }
-  if (committed.height > proposed.number) return { verified: false, reason: 'the committed block is higher than the proposed one' };
+  if (committed.height > proposed.number) return { verified: false, terminal: true, reason: 'the committed block is higher than the proposed one' };
   const span = proposed.number - committed.height + 1n;
   if (span > ANCESTRY_WALK_MAX) {
-    return { verified: false, reason: `the ${span}-block range from ${committed.height} to ${proposed.number} exceeds --ancestry-walk-max ${ANCESTRY_WALK_MAX}; raise it deliberately to walk it` };
+    return { verified: false, terminal: true, reason: `the ${span}-block range from ${committed.height} to ${proposed.number} exceeds --ancestry-walk-max ${ANCESTRY_WALK_MAX}; raise it deliberately to walk it` };
   }
   let batchSize = Math.max(1, ANCESTRY_BATCH);
   let pauseMs = ANCESTRY_BATCH_PAUSE_MS;
   let rateHits = 0;
+  let unknownRetries = 0; // #2095 r27 — consecutive opaque failures at single reads
   let refusedAt = Infinity; // the smallest batch size the endpoint has refused; growth stays below it
   let cleanStreak = 0;
   const batcherFor = (n) => createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents, batch: { batchSize: n, wait: 0 } }) });
@@ -1274,7 +1320,16 @@ export async function verifyAncestryByWalk(rpc, committed, proposed, who) {
       // viem's batch decoder reports as an unknown "reading 'error'" failure
       // rather than a rate limit — Tenderly at 25/req); only a failure at
       // single reads propagates, since nothing is left to shrink.
-      if (batchSize === 1 && classifyRpcError(err) !== 'rate') throw err;
+      const cls = classifyRpcError(err);
+      if (batchSize === 1 && cls !== 'rate') {
+        if (cls !== 'unknown' || unknownRetries >= ANCESTRY_UNKNOWN_RETRIES) throw err;
+        unknownRetries += 1;
+        pauseMs = Math.min(pauseMs * 2 || 200, 8_000);
+        process.stderr.write(`census: ${who} — single read failed (${cls}) during the ancestry walk; retrying after ${pauseMs} ms (${unknownRetries}/${ANCESTRY_UNKNOWN_RETRIES})\n`);
+        await sleep(pauseMs);
+        continue; // retry the same range at size one
+      }
+      unknownRetries = 0;
       rateHits += 1;
       if (rateHits > ANCESTRY_RATE_HITS_MAX) throw err;
       refusedAt = Math.min(refusedAt, batchSize);
@@ -1303,17 +1358,17 @@ export async function verifyAncestryByWalk(rpc, committed, proposed, who) {
       const h = String(b.hash).toLowerCase();
       const parent = String(b.parentHash).toLowerCase();
       if (b.number === committed.height && h !== committed.hash) {
-        return { verified: false, reason: `this run's endpoint has ${h} at the committed height ${committed.height}, not the committed ${committed.hash}` };
+        return { verified: false, terminal: true, reason: `this run's endpoint has ${h} at the committed height ${committed.height}, not the committed ${committed.hash}` };
       }
       if (prevHash !== null && parent !== prevHash) {
-        return { verified: false, reason: `parent-hash link broken at ${b.number}: parentHash ${parent} ≠ previous block hash ${prevHash} — a fork or an inconsistent endpoint` };
+        return { verified: false, terminal: true, reason: `parent-hash link broken at ${b.number}: parentHash ${parent} ≠ previous block hash ${prevHash} — a fork or an inconsistent endpoint` };
       }
       prevHash = h;
       fetched += 1n;
     }
   }
   if (prevHash !== String(proposed.hash).toLowerCase()) {
-    return { verified: false, reason: `the walk ended at ${prevHash}, not at the proposed block ${proposed.hash}` };
+    return { verified: false, terminal: true, reason: `the walk ended at ${prevHash}, not at the proposed block ${proposed.hash}` };
   }
   process.stderr.write(`census: ${who} — ancestry verified by parent-hash link walk over ${fetched} block(s) in ${Math.round((Date.now() - started) / 1000)}s\n`);
   return { verified: true, method: 'parent-hash-link-walk', span: fetched };
@@ -1583,7 +1638,22 @@ async function gatherAncestry(chainSlug, who, chosen) {
   try {
     const v = await verifyAncestryByWalk(rpcFor(chainSlug), { height: th, hash: thash }, chosen, who);
     ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, proposed, ...v });
+    // #2095 r27 — a TERMINAL refusal (the span cap, a fork, a hash that is
+    // not the committed one) cannot change before publication, and the
+    // replacement guard will refuse the snapshot with this exact reason; every
+    // state read after this point would be discarded. Run 42 (2026-09-12)
+    // scanned all twenty deployments for six hours and was refused at
+    // publication because arb-sepolia's span exceeded --ancestry-walk-max at
+    // the moment its block was chosen. Refuse HERE, before the first read.
+    if (v.verified === false && v.terminal === true) {
+      throw new CensusRunAbort(
+        `${who}: refusing to continue — the snapshot this run would replace (block ${th}, ${thash}) cannot be shown to be an ancestor of ` +
+          `the chosen block ${proposed.number}: ${v.reason}. The replacement guard would refuse the result at publication, so the run stops now ` +
+          `rather than after the reads. A span cap is raised deliberately with --ancestry-walk-max; a fork or a hash mismatch needs a different endpoint.`,
+      );
+    }
   } catch (err) {
+    if (err instanceof CensusRunAbort) throw err; // terminal — not a transient walk failure
     const reason = `the ancestry walk failed: ${classifyRpcError(err)} — ${err.message?.split('\n')[0]}`;
     process.stderr.write(`census: ${who} — ${reason}\n`);
     ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, proposed, verified: false, reason });
@@ -2230,7 +2300,7 @@ async function censusDeployment(dep) {
       scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
-    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null });
+    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, readFacetAddress: loupeRouted ? (sel) => read('facetAddress', [sel]) : null, who, manifestEntry: dep.manifestEntry ?? null });
   }
 
   const stats = await read('getProtocolStats');
@@ -2801,7 +2871,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, readFacetAddress: loupeRouted ? (sel) => read('facetAddress', [sel]) : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
 }
 
 /**
@@ -2992,6 +3062,7 @@ async function main() {
       results.push(r);
       byAddress.set(addrKey, r);
     } catch (err) {
+      if (err instanceof CensusRunAbort) throw err; // #2095 r27 — the run stops; nothing after this read would survive publication
       // A lagging replica that outlasted the rotated retries: cap the chain's
       // height at that replica's head (still finalized) and restart the chain
       // there, before the generic pruned → safe downgrade is even considered.

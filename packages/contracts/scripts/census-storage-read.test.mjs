@@ -373,3 +373,17 @@ test('the snapshot getter and the loan getter must attribute to a common layout 
   assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xToken']).shared, true);
   assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xTokenOld']).shared, false, 'a token getter on another layout breaks the exclusion');
 });
+
+test('cutHistoryCompleteness: the recorded diamondCutFacet is exempt from "never added" only when the cut host is resolved (#2095 r27 — facets() may omit it)', () => {
+  const base = { verdict: 'read', cuts: 3, constructorCutSeen: true, addresses: ['0xa', '0xb'], loupe: ['0xa', '0xb'], recordedFacets: ['0xa', '0xb', '0xcut'] };
+  // facets() omitted the cut host and nothing resolved it: the record's cut facet reads as an omitted cut
+  const unresolved = cutHistoryCompleteness({ ...base, cutFacetHost: null });
+  assert.equal(unresolved.complete, false);
+  assert.match(unresolved.reasons.join(';'), /1 facet\(s\) the records name were never added/);
+  // the per-selector lookup named it: the constructor-installed host is exempt and the population is exhaustive
+  const resolved = cutHistoryCompleteness({ ...base, cutFacetHost: '0xCUT' });
+  assert.equal(resolved.complete, true, resolved.reasons.join(';'));
+  // a recorded facet that is NOT the cut host and never appears is still an omission
+  const other = cutHistoryCompleteness({ ...base, recordedFacets: ['0xa', '0xb', '0xcut', '0xghost'], cutFacetHost: '0xcut' });
+  assert.equal(other.complete, false);
+});

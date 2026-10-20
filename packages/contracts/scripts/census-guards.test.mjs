@@ -2,7 +2,7 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert, verifyAncestryByWalk } from './census-grandfathered-custody.mjs';
 import { toFunctionSelector } from 'viem';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
@@ -122,4 +122,23 @@ test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload pr
   // an empty revert is not the fallback either
   assert.equal(isFunctionDoesNotExistRevert({ data: '0x' }), false);
   assert.equal(isFunctionDoesNotExistRevert(null), false);
+});
+
+test('verifyAncestryByWalk: every refusal it can pronounce without the endpoint is TERMINAL (#2095 r27 — run 42 lost six hours to a cap refused only at publication)', async () => {
+  // the span cap — no rpc is touched, so `null` proves the refusal is pronounced before any read
+  const cap = await verifyAncestryByWalk(null, { height: 1n, hash: H(1) }, { number: 10_000_000n, hash: H(2) }, 't');
+  assert.equal(cap.verified, false);
+  assert.equal(cap.terminal, true);
+  assert.match(cap.reason, /exceeds --ancestry-walk-max/);
+  // a committed block above the proposed one
+  const above = await verifyAncestryByWalk(null, { height: 5n, hash: H(1) }, { number: 4n, hash: H(2) }, 't');
+  assert.equal(above.terminal, true);
+  // the same height with a different hash
+  const fork = await verifyAncestryByWalk(null, { height: 5n, hash: H(1) }, { number: 5n, hash: H(2) }, 't');
+  assert.equal(fork.verified, false);
+  assert.equal(fork.terminal, true);
+  // the same height with the committed hash is the one non-refusal that needs no walk
+  const same = await verifyAncestryByWalk(null, { height: 5n, hash: H(1) }, { number: 5n, hash: H(1) }, 't');
+  assert.equal(same.verified, true);
+  assert.equal(same.terminal, undefined);
 });

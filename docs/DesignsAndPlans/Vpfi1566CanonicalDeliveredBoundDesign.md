@@ -6259,9 +6259,70 @@ candidates file), reporting ref-derived ones as advisory. And the standard
 itself is now `--proof-standard provenance|routed`, recorded on the artifact
 and every result: `provenance` (the default this PR ships) withholds a
 verdict on an unattributed facet or an incomplete population; `routed` —
-the programme's ratified standard — records the same provenance verdict
-beside a routed proof without gating on it. Ratifying one is a flag, not a
-change of evidence. The first smoke of the population gate showed its
+the standard the programme had ratified before 2026-09-12 — records the
+same provenance verdict beside a routed proof without gating on it.
+Ratifying one is a flag, not a change of evidence.
+
+**RATIFIED 2026-09-12 (owner): the PROVENANCE standard governs every
+deployment, testnet and mainnet alike.** A routed enumeration certifies a
+deployment empty only when every facet that ever wrote to it is attributed
+by code hash to a build the repository reproduces; the routed evidence is
+recorded beside a refusal and never gates. Three consequences are stated
+here so they are not rediscovered: the live base-sepolia and arb-sepolia
+Diamonds stay indeterminate permanently, because their July–September
+in-place refreshes ran from working trees no commit reproduces, and the
+remedy is a fresh deploy from a committed, stamped tree — which starts an
+attributable history and is also the cleanest vehicle for the closure-3
+refresh that is on `main` and on no deployed chain; mainnet pays nothing for
+the standard, because the deploy scripts refuse to broadcast from a dirty
+source tree, so every mainnet history is attributable by construction; and
+the headline this programme reports is the provenance count, never the
+routed one. The pruned-endpoint half — exhaustiveness of a cut history on an
+endpoint that drops old logs — needs no further decision under this
+standard: a population the endpoint cannot prove exhaustive stays
+indeterminate, with the routed verdict recorded beside it. Recorded on
+#1566 the same day.
+
+**Run 42 (2026-09-12, the first regeneration from the final code) was refused
+at publication, not at the start, and six hours of reads were discarded.** The
+replacement guard requires the committed artifact's block to be a proven
+ancestor of the new one, by the parent-hash link walk; arb-sepolia produces
+roughly four blocks a second, so the 324,684-block span from the committed
+run-31 block to run 42's exceeded the 250,000-block walk cap. The walk had
+pronounced that refusal when arb-sepolia's block was chosen, in the run's
+first minute, and the run carried the verdict silently to publication. Fixed
+in the same PR: every refusal the walk can pronounce is marked terminal, and a
+terminal refusal at block choice aborts the run before its first read (a
+transient walk failure still defers to the publication re-walk, which is the
+retry for it). The cap is a cost bound, not a soundness rule — run 43 was
+started with `--ancestry-walk-max` raised deliberately, and on a chain at this
+block rate any regeneration more than about seventeen hours after the last
+committed artifact will need the same.
+
+**Run 43 (2026-09-12, the raised cap) covered eighteen of twenty and refused
+to publish, and what it did cover was ZERO proven — both facts were the
+census's own defects, not the deployments'.** The two bnb-testnet cells were
+lost eight hours in: after the ancestry walk had shrunk its batch to a single
+block, the endpoint answered a few requests with an opaque error and the walk
+threw on the first, although the same walk had completed on the same endpoint
+the run before; a transient at single reads now gets a bounded retry budget
+with the rate path's growing pause (`--ancestry-unknown-retries`, default
+eight), while a pruned answer still propagates at once. The zero was the
+population gate: on every fully-read history it refused for "one facet the
+records name was never added", and that facet was the recorded
+`diamondCutFacet` on every Diamond checked. The constructor installs the
+diamondCut selector by writing storage directly, so it never appears as an
+Add — the gate has exempted the cut host for that reason since round 13 —
+but it resolved the host from the loupe's `facets()` list, which does not
+enumerate that constructor-installed host on these deployments, so the
+exemption was empty and the record's cut facet read as an omitted cut. The
+host is now resolved by the per-selector lookup `facetAddress(diamondCut)`,
+which reads the storage the constructor wrote; a unit test pins the rule in
+both directions. The cells on pruned endpoints (sepolia's archives,
+op-sepolia, base-sepolia's May–June archives: "the cut history was empty")
+stay indeterminate under the ratified standard, as §5c above says they must;
+the eighteen-cell partial is retained beside the run logs as evidence and was
+never a candidate for the canonical artifact. The first smoke of the population gate showed its
 cost on a public endpoint: sepolia's three records attribute every facet,
 yet their cut histories come back empty or without the deploy-time cut —
 the endpoint prunes old logs — so the population is not exhaustive and the
