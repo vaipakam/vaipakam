@@ -168,7 +168,9 @@ contract RewardRemittanceLensFacet {
      *         send: the message executes, if at all, behind the old adapter,
      *         whose acknowledgement Base no longer authenticates, and the
      *         reservation needs an operator decision on evidence
-     *         (`finalizeRemitReservation` when delivery is proven,
+     *         (`finalizeRemitReservation` only when the destination receipt
+     *         shows the remittance consumed, since it attests consumption
+     *         with a zero received figure and clears any compensation gate;
      *         `releaseRemitReservation` when it will never execute).
      *
      *         Both are zero for a `remitId` never issued. `sentMessenger` is
