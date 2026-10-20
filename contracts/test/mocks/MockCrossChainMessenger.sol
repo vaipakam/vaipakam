@@ -43,16 +43,11 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
     /// @notice Every message captured by {sendMessage}, in send order.
     Sent[] public sent;
 
-    /// @notice What {destinationOf} reports per destination chain. Unset, it
-    ///         reports this mock as both legs (a declared route), so a test
-    ///         that does not care about routes dispatches as before.
-    struct Route {
-        address remoteMessenger;
-        address remotePeer;
-        bool set;
-    }
-
-    mapping(uint256 => Route) private _routes;
+    /// @notice What {remoteMessengerOf} reports per destination chain. Unset,
+    ///         it reports this mock (a declared adapter), so a test that does
+    ///         not care about routes dispatches as before.
+    mapping(uint256 => address) private _remoteMessenger;
+    mapping(uint256 => bool) private _remoteMessengerSet;
 
     event MessageSent(uint256 indexed index, uint256 indexed destinationChainId);
     event MessageRelayed(uint256 indexed index, address indexed recipient);
@@ -67,10 +62,11 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
         _localChainId = chainId;
     }
 
-    /// @notice #2561 — set the route {destinationOf} reports for `chainId`
-    ///         (zero legs model an undeclared route).
-    function setDestination(uint256 chainId, address remoteMessenger, address remotePeer) external {
-        _routes[chainId] = Route(remoteMessenger, remotePeer, true);
+    /// @notice #2561 — set the adapter {remoteMessengerOf} reports for
+    ///         `chainId` (zero models an undeclared destination).
+    function setRemoteMessenger(uint256 chainId, address remoteMessenger) external {
+        _remoteMessenger[chainId] = remoteMessenger;
+        _remoteMessengerSet[chainId] = true;
     }
 
     function sentCount() external view returns (uint256) {
@@ -130,12 +126,8 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
         return _localChainId;
     }
 
-    function destinationOf(
-        uint256 destinationChainId
-    ) external view override returns (address remoteMessenger, address remotePeer) {
-        Route memory r = _routes[destinationChainId];
-        if (!r.set) return (address(this), address(this));
-        return (r.remoteMessenger, r.remotePeer);
+    function remoteMessengerOf(uint256 destinationChainId) external view override returns (address) {
+        return _remoteMessengerSet[destinationChainId] ? _remoteMessenger[destinationChainId] : address(this);
     }
 
     // ─── Test-driven delivery ───────────────────────────────────────────────

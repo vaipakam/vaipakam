@@ -85,26 +85,19 @@ interface ICrossChainMessenger {
     function localChainId() external view returns (uint256);
 
     /**
-     * @notice Where a message the CALLER sends to `destinationChainId` would
-     *         be delivered right now: the remote adapter this adapter
-     *         addresses on that chain, and the remote contract it declares as
-     *         the caller's channel peer there.
-     * @dev #2561 — lets a domain contract record, at dispatch, the route a
-     *      value-bearing message took, so the record survives a later
-     *      re-pointing of the lane at a redeployed destination. Both are
-     *      plain addresses on the remote chain. Either is zero when that leg
-     *      is not configured (or the caller has no channel); the caller
-     *      decides whether that is acceptable. A view: it never authorises
-     *      anything, it only reports the adapter's configuration.
+     * @notice The adapter this adapter addresses on `destinationChainId`: the
+     *         receiver every message sent there is bound to. Zero when no
+     *         remote adapter is configured for that chain.
+     * @dev #2561 — a message is bound to this adapter and to nothing else:
+     *      which domain contract handles it is resolved on the destination
+     *      when it executes (its `handlerOf` there). So this is the one
+     *      destination fact a sender can record at dispatch that proves where
+     *      the message went, whatever the lane is pointed at later. A view: it
+     *      only reports the adapter's configuration.
      * @param destinationChainId EVM chain id of the destination chain.
-     * @return remoteMessenger The adapter on the destination chain that
-     *         receives the message.
-     * @return remotePeer      The contract on the destination chain declared
-     *         for the caller's channel there.
+     * @return The adapter on the destination chain the message is bound to.
      */
-    function destinationOf(
-        uint256 destinationChainId
-    ) external view returns (address remoteMessenger, address remotePeer);
+    function remoteMessengerOf(uint256 destinationChainId) external view returns (address);
 }
 
 /**

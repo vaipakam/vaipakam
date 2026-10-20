@@ -721,30 +721,41 @@ drain.
 
 **What happens if a mirror is redeployed without the drain** (#2561, on a
 canonical Diamond that carries it). Base records, for every remittance, the
-remote messenger and reward-budget receiver it was sent to;
-`getRemitRoute(remitId)` returns that pair beside the pair the lane names now.
-A remittance sent before the lane was re-pointed landed at the OLD receiver,
-so the new mirror never holds its receipt. The keeper's ack pass then posts an
-ops alert, "Remittance N is still Pending on Base, and the keeper cannot
-acknowledge it", naming both routes, the CCIP message id and the amount, and
-re-posts it daily while the reservation stays Pending. A released remittance
-whose stranded share waits for a late acknowledgement gets the same alert from
-the late path. The keeper does not settle either. The operator's options, on
-the evidence:
+remote messenger the message was bound to; `getRemitRoute(remitId)` returns it
+beside the remote messenger the lane names now. That adapter is the whole
+route: it hands the message to whatever receiver it has registered when the
+message executes. So a mirror redeployed behind the SAME messenger, with the
+receiver re-registered, still receives in-flight messages and nothing is
+alerted. A mirror redeployed with a NEW messenger, and Base's lane re-pointed
+at it, never receives a message bound to the old one, so the new mirror never
+holds its receipt. The keeper's ack pass then posts one ops alert per run,
+"N remittance(s) still Pending on Base were sent through a remote adapter the
+lane no longer names", listing each remittance with the adapter it was sent
+to, the adapter the lane names now (or "no adapter"), the CCIP message id and
+the amount, and re-posts each daily while it stays Pending. A released
+remittance whose stranded share waits for a late acknowledgement gets the same
+kind of alert from the late path, naming the unresolved share. The keeper does
+not settle either. The operator's options, on the evidence:
 
-1. The message executed at the old receiver (check the CCIP explorer for the
-   message id): acknowledge it from the OLD mirror Diamond by hand. Base only
-   accepts acknowledgements from the lane's current peers, so this needs the
-   old remote messenger and channel peer restored on Base's `CcipMessenger`
-   for the duration, then the redeploy's values put back (the recovery shape
-   in AdminConfigurableKnobsAndSwitches, "Rotating a channel peer"). Or
-   finalize it on Base with `finalizeRemitReservation(remitId)`, which records
-   it as delivered without a received figure.
-2. It will never execute: `releaseRemitReservation(remitId)`, no sooner than
-   seven days after the send.
+1. Pending, and the message executed behind the old adapter (check the CCIP
+   explorer for the message id): acknowledge it from the OLD mirror Diamond by
+   hand. Base only accepts acknowledgements from the lane's current peers, so
+   this needs the old remote messenger and channel peer restored on Base's
+   `CcipMessenger` for the duration, then the redeploy's values put back (the
+   recovery shape in AdminConfigurableKnobsAndSwitches, "Rotating a channel
+   peer"). While the old adapter is restored the recorded route is current
+   again, so the keeper clears the alert. Or finalize it on Base with
+   `finalizeRemitReservation(remitId)`, which records it as delivered without
+   a received figure.
+2. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
+   sooner than seven days after the send.
+3. Released, with its stranded share unresolved: a late acknowledgement from
+   the old mirror (as in 1), or `recordRecoveryCeremony` for value a
+   governance ceremony brought back to the Diamond and
+   `recordRecoveryTerminalLoss` for governance-evidenced loss of the rest.
 
 Record whichever was done, by remit id, in the redeploy's release fragment.
-The alert clears on its own once the reservation leaves Pending. A canonical
+The alert clears on its own once the reservation is settled. A canonical
 Diamond deployed before #2561 records no route, so for it the drain above is
 the only safeguard. That was the case for Base Sepolia on 2026-10-17: both the retired
 Diamond `0xd89fd7…b995` and the new one read nonce 0.

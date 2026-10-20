@@ -61,14 +61,16 @@ import {
 } from './db';
 import { discoverWork } from './workQueue';
 import { reportSendError } from './submissionQueue';
-import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
+import { resolveOpsAlert, sendOpsAlertDigest, type OpsAlertEntry } from './opsAlert';
 import {
   readRemitRoutes,
   remitIdOfAlertKey,
   RETIRED_ROUTE_ALERT_REPEAT_SEC,
+  retiredRouteAlertDetail,
+  retiredRouteAlertFooter,
+  retiredRouteAlertHeader,
   retiredRouteAlertKey,
   retiredRouteAlertPattern,
-  retiredRouteAlertText,
 } from './remitRoute';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
@@ -301,10 +303,16 @@ async function ackPending(
 
 /**
  * #2561 — of reservations whose receipt the configured mirror does not hold,
- * report to the operator the ones Base recorded as sent through a route the
- * lane no longer names. No receipt with a current or unrecorded route is the
- * ordinary wait for a delivery in flight, and stays silent. Contained: a
- * failure here is logged and never unwinds the pass.
+ * report to the operator the ones Base recorded as bound to a remote adapter
+ * the lane no longer names. No receipt with a current or unrecorded route is
+ * the ordinary wait for a delivery in flight, and stays silent.
+ *
+ * One digest post per run however many are due (each keeps its own key, so
+ * each re-posts daily and clears on its own), so a redeploy that strands many
+ * remittances costs one bounded post, not one per reservation. A reservation
+ * whose recorded adapter is the lane's again (an operator restored the old
+ * peer to hand-ack it) has its alert cleared, so a later retirement alerts at
+ * once. Contained: a failure here is logged and never unwinds the pass.
  */
 async function alertRetiredRoutes(
   env: Env,
@@ -318,31 +326,42 @@ async function alertRetiredRoutes(
   if (items.length === 0 || Date.now() >= deadline) return;
   try {
     const routes = await readRemitRoutes(publicClient, diamond, items.map((i) => i.remitId), deadline);
+    const entries: OpsAlertEntry[] = [];
+    const nowCurrent: string[] = [];
     for (const { remitId, v } of items) {
       const route = routes.get(remitId);
+      const key = retiredRouteAlertKey(path, baseChainId, diamond, remitId);
+      if (route?.kind === 'current') nowCurrent.push(key);
       if (route?.kind !== 'retired') continue;
-      console.warn(
-        `[keeper] remitAck${path === 'late' ? ' late' : ''} remit=${remitId} dst=${v.dstChainId}: sent through a retired route (messenger ${route.sent.messenger}, receiver ${route.sent.recipient}); the lane now names messenger ${route.live.messenger}, receiver ${route.live.recipient}. Not acknowledgeable by this keeper; operator alerted.`,
-      );
-      // eslint-disable-next-line no-await-in-loop
-      await sendOpsAlert(
-        env,
-        retiredRouteAlertKey(path, baseChainId, diamond, remitId),
-        retiredRouteAlertText({
-          path,
-          baseChainId,
-          remitId,
-          dstChainId: Number(v.dstChainId),
-          sent: route.sent,
-          live: route.live,
-          ccipMessageId: v.ccipMessageId,
-          totalWei: BigInt(v.total),
-        }),
-        RETIRED_ROUTE_ALERT_REPEAT_SEC,
-        Math.floor(Date.now() / 1000),
-        baseChainId,
-      );
+      const detail = retiredRouteAlertDetail({
+        remitId,
+        dstChainId: Number(v.dstChainId),
+        sent: route.sent,
+        live: route.live,
+        ccipMessageId: v.ccipMessageId,
+        totalWei: BigInt(v.total),
+        strandedWei: path === 'late' ? BigInt(v.strandedRecycled ?? 0n) : undefined,
+      });
+      console.warn(`[keeper] remitAck${path === 'late' ? ' late' : ''} remit=${remitId}: retired route — ${detail} Not acknowledgeable by this keeper; operator alerted.`);
+      entries.push({ key, id: `remit ${remitId}`, detail });
     }
+    if (nowCurrent.length > 0) {
+      const open = new Set(await listOpsAlertKeys(env.KEEPER_DB, retiredRouteAlertPattern(path, baseChainId, diamond)));
+      for (const key of nowCurrent) {
+        // eslint-disable-next-line no-await-in-loop
+        if (open.has(key)) await resolveOpsAlert(env, key);
+      }
+    }
+    if (entries.length === 0 || Date.now() >= deadline) return;
+    await sendOpsAlertDigest(
+      env,
+      (count) => retiredRouteAlertHeader(path, baseChainId, count),
+      entries,
+      retiredRouteAlertFooter(path),
+      RETIRED_ROUTE_ALERT_REPEAT_SEC,
+      Math.floor(Date.now() / 1000),
+      baseChainId,
+    );
   } catch (err) {
     console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} retired-route check failed this run: ${(err as Error).message}`);
   }

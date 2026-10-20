@@ -2,25 +2,35 @@
 
 A reward-budget remittance waits on Base, reserved, until the destination
 mirror acknowledges it, and the keeper sends that acknowledgement once the
-mirror shows a receipt. If a mirror is redeployed on its own and Base's lane
-re-pointed at the new one, a remittance sent before that landed at the old
-receiver. The new mirror never holds its receipt, so the keeper waited for
+mirror shows a receipt. If a mirror is redeployed on its own with a new
+messenger and Base's lane re-pointed at it, a remittance sent before that
+executes, if at all, behind the old messenger. The new mirror never holds its
+receipt, so the keeper waited for
 it forever and nothing said so. No live case exists today, but BNB Testnet was
 redeployed on its own on 2026-10-18.
 
-Base now records, for every remittance it sends, the remote messenger and the
-reward-budget receiver the lane named at that moment, and a new read returns
-that record beside the route the lane names now. A remittance is refused,
-before any value moves, when either is undeclared for the destination, and
-the fee quote refuses it by the same rule, so every remittance leaves with a
-route Base can name. The keeper still acknowledges any remittance whose
-receipt the configured mirror holds. When the receipt is missing and the
-recorded route is no longer the lane's, it posts an ops alert instead of
-waiting: the remittance, the destination, both routes, the CCIP message id and
-the amount, and that settling it is an operator decision (finalize on proven
-delivery, release when it will never execute, or acknowledge by hand from the
-old mirror). The alert re-posts daily and clears once the reservation is
-settled. The deployment runbook's drain section now says what to do.
+Base now records, for every remittance it sends, the remote messenger the
+message was bound to, which is the one adapter on the destination that can
+ever execute it. A new read returns that record beside the adapter the lane
+names now. Only the adapter is recorded because it is the whole route: the
+destination adapter hands the message to whichever receiver it has registered
+when the message executes, so a receiver replaced behind the same adapter still
+receives it, and a replaced adapter never will. A remittance is refused, before
+any value moves, when the destination has no remote messenger declared, and the
+fee quote refuses it by the same rule, so every remittance leaves with a route
+Base can name. The keeper still acknowledges any remittance whose receipt the
+configured mirror holds. When the receipt is missing and the recorded adapter
+is no longer the lane's, it posts an ops alert instead of waiting. One post per
+run covers every such remittance on a path, however many there are. Each one is
+listed with its destination, the adapter it was sent to, the adapter the lane
+names now (or that it names none), the CCIP message id and the amount, and for
+a released remittance the stranded share still unresolved. The post says that
+settling it is an operator decision. For a Pending remittance that means
+finalizing on proven delivery or releasing it when it will never execute; for a
+released one, a late acknowledgement or a recovery record (a recovery ceremony
+or a recorded terminal loss). Each remittance's alert re-posts daily and clears
+once it is settled, or once its adapter is the lane's again. The deployment
+runbook's drain section now says what to do.
 
 Base's cross-chain trust is unchanged: it still accepts acknowledgements only
 from the lane's current peers. Recording the route is what makes the case

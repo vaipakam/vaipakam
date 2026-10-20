@@ -30,43 +30,41 @@ library LibRewardRemitDispatch {
     ///      identically wherever the revert originates.
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
     error RemittanceRefundFailed();
-    /// @dev #2561 — the messenger names no remote adapter, or no declared
-    ///      reward-budget receiver, on `dstChainId`. Refused BEFORE any value
-    ///      moves: a remittance must leave with a route Base can name.
-    error RemitRouteUndeclared(uint32 dstChainId, address remoteMessenger, address remoteRecipient);
+    /// @dev #2561 — the messenger names no remote adapter on `dstChainId`.
+    ///      Refused BEFORE any value moves: a remittance must leave bound to
+    ///      an adapter Base can name.
+    error RemitRouteUndeclared(uint32 dstChainId);
 
-    /// @notice #2561 — the route remittance `remitId` was dispatched on, as
-    ///         the messenger reported it at the send. One per dispatch; the
-    ///         same pair is readable afterwards from
-    ///         `RewardRemittanceLensFacet.getRemitRoute`.
+    /// @notice #2561 — the remote adapter remittance `remitId` was bound to,
+    ///         as the messenger reported it at the send. One per dispatch;
+    ///         readable afterwards from `RewardRemittanceLensFacet.getRemitRoute`.
     event RemitRouteRecorded(
         uint256 indexed remitId,
         uint32 indexed dstChainId,
-        address remoteMessenger,
-        address remoteRecipient
+        address remoteMessenger
     );
 
     using SafeERC20 for IERC20;
 
     /**
-     * @notice #2561 — the route a remittance to `dstChainId` takes through
-     *         `messenger` right now: the remote adapter it addresses and the
-     *         reward-budget receiver it declares there.
-     * @dev    The ONE rule for "this remittance has a route Base can name".
-     *         The send ({dispatchRemitTail}) records what it returns, and the
-     *         strict fee dry run (`RewardRemittanceFacet.quoteRemittanceFee`)
-     *         reads it too, so a quote never prices a send this refuses.
-     *         Reverts {RemitRouteUndeclared} when either leg is zero.
+     * @notice #2561 — the remote adapter a remittance to `dstChainId` sent
+     *         through `messenger` right now is bound to.
+     * @dev    The ONE rule for "this remittance has a destination Base can
+     *         name". Only the adapter is recorded because only the adapter is
+     *         bound into the message: which handler receives it is resolved
+     *         on the destination when it executes, so a handler rotated
+     *         behind the same adapter still receives it. The send
+     *         ({dispatchRemitTail}) records what this returns, and the strict
+     *         fee dry run (`RewardRemittanceFacet.quoteRemittanceFee`) calls
+     *         it too, so a quote never prices a send this refuses. Reverts
+     *         {RemitRouteUndeclared} when no adapter is configured.
      */
-    function declaredRoute(
+    function boundRemoteMessenger(
         address messenger,
         uint32 dstChainId
-    ) internal view returns (address remoteMessenger, address remoteRecipient) {
-        (remoteMessenger, remoteRecipient) =
-            ICrossChainMessenger(messenger).destinationOf(dstChainId);
-        if (remoteMessenger == address(0) || remoteRecipient == address(0)) {
-            revert RemitRouteUndeclared(dstChainId, remoteMessenger, remoteRecipient);
-        }
+    ) internal view returns (address remoteMessenger) {
+        remoteMessenger = ICrossChainMessenger(messenger).remoteMessengerOf(dstChainId);
+        if (remoteMessenger == address(0)) revert RemitRouteUndeclared(dstChainId);
     }
 
     /// @notice The gas a reward remittance asks the destination to run its
@@ -134,18 +132,15 @@ library LibRewardRemitDispatch {
         uint256 remitId,
         LibRewardCustody.TransportDraw memory draw
     ) internal returns (bytes32 messageId) {
-        // #2561 — record WHERE the value goes before any of it moves. The lane
-        // can later be re-pointed at a redeployed mirror; the reservation's
-        // receipt and acknowledgement then live on the OLD one, and this
-        // record is what lets anyone see that. A route with an unnamed leg is
+        // #2561 — record WHERE the value goes before any of it moves: the
+        // remote adapter the message is bound to. The lane can later be
+        // re-pointed at a redeployed mirror; the message still executes at
+        // this adapter, so its receipt and acknowledgement live on the OLD
+        // mirror, and this record is what lets anyone see that. No adapter is
         // refused rather than recorded as unknown.
-        (address remoteMessenger, address remoteRecipient) =
-            declaredRoute(messenger, dstChainId);
-        s.remitRoutes[remitId] = LibVaipakam.RemitRoute({
-            remoteMessenger: remoteMessenger,
-            remoteRecipient: remoteRecipient
-        });
-        emit RemitRouteRecorded(remitId, dstChainId, remoteMessenger, remoteRecipient);
+        address remoteMessenger = boundRemoteMessenger(messenger, dstChainId);
+        s.remitRemoteMessenger[remitId] = remoteMessenger;
+        emit RemitRouteRecorded(remitId, dstChainId, remoteMessenger);
 
         // #1566 slice 4 PR B — the tail takes the custody SOURCE as an
         // argument (design §5d): a `Live` draw is bounded and charged

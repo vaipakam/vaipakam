@@ -155,7 +155,7 @@ contract CcipMessenger is
     /// @notice EVM chain id → the CcipMessenger deployed on that chain.
     ///         Outbound, this is the CCIP message receiver; inbound, the
     ///         allowlisted sender. Zero = no peer messenger.
-    mapping(uint256 => address) public remoteMessengerOf;
+    mapping(uint256 => address) public override remoteMessengerOf;
 
     /// @notice channelId → the local domain contract that handles that
     ///         channel's inbound messages. Zero = channel not registered
@@ -542,18 +542,6 @@ contract CcipMessenger is
     /// @inheritdoc ICrossChainMessenger
     function localChainId() external view override returns (uint256) {
         return block.chainid;
-    }
-
-    /// @inheritdoc ICrossChainMessenger
-    /// @dev The channel is the caller's own ({channelOf}), so the peer is the
-    ///      one {_ccipReceive} would accept from that chain on that channel —
-    ///      the same entry, read from the outbound side.
-    function destinationOf(
-        uint256 destinationChainId
-    ) external view override returns (address remoteMessenger, address remotePeer) {
-        remoteMessenger = remoteMessengerOf[destinationChainId];
-        bytes32 channelId = channelOf[msg.sender];
-        if (channelId != bytes32(0)) remotePeer = channelPeerOf[channelId][destinationChainId];
     }
 
     // ─── Inbound — the CCIP receive path ────────────────────────────────────

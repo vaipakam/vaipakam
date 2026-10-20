@@ -2,13 +2,15 @@
 //
 // #2561 — where each reward-budget remittance was actually sent.
 //
-// Base records, at dispatch, the remote messenger and the reward-budget
-// receiver the lane named for the destination (`getRemitRoute`), and reports
-// beside it the pair the lane names NOW. The ack pass reads a remittance's
-// receipt on the mirror Diamond this keeper is configured with. When a mirror
-// is redeployed and the lane re-pointed, a remittance sent before that landed
-// at the OLD receiver, so the new Diamond never holds its receipt and the
-// reservation would wait for an acknowledgement nobody can send.
+// Base records, at dispatch, the remote adapter the remittance's message was
+// bound to (`getRemitRoute`), and reports beside it the adapter the lane names
+// NOW. Only the adapter is recorded because only the adapter is bound into the
+// message: the handler behind it is resolved on the destination when it
+// executes. The ack pass reads a remittance's receipt on the mirror Diamond
+// this keeper is configured with. When a mirror is redeployed and the lane
+// re-pointed, a remittance sent before that executes behind the OLD adapter,
+// so the new Diamond never holds its receipt and the reservation would wait
+// for an acknowledgement nobody can send.
 //
 // This module states which case a reservation is in. It decides nothing about
 // funds: a retired route is reported to the operator with its evidence, and
@@ -28,20 +30,15 @@ const ROUTE_READ_CHUNK = 100;
 const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
 const ZERO = '0x0000000000000000000000000000000000000000';
 
-/** One end of a route: the remote messenger and the receiver behind it. */
-export interface RemitRouteLeg {
-  messenger: Address;
-  recipient: Address;
-}
-
 export type RemitRouteVerdict =
   /** Sent where the lane points now: ack it as usual. */
   | { kind: 'current' }
   /** No route on record: sent before #2561, or a Diamond without the getter.
    *  The route is UNKNOWN, not unchanged; the pass acts as it did before. */
   | { kind: 'unrecorded' }
-  /** Sent to a destination the lane no longer names. */
-  | { kind: 'retired'; sent: RemitRouteLeg; live: RemitRouteLeg }
+  /** Bound to a remote adapter the lane no longer names. `live` is zero when
+   *  the lane names none now. */
+  | { kind: 'retired'; sent: Address; live: Address }
   /** The read failed: nothing is decided about this reservation this run. */
   | { kind: 'unread' };
 
@@ -57,19 +54,10 @@ export function remitRouteVerdict(r: BatchResult | undefined): RemitRouteVerdict
       extractRevertSelector(err) === FUNCTION_DOES_NOT_EXIST_SELECTOR;
     return unrouted ? { kind: 'unrecorded' } : { kind: 'unread' };
   }
-  const [sentMessenger, sentRecipient, liveMessenger, liveRecipient] = r.result as readonly [
-    Address,
-    Address,
-    Address,
-    Address,
-  ];
-  if (same(sentMessenger, ZERO) && same(sentRecipient, ZERO)) return { kind: 'unrecorded' };
-  if (same(sentMessenger, liveMessenger) && same(sentRecipient, liveRecipient)) return { kind: 'current' };
-  return {
-    kind: 'retired',
-    sent: { messenger: sentMessenger, recipient: sentRecipient },
-    live: { messenger: liveMessenger, recipient: liveRecipient },
-  };
+  const [sent, live] = r.result as readonly [Address, Address];
+  if (same(sent, ZERO)) return { kind: 'unrecorded' };
+  if (same(sent, live)) return { kind: 'current' };
+  return { kind: 'retired', sent, live };
 }
 
 /** The route verdict for each id, read in bounded batches on Base. */
@@ -119,33 +107,36 @@ export function remitIdOfAlertKey(key: string): number | undefined {
   return Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
-/** The operator's evidence for one retired-route reservation. States what is
- *  known (where it went, where the lane points, the amount and the message)
- *  and that the keeper will not settle it. */
-export function retiredRouteAlertText(a: {
-  path: 'pending' | 'late';
-  baseChainId: number;
+/** One retired-route reservation, as the alert states it. */
+export interface RetiredRouteEvidence {
   remitId: number;
   dstChainId: number;
-  sent: RemitRouteLeg;
-  live: RemitRouteLeg;
+  sent: Address;
+  live: Address;
   ccipMessageId: string;
   totalWei: bigint;
-}): string {
-  const what =
-    a.path === 'pending'
-      ? `Remittance ${a.remitId} is still Pending on Base`
-      : `Released remittance ${a.remitId} still counts its recycled share as in transit`;
-  const next =
-    a.path === 'pending'
-      ? `If the message executed at the old receiver, finalizeRemitReservation(${a.remitId}) records it as delivered; if it never will, releaseRemitReservation(${a.remitId}) (seven days after the send) releases it.`
-      : `Only a late acknowledgement from the old mirror resolves that share.`;
-  return [
-    `[chain ${a.baseChainId}] ${what}, and the keeper cannot acknowledge it.`,
-    `It was sent to chain ${a.dstChainId} through a destination the lane no longer names, and the mirror the keeper reads holds no receipt for it.`,
-    `Sent to: messenger ${a.sent.messenger}, receiver ${a.sent.recipient}.`,
-    `Lane now: messenger ${a.live.messenger}, receiver ${a.live.recipient}.`,
-    `CCIP message ${a.ccipMessageId}, total ${a.totalWei} VPFI wei.`,
-    `${next} This is an operator decision on evidence; see DeploymentRunbook, "drain the remittances".`,
-  ].join('\n');
+  /** Late path only: the released reservation's stranded share still
+   *  unresolved. */
+  strandedWei?: bigint;
+}
+
+/** The digest heading for `count` retired-route reservations on one path. */
+export function retiredRouteAlertHeader(path: 'pending' | 'late', baseChainId: number, count: number): string {
+  return path === 'pending'
+    ? `[chain ${baseChainId}] ${count} remittance(s) still Pending on Base were sent through a remote adapter the lane no longer names. The mirror the keeper reads holds no receipt for them, so the keeper cannot acknowledge them:`
+    : `[chain ${baseChainId}] ${count} released remittance(s) still count a stranded share as in transit, and were sent through a remote adapter the lane no longer names. The mirror the keeper reads holds no receipt for them:`;
+}
+
+/** The digest footer: what settles each case, and that it is the operator's
+ *  decision. */
+export function retiredRouteAlertFooter(path: 'pending' | 'late'): string {
+  return path === 'pending'
+    ? 'Each message executes, if at all, behind the adapter it was sent to. If it executed there, finalizeRemitReservation(remitId) records it as delivered; if it never will, releaseRemitReservation(remitId) (seven days after the send) releases it. An operator decision on evidence; see DeploymentRunbook, "drain the remittances".'
+    : 'A late acknowledgement from the old mirror resolves the stranded share. So does a recovery record: recordRecoveryCeremony books value a governance ceremony brought back to the Diamond, and recordRecoveryTerminalLoss books governance-evidenced loss of the rest. An operator decision on evidence; see DeploymentRunbook, "drain the remittances".';
+}
+
+/** One reservation's line in the digest: what is known about it. */
+export function retiredRouteAlertDetail(e: RetiredRouteEvidence): string {
+  const stranded = e.strandedWei === undefined ? '' : `, stranded share ${e.strandedWei} VPFI wei still unresolved`;
+  return `to chain ${e.dstChainId}; sent to adapter ${e.sent}, lane now names ${same(e.live, ZERO) ? 'no adapter' : e.live}; CCIP message ${e.ccipMessageId}; total ${e.totalWei} VPFI wei${stranded}.`;
 }
