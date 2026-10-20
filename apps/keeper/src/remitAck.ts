@@ -174,8 +174,9 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
-    await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
+    const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
     await clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
+    await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -257,13 +258,20 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
+  // REPORT EVERYTHING, THEN SEND (Codex #2607 r3). Both paths are read,
+  // classified and reported before any acknowledgement is broadcast, so a slow
+  // or failing send can never spend the deadline an undelivered remittance's
+  // alert needed. Broadcasts are the only open-ended step; every read before
+  // them is batched and bounded.
   // PENDING FIRST, late after (#2497 r13): the Pending acks are the ordinary
   // work — a reservation stays reserved on Base until acked — and the late path
   // is a backlog that can be large, so it gets only what the Pending acks left
   // of the tick's one budget, never the other way round.
-  await ackPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, ackBudget);
-  await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
+  const pending = await planPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
+  const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
   await clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow);
+  await sendPlanned(env, pending, mirrorClients, baseChainId, diamond, ackBudget);
+  await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
 }
 
 /** The rotation order for acknowledgements: never attempted first, then the
@@ -272,7 +280,17 @@ export function ackOrder(ids: readonly number[], attempts: ReadonlyMap<number, {
   return [...ids].sort((a, b) => (attempts.get(a)?.lastAttemptAt ?? 0) - (attempts.get(b)?.lastAttemptAt ?? 0) || a - b);
 }
 
-async function ackPending(
+/** One path's classified work (#2561, Codex #2607 r3): every candidate with
+ *  its receipt read and its undelivered state already reported, waiting only
+ *  on the broadcast. */
+interface AckPlan {
+  late: boolean;
+  candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg: ChainConfig }[];
+  receipts: ReadonlyMap<number, MirrorReceipt | null>;
+  attempts: Awaited<ReturnType<typeof getRemitAckAttempts>>;
+}
+
+async function planPending(
   env: Env,
   publicClient: PublicClient,
   baseChainId: number,
@@ -281,11 +299,10 @@ async function ackPending(
   reservations: ReadonlyMap<number, RemitReservationView>,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number; deadline: number },
-): Promise<void> {
-  if (pendingIds.length === 0) return;
+  deadline: number,
+): Promise<AckPlan | undefined> {
+  if (pendingIds.length === 0) return undefined;
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
-  const now = Math.floor(Date.now() / 1000);
   // CLASSIFY first (Codex #2607 r2): every Pending reservation in the window
   // has its receipt read, whatever the send budget, so the report below covers
   // them all; the budget gates only the broadcast.
@@ -294,29 +311,44 @@ async function ackPending(
     const mirrorCfg = v && mirrorFor(mirrorConfigs, v.dstChainId, remitId);
     return v && mirrorCfg ? [{ remitId, v, mirrorCfg }] : [];
   });
-  const byId = new Map(candidates.map((c) => [c.remitId, c]));
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, ackBudget.deadline);
-  // Least recently attempted first, never-attempted first of all (#2497 r16):
-  // the same rotation rule as the open-work queues. Ascending id order let the
-  // first ids re-take the budget every backoff window while later ones waited
-  // indefinitely.
-  for (const remitId of ackOrder([...byId.keys()], attempts)) {
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
+  await reportUndelivered(env, publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline);
+  return { late: false, candidates, receipts, attempts };
+}
+
+/** Broadcast a plan's acknowledgements within the tick's one budget. Only a
+ *  candidate holding a receipt is sent, and one attempted within the backoff
+ *  waits. Least recently attempted first, never-attempted first of all
+ *  (#2497 r16/r17): ascending id order let the first ids re-take the budget
+ *  every backoff window while later ones waited indefinitely. */
+async function sendPlanned(
+  env: Env,
+  plan: AckPlan | undefined,
+  mirrorClients: Map<number, PublicClient>,
+  baseChainId: number,
+  diamond: Address,
+  ackBudget: { remaining: number; deadline: number },
+): Promise<void> {
+  if (!plan) return;
+  const now = Math.floor(Date.now() / 1000);
+  const byId = new Map(plan.candidates.map((c) => [c.remitId, c]));
+  for (const remitId of ackOrder([...byId.keys()], plan.attempts)) {
     if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
     const c = byId.get(remitId)!;
-    const receipt = receipts.get(remitId);
+    const receipt = plan.receipts.get(remitId);
     if (!receipt) continue;
-    const prior = attempts.get(remitId);
+    const prior = plan.attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
+    const dst = Number(c.v.dstChainId);
     try {
       // eslint-disable-next-line no-await-in-loop
-      const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, remitId, diamond, ackBudget, receipt);
+      const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, remitId, diamond, ackBudget, receipt, plan.late);
       // eslint-disable-next-line no-await-in-loop
-      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, remitId, c.v.dstChainId);
+      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, remitId, dst);
     } catch (err) {
-      reportSendError(`[keeper] remitAck remit=${remitId} dst=${c.v.dstChainId}`, err, `skipped: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] remitAck${plan.late ? ' late' : ''} remit=${remitId} dst=${dst}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
-  await reportUndelivered(env, publicClient, 'pending', baseChainId, diamond, candidates, receipts, ackBudget.deadline);
 }
 
 /** A mirror receipt as `getReceivedRemit` returns it. */
@@ -609,23 +641,24 @@ function mirrorFor(
 /** The late path, CONTAINED (#2497 r5): it is auxiliary to the Pending acks,
  *  so a failure of its own (the release ledger unreadable, say) is reported and
  *  never unwinds the tick before the Pending reservations are acknowledged. */
-async function ackLateDeliveriesContained(...args: Parameters<typeof ackLateDeliveries>): Promise<void> {
+async function planLateDeliveriesContained(...args: Parameters<typeof planLateDeliveries>): Promise<AckPlan | undefined> {
   try {
-    await ackLateDeliveries(...args);
+    return await planLateDeliveries(...args);
   } catch (err) {
     console.error(`[keeper] remitAck late deliveries failed this tick (pending acks continue): ${(err as Error).message}`);
+    return undefined;
   }
 }
 
-async function ackLateDeliveries(
+async function planLateDeliveries(
   env: Env,
   publicClient: PublicClient,
   baseChainId: number,
   diamond: Address,
   mirrorConfigs: Map<number, ChainConfig>,
   mirrorClients: Map<number, PublicClient>,
-  ackBudget: { remaining: number; deadline: number },
-): Promise<void> {
+  deadline: number,
+): Promise<AckPlan | undefined> {
   // DISCOVER new releases into the open-work queue, then WORK a bounded slice
   // of what is open (#2497 r8, `workQueue.ts`): a release leaves only when the
   // chain shows it finished, and one that never does pins no read.
@@ -634,7 +667,7 @@ async function ackLateDeliveries(
     return { items: page.rows.map((r) => ({ item: String(r.remitId), block: r.block, payload: { remitId: r.remitId } })), next: page.next };
   });
   const open = await listOpenWork<{ remitId: number }>(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, LATE_OPEN_SLICE);
-  if (open.length === 0) return;
+  if (open.length === 0) return undefined;
   const ids = open.map((o) => o.payload.remitId);
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
@@ -648,7 +681,7 @@ async function ackLateDeliveries(
         args: [BigInt(id)] as const,
       })),
       `remitAck late deliveries ${i}/${ids.length}`,
-      ackBudget.deadline,
+      deadline,
     );
     res.push(...part);
   }
@@ -664,7 +697,7 @@ async function ackLateDeliveries(
     publicClient as never,
     dsts.map((d) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getCompensationOutstanding' as const, args: [d] as const })),
     'remitAck compensation gates',
-    ackBudget.deadline,
+    deadline,
   );
   const gateOf = new Map(dsts.map((d, i) => [d, gates[i]?.status === 'success' ? BigInt(gates[i].result as bigint) : null]));
   /** `unreadIsHeld`: for RETIREMENT an unread gate counts as held (never
@@ -688,11 +721,9 @@ async function ackLateDeliveries(
     LATE_KIND,
     ids.filter((id, i) => res[i]?.status === 'success' && !fin.has(id)).map(String),
   );
+  // The attempts feed the same rotation rule as the Pending acks (#2497 r17),
+  // applied in `sendPlanned`.
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, ids);
-  const now = Math.floor(Date.now() / 1000);
-  // The same rotation rule as the Pending acks (#2497 r17): least recently
-  // attempted first, so a candidate is never stuck behind ones re-taking the
-  // budget every backoff window.
   // CLASSIFY first (Codex #2607 r2), as on the Pending path: every candidate
   // read this run has its receipt read, whatever the send budget.
   const candidates = ids.flatMap((id, i) => {
@@ -703,25 +734,9 @@ async function ackLateDeliveries(
     const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), id, 'late');
     return mirrorCfg ? [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }] : [];
   });
-  const byId = new Map(candidates.map((c) => [c.remitId, c]));
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, ackBudget.deadline);
-  for (const id of ackOrder([...byId.keys()], attempts)) {
-    if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
-    const c = byId.get(id)!;
-    const receipt = receipts.get(id);
-    if (!receipt) continue;
-    const prior = attempts.get(id);
-    if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, id, diamond, ackBudget, receipt, true);
-      // eslint-disable-next-line no-await-in-loop
-      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, id, Number(c.v.dstChainId));
-    } catch (err) {
-      reportSendError(`[keeper] remitAck late remit=${id}`, err, `skipped: ${(err as Error).message}`, console.log);
-    }
-  }
-  await reportUndelivered(env, publicClient, 'late', baseChainId, diamond, candidates, receipts, ackBudget.deadline);
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
+  await reportUndelivered(env, publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);
+  return { late: true, candidates, receipts, attempts };
 }
 
 /** What a released candidate still waits on, as Base shows it (#2561 r2): the

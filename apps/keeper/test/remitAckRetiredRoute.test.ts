@@ -81,6 +81,7 @@ const F = {
   reservation: fn('getRemitReservation'),
   route: fn('getRemitRoute'),
   received: fn('getReceivedRemit'),
+  quote: fn('quoteRemitAckFee'),
 };
 const sel = (f: AbiFunction | string) => toFunctionSelector(f as never).toLowerCase();
 const SEL = {
@@ -89,6 +90,7 @@ const SEL = {
   reservation: sel(F.reservation),
   route: sel(F.route),
   received: sel(F.received),
+  quote: sel(F.quote),
   gate: sel('function getCompensationOutstanding(uint32) view returns (uint256)'),
   agg: sel(AGGREGATE3 as never),
 };
@@ -130,18 +132,28 @@ type Book = {
   receipt?: boolean;
   /** Open alert keys the keeper database holds. */
   openAlerts?: string[];
+  /** The ledger nonce (default 1: reservation 1 only). */
+  nonce?: number;
+  /** Which reservations' receipts the mirror holds; overrides `receipt`. */
+  receiptIds?: number[];
+  /** Hold the mirror's fee quote this long before it reverts, so the ack
+   *  send runs past the tick's deadline. */
+  slowQuoteMs?: number;
+  /** The tick's deadline, from now (default 60 s). */
+  deadlineInMs?: number;
 };
 
-function install(book: Book): { routeReads: () => number; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
+  const routeIds: number[] = [];
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
     if (s === SEL.cfg) {
       // (reporter, baseChainId, ?, isCanonical, ?): canonical on Base only.
       return { ok: enc(F.cfg, ['0x0000000000000000000000000000000000000000', BASE, 0, rpc === BASE_RPC, 0n]) };
     }
-    if (s === SEL.nonce) return { ok: enc(F.nonce, 1n) };
+    if (s === SEL.nonce) return { ok: enc(F.nonce, BigInt(book.nonce ?? 1)) };
     if (s === SEL.gate) return { ok: `0x${'0'.repeat(64)}` };
     if (s === SEL.reservation) {
       return {
@@ -158,14 +170,19 @@ function install(book: Book): { routeReads: () => number; restore: () => void } 
     if (s === SEL.route) {
       routeReads += 1;
       const { args } = decodeFunctionData({ abi: [F.route] as Abi, data: data as `0x${string}` });
-      expect((args as readonly bigint[])[0]).toBe(1n);
+      routeIds.push(Number((args as readonly bigint[])[0]));
       if (book.route === 'unrouted') return { revert: FUNCTION_DOES_NOT_EXIST };
       const r = book.route;
       return { ok: enc(F.route, [r.sent, r.live]) };
     }
     // The configured mirror holds no receipt for remittance 1 unless the book
     // says it does.
-    if (s === SEL.received) return { ok: tupleOut(F.received, book.receipt ? { receivedAt: 1_700_000_000n, srcChainId: BASE } : {}) };
+    if (s === SEL.received) {
+      const { args } = decodeFunctionData({ abi: [F.received] as Abi, data: data as `0x${string}` });
+      const id = Number((args as readonly unknown[]).find((a) => typeof a === 'bigint'));
+      const held = book.receiptIds ? book.receiptIds.includes(id) : book.receipt;
+      return { ok: tupleOut(F.received, held ? { receivedAt: 1_700_000_000n, srcChainId: BASE } : {}) };
+    }
     return { revert: '0x' };
   };
 
@@ -173,6 +190,9 @@ function install(book: Book): { routeReads: () => number; restore: () => void } 
     const rpc = String(input);
     const body = JSON.parse(init?.body ?? '{}');
     const reqs = Array.isArray(body) ? body : [body];
+    if (book.slowQuoteMs && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
+      await new Promise((r) => setTimeout(r, book.slowQuoteMs));
+    }
     const out = reqs.map((req: { method: string; params?: unknown[]; id?: unknown }) => {
       const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id ?? 1, result });
       if (req.method === 'eth_chainId') return ok(rpc === BASE_RPC ? '0x14a34' : '0x66eee');
@@ -203,7 +223,7 @@ function install(book: Book): { routeReads: () => number; restore: () => void } 
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
@@ -236,7 +256,7 @@ function d1(openAlerts: string[] = []) {
 }
 
 async function tick(book: Book) {
-  const { routeReads, restore } = install(book);
+  const { routeReads, routeIds, restore } = install(book);
   const shared = d1();
   const keeper = d1(book.openAlerts);
   const warns: string[] = [];
@@ -257,7 +277,7 @@ async function tick(book: Book) {
         RPC_BASE_SEPOLIA: BASE_RPC,
         RPC_ARB_SEPOLIA: ARB_RPC,
       } as never,
-      { scheduledTimeMs: undefined, deadlineMs: Date.now() + 60_000 },
+      { scheduledTimeMs: undefined, deadlineMs: Date.now() + (book.deadlineInMs ?? 60_000) },
     );
   } finally {
     restore();
@@ -267,7 +287,7 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads() };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -292,6 +312,25 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(text).toContain('total 5000000000000000000 VPFI wei');
     expect(text).toMatch(/finalizeRemitReservation\(remitId\).*releaseRemitReservation\(remitId\)/s);
     expect(t.errors.join('\n')).not.toMatch(/undelivered/);
+  });
+
+  it('reports an undelivered remittance even when an acknowledgement ahead of it outlives the deadline', async () => {
+    // Reservation 1 holds a receipt, so its ack is sent, and the mirror's fee
+    // quote stalls past the tick's deadline. Reservation 2 has no receipt and a
+    // retired route. Its alert must not depend on the send finishing in time
+    // (Codex #2607 r3): every path is reported before anything is broadcast.
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      receiptIds: [1],
+      route: { sent: OLD, live: NEW },
+      slowQuoteMs: 1_500,
+      deadlineInMs: 1_000,
+    });
+    expect(t.routeIds).toEqual([2]);
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('remit 2');
+    expect(t.alerts[0]).not.toContain('remit 1');
   });
 
   it('says nothing while a delivery on the current route is still in flight', async () => {

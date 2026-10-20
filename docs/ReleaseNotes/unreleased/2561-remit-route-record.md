@@ -20,8 +20,9 @@ any value moves, when the destination has no remote messenger declared, and the
 fee quote refuses it by the same rule, so every remittance leaves with a route
 Base can name. The keeper still acknowledges any remittance whose receipt the
 configured mirror holds. It now reads every receipt it is responsible for each
-run, before it spends its small acknowledgement budget. So a backlog of
-ordinary acknowledgements never hides one it cannot make. A reservation with no
+run and reports what it cannot acknowledge before it sends any
+acknowledgement. So neither a backlog of ordinary acknowledgements nor one slow
+send can hide a remittance it cannot make. A reservation with no
 receipt is reported to ops, never left waiting in silence, in two cases. The
 first is a remittance sent through an adapter the lane no longer names. The
 second is a Pending remittance still without a receipt more than 8 hours after
