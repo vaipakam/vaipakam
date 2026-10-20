@@ -48,7 +48,8 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead, boundedRead, deadlineClient } from './batchRead';
+import { batchedRead, deadlineClient, settledRead } from './batchRead';
+import { readCutoffMs } from './runWindow';
 import type { PassTick } from './passSchedule';
 import {
   discoverReleasedRemits,
@@ -163,10 +164,17 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   if (nonce === 0n) return;
 
   const { frontier, scanCursor } = await getRemitAckScanState(env.KEEPER_DB, baseChainId, diamond);
-  // Mirror clients are built lazily, once per destination chain.
+  // One client per destination chain, bound to the RUN deadline: the plans
+  // read through it only until their read cutoff (`settledRead`), and the
+  // sends reuse it until the deadline.
   const mirrorConfigs = new Map<number, ChainConfig>();
   for (const c of getChainConfigs(env)) mirrorConfigs.set(c.id, c);
   const mirrorClients = new Map<number, PublicClient>();
+  for (const c of mirrorConfigs.values()) mirrorClient(mirrorClients, c, deadline);
+  // The plans stop reading at the read cutoff, abandoning any read still in
+  // flight then (Codex #2607 r7, `runWindow.ts` rule 3), so the sends always
+  // keep their reserve whatever one destination's RPC does.
+  const readCutoff = readCutoffMs(deadline);
   // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
   // more than the cap however its work splits between them.
@@ -174,7 +182,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   if (BigInt(frontier) > nonce) {
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
-    const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+    const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff);
     await Promise.all([
       clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set()),
       alertAndSend(env, baseChainId, diamond, Promise.resolve(undefined), late, mirrorClients, ackBudget, deadline),
@@ -270,8 +278,8 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   // ordinary work — a reservation stays reserved on Base until acked — so the
   // late sends get only what the Pending sends left of the tick's one budget,
   // never the other way round.
-  const pending = planPendingContained(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
-  const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
+  const pending = planPendingContained(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, readCutoff);
+  const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff);
   await Promise.all([
     clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow),
     alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline),
@@ -441,14 +449,16 @@ async function readReceipts(
     g.ids.push(c.remitId);
     byMirror.set(c.mirrorCfg.id, g);
   }
-  // One mirror's reads never wait on another's: a slow destination RPC delays
-  // only its own reservations.
+  // The mirrors are read side by side, each settled by `deadline` (the plan's
+  // read cutoff): a slow destination RPC leaves only its own reservations
+  // unread this run, and never holds the others past the cutoff (Codex #2607
+  // r6/r7). The client is the run-deadline one built for this pass.
   await Promise.all([...byMirror.values()].map(async ({ cfg, ids }) => {
     const client = mirrorClient(clients, cfg, deadline);
     for (let i = 0; i < ids.length; i += RECEIPT_READ_CHUNK) {
       const chunk = ids.slice(i, i + RECEIPT_READ_CHUNK);
       // eslint-disable-next-line no-await-in-loop
-      const res = await boundedRead(
+      const res = await settledRead(
         client as never,
         chunk.map((id) => ({
           address: cfg.diamond as Address,
@@ -779,7 +789,7 @@ async function planLateDeliveries(
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
-    const part = await boundedRead(
+    const part = await settledRead(
       publicClient as never,
       ids.slice(i, i + LATE_READ_CHUNK).map((id) => ({
         address: diamond,
@@ -800,7 +810,7 @@ async function planLateDeliveries(
   // late ack is what clears that gate on Base. One read per destination, not
   // per id; an unread gate counts as held (never retire on an unread value).
   const dsts = [...new Set(res.flatMap((r) => (r?.status === 'success' ? [Number((r.result as RemitReservationView).dstChainId)] : [])))];
-  const gates = await boundedRead(
+  const gates = await settledRead(
     publicClient as never,
     dsts.map((d) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getCompensationOutstanding' as const, args: [d] as const })),
     'remitAck compensation gates',

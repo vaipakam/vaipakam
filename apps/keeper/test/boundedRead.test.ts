@@ -4,7 +4,7 @@
  * reads as unread, never one serial request per entry.
  */
 import { describe, expect, it } from 'vitest';
-import { PastRunDeadline, boundedRead, deadlineClient } from '../src/batchRead';
+import { PastRunDeadline, boundedRead, deadlineClient, settledRead } from '../src/batchRead';
 
 function client(behaviour: 'reject' | 'ok') {
   const calls = { multicall: 0, readContract: 0 };
@@ -43,6 +43,25 @@ describe('boundedRead', () => {
   it('reads normally inside the deadline', async () => {
     const { c } = client('ok');
     const res = await boundedRead(c, contracts, 'test', Date.now() + 60_000);
+    expect(res.every((r) => r.status === 'success')).toBe(true);
+  });
+});
+
+describe('settledRead — a read in flight at the deadline is abandoned (Codex #2607 r7)', () => {
+  const contracts = Array.from({ length: 3 }, () => ({}));
+
+  it('settles at the deadline as unread when the aggregate is still in flight', async () => {
+    const stalled = { multicall: () => new Promise(() => {}), readContract: async () => 1 };
+    const started = Date.now();
+    const res = await settledRead(stalled as never, contracts, 'test', Date.now() + 100);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(res).toHaveLength(3);
+    expect(res.every((r) => r.status === 'failure')).toBe(true);
+  });
+
+  it('returns the read itself when it answers in time', async () => {
+    const { c } = client('ok');
+    const res = await settledRead(c, contracts, 'test', Date.now() + 60_000);
     expect(res.every((r) => r.status === 'success')).toBe(true);
   });
 });

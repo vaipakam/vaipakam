@@ -157,6 +157,35 @@ export async function boundedRead(
   return batchedRead(client, contracts, label, undefined, 'unread');
 }
 
+/**
+ * {@link boundedRead} that also SETTLES by `deadline` (Codex #2607 r7): a read
+ * still in flight then is abandoned, and its entries read as failures like any
+ * other unread value. `boundedRead` refuses to START a read past its deadline
+ * but awaits one already started, so a single slow RPC can hold its caller
+ * well past it; a read phase that feeds sends must not be held so
+ * (`runWindow.ts` rule 3). The abandoned request finishes in the background
+ * and its answer is dropped.
+ */
+export async function settledRead(
+  client: ReturnType<typeof createPublicClient>,
+  contracts: readonly unknown[],
+  label: string,
+  deadline: number,
+): Promise<BatchResult[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cut = new Promise<BatchResult[]>((resolve) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label}: still in flight at the read deadline — read next run`);
+      resolve(contracts.map(() => ({ status: 'failure' as const, error })));
+    }, Math.max(0, deadline - Date.now()));
+  });
+  try {
+    return await Promise.race([boundedRead(client, contracts, label, deadline), cut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** A read refused because the pass's run deadline has passed (#2497 re-cut). */
 export class PastRunDeadline extends Error {}
 

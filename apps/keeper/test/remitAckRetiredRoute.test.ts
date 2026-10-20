@@ -44,6 +44,12 @@ vi.mock('../src/epochFence', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/epochFence')>()),
   assertEpochsHold: async () => {},
 }));
+// A short send reserve, so the stalls below can outlast the read cutoff
+// (deadline − 500 ms) and the deadline itself within a fast test.
+vi.mock('../src/runWindow', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/runWindow')>()),
+  readCutoffMs: (deadlineMs: number) => deadlineMs - 500,
+}));
 
 const AGGREGATE3 = {
   type: 'function',
@@ -414,6 +420,26 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
       deadlineInMs: 1_000,
     });
     expect(t.quotes).toBeGreaterThan(0);
+  });
+
+  it('a mirror read still in flight at the read cutoff is abandoned, so another mirror is still acknowledged', async () => {
+    // Reservation 1 goes to Arbitrum Sepolia and holds its receipt there.
+    // Reservation 2 goes to Base Sepolia, configured as a mirror too, whose
+    // receipt read stalls past the deadline. That read is abandoned at the
+    // read cutoff, so reservation 1's ack is still sent before the deadline,
+    // and nothing is decided about 2 (Codex #2607 r7).
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      receiptIds: [1],
+      dstById: { 2: BASE },
+      route: { sent: OLD, live: NEW },
+      slowReceipt: { id: 2, ms: 1_500 },
+      deadlineInMs: 1_000,
+    });
+    expect(t.quotes).toBeGreaterThan(0);
+    expect(t.routeIds).toEqual([]);
+    expect(t.alerts).toEqual([]);
   });
 
   it('alerts a remittance to a chain the keeper has no RPC for, and reads no route for it', async () => {

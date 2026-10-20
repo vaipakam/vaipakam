@@ -25,7 +25,9 @@ reservation in that run's slice, which is up to 200 in-flight reservations and
 works the two kinds side by side. Each kind's alerts go out as soon as that
 kind is classified, alongside its acknowledgements, and the released backlog
 never holds up the in-flight acknowledgements, which keep first call on the
-run's send budget. So neither a backlog, nor a slow destination, nor a slow
+run's send budget. Its reads stop early enough to leave the acknowledgements
+time, and a destination whose read is still unanswered then is left unread
+for that run rather than waited on. So neither a backlog, nor a slow destination, nor a slow
 send, nor a slow alert channel can hide a remittance it cannot make or hold up
 one it can. An alert is still sent when the keeper cannot read its record of
 open alerts, or its record of past acknowledgement attempts; in that second

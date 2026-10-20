@@ -17,6 +17,10 @@
  *   3. A pass that reads before it sends stops reading early enough to leave
  *      its sends time ({@link readCutoffMs}). Otherwise a slow read phase uses
  *      the whole window, every send is refused, and the next run repeats it.
+ *      Refusing new reads at the cutoff is not enough on its own: a read
+ *      already in flight can outlast it, so a read phase whose callers must
+ *      not wait past the cutoff reads through `settledRead` (`batchRead.ts`),
+ *      which abandons such a read at the cutoff.
  *
  * Leaf module: no keeper imports, so any pass (and the schedule) can use it.
  */

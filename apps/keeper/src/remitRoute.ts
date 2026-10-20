@@ -30,7 +30,7 @@
 import type { Abi, Address, PublicClient } from 'viem';
 import { RewardRemittanceLensFacetABI } from '@vaipakam/contracts/abis';
 import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
-import { boundedRead, type BatchResult } from './batchRead';
+import { settledRead, type BatchResult } from './batchRead';
 
 const LENS_ABI = RewardRemittanceLensFacetABI as Abi;
 /** Route reads per `aggregate3` (#1946). */
@@ -80,7 +80,7 @@ export async function readRemitRoutes(
   for (let i = 0; i < ids.length; i += ROUTE_READ_CHUNK) {
     const chunk = ids.slice(i, i + ROUTE_READ_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const res = await boundedRead(
+    const res = await settledRead(
       client as never,
       chunk.map((id) => ({
         address: diamond,
