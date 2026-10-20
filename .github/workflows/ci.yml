@@ -648,6 +648,9 @@ jobs:
           fi
           git show "$BASE_SHA:$golden" > "$RUNNER_TEMP/base-layout.golden.json"
           echo "STORAGE_LAYOUT_BASE=$RUNNER_TEMP/base-layout.golden.json" >> "$GITHUB_ENV"
+          # This comparison gates a MERGE, so it reads breaks.ack.json; the
+          # deploy-time comparison against a chain's own layout never does.
+          echo "STORAGE_LAYOUT_HONOUR_ACKS=1" >> "$GITHUB_ENV"
           echo "Comparing against the layout committed at $BASE_SHA."
 
       - name: Pre-deploy check (deploy-sanity suite)

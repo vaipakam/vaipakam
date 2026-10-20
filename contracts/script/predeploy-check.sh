@@ -16,6 +16,11 @@
 #       and every namespaced storage struct and UUPS implementation is a
 #       listed root. With STORAGE_LAYOUT_BASE=<golden file> it also checks
 #       append-only against that base (CI passes the PR base's file).
+#       Acknowledged breaks (storage-layout/breaks.ack.json) are read only
+#       when STORAGE_LAYOUT_HONOUR_ACKS=1, which CI's pull-request check
+#       sets. Never set it for a comparison against a deployed chain's
+#       layout: an acknowledged break is still one no chain may be upgraded
+#       in place across.
 #
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*):
@@ -117,6 +122,9 @@ else
   LAYOUT_ARGS=(check --out "$CONTRACTS_DIR/out")
   if [ -n "${STORAGE_LAYOUT_BASE:-}" ]; then
     LAYOUT_ARGS+=(--base "$STORAGE_LAYOUT_BASE")
+    if [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" = "1" ]; then
+      LAYOUT_ARGS+=(--honour-acks)
+    fi
   fi
   if node "$SCRIPT_DIR/storage-layout-guard.mjs" "${LAYOUT_ARGS[@]}"; then
     : # the script prints its own lines

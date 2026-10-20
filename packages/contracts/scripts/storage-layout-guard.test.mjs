@@ -7,31 +7,43 @@
 // own Keccak-256 against.
 //
 // The layouts below are hand-built in the shape solc's `storageLayout` output
-// takes, so each case states exactly which compiler fact changed.
+// takes, so each case states exactly which compiler fact changed. The source
+// checks read solc's AST, so their cases use a real one: fixtures/
+// storage-layout-guard/ast.json, generated from the .sol files beside it by
+// regen.mjs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { keccak256 as viemKeccak, toHex, encodeAbiParameters } from 'viem';
 import {
   applyRenames,
   appendOnlyVerdict,
-  CONTRACTS_DIR,
-  enumMembers,
+  contractArtifact,
   erc7201,
   GOLDEN_FILE,
   keccak256,
   ledgerFromLayout,
+  loadBuild,
+  parseArgs,
+  pointerProblems,
   positionOf,
   readAcks,
   readRenames,
+  readRoots,
   ROOTS_FILE,
   sha256,
   storagePointers,
-  stripComments,
+  typeIndex,
   uupsContracts,
 } from '../../../contracts/script/storage-layout-guard.mjs';
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'storage-layout-guard');
+const AST = JSON.parse(readFileSync(join(FIXTURES, 'ast.json'), 'utf8')).units;
+const FIXTURE_SOURCE = readFileSync(join(FIXTURES, 'Fixture.sol'));
 
 // ─── Layout builders ─────────────────────────────────────────────────────
 
@@ -82,7 +94,7 @@ function probeLayout(fields, extraTypes = {}) {
 
 const ledger = (layout, opts = { probe: true }) => {
   const l = ledgerFromLayout('ns', layout, opts);
-  return { layout: [...l.layout], enums: [...l.enums] };
+  return { layout: [...l.layout], enums: [...l.enums], valueTypes: [...l.valueTypes] };
 };
 const verdict = (before, after, opts = { probe: true }, extra = {}) => appendOnlyVerdict(ledger(before, opts), ledger(after, opts), extra);
 
@@ -165,6 +177,28 @@ test('a rename rewrites the nested lines of the renamed field', () => {
   const lines = ['M|ns|0|0|uint256|byId', 'L|ns@0[uint256]|0|0|uint256|byId[].a', 'L|ns|1|0|uint256|byIdCount'];
   const r = { region: 'ns', slot: '0', offset: 0, from: 'byId', to: 'loans', reason: 'x' };
   assert.deepEqual(applyRenames(lines, [r]), ['M|ns|0|0|uint256|loans', 'L|ns@0[uint256]|0|0|uint256|loans[].a', 'L|ns|1|0|uint256|byIdCount']);
+});
+
+test('an inline struct field is renamed through its container line', () => {
+  const types = { ...BASE_TYPES };
+  struct('t_struct(Inner)2', 'struct Lib.Inner', [['a', 't_uint256'], ['b', 't_uint256']], types);
+  const before = ledger(probeLayout([['cfg', 't_struct(Inner)2'], ['total', 't_uint256']], types));
+  const after = ledger(probeLayout([['config', 't_struct(Inner)2'], ['total', 't_uint256']], types));
+  assert.ok(before.layout.includes('C|ns|0|0|cfg'));
+  assert.equal(appendOnlyVerdict(before, after).breaks.length, 3, 'undeclared: the container and both members');
+  const r = { region: 'ns', slot: '0', offset: 0, from: 'cfg', to: 'config', reason: 'same struct, new name' };
+  assert.deepEqual(appendOnlyVerdict(before, after, { renames: [r] }).breaks, []);
+});
+
+test('a fixed array of structs is renamed through its container line', () => {
+  const types = { ...BASE_TYPES };
+  struct('t_struct(Inner)2', 'struct Lib.Inner', [['a', 't_uint256']], types);
+  types['t_array(t_struct(Inner)2)3_storage'] = { encoding: 'inplace', base: 't_struct(Inner)2', label: 'struct Lib.Inner[3]', numberOfBytes: '96' };
+  const before = ledger(probeLayout([['legs', 't_array(t_struct(Inner)2)3_storage']], types));
+  const after = ledger(probeLayout([['parts', 't_array(t_struct(Inner)2)3_storage']], types));
+  const r = { region: 'ns', slot: '0', offset: 0, from: 'legs', to: 'parts', reason: 'same array, new name' };
+  assert.ok(appendOnlyVerdict(before, after).breaks.length > 0);
+  assert.deepEqual(appendOnlyVerdict(before, after, { renames: [r] }).breaks, []);
 });
 
 test('a rename applies only to a ledger that has the field at its anchor', () => {
@@ -266,17 +300,29 @@ test('shrinking a __gap by the wrong amount moves the field after it', () => {
 
 // ─── Enums, probes ───────────────────────────────────────────────────────
 
-test('enum members come from the declaring library and reordering them breaks', () => {
-  const src = (body) => ({ 'src/Lib.sol': stripComments(`library Lib { /* enum Status { X } */ enum Status { ${body} } }`) });
-  const ledgerOf = (body) => enumMembers('enum Lib.Status', src(body)).map((m, i) => `E|enum Lib.Status|${i}|${m}`);
-  assert.deepEqual(enumMembers('enum Lib.Status', src('Active, Repaid')), ['Active', 'Repaid']);
-  assert.deepEqual(appendOnlyVerdict({ layout: ledgerOf('Active, Repaid') }, { layout: ledgerOf('Active, Repaid, Settled') }).breaks, []);
-  assert.deepEqual(appendOnlyVerdict({ layout: ledgerOf('Active, Repaid') }, { layout: ledgerOf('Repaid, Active') }).breaks.length, 2);
+test('enum members and value types come from the compiler\'s declarations', () => {
+  const types = typeIndex([AST['Fixture.sol']]);
+  assert.deepEqual(types.enums.get('LibFixture.Status'), ['Active', 'Repaid']);
+  assert.equal(types.valueTypes.get('LibFixture.Amount'), 'uint128');
+  const ledgerOf = (members) => members.map((m, i) => `E|enum Lib.Status|${i}|${m}`);
+  assert.deepEqual(appendOnlyVerdict({ layout: ledgerOf(['Active', 'Repaid']) }, { layout: ledgerOf(['Active', 'Repaid', 'Settled']) }).breaks, []);
+  assert.deepEqual(appendOnlyVerdict({ layout: ledgerOf(['Active', 'Repaid']) }, { layout: ledgerOf(['Repaid', 'Active']) }).breaks.length, 2);
   assert.ok(ledger(probeLayout([['status', 't_enum(Status)1']])).enums.includes('enum Lib.Status'));
 });
 
-test('an enum declared twice in its scope is refused', () => {
-  assert.throws(() => enumMembers('enum Lib.Status', { a: 'library Lib { enum Status { A } }', b: 'library Lib { enum Status { B } }' }), /exactly one/);
+test('an enum or value type declared twice is ambiguous, not guessed', () => {
+  const types = typeIndex([AST['Fixture.sol'], AST['Fixture.sol']]);
+  assert.equal(types.enums.get('LibFixture.Status'), null);
+  assert.equal(types.valueTypes.get('LibFixture.Amount'), null);
+});
+
+test('a value type records what it wraps, so a retype of the same width breaks', () => {
+  const udvt = { 't_userDefinedValueType(Amount)9': { encoding: 'inplace', label: 'Lib.Amount', numberOfBytes: '16' } };
+  const l = ledger(probeLayout([['amount', 't_userDefinedValueType(Amount)9']], udvt));
+  assert.deepEqual(l.valueTypes, ['Lib.Amount']);
+  // The layout line is the same whatever Amount wraps; the U line is not.
+  const v = appendOnlyVerdict({ layout: [...l.layout, 'U|Lib.Amount|uint128'] }, { layout: [...l.layout, 'U|Lib.Amount|int128'] });
+  assert.deepEqual(v.breaks, ['U|Lib.Amount|uint128']);
 });
 
 test('a probe must declare exactly one struct at slot 0', () => {
@@ -303,22 +349,21 @@ test('erc7201 matches the EIP example and a viem derivation', () => {
   assert.equal(erc7201(id), expected);
 });
 
-test('positionOf evaluates the three forms the tree uses', () => {
-  assert.equal(positionOf('P', 'bytes32 constant P = keccak256("a.b");'), viemKeccak(toHex('a.b')));
-  assert.equal(
-    positionOf('P', 'bytes32 private constant P = keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff));'),
-    '0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500',
-  );
-  const lit = '0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500';
-  assert.equal(positionOf('P', `/// keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff))\nbytes32 constant P = ${lit};`), lit);
+test('positionOf evaluates the forms the tree uses, from the AST', () => {
+  const unit = AST['Fixture.sol'];
+  const ozFormula = (id) => {
+    const inner = BigInt(viemKeccak(toHex(id))) - 1n;
+    return toHex(BigInt(viemKeccak(encodeAbiParameters([{ type: 'uint256' }], [inner]))) & ~0xffn, { size: 32 });
+  };
+  assert.equal(positionOf('A_POS', unit, FIXTURE_SOURCE), ozFormula('fixture.a'));
+  assert.equal(positionOf('B_POS', unit, FIXTURE_SOURCE), viemKeccak(toHex('fixture.b')));
+  assert.equal(positionOf('C_POS', unit, FIXTURE_SOURCE), ozFormula('fixture.c'));
+  assert.equal(positionOf('D_POS', unit, FIXTURE_SOURCE), ozFormula('fixture.c'), 'a constant defined as another constant');
+  assert.throws(() => positionOf('NOPE', unit, FIXTURE_SOURCE), /exactly one constant/);
 });
 
 test('a literal position that disagrees with its own ERC-7201 comment is refused', () => {
-  const wrong = '0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab600';
-  assert.throws(
-    () => positionOf('P', `/// keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff))\nbytes32 constant P = ${wrong};`),
-    /comment derives/,
-  );
+  assert.throws(() => positionOf('WRONG_POS', AST['Fixture.sol'], FIXTURE_SOURCE), /comment derives/);
 });
 
 test('a changed namespace position is a break', () => {
@@ -326,33 +371,150 @@ test('a changed namespace position is a break', () => {
   assert.deepEqual(v.breaks, ['P|ns|0x01']);
 });
 
-// ─── Completeness helpers ────────────────────────────────────────────────
+// ─── Completeness: storage pointers ──────────────────────────────────────
 
-test('uupsContracts follows inheritance and skips abstract bases', () => {
-  const sources = {
-    'a.sol': 'abstract contract Base is Initializable, UUPSUpgradeable { }',
-    'b.sol': 'contract Child is Base, Ownable { }\ncontract Direct is\n  UUPSUpgradeable\n{ }',
-    'c.sol': '// contract Commented is UUPSUpgradeable {}\ncontract Plain is Ownable { }',
+const pointersOf = (name) => {
+  // The fixture's unit with every function but `name` taken out.
+  const ast = AST['Fixture.sol'];
+  return storagePointers({ ...ast, nodes: ast.nodes.map((c) => (c.nodes ? { ...c, nodes: c.nodes.filter((n) => n.nodeType !== 'FunctionDefinition' || n.name === name) } : c)) });
+};
+
+test('storagePointers resolves a constant, a local, and a constant defined as another', () => {
+  assert.deepEqual(pointersOf('direct').map(({ struct, constant }) => ({ struct, constant })), [{ struct: 'LibFixture.S', constant: 'A_POS' }]);
+  assert.deepEqual(pointersOf('viaLocal').map(({ struct, constant }) => ({ struct, constant })), [{ struct: 'LibFixture.S', constant: 'B_POS' }]);
+  assert.deepEqual(pointersOf('viaConstantAlias').map(({ struct, constant }) => ({ struct, constant })), [{ struct: 'LibFixture.S', constant: 'D_POS' }]);
+  assert.deepEqual(pointersOf('otherView').map(({ struct, constant }) => ({ struct, constant })), [{ struct: 'LibFixture.Other', constant: 'A_POS' }]);
+});
+
+test('storagePointers ignores a read of a slot', () => {
+  assert.deepEqual(pointersOf('readOnly'), []);
+});
+
+test('storagePointers reports a position it cannot name', () => {
+  assert.match(pointersOf('fromParameter')[0].error, /not a local initialised/);
+  assert.match(pointersOf('computed')[0].error, /not initialised from a named position constant/);
+  assert.match(pointersOf('reassigned')[0].error, /written again/);
+});
+
+test('storagePointers follows a parameterless function that returns a constant, and says it is virtual', () => {
+  const [p] = storagePointers({ ...AST['Fixture.sol'], nodes: AST['Fixture.sol'].nodes.filter((n) => n.name !== 'LibFixture') });
+  assert.equal(p.struct, 'VirtualPosition.V');
+  assert.equal(p.constant, 'V_POS');
+  assert.equal(p.via, '_vPosition');
+});
+
+const NS = { id: 'a', probe: 'ProbeA', positionFile: 'Fixture.sol', positionConstant: 'A_POS' };
+const at = (p) => ({ ...p, file: 'Fixture.sol', at: 'Fixture.sol:1' });
+
+test('every view of a rooted namespace must be the probed struct', () => {
+  const pointers = [at({ struct: 'LibFixture.S', constant: 'A_POS' }), at({ struct: 'LibFixture.Other', constant: 'A_POS' })];
+  const problems = pointerProblems({ namespaces: [NS], probeStructs: { a: 'LibFixture.S' }, pointers, functionFiles: new Map() });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /as LibFixture.Other, but its root probes LibFixture.S/);
+});
+
+test('a pointer no root names, and a root no pointer binds, are both refused', () => {
+  const problems = pointerProblems({ namespaces: [NS], probeStructs: { a: 'LibFixture.S' }, pointers: [at({ struct: 'LibFixture.S', constant: 'B_POS' })], functionFiles: new Map() });
+  assert.equal(problems.length, 2);
+  assert.ok(problems.some((p) => /no namespace root in roots.json names that position/.test(p)));
+  assert.ok(problems.some((p) => /sets no storage pointer from A_POS/.test(p)));
+});
+
+test('a position from an overridden virtual function is refused', () => {
+  const ns = { ...NS, positionConstant: 'V_POS' };
+  const pointer = at({ struct: 'VirtualPosition.V', constant: 'V_POS', via: '_vPosition' });
+  const once = pointerProblems({ namespaces: [ns], probeStructs: { a: 'VirtualPosition.V' }, pointers: [pointer], functionFiles: new Map([['_vPosition', ['Fixture.sol']]]) });
+  assert.deepEqual(once, []);
+  const files = new Map([['_vPosition', ['Fixture.sol', 'Overridden.sol']]]);
+  const problems = pointerProblems({ namespaces: [ns], probeStructs: { a: 'VirtualPosition.V' }, pointers: [pointer], functionFiles: files });
+  assert.ok(problems.some((p) => /virtual and declared 2 times/.test(p)));
+  assert.ok(AST['Overridden.sol'].nodes.some((n) => n.name === 'OverridesPosition'), 'the fixture really overrides it');
+});
+
+// ─── Completeness: artifacts and UUPS ────────────────────────────────────
+
+test('uupsContracts reads proxiableUUID() from the compiler, however the contract reaches it', () => {
+  const c = (name, target, code, uups) => ({ name, target, art: { deployedBytecode: { object: code }, methodIdentifiers: uups ? { 'proxiableUUID()': '52d1902d' } : {} } });
+  const contracts = [
+    c('Qualified', 'src/A.sol', '0x6080', true), // e.g. `is OZ.UUPSUpgradeable`
+    c('AbstractBase', 'src/A.sol', '0x', true),
+    c('Plain', 'src/B.sol', '0x6080', false),
+    c('TestDouble', 'test/C.sol', '0x6080', true),
+  ];
+  assert.deepEqual(uupsContracts(contracts), ['Qualified']);
+});
+
+/** A temporary contracts/ tree with one source and one forge-shaped artifact. */
+function tree({ target = 'src/A.sol', compiledFrom = 'contract A {}', onDisk = compiledFrom, name = 'A' } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'slg-'));
+  const out = join(root, 'out');
+  mkdirSync(join(root, dirname(target)), { recursive: true });
+  if (onDisk !== null) writeFileSync(join(root, target), onDisk);
+  mkdirSync(join(out, `${name}.sol`), { recursive: true });
+  const art = {
+    abi: [{ type: 'function', name: 'f' }],
+    storageLayout: { storage: [], types: {} },
+    metadata: { settings: { compilationTarget: { [target]: name } }, sources: { [target]: { keccak256: keccak256(Buffer.from(compiledFrom)) } } },
+    ast: { nodeType: 'SourceUnit', absolutePath: target, nodes: [] },
   };
-  assert.deepEqual(uupsContracts(sources), ['Child', 'Direct']);
+  writeFileSync(join(out, `${name}.sol`, `${name}.json`), JSON.stringify(art));
+  return { root, out, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test('an artifact compiled from the file on disk is used', () => {
+  const t = tree();
+  try {
+    const build = loadBuild(t.out, { root: t.root });
+    assert.deepEqual(build.problems, []);
+    assert.ok(contractArtifact(build, 'A').storageLayout);
+    assert.ok(build.scope.has('src/A.sol'));
+  } finally {
+    t.cleanup();
+  }
 });
 
-test('storagePointers resolves both pointer forms and ignores comments', () => {
-  const src = `
-    // x.slot := NOT_THIS
-    function a() internal pure returns (Lib.Storage storage s) { bytes32 position = POS_A; assembly { s.slot := position } }
-    function b() private pure returns (GuardianStorage storage $) { assembly { $.slot := POS_B } }`;
-  assert.deepEqual(storagePointers(src), [
-    { struct: 'Storage', constant: 'POS_A' },
-    { struct: 'GuardianStorage', constant: 'POS_B' },
-  ]);
+test('a stale artifact of a file that still exists is refused', () => {
+  const t = tree({ compiledFrom: 'contract A {}', onDisk: 'contract A { uint256 x; }' });
+  try {
+    const build = loadBuild(t.out, { root: t.root });
+    assert.match(build.problems.join('\n'), /was not compiled from the current src\/A.sol/);
+    assert.throws(() => contractArtifact(build, 'A'), /found 0/);
+  } finally {
+    t.cleanup();
+  }
 });
 
-test('storagePointers reports a pointer it cannot resolve', () => {
-  const computed = 'function a() internal pure returns (S storage s) { bytes32 p = keccak256(abi.encode(k)); assembly { s.slot := p } }';
-  assert.match(storagePointers(computed)[0].error, /named position constant/);
-  const foreign = 'function a() internal pure returns (S storage s) { assembly { other.slot := POS } }';
-  assert.match(storagePointers(foreign)[0].error, /returned storage pointer/);
+test('a leftover artifact of a deleted source is never read', () => {
+  const t = tree({ onDisk: null });
+  try {
+    const build = loadBuild(t.out, { root: t.root });
+    assert.deepEqual(build.problems, []);
+    assert.throws(() => contractArtifact(build, 'A'), /found 0/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('a lone artifact compiled outside src/ is never a root', () => {
+  const t = tree({ target: 'test/A.sol' });
+  try {
+    assert.throws(() => contractArtifact(loadBuild(t.out, { root: t.root }), 'A'), /compiled from src\/, found 0/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('an artifact with no metadata is a problem, not a skip', () => {
+  const t = tree();
+  try {
+    const file = join(t.out, 'A.sol', 'A.json');
+    const art = JSON.parse(readFileSync(file, 'utf8'));
+    delete art.metadata;
+    writeFileSync(file, JSON.stringify(art));
+    assert.match(loadBuild(t.out, { root: t.root }).problems.join('\n'), /no metadata/);
+  } finally {
+    t.cleanup();
+  }
 });
 
 // ─── Acknowledgements ────────────────────────────────────────────────────
@@ -377,16 +539,31 @@ test('a malformed acknowledgement is an error, not a silent ack', () => {
   assert.throws(() => readAcks(JSON.stringify({ acks: [{ ...ok, reason: ' ' }] })), /reason/);
 });
 
+// ─── CLI ─────────────────────────────────────────────────────────────────
+
+test('the command line is parsed strictly', () => {
+  assert.deepEqual(parseArgs(['check']), { mode: 'check' });
+  assert.deepEqual(parseArgs(['check', '--base', 'b.json', '--honour-acks', '--out', 'o']), { mode: 'check', base: 'b.json', honourAcks: true, out: 'o' });
+  assert.throws(() => parseArgs(['check', '--base']), /needs a value/);
+  assert.throws(() => parseArgs(['check', '--base', '--out', 'o']), /needs a value/);
+  assert.throws(() => parseArgs(['check', '--bsae', 'b.json']), /unknown argument --bsae/);
+  assert.throws(() => parseArgs(['check', '--out', 'a', '--out', 'b']), /twice/);
+  assert.throws(() => parseArgs(['check', '--honour-acks']), /only to a --base/);
+  assert.throws(() => parseArgs(['write', '--base', 'b.json']), /write takes no/);
+  assert.throws(() => parseArgs(['verify']), /usage/);
+  assert.throws(() => parseArgs([]), /usage/);
+});
+
 // ─── The committed files ─────────────────────────────────────────────────
 
-test('the committed golden file names every root and the positions the sources declare', () => {
+test('the committed golden file names every root and one position per namespace', () => {
   const golden = JSON.parse(readFileSync(GOLDEN_FILE, 'utf8'));
-  const roots = JSON.parse(readFileSync(ROOTS_FILE, 'utf8'));
+  const roots = readRoots(readFileSync(ROOTS_FILE, 'utf8'));
   const expectedRoots = [...roots.namespaces.map((n) => n.id), ...roots.uups.map((c) => `uups:${c}`)].sort();
   assert.deepEqual(golden.roots, expectedRoots);
   for (const ns of roots.namespaces) {
-    const raw = readFileSync(join(CONTRACTS_DIR, ns.positionFile), 'utf8');
-    assert.ok(golden.layout.includes(`P|${ns.id}|${positionOf(ns.positionConstant, raw)}`), `${ns.id} position`);
+    assert.equal(golden.layout.filter((l) => l.startsWith(`P|${ns.id}|`)).length, 1, `${ns.id} position`);
   }
+  for (const e of roots.pointerExemptions) assert.ok(e.reason.length > 40, `${e.file} exemption says why`);
   assert.equal(sha256('x').length, 64);
 });

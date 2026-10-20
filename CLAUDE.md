@@ -491,9 +491,14 @@ duplicate work.
 ## Storage-layout guard (#1274 / #2092)
 
 Every layout that survives an in-place upgrade — the Diamond's namespaced
-storage structs and the 13 UUPS implementations — is listed in
-`contracts/storage-layout/roots.json` and recorded, from the compiler's own
-`storageLayout`, in `contracts/storage-layout/layout.golden.json`.
+storage structs, the 13 UUPS implementations and the OpenZeppelin namespaces
+they use — is listed in `contracts/storage-layout/roots.json` and recorded,
+from the compiler's own `storageLayout`, in
+`contracts/storage-layout/layout.golden.json`. Everything the guard checks
+about the SOURCE (storage pointers, position constants, enum members, value
+types, which contracts are UUPS) it reads from the compiler's AST
+(`ast = true` in foundry.toml), never from the text, and it refuses any
+artifact that was not compiled from the files as they are on disk.
 `predeploy-check.sh` step 1b refuses a tree whose golden file is stale or
 whose roots are incomplete; CI also compares it against the base commit's
 golden file and refuses any change that removes a line (a field moved,
@@ -517,10 +522,15 @@ node contracts/script/storage-layout-guard.mjs write   # commit the golden file 
   `contracts/storage-layout/breaks.ack.json` against the base file's sha256
   (the guard prints it). That records that no chain may be upgraded in place
   across the change; such a chain gets a fresh deploy. Never add an
-  acknowledgement to get a red check green.
+  acknowledgement to get a red check green. Only the merge check reads
+  acknowledgements (CI sets `STORAGE_LAYOUT_HONOUR_ACKS=1`, which passes
+  `--honour-acks`); never set it for a comparison against a deployed chain.
 - **New namespaced struct or UUPS contract → add a root** (and, for a
   namespace, a probe in `src/storage-layout/StorageLayoutProbes.sol`). The
-  guard refuses the tree until you do.
+  guard refuses the tree until you do. Every view of one namespace must be
+  the probed struct; a `.slot :=` file that defines no namespace (a generic
+  accessor taking the slot as a parameter) is listed under
+  `pointerExemptions` with its reason.
 - **Facets declare no state variables.** The guard refuses one that does.
 
 ## Conventions

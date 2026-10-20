@@ -11,19 +11,25 @@
  * field one or more slots away from where it had been written. The repository
  * stated the rule ("append-only post-launch") only in comments.
  *
- * This module turns the rule into a check, from the COMPILER's own layout —
- * never from a reading of the source, which is how a moved field and a renamed
- * one get confused:
+ * This module turns the rule into a check, from the COMPILER's own output and
+ * never from a reading of the source text. Two outputs are read, both from the
+ * forge artifacts in out/: each contract's `storageLayout` (foundry.toml
+ * `extra_output`) for the layouts, and each source's AST (foundry.toml
+ * `ast = true`) for everything about the source itself: storage pointers,
+ * position constants, enum members, value types. The AST is what the compiler
+ * resolved, so formatting, aliases and qualified names cannot hide anything
+ * from it the way they hide things from a text match.
  *
  *   1. Every surviving layout is a ROOT (contracts/storage-layout/roots.json):
- *      each namespaced storage struct of the Diamond, read through a probe
- *      contract (src/storage-layout/StorageLayoutProbes.sol), and each UUPS
+ *      each namespaced storage struct, read through a probe contract
+ *      (src/storage-layout/StorageLayoutProbes.sol), and each UUPS
  *      implementation contract.
- *   2. Each root's `storageLayout` (forge `extra_output`) is flattened into a
- *      LEDGER of lines. A line states one fact a live contract depends on:
- *      this slot/offset in this region holds this type; this mapping is keyed
- *      by this type; this array's elements are this wide; this enum's Nth
- *      member is this name; this namespace sits at this position.
+ *   2. Each root's `storageLayout` is flattened into a LEDGER of lines. A line
+ *      states one fact a live contract depends on: this slot/offset in this
+ *      region holds this type, or starts this struct; this mapping is keyed by
+ *      this type; this array's elements are this wide; this enum's Nth member
+ *      is this name; this value type wraps this type; this namespace sits at
+ *      this position.
  *   3. The rule is set inclusion: every line of the old ledger must still be in
  *      the new one. Appending a field adds lines and removes none. Inserting,
  *      removing, reordering, retyping or resizing an element type removes at
@@ -48,9 +54,10 @@
  * rename of that mapping changes only the paths, never the region.
  *
  * A real break, accepted on purpose, is acknowledged in breaks.ack.json against
- * the exact base file it was measured on, and only CI honours it: an
- * acknowledgement says "nothing may be upgraded in place across this change",
- * which is why the deploy-time check never reads one.
+ * the exact base file it was measured on, and is honoured only when the caller
+ * passes `--honour-acks`, which only CI does: an acknowledgement says "nothing
+ * may be upgraded in place across this change", so a comparison against a
+ * deployed chain's layout must never read one.
  *
  * `__gap` arrays (OpenZeppelin's reserved-space convention, used by several
  * UUPS contracts here) are free space: they contribute no lines, so a new field
@@ -59,12 +66,13 @@
  *
  * CLI (run from anywhere; paths are resolved against the repository):
  *
- *   node contracts/script/storage-layout-guard.mjs write             regenerate the golden file
- *   node contracts/script/storage-layout-guard.mjs check             golden is fresh + tree complete
- *   node contracts/script/storage-layout-guard.mjs check --base <f>  ... and append-only vs <f>
+ *   node contracts/script/storage-layout-guard.mjs write                 regenerate the golden file
+ *   node contracts/script/storage-layout-guard.mjs check                 golden is fresh + tree complete
+ *   node contracts/script/storage-layout-guard.mjs check --base <file>   ... and append-only vs <file>
+ *   ... check --base <file> --honour-acks                                ... with breaks.ack.json (CI only)
  *
  * `--out <dir>` overrides the forge artifact directory (default contracts/out).
- * Anything non-zero must stop the caller.
+ * Any other argument is refused. Anything non-zero must stop the caller.
  *
  * NO DEPENDENCIES, on purpose: it runs inside `predeploy-check.sh`, in CI's
  * contracts-fast job and on a deploy machine, none of which installs the pnpm
@@ -89,10 +97,10 @@ export const RENAMES_FILE = join(LAYOUT_DIR, 'renames.json');
 export const FACETS_FILE = join(REPO_ROOT, 'packages', 'contracts', 'scripts', 'diamond-facets.json');
 export const GOLDEN_FORMAT = 2;
 
-/** The file's text, or `undefined` if it does not exist. One read, no separate existence check. */
-function readIfPresent(path) {
+/** The file's contents, or `undefined` if it does not exist. One read, no separate existence check. */
+function readIfPresent(path, encoding) {
   try {
-    return readFileSync(path, 'utf8');
+    return readFileSync(path, encoding);
   } catch (e) {
     if (e.code === 'ENOENT') return undefined;
     throw e;
@@ -110,29 +118,47 @@ function isValueType(ty) {
 /**
  * Flatten one root's compiler layout into ledger lines. Pure.
  *
+ * Line shapes (`region` is the root id, or a nested region named by the slot
+ * of the field that owns it):
+ *   L|region|slot|offset|type|path      a value of this type, as this field
+ *   C|region|slot|offset|path           an inline struct, or a fixed array of
+ *                                       non-value elements, starts here
+ *   M|region|slot|offset|keyType|path   a mapping keyed by this type
+ *   D|region|slot|offset|path           a dynamic array
+ *   W|elementRegion|bytes               the stride of an array's elements
+ *
+ * `C` lines carry no type. A container's members already state everything its
+ * type does; the line exists so a rename of the container can be anchored on
+ * it like any other field.
+ *
  * @param {string} rootId   region prefix for this root
  * @param {{storage: object[], types: Record<string, object>}} layout
- * @returns {{layout: Set<string>, enums: Set<string>}}
- *          `enums` are the enum type labels the layout uses; their members are
- *          added by the caller, which has the sources.
+ * @returns {{layout: Set<string>, enums: Set<string>, valueTypes: Set<string>}}
+ *          `enums` and `valueTypes` are the enum and user-defined value type
+ *          labels the layout uses; their `E` and `U` lines are added by the
+ *          caller, which has the ASTs.
  */
 export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
   const types = layout.types ?? {};
-  const out = { layout: new Set(), enums: new Set() };
+  const out = { layout: new Set(), enums: new Set(), valueTypes: new Set() };
   const typeOf = (id) => {
     const ty = types[id];
     if (!ty) throw new Error(`${rootId}: storage layout names type ${id} but does not define it`);
     return ty;
+  };
+  const noteValue = (id, ty) => {
+    if (ty.label.startsWith('enum ')) out.enums.add(ty.label);
+    if (id.startsWith('t_userDefinedValueType')) out.valueTypes.add(ty.label);
   };
 
   const member = (region, slot, offset, typeId, path, label) => {
     const ty = typeOf(typeId);
     if (GAP.test(label) && ty.encoding === 'inplace' && ty.base && isValueType(typeOf(ty.base))) return;
     if (ty.encoding === 'mapping') {
-      const key = typeOf(ty.key).label;
-      out.layout.add(`M|${region}|${slot}|${offset}|${key}|${path}`);
-      if (key.startsWith('enum ')) out.enums.add(key);
-      const valueRegion = `${region}@${slot}[${key}]`;
+      const keyType = typeOf(ty.key);
+      out.layout.add(`M|${region}|${slot}|${offset}|${keyType.label}|${path}`);
+      noteValue(ty.key, keyType);
+      const valueRegion = `${region}@${slot}[${keyType.label}]`;
       member(valueRegion, 0n, 0, ty.value, `${path}[]`, '');
     } else if (ty.encoding === 'dynamic_array') {
       const base = typeOf(ty.base);
@@ -143,6 +169,7 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
     } else if (ty.encoding === 'bytes') {
       out.layout.add(`L|${region}|${slot}|${offset}|${ty.label}|${path}`);
     } else if (ty.encoding === 'inplace' && ty.members) {
+      out.layout.add(`C|${region}|${slot}|${offset}|${path}`);
       for (const m of ty.members) {
         member(region, slot + BigInt(m.slot), m.offset, m.type, path ? `${path}.${m.label}` : m.label, m.label);
       }
@@ -150,15 +177,16 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
       const base = typeOf(ty.base);
       if (isValueType(base)) {
         out.layout.add(`L|${region}|${slot}|${offset}|${ty.label}|${path}`);
-        if (base.label.startsWith('enum ')) out.enums.add(base.label);
+        noteValue(ty.base, base);
       } else {
+        out.layout.add(`C|${region}|${slot}|${offset}|${path}`);
         const elemRegion = `${region}@${slot}[${ty.label.match(/\[(\d+)\]$/)?.[1] ?? '?'}]`;
         out.layout.add(`W|${elemRegion}|${base.numberOfBytes}`);
         member(elemRegion, 0n, 0, ty.base, `${path}[]`, '');
       }
     } else if (isValueType(ty)) {
       out.layout.add(`L|${region}|${slot}|${offset}|${ty.label}|${path}`);
-      if (ty.label.startsWith('enum ')) out.enums.add(ty.label);
+      noteValue(typeId, ty);
     } else {
       throw new Error(`${rootId}: unknown storage encoding ${ty.encoding} for ${path}`);
     }
@@ -180,88 +208,11 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
   return out;
 }
 
-// ─── Sources: enum members, namespace positions, completeness ────────────
-
-/** Strip // and /* *\/ comments, keeping string literals intact. Pure. */
-export function stripComments(src) {
-  let out = '';
-  for (let i = 0; i < src.length; ) {
-    const c = src[i];
-    if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) j += src[j] === '\\' ? 2 : 1;
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else if (src.startsWith('//', i)) {
-      while (i < src.length && src[i] !== '\n') i++;
-    } else if (src.startsWith('/*', i)) {
-      const end = src.indexOf('*/', i + 2);
-      i = end < 0 ? src.length : end + 2;
-      out += ' ';
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
-}
-
-/**
- * Members of the enum a layout label names, from the sources. Pure over the
- * given `{path: commentFreeSource}` map. `enum LibVaipakam.LoanStatus` is looked
- * up as `enum LoanStatus { … }` in the file that declares `LibVaipakam`; a
- * top-level `enum Foo` in any file. Exactly one declaration must match.
- */
-export function enumMembers(label, sources) {
-  const qualified = label.replace(/^enum /, '');
-  const parts = qualified.split('.');
-  const name = parts.pop();
-  const scope = parts.pop();
-  const decl = new RegExp(`\\benum\\s+${name}\\s*\\{([^}]*)\\}`, 'g');
-  const scopeDecl = scope ? new RegExp(`\\b(library|contract|interface)\\s+${scope}\\b`) : null;
-  const hits = [];
-  for (const [path, src] of Object.entries(sources)) {
-    if (scopeDecl && !scopeDecl.test(src)) continue;
-    for (const m of src.matchAll(decl)) hits.push({ path, body: m[1] });
-  }
-  if (hits.length !== 1) {
-    throw new Error(`${label}: expected exactly one enum declaration, found ${hits.length}${hits.length ? ` (${hits.map((h) => h.path).join(', ')})` : ''}`);
-  }
-  return hits[0].body.split(',').map((s) => s.trim()).filter(Boolean);
-}
-
-/**
- * The bytes32 a position constant evaluates to. Accepts the three forms this
- * tree uses: a literal, `keccak256("…")`, and the ERC-7201 formula
- * `keccak256(abi.encode(uint256(keccak256("…")) - 1)) & ~bytes32(uint256(0xff))`.
- * A literal is checked against the formula in its own `///` comment when there
- * is one, so a hand-typed hash that disagrees with its stated namespace fails.
- * Pure over the raw (comment-bearing) source.
- */
-export function positionOf(constantName, rawSource) {
-  const src = stripComments(rawSource);
-  const m = src.match(new RegExp(`\\bconstant\\s+${constantName}\\s*=\\s*([^;]+);`));
-  if (!m) throw new Error(`position constant ${constantName} not found`);
-  const expr = m[1].replace(/\s+/g, '');
-  const lit = expr.match(/^(0x[0-9a-fA-F]{64})$/);
-  if (lit) {
-    const value = lit[1].toLowerCase();
-    const before = rawSource.slice(0, rawSource.search(new RegExp(`\\bconstant\\s+${constantName}\\b`)));
-    const doc = before.split('\n').slice(-4).join('\n');
-    const ns = doc.match(/keccak256\(abi\.encode\(uint256\(keccak256\("([^"]+)"\)\)\s*-\s*1\)\)\s*&\s*~bytes32\(uint256\(0xff\)\)/);
-    if (ns && erc7201(ns[1]) !== value) {
-      throw new Error(`${constantName} = ${value}, but its comment derives ERC-7201 "${ns[1]}" = ${erc7201(ns[1])}`);
-    }
-    return value;
-  }
-  const plain = expr.match(/^keccak256\("([^"]+)"\)$/);
-  if (plain) return keccak256(utf8(plain[1]));
-  const formula = expr.match(/^keccak256\(abi\.encode\(uint256\(keccak256\("([^"]+)"\)\)-1\)\)&~bytes32\(uint256\(0xff\)\)$/);
-  if (formula) return erc7201(formula[1]);
-  throw new Error(`${constantName}: unsupported position expression ${m[1].trim()}`);
-}
-
 // ─── Keccak-256 (the Ethereum hash, NOT NIST SHA3-256: different padding) ──
+//
+// 64-bit lanes as (lo, hi) pairs of 32-bit words, so the permutation runs on
+// plain integer arithmetic. The guard hashes every source it reads (8 MB here)
+// to prove each artifact was compiled from the file on disk.
 
 const KECCAK_RC = [
   0x0000000000000001n, 0x0000000000008082n, 0x800000000000808an, 0x8000000080008000n,
@@ -271,188 +222,524 @@ const KECCAK_RC = [
   0x8000000000008002n, 0x8000000000000080n, 0x000000000000800an, 0x800000008000000an,
   0x8000000080008081n, 0x8000000000008080n, 0x0000000080000001n, 0x8000000080008008n,
 ];
+const RC_LO = KECCAK_RC.map((r) => Number(r & 0xffffffffn));
+const RC_HI = KECCAK_RC.map((r) => Number(r >> 32n));
 // Rotation offsets r[x][y].
 const KECCAK_ROT = [
   [0, 36, 3, 41, 18], [1, 44, 10, 45, 2], [62, 6, 43, 15, 61], [28, 55, 25, 21, 56], [27, 20, 39, 8, 14],
 ];
-const MASK64 = (1n << 64n) - 1n;
-const rotl64 = (v, n) => (n === 0 ? v : ((v << BigInt(n)) | (v >> BigInt(64 - n))) & MASK64);
 
-function keccakF(a) {
+function keccakF(s) {
+  const c = new Uint32Array(10);
+  const b = new Uint32Array(50);
   for (let round = 0; round < 24; round++) {
-    const c = [0, 1, 2, 3, 4].map((x) => a[x] ^ a[x + 5] ^ a[x + 10] ^ a[x + 15] ^ a[x + 20]);
+    // θ
     for (let x = 0; x < 5; x++) {
-      const d = c[(x + 4) % 5] ^ rotl64(c[(x + 1) % 5], 1);
-      for (let y = 0; y < 5; y++) a[x + 5 * y] ^= d;
-    }
-    const b = new Array(25);
-    for (let x = 0; x < 5; x++) {
-      for (let y = 0; y < 5; y++) b[y + 5 * ((2 * x + 3 * y) % 5)] = rotl64(a[x + 5 * y], KECCAK_ROT[x][y]);
+      c[2 * x] = s[2 * x] ^ s[2 * x + 10] ^ s[2 * x + 20] ^ s[2 * x + 30] ^ s[2 * x + 40];
+      c[2 * x + 1] = s[2 * x + 1] ^ s[2 * x + 11] ^ s[2 * x + 21] ^ s[2 * x + 31] ^ s[2 * x + 41];
     }
     for (let x = 0; x < 5; x++) {
-      for (let y = 0; y < 5; y++) a[x + 5 * y] = b[x + 5 * y] ^ (~b[((x + 1) % 5) + 5 * y] & MASK64 & b[((x + 2) % 5) + 5 * y]);
+      const nl = c[2 * ((x + 1) % 5)];
+      const nh = c[2 * ((x + 1) % 5) + 1];
+      const dl = c[2 * ((x + 4) % 5)] ^ ((nl << 1) | (nh >>> 31));
+      const dh = c[2 * ((x + 4) % 5) + 1] ^ ((nh << 1) | (nl >>> 31));
+      for (let y = 0; y < 5; y++) {
+        s[2 * (x + 5 * y)] ^= dl;
+        s[2 * (x + 5 * y) + 1] ^= dh;
+      }
     }
-    a[0] ^= KECCAK_RC[round];
+    // ρ and π
+    for (let x = 0; x < 5; x++) {
+      for (let y = 0; y < 5; y++) {
+        const src = 2 * (x + 5 * y);
+        const dst = 2 * (y + 5 * ((2 * x + 3 * y) % 5));
+        const n = KECCAK_ROT[x][y];
+        const lo = s[src];
+        const hi = s[src + 1];
+        if (n === 0) {
+          b[dst] = lo;
+          b[dst + 1] = hi;
+        } else if (n < 32) {
+          b[dst] = (lo << n) | (hi >>> (32 - n));
+          b[dst + 1] = (hi << n) | (lo >>> (32 - n));
+        } else if (n === 32) {
+          b[dst] = hi;
+          b[dst + 1] = lo;
+        } else {
+          b[dst] = (hi << (n - 32)) | (lo >>> (64 - n));
+          b[dst + 1] = (lo << (n - 32)) | (hi >>> (64 - n));
+        }
+      }
+    }
+    // χ
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 5; x++) {
+        const i = 2 * (x + 5 * y);
+        const i1 = 2 * (((x + 1) % 5) + 5 * y);
+        const i2 = 2 * (((x + 2) % 5) + 5 * y);
+        s[i] = b[i] ^ (~b[i1] & b[i2]);
+        s[i + 1] = b[i + 1] ^ (~b[i1 + 1] & b[i2 + 1]);
+      }
+    }
+    // ι
+    s[0] ^= RC_LO[round];
+    s[1] ^= RC_HI[round];
   }
 }
 
 /** Keccak-256 of a byte array, as a 0x-prefixed 32-byte hex string. Pure. */
 export function keccak256(bytes) {
   const rate = 136;
-  const padded = new Uint8Array(Math.ceil((bytes.length + 1) / rate) * rate);
+  const blocks = Math.floor(bytes.length / rate) + 1;
+  const padded = new Uint8Array(blocks * rate);
   padded.set(bytes);
   padded[bytes.length] ^= 0x01;
   padded[padded.length - 1] ^= 0x80;
-  const a = new Array(25).fill(0n);
+  const s = new Uint32Array(50);
+  const view = new DataView(padded.buffer);
   for (let off = 0; off < padded.length; off += rate) {
-    for (let i = 0; i < rate / 8; i++) {
-      let lane = 0n;
-      for (let k = 7; k >= 0; k--) lane = (lane << 8n) | BigInt(padded[off + 8 * i + k]);
-      a[i] ^= lane;
-    }
-    keccakF(a);
+    for (let i = 0; i < rate / 4; i++) s[i] ^= view.getUint32(off + 4 * i, true);
+    keccakF(s);
   }
-  let hex = '0x';
-  for (let i = 0; i < 4; i++) {
-    for (let k = 0; k < 8; k++) hex += Number((a[i] >> BigInt(8 * k)) & 0xffn).toString(16).padStart(2, '0');
-  }
-  return hex;
+  const out = new DataView(new ArrayBuffer(32));
+  for (let i = 0; i < 8; i++) out.setUint32(4 * i, s[i], true);
+  return `0x${Buffer.from(out.buffer).toString('hex')}`;
 }
 
 const utf8 = (text) => new TextEncoder().encode(text);
+const MAX256 = (1n << 256n) - 1n;
 const word = (n) => Uint8Array.from(Buffer.from(n.toString(16).padStart(64, '0'), 'hex'));
+const hex32 = (n) => `0x${n.toString(16).padStart(64, '0')}`;
 
 /** ERC-7201 slot for a namespace id. Pure. */
 export function erc7201(id) {
   const inner = BigInt(keccak256(utf8(id))) - 1n;
   const outer = BigInt(keccak256(word(inner)));
-  return `0x${(outer & ~0xffn).toString(16).padStart(64, '0')}`;
+  return hex32(outer & ~0xffn);
+}
+
+// ─── Compiler output: artifacts and ASTs ─────────────────────────────────
+
+/** Every node of an AST (Solidity or Yul), depth first. */
+function* nodes(n) {
+  if (Array.isArray(n)) {
+    for (const v of n) yield* nodes(v);
+  } else if (n && typeof n === 'object') {
+    if (typeof n.nodeType === 'string') yield n;
+    for (const v of Object.values(n)) if (v && typeof v === 'object') yield* nodes(v);
+  }
+}
+
+/** `file:line` of an AST `src` ("start:length:index") in `source` (a Buffer). */
+function where(file, source, src) {
+  const start = Number(String(src).split(':')[0]);
+  if (!source || !Number.isInteger(start)) return file;
+  return `${file}:${source.subarray(0, start).toString('utf8').split('\n').length}`;
 }
 
 /**
- * Every `.sol` file under `dir`, as `{repoRelativePath: source}`. Entry types
- * come from the directory listing itself (no separate stat before the read),
- * and symlinks are not followed: the guard reads the tree as committed.
+ * One source unit's AST, indexed. Declaration ids are unique only within one
+ * compiler run, and forge's incremental builds put different files in
+ * different runs, so the guard never resolves an id outside the unit it came
+ * from: a reference it cannot resolve inside its own file is reported, not
+ * guessed at.
  */
-function readSources(dir, base = CONTRACTS_DIR) {
-  const out = {};
+function indexUnit(unit) {
+  const byId = new Map();
+  const statementOf = new Map();
+  const writes = new Map();
+  const note = (id, n) => writes.set(id, [...(writes.get(id) ?? []), n]);
+  for (const n of nodes(unit)) {
+    if (Number.isInteger(n.id)) byId.set(n.id, n);
+    if (n.nodeType === 'VariableDeclarationStatement') {
+      for (const d of n.declarations ?? []) if (d) statementOf.set(d.id, n);
+    }
+    if (n.nodeType === 'Assignment' && n.leftHandSide?.nodeType === 'Identifier') note(n.leftHandSide.referencedDeclaration, n);
+    if (n.nodeType === 'InlineAssembly') {
+      const refs = new Map((n.externalReferences ?? []).map((r) => [r.src, r]));
+      for (const y of nodes(n.AST)) {
+        if (y.nodeType !== 'YulAssignment') continue;
+        for (const v of y.variableNames ?? []) {
+          const r = refs.get(v.src);
+          if (r && !r.suffix) note(r.declaration, y);
+        }
+      }
+    }
+  }
+  return { unit, byId, statementOf, writes };
+}
+
+/**
+ * Read the forge artifacts under `outDir`, keeping only those compiled from the
+ * files on disk as they are now.
+ *
+ * An artifact is used only if its compilation target exists under `root` and
+ * every source its metadata lists still hashes to the keccak256 it was compiled
+ * from. A leftover artifact from a deleted or moved source (forge never prunes
+ * one, and CI restores out/ from a cache) is ignored; a stale artifact of a
+ * file that still exists is an error, because the build did not run. Test and
+ * script artifacts are never read: what survives on a chain is src/ and the
+ * libraries it compiles.
+ *
+ * @returns {{contracts: {name: string, target: string, art: object}[],
+ *            units: Map<string, object>, sources: Map<string, Buffer>,
+ *            scope: Set<string>, problems: string[]}}
+ *          `scope` is every source compiled into any src/ contract.
+ */
+export function loadBuild(outDir, { root = CONTRACTS_DIR } = {}) {
+  const sources = new Map();
+  const hashes = new Map();
+  const problems = [];
+  const sourceOf = (p) => {
+    if (!sources.has(p)) sources.set(p, readIfPresent(join(root, p)));
+    return sources.get(p);
+  };
+  const hashOf = (p) => {
+    if (!hashes.has(p)) hashes.set(p, sourceOf(p) === undefined ? undefined : keccak256(sourceOf(p)));
+    return hashes.get(p);
+  };
+  const files = [];
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.isFile() && e.name.endsWith('.sol')) out[relative(base, p)] = readFileSync(p, 'utf8');
+      if (e.isDirectory()) {
+        if (e.name !== 'build-info') walk(p);
+      } else if (e.isFile() && e.name.endsWith('.json')) files.push(p);
     }
   };
-  walk(dir);
-  return out;
-}
+  walk(outDir);
 
-/**
- * Every storage-pointer assignment (`<ptr>.slot := …`) in one file, resolved
- * to the struct it points as and the position constant it points at. Two
- * forms are read: `<ptr>.slot := CONST` and `bytes32 v = CONST; … <ptr>.slot
- * := v` within the same function. The struct is the one the enclosing
- * function returns as `(<Struct> storage <ptr>)`. An assignment this cannot
- * resolve comes back with `error` set: a pointer whose target the guard cannot
- * name is a namespace it cannot check. Pure over the raw source.
- */
-export function storagePointers(rawSource) {
-  const src = stripComments(rawSource);
-  const out = [];
-  for (const m of src.matchAll(/(\$\w*|\w+)\.slot\s*:=\s*(\w+)/g)) {
-    const before = src.slice(0, m.index);
-    const fnAt = before.lastIndexOf('function ');
-    const header = fnAt >= 0 ? before.slice(fnAt) : '';
-    const ret = header.match(/returns\s*\(\s*([\w.]+)\s+storage\s+(\$\w*|\w+)\s*\)/);
-    const [ptr, rhs] = [m[1], m[2]];
-    if (!ret || ret[2] !== ptr) {
-      out.push({ error: `\`${ptr}.slot := ${rhs}\` is not the returned storage pointer of its enclosing function` });
+  const contracts = [];
+  const units = new Map();
+  const sourceOnly = [];
+  let missingAst = false;
+  for (const file of files.sort()) {
+    const art = JSON.parse(readFileSync(file, 'utf8'));
+    if (!art.abi) continue; // not an artifact
+    const meta = typeof art.metadata === 'string' ? JSON.parse(art.metadata) : art.metadata;
+    const [target, name] = Object.entries(meta?.settings?.compilationTarget ?? {})[0] ?? [];
+    if (!target && art.ast && Array.isArray(art.abi) && !art.abi.length && !meta) {
+      // A source with no contract in it (only structs, enums, free functions
+      // or imports) gets an artifact carrying just its AST. It has no hashes
+      // of its own; it is used below only for a file that a current src/
+      // artifact's metadata proves was compiled as it is on disk now.
+      sourceOnly.push(art.ast);
       continue;
     }
-    const struct = ret[1].split('.').pop();
-    const alias = header.match(new RegExp(`\\bbytes32\\s+${rhs}\\s*=\\s*(\\w+)\\s*;`));
-    const constant = alias ? alias[1] : rhs;
-    if (!/^[A-Z][A-Z0-9_]*$/.test(constant)) {
-      out.push({ struct, error: `\`${ptr}.slot := ${rhs}\` does not resolve to a named position constant` });
+    if (!target) {
+      problems.push(`${relative(outDir, file)} has no metadata naming the source it was compiled from; the guard cannot tell whether it is current (forge must keep its default \`metadata\` output)`);
       continue;
     }
-    out.push({ struct, constant });
-  }
-  return out;
-}
-
-/**
- * Concrete contracts that inherit UUPSUpgradeable, directly or through any
- * chain of bases declared in `sources`. Abstract bases are not returned: their
- * state is part of every concrete descendant's layout, which is what a proxy
- * actually runs. Pure.
- */
-export function uupsContracts(sources) {
-  const decls = {};
-  for (const src of Object.values(sources)) {
-    for (const m of stripComments(src).matchAll(/\b(abstract\s+)?contract\s+(\w+)\s+is\s+([^{]*)\{/g)) {
-      const bases = m[3].split(',').map((b) => b.trim().match(/^\w+/)?.[0]).filter(Boolean);
-      decls[m[2]] = { abstract: Boolean(m[1]), bases };
+    if (!target.startsWith('src/') && !target.startsWith('lib/')) continue;
+    if (sourceOf(target) === undefined) continue; // leftover from a deleted or moved source
+    const stale = Object.entries(meta.sources ?? {}).filter(([p, s]) => hashOf(p) !== s.keccak256).map(([p]) => p);
+    if (stale.length) {
+      problems.push(`${relative(outDir, file)} was not compiled from the current ${stale.slice(0, 3).join(', ')}${stale.length > 3 ? ` and ${stale.length - 3} more` : ''} — run forge build (forge clean first if it persists)`);
+      continue;
     }
+    if (!art.ast) {
+      missingAst = true;
+      continue;
+    }
+    contracts.push({ name, target, art, meta });
+    units.set(art.ast.absolutePath, art.ast);
   }
-  const reaches = (name, seen = new Set()) => {
-    if (name === 'UUPSUpgradeable') return true;
-    if (seen.has(name) || !decls[name]) return false;
-    seen.add(name);
-    return decls[name].bases.some((b) => reaches(b, seen));
-  };
-  return Object.keys(decls).filter((c) => !decls[c].abstract && reaches(c)).sort();
-}
+  if (missingAst) problems.push('artifacts carry no AST — foundry.toml must set `ast = true` in the active profile');
 
-// ─── Artifacts ───────────────────────────────────────────────────────────
-
-/** Every `<Contract>.json` at any depth under `dir`. */
-function findArtifacts(dir, file, found = []) {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) findArtifacts(p, file, found);
-    else if (e.isFile() && e.name === file) found.push(p);
-  }
-  return found;
-}
-
-/** The source path the artifact was compiled from, per its solc metadata. */
-function compilationTarget(art) {
-  const meta = typeof art.metadata === 'string' ? JSON.parse(art.metadata) : art.metadata;
-  return Object.keys(meta?.settings?.compilationTarget ?? {})[0];
+  const scope = new Set();
+  for (const c of contracts) if (c.target.startsWith('src/')) Object.keys(c.meta.sources).forEach((p) => scope.add(p));
+  for (const ast of sourceOnly) if (scope.has(ast.absolutePath) && !units.has(ast.absolutePath)) units.set(ast.absolutePath, ast);
+  for (const p of [...scope].sort()) if (!units.has(p)) problems.push(`${p} is compiled into src/ but no current artifact carries its AST`);
+  return { contracts, units, sources, scope, problems };
 }
 
 /**
- * The storageLayout of the contract of this name compiled from `src/`. Forge
- * nests artifacts by path when two contracts share a name (a test double, a
- * vendored copy), so this searches at any depth and, when several match,
- * keeps the one compiled from `src/`. Anything but exactly one is an error.
+ * The one current artifact of `name` compiled from `src/`. A contract of the
+ * same name in a test, a script or a dependency is never it, and neither is a
+ * leftover from a source that no longer exists.
  */
-export function readStorageLayout(outDir, contract) {
-  let hits = findArtifacts(outDir, `${contract}.json`).map((p) => ({ p, art: JSON.parse(readFileSync(p, 'utf8')) }));
-  if (hits.length > 1) hits = hits.filter((h) => compilationTarget(h.art)?.startsWith('src/'));
+export function contractArtifact(build, name) {
+  const hits = build.contracts.filter((c) => c.name === name && c.target.startsWith('src/'));
   if (hits.length !== 1) {
-    throw new Error(`${contract}: expected exactly one artifact compiled from src/ under ${outDir}, found ${hits.length}${hits.length ? ` (${hits.map((h) => relative(outDir, h.p)).join(', ')}: a stale artifact from a moved source — run \`forge clean\` and rebuild)` : ' (run forge build first)'}`);
+    throw new Error(`${name}: expected exactly one current artifact compiled from src/, found ${hits.length}${hits.length ? ` (${hits.map((h) => h.target).join(', ')})` : ' (run forge build first)'}`);
   }
-  const { art } = hits[0];
-  if (!art.storageLayout) {
-    throw new Error(`${contract}: artifact has no storageLayout — foundry.toml must carry extra_output = ["storageLayout"] in the active profile`);
+  if (!hits[0].art.storageLayout) {
+    throw new Error(`${name}: artifact has no storageLayout — foundry.toml must carry extra_output = ["storageLayout"] in the active profile`);
   }
-  return art.storageLayout;
+  return hits[0].art;
+}
+
+// ─── Sources, from the AST ───────────────────────────────────────────────
+
+/**
+ * Every write of a storage pointer's slot (`<ptr>.slot := …` in inline
+ * assembly) in one source unit, resolved to the struct the pointer is typed as
+ * and the position constant its slot is set from. Pure over the AST.
+ *
+ * The slot value may be the constant itself, or a local that is initialised
+ * once from the constant (or from a parameterless function in the same file
+ * that returns it) and never written again. Anything else comes back with
+ * `error` set: a pointer whose position the guard cannot name is a namespace
+ * it cannot check. `via` names the function, when one is used, so the caller
+ * can refuse one that is overridden.
+ *
+ * @returns {{struct?: string, constant?: string, via?: string, src: string, error?: string}[]}
+ */
+export function storagePointers(unit) {
+  const ix = indexUnit(unit);
+  const out = [];
+  const constantOf = (id, what) => {
+    const d = ix.byId.get(id);
+    if (!d) return { error: `${what} is declared in another file, which the guard does not resolve` };
+    if (d.nodeType === 'VariableDeclaration' && d.constant) return { constant: d.name };
+    return { error: `${what} is not a constant` };
+  };
+  const resolveLocal = (decl) => {
+    if (decl.constant) return { constant: decl.name };
+    const stmt = ix.statementOf.get(decl.id);
+    if (!stmt) return { error: `\`${decl.name}\` is not a local initialised from a position constant` };
+    if ((ix.writes.get(decl.id) ?? []).length) return { error: `\`${decl.name}\` is written again after it is initialised` };
+    const init = stmt.initialValue;
+    if (init?.nodeType === 'Identifier') return constantOf(init.referencedDeclaration, `\`${init.name}\``);
+    if (init?.nodeType === 'FunctionCall' && init.expression?.nodeType === 'Identifier' && !(init.arguments ?? []).length) {
+      const fn = ix.byId.get(init.expression.referencedDeclaration);
+      const body = fn?.nodeType === 'FunctionDefinition' ? fn.body?.statements ?? [] : [];
+      const ret = body.length === 1 && body[0].nodeType === 'Return' ? body[0].expression : undefined;
+      if (ret?.nodeType === 'Identifier') {
+        const c = constantOf(ret.referencedDeclaration, `\`${ret.name}\``);
+        return c.error ? c : { ...c, via: fn.virtual ? fn.name : undefined };
+      }
+      return { error: `\`${decl.name}\` is set from \`${init.expression.name}()\`, which does not just return a constant from this file` };
+    }
+    return { error: `\`${decl.name}\` is not initialised from a named position constant` };
+  };
+
+  for (const asm of nodes(unit)) {
+    if (asm.nodeType !== 'InlineAssembly') continue;
+    const refs = new Map((asm.externalReferences ?? []).map((r) => [r.src, r]));
+    for (const y of nodes(asm.AST)) {
+      if (y.nodeType !== 'YulAssignment') continue;
+      for (const v of y.variableNames ?? []) {
+        const ref = refs.get(v.src);
+        if (!ref || ref.suffix !== 'slot') continue;
+        const ptr = ix.byId.get(ref.declaration);
+        const struct = ptr?.storageLocation === 'storage' ? ptr.typeDescriptions?.typeString?.match(/^struct (\S+)( storage( pointer| ref)?)?$/)?.[1] : undefined;
+        if (!struct) {
+          out.push({ src: v.src, error: `\`${v.name} :=\` sets the slot of something other than a struct storage pointer (${ptr?.typeDescriptions?.typeString ?? 'unresolved'})` });
+          continue;
+        }
+        const valueRef = y.value?.nodeType === 'YulIdentifier' ? refs.get(y.value.src) : undefined;
+        if (!valueRef || valueRef.suffix) {
+          out.push({ struct, src: v.src, error: `\`${v.name} :=\` is not set from a named position constant` });
+          continue;
+        }
+        const decl = ix.byId.get(valueRef.declaration);
+        const r = decl?.nodeType === 'VariableDeclaration' ? resolveLocal(decl) : { error: `\`${y.value.name}\` is not resolvable in this file` };
+        out.push({ struct, src: v.src, ...r });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Evaluate a 256-bit constant expression from the AST: literals, string
+ * literals, `keccak256`, `abi.encode` of words, `uint256(…)` / `bytes32(…)`,
+ * parentheses, `+ - & | ^ ~`, and other constants of the same file. That
+ * covers the literal, `keccak256("…")` and ERC-7201 forms, written any way the
+ * compiler accepts. Anything else is refused, never approximated. Pure.
+ */
+function evaluate(expr, ix, depth = 0) {
+  const fail = (why) => {
+    throw new Error(`unsupported position expression (${why})`);
+  };
+  if (depth > 32) fail('nested too deep');
+  const int = (v) => (typeof v === 'bigint' ? v : fail('a byte string where a word is needed'));
+  switch (expr?.nodeType) {
+    case 'Literal':
+      if (expr.subdenomination) fail(`a ${expr.subdenomination} literal`);
+      if (expr.kind === 'number') {
+        const text = String(expr.value).replace(/_/g, '');
+        if (!/^(0x[0-9a-fA-F]+|\d+)$/.test(text)) fail(`literal ${expr.value}`);
+        return BigInt(text);
+      }
+      if (expr.kind === 'string' || expr.kind === 'hexString') return Uint8Array.from(Buffer.from(expr.hexValue, 'hex'));
+      return fail(`a ${expr.kind} literal`);
+    case 'TupleExpression':
+      if (expr.components?.length !== 1 || expr.isInlineArray) fail('a tuple');
+      return evaluate(expr.components[0], ix, depth + 1);
+    case 'Identifier': {
+      const d = ix.byId.get(expr.referencedDeclaration);
+      if (d?.nodeType !== 'VariableDeclaration' || !d.constant || !d.value) fail(`\`${expr.name}\` is not a constant of this file`);
+      return evaluate(d.value, ix, depth + 1);
+    }
+    case 'UnaryOperation':
+      if (expr.operator !== '~') fail(`operator ${expr.operator}`);
+      return ~int(evaluate(expr.subExpression, ix, depth + 1)) & MAX256;
+    case 'BinaryOperation': {
+      const a = int(evaluate(expr.leftExpression, ix, depth + 1));
+      const b = int(evaluate(expr.rightExpression, ix, depth + 1));
+      const ops = { '+': a + b, '-': a - b, '&': a & b, '|': a | b, '^': a ^ b };
+      if (!(expr.operator in ops)) fail(`operator ${expr.operator}`);
+      const r = ops[expr.operator];
+      if (r < 0n || r > MAX256) fail('a value outside 256 bits');
+      return r;
+    }
+    case 'FunctionCall': {
+      const callee = expr.expression;
+      const args = expr.arguments ?? [];
+      if (expr.kind === 'typeConversion') {
+        const to = callee?.typeName?.name;
+        if (to !== 'uint256' && to !== 'bytes32') fail(`a conversion to ${to}`);
+        if (args.length !== 1) fail('a conversion of several values');
+        return int(evaluate(args[0], ix, depth + 1));
+      }
+      if (callee?.nodeType === 'Identifier' && callee.name === 'keccak256' && callee.referencedDeclaration < 0 && args.length === 1) {
+        const v = evaluate(args[0], ix, depth + 1);
+        return BigInt(keccak256(typeof v === 'bigint' ? fail('keccak256 of a word') : v));
+      }
+      if (callee?.nodeType === 'MemberAccess' && callee.memberName === 'encode' && callee.expression?.name === 'abi' && callee.expression.referencedDeclaration < 0) {
+        const words = args.map((a) => word(int(evaluate(a, ix, depth + 1))));
+        return Uint8Array.from(words.flatMap((w) => [...w]));
+      }
+      return fail('a call');
+    }
+    default:
+      return fail(expr?.nodeType ?? 'nothing');
+  }
+}
+
+/**
+ * The bytes32 a position constant evaluates to, from its AST. A literal is
+ * also checked against the ERC-7201 formula in the comment just above it,
+ * when there is one, so a hand-typed hash that disagrees with its stated
+ * namespace fails. Pure over the AST and the source bytes.
+ */
+export function positionOf(constantName, unit, source) {
+  const ix = indexUnit(unit);
+  const decls = [...ix.byId.values()].filter((n) => n.nodeType === 'VariableDeclaration' && n.constant && n.name === constantName);
+  if (decls.length !== 1) throw new Error(`${unit.absolutePath}: expected exactly one constant ${constantName}, found ${decls.length}`);
+  const [decl] = decls;
+  let value;
+  try {
+    value = hex32(evaluate(decl.value, ix));
+  } catch (e) {
+    throw new Error(`${constantName}: ${e.message}`);
+  }
+  if (decl.value?.nodeType === 'Literal' && source) {
+    const start = Number(decl.src.split(':')[0]);
+    const doc = source.subarray(0, start).toString('utf8').split('\n').slice(-4).join('\n');
+    const ns = doc.match(/keccak256\(abi\.encode\(uint256\(keccak256\("([^"]+)"\)\)\s*-\s*1\)\)\s*&\s*~bytes32\(uint256\(0xff\)\)/);
+    if (ns && erc7201(ns[1]) !== value) {
+      throw new Error(`${constantName} = ${value}, but its comment derives ERC-7201 "${ns[1]}" = ${erc7201(ns[1])}`);
+    }
+  }
+  return value;
+}
+
+/**
+ * Enum members and user-defined value types, by canonical name, across the
+ * given units. A name declared twice is recorded as ambiguous. Pure.
+ */
+export function typeIndex(units) {
+  const enums = new Map();
+  const valueTypes = new Map();
+  const add = (map, key, value) => map.set(key, map.has(key) ? null : value);
+  for (const unit of units) {
+    for (const n of nodes(unit)) {
+      if (n.nodeType === 'EnumDefinition') add(enums, n.canonicalName, n.members.map((m) => m.name));
+      if (n.nodeType === 'UserDefinedValueTypeDefinition') {
+        add(valueTypes, n.canonicalName, n.underlyingType?.typeDescriptions?.typeString);
+        if (n.canonicalName !== n.name) add(valueTypes, `#${n.name}`, n.underlyingType?.typeDescriptions?.typeString);
+      }
+    }
+  }
+  return { enums, valueTypes };
+}
+
+/**
+ * The UUPS implementations among `contracts`: deployable (non-empty runtime
+ * code) and upgradeable through ERC-1822, that is exposing `proxiableUUID()`.
+ * Read from the compiler's own method list, so it does not matter how the
+ * contract reaches UUPSUpgradeable, or whether it does at all. Pure.
+ */
+export function uupsContracts(contracts) {
+  return contracts
+    .filter((c) => c.target.startsWith('src/'))
+    .filter((c) => (c.art.deployedBytecode?.object ?? '0x').length > 2 && c.art.methodIdentifiers?.['proxiableUUID()'])
+    .map((c) => c.name)
+    .sort();
 }
 
 // ─── Build + compare ─────────────────────────────────────────────────────
 
 /**
- * The whole ledger for the tree, plus the completeness findings. Reads the
- * roots manifest, the forge artifacts and the sources.
+ * Completeness of the storage pointers against the namespace roots. Pure.
+ *
+ * Every pointer must resolve, must be set from a constant some root names,
+ * and must view that namespace as the very struct the root probes: a second
+ * struct read at a rooted position is a layout nobody records. Every root must
+ * have at least one such pointer, or its probe may describe storage that
+ * position does not hold. A position that comes from a virtual function is
+ * refused when a function of that name is declared anywhere else in scope,
+ * since an override moves the namespace.
+ *
+ * @param {{namespaces: object[], probeStructs: Record<string, string>,
+ *          pointers: {file: string, at: string, struct?: string, constant?: string, via?: string, error?: string}[],
+ *          functionFiles: Map<string, string[]>}} args
  */
-export function buildLedger({ outDir = join(CONTRACTS_DIR, 'out'), roots = JSON.parse(readFileSync(ROOTS_FILE, 'utf8')) } = {}) {
-  const srcSources = readSources(join(CONTRACTS_DIR, 'src'));
-  const enumSources = Object.fromEntries(Object.entries(srcSources).map(([p, s]) => [p, stripComments(s)]));
+export function pointerProblems({ namespaces, probeStructs, pointers, functionFiles }) {
+  const problems = [];
+  const resolved = [];
+  for (const p of pointers) {
+    const declared = p.via ? functionFiles.get(p.via) ?? [] : [];
+    if (p.error) problems.push(`${p.at}: ${p.error}`);
+    else if (declared.length > 1) {
+      problems.push(`${p.at}: the position comes from \`${p.via}()\`, which is virtual and declared ${declared.length} times (${[...new Set(declared)].join(', ')}), so which position a contract uses cannot be read statically`);
+    } else resolved.push(p);
+  }
+  for (const ns of namespaces) {
+    const bound = resolved.filter((p) => p.file === ns.positionFile && p.constant === ns.positionConstant);
+    if (!bound.length) problems.push(`root ${ns.id}: ${ns.positionFile} sets no storage pointer from ${ns.positionConstant}, so the probe ${ns.probe} may not describe the storage that position holds`);
+    for (const p of bound) {
+      if (p.struct !== probeStructs[ns.id]) problems.push(`${p.at} reads the ${ns.id} namespace (${ns.positionConstant}) as ${p.struct}, but its root probes ${probeStructs[ns.id]}; every view of one namespace must be the probed struct`);
+    }
+  }
+  for (const p of resolved) {
+    if (!namespaces.some((ns) => ns.positionFile === p.file && ns.positionConstant === p.constant)) {
+      problems.push(`${p.at} points ${p.struct} storage at ${p.constant}, but no namespace root in roots.json names that position`);
+    }
+  }
+  return problems;
+}
+
+/** Parse roots.json. A malformed manifest is an error, never an empty check. Pure. */
+export function readRoots(text) {
+  const roots = JSON.parse(text);
+  if (!Array.isArray(roots.namespaces) || !Array.isArray(roots.uups)) throw new Error('roots.json needs `namespaces` and `uups` arrays');
+  roots.namespaces.forEach((ns, i) => {
+    for (const k of ['id', 'probe', 'positionFile', 'positionConstant']) {
+      if (typeof ns?.[k] !== 'string' || !ns[k]) throw new Error(`roots.json: namespaces[${i}].${k} must be a non-empty string`);
+    }
+  });
+  const exemptions = roots.pointerExemptions ?? [];
+  if (!Array.isArray(exemptions)) throw new Error('roots.json: `pointerExemptions` must be an array');
+  exemptions.forEach((e, i) => {
+    if (typeof e?.file !== 'string' || typeof e.reason !== 'string' || !e.reason.trim()) throw new Error(`roots.json: pointerExemptions[${i}] needs a \`file\` and a \`reason\``);
+  });
+  return { ...roots, pointerExemptions: exemptions };
+}
+
+/**
+ * The whole ledger for the tree, plus the completeness findings. Reads the
+ * roots manifest and the forge artifacts (layouts and ASTs) under `outDir`.
+ */
+export function buildLedger({ outDir = join(CONTRACTS_DIR, 'out'), roots = readRoots(readFileSync(ROOTS_FILE, 'utf8')), root = CONTRACTS_DIR, facetsFile = FACETS_FILE } = {}) {
+  const build = loadBuild(outDir, { root });
+  const problems = [...build.problems];
   const layout = new Set();
   const enums = new Set();
-  const problems = [];
+  const valueTypes = new Set();
   const rootIds = new Set();
   const add = (id, l, opts) => {
     if (rootIds.has(id)) throw new Error(`root id ${id} is listed twice`);
@@ -460,47 +747,72 @@ export function buildLedger({ outDir = join(CONTRACTS_DIR, 'out'), roots = JSON.
     const led = ledgerFromLayout(id, l, opts);
     led.layout.forEach((x) => layout.add(x));
     led.enums.forEach((x) => enums.add(x));
+    led.valueTypes.forEach((x) => valueTypes.add(x));
   };
 
-  // Each namespace root binds three things that must agree: the probe's
-  // struct, a storage pointer in the position file that returns that struct,
-  // and the constant that pointer is set from.
-  for (const ns of roots.namespaces) {
-    const probeLayout = readStorageLayout(outDir, ns.probe);
-    add(ns.id, probeLayout, { probe: true });
-    const raw = readFileSync(join(CONTRACTS_DIR, ns.positionFile), 'utf8');
-    layout.add(`P|${ns.id}|${positionOf(ns.positionConstant, raw)}`);
-    const struct = probeLayout.types[probeLayout.storage[0].type].label.split('.').pop();
-    if (!storagePointers(raw).some((p) => p.struct === struct && p.constant === ns.positionConstant)) {
-      problems.push(`root ${ns.id}: ${ns.positionFile} has no storage pointer returning ${struct} from ${ns.positionConstant}, so the probe ${ns.probe} may not describe the storage that position holds`);
+  // Every storage pointer in everything src/ compiles, resolved from the AST.
+  const exempt = new Map(roots.pointerExemptions.map((e) => [e.file, e]));
+  const pointers = [];
+  for (const file of [...build.scope].sort()) {
+    const unit = build.units.get(file);
+    if (!unit) continue;
+    const found = storagePointers(unit).map((p) => ({ ...p, file, at: where(file, build.sources.get(file), p.src) }));
+    if (exempt.has(file)) {
+      if (!found.length) problems.push(`roots.json exempts ${file}, which no longer sets any storage pointer; delete the exemption`);
+      continue;
     }
+    pointers.push(...found);
   }
-  for (const c of roots.uups) add(`uups:${c}`, readStorageLayout(outDir, c));
-  for (const label of [...enums].sort()) {
-    enumMembers(label, enumSources).forEach((m, i) => layout.add(`E|${label}|${i}|${m}`));
+  for (const e of exempt.keys()) if (!build.scope.has(e)) problems.push(`roots.json exempts ${e}, which nothing in src/ compiles; delete the exemption`);
+  const functionFiles = new Map();
+  for (const file of build.scope) {
+    for (const n of nodes(build.units.get(file) ?? {})) {
+      if (n.nodeType === 'FunctionDefinition' && n.name) functionFiles.set(n.name, [...(functionFiles.get(n.name) ?? []), file]);
+    }
   }
 
-  // Completeness: a surviving layout nobody listed is a layout nobody checks.
-  for (const [f, src] of Object.entries(srcSources)) {
-    for (const p of storagePointers(src)) {
-      if (p.error) problems.push(`${f}: ${p.error}`);
-      else if (!roots.namespaces.some((ns) => ns.positionFile === f && ns.positionConstant === p.constant)) {
-        problems.push(`${f} points ${p.struct} storage at ${p.constant}, but no namespace root in roots.json names that position`);
-      }
+  // Each namespace root: its probe's layout, and its position from the AST.
+  const probeStructs = {};
+  const positions = new Map();
+  for (const ns of roots.namespaces) {
+    const probeLayout = contractArtifact(build, ns.probe).storageLayout;
+    add(ns.id, probeLayout, { probe: true });
+    probeStructs[ns.id] = probeLayout.types[probeLayout.storage[0].type].label.replace(/^struct /, '');
+    const unit = build.units.get(ns.positionFile);
+    if (!unit) {
+      problems.push(`root ${ns.id}: ${ns.positionFile} is not compiled into src/, so its position cannot be read`);
+      continue;
     }
+    const position = positionOf(ns.positionConstant, unit, build.sources.get(ns.positionFile));
+    if (positions.has(position)) problems.push(`roots ${positions.get(position)} and ${ns.id} sit at the same position ${position}`);
+    positions.set(position, ns.id);
+    layout.add(`P|${ns.id}|${position}`);
   }
-  const listedUups = new Set(roots.uups);
-  const foundUups = uupsContracts(srcSources);
-  for (const c of foundUups) {
-    if (!listedUups.has(c)) problems.push(`${c} is a UUPS implementation but roots.json does not list it`);
+  problems.push(...pointerProblems({ namespaces: roots.namespaces, probeStructs, pointers, functionFiles }));
+
+  // UUPS implementations: their own state variables are the layout.
+  for (const c of roots.uups) add(`uups:${c}`, contractArtifact(build, c).storageLayout);
+  const found = uupsContracts(build.contracts);
+  for (const c of found) if (!roots.uups.includes(c)) problems.push(`${c} is a UUPS implementation (it exposes proxiableUUID()) but roots.json does not list it`);
+  for (const c of roots.uups) if (!found.includes(c)) problems.push(`roots.json lists ${c} as UUPS, but it does not expose proxiableUUID()`);
+
+  // Enum members and value types, from the declarations the compiler resolved.
+  const types = typeIndex([...build.scope].map((f) => build.units.get(f)).filter(Boolean));
+  for (const label of [...enums].sort()) {
+    const members = types.enums.get(label.replace(/^enum /, ''));
+    if (!members) problems.push(`${label}: expected exactly one declaration among the sources src/ compiles`);
+    else members.forEach((m, i) => layout.add(`E|${label}|${i}|${m}`));
   }
-  for (const c of roots.uups) {
-    if (!foundUups.includes(c)) problems.push(`roots.json lists ${c} as UUPS, but no contract of that name inherits UUPSUpgradeable`);
+  for (const label of [...valueTypes].sort()) {
+    const underlying = types.valueTypes.get(label) ?? types.valueTypes.get(`#${label}`);
+    if (!underlying) problems.push(`value type ${label}: expected exactly one declaration among the sources src/ compiles`);
+    else layout.add(`U|${label}|${underlying}`);
   }
+
   // A facet with an ordinary state variable writes at slot 0.. of the Diamond.
-  const facets = JSON.parse(readFileSync(FACETS_FILE, 'utf8'));
+  const facets = JSON.parse(readFileSync(facetsFile, 'utf8'));
   for (const c of [...facets.facets, ...facets.proxy, 'DiamondCutFacet']) {
-    const l = readStorageLayout(outDir, c);
+    const l = contractArtifact(build, c).storageLayout;
     if ((l.storage ?? []).length) problems.push(`${c} declares state variables (${l.storage.map((s) => s.label).join(', ')}); Diamond code must keep all state in a namespaced struct`);
   }
 
@@ -531,14 +843,17 @@ export function missingLines(before, after) {
   return before.filter((l) => !have.has(l));
 }
 
+const FIELD_LINES = 'LCMD';
+
 /**
  * Rewrite `lines` through the declared renames, oldest first, so a base laid
  * down before a rename reads with today's names. A rename is anchored on the
- * exact line its field had (region, slot, offset and old path): it applies only
- * to a ledger that HAS that field there, which is what keeps a later, unrelated
- * field reusing the old name from being rewritten. Within a root every path is
- * unique (Solidity forbids two members of one name), so the anchor's path
- * prefix identifies the field's nested lines exactly. Pure.
+ * exact line its field had (region, slot, offset and old path), which may be a
+ * value, a container, a mapping or an array: it applies only to a ledger that
+ * HAS that field there, which is what keeps a later, unrelated field reusing
+ * the old name from being rewritten. Within a root every path is unique
+ * (Solidity forbids two members of one name), so the anchor's path prefix
+ * identifies the field's nested lines exactly. Pure.
  */
 export function applyRenames(lines, renames = []) {
   let out = [...lines];
@@ -549,13 +864,13 @@ export function applyRenames(lines, renames = []) {
     }
     const anchored = out.some((l) => {
       const f = l.split('|');
-      return 'LMD'.includes(f[0]) && f[1] === r.region && f[2] === String(r.slot) && f[3] === String(r.offset) && f[f.length - 1] === r.from;
+      return FIELD_LINES.includes(f[0]) && f[1] === r.region && f[2] === String(r.slot) && f[3] === String(r.offset) && f[f.length - 1] === r.from;
     });
     if (!anchored) continue;
     const root = r.region.split('@')[0];
     out = out.map((l) => {
       const f = l.split('|');
-      if (!'LMD'.includes(f[0]) || f[1].split('@')[0] !== root) return l;
+      if (!FIELD_LINES.includes(f[0]) || f[1].split('@')[0] !== root) return l;
       const path = f[f.length - 1];
       if (path !== r.from && !path.startsWith(`${r.from}.`) && !path.startsWith(`${r.from}[`)) return l;
       f[f.length - 1] = r.to + path.slice(r.from.length);
@@ -569,8 +884,8 @@ export function applyRenames(lines, renames = []) {
  * Append-only verdict of `current` against `base`: the declared renames are
  * applied to the base first; then every base line must be in `current`.
  * Acknowledgements are honoured only when their `baseSha256` names this base
- * file exactly, so one can never outlive the comparison it was written for. The
- * deploy-time check passes no acks at all. Pure.
+ * file exactly, so one can never outlive the comparison it was written for. A
+ * comparison against a deployed chain passes no acks at all. Pure.
  */
 export function appendOnlyVerdict(base, current, { baseSha256, acks = [], renames = [] } = {}) {
   const live = acks.filter((a) => a.baseSha256 === baseSha256);
@@ -624,32 +939,66 @@ export function readAcks(text) {
 
 // ─── CLI ─────────────────────────────────────────────────────────────────
 
-function arg(argv, flag) {
-  const i = argv.indexOf(flag);
-  return i >= 0 ? argv[i + 1] : undefined;
+const USAGE = 'usage: storage-layout-guard.mjs write [--out <dir>] | check [--out <dir>] [--base <golden> [--honour-acks]]';
+
+/**
+ * Parse the command line strictly: one mode, known flags only, each at most
+ * once, and every value present. A typo must stop the run, not quietly skip
+ * the comparison it asked for. Pure; throws on anything else.
+ */
+export function parseArgs(argv) {
+  const [mode, ...rest] = argv;
+  if (mode !== 'write' && mode !== 'check') throw new Error(USAGE);
+  const opts = { mode };
+  const valued = { '--out': 'out', '--base': 'base' };
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    const key = valued[flag] ?? (flag === '--honour-acks' ? 'honourAcks' : undefined);
+    if (!key) throw new Error(`unknown argument ${flag}\n${USAGE}`);
+    if (key in opts) throw new Error(`${flag} given twice`);
+    if (key === 'honourAcks') {
+      opts.honourAcks = true;
+      continue;
+    }
+    const value = rest[++i];
+    if (value === undefined || value === '' || value.startsWith('--')) throw new Error(`${flag} needs a value`);
+    opts[key] = value;
+  }
+  if (mode === 'write' && (opts.base || opts.honourAcks)) throw new Error(`write takes no --base or --honour-acks\n${USAGE}`);
+  if (opts.honourAcks && !opts.base) throw new Error('--honour-acks applies only to a --base comparison');
+  return opts;
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const mode = argv[0];
-  const outDir = arg(argv, '--out') ?? join(CONTRACTS_DIR, 'out');
   const fail = (msg) => {
     console.error(`storage-layout-guard: ${msg}`);
     return 1;
   };
-  if (mode !== 'write' && mode !== 'check') return fail('usage: storage-layout-guard.mjs write|check [--base <golden>] [--out <dir>]');
-  const { golden, problems } = buildLedger({ outDir });
+  let opts;
+  try {
+    opts = parseArgs(argv);
+  } catch (e) {
+    return fail(e.message);
+  }
+  let golden;
+  let problems;
+  try {
+    ({ golden, problems } = buildLedger({ outDir: opts.out ?? join(CONTRACTS_DIR, 'out') }));
+  } catch (e) {
+    return fail(e.message);
+  }
   if (problems.length) {
     problems.forEach((p) => console.error(`storage-layout-guard: ${p}`));
     return fail(`${problems.length} completeness problem(s)`);
   }
 
-  if (mode === 'write') {
+  if (opts.mode === 'write') {
     writeFileSync(GOLDEN_FILE, serializeGolden(golden));
     console.log(`storage-layout-guard: wrote ${relative(REPO_ROOT, GOLDEN_FILE)} (${golden.layout.length} lines, ${golden.roots.length} roots)`);
     return 0;
   }
 
-  const committedText = readIfPresent(GOLDEN_FILE);
+  const committedText = readIfPresent(GOLDEN_FILE, 'utf8');
   if (committedText === undefined) return fail(`${relative(REPO_ROOT, GOLDEN_FILE)} is missing — run \`node contracts/script/storage-layout-guard.mjs write\``);
   const committed = JSON.parse(committedText);
   let rc = 0;
@@ -666,24 +1015,27 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   // 2. Append-only against a base golden (CI passes the PR base's file).
-  const basePath = arg(argv, '--base');
-  if (basePath) {
-    const baseText = readFileSync(basePath, 'utf8');
+  if (opts.base) {
+    const baseText = readFileSync(opts.base, 'utf8');
     const base = JSON.parse(baseText);
     if (base.format !== GOLDEN_FORMAT) {
       return fail(`the base golden is format ${base.format}, this guard reads format ${GOLDEN_FORMAT}. A format change must ship a translation of the old format, or no base can be compared.`);
     }
-    const acksText = readIfPresent(ACKS_FILE);
-    const renamesText = readIfPresent(RENAMES_FILE);
-    const acks = acksText === undefined ? [] : readAcks(acksText);
+    const renamesText = readIfPresent(RENAMES_FILE, 'utf8');
     const renames = renamesText === undefined ? [] : readRenames(renamesText);
+    const acksText = opts.honourAcks ? readIfPresent(ACKS_FILE, 'utf8') : undefined;
+    const acks = acksText === undefined ? [] : readAcks(acksText);
     const v = appendOnlyVerdict(base, golden, { baseSha256: sha256(baseText), acks, renames });
     if (v.breaks.length) {
       console.error(`storage-layout-guard: LAYOUT BREAK — ${v.breaks.length} line(s) of the base layout are gone. A proxy upgraded in place across this change would read existing state at the wrong place, or under the wrong field:`);
       v.breaks.slice(0, 40).forEach((l) => console.error(`  - ${l}`));
       if (v.breaks.length > 40) console.error(`  … and ${v.breaks.length - 40} more`);
       console.error(`  If a field only changed its NAME and kept its meaning, declare it in ${relative(REPO_ROOT, RENAMES_FILE)}.`);
-      console.error(`  If the break is intended (no chain will be upgraded in place across it), acknowledge it in ${relative(REPO_ROOT, ACKS_FILE)} with baseSha256 ${sha256(baseText)}.`);
+      if (opts.honourAcks) {
+        console.error(`  If the break is intended (no chain will be upgraded in place across it), acknowledge it in ${relative(REPO_ROOT, ACKS_FILE)} with baseSha256 ${sha256(baseText)}.`);
+      } else {
+        console.error('  Acknowledgements are not read by this comparison: an acknowledged break still means no chain may be upgraded in place across it.');
+      }
       rc = 1;
     } else {
       console.log('storage-layout-guard: append-only against the base layout');
