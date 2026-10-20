@@ -184,7 +184,13 @@ export function clearanceOracleName(snap) {
   return 'the clearance oracle';
 }
 
-const isoAt = (seconds) => new Date(Number(seconds) * 1000).toISOString();
+/** A chain time in seconds as an ISO string. Never throws: a report is
+ *  written whatever a chain returned, so a value no date can hold reads as
+ *  unreadable instead of aborting the run. */
+const isoAt = (seconds) => {
+  const at = new Date(Number(seconds) * 1000);
+  return Number.isNaN(at.getTime()) ? `an unreadable time (${seconds})` : at.toISOString();
+};
 
 /**
  * Why a matured proposal reads `OracleStale`, and what — if anything — moves
@@ -480,7 +486,7 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
       continue;
     }
     if (at === 'window') {
-      notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${new Date(Number(p.eta) * 1000).toISOString()}`);
+      notes.push(`${tag} (${p.accounts.length} address(es)) is in its window until ${isoAt(p.eta)}`);
       continue;
     }
     if (ADVANCING.has(at)) {
@@ -858,7 +864,9 @@ function oracleReport(snap) {
     address: o.address ?? null,
     identity: o.identity ?? ORACLE_IDENTITY.UNKNOWN,
     name: clearanceOracleName(snap),
-    updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number(o.updatedAt),
+    // A number while exact (every time the source rule accepts is), else the
+    // digits as text, so the report never states a rounded value.
+    updatedAt: o.updatedAt === null || o.updatedAt === undefined ? null : Number.isSafeInteger(Number(o.updatedAt)) ? Number(o.updatedAt) : String(o.updatedAt),
     ...(o.detail && { detail: o.detail }),
   };
 }
@@ -1110,14 +1118,21 @@ export function listRoleKeyVet({ listByChain, key, abi }) {
  * release (#2443) must establish RedStone positively, from the address it is
  * recorded under, rather than revive an inference.
  *
- * `updatedAt` is its `getLastUpdateBlockTimestamp()` now, or null when that
- * is unreadable or zero (unknown, as the contracts treat it).
+ * `updatedAt` is its `getLastUpdateBlockTimestamp()` now, judged by the
+ * contracts' own rule (`LibOracleFreshness.lastUpdate`): null — unknown —
+ * when it is unreadable, zero, or later than its chain's latest block, and
+ * null too when that block cannot be read to judge it.
  */
 export async function identifyOracle(client, address, abi) {
   const at = getAddress(address);
   const read = (functionName) => client.readContract({ address: at, abi, functionName }).then((value) => ({ value }), (error) => ({ error }));
-  const [marker, freshness] = await Promise.all([read('isTestnetStandIn'), read('getLastUpdateBlockTimestamp')]);
-  const updatedAt = freshness.error || !freshness.value ? null : BigInt(freshness.value);
+  const [marker, freshness, block] = await Promise.all([
+    read('isTestnetStandIn'),
+    read('getLastUpdateBlockTimestamp'),
+    client.getBlock().then((b) => b, () => null),
+  ]);
+  const ts = freshness.error || freshness.value === undefined || freshness.value === null ? 0n : BigInt(freshness.value);
+  const updatedAt = ts === 0n || !block || ts > BigInt(block.timestamp) ? null : ts;
   if (marker.value === true) return { address: at, identity: ORACLE_IDENTITY.STAND_IN, updatedAt };
   const detail =
     'error' in marker

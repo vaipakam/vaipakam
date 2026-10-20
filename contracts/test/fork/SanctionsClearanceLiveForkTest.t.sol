@@ -126,6 +126,50 @@ contract SanctionsClearanceLiveForkTest is Test {
         assertTrue(list.listedByOwnList(target), "a flagged address stays listed");
     }
 
+    /// @dev A recorded stand-in the admin no longer alone controls (a
+    ///      transfer pending) would be replaced, and so would its attestor —
+    ///      but the old attestor still handles the clearance channel, so the
+    ///      run stops, and it stops before deploying or recording anything:
+    ///      the artifact a `--broadcast` simulation writes survives a later
+    ///      revert, and must never name contracts that were not sent.
+    function test_BnbTestnet_AnUnfitStandInStopsTheRunBeforeAnythingIsDeployed() public {
+        string memory bnbUrl = vm.envOr("FORK_URL_BNB_TESTNET", string(""));
+        if (bytes(bnbUrl).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(bnbUrl);
+        string memory root = _scratchRoot("bnb-refuses");
+        admin = vm.parseJsonAddress(vm.readFile(string.concat(root, "/base-sepolia/addresses.json")), ".admin");
+        uint256[] memory timelockChains = new uint256[](2);
+        timelockChains[0] = BASE;
+        timelockChains[1] = ARB;
+        address deployer = makeAddr("deployer");
+
+        ConfigureSanctionsClearance first = new ConfigureSanctionsClearance();
+        first.setArtifactRootOverride(root);
+        first.runWith(admin, deployer, BNB, timelockChains);
+        TestnetSanctionsOracleStandIn s = TestnetSanctionsOracleStandIn(first.standIn());
+
+        vm.prank(admin);
+        s.transferOwnership(makeAddr("next owner"));
+        string memory artifactPath = string.concat(root, "/bnb-testnet/addresses.json");
+        string memory before = vm.readFile(artifactPath);
+
+        ConfigureSanctionsClearance again = new ConfigureSanctionsClearance();
+        again.setArtifactRootOverride(root);
+        vm.expectRevert(
+            bytes(
+                "ConfigureSanctionsClearance: this run would deploy a new attestor (the recorded stand-in or attestor is not fit to reuse), but another contract already handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first. Nothing was deployed or recorded"
+            )
+        );
+        again.runWith(admin, deployer, BNB, timelockChains);
+        // The revert undoes chain state either way; the file is what would
+        // keep a deploy that came before the refusal.
+        assertEq(vm.readFile(artifactPath), before, "nothing recorded");
+        vm.removeDir(root, true);
+    }
+
     // ── Cells ─────────────────────────────────────────────────────────
 
     function _clearsAndExecutes() internal {

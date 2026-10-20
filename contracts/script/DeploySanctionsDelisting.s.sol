@@ -40,7 +40,10 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         Keys: `DEPLOYER_PRIVATE_KEY` deploys; `ADMIN_PRIVATE_KEY` owns the
  *         list and the timelock and appoints the roles. Address:
  *         `SANCTIONS_DELISTER_ADDRESS`. A timelock already recorded for the
- *         same list and owner is reused; a re-run only adds a missing role.
+ *         same list is reused while the admin alone controls it (no transfer
+ *         pending); a re-run only adds a missing role. One the admin does not
+ *         alone control is never left beside a replacement: while it is still
+ *         a remover of the list the run refuses.
  *
  *         Run (dry, then with `--broadcast`):
  *           forge script script/DeploySanctionsDelisting.s.sol \
@@ -111,15 +114,28 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
 
     /// @dev The recorded timelock while it serves this list and the admin
     ///      alone controls it ({AdminControl.aloneControls}); otherwise a new
-    ///      one, recorded.
+    ///      one, recorded — but never while the recorded one is still a
+    ///      remover of this list. Deploying beside it would leave two
+    ///      delisting routes live, one answering to someone other than the
+    ///      admin (its owner, or the pending owner once it accepts), while the
+    ///      artifact and this script's output name only the new one. That
+    ///      case stops the run before anything is deployed or recorded, and
+    ///      the admin resolves it deliberately: cancel the transfer (the
+    ///      timelock is then reused), or revoke its remover role.
     function _timelockFor(SanctionsList list, address admin, bool writes) internal returns (SanctionsDelistingTimelock) {
         address recorded = Deployments.readSanctionsDelistingTimelockOptional();
         if (recorded.code.length != 0) {
             SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(payable(recorded));
             try existing.list() returns (SanctionsList l) {
-                if (address(l) == address(list) && AdminControl.aloneControls(recorded, admin)) {
-                    console.log("Reusing the recorded SanctionsDelistingTimelock");
-                    return existing;
+                if (address(l) == address(list)) {
+                    if (AdminControl.aloneControls(recorded, admin)) {
+                        console.log("Reusing the recorded SanctionsDelistingTimelock");
+                        return existing;
+                    }
+                    require(
+                        !list.isRemover(recorded),
+                        "DeploySanctionsDelisting: the recorded timelock is still a remover of this list, but the admin does not alone control it (another owner, or an ownership transfer pending) - cancel the transfer, or revoke it with setRemover(timelock, false), then re-run. Nothing was deployed or recorded"
+                    );
                 }
             } catch {}
             console.log("The recorded timelock serves another list, or the admin does not alone control it; deploying a new one");

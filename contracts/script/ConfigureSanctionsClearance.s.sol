@@ -53,7 +53,11 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         address from that chain's artifact and refuses while it is absent.
  *
  *         Every step reads before it writes and is skipped when already in
- *         place, so a re-run sends nothing on a wired chain. Nothing is ever
+ *         place, so a re-run sends nothing on a wired chain. On the attestor
+ *         chain every refusal is checked BEFORE anything is deployed or
+ *         recorded: an artifact write survives a later revert in a
+ *         `--broadcast` run's simulation, so a refusal after a deploy would
+ *         leave the artifact naming contracts that were never sent. Nothing is ever
  *         re-pointed: a channel handler, a channel peer or a lane already set
  *         to something else stops the run, because rotating any of them
  *         needs the drain `CcipMessenger.registerChannel` / `setChannelPeer`
@@ -131,8 +135,25 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         uint256[] memory timelockChainIds,
         bool writes
     ) internal {
-        TestnetSanctionsOracleStandIn s = _standInFor(admin, deployer, writes);
-        SanctionsClearanceAttestor a = _attestorFor(s, m, deployer, writes);
+        // Decide what is reused (address(0): this run deploys it), then check
+        // every refusal the wiring can hit, and only then deploy and record.
+        address reusedStandIn = _recordedStandInToReuse(admin);
+        address reusedAttestor = reusedStandIn == address(0) ? address(0) : _recordedAttestorToReuse(reusedStandIn, m);
+        for (uint256 i; i < timelockChainIds.length; ++i) {
+            _checkLane(m, timelockChainIds[i]);
+        }
+        _checkHandler(m, reusedAttestor);
+        for (uint256 i; i < timelockChainIds.length; ++i) {
+            uint256 cid = timelockChainIds[i];
+            _checkPeer(m, cid, Deployments.readAddressForChain(cid, ".sanctionsDelistingTimelock"));
+        }
+
+        TestnetSanctionsOracleStandIn s = reusedStandIn != address(0)
+            ? TestnetSanctionsOracleStandIn(reusedStandIn)
+            : _deployStandIn(admin, deployer, writes);
+        SanctionsClearanceAttestor a = reusedAttestor != address(0)
+            ? SanctionsClearanceAttestor(payable(reusedAttestor))
+            : _deployAttestor(s, m, deployer, writes);
         standIn = address(s);
         attestor = address(a);
 
@@ -163,19 +184,23 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     }
 
     /// @dev The recorded stand-in while it is fit to reuse (see
-    ///      {_reusableStandIn}); otherwise a new one, recorded.
-    function _standInFor(address admin, address deployer, bool writes)
+    ///      {_reusableStandIn}); otherwise address(0), for a new one.
+    function _recordedStandInToReuse(address admin) internal view returns (address) {
+        address recorded = Deployments.readSanctionsOracleStandInOptional();
+        if (recorded.code.length == 0) return address(0);
+        if (_reusableStandIn(recorded, admin)) {
+            console.log("Reusing the recorded stand-in");
+            return recorded;
+        }
+        console.log("The recorded stand-in is not one the admin alone controls; deploying a new one");
+        return address(0);
+    }
+
+    /// @dev A new stand-in owned by the admin, recorded.
+    function _deployStandIn(address admin, address deployer, bool writes)
         internal
         returns (TestnetSanctionsOracleStandIn)
     {
-        address recorded = Deployments.readSanctionsOracleStandInOptional();
-        if (recorded.code.length != 0) {
-            if (_reusableStandIn(recorded, admin)) {
-                console.log("Reusing the recorded stand-in");
-                return TestnetSanctionsOracleStandIn(recorded);
-            }
-            console.log("The recorded stand-in is not one the admin alone controls; deploying a new one");
-        }
         vm.startBroadcast(deployer);
         TestnetSanctionsOracleStandIn s = new TestnetSanctionsOracleStandIn(admin);
         vm.stopBroadcast();
@@ -197,23 +222,28 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         }
     }
 
-    /// @dev The recorded attestor while it reads this stand-in through this
-    ///      messenger; otherwise a new one, recorded.
-    function _attestorFor(TestnetSanctionsOracleStandIn s, CcipMessenger m, address deployer, bool writes)
+    /// @dev The recorded attestor while it reads `standIn_` (a reused
+    ///      stand-in) through this messenger; otherwise address(0), for a new
+    ///      one.
+    function _recordedAttestorToReuse(address standIn_, CcipMessenger m) internal view returns (address) {
+        address recorded = Deployments.readSanctionsClearanceAttestorOptional();
+        if (recorded.code.length == 0) return address(0);
+        SanctionsClearanceAttestor existing = SanctionsClearanceAttestor(payable(recorded));
+        try existing.oracle() returns (ISanctionsList o) {
+            if (address(o) == standIn_ && address(existing.messenger()) == address(m)) {
+                console.log("Reusing the recorded attestor");
+                return recorded;
+            }
+        } catch {}
+        console.log("The recorded attestor reads another oracle or messenger; deploying a new one");
+        return address(0);
+    }
+
+    /// @dev A new attestor reading `s` through `m`, recorded.
+    function _deployAttestor(TestnetSanctionsOracleStandIn s, CcipMessenger m, address deployer, bool writes)
         internal
         returns (SanctionsClearanceAttestor)
     {
-        address recorded = Deployments.readSanctionsClearanceAttestorOptional();
-        if (recorded.code.length != 0) {
-            SanctionsClearanceAttestor existing = SanctionsClearanceAttestor(payable(recorded));
-            try existing.oracle() returns (ISanctionsList o) {
-                if (address(o) == address(s) && address(existing.messenger()) == address(m)) {
-                    console.log("Reusing the recorded attestor");
-                    return existing;
-                }
-            } catch {}
-            console.log("The recorded attestor reads another oracle or messenger; deploying a new one");
-        }
         vm.startBroadcast(deployer);
         SanctionsClearanceAttestor a = new SanctionsClearanceAttestor(ISanctionsList(address(s)), ICrossChainMessenger(address(m)));
         vm.stopBroadcast();
@@ -266,61 +296,87 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
 
     // ── Shared steps (inside the admin's broadcast) ────────────────────
 
-    /// @dev This messenger's lane to `remote`: CCIP must support it, and the
-    ///      selector and remote messenger are set when absent and must match
-    ///      when present.
-    function _ensureLane(CcipMessenger m, uint256 remote) internal {
+    /// @dev Refuses what {_ensureLane} cannot do: CCIP must support the lane
+    ///      to `remote`, and a selector or remote messenger already set must
+    ///      be the expected one.
+    function _checkLane(CcipMessenger m, uint256 remote) internal view {
         uint64 selector = Deployments.ccipSelectorForChainId(remote);
         require(
             IRouterClient(m.getRouter()).isChainSupported(selector),
             string.concat("ConfigureSanctionsClearance: CCIP does not support a lane to chain ", vm.toString(remote))
         );
         uint64 currentSelector = m.chainSelectorOf(remote);
-        if (currentSelector == 0) {
-            m.setChainSelector(remote, selector);
-            console.log("  lane: selector set for chain", remote);
-        } else {
-            require(currentSelector == selector, "ConfigureSanctionsClearance: the messenger maps that chain to another selector");
-        }
-        address remoteMessenger = Deployments.readAddressForChain(remote, ".ccipMessenger");
+        require(
+            currentSelector == 0 || currentSelector == selector,
+            "ConfigureSanctionsClearance: the messenger maps that chain to another selector"
+        );
         address currentMessenger = m.remoteMessengerOf(remote);
-        if (currentMessenger == address(0)) {
-            m.setRemoteMessenger(remote, remoteMessenger);
+        require(
+            currentMessenger == address(0)
+                || currentMessenger == Deployments.readAddressForChain(remote, ".ccipMessenger"),
+            "ConfigureSanctionsClearance: the messenger trusts another remote messenger for that chain"
+        );
+    }
+
+    /// @dev This messenger's lane to `remote` (see {_checkLane}): the
+    ///      selector and remote messenger are set when absent.
+    function _ensureLane(CcipMessenger m, uint256 remote) internal {
+        _checkLane(m, remote);
+        if (m.chainSelectorOf(remote) == 0) {
+            m.setChainSelector(remote, Deployments.ccipSelectorForChainId(remote));
+            console.log("  lane: selector set for chain", remote);
+        }
+        if (m.remoteMessengerOf(remote) == address(0)) {
+            m.setRemoteMessenger(remote, Deployments.readAddressForChain(remote, ".ccipMessenger"));
             console.log("  lane: remote messenger set for chain", remote);
-        } else {
-            require(
-                currentMessenger == remoteMessenger,
-                "ConfigureSanctionsClearance: the messenger trusts another remote messenger for that chain"
-            );
         }
     }
 
-    /// @dev Registers `handler` on the clearance channel. Refuses to replace
-    ///      another handler: a rotation needs a drain first.
-    function _ensureHandler(CcipMessenger m, address handler) internal {
+    /// @dev Refuses what {_ensureHandler} cannot do. `handler` is the
+    ///      contract to register, or address(0) for one this run has yet to
+    ///      deploy, which can only take a channel nobody handles. Another
+    ///      handler is never replaced: a rotation needs a drain first, and a
+    ///      replaced attestor left registered would still answer.
+    function _checkHandler(CcipMessenger m, address handler) internal view {
         address current = m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL);
-        if (current == handler) return;
+        if (handler != address(0) && current == handler) return;
+        require(
+            current == address(0) || handler != address(0),
+            "ConfigureSanctionsClearance: this run would deploy a new attestor (the recorded stand-in or attestor is not fit to reuse), but another contract already handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first. Nothing was deployed or recorded"
+        );
         require(
             current == address(0),
             "ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"
         );
         require(
-            m.channelOf(handler) == bytes32(0),
+            handler == address(0) || m.channelOf(handler) == bytes32(0),
             "ConfigureSanctionsClearance: that contract already handles another channel on this messenger"
         );
+    }
+
+    /// @dev Registers `handler` on the clearance channel (see {_checkHandler}).
+    function _ensureHandler(CcipMessenger m, address handler) internal {
+        _checkHandler(m, handler);
+        if (m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL) == handler) return;
         m.registerChannel(SANCTIONS_CLEARANCE_CHANNEL, handler);
         console.log("  channel: handler registered", handler);
     }
 
-    /// @dev Sets `peer` as the clearance channel's peer for `remote`. Refuses
-    ///      to replace another peer: a rotation needs a drain first.
-    function _ensurePeer(CcipMessenger m, uint256 remote, address peer) internal {
+    /// @dev Refuses to replace another clearance-channel peer for `remote`:
+    ///      a rotation needs a drain first.
+    function _checkPeer(CcipMessenger m, uint256 remote, address peer) internal view {
         address current = m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, remote);
-        if (current == peer) return;
         require(
-            current == address(0),
+            current == address(0) || current == peer,
             "ConfigureSanctionsClearance: the clearance channel already has another peer for that chain - rotating it needs a drain (CcipMessenger.setChannelPeer); clear it deliberately first"
         );
+    }
+
+    /// @dev Sets `peer` as the clearance channel's peer for `remote` (see
+    ///      {_checkPeer}).
+    function _ensurePeer(CcipMessenger m, uint256 remote, address peer) internal {
+        _checkPeer(m, remote, peer);
+        if (m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, remote) == peer) return;
         m.setChannelPeer(SANCTIONS_CLEARANCE_CHANNEL, remote, peer);
         console.log("  channel: peer set for chain", remote, peer);
     }

@@ -832,15 +832,18 @@ test('the report names the clearance oracle, and says the stand-in is not RedSto
   assert.match(summarize(denies), new RegExp(`clearance oracle not identified this run at ${ORACLE} \\(it answers false\\); it reports a last update of 1970-01-12T13:30:00.000Z\\.`));
   assert.ok(!summarize(denies).includes('RedStone'), 'an unidentified oracle is never called RedStone');
   assert.equal((await run(snapOf({ ...quiet, route: 0, clearanceOracle: null }))).report.chains.b.clearanceOracle, null, 'no route, no oracle to name');
+  const absurd = (await run(snapOf({ ...quiet, clearanceOracle: { address: ORACLE, identity: 'stand-in', updatedAt: 2n ** 64n - 1n } }))).report;
+  assert.match(summarize(absurd), /last published an unreadable time \(18446744073709551615\)/, 'a time no date can hold never aborts the report');
 });
 
 test('an oracle is the stand-in only on its own answer, and never RedStone', async () => {
-  const answering = (marker, updatedAt = 123n) => ({
+  const answering = (marker, updatedAt = 123n, blockTime = 1_000n) => ({
     readContract: async ({ functionName }) => {
       if (functionName === 'isTestnetStandIn') return marker instanceof Error ? Promise.reject(marker) : marker;
       assert.equal(functionName, 'getLastUpdateBlockTimestamp');
       return updatedAt instanceof Error ? Promise.reject(updatedAt) : updatedAt;
     },
+    getBlock: async () => (blockTime instanceof Error ? Promise.reject(blockTime) : { timestamp: blockTime }),
   });
   assert.deepEqual(await identifyOracle(answering(true), ORACLE.toLowerCase(), []), { address: ORACLE, identity: 'stand-in', updatedAt: 123n });
   // An explicit false says only that it is not the stand-in.
@@ -860,4 +863,9 @@ test('an oracle is the stand-in only on its own answer, and never RedStone', asy
   assert.equal(down.updatedAt, null);
   assert.match(down.detail, /whether it is the testnet stand-in returned no answer: fetch failed/);
   for (const o of [no, noFunction, down]) assert.equal(clearanceOracleName({ clearanceOracle: o }), 'the clearance oracle');
+  // The contracts' freshness rule: a time later than the chain's latest block
+  // is unknown, as is one that cannot be judged because the block is unreadable.
+  assert.equal((await identifyOracle(answering(true, 2n ** 64n - 1n), ORACLE, [])).updatedAt, null, 'a future time is unknown');
+  assert.equal((await identifyOracle(answering(true, 1_000n), ORACLE, [])).updatedAt, 1_000n, 'the current block itself is fine');
+  assert.equal((await identifyOracle(answering(true, 123n, new Error('rpc down')), ORACLE, [])).updatedAt, null);
 });

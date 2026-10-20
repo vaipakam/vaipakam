@@ -17,6 +17,12 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
  *
  *         Each call is guarded: a contract that does not answer `owner()` or
  *         `pendingOwner()` (no code, another interface) is never reused.
+ *
+ *         Failing this rule means "do not reuse", never "replace silently": a
+ *         script that would deploy a replacement while the unfit contract
+ *         still holds a role (a remover of the list, the handler of a
+ *         channel) refuses instead, before deploying or recording anything,
+ *         so two live contracts never hold one role.
  */
 library AdminControl {
     /// @notice Whether `target` answers to `admin` alone: owned by it, with no

@@ -346,11 +346,21 @@ Both accept native value only as their messenger's fee refund.
     NOW: a fresh request alone when it has updated since, the admin
     re-publishing the stand-in when it has not, and a conditional
     instruction when the current time could not be read.
-  - **Only the admin's stand-in is reused.** The wiring script reuses a
-    recorded stand-in only while it answers as the stand-in, the admin owns
-    it, and no ownership transfer is pending; otherwise it deploys a new one.
-    An attestor binds its oracle for good, so binding one another account
-    could take over would hand that account the clearance.
+  - **Only the admin's stand-in is reused, and nothing is replaced while it
+    still holds a role.** The wiring script reuses a recorded stand-in only
+    while it answers as the stand-in, the admin owns it, and no ownership
+    transfer is pending (one rule, `script/lib/AdminControl.sol`, shared by
+    every sanctions deploy and configure script). An attestor binds its
+    oracle for good, so binding one another account could take over would
+    hand that account the clearance. Failing the rule means "do not reuse",
+    never "replace silently": when a replacement attestor would be needed
+    while the old one still handles the clearance channel, the run stops,
+    and it checks every such refusal before it deploys or records anything,
+    since an artifact written during a `--broadcast` simulation survives a
+    later revert. `DeploySanctionsDelisting` applies the same rule to the
+    timelock: it never deploys a second timelock beside a recorded one that
+    is still a remover of the list, so a list never has two automated
+    delisting routes.
 
   A fork test (`contracts/test/fork/SanctionsClearanceLiveForkTest.t.sol`,
   gated on `FORK_URL_BNB_TESTNET` plus each timelock chain's URL) runs the

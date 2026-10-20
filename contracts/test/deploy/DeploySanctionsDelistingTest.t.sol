@@ -75,6 +75,44 @@ contract DeploySanctionsDelistingTest is Test {
         vm.removeDir(root, true);
     }
 
+    function test_Testnet_NeverDeploysBesideATimelockThatStillHoldsTheRemoverRole() public {
+        (DeploySanctionsDelisting s, SanctionsList list) = _script(84532, "base-sepolia-pending", true);
+        s.runWith(delister);
+        address first = vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock");
+        address next = makeAddr("next owner");
+
+        // A pending transfer: the admin no longer alone controls it, and it is
+        // still a remover, so a replacement would be a second live route.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(next);
+        string memory before = _artifact();
+        vm.expectRevert(
+            bytes(
+                "DeploySanctionsDelisting: the recorded timelock is still a remover of this list, but the admin does not alone control it (another owner, or an ownership transfer pending) - cancel the transfer, or revoke it with setRemover(timelock, false), then re-run. Nothing was deployed or recorded"
+            )
+        );
+        s.runWith(delister);
+        assertEq(_artifact(), before, "nothing recorded");
+
+        // Cancelled, it is reused.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(address(0));
+        s.runWith(delister);
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock"), first, "reused once nothing is pending");
+
+        // Revoked deliberately, a replacement goes ahead and the old one holds no role.
+        vm.prank(admin);
+        SanctionsDelistingTimelock(payable(first)).transferOwnership(next);
+        vm.prank(admin);
+        list.setRemover(first, false);
+        s.runWith(delister);
+        address second = vm.parseJsonAddress(_artifact(), ".sanctionsDelistingTimelock");
+        assertTrue(second != first, "replaced");
+        assertTrue(list.isRemover(second));
+        assertFalse(list.isRemover(first), "one delisting route, not two");
+        vm.removeDir(root, true);
+    }
+
     function test_Testnet_RefusesSharedKeysAndAMissingList() public {
         (DeploySanctionsDelisting s,) = _script(84532, "base-sepolia-keys", true);
         vm.expectRevert(bytes("DeploySanctionsDelisting: the proposer must not be the owner"));
