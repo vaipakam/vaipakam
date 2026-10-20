@@ -44,11 +44,13 @@ vi.mock('../src/epochFence', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/epochFence')>()),
   assertEpochsHold: async () => {},
 }));
-// A short send reserve, so the stalls below can outlast the read cutoff
-// (deadline − 500 ms) and the deadline itself within a fast test.
+// Short reserves, so the stalls below can outlast the read cutoffs (receipts
+// at deadline − 650 ms, routes at − 500 ms) and the deadline itself within a
+// fast test.
 vi.mock('../src/runWindow', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/runWindow')>()),
   readCutoffMs: (deadlineMs: number) => deadlineMs - 500,
+  priorStageCutoffMs: (nextMs: number) => nextMs - 150,
 }));
 
 const AGGREGATE3 = {
@@ -440,6 +442,26 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.quotes).toBeGreaterThan(0);
     expect(t.routeIds).toEqual([]);
     expect(t.alerts).toEqual([]);
+  });
+
+  it('a mirror stalled until its read is abandoned does not silence another mirror\'s alert', async () => {
+    // Reservation 1 goes to Arbitrum Sepolia, which holds no receipt for it,
+    // behind a retired adapter. Reservation 2 goes to Base Sepolia, whose
+    // receipt read stalls. The stalled read is abandoned at the receipt
+    // cutoff, which leaves the route reads their own reserve, so 1 is still
+    // alerted (Codex #2607 r8).
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      dstById: { 2: BASE },
+      route: { sent: OLD, live: NEW },
+      slowReceipt: { id: 2, ms: 1_500 },
+      deadlineInMs: 1_000,
+    });
+    expect(t.routeIds).toEqual([1]);
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('remit 1');
+    expect(t.alerts[0]).not.toContain('remit 2');
   });
 
   it('alerts a remittance to a chain the keeper has no RPC for, and reads no route for it', async () => {

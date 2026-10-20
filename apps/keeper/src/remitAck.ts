@@ -49,7 +49,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
 import { batchedRead, deadlineClient, settledRead } from './batchRead';
-import { readCutoffMs } from './runWindow';
+import { priorStageCutoffMs, readCutoffMs } from './runWindow';
 import type { PassTick } from './passSchedule';
 import {
   discoverReleasedRemits,
@@ -368,7 +368,10 @@ async function planPending(
     const v = reservations.get(remitId);
     return v ? [{ remitId, v, mirrorCfg: mirrorFor(mirrorConfigs, v.dstChainId, remitId) }] : [];
   });
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
+  // The receipts leave the route reads that follow them a reserve (Codex
+  // #2607 r8): a mirror stalled until the receipt cutoff is abandoned there,
+  // and the healthy mirrors' missing receipts are still classified.
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, priorStageCutoffMs(deadline));
   const undelivered = await classifyUndelivered(publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline);
   return { late: false, candidates, receipts, attempts, undelivered };
 }
@@ -786,6 +789,9 @@ async function planLateDeliveries(
   const open = await listOpenWork<{ remitId: number }>(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, LATE_OPEN_SLICE);
   if (open.length === 0) return undefined;
   const ids = open.map((o) => o.payload.remitId);
+  // The release ledger and the gates feed the receipt reads, which feed the
+  // route reads: each stage leaves the next its reserve (Codex #2607 r8).
+  const ledgerCutoff = priorStageCutoffMs(priorStageCutoffMs(deadline));
   const res: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
@@ -798,7 +804,7 @@ async function planLateDeliveries(
         args: [BigInt(id)] as const,
       })),
       `remitAck late deliveries ${i}/${ids.length}`,
-      deadline,
+      ledgerCutoff,
     );
     res.push(...part);
   }
@@ -814,7 +820,7 @@ async function planLateDeliveries(
     publicClient as never,
     dsts.map((d) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getCompensationOutstanding' as const, args: [d] as const })),
     'remitAck compensation gates',
-    deadline,
+    ledgerCutoff,
   );
   const gateOf = new Map(dsts.map((d, i) => [d, gates[i]?.status === 'success' ? BigInt(gates[i].result as bigint) : null]));
   /** `unreadIsHeld`: for RETIREMENT an unread gate counts as held (never
@@ -851,7 +857,10 @@ async function planLateDeliveries(
     const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), id, 'late');
     return [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }];
   });
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, deadline);
+  // The receipts leave the route reads that follow them a reserve (Codex
+  // #2607 r8): a mirror stalled until the receipt cutoff is abandoned there,
+  // and the healthy mirrors' missing receipts are still classified.
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, priorStageCutoffMs(deadline));
   const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline);
   return { late: true, candidates, receipts, attempts, undelivered };
 }
