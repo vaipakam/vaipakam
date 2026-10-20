@@ -61,7 +61,7 @@ import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
-import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWork, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
+import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWorkPage, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
 import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
@@ -322,20 +322,25 @@ async function proveOnMirror(
     return { items: page.rows.map((r) => ({ item: r.packetHash.toLowerCase(), block: r.block, payload: r })), next: page.next };
   });
   // One past the slice, so the run knows whether the slice is the whole queue.
-  const listed = await listOpenWork<BudgetDeliveryRow>(env.KEEPER_DB, chain.id, diamond, WORK_KIND, OPEN_SLICE + 1);
-  const overflow = listed.length > OPEN_SLICE;
-  const open = listed.slice(0, OPEN_SLICE);
+  const page = await listOpenWorkPage<BudgetDeliveryRow>(env.KEEPER_DB, chain.id, diamond, WORK_KIND, OPEN_SLICE + 1);
+  // The slice is the whole queue only when the page did not overflow AND every
+  // row in it could be read (Codex #2599 r3): an unreadable row stays queued
+  // but unseen, so a run that skipped one has not measured every delivery.
+  const overflow = page.rows > OPEN_SLICE;
+  const unreadRows = Math.min(page.rows, OPEN_SLICE + 1) - page.items.length;
+  const open = page.items.slice(0, OPEN_SLICE);
   const nowSec = Math.floor(Date.now() / 1000);
   const openWork = (items: readonly string[]) => openWorkAmong(env.KEEPER_DB, chain.id, diamond, WORK_KIND, items);
   if (open.length === 0) {
-    // Nothing open: nothing is awaiting, measured, and no revert alert can
-    // stand (its delivery is no longer open work).
+    // Nothing readable open: nothing is awaiting — measured only if no row was
+    // skipped — and no revert alert can stand (its delivery is no longer open
+    // work).
     await raiseDeliveryAlerts(env, chain.id, {
       failures: new Map(),
       cleared: new Set(),
       openWork,
       awaiting: [],
-      awaitingMeasured: true,
+      awaitingMeasured: !overflow && unreadRows === 0,
       nowSec,
       deadline: alertDeadline,
     });
@@ -440,12 +445,16 @@ async function proveOnMirror(
   // budget never reached, a re-read that did not land, a slice that is not the
   // whole queue — can raise the alert but never clear it.
   const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, finished, notWhole, moved, remeasured, nowSec });
+  // A delivery this run measured whole has nothing a refusal could be holding
+  // back (another caller finished it, say): no revert alert for it (Codex
+  // #2599 r3). Its refusal stays in the journal.
+  for (const key of finished) failures.delete(key);
   await raiseDeliveryAlerts(env, chain.id, {
     failures,
     cleared: new Set([...clean, ...finished]),
     openWork,
     awaiting,
-    awaitingMeasured: unreadPackets.size === 0 && undetermined === 0 && !overflow,
+    awaitingMeasured: unreadPackets.size === 0 && undetermined === 0 && !overflow && unreadRows === 0,
     nowSec,
     deadline: alertDeadline,
   });
@@ -500,7 +509,8 @@ export interface DeliveryAlertInput {
   /** False when the run could not look at every open delivery. */
   awaitingMeasured: boolean;
   nowSec: number;
-  /** Alerts past this are neither sent nor recorded; the next run raises them. */
+  /** Past this, clears and the "not whole" alert wait for the next run, which
+   *  measures them again; a refusal is raised regardless. */
   deadline: number;
 }
 
@@ -511,11 +521,18 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   try {
     open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `delivery-%:${chainId}:%`));
   } catch (err) {
-    console.error(`[keeper] deliveryProof chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
-    return;
+    // Nothing is cleared on an unread alert table, but this run's refusals are
+    // still raised: the next run cannot measure them again.
+    console.error(`[keeper] deliveryProof chain=${chainId}: open alerts unread, nothing cleared this run: ${shortErr(err)}`);
+    open = new Set();
   }
-  const toggle = async (key: string, on: boolean, text: () => string): Promise<void> => {
-    if (Date.now() >= m.deadline) return;
+  // What the next run can MEASURE again — a clear, the "not whole" state —
+  // waits for it once this run is out of time. A refusal cannot be measured
+  // again (a later call may go through), so it is raised even past the
+  // deadline (Codex #2599 r3): never dropped. The ops bot's send is bounded by
+  // its own timeout.
+  const toggle = async (key: string, on: boolean, text: () => string, always = false): Promise<void> => {
+    if (!always && Date.now() >= m.deadline) return;
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, m.nowSec, chainId);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
@@ -524,6 +541,7 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
     // eslint-disable-next-line no-await-in-loop
     await toggle(`${prefix}${packet}`, true, () =>
       `${tag}: the proof for delivery ${packet} reverts (${why}). Until it goes through, that delivery's days fund nothing a claim can find, and an armed day-delivery gate holds them.`,
+      true,
     );
   }
   // Open revert alerts this run did not re-raise: cleared when this run
@@ -991,6 +1009,16 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     }
     return { kind: 'ok' };
   } catch (err) {
+    // The contract refusing the call before broadcast — gas estimation after
+    // the state moved since the simulation (Codex #2599 r3) — is a refused
+    // call like any other, classified by the same rule. Only a failure that
+    // carries no contract reason (transport, nonce, a receipt not in time)
+    // stops this run's sends.
+    const refused = refusedBeforeBroadcast(err, call.functionName);
+    if (refused) {
+      console.log(`[keeper] deliveryProof ${call.functionName} refused before broadcast: ${shortErr(err)}`);
+      return refused;
+    }
     reportSendError(`[keeper] deliveryProof ${call.functionName}`, err, `send failed: ${shortErr(err)}`);
     budget.writes = 0;
     return { kind: 'stopped' };
@@ -1025,6 +1053,14 @@ export async function minedRevertOutcome(simulate: (c: Call) => Promise<unknown>
  *  Pure; exported for tests. */
 export function receiptTimeoutMs(notAfterMs: number, nowMs: number = Date.now()): number {
   return Math.max(1, Math.min(RECEIPT_TIMEOUT_MS, notAfterMs - nowMs));
+}
+
+/** A send that failed with the CONTRACT's reason (gas estimation refusing it,
+ *  say) as an outcome classified like any refused call; null for a failure
+ *  that carries no contract reason, which stops the run's sends. Pure;
+ *  exported for the tests. */
+export function refusedBeforeBroadcast(err: unknown, fn: string): SendOutcome | null {
+  return revertName(err) !== undefined ? outcomeOf(err, fn) : null;
 }
 
 /** A refused simulation as a send outcome. A deadline refusal stops the run. */

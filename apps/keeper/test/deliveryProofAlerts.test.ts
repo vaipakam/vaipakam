@@ -17,11 +17,13 @@ import {
   classifyRevert,
   minedRevertOutcome,
   receiptTimeoutMs,
+  refusedBeforeBroadcast,
   raiseDeliveryAlerts,
   type DeliveryAlertInput,
 } from '../src/deliveryProof';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
+import { listOpenWorkPage, type KeeperD1 } from '../src/db';
 import type { SqliteD1 } from './helpers/sqliteD1';
 
 const ABI = RewardEpochFacetABI as Abi;
@@ -155,9 +157,31 @@ describe('raiseDeliveryAlerts', () => {
     expect(keys()).toEqual(['delivery-awaiting:84532:all']);
   });
 
-  it('sends nothing past the run deadline', async () => {
-    await raiseDeliveryAlerts(env, CHAIN, input({ failures: new Map([[P1, 'x']]), awaiting: [{ packetHash: P1, arrivedAt: 0 }], deadline: 0 }));
-    expect(warned).toEqual([]);
+  it('past the run deadline, still raises a refusal but leaves what the next run can measure', async () => {
+    recorded(`delivery-revert:${CHAIN}:${P2}`);
+    await raiseDeliveryAlerts(
+      env,
+      CHAIN,
+      input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]), awaiting: [{ packetHash: P1, arrivedAt: 0 }], deadline: 0 }),
+    );
+    expect(warned.filter((w) => w.includes(`the proof for delivery ${P1} reverts`)), 'a refusal is never dropped').toHaveLength(1);
+    expect(warned.filter((w) => w.includes('not yet whole')), 'the "not whole" alert waits').toEqual([]);
+    expect(keys(), 'no clear past the deadline').toContain(`delivery-revert:${CHAIN}:${P2}`);
+  });
+
+  it('still raises refusals when the open alerts cannot be read, and clears nothing', async () => {
+    const failing = {
+      ...keeper.d1,
+      prepare: (sql: string) => {
+        if (sql.includes('SELECT alert_key FROM keeper_ops_alert')) throw new Error('d1 down');
+        return keeper.d1.prepare(sql);
+      },
+    };
+    recorded(`delivery-revert:${CHAIN}:${P2}`);
+    const e = { ...env, KEEPER_DB: failing } as unknown as Env;
+    await raiseDeliveryAlerts(e, CHAIN, input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]) }));
+    expect(warned.filter((w) => w.includes(`the proof for delivery ${P1} reverts`))).toHaveLength(1);
+    expect(keys()).toContain(`delivery-revert:${CHAIN}:${P2}`);
   });
 });
 
@@ -222,5 +246,35 @@ describe('receiptTimeoutMs', () => {
     expect(receiptTimeoutMs(100_000, 0)).toBe(30_000);
     expect(receiptTimeoutMs(5_000, 0)).toBe(5_000);
     expect(receiptTimeoutMs(0, 5_000), 'a timeout of 0 would mean none at all').toBe(1);
+  });
+});
+
+describe('refusedBeforeBroadcast', () => {
+  it('classifies a contract refusal at gas estimation like any refused call', () => {
+    expect(refusedBeforeBroadcast(revert('TransportChunkProofInvalid', [P1, 1n, P2]), 'proveDeliveryDayChunk')).toEqual({
+      kind: 'failed',
+      reason: 'proveDeliveryDayChunk: TransportChunkProofInvalid',
+    });
+    expect(refusedBeforeBroadcast(revert('TransportChunkAlreadyIndexed', [P1, 2n]), 'proveDeliveryDayChunk')).toEqual({ kind: 'ok' });
+  });
+
+  it('leaves a failure with no contract reason to stop the run', () => {
+    expect(refusedBeforeBroadcast(new Error('nonce too low'), 'proveDeliveryDayChunk')).toBeNull();
+  });
+});
+
+describe('listOpenWorkPage', () => {
+  it('reports the rows it read beside the payloads it could parse', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const k = createKeeperD1();
+    const ins = k.db.prepare(
+      'INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+    );
+    ins.run(CHAIN, '0xab', 'delivery_proof', 'a', 1, JSON.stringify({ packetHash: P1 }), 0);
+    ins.run(CHAIN, '0xab', 'delivery_proof', 'b', 2, '{not json', 0);
+    const page = await listOpenWorkPage(k.d1 as unknown as KeeperD1, CHAIN, '0xab', 'delivery_proof', 10);
+    expect(page.items.map((i) => i.item)).toEqual(['a']);
+    expect(page.rows, 'an unreadable row is counted, so the run knows it did not see it').toBe(2);
+    vi.restoreAllMocks();
   });
 });

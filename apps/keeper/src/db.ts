@@ -1000,6 +1000,22 @@ export async function listOpenWork<T>(
   kind: WorkKind,
   limit: number,
 ): Promise<WorkItem<T>[]> {
+  return (await listOpenWorkPage<T>(db, chainId, diamond, kind, limit)).items;
+}
+
+/**
+ * {@link listOpenWork}, with how many rows the page READ (`rows`) beside the
+ * items it could parse. A row whose payload is unreadable is left queued and
+ * skipped, so `rows > items.length` tells a caller that measures the whole
+ * queue that it did not see all of it (Codex #2599 r3).
+ */
+export async function listOpenWorkPage<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  limit: number,
+): Promise<{ items: WorkItem<T>[]; rows: number }> {
   const rows = await db
     .prepare(
       `SELECT item, block, payload FROM keeper_work_open
@@ -1008,15 +1024,16 @@ export async function listOpenWork<T>(
     )
     .bind(chainId, diamond.toLowerCase(), kind, limit)
     .all<{ item: string; block: number; payload: string }>();
-  const out: WorkItem<T>[] = [];
-  for (const r of rows.results ?? []) {
+  const items: WorkItem<T>[] = [];
+  const read = rows.results ?? [];
+  for (const r of read) {
     try {
-      out.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+      items.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
     } catch {
       console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
     }
   }
-  return out;
+  return { items, rows: read.length };
 }
 
 /** Stamp `items` as checked now, moving them to the back of the rotation. */
