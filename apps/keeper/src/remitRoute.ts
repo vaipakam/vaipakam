@@ -211,7 +211,7 @@ export function undeliveredAlertFooter(path: RemitPath, reason: UndeliveredReaso
   const valves =
     'If it executed, finalizeRemitReservation(remitId) records it as delivered; if it never will, releaseRemitReservation(remitId) (seven days after the send) releases it.';
   if (path === 'late') {
-    return `A late acknowledgement from the old mirror resolves each. So do recovery records: recordRecoveryCeremony books value a governance ceremony brought back to the Diamond, and recordRecoveryTerminalLoss books governance-evidenced loss of the rest; a compensation gate clears once the two cover the remittance's total. ${runbook}`;
+    return `A late acknowledgement resolves each, from the mirror Diamond that holds its receipt: the receiver its adapter had registered when the message executed, which the destination transaction shows (find it by CCIP message id). If the message has not executed, no mirror can acknowledge it yet. Recovery records also resolve each: recordRecoveryCeremony books value a governance ceremony brought back to the Diamond, and recordRecoveryTerminalLoss books governance-evidenced loss of the rest; a compensation gate clears once the two cover the remittance's total. ${runbook}`;
   }
   return reason === 'retired'
     ? `Each message executes, if at all, behind the adapter it was sent to. ${valves} ${runbook}`

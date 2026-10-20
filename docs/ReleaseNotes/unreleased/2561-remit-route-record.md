@@ -22,9 +22,10 @@ Base can name. The keeper still acknowledges any remittance whose receipt the
 configured mirror holds. Each run it now reads the receipt of every
 reservation in that run's slice, which is up to 200 in-flight reservations and
 300 released ones, rotating through any larger backlog over later runs. It
-classifies both kinds before it posts any alert, and posts its alerts before it
-sends any acknowledgement. So neither a backlog of ordinary acknowledgements,
-nor a slow send, nor a slow alert channel can hide a remittance it cannot make.
+classifies both kinds before it posts any alert or sends any acknowledgement,
+then posts its alerts alongside its acknowledgements. So neither a backlog of
+ordinary acknowledgements, nor a slow send, nor a slow alert channel can hide a
+remittance it cannot make or hold up one it can.
 An alert is still sent when the keeper cannot read its record of open alerts. A reservation with no
 receipt is reported to ops, never left waiting in silence, in two cases. The
 first is a remittance sent through an adapter the lane no longer names. The

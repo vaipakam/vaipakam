@@ -158,12 +158,13 @@ type Book = {
   failAlertList?: boolean;
 };
 
-function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; quotes: () => number; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
   const routeIds: number[] = [];
   /** When each ops post began, in ms since install, beside each route read's. */
   const posts: number[] = [];
+  let quotes = 0;
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
     if (s === SEL.cfg) {
@@ -209,13 +210,14 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
 
   globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
     const rpc = String(input);
-    if (rpc.includes('api.telegram.org')) {
+    if (new URL(rpc).hostname === 'api.telegram.org') {
       posts.push(routeIds.length);
       await new Promise((r) => setTimeout(r, book.telegramDelayMs ?? 0));
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     const body = JSON.parse(init?.body ?? '{}');
     const reqs = Array.isArray(body) ? body : [body];
+    if (JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) quotes += 1;
     if (book.slowQuoteMs && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
       await new Promise((r) => setTimeout(r, book.slowQuoteMs));
     }
@@ -249,7 +251,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, routeIds, posts, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, posts, quotes: () => quotes, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
@@ -286,7 +288,7 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
 }
 
 async function tick(book: Book) {
-  const { routeReads, routeIds, posts, restore } = install(book);
+  const { routeReads, routeIds, posts, quotes, restore } = install(book);
   const shared = d1();
   const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList);
   const warns: string[] = [];
@@ -318,7 +320,7 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, quotes: quotes() };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -380,6 +382,22 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect([...t.routeIds].sort()).toEqual([1, 2]);
     expect(t.posts.length).toBeGreaterThan(0);
     expect(t.posts.every((readsBefore) => readsBefore === 2)).toBe(true);
+  });
+
+  it('still sends acknowledgements while every alert post stalls', async () => {
+    // Reservation 1 holds a receipt; reservation 2 is undelivered and alerted.
+    // Each ops post outlives the deadline. The ack for 1 must not wait for it
+    // (Codex #2607 r5): posts run beside the sends, not before them.
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      receiptIds: [1],
+      route: { sent: OLD, live: NEW },
+      telegramDelayMs: 1_500,
+      deadlineInMs: 1_000,
+    });
+    expect(t.posts.length).toBeGreaterThan(0);
+    expect(t.quotes).toBeGreaterThan(0);
   });
 
   it('still sends a new alert when the open-alert list cannot be read', async () => {
@@ -518,6 +536,10 @@ describe('undelivered alert keys and text (#2561)', () => {
     expect(footer).toMatch(/recordRecoveryCeremony/);
     expect(footer).toMatch(/recordRecoveryTerminalLoss/);
     expect(`${header} ${footer}`).not.toMatch(/releaseRemitReservation|finalizeRemitReservation/);
+    // The receipt's holder is found from the execution, never assumed (r5).
+    expect(footer).not.toMatch(/old mirror/);
+    expect(footer).toMatch(/holds its receipt/);
+    expect(footer).toMatch(/has not executed, no mirror can acknowledge it yet/);
   });
 
   it('a released compensation remittance names the gate it holds, never a zero stranded share', () => {

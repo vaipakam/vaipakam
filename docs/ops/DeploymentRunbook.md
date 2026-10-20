@@ -753,9 +753,11 @@ options, on the evidence:
 1. Pending, and the message waits for manual execution on CCIP: execute it
    there. The receipt then appears and the keeper acknowledges it by itself.
 2. Pending, and the message executed behind the old adapter, or at a receiver
-   since replaced (check the CCIP explorer for the message id): acknowledge it
-   from the OLD mirror Diamond by
-   hand. Base only accepts acknowledgements from the lane's current peers, so
+   since replaced: acknowledge it by hand from the mirror Diamond that holds
+   its receipt. That is the receiver the adapter had registered when the
+   message executed, which the destination transaction shows (find it on the
+   CCIP explorer by message id). Do not assume it is the pre-redeploy mirror,
+   and if the message has not executed, no Diamond can acknowledge it yet. Base only accepts acknowledgements from the lane's current peers, so
    this needs the old remote messenger and channel peer restored on Base's
    `CcipMessenger` for the duration, then the redeploy's values put back (the
    recovery shape in AdminConfigurableKnobsAndSwitches, "Rotating a channel
@@ -768,7 +770,8 @@ options, on the evidence:
 3. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
    sooner than seven days after the send.
 4. Released, with its stranded share or compensation gate unresolved: a late
-   acknowledgement from the old mirror (as in 2), or `recordRecoveryCeremony`
+   acknowledgement from the Diamond that holds its receipt (identified as in
+   2), or `recordRecoveryCeremony`
    for value a governance ceremony brought back to the Diamond and
    `recordRecoveryTerminalLoss` for governance-evidenced loss of the rest. A
    compensation gate clears once the two cover the remittance's total.

@@ -175,9 +175,10 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
     const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
-    await deliverUndelivered(env, baseChainId, diamond, [late?.undelivered], deadline);
+    const alerts = deliverUndelivered(env, baseChainId, diamond, [late?.undelivered], deadline);
     await clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
     await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
+    await alerts;
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -259,21 +260,23 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  // CLASSIFY EVERYTHING, THEN ALERT, THEN SEND (Codex #2607 r3/r4). Both
-  // paths are read and classified before any alert is posted, and every alert
-  // is posted before any acknowledgement is broadcast, so neither a slow ops
-  // channel nor a slow send can spend the deadline the other path's reads
-  // needed. Every step before the posts is a batched, bounded read.
+  // CLASSIFY EVERYTHING, THEN ALERT AND SEND SIDE BY SIDE (Codex #2607
+  // r3–r5). Both paths are read and classified before anything is posted or
+  // broadcast, so neither a slow ops channel nor a slow send can spend the
+  // deadline a path's reads needed; every step before them is a batched,
+  // bounded read. The alert posts then run concurrently with the
+  // acknowledgement sends, so neither waits on the other.
   // PENDING FIRST, late after (#2497 r13): the Pending acks are the ordinary
   // work — a reservation stays reserved on Base until acked — and the late path
   // is a backlog that can be large, so it gets only what the Pending acks left
   // of the tick's one budget, never the other way round.
   const pending = await planPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, deadline);
   const late = await planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, deadline);
-  await deliverUndelivered(env, baseChainId, diamond, [pending?.undelivered, late?.undelivered], deadline);
+  const alerts = deliverUndelivered(env, baseChainId, diamond, [pending?.undelivered, late?.undelivered], deadline);
   await clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow);
   await sendPlanned(env, pending, mirrorClients, baseChainId, diamond, ackBudget);
   await sendPlanned(env, late, mirrorClients, baseChainId, diamond, ackBudget);
+  await alerts;
 }
 
 /** The rotation order for acknowledgements: never attempted first, then the
@@ -486,15 +489,18 @@ async function classifyUndelivered(
  * once, after all of them are classified. One digest post per path and reason
  * however many are due (each reservation keeps its own key, so each re-posts
  * daily and clears on its own), so a redeploy that strands many remittances
- * costs a bounded number of posts. The posts start from a random digest, so no
- * fixed order can leave one digest behind a slow channel every run.
+ * costs a bounded number of posts. The posts run CONCURRENTLY, with each other
+ * and with the tick's acknowledgement sends (Codex #2607 r5): a slow or
+ * unreachable ops channel costs one post timeout in total, and never the time
+ * an acknowledgement or another digest needed.
  *
  * Then, for every reservation classified this run, an open alert whose reason
  * no longer holds (the receipt appeared, the adapter is the lane's again) is
  * cleared, so a recurrence alerts at once. That reconciliation is contained on
  * its own (Codex #2607 r4): an unreadable alert list never withholds a new
  * alert, since the digest itself fails open on unread sent-state. It never
- * clears a key this run posts, so it can follow the posts.
+ * clears a key this run posts, so it can follow the posts. Never rejects, so
+ * the caller may start it and await it after the sends.
  */
 async function deliverUndelivered(
   env: Env,
@@ -505,22 +511,20 @@ async function deliverUndelivered(
 ): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
   const posts = reports.flatMap((r) => (r ? [...r.entries].map(([reason, list]) => ({ path: r.path, reason, list })) : []));
-  const first = Math.floor(Math.random() * posts.length);
-  for (let i = 0; i < posts.length; i++) {
-    if (Date.now() >= deadline) break;
-    const { path, reason, list } = posts[(first + i) % posts.length];
-    // Contained by the digest itself: a failed post is logged and stays due.
-    // eslint-disable-next-line no-await-in-loop
-    await sendOpsAlertDigest(
-      env,
-      (count) => undeliveredAlertHeader(path, reason, baseChainId, count),
-      list,
-      undeliveredAlertFooter(path, reason),
-      UNDELIVERED_ALERT_REPEAT_SEC,
-      nowSec,
-      baseChainId,
-    );
-  }
+  // Contained by the digest itself: a failed post is logged and stays due.
+  await Promise.allSettled(
+    posts.map(({ path, reason, list }) =>
+      sendOpsAlertDigest(
+        env,
+        (count) => undeliveredAlertHeader(path, reason, baseChainId, count),
+        list,
+        undeliveredAlertFooter(path, reason),
+        UNDELIVERED_ALERT_REPEAT_SEC,
+        nowSec,
+        baseChainId,
+      ),
+    ),
+  );
   for (const r of reports) {
     if (!r || Date.now() >= deadline) continue;
     try {
