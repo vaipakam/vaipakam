@@ -111,6 +111,10 @@ Two consequences:
   values live in region `region@slot[keyType]`.
 - `D|…|path` and `W|elementRegion|bytes`: a dynamic array, and the stride of
   its elements. `W` also covers fixed arrays of structs.
+- `R|region|slot|offset|struct|path`: a struct that contains itself, through a
+  mapping or a dynamic array (a tree node with `mapping(uint256 => Node)
+  children`), recurs here. Its members are the lines already written for the
+  enclosing instance, so they are recorded once rather than expanded forever.
 - `E|enum|index|member`: the enum's Nth member, from its AST declaration.
 - `U|valueType|underlying`: what a user-defined value type wraps. The layout
   line names only the value type, so without this a redefinition (`type
@@ -152,7 +156,9 @@ A break that is intended is acknowledged in
 `contracts/storage-layout/breaks.ack.json`. Each entry names the sha256 of the
 exact base golden file it was measured against, the exact lines it accepts, and
 why. It goes inert as soon as the base changes, so it cannot outlive the
-comparison it was written for. It is read only when the guard is run with
+comparison it was written for. A live entry must list only lines the change
+actually removes: a line it lists that is still present would pre-authorise a
+later removal against the same base, so the guard refuses it. It is read only when the guard is run with
 `--honour-acks`, which `predeploy-check.sh` passes only when
 `STORAGE_LAYOUT_HONOUR_ACKS=1`, which only CI's merge check sets. An operator
 comparing against a deployed chain's layout with `STORAGE_LAYOUT_BASE` alone
@@ -169,7 +175,10 @@ A layout nobody lists is a layout nobody checks, so the guard refuses:
   (dependencies included), that no root names. Each pointer is resolved to
   the struct it is typed as and the position constant its slot is set from:
   the constant itself, or a local initialised once from it, or from a
-  parameterless function in the same file that returns it. A pointer that
+  parameterless function in the same file that returns it. A local qualifies
+  only when the pointer's read is its sole use anywhere in the file, so a
+  later assignment, `delete`, tuple write or Yul `:=` is refused without the
+  guard having to recognise each form of write. A pointer that
   cannot be resolved is refused too, and so is one whose position comes from
   a virtual function declared more than once in scope, since an override
   moves the namespace;
@@ -188,9 +197,12 @@ A layout nobody lists is a layout nobody checks, so the guard refuses:
 One file is exempt, by name and with its reason in `roots.json`:
 OpenZeppelin's `StorageSlot.sol`, whose typed accessors take the slot as a
 parameter and so define no namespace; the slots they are used with here are
-EIP-1967's fixed implementation, admin and beacon slots. An exemption for a
-file that no longer sets a pointer, or that nothing compiles, is itself an
-error.
+EIP-1967's fixed implementation, admin and beacon slots. The exemption passes
+only pointers whose slot is a parameter of their function. Any other pointer
+in the file, such as a real namespace a dependency bump adds beside the
+accessors, is checked like any pointer elsewhere. An exemption for a file
+that no longer has a parameter-slot pointer, or that nothing compiles, is
+itself an error.
 
 ## Where it runs
 

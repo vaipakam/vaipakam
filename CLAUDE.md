@@ -522,7 +522,8 @@ node contracts/script/storage-layout-guard.mjs write   # commit the golden file 
   `contracts/storage-layout/breaks.ack.json` against the base file's sha256
   (the guard prints it). That records that no chain may be upgraded in place
   across the change; such a chain gets a fresh deploy. Never add an
-  acknowledgement to get a red check green. Only the merge check reads
+  acknowledgement to get a red check green, and list exactly the lines the
+  change removes (a line still present is refused). Only the merge check reads
   acknowledgements (CI sets `STORAGE_LAYOUT_HONOUR_ACKS=1`, which passes
   `--honour-acks`); never set it for a comparison against a deployed chain.
 - **New namespaced struct or UUPS contract → add a root** (and, for a
@@ -530,7 +531,8 @@ node contracts/script/storage-layout-guard.mjs write   # commit the golden file 
   guard refuses the tree until you do. Every view of one namespace must be
   the probed struct; a `.slot :=` file that defines no namespace (a generic
   accessor taking the slot as a parameter) is listed under
-  `pointerExemptions` with its reason.
+  `pointerExemptions` with its reason; that passes only its pointers whose
+  slot is a parameter, never another pointer in the same file.
 - **Facets declare no state variables.** The guard refuses one that does.
 
 ## Conventions

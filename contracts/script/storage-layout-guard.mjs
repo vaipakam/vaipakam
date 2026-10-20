@@ -125,6 +125,10 @@ function isValueType(ty) {
  *                                       non-value elements, starts here
  *   M|region|slot|offset|keyType|path   a mapping keyed by this type
  *   D|region|slot|offset|path           a dynamic array
+ *   R|region|slot|offset|struct|path    a struct that contains itself (through
+ *                                       a mapping or dynamic array) recurs
+ *                                       here; its members are the lines
+ *                                       already written for the enclosing one
  *   W|elementRegion|bytes               the stride of an array's elements
  *
  * `C` lines carry no type. A container's members already state everything its
@@ -151,7 +155,10 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
     if (id.startsWith('t_userDefinedValueType')) out.valueTypes.add(ty.label);
   };
 
-  const member = (region, slot, offset, typeId, path, label) => {
+  // `active` is the structs being expanded on the way to this member. A struct
+  // can reach itself only through a mapping or dynamic array (inline recursion
+  // does not compile), and expanding it again would never end.
+  const member = (region, slot, offset, typeId, path, label, active) => {
     const ty = typeOf(typeId);
     if (GAP.test(label) && ty.encoding === 'inplace' && ty.base && isValueType(typeOf(ty.base))) return;
     if (ty.encoding === 'mapping') {
@@ -159,19 +166,24 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
       out.layout.add(`M|${region}|${slot}|${offset}|${keyType.label}|${path}`);
       noteValue(ty.key, keyType);
       const valueRegion = `${region}@${slot}[${keyType.label}]`;
-      member(valueRegion, 0n, 0, ty.value, `${path}[]`, '');
+      member(valueRegion, 0n, 0, ty.value, `${path}[]`, '', active);
     } else if (ty.encoding === 'dynamic_array') {
       const base = typeOf(ty.base);
       const elemRegion = `${region}@${slot}[]`;
       out.layout.add(`D|${region}|${slot}|${offset}|${path}`);
       out.layout.add(`W|${elemRegion}|${base.numberOfBytes}`);
-      member(elemRegion, 0n, 0, ty.base, `${path}[]`, '');
+      member(elemRegion, 0n, 0, ty.base, `${path}[]`, '', active);
     } else if (ty.encoding === 'bytes') {
       out.layout.add(`L|${region}|${slot}|${offset}|${ty.label}|${path}`);
     } else if (ty.encoding === 'inplace' && ty.members) {
+      if (active.has(typeId)) {
+        out.layout.add(`R|${region}|${slot}|${offset}|${ty.label}|${path}`);
+        return;
+      }
       out.layout.add(`C|${region}|${slot}|${offset}|${path}`);
+      const inner = new Set(active).add(typeId);
       for (const m of ty.members) {
-        member(region, slot + BigInt(m.slot), m.offset, m.type, path ? `${path}.${m.label}` : m.label, m.label);
+        member(region, slot + BigInt(m.slot), m.offset, m.type, path ? `${path}.${m.label}` : m.label, m.label, inner);
       }
     } else if (ty.encoding === 'inplace' && ty.base) {
       const base = typeOf(ty.base);
@@ -182,7 +194,7 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
         out.layout.add(`C|${region}|${slot}|${offset}|${path}`);
         const elemRegion = `${region}@${slot}[${ty.label.match(/\[(\d+)\]$/)?.[1] ?? '?'}]`;
         out.layout.add(`W|${elemRegion}|${base.numberOfBytes}`);
-        member(elemRegion, 0n, 0, ty.base, `${path}[]`, '');
+        member(elemRegion, 0n, 0, ty.base, `${path}[]`, '', active);
       }
     } else if (isValueType(ty)) {
       out.layout.add(`L|${region}|${slot}|${offset}|${ty.label}|${path}`);
@@ -201,9 +213,10 @@ export function ledgerFromLayout(rootId, layout, { probe = false } = {}) {
     if (entries.length !== 1 || only.slot !== '0' || only.offset !== 0 || !ty?.members) {
       throw new Error(`${rootId}: a namespace probe must declare exactly one struct variable at slot 0`);
     }
-    for (const m of ty.members) member(rootId, BigInt(m.slot), m.offset, m.type, m.label, m.label);
+    const inner = new Set([only.type]);
+    for (const m of ty.members) member(rootId, BigInt(m.slot), m.offset, m.type, m.label, m.label, inner);
   } else {
-    for (const e of entries) member(rootId, BigInt(e.slot), e.offset, e.type, e.label, e.label);
+    for (const e of entries) member(rootId, BigInt(e.slot), e.offset, e.type, e.label, e.label, new Set());
   }
   return out;
 }
@@ -347,26 +360,21 @@ function where(file, source, src) {
 function indexUnit(unit) {
   const byId = new Map();
   const statementOf = new Map();
-  const writes = new Map();
-  const note = (id, n) => writes.set(id, [...(writes.get(id) ?? []), n]);
+  // Every reference to a declaration, Solidity or Yul, read or write. A
+  // position local is accepted only when the pointer's own read is its sole
+  // use, so no form of write (assignment, `delete`, a tuple, `++`, a Yul
+  // `:=`) has to be recognised for one to be refused.
+  const uses = new Map();
+  const use = (id) => uses.set(id, (uses.get(id) ?? 0) + 1);
   for (const n of nodes(unit)) {
     if (Number.isInteger(n.id)) byId.set(n.id, n);
     if (n.nodeType === 'VariableDeclarationStatement') {
       for (const d of n.declarations ?? []) if (d) statementOf.set(d.id, n);
     }
-    if (n.nodeType === 'Assignment' && n.leftHandSide?.nodeType === 'Identifier') note(n.leftHandSide.referencedDeclaration, n);
-    if (n.nodeType === 'InlineAssembly') {
-      const refs = new Map((n.externalReferences ?? []).map((r) => [r.src, r]));
-      for (const y of nodes(n.AST)) {
-        if (y.nodeType !== 'YulAssignment') continue;
-        for (const v of y.variableNames ?? []) {
-          const r = refs.get(v.src);
-          if (r && !r.suffix) note(r.declaration, y);
-        }
-      }
-    }
+    if (n.nodeType === 'Identifier' && Number.isInteger(n.referencedDeclaration)) use(n.referencedDeclaration);
+    if (n.nodeType === 'InlineAssembly') for (const r of n.externalReferences ?? []) use(r.declaration);
   }
-  return { unit, byId, statementOf, writes };
+  return { unit, byId, statementOf, uses };
 }
 
 /**
@@ -478,12 +486,14 @@ export function contractArtifact(build, name) {
  *
  * The slot value may be the constant itself, or a local that is initialised
  * once from the constant (or from a parameterless function in the same file
- * that returns it) and never written again. Anything else comes back with
- * `error` set: a pointer whose position the guard cannot name is a namespace
- * it cannot check. `via` names the function, when one is used, so the caller
- * can refuse one that is overridden.
+ * that returns it) and is used nowhere but in this one read. Anything else
+ * comes back with `error` set: a pointer whose position the guard cannot name
+ * is a namespace it cannot check. `via` names the function, when one is used,
+ * so the caller can refuse one that is overridden. `parameter` marks a pointer
+ * whose slot is a parameter of its function (a generic accessor); it carries
+ * an error too, and only a roots.json exemption passes it.
  *
- * @returns {{struct?: string, constant?: string, via?: string, src: string, error?: string}[]}
+ * @returns {{struct?: string, constant?: string, via?: string, parameter?: true, src: string, error?: string}[]}
  */
 export function storagePointers(unit) {
   const ix = indexUnit(unit);
@@ -494,11 +504,15 @@ export function storagePointers(unit) {
     if (d.nodeType === 'VariableDeclaration' && d.constant) return { constant: d.name };
     return { error: `${what} is not a constant` };
   };
+  const isParameter = (decl) => {
+    const fn = ix.byId.get(decl.scope);
+    return fn?.nodeType === 'FunctionDefinition' && (fn.parameters?.parameters ?? []).some((p) => p.id === decl.id);
+  };
   const resolveLocal = (decl) => {
     if (decl.constant) return { constant: decl.name };
     const stmt = ix.statementOf.get(decl.id);
     if (!stmt) return { error: `\`${decl.name}\` is not a local initialised from a position constant` };
-    if ((ix.writes.get(decl.id) ?? []).length) return { error: `\`${decl.name}\` is written again after it is initialised` };
+    if (ix.uses.get(decl.id) !== 1) return { error: `\`${decl.name}\` is used again besides this read, so the guard cannot tell which slot it holds` };
     const init = stmt.initialValue;
     if (init?.nodeType === 'Identifier') return constantOf(init.referencedDeclaration, `\`${init.name}\``);
     if (init?.nodeType === 'FunctionCall' && init.expression?.nodeType === 'Identifier' && !(init.arguments ?? []).length) {
@@ -529,11 +543,18 @@ export function storagePointers(unit) {
           continue;
         }
         const valueRef = y.value?.nodeType === 'YulIdentifier' ? refs.get(y.value.src) : undefined;
+        const decl = valueRef && ix.byId.get(valueRef.declaration);
+        if (decl && isParameter(decl)) {
+          // A generic accessor: each caller chooses the slot, so this pointer
+          // names no namespace of its own. Reported, so only an exemption can
+          // pass it, and the exemption covers exactly this form.
+          out.push({ struct, src: v.src, parameter: true, error: `\`${v.name} :=\` takes its slot from the parameter \`${decl.name}\`` });
+          continue;
+        }
         if (!valueRef || valueRef.suffix) {
           out.push({ struct, src: v.src, error: `\`${v.name} :=\` is not set from a named position constant` });
           continue;
         }
-        const decl = ix.byId.get(valueRef.declaration);
         const r = decl?.nodeType === 'VariableDeclaration' ? resolveLocal(decl) : { error: `\`${y.value.name}\` is not resolvable in this file` };
         out.push({ struct, src: v.src, ...r });
       }
@@ -674,6 +695,16 @@ export function uupsContracts(contracts) {
 // ─── Build + compare ─────────────────────────────────────────────────────
 
 /**
+ * What an exemption in roots.json may pass: only the pointers that take their
+ * slot from a parameter (a generic accessor such as StorageSlot's, whose
+ * callers choose the slot). Every other pointer in an exempted file, including
+ * one a dependency bump adds there, is checked like any other. Pure.
+ */
+export function applyExemption(found) {
+  return { exempted: found.filter((p) => p.parameter), kept: found.filter((p) => !p.parameter) };
+}
+
+/**
  * Completeness of the storage pointers against the namespace roots. Pure.
  *
  * Every pointer must resolve, must be set from a constant some root names,
@@ -758,7 +789,9 @@ export function buildLedger({ outDir = join(CONTRACTS_DIR, 'out'), roots = readR
     if (!unit) continue;
     const found = storagePointers(unit).map((p) => ({ ...p, file, at: where(file, build.sources.get(file), p.src) }));
     if (exempt.has(file)) {
-      if (!found.length) problems.push(`roots.json exempts ${file}, which no longer sets any storage pointer; delete the exemption`);
+      const { kept, exempted } = applyExemption(found);
+      if (!exempted.length) problems.push(`roots.json exempts ${file}, which no longer has a pointer taking its slot from a parameter; delete the exemption`);
+      pointers.push(...kept);
       continue;
     }
     pointers.push(...found);
@@ -843,7 +876,7 @@ export function missingLines(before, after) {
   return before.filter((l) => !have.has(l));
 }
 
-const FIELD_LINES = 'LCMD';
+const FIELD_LINES = 'LCMDR';
 
 /**
  * Rewrite `lines` through the declared renames, oldest first, so a base laid
@@ -884,16 +917,22 @@ export function applyRenames(lines, renames = []) {
  * Append-only verdict of `current` against `base`: the declared renames are
  * applied to the base first; then every base line must be in `current`.
  * Acknowledgements are honoured only when their `baseSha256` names this base
- * file exactly, so one can never outlive the comparison it was written for. A
+ * file exactly, so one can never outlive the comparison it was written for,
+ * and a live one may list only lines this change removes (`overreach`). A
  * comparison against a deployed chain passes no acks at all. Pure.
  */
 export function appendOnlyVerdict(base, current, { baseSha256, acks = [], renames = [] } = {}) {
   const live = acks.filter((a) => a.baseSha256 === baseSha256);
   const acked = new Set(live.flatMap((a) => a.lines ?? []));
   const missing = missingLines(applyRenames(base.layout, renames), current.layout);
+  const gone = new Set(missing);
   return {
     breaks: missing.filter((l) => !acked.has(l)),
     acknowledged: missing.filter((l) => acked.has(l)),
+    // A live acknowledgement accepts exactly the measured break. A line it
+    // lists that this change does not remove would pre-authorise a later
+    // removal against the same base, so it is refused, not ignored.
+    overreach: [...acked].filter((l) => !gone.has(l)).sort(),
     staleAcks: acks.filter((a) => a.baseSha256 !== baseSha256).length,
   };
 }
@@ -1039,6 +1078,11 @@ export function main(argv = process.argv.slice(2)) {
       rc = 1;
     } else {
       console.log('storage-layout-guard: append-only against the base layout');
+    }
+    if (v.overreach.length) {
+      console.error(`storage-layout-guard: ${relative(REPO_ROOT, ACKS_FILE)} acknowledges ${v.overreach.length} line(s) this change does not remove. An acknowledgement must list exactly the break it accepts:`);
+      v.overreach.slice(0, 40).forEach((l) => console.error(`  - ${l}`));
+      rc = 1;
     }
     if (v.acknowledged.length) console.log(`storage-layout-guard: ${v.acknowledged.length} line(s) acknowledged as an intended break in ${relative(REPO_ROOT, ACKS_FILE)}`);
     if (v.staleAcks) console.log(`storage-layout-guard: note — ${v.staleAcks} acknowledgement(s) name a different base and are inert; delete them`);

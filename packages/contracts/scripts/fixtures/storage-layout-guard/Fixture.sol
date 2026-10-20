@@ -79,6 +79,37 @@ library LibFixture {
         }
     }
 
+    function deleted() internal pure returns (S storage s) {
+        bytes32 p = A_POS;
+        delete p;
+        assembly {
+            s.slot := p
+        }
+    }
+
+    function tupleAssigned() internal pure returns (S storage s) {
+        bytes32 p = A_POS;
+        bytes32 q;
+        (p, q) = (B_POS, A_POS);
+        assembly {
+            s.slot := p
+        }
+    }
+
+    function yulAssigned() internal pure returns (S storage s) {
+        bytes32 p = A_POS;
+        assembly {
+            p := 1
+            s.slot := p
+        }
+    }
+
+    function fromStorageParameter(Other storage o) internal pure returns (S storage s) {
+        assembly {
+            s.slot := o.slot
+        }
+    }
+
     function readOnly() internal pure returns (bytes32 slot) {
         S storage s = direct();
         assembly {

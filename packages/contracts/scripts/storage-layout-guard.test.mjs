@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keccak256 as viemKeccak, toHex, encodeAbiParameters } from 'viem';
 import {
+  applyExemption,
   applyRenames,
   appendOnlyVerdict,
   contractArtifact,
@@ -110,6 +111,29 @@ const BASE_FIELDS = [
 test('appending a field passes', () => {
   const v = verdict(probeLayout(BASE_FIELDS), probeLayout([...BASE_FIELDS, ['added', 't_uint256']]));
   assert.deepEqual(v.breaks, []);
+});
+
+test('a struct that reaches itself through a mapping is recorded once, not expanded forever', () => {
+  const types = { ...BASE_TYPES };
+  const nodeMap = 't_mapping(t_uint256,t_struct(Node)2_storage)';
+  types[nodeMap] = { encoding: 'mapping', key: 't_uint256', value: 't_struct(Node)2_storage', label: 'mapping(uint256 => struct Lib.Node)', numberOfBytes: '32' };
+  struct('t_struct(Node)2_storage', 'struct Lib.Node', [['value', 't_uint256'], ['children', nodeMap]], types);
+  const selfMap = 't_mapping(t_uint256,t_struct(Storage)1)';
+  types[selfMap] = { encoding: 'mapping', key: 't_uint256', value: 't_struct(Storage)1', label: 'mapping(uint256 => struct Lib.Storage)', numberOfBytes: '32' };
+  const l = ledger(probeLayout([['root', 't_struct(Node)2_storage'], ['nested', selfMap]], types));
+  assert.deepEqual(l.layout.sort(), [
+    'C|ns|0|0|root',
+    'L|ns|0|0|uint256|root.value',
+    'M|ns|1|0|uint256|root.children',
+    'M|ns|2|0|uint256|nested',
+    'R|ns@1[uint256]|0|0|struct Lib.Node|root.children[]',
+    'R|ns@2[uint256]|0|0|struct Lib.Storage|nested[]',
+  ].sort());
+  // The recursive struct's own fields are still checked, once.
+  const types2 = { ...types };
+  struct('t_struct(Node)2_storage', 'struct Lib.Node', [['children', nodeMap], ['value', 't_uint256']], types2);
+  const v = verdict(probeLayout([['root', 't_struct(Node)2_storage'], ['nested', selfMap]], types), probeLayout([['root', 't_struct(Node)2_storage'], ['nested', selfMap]], types2));
+  assert.ok(v.breaks.includes('L|ns|0|0|uint256|root.value'));
 });
 
 test('inserting a field in the middle shifts every later field', () => {
@@ -391,9 +415,31 @@ test('storagePointers ignores a read of a slot', () => {
 });
 
 test('storagePointers reports a position it cannot name', () => {
-  assert.match(pointersOf('fromParameter')[0].error, /not a local initialised/);
   assert.match(pointersOf('computed')[0].error, /not initialised from a named position constant/);
-  assert.match(pointersOf('reassigned')[0].error, /written again/);
+});
+
+test('storagePointers refuses a position local used anywhere besides its one read, whatever the form of write', () => {
+  for (const name of ['reassigned', 'deleted', 'tupleAssigned', 'yulAssigned']) {
+    const [p] = pointersOf(name);
+    assert.equal(p.constant, undefined, name);
+    assert.match(p.error, /used again besides this read/, name);
+  }
+});
+
+test('storagePointers marks a slot taken from a parameter, value or storage reference', () => {
+  for (const name of ['fromParameter', 'fromStorageParameter']) {
+    const [p] = pointersOf(name);
+    assert.equal(p.parameter, true, name);
+    assert.match(p.error, /takes its slot from the parameter/, name);
+  }
+  assert.equal(pointersOf('direct')[0].parameter, undefined);
+});
+
+test('an exemption passes only the pointers that take their slot from a parameter', () => {
+  const generic = { struct: 'StorageSlot.AddressSlot', parameter: true, error: 'x', src: '1' };
+  const added = { struct: 'StorageSlot.Ns', constant: 'NS_POS', src: '2' };
+  assert.deepEqual(applyExemption([generic, added]), { exempted: [generic], kept: [added] });
+  assert.deepEqual(applyExemption([added]).exempted, []);
 });
 
 test('storagePointers follows a parameterless function that returns a constant, and says it is virtual', () => {
@@ -529,6 +575,18 @@ test('an acknowledgement applies only to the base it names', () => {
   const inert = appendOnlyVerdict(base, current, { baseSha256: 'b'.repeat(64), acks: [ack] });
   assert.equal(inert.breaks.length, 2);
   assert.equal(inert.staleAcks, 1);
+});
+
+test('a live acknowledgement may list only lines the change removes', () => {
+  const base = { layout: ['L|ns|0|0|uint256|a', 'L|ns|1|0|uint256|b'] };
+  const ack = { baseSha256: 'a'.repeat(64), lines: ['L|ns|0|0|uint256|a', 'L|ns|1|0|uint256|b'], reason: 'test' };
+  const v = appendOnlyVerdict(base, { layout: ['L|ns|1|0|uint256|b'] }, { baseSha256: 'a'.repeat(64), acks: [ack] });
+  assert.deepEqual(v.breaks, []);
+  assert.deepEqual(v.acknowledged, ['L|ns|0|0|uint256|a']);
+  assert.deepEqual(v.overreach, ['L|ns|1|0|uint256|b']);
+  assert.deepEqual(appendOnlyVerdict(base, { layout: [] }, { baseSha256: 'a'.repeat(64), acks: [ack] }).overreach, []);
+  // An inert acknowledgement (another base) is reported as stale, not as overreach.
+  assert.deepEqual(appendOnlyVerdict(base, { layout: base.layout }, { baseSha256: 'b'.repeat(64), acks: [ack] }).overreach, []);
 });
 
 test('a malformed acknowledgement is an error, not a silent ack', () => {
