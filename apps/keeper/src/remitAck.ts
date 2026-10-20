@@ -24,13 +24,17 @@
 // receipt appears and this pass acks it. Operator terminals
 // (finalize/release valves) are deliberately manual and NOT driven here.
 //
-// #2561 — one case no wait resolves: a remittance sent before its mirror was
-// redeployed landed at the OLD receiver, so the mirror this keeper reads never
-// holds its receipt. When the receipt is missing, the pass reads the route Base
-// recorded at dispatch (`remitRoute.ts`); if the lane no longer names it, the
-// operator is alerted with the evidence instead of the reservation waiting in
-// silence. Acknowledging itself is unchanged: a receipt on the configured
-// mirror proves the delivery reached it, whatever the route.
+// #2561 — cases no wait resolves: a remittance sent before its mirror was
+// redeployed behind a new adapter executes, if at all, behind the OLD one, so
+// the mirror this keeper reads never holds its receipt; and a message waiting on
+// CCIP for manual execution, or executed at a receiver since replaced, looks
+// the same from here. Each path first CLASSIFIES every reservation it read
+// (receipts read in batches per mirror, whatever the send budget), then sends
+// what the budget allows, then reports what it classified: a missing receipt on
+// a retired route (`remitRoute.ts`), or on a Pending reservation long past its
+// send, goes to the operator with the evidence instead of waiting in silence.
+// Acknowledging itself is unchanged: a receipt on the configured mirror proves
+// the delivery reached it, whatever the route.
 //
 // Gated by KEEPER_ENABLED + REWARD_REMIT_ENABLED (the ack completes remits —
 // same arming as the remit pass itself).
@@ -63,14 +67,18 @@ import { discoverWork } from './workQueue';
 import { reportSendError } from './submissionQueue';
 import { resolveOpsAlert, sendOpsAlertDigest, type OpsAlertEntry } from './opsAlert';
 import {
+  parseUndeliveredAlertKey,
   readRemitRoutes,
-  remitIdOfAlertKey,
-  RETIRED_ROUTE_ALERT_REPEAT_SEC,
-  retiredRouteAlertDetail,
-  retiredRouteAlertFooter,
-  retiredRouteAlertHeader,
-  retiredRouteAlertKey,
-  retiredRouteAlertPattern,
+  UNDELIVERED_ALERT_REPEAT_SEC,
+  undeliveredAlertDetail,
+  undeliveredAlertFooter,
+  undeliveredAlertHeader,
+  undeliveredAlertKey,
+  undeliveredAlertPattern,
+  undeliveredReason,
+  type LateOutstanding,
+  type RemitPath,
+  type UndeliveredReason,
 } from './remitRoute';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
@@ -167,7 +175,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     // Caught up — the steady state. A released reservation may still see its
     // delivery land late, so that step runs here too (#1461).
     await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
-    await resolveRetiredPendingAlerts(env, publicClient as never, baseChainId, diamond, deadline);
+    await clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
     return;
   }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
@@ -188,6 +196,8 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   // starts AT the frontier (a rotated window proves nothing about the ids
   // it skipped).
   let prefixUnbroken = from === BigInt(frontier);
+  // Ids this window read as terminal, for the Pending alerts (#2561).
+  const terminalInWindow = new Set<number>();
 
   // BATCHED (#1896). This was one `getRemitReservation` per id in the window —
   // up to MAX_SCAN_PER_TICK subrequests per tick against a 50-per-invocation
@@ -233,6 +243,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
     }
     const r = res.result as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
+      terminalInWindow.add(Number(id));
       if (r.status === 2) await markRemitAcked(env.KEEPER_DB, baseChainId, diamond, Number(id));
       if (prefixUnbroken) contiguousTerminal = Number(id) + 1;
       continue;
@@ -252,7 +263,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number)
   // of the tick's one budget, never the other way round.
   await ackPending(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, ackBudget);
   await ackLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, ackBudget);
-  await resolveRetiredPendingAlerts(env, publicClient as never, baseChainId, diamond, deadline);
+  await clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow);
 }
 
 /** The rotation order for acknowledgements: never attempted first, then the
@@ -275,144 +286,213 @@ async function ackPending(
   if (pendingIds.length === 0) return;
   const attempts = await getRemitAckAttempts(env.KEEPER_DB, baseChainId, diamond, [...pendingIds]);
   const now = Math.floor(Date.now() / 1000);
+  // CLASSIFY first (Codex #2607 r2): every Pending reservation in the window
+  // has its receipt read, whatever the send budget, so the report below covers
+  // them all; the budget gates only the broadcast.
+  const candidates = pendingIds.flatMap((remitId) => {
+    const v = reservations.get(remitId);
+    const mirrorCfg = v && mirrorFor(mirrorConfigs, v.dstChainId, remitId);
+    return v && mirrorCfg ? [{ remitId, v, mirrorCfg }] : [];
+  });
+  const byId = new Map(candidates.map((c) => [c.remitId, c]));
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, ackBudget.deadline);
   // Least recently attempted first, never-attempted first of all (#2497 r16):
   // the same rotation rule as the open-work queues. Ascending id order let the
   // first ids re-take the budget every backoff window while later ones waited
   // indefinitely.
-  // Reservations whose receipt the configured mirror does not hold (#2561).
-  const noReceipt: { remitId: number; v: RemitReservationView }[] = [];
-  for (const remitId of ackOrder(pendingIds, attempts)) {
+  for (const remitId of ackOrder([...byId.keys()], attempts)) {
     if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
-    const r = reservations.get(remitId);
-    if (!r) continue;
+    const c = byId.get(remitId)!;
+    const receipt = receipts.get(remitId);
+    if (!receipt) continue;
     const prior = attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
-
-    const mirrorCfg = mirrorFor(mirrorConfigs, r.dstChainId, remitId);
-    if (!mirrorCfg) continue;
     try {
-      const outcome = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond, ackBudget);
-      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, remitId, r.dstChainId);
-      else if (outcome === 'no-receipt') noReceipt.push({ remitId, v: r });
+      // eslint-disable-next-line no-await-in-loop
+      const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, remitId, diamond, ackBudget, receipt);
+      // eslint-disable-next-line no-await-in-loop
+      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, remitId, c.v.dstChainId);
     } catch (err) {
-      reportSendError(`[keeper] remitAck remit=${remitId} dst=${r.dstChainId}`, err, `skipped: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] remitAck remit=${remitId} dst=${c.v.dstChainId}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
-  await alertRetiredRoutes(env, publicClient, 'pending', baseChainId, diamond, noReceipt, ackBudget.deadline);
+  await reportUndelivered(env, publicClient, 'pending', baseChainId, diamond, candidates, receipts, ackBudget.deadline);
+}
+
+/** A mirror receipt as `getReceivedRemit` returns it. */
+interface MirrorReceipt {
+  srcChainId: number;
+  receivedAt: bigint;
+  amount: bigint;
+  classification: number;
+}
+
+/** The mirror client for `cfg`, built once per destination chain. */
+function mirrorClient(clients: Map<number, PublicClient>, cfg: ChainConfig, deadline: number): PublicClient {
+  let client = clients.get(cfg.id);
+  if (!client) {
+    client = deadlineClient(createPublicClient({ transport: http(cfg.rpc) }), deadline) as PublicClient;
+    clients.set(cfg.id, client);
+  }
+  return client;
+}
+
+/** Receipt reads per `aggregate3` (#1946). */
+const RECEIPT_READ_CHUNK = 100;
+
+/**
+ * Each candidate's receipt on its configured mirror, read in bounded batches
+ * per mirror (#2561 r2). A held receipt maps to it; a read that found NONE maps
+ * to `null`; an unread one is absent, and nothing is decided about it this run.
+ */
+async function readReceipts(
+  candidates: readonly { remitId: number; mirrorCfg: ChainConfig }[],
+  clients: Map<number, PublicClient>,
+  baseDiamond: Address,
+  deadline: number,
+): Promise<Map<number, MirrorReceipt | null>> {
+  const out = new Map<number, MirrorReceipt | null>();
+  const byMirror = new Map<number, { cfg: ChainConfig; ids: number[] }>();
+  for (const c of candidates) {
+    const g = byMirror.get(c.mirrorCfg.id) ?? { cfg: c.mirrorCfg, ids: [] };
+    g.ids.push(c.remitId);
+    byMirror.set(c.mirrorCfg.id, g);
+  }
+  for (const { cfg, ids } of byMirror.values()) {
+    const client = mirrorClient(clients, cfg, deadline);
+    for (let i = 0; i < ids.length; i += RECEIPT_READ_CHUNK) {
+      const chunk = ids.slice(i, i + RECEIPT_READ_CHUNK);
+      // eslint-disable-next-line no-await-in-loop
+      const res = await boundedRead(
+        client as never,
+        chunk.map((id) => ({
+          address: cfg.diamond as Address,
+          abi: REMIT_ABI,
+          functionName: 'getReceivedRemit' as const,
+          args: [baseDiamond, BigInt(id)] as const,
+        })),
+        `remitAck getReceivedRemit dst=${cfg.id} ${i}/${ids.length}`,
+        deadline,
+      );
+      chunk.forEach((id, j) => {
+        const r = res[j];
+        if (r?.status !== 'success') return;
+        const receipt = r.result as MirrorReceipt;
+        out.set(id, receipt.receivedAt === 0n ? null : receipt);
+      });
+    }
+  }
+  return out;
 }
 
 /**
- * #2561 — of reservations whose receipt the configured mirror does not hold,
- * report to the operator the ones Base recorded as bound to a remote adapter
- * the lane no longer names. No receipt with a current or unrecorded route is
- * the ordinary wait for a delivery in flight, and stays silent.
+ * #2561 — report the reservations this path classified whose configured mirror
+ * holds no receipt, with the evidence, and reconcile their open alerts.
  *
- * One digest post per run however many are due (each keeps its own key, so
- * each re-posts daily and clears on its own), so a redeploy that strands many
- * remittances costs one bounded post, not one per reservation. A reservation
- * whose recorded adapter is the lane's again (an operator restored the old
- * peer to hand-ack it) has its alert cleared, so a later retirement alerts at
- * once. Contained: a failure here is logged and never unwinds the pass.
+ * One digest post per reason per run however many are due (each reservation
+ * keeps its own key, so each re-posts daily and clears on its own), so a
+ * redeploy that strands many remittances costs a bounded number of posts. For
+ * every reservation classified this run, an open alert whose reason no longer
+ * holds (the receipt appeared, the adapter is the lane's again) is cleared, so
+ * a recurrence alerts at once. A reservation whose receipt or route was not
+ * read keeps its alerts. Contained: a failure here is logged and never unwinds
+ * the pass.
  */
-async function alertRetiredRoutes(
+async function reportUndelivered(
   env: Env,
   publicClient: PublicClient,
-  path: 'pending' | 'late',
+  path: RemitPath,
   baseChainId: number,
   diamond: Address,
-  items: readonly { remitId: number; v: RemitReservationView }[],
+  candidates: readonly { remitId: number; v: RemitReservationView; outstanding?: LateOutstanding }[],
+  receipts: ReadonlyMap<number, MirrorReceipt | null>,
   deadline: number,
 ): Promise<void> {
-  if (items.length === 0 || Date.now() >= deadline) return;
+  if (candidates.length === 0 || Date.now() >= deadline) return;
   try {
-    const routes = await readRemitRoutes(publicClient, diamond, items.map((i) => i.remitId), deadline);
-    const entries: OpsAlertEntry[] = [];
-    const nowCurrent: string[] = [];
-    for (const { remitId, v } of items) {
+    const noReceipt = candidates.filter((c) => receipts.get(c.remitId) === null);
+    const routes = await readRemitRoutes(publicClient, diamond, noReceipt.map((c) => c.remitId), deadline);
+    const nowSec = Math.floor(Date.now() / 1000);
+    /** What holds for each reservation classified this run: a reason, or none. */
+    const holding = new Map<number, UndeliveredReason | undefined>();
+    for (const c of candidates) if (receipts.get(c.remitId)) holding.set(c.remitId, undefined);
+    const entries = new Map<UndeliveredReason, OpsAlertEntry[]>();
+    for (const { remitId, v, outstanding } of noReceipt) {
       const route = routes.get(remitId);
-      const key = retiredRouteAlertKey(path, baseChainId, diamond, remitId);
-      if (route?.kind === 'current') nowCurrent.push(key);
-      if (route?.kind !== 'retired') continue;
-      const detail = retiredRouteAlertDetail({
+      if (!route || route.kind === 'unread') continue;
+      const reason = undeliveredReason(path, route, v.sentAt, nowSec);
+      holding.set(remitId, reason);
+      if (!reason) continue;
+      const detail = undeliveredAlertDetail({
         remitId,
         dstChainId: Number(v.dstChainId),
-        sent: route.sent,
-        live: route.live,
+        route,
+        ageSec: Math.max(0, nowSec - Number(v.sentAt)),
         ccipMessageId: v.ccipMessageId,
         totalWei: BigInt(v.total),
-        strandedWei: path === 'late' ? BigInt(v.strandedRecycled ?? 0n) : undefined,
+        outstanding,
       });
-      console.warn(`[keeper] remitAck${path === 'late' ? ' late' : ''} remit=${remitId}: retired route — ${detail} Not acknowledgeable by this keeper; operator alerted.`);
-      entries.push({ key, id: `remit ${remitId}`, detail });
+      console.warn(`[keeper] remitAck${path === 'late' ? ' late' : ''} remit=${remitId}: undelivered (${reason}) — ${detail} Not acknowledgeable by this keeper; operator alerted.`);
+      const list = entries.get(reason) ?? [];
+      list.push({ key: undeliveredAlertKey(path, baseChainId, diamond, reason, remitId), id: `remit ${remitId}`, detail });
+      entries.set(reason, list);
     }
-    if (nowCurrent.length > 0) {
-      const open = new Set(await listOpsAlertKeys(env.KEEPER_DB, retiredRouteAlertPattern(path, baseChainId, diamond)));
-      for (const key of nowCurrent) {
-        // eslint-disable-next-line no-await-in-loop
-        if (open.has(key)) await resolveOpsAlert(env, key);
-      }
+    const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern(path, baseChainId, diamond));
+    for (const key of open) {
+      const k = parseUndeliveredAlertKey(key);
+      if (!k || !holding.has(k.remitId) || holding.get(k.remitId) === k.reason) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await resolveOpsAlert(env, key);
     }
-    if (entries.length === 0 || Date.now() >= deadline) return;
-    await sendOpsAlertDigest(
-      env,
-      (count) => retiredRouteAlertHeader(path, baseChainId, count),
-      entries,
-      retiredRouteAlertFooter(path),
-      RETIRED_ROUTE_ALERT_REPEAT_SEC,
-      Math.floor(Date.now() / 1000),
-      baseChainId,
-    );
+    for (const [reason, list] of entries) {
+      if (Date.now() >= deadline) return;
+      // eslint-disable-next-line no-await-in-loop
+      await sendOpsAlertDigest(
+        env,
+        (count) => undeliveredAlertHeader(path, reason, baseChainId, count),
+        list,
+        undeliveredAlertFooter(path, reason),
+        UNDELIVERED_ALERT_REPEAT_SEC,
+        nowSec,
+        baseChainId,
+      );
+    }
   } catch (err) {
-    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} retired-route check failed this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck${path === 'late' ? ' late' : ''} undelivered report failed this run: ${(err as Error).message}`);
   }
 }
 
 /**
- * #2561 — clear the Pending-path retired-route alerts whose reservation is no
- * longer Pending (acknowledged, finalized or released by the operator). Reads
- * only the reservations that hold an open alert, which are few. An unread
- * reservation keeps its alert. Contained like {@link alertRetiredRoutes}.
+ * #2561 — clear the Pending-path alerts whose reservation is settled, from what
+ * the scan already proves and with no read: every id below the frontier is
+ * terminal by construction (the frontier is the contiguous terminal prefix),
+ * and so is every id this window read as acknowledged or released. A terminal
+ * reservation never returns to Pending. Contained like
+ * {@link reportUndelivered}.
  */
-async function resolveRetiredPendingAlerts(
+async function clearSettledPendingAlerts(
   env: Env,
-  publicClient: PublicClient,
   baseChainId: number,
   diamond: Address,
-  deadline: number,
+  frontier: number,
+  terminal: ReadonlySet<number>,
 ): Promise<void> {
-  if (Date.now() >= deadline) return;
   try {
-    const keys = await listOpsAlertKeys(env.KEEPER_DB, retiredRouteAlertPattern('pending', baseChainId, diamond));
-    const open = keys.flatMap((key) => {
-      const remitId = remitIdOfAlertKey(key);
-      return remitId === undefined ? [] : [{ key, remitId }];
-    });
-    if (open.length === 0) return;
-    const res = await boundedRead(
-      publicClient as never,
-      open.map((o) => ({
-        address: diamond,
-        abi: REMIT_ABI,
-        functionName: 'getRemitReservation' as const,
-        args: [BigInt(o.remitId)] as const,
-      })),
-      'remitAck retired-route alerts',
-      deadline,
-    );
-    for (let i = 0; i < open.length; i++) {
-      const r = res[i];
-      if (r?.status !== 'success') continue;
+    const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern('pending', baseChainId, diamond));
+    for (const key of open) {
+      const k = parseUndeliveredAlertKey(key);
+      if (!k || (k.remitId >= frontier && !terminal.has(k.remitId))) continue;
       // eslint-disable-next-line no-await-in-loop
-      if ((r.result as RemitReservationView).status !== 1) await resolveOpsAlert(env, open[i].key);
+      await resolveOpsAlert(env, key);
     }
   } catch (err) {
-    console.error(`[keeper] remitAck retired-route alerts not cleared this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck settled undelivered alerts not cleared this run: ${(err as Error).message}`);
   }
 }
 
-/** Send one ack from the mirror. `'no-receipt'` when the mirror holds no
- *  receipt for the remittance (nothing to ack there); `'declined'` when it does
- *  but no ack is sent (a provisional late receipt, no signer, no budget). */
+/** Send one ack from the mirror for a remittance whose `receipt` the caller
+ *  already read there. `'declined'` when no ack is sent (a provisional late
+ *  receipt, no signer, no budget). */
 async function sendAckFromMirror(
   env: Env,
   mirrorCfg: ChainConfig,
@@ -426,22 +506,11 @@ async function sendAckFromMirror(
   // A LATE ack (a released reservation) only resolves a settled receipt: Base's
   // released branch stamps nothing for a provisional one, so sending it would
   // pay the CCIP fee every backoff window for nothing.
+  receipt: MirrorReceipt,
   late = false,
-): Promise<'sent' | 'no-receipt' | 'declined'> {
-  let client = clients.get(mirrorCfg.id);
-  if (!client) {
-    client = deadlineClient(createPublicClient({ transport: http(mirrorCfg.rpc) }), ackBudget.deadline) as PublicClient;
-    clients.set(mirrorCfg.id, client);
-  }
+): Promise<'sent' | 'declined'> {
+  const client = mirrorClient(clients, mirrorCfg, ackBudget.deadline);
   const diamond = mirrorCfg.diamond as Address;
-
-  const receipt = (await client.readContract({
-    address: diamond,
-    abi: REMIT_ABI,
-    functionName: 'getReceivedRemit',
-    args: [baseDiamond, BigInt(remitId)],
-  })) as { srcChainId: number; receivedAt: bigint; amount: bigint; classification: number };
-  if (receipt.receivedAt === 0n) return 'no-receipt';
   if (late && !lateAckUseful(receipt.classification)) {
     console.log(`[keeper] remitAck late remit=${remitId}: the receipt is still provisional — waits for its broadcast`);
     return 'declined';
@@ -611,7 +680,7 @@ async function ackLateDeliveries(
   });
   const fin = new Set(finished);
   await finishWork(env.KEEPER_DB, baseChainId, diamond, LATE_KIND, finished.map(String));
-  await resolveRetiredLateAlerts(env, baseChainId, diamond, finished);
+  await resolveFinishedLateAlerts(env, baseChainId, diamond, finished);
   await touchOpenWork(
     env.KEEPER_DB,
     baseChainId,
@@ -624,36 +693,54 @@ async function ackLateDeliveries(
   // The same rotation rule as the Pending acks (#2497 r17): least recently
   // attempted first, so a candidate is never stuck behind ones re-taking the
   // budget every backoff window.
-  const at = new Map(ids.map((id, i) => [id, i]));
-  const noReceipt: { remitId: number; v: RemitReservationView }[] = [];
-  for (const id of ackOrder(ids, attempts)) {
-    if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
-    const i = at.get(id)!;
+  // CLASSIFY first (Codex #2607 r2), as on the Pending path: every candidate
+  // read this run has its receipt read, whatever the send budget.
+  const candidates = ids.flatMap((id, i) => {
     const r = res[i];
-    if (!r || r.status !== 'success') continue;
+    if (!r || r.status !== 'success') return [];
     const v = r.result as RemitReservationView;
-    if (!isLateDeliveryCandidate(v, holdsGate(id, v, false))) continue;
-    const prior = attempts.get(ids[i]);
+    if (!isLateDeliveryCandidate(v, holdsGate(id, v, false))) return [];
+    const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), id, 'late');
+    return mirrorCfg ? [{ remitId: id, v, mirrorCfg, outstanding: lateOutstanding(v, holdsGate(id, v, false)) }] : [];
+  });
+  const byId = new Map(candidates.map((c) => [c.remitId, c]));
+  const receipts = await readReceipts(candidates, mirrorClients, diamond, ackBudget.deadline);
+  for (const id of ackOrder([...byId.keys()], attempts)) {
+    if (ackBudget.remaining <= 0 || Date.now() >= ackBudget.deadline) break;
+    const c = byId.get(id)!;
+    const receipt = receipts.get(id);
+    if (!receipt) continue;
+    const prior = attempts.get(id);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
-    const mirrorCfg = mirrorFor(mirrorConfigs, Number(v.dstChainId), ids[i], 'late');
-    if (!mirrorCfg) continue;
     try {
       // eslint-disable-next-line no-await-in-loop
-      const outcome = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond, ackBudget, true);
+      const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, id, diamond, ackBudget, receipt, true);
       // eslint-disable-next-line no-await-in-loop
-      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, ids[i], Number(v.dstChainId));
-      else if (outcome === 'no-receipt') noReceipt.push({ remitId: ids[i], v });
+      if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, id, Number(c.v.dstChainId));
     } catch (err) {
-      reportSendError(`[keeper] remitAck late remit=${ids[i]}`, err, `skipped: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] remitAck late remit=${id}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
   }
-  await alertRetiredRoutes(env, publicClient, 'late', baseChainId, diamond, noReceipt, ackBudget.deadline);
+  await reportUndelivered(env, publicClient, 'late', baseChainId, diamond, candidates, receipts, ackBudget.deadline);
 }
 
-/** #2561 — clear the late-path retired-route alerts of the releases that just
- *  finished (the chain shows they need nothing more). Only keys actually open
- *  are touched. Contained: a failure is logged and the alerts stay. */
-async function resolveRetiredLateAlerts(
+/** What a released candidate still waits on, as Base shows it (#2561 r2): the
+ *  compensation gate it holds, else its stamped stranded share, else that the
+ *  share is not stamped yet (a default zero is not a resolved share). */
+export function lateOutstanding(
+  v: { strandedRecycled?: bigint; strandedStamped?: boolean },
+  holdsCompensationGate: boolean,
+): LateOutstanding {
+  if (holdsCompensationGate) return { kind: 'gate' };
+  if (v.strandedStamped !== true) return { kind: 'unstamped' };
+  return { kind: 'stranded', wei: BigInt(v.strandedRecycled ?? 0n) };
+}
+
+/** #2561 — clear the late-path undelivered alerts of the releases that just
+ *  finished (the chain shows they need nothing more), whatever their reason.
+ *  Only keys actually open are touched. Contained: a failure is logged and the
+ *  alerts stay. */
+async function resolveFinishedLateAlerts(
   env: Env,
   baseChainId: number,
   diamond: Address,
@@ -661,14 +748,14 @@ async function resolveRetiredLateAlerts(
 ): Promise<void> {
   if (finished.length === 0) return;
   try {
-    const open = new Set(await listOpsAlertKeys(env.KEEPER_DB, retiredRouteAlertPattern('late', baseChainId, diamond)));
-    for (const id of finished) {
-      const key = retiredRouteAlertKey('late', baseChainId, diamond, id);
+    const done = new Set(finished);
+    for (const key of await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern('late', baseChainId, diamond))) {
+      const k = parseUndeliveredAlertKey(key);
       // eslint-disable-next-line no-await-in-loop
-      if (open.has(key)) await resolveOpsAlert(env, key);
+      if (k && done.has(k.remitId)) await resolveOpsAlert(env, key);
     }
   } catch (err) {
-    console.error(`[keeper] remitAck late retired-route alerts not cleared this run: ${(err as Error).message}`);
+    console.error(`[keeper] remitAck late undelivered alerts not cleared this run: ${(err as Error).message}`);
   }
 }
 

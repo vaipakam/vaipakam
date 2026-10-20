@@ -26,15 +26,17 @@ import {
   RewardReporterFacetABI,
 } from '@vaipakam/contracts/abis';
 import {
-  remitIdOfAlertKey,
+  parseUndeliveredAlertKey,
+  REMIT_OVERDUE_SEC,
   remitRouteVerdict,
-  retiredRouteAlertKey,
-  retiredRouteAlertDetail,
-  retiredRouteAlertFooter,
-  retiredRouteAlertHeader,
-  retiredRouteAlertPattern,
+  undeliveredAlertDetail,
+  undeliveredAlertFooter,
+  undeliveredAlertHeader,
+  undeliveredAlertKey,
+  undeliveredAlertPattern,
+  undeliveredReason,
 } from '../src/remitRoute';
-import { runRemitAck } from '../src/remitAck';
+import { lateOutstanding, runRemitAck } from '../src/remitAck';
 
 const AGGREGATE3 = {
   type: 'function',
@@ -122,6 +124,10 @@ type Book = {
   status: number;
   /** What `getRemitRoute(1)` answers; `'unrouted'` = the Diamond predates it. */
   route: { sent: string; live: string } | 'unrouted';
+  /** Seconds since the send (default: one minute, an ordinary delivery). */
+  ageSec?: number;
+  /** Whether the configured mirror holds reservation 1's receipt. */
+  receipt?: boolean;
   /** Open alert keys the keeper database holds. */
   openAlerts?: string[];
 };
@@ -144,6 +150,7 @@ function install(book: Book): { routeReads: () => number; restore: () => void } 
           dstChainId: ARB,
           ccipMessageId: MESSAGE_ID,
           total: 5n * 10n ** 18n,
+          sentAt: BigInt(Math.floor(Date.now() / 1000) - (book.ageSec ?? 60)),
           strandedStamped: true,
         }),
       };
@@ -156,8 +163,9 @@ function install(book: Book): { routeReads: () => number; restore: () => void } 
       const r = book.route;
       return { ok: enc(F.route, [r.sent, r.live]) };
     }
-    // The configured mirror holds no receipt for remittance 1.
-    if (s === SEL.received) return { ok: tupleOut(F.received, {}) };
+    // The configured mirror holds no receipt for remittance 1 unless the book
+    // says it does.
+    if (s === SEL.received) return { ok: tupleOut(F.received, book.receipt ? { receivedAt: 1_700_000_000n, srcChainId: BASE } : {}) };
     return { revert: '0x' };
   };
 
@@ -266,8 +274,12 @@ const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('remitAck and a remittance sent to a retired mirror (#2561)', () => {
-  it('alerts the operator with the evidence when the route is retired and the mirror holds no receipt', async () => {
+const key = (reason: 'retired' | 'overdue', path: 'pending' | 'late' = 'pending', id = 1) =>
+  undeliveredAlertKey(path, BASE, BASE_DIAMOND as never, reason, id);
+const Z = '0x0000000000000000000000000000000000000000';
+
+describe('remitAck and a remittance with no receipt on the configured mirror (#2561)', () => {
+  it('alerts the operator with the evidence when the route is retired', async () => {
     const t = await tick({ status: 1, route: { sent: OLD, live: NEW } });
     expect(t.routeReads).toBe(1);
     expect(t.alerts).toHaveLength(1);
@@ -279,7 +291,7 @@ describe('remitAck and a remittance sent to a retired mirror (#2561)', () => {
     expect(text).toContain(MESSAGE_ID);
     expect(text).toContain('total 5000000000000000000 VPFI wei');
     expect(text).toMatch(/finalizeRemitReservation\(remitId\).*releaseRemitReservation\(remitId\)/s);
-    expect(t.errors.join('\n')).not.toMatch(/retired-route/);
+    expect(t.errors.join('\n')).not.toMatch(/undelivered/);
   });
 
   it('says nothing while a delivery on the current route is still in flight', async () => {
@@ -288,42 +300,65 @@ describe('remitAck and a remittance sent to a retired mirror (#2561)', () => {
     expect(t.alerts).toEqual([]);
   });
 
-  it('treats a Diamond without the route getter as route unknown, not as an error', async () => {
-    const t = await tick({ status: 1, route: 'unrouted' });
-    expect(t.alerts).toEqual([]);
-    expect(t.errors.join('\n')).not.toMatch(/retired-route/);
+  it('reports a Pending remittance overdue on the CURRENT route, and says the cause is unknown', async () => {
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, ageSec: REMIT_OVERDUE_SEC + 3600 });
+    expect(t.alerts).toHaveLength(1);
+    const text = t.alerts[0];
+    expect(text).toMatch(/have no receipt on the mirror the keeper reads, more than 8 hours after the send\. The keeper does not know why/);
+    expect(text).toContain('sent 9h ago; sent to the adapter the lane still names');
+    expect(text).toMatch(/manual execution/);
+    expect(text).toMatch(/replaced behind the same adapter/);
+  });
+
+  it('reports an overdue remittance on a Diamond without the route getter as route unknown', async () => {
+    const quiet = await tick({ status: 1, route: 'unrouted' });
+    expect(quiet.alerts).toEqual([]);
+    expect(quiet.errors.join('\n')).not.toMatch(/undelivered/);
+    const t = await tick({ status: 1, route: 'unrouted', ageSec: REMIT_OVERDUE_SEC });
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toContain('Base holds no record of the adapter it was sent to');
   });
 
   it('names a lane that no longer has any adapter', async () => {
-    const t = await tick({ status: 1, route: { sent: OLD, live: '0x0000000000000000000000000000000000000000' } });
+    const t = await tick({ status: 1, route: { sent: OLD, live: Z } });
     expect(t.alerts).toHaveLength(1);
     expect(t.alerts[0].toLowerCase()).toContain(`sent to adapter ${OLD}, lane now names no adapter`);
   });
 
   it('clears an open alert once the recorded adapter is the lane\'s again', async () => {
-    const key = retiredRouteAlertKey('pending', BASE, BASE_DIAMOND as never, 1);
-    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, openAlerts: [key] });
-    expect(t.cleared).toEqual([key]);
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, openAlerts: [key('retired')] });
+    expect(t.cleared).toEqual([key('retired')]);
     expect(t.alerts).toEqual([]);
   });
 
-  it('clears the alert once the reservation is no longer Pending', async () => {
-    const key = retiredRouteAlertKey('pending', BASE, BASE_DIAMOND as never, 1);
-    const t = await tick({ status: 2, route: { sent: OLD, live: NEW }, openAlerts: [key] });
-    expect(t.cleared).toEqual([key]);
+  it('a change of reason clears the old key and alerts under the new one at once', async () => {
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, ageSec: REMIT_OVERDUE_SEC, openAlerts: [key('retired')] });
+    expect(t.cleared).toEqual([key('retired')]);
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toMatch(/The keeper does not know why/);
+  });
+
+  it('clears an open alert once the configured mirror holds the receipt, and reads no route', async () => {
+    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, receipt: true, openAlerts: [key('retired'), key('overdue')] });
+    expect(t.cleared.sort()).toEqual([key('overdue'), key('retired')].sort());
+    expect(t.routeReads).toBe(0);
     expect(t.alerts).toEqual([]);
   });
 
-  it('keeps the alert while the reservation is still Pending', async () => {
-    const key = retiredRouteAlertKey('pending', BASE, BASE_DIAMOND as never, 1);
-    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, openAlerts: [key] });
+  it('clears the alert once the reservation is no longer Pending, with no reservation re-read', async () => {
+    const t = await tick({ status: 2, route: { sent: OLD, live: NEW }, openAlerts: [key('retired')] });
+    expect(t.cleared).toEqual([key('retired')]);
+    expect(t.alerts).toEqual([]);
+  });
+
+  it('keeps the alert while the reservation is still Pending on the same reason', async () => {
+    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, openAlerts: [key('retired')] });
     expect(t.cleared).toEqual([]);
   });
 });
 
 describe('remitRouteVerdict (#2561)', () => {
   const ok = (r: readonly string[]) => ({ status: 'success' as const, result: r });
-  const Z = '0x0000000000000000000000000000000000000000';
 
   it('the same adapter, in any letter case, is the current route', () => {
     expect(remitRouteVerdict(ok([OLD, OLD.toUpperCase().replace('0X', '0x')]))).toEqual({ kind: 'current' });
@@ -346,38 +381,66 @@ describe('remitRouteVerdict (#2561)', () => {
   });
 });
 
-describe('retired-route alert keys (#2561)', () => {
-  it('round-trips the remitId and matches its own pattern only', () => {
-    const key = retiredRouteAlertKey('late', BASE, BASE_DIAMOND as never, 42);
-    expect(remitIdOfAlertKey(key)).toBe(42);
-    expect(key.startsWith(retiredRouteAlertPattern('late', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(true);
-    expect(key.startsWith(retiredRouteAlertPattern('pending', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(false);
-    expect(remitIdOfAlertKey('remit-route-retired:pending:1:0xabc:x')).toBeUndefined();
+describe('undeliveredReason (#2561)', () => {
+  const now = 1_800_000_000;
+  const retired = { kind: 'retired' as const, sent: OLD, live: NEW };
+  it('a retired route is reported on either path, at once', () => {
+    expect(undeliveredReason('pending', retired, now, now)).toBe('retired');
+    expect(undeliveredReason('late', retired, now, now)).toBe('retired');
+  });
+  it('a Pending reservation on the current or an unrecorded route is reported only once overdue', () => {
+    for (const route of [{ kind: 'current' as const }, { kind: 'unrecorded' as const }]) {
+      expect(undeliveredReason('pending', route, now - REMIT_OVERDUE_SEC + 1, now)).toBeUndefined();
+      expect(undeliveredReason('pending', route, now - REMIT_OVERDUE_SEC, now)).toBe('overdue');
+    }
+  });
+  it('a released reservation on its current route is not reported: that is what a release means', () => {
+    expect(undeliveredReason('late', { kind: 'current' }, 0, now)).toBeUndefined();
+  });
+  it('an unread route decides nothing', () => {
+    expect(undeliveredReason('pending', { kind: 'unread' }, 0, now)).toBeUndefined();
+  });
+});
+
+describe('undelivered alert keys and text (#2561)', () => {
+  it('round-trips the reason and remitId and matches its own path pattern only', () => {
+    const k = key('retired', 'late', 42);
+    expect(parseUndeliveredAlertKey(k)).toEqual({ reason: 'retired', remitId: 42 });
+    expect(k.startsWith(undeliveredAlertPattern('late', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(true);
+    expect(k.startsWith(undeliveredAlertPattern('pending', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(false);
+    expect(parseUndeliveredAlertKey('remit-undelivered:pending:1:0xabc:bogus:1')).toBeUndefined();
+    expect(parseUndeliveredAlertKey('remit-undelivered:pending:1:0xabc:retired:x')).toBeUndefined();
   });
 
-  it('the late text names the unresolved share and the recovery paths, and no Pending valve', () => {
-    const header = retiredRouteAlertHeader('late', BASE, 1);
-    const detail = retiredRouteAlertDetail({
-      remitId: 7,
-      dstChainId: ARB,
-      sent: OLD,
-      live: NEW,
-      ccipMessageId: MESSAGE_ID,
-      totalWei: 10n,
-      strandedWei: 3n,
-    });
-    const footer = retiredRouteAlertFooter('late');
-    expect(header).toMatch(/1 released remittance\(s\) still count a stranded share as in transit/);
-    expect(detail).toContain('total 10 VPFI wei, stranded share 3 VPFI wei still unresolved');
+  const base = { remitId: 7, dstChainId: ARB, route: { kind: 'retired' as const, sent: OLD, live: NEW }, ageSec: 3600, ccipMessageId: MESSAGE_ID, totalWei: 10n };
+
+  it('the late text names the outstanding share and the recovery paths, and no Pending valve', () => {
+    const header = undeliveredAlertHeader('late', 'retired', BASE, 1);
+    const footer = undeliveredAlertFooter('late', 'retired');
+    expect(header).toMatch(/1 released remittance\(s\) still wait on a late acknowledgement/);
+    expect(undeliveredAlertDetail({ ...base, outstanding: { kind: 'stranded', wei: 3n } })).toContain('total 10 VPFI wei; stranded share 3 VPFI wei still unresolved');
     expect(footer).toMatch(/late acknowledgement/);
     expect(footer).toMatch(/recordRecoveryCeremony/);
     expect(footer).toMatch(/recordRecoveryTerminalLoss/);
     expect(`${header} ${footer}`).not.toMatch(/releaseRemitReservation|finalizeRemitReservation/);
   });
 
-  it('the Pending text names both valves and no stranded share', () => {
-    const detail = retiredRouteAlertDetail({ remitId: 1, dstChainId: ARB, sent: OLD, live: NEW, ccipMessageId: MESSAGE_ID, totalWei: 1n });
-    expect(detail).not.toMatch(/stranded/);
-    expect(retiredRouteAlertFooter('pending')).toMatch(/finalizeRemitReservation\(remitId\).*releaseRemitReservation\(remitId\)/s);
+  it('a released compensation remittance names the gate it holds, never a zero stranded share', () => {
+    const outstanding = lateOutstanding({ strandedRecycled: 0n, strandedStamped: true }, true);
+    expect(outstanding).toEqual({ kind: 'gate' });
+    const detail = undeliveredAlertDetail({ ...base, outstanding });
+    expect(detail).toContain(`holds chain ${ARB}'s compensation gate`);
+    expect(detail).not.toMatch(/stranded share 0/);
+  });
+
+  it('an unstamped stranded share is stated as unknown, not as zero', () => {
+    const outstanding = lateOutstanding({ strandedRecycled: 0n, strandedStamped: false }, false);
+    expect(undeliveredAlertDetail({ ...base, outstanding })).toMatch(/not stamped on Base yet, so its size is not known/);
+  });
+
+  it('the Pending text names both valves and no outstanding share', () => {
+    expect(undeliveredAlertDetail(base)).not.toMatch(/stranded|gate/);
+    expect(undeliveredAlertFooter('pending', 'retired')).toMatch(/finalizeRemitReservation\(remitId\).*releaseRemitReservation\(remitId\)/s);
+    expect(undeliveredAlertFooter('pending', 'overdue')).toMatch(/finalizeRemitReservation\(remitId\).*releaseRemitReservation\(remitId\)/s);
   });
 });

@@ -725,37 +725,57 @@ remote messenger the message was bound to; `getRemitRoute(remitId)` returns it
 beside the remote messenger the lane names now. That adapter is the whole
 route: it hands the message to whatever receiver it has registered when the
 message executes. So a mirror redeployed behind the SAME messenger, with the
-receiver re-registered, still receives in-flight messages and nothing is
-alerted. A mirror redeployed with a NEW messenger, and Base's lane re-pointed
-at it, never receives a message bound to the old one, so the new mirror never
-holds its receipt. The keeper's ack pass then posts one ops alert per run,
-"N remittance(s) still Pending on Base were sent through a remote adapter the
-lane no longer names", listing each remittance with the adapter it was sent
-to, the adapter the lane names now (or "no adapter"), the CCIP message id and
-the amount, and re-posts each daily while it stays Pending. A released
-remittance whose stranded share waits for a late acknowledgement gets the same
-kind of alert from the late path, naming the unresolved share. The keeper does
-not settle either. The operator's options, on the evidence:
+receiver re-registered, still receives messages that had not yet executed. A
+mirror redeployed with a NEW messenger, and Base's lane re-pointed at it, never
+receives a message bound to the old one, so the new mirror never holds its
+receipt. The keeper's ack pass then posts one ops alert per run, "N
+remittance(s) still Pending on Base were sent through a remote adapter the lane
+no longer names". It lists each remittance with its age, the adapter it was
+sent to, the adapter the lane names now (or "no adapter"), the CCIP message id
+and the amount, and re-posts each daily while it stays Pending.
 
-1. Pending, and the message executed behind the old adapter (check the CCIP
-   explorer for the message id): acknowledge it from the OLD mirror Diamond by
+The record cannot see one case: a message that executed at the OLD receiver
+before it was replaced behind the same messenger, and was not yet
+acknowledged. Its receipt is on the old Diamond, and its route reads as
+current. That case, and a message waiting on CCIP for manual execution, is
+caught by a second alert. A Pending remittance with no receipt on the mirror
+the keeper reads more than 8 hours after its send (CCIP's usual
+smart-execution window) is reported as "N remittance(s) still Pending on Base
+have no receipt on the mirror the keeper reads … The keeper does not know
+why", with the same evidence. Check the message on the CCIP explorer first.
+
+A released remittance that waits for a late acknowledgement gets the
+retired-route alert from the late path. That alert names what is still
+outstanding: its stranded share, that the share is not yet stamped, or the
+compensation gate it holds. The keeper settles none of these. The operator's
+options, on the evidence:
+
+1. Pending, and the message waits for manual execution on CCIP: execute it
+   there. The receipt then appears and the keeper acknowledges it by itself.
+2. Pending, and the message executed behind the old adapter, or at a receiver
+   since replaced (check the CCIP explorer for the message id): acknowledge it
+   from the OLD mirror Diamond by
    hand. Base only accepts acknowledgements from the lane's current peers, so
    this needs the old remote messenger and channel peer restored on Base's
    `CcipMessenger` for the duration, then the redeploy's values put back (the
    recovery shape in AdminConfigurableKnobsAndSwitches, "Rotating a channel
-   peer"). While the old adapter is restored the recorded route is current
-   again, so the keeper clears the alert. Or finalize it on Base with
+   peer"). For a receiver replaced behind the same messenger, that means
+   registering the old receiver's channel again. While the old adapter is
+   restored the retired-route alert clears; the overdue alert stays while the
+   receipt is missing. Or finalize it on Base with
    `finalizeRemitReservation(remitId)`, which records it as delivered without
    a received figure.
-2. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
+3. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
    sooner than seven days after the send.
-3. Released, with its stranded share unresolved: a late acknowledgement from
-   the old mirror (as in 1), or `recordRecoveryCeremony` for value a
-   governance ceremony brought back to the Diamond and
-   `recordRecoveryTerminalLoss` for governance-evidenced loss of the rest.
+4. Released, with its stranded share or compensation gate unresolved: a late
+   acknowledgement from the old mirror (as in 2), or `recordRecoveryCeremony`
+   for value a governance ceremony brought back to the Diamond and
+   `recordRecoveryTerminalLoss` for governance-evidenced loss of the rest. A
+   compensation gate clears once the two cover the remittance's total.
 
 Record whichever was done, by remit id, in the redeploy's release fragment.
-The alert clears on its own once the reservation is settled. A canonical
+Each alert clears on its own once the reservation is settled, its receipt
+appears, or its reason no longer holds. A canonical
 Diamond deployed before #2561 records no route, so for it the drain above is
 the only safeguard. That was the case for Base Sepolia on 2026-10-17: both the retired
 Diamond `0xd89fd7…b995` and the new one read nonce 0.

@@ -19,25 +19,34 @@ receives it, and a replaced adapter never will. A remittance is refused, before
 any value moves, when the destination has no remote messenger declared, and the
 fee quote refuses it by the same rule, so every remittance leaves with a route
 Base can name. The keeper still acknowledges any remittance whose receipt the
-configured mirror holds. When the receipt is missing and the recorded adapter
-is no longer the lane's, it posts an ops alert instead of waiting. One post per
-run covers every such remittance on a path, however many there are. Each one is
-listed with its destination, the adapter it was sent to, the adapter the lane
-names now (or that it names none), the CCIP message id and the amount, and for
-a released remittance the stranded share still unresolved. The post says that
-settling it is an operator decision. For a Pending remittance that means
-finalizing on proven delivery or releasing it when it will never execute; for a
-released one, a late acknowledgement or a recovery record (a recovery ceremony
-or a recorded terminal loss). Each remittance's alert re-posts daily and clears
-once it is settled, or once its adapter is the lane's again. The deployment
+configured mirror holds. It now reads every receipt it is responsible for each
+run, before it spends its small acknowledgement budget. So a backlog of
+ordinary acknowledgements never hides one it cannot make. A reservation with no
+receipt is reported to ops, never left waiting in silence, in two cases. The
+first is a remittance sent through an adapter the lane no longer names. The
+second is a Pending remittance still without a receipt more than 8 hours after
+its send, the window after which CCIP needs a message executed by hand, whatever
+its route. For that one the alert says the cause is not known to the keeper:
+the message may be waiting for manual execution, or it may have executed at a
+receiver since replaced behind the same adapter, which the route record cannot
+see. One post per run covers every remittance of a kind, however many there
+are. Each is listed with its destination, its age, the adapter it was sent to
+and the one the lane names now (or that Base has no record of it), the CCIP
+message id and the amount. A released remittance also shows what it still
+waits on: its stranded share, the fact that the share is not stamped yet, or
+the compensation gate it holds. The post says that settling it is an operator
+decision. For a Pending remittance that means manual execution, finalizing on
+proven delivery or releasing it when it will never execute. For a released
+one, a late acknowledgement or a recovery record. Each alert re-posts daily
+and clears once its remittance is settled, its receipt appears or its reason
+no longer holds. The deployment
 runbook's drain section now says what to do.
 
 Base's cross-chain trust is unchanged: it still accepts acknowledgements only
 from the lane's current peers. Recording the route is what makes the case
 visible; it does not, and should not, let a retired mirror's acknowledgement
 through. The contract half reaches a chain by fresh deploy (owner decision
-O1 = A), and it needs the messenger and the Diamond from the same release:
-the route is read from the messenger at each send, so remittance facets
-refreshed in place against an older messenger would refuse every remittance.
-A Base Diamond deployed earlier records no route, and the keeper treats its
+O1 = A). That is the deploy policy, not a runtime dependency: the remote
+messenger is read from the messenger's existing public getter, which every
+deployed messenger already answers. A Base Diamond deployed earlier records no route, and the keeper treats its
 remittances as route unknown, exactly as before. Closes #2561.
