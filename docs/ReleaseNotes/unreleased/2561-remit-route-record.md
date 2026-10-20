@@ -1,4 +1,4 @@
-## Rewards — every remittance records where it was sent, and the keeper reports one sent to a replaced mirror (PR #<n>)
+## Rewards — every remittance records where it was sent, and the keeper reports one sent to a replaced mirror (PR #2607)
 
 A reward-budget remittance waits on Base, reserved, until the destination
 mirror acknowledges it, and the keeper sends that acknowledgement once the
