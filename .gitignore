@@ -168,3 +168,5 @@ rollback-mirror*.json.tmp-*
 # That happened in #2290.
 __pycache__/
 *.py[cod]
+.env.oracle
+docs/internal/security-notes
