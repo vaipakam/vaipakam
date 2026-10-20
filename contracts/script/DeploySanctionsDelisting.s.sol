@@ -8,6 +8,7 @@ import {SanctionsDelistingTimelock} from "../src/compliance/SanctionsDelistingTi
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {AdminControl} from "./lib/AdminControl.sol";
 
 /**
  * @title  DeploySanctionsDelisting
@@ -108,19 +109,20 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         }
     }
 
-    /// @dev The recorded timelock while it serves this list under this owner;
-    ///      otherwise a new one, recorded.
+    /// @dev The recorded timelock while it serves this list and the admin
+    ///      alone controls it ({AdminControl.aloneControls}); otherwise a new
+    ///      one, recorded.
     function _timelockFor(SanctionsList list, address admin, bool writes) internal returns (SanctionsDelistingTimelock) {
         address recorded = Deployments.readSanctionsDelistingTimelockOptional();
         if (recorded.code.length != 0) {
             SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(payable(recorded));
             try existing.list() returns (SanctionsList l) {
-                if (address(l) == address(list) && existing.owner() == admin) {
+                if (address(l) == address(list) && AdminControl.aloneControls(recorded, admin)) {
                     console.log("Reusing the recorded SanctionsDelistingTimelock");
                     return existing;
                 }
             } catch {}
-            console.log("The recorded timelock serves another list or owner; deploying a new one");
+            console.log("The recorded timelock serves another list, or the admin does not alone control it; deploying a new one");
         }
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsDelistingTimelock tl = new SanctionsDelistingTimelock(admin, list);

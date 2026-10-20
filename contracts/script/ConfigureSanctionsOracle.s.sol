@@ -10,6 +10,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {TestnetSanctionsOverlay} from "../src/compliance/TestnetSanctionsOverlay.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {AdminControl} from "./lib/AdminControl.sol";
 
 /**
  * @title  ConfigureSanctionsOracle
@@ -143,27 +144,18 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
     }
 
     /// @dev True iff `overlay` has no upstream (so it is the whole screen, not
-    ///      a layer over a list this script no longer configures), is owned by
-    ///      `admin`, and has no pending ownership transfer — the owner decides
-    ///      who is flagged, so an overlay anyone else controls or is about to
-    ///      control is never configured. Any read that fails — not an overlay
-    ///      at all — is a no.
+    ///      a layer over a list this script no longer configures) and `admin`
+    ///      alone controls it ({AdminControl.aloneControls}: owner, nothing
+    ///      pending) — the owner decides who is flagged, so an overlay anyone
+    ///      else controls or is about to control is never configured. Any read
+    ///      that fails — not an overlay at all — is a no.
     function _reusable(TestnetSanctionsOverlay overlay, address admin) internal view returns (bool) {
         try overlay.upstream() returns (ISanctionsList up) {
             if (address(up) != address(0)) return false;
         } catch {
             return false;
         }
-        try overlay.owner() returns (address o) {
-            if (o != admin) return false;
-        } catch {
-            return false;
-        }
-        try overlay.pendingOwner() returns (address pending) {
-            return pending == address(0);
-        } catch {
-            return false;
-        }
+        return AdminControl.aloneControls(address(overlay), admin);
     }
 
     /// @dev The Diamond now routes to `target`, and both the oracle and the

@@ -4,9 +4,11 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {SanctionsList} from "../src/compliance/SanctionsList.sol";
+import {ISanctionsList} from "../src/interfaces/ISanctionsList.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {AdminControl} from "./lib/AdminControl.sol";
 
 /**
  * @title  DeploySanctionsList
@@ -82,19 +84,22 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         console.log("  The Diamond is NOT pointed at it; it is the adder service's rehearsal target.");
     }
 
-    /// @dev The recorded list while the admin owns it and it composes no
-    ///      secondary; otherwise a new one, recorded.
+    /// @dev The recorded list while the admin alone controls it
+    ///      ({AdminControl.aloneControls}) and it composes no secondary;
+    ///      otherwise a new one, recorded.
     function _listFor(address admin, bool writes) internal returns (SanctionsList) {
         address recorded = Deployments.readSanctionsListOptional();
         if (recorded.code.length != 0) {
             SanctionsList existing = SanctionsList(recorded);
-            try existing.owner() returns (address o) {
-                if (o == admin && address(existing.secondary()) == address(0)) {
-                    console.log("Reusing the recorded SanctionsList");
-                    return existing;
-                }
-            } catch {}
-            console.log("The recorded SanctionsList is not the admin's own list; deploying a new one");
+            if (AdminControl.aloneControls(recorded, admin)) {
+                try existing.secondary() returns (ISanctionsList secondary) {
+                    if (address(secondary) == address(0)) {
+                        console.log("Reusing the recorded SanctionsList");
+                        return existing;
+                    }
+                } catch {}
+            }
+            console.log("The recorded SanctionsList is not one the admin alone controls with no secondary; deploying a new one");
         }
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsList list = new SanctionsList(admin, address(0));

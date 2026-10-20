@@ -13,6 +13,7 @@ import {TestnetSanctionsOracleStandIn} from "../src/compliance/TestnetSanctionsO
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {AdminControl} from "./lib/AdminControl.sol";
 
 /**
  * @title  ConfigureSanctionsClearance
@@ -161,28 +162,39 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         console.log("Next: run this script on each timelock chain.");
     }
 
-    /// @dev The recorded stand-in while it is one and the admin owns it;
-    ///      otherwise a new one, recorded.
+    /// @dev The recorded stand-in while it is fit to reuse (see
+    ///      {_reusableStandIn}); otherwise a new one, recorded.
     function _standInFor(address admin, address deployer, bool writes)
         internal
         returns (TestnetSanctionsOracleStandIn)
     {
         address recorded = Deployments.readSanctionsOracleStandInOptional();
         if (recorded.code.length != 0) {
-            TestnetSanctionsOracleStandIn existing = TestnetSanctionsOracleStandIn(recorded);
-            try existing.isTestnetStandIn() returns (bool yes) {
-                if (yes && existing.owner() == admin) {
-                    console.log("Reusing the recorded stand-in");
-                    return existing;
-                }
-            } catch {}
-            console.log("The recorded stand-in is not one the admin owns; deploying a new one");
+            if (_reusableStandIn(recorded, admin)) {
+                console.log("Reusing the recorded stand-in");
+                return TestnetSanctionsOracleStandIn(recorded);
+            }
+            console.log("The recorded stand-in is not one the admin alone controls; deploying a new one");
         }
         vm.startBroadcast(deployer);
         TestnetSanctionsOracleStandIn s = new TestnetSanctionsOracleStandIn(admin);
         vm.stopBroadcast();
         if (writes) Deployments.writeSanctionsOracleStandIn(address(s));
         return s;
+    }
+
+    /// @dev Whether `candidate` is a stand-in only the admin controls: it says
+    ///      it is one, and {AdminControl.aloneControls} holds. An attestor
+    ///      binds its oracle for good, so reusing a stand-in whose pending
+    ///      owner could accept it would hand the clearance answers — flags and
+    ///      freshness — to someone other than the admin.
+    function _reusableStandIn(address candidate, address admin) internal view returns (bool) {
+        if (!AdminControl.aloneControls(candidate, admin)) return false;
+        try TestnetSanctionsOracleStandIn(candidate).isTestnetStandIn() returns (bool yes) {
+            return yes;
+        } catch {
+            return false;
+        }
     }
 
     /// @dev The recorded attestor while it reads this stand-in through this

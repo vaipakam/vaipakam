@@ -326,15 +326,31 @@ Both accept native value only as their messenger's fee refund.
     `STAND_IN_FOR` names RedStone's oracle. The delister asks every oracle it
     reads, through either route, whether it is the stand-in, and names the
     answer in every action, note and report line: "the testnet stand-in for
-    RedStone" (with "NOT RedStone" on the report's oracle line), "RedStone"
-    only when the oracle answered without the stand-in's function, and "the
-    clearance oracle" when the run could not tell. Facts are read from the
-    same address the report names.
+    RedStone" (with "NOT RedStone" on the report's oracle line) when the
+    oracle itself answers that it is, and "the clearance oracle" for any
+    other, whether it answers false or gives no answer. It never names an
+    oracle RedStone: the delister runs on test networks only, where RedStone
+    has no deployment, and RedStone's oracle carries no marker a run could
+    read, so the only way to name it would be to infer it from a call that
+    failed, which an RPC fault can imitate. A mainnet release must identify
+    RedStone from the address it is recorded under. The attestor chain's own
+    report names the oracle its attestor reads, even though no timelock lives
+    there. Facts are read from the same address the report names.
   - **Its freshness is the admin's.** `getLastUpdateBlockTimestamp()` is the
     admin's last write (deploy, a flag change, or `markUpdated`), never the
     block's time. Left alone longer than a timelock's `oracleMaxAge`
     (default 7 days) it closes that timelock's automated route exactly as a
-    frozen RedStone would, and the delister names the remedy.
+    frozen RedStone would, and the delister names the remedy. On the
+    cross-chain route a stale clearance carries the oracle's update time as
+    of the request, so the remedy is judged from the oracle's update time
+    NOW: a fresh request alone when it has updated since, the admin
+    re-publishing the stand-in when it has not, and a conditional
+    instruction when the current time could not be read.
+  - **Only the admin's stand-in is reused.** The wiring script reuses a
+    recorded stand-in only while it answers as the stand-in, the admin owns
+    it, and no ownership transfer is pending; otherwise it deploys a new one.
+    An attestor binds its oracle for good, so binding one another account
+    could take over would hand that account the clearance.
 
   A fork test (`contracts/test/fork/SanctionsClearanceLiveForkTest.t.sol`,
   gated on `FORK_URL_BNB_TESTNET` plus each timelock chain's URL) runs the

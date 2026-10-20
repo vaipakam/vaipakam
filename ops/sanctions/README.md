@@ -124,12 +124,19 @@ only what that chain's admin flags. The delister asks the oracle it reads
 whether it is that stand-in, and says so in every line: actions read "request
 the clearance from the testnet stand-in for RedStone", and the report adds
 "clearance read from the testnet stand-in for RedStone at 0x…: NOT RedStone".
-It writes "RedStone" only when the oracle answered without the stand-in's
-function, and "the clearance oracle" when it could not tell. The stand-in is
-only as fresh as the admin's last write to it: unless the admin calls
+Any other oracle is "the clearance oracle", whatever it answered: the
+delister never calls an oracle RedStone, since RedStone has no testnet
+deployment and its oracle carries no marker a run could read. The BNB testnet
+section of the report, which hosts the
+attestor rather than a timelock, names the oracle the same way. The stand-in
+is only as fresh as the admin's last write to it: unless the admin calls
 `markUpdated` within a timelock's `oracleMaxAge` (default 7 days) of an
-execution, the clearance comes back stale and the delister reports that the
-admin must re-publish it. On this route the delister key needs tBNB on BNB
+execution, the clearance comes back stale. The delister then reads the
+oracle's update time as it is now, not as the stale answer recorded it: if
+the stand-in has been re-published since, it says the next request (which it
+sends once the stale one expires) carries the new time; if not, it says the
+admin must re-publish it; if it cannot read the time, it says both,
+conditionally. On this route the delister key needs tBNB on BNB
 testnet for the reply fees, and the env file needs `RPC_BNB_TESTNET`.
 
 On a testnet both services work against a **rehearsal** list:

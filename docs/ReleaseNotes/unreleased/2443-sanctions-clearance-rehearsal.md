@@ -24,10 +24,16 @@ Running the script on the live testnets waits on the owner's go-ahead for
 each chain.
 
 The delister bot now states which oracle answered. It asks the oracle it
-reads whether it is the stand-in and names it accordingly in every action,
-note and report line, adding that the stand-in is not RedStone; it says
-"RedStone" only when the oracle is shown not to be the stand-in, and "the
-clearance oracle" when it could not tell. It reads candidates from the same
-oracle the report names, and when a clearance comes back stale it says
-whether the remedy is the admin re-publishing the stand-in. Part of #2443,
-which stays open for the mainnet adder host and RedStone's terms.
+reads whether it is the stand-in, and when it last updated, and names it
+accordingly in every action, note and report line, adding that the stand-in
+is not RedStone. Any other oracle is "the clearance oracle", and the bot
+never calls an oracle RedStone, since RedStone has no deployment on the test
+networks it runs on and nothing it could read would establish it. The
+attestor chain's
+own report says the same of the oracle its attestor reads. It reads
+candidates from the same oracle the report names, and when a clearance comes
+back stale it judges the remedy from the oracle's current update time rather
+than from the old answer: a new request alone when the oracle has updated
+since, the admin re-publishing the stand-in when it has not, and a
+conditional instruction when the current time could not be read. Part of
+#2443, which stays open for the mainnet adder host and RedStone's terms.
