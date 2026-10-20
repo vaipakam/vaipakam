@@ -117,7 +117,9 @@ contract SanctionsClearanceLiveForkTest is Test {
         _roundTrip(id, target, flags);
 
         (uint64 requestId,,,, SanctionsDelistingTimelock.ClearanceState state) = tl.clearanceOf(id);
-        assertEq(uint8(state), uint8(SanctionsDelistingTimelock.ClearanceState.Flagged), "the stand-in's flag came back");
+        assertEq(
+            uint8(state), uint8(SanctionsDelistingTimelock.ClearanceState.Flagged), "the stand-in's flag came back"
+        );
         (bool ready, bytes4 reason) = tl.readiness(id);
         assertFalse(ready);
         assertEq(reason, SanctionsDelistingTimelock.ClearanceFlagged.selector);
@@ -129,10 +131,10 @@ contract SanctionsClearanceLiveForkTest is Test {
     /// @dev A recorded stand-in the admin no longer alone controls (a
     ///      transfer pending) would be replaced, and so would its attestor —
     ///      but the old attestor still handles the clearance channel, so the
-    ///      run stops, and it stops before deploying or recording anything:
-    ///      the artifact a `--broadcast` simulation writes survives a later
-    ///      revert, and must never name contracts that were not sent.
-    function test_BnbTestnet_AnUnfitStandInStopsTheRunBeforeAnythingIsDeployed() public {
+    ///      run stops. Forge would then broadcast nothing, and the artifact,
+    ///      whose writes survive a revert, must not name the replacements the
+    ///      run deployed in simulation: the script records last.
+    function test_BnbTestnet_AnUnfitStandInStopsTheRunAndRecordsNothing() public {
         string memory bnbUrl = vm.envOr("FORK_URL_BNB_TESTNET", string(""));
         if (bytes(bnbUrl).length == 0) {
             vm.skip(true);
@@ -160,12 +162,12 @@ contract SanctionsClearanceLiveForkTest is Test {
         again.setArtifactRootOverride(root);
         vm.expectRevert(
             bytes(
-                "ConfigureSanctionsClearance: this run would deploy a new attestor (the recorded stand-in or attestor is not fit to reuse), but another contract already handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first. Nothing was deployed or recorded"
+                "ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"
             )
         );
         again.runWith(admin, deployer, BNB, timelockChains);
-        // The revert undoes chain state either way; the file is what would
-        // keep a deploy that came before the refusal.
+        // The replacements were deployed in the run before the refusal; the
+        // file is what would have kept them.
         assertEq(vm.readFile(artifactPath), before, "nothing recorded");
         vm.removeDir(root, true);
     }

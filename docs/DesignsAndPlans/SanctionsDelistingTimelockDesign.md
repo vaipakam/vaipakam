@@ -355,10 +355,16 @@ Both accept native value only as their messenger's fee refund.
     hand that account the clearance. Failing the rule means "do not reuse",
     never "replace silently": when a replacement attestor would be needed
     while the old one still handles the clearance channel, the run stops,
-    and it checks every such refusal before it deploys or records anything,
-    since an artifact written during a `--broadcast` simulation survives a
-    later revert. `DeploySanctionsDelisting` applies the same rule to the
-    timelock: it never deploys a second timelock beside a recorded one that
+    at the script's read of the channel or else at the messenger's own
+    check. Nothing a refused run deployed is recorded: every sanctions
+    deploy and configure script writes its artifact only after every step
+    of the run has succeeded, because Forge executes the whole script
+    before broadcasting and sends nothing when a step reverts, while an
+    artifact written during that execution would survive the revert. The
+    script does not copy the messenger's rules into an up-front check of
+    its own; a copy could never be complete, and the messenger's refusals
+    bind either way. `DeploySanctionsDelisting` applies the same rule to
+    the timelock: it never deploys a second timelock beside a recorded one that
     is still a remover of the list, so a list never has two automated
     delisting routes.
 

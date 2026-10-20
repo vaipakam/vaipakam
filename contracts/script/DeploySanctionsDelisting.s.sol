@@ -75,7 +75,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         require(!list.isAdder(proposer), "DeploySanctionsDelisting: the proposer must not be the list's adder");
         require(!list.isRemover(proposer), "DeploySanctionsDelisting: the proposer must not be a remover");
 
-        SanctionsDelistingTimelock tl = _timelockFor(list, admin, writes);
+        (SanctionsDelistingTimelock tl, bool deployed) = _timelockFor(list, admin);
 
         bool needsRemover = !list.isRemover(address(tl));
         bool needsProposer = !tl.isProposer(proposer);
@@ -86,6 +86,10 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
             vm.stopBroadcast();
         }
         require(list.isRemover(address(tl)) && tl.isProposer(proposer), "DeploySanctionsDelisting: roles not set");
+        // Recorded last, once every step has succeeded: an artifact write
+        // survives a later revert in a `--broadcast` run's simulation, which
+        // would leave it naming a timelock that was never sent.
+        if (writes && deployed) Deployments.writeSanctionsDelistingTimelock(address(tl));
 
         console.log("SanctionsDelistingTimelock:", address(tl));
         console.log("  list    :", address(list));
@@ -114,7 +118,8 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
 
     /// @dev The recorded timelock while it serves this list and the admin
     ///      alone controls it ({AdminControl.aloneControls}); otherwise a new
-    ///      one, recorded — but never while the recorded one is still a
+    ///      one, which the caller records once the run has succeeded (`deployed`
+    ///      true) — but never while the recorded one is still a
     ///      remover of this list. Deploying beside it would leave two
     ///      delisting routes live, one answering to someone other than the
     ///      admin (its owner, or the pending owner once it accepts), while the
@@ -122,7 +127,10 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
     ///      case stops the run before anything is deployed or recorded, and
     ///      the admin resolves it deliberately: cancel the transfer (the
     ///      timelock is then reused), or revoke its remover role.
-    function _timelockFor(SanctionsList list, address admin, bool writes) internal returns (SanctionsDelistingTimelock) {
+    function _timelockFor(SanctionsList list, address admin)
+        internal
+        returns (SanctionsDelistingTimelock, bool deployed)
+    {
         address recorded = Deployments.readSanctionsDelistingTimelockOptional();
         if (recorded.code.length != 0) {
             SanctionsDelistingTimelock existing = SanctionsDelistingTimelock(payable(recorded));
@@ -130,7 +138,7 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
                 if (address(l) == address(list)) {
                     if (AdminControl.aloneControls(recorded, admin)) {
                         console.log("Reusing the recorded SanctionsDelistingTimelock");
-                        return existing;
+                        return (existing, false);
                     }
                     require(
                         !list.isRemover(recorded),
@@ -143,7 +151,6 @@ contract DeploySanctionsDelisting is Script, ArtifactRootBase {
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsDelistingTimelock tl = new SanctionsDelistingTimelock(admin, list);
         vm.stopBroadcast();
-        if (writes) Deployments.writeSanctionsDelistingTimelock(address(tl));
-        return tl;
+        return (tl, true);
     }
 }

@@ -53,12 +53,13 @@ import {AdminControl} from "./lib/AdminControl.sol";
  *         address from that chain's artifact and refuses while it is absent.
  *
  *         Every step reads before it writes and is skipped when already in
- *         place, so a re-run sends nothing on a wired chain. On the attestor
- *         chain every refusal is checked BEFORE anything is deployed or
- *         recorded: an artifact write survives a later revert in a
- *         `--broadcast` run's simulation, so a refusal after a deploy would
- *         leave the artifact naming contracts that were never sent. Nothing is ever
- *         re-pointed: a channel handler, a channel peer or a lane already set
+ *         place, so a re-run sends nothing on a wired chain. It RECORDS LAST:
+ *         the artifact is written only after every step of the run has
+ *         succeeded. Forge executes the whole script before broadcasting and
+ *         sends nothing if any step reverts, but an artifact write made
+ *         during that execution survives the revert, so a write before a step
+ *         that can still refuse could name contracts that were never sent.
+ *         Nothing is ever re-pointed: a channel handler, a channel peer or a lane already set
  *         to something else stops the run, because rotating any of them
  *         needs the drain `CcipMessenger.registerChannel` / `setChannelPeer`
  *         describe. `setClearanceSource` is called only when the source
@@ -135,25 +136,16 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         uint256[] memory timelockChainIds,
         bool writes
     ) internal {
-        // Decide what is reused (address(0): this run deploys it), then check
-        // every refusal the wiring can hit, and only then deploy and record.
+        // Reused when fit (address(0): this run deploys it). Nothing is
+        // recorded until the wiring below has succeeded — see "records last".
         address reusedStandIn = _recordedStandInToReuse(admin);
         address reusedAttestor = reusedStandIn == address(0) ? address(0) : _recordedAttestorToReuse(reusedStandIn, m);
-        for (uint256 i; i < timelockChainIds.length; ++i) {
-            _checkLane(m, timelockChainIds[i]);
-        }
-        _checkHandler(m, reusedAttestor);
-        for (uint256 i; i < timelockChainIds.length; ++i) {
-            uint256 cid = timelockChainIds[i];
-            _checkPeer(m, cid, Deployments.readAddressForChain(cid, ".sanctionsDelistingTimelock"));
-        }
-
         TestnetSanctionsOracleStandIn s = reusedStandIn != address(0)
             ? TestnetSanctionsOracleStandIn(reusedStandIn)
-            : _deployStandIn(admin, deployer, writes);
+            : _deployStandIn(admin, deployer);
         SanctionsClearanceAttestor a = reusedAttestor != address(0)
             ? SanctionsClearanceAttestor(payable(reusedAttestor))
-            : _deployAttestor(s, m, deployer, writes);
+            : _deployAttestor(s, m, deployer);
         standIn = address(s);
         attestor = address(a);
 
@@ -168,14 +160,22 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         }
         vm.stopBroadcast();
 
-        require(m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL) == address(a), "ConfigureSanctionsClearance: attestor not registered");
+        require(
+            m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL) == address(a),
+            "ConfigureSanctionsClearance: attestor not registered"
+        );
+        // Every step has succeeded: record what this run deployed, last.
+        if (writes && reusedStandIn == address(0)) Deployments.writeSanctionsOracleStandIn(address(s));
+        if (writes && reusedAttestor == address(0)) Deployments.writeSanctionsClearanceAttestor(address(a));
         console.log("SanctionsClearanceAttestor:", address(a));
         console.log("  messenger:", address(m));
         console.log("  reads    : the TESTNET STAND-IN for", s.STAND_IN_FOR(), "- NOT RedStone:");
         console.log("            ", address(s));
         console.log("  stand-in owner      :", s.owner());
         console.log("  stand-in last update:", s.getLastUpdateBlockTimestamp());
-        console.log("    It goes stale once older than a timelock's oracleMaxAge; the admin refreshes it with markUpdated().");
+        console.log(
+            "    It goes stale once older than a timelock's oracleMaxAge; the admin refreshes it with markUpdated()."
+        );
         for (uint256 i; i < timelockChainIds.length; ++i) {
             uint256 cid = timelockChainIds[i];
             console.log("  answers the timelock on chain", cid, m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, cid));
@@ -196,15 +196,12 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         return address(0);
     }
 
-    /// @dev A new stand-in owned by the admin, recorded.
-    function _deployStandIn(address admin, address deployer, bool writes)
-        internal
-        returns (TestnetSanctionsOracleStandIn)
-    {
+    /// @dev A new stand-in owned by the admin (recorded by the caller once
+    ///      the run has succeeded).
+    function _deployStandIn(address admin, address deployer) internal returns (TestnetSanctionsOracleStandIn) {
         vm.startBroadcast(deployer);
         TestnetSanctionsOracleStandIn s = new TestnetSanctionsOracleStandIn(admin);
         vm.stopBroadcast();
-        if (writes) Deployments.writeSanctionsOracleStandIn(address(s));
         return s;
     }
 
@@ -239,23 +236,25 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
         return address(0);
     }
 
-    /// @dev A new attestor reading `s` through `m`, recorded.
-    function _deployAttestor(TestnetSanctionsOracleStandIn s, CcipMessenger m, address deployer, bool writes)
+    /// @dev A new attestor reading `s` through `m` (recorded by the caller
+    ///      once the run has succeeded).
+    function _deployAttestor(TestnetSanctionsOracleStandIn s, CcipMessenger m, address deployer)
         internal
         returns (SanctionsClearanceAttestor)
     {
         vm.startBroadcast(deployer);
-        SanctionsClearanceAttestor a = new SanctionsClearanceAttestor(ISanctionsList(address(s)), ICrossChainMessenger(address(m)));
+        SanctionsClearanceAttestor a =
+            new SanctionsClearanceAttestor(ISanctionsList(address(s)), ICrossChainMessenger(address(m)));
         vm.stopBroadcast();
-        if (writes) Deployments.writeSanctionsClearanceAttestor(address(a));
         return a;
     }
 
     // ── Timelock chain ─────────────────────────────────────────────────
 
     function _wireTimelockChain(CcipMessenger m, address admin, uint256 attestorChainId) internal {
-        SanctionsDelistingTimelock tl =
-            SanctionsDelistingTimelock(payable(Deployments.readAddressForChain(block.chainid, ".sanctionsDelistingTimelock")));
+        SanctionsDelistingTimelock tl = SanctionsDelistingTimelock(
+            payable(Deployments.readAddressForChain(block.chainid, ".sanctionsDelistingTimelock"))
+        );
         require(tl.owner() == admin, "ConfigureSanctionsClearance: this chain's timelock is not owned by the admin");
         address a = Deployments.readSanctionsClearanceAttestorOptionalForChain(attestorChainId);
         require(
@@ -283,7 +282,9 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
             console.log("  RedStone check: CROSS-CHAIN, answered by the attestor chain's oracle.");
             address recordedStandIn = Deployments.readSanctionsOracleStandInOptionalForChain(attestorChainId);
             if (recordedStandIn != address(0)) {
-                console.log("    That chain's artifact records it as the TESTNET STAND-IN (not RedStone):", recordedStandIn);
+                console.log(
+                    "    That chain's artifact records it as the TESTNET STAND-IN (not RedStone):", recordedStandIn
+                );
             }
         } else if (route == SanctionsDelistingTimelock.Route.Local) {
             // The list's own secondary wins; the source above is configured
@@ -296,87 +297,64 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
 
     // ── Shared steps (inside the admin's broadcast) ────────────────────
 
-    /// @dev Refuses what {_ensureLane} cannot do: CCIP must support the lane
-    ///      to `remote`, and a selector or remote messenger already set must
-    ///      be the expected one.
-    function _checkLane(CcipMessenger m, uint256 remote) internal view {
+    /// @dev This messenger's lane to `remote`: CCIP must support it, and the
+    ///      selector and remote messenger are set when absent and must match
+    ///      when present.
+    function _ensureLane(CcipMessenger m, uint256 remote) internal {
         uint64 selector = Deployments.ccipSelectorForChainId(remote);
         require(
             IRouterClient(m.getRouter()).isChainSupported(selector),
             string.concat("ConfigureSanctionsClearance: CCIP does not support a lane to chain ", vm.toString(remote))
         );
         uint64 currentSelector = m.chainSelectorOf(remote);
-        require(
-            currentSelector == 0 || currentSelector == selector,
-            "ConfigureSanctionsClearance: the messenger maps that chain to another selector"
-        );
-        address currentMessenger = m.remoteMessengerOf(remote);
-        require(
-            currentMessenger == address(0)
-                || currentMessenger == Deployments.readAddressForChain(remote, ".ccipMessenger"),
-            "ConfigureSanctionsClearance: the messenger trusts another remote messenger for that chain"
-        );
-    }
-
-    /// @dev This messenger's lane to `remote` (see {_checkLane}): the
-    ///      selector and remote messenger are set when absent.
-    function _ensureLane(CcipMessenger m, uint256 remote) internal {
-        _checkLane(m, remote);
-        if (m.chainSelectorOf(remote) == 0) {
-            m.setChainSelector(remote, Deployments.ccipSelectorForChainId(remote));
+        if (currentSelector == 0) {
+            m.setChainSelector(remote, selector);
             console.log("  lane: selector set for chain", remote);
+        } else {
+            require(
+                currentSelector == selector,
+                "ConfigureSanctionsClearance: the messenger maps that chain to another selector"
+            );
         }
-        if (m.remoteMessengerOf(remote) == address(0)) {
-            m.setRemoteMessenger(remote, Deployments.readAddressForChain(remote, ".ccipMessenger"));
+        address remoteMessenger = Deployments.readAddressForChain(remote, ".ccipMessenger");
+        address currentMessenger = m.remoteMessengerOf(remote);
+        if (currentMessenger == address(0)) {
+            m.setRemoteMessenger(remote, remoteMessenger);
             console.log("  lane: remote messenger set for chain", remote);
+        } else {
+            require(
+                currentMessenger == remoteMessenger,
+                "ConfigureSanctionsClearance: the messenger trusts another remote messenger for that chain"
+            );
         }
     }
 
-    /// @dev Refuses what {_ensureHandler} cannot do. `handler` is the
-    ///      contract to register, or address(0) for one this run has yet to
-    ///      deploy, which can only take a channel nobody handles. Another
-    ///      handler is never replaced: a rotation needs a drain first, and a
-    ///      replaced attestor left registered would still answer.
-    function _checkHandler(CcipMessenger m, address handler) internal view {
+    /// @dev Registers `handler` on the clearance channel. Refuses to replace
+    ///      another handler: a rotation needs a drain first.
+    function _ensureHandler(CcipMessenger m, address handler) internal {
         address current = m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL);
-        if (handler != address(0) && current == handler) return;
-        require(
-            current == address(0) || handler != address(0),
-            "ConfigureSanctionsClearance: this run would deploy a new attestor (the recorded stand-in or attestor is not fit to reuse), but another contract already handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first. Nothing was deployed or recorded"
-        );
+        if (current == handler) return;
         require(
             current == address(0),
             "ConfigureSanctionsClearance: another contract handles the clearance channel here - rotating it needs a drain (CcipMessenger.registerChannel); clear it deliberately first"
         );
         require(
-            handler == address(0) || m.channelOf(handler) == bytes32(0),
+            m.channelOf(handler) == bytes32(0),
             "ConfigureSanctionsClearance: that contract already handles another channel on this messenger"
         );
-    }
-
-    /// @dev Registers `handler` on the clearance channel (see {_checkHandler}).
-    function _ensureHandler(CcipMessenger m, address handler) internal {
-        _checkHandler(m, handler);
-        if (m.handlerOf(SANCTIONS_CLEARANCE_CHANNEL) == handler) return;
         m.registerChannel(SANCTIONS_CLEARANCE_CHANNEL, handler);
         console.log("  channel: handler registered", handler);
     }
 
-    /// @dev Refuses to replace another clearance-channel peer for `remote`:
-    ///      a rotation needs a drain first.
-    function _checkPeer(CcipMessenger m, uint256 remote, address peer) internal view {
+    /// @dev Sets `peer` as the clearance channel's peer for `remote`. Refuses
+    ///      to replace another peer: a rotation needs a drain first.
+    function _ensurePeer(CcipMessenger m, uint256 remote, address peer) internal {
         address current = m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, remote);
+        if (current == peer) return;
         require(
-            current == address(0) || current == peer,
+            current == address(0),
             "ConfigureSanctionsClearance: the clearance channel already has another peer for that chain - rotating it needs a drain (CcipMessenger.setChannelPeer); clear it deliberately first"
         );
-    }
-
-    /// @dev Sets `peer` as the clearance channel's peer for `remote` (see
-    ///      {_checkPeer}).
-    function _ensurePeer(CcipMessenger m, uint256 remote, address peer) internal {
-        _checkPeer(m, remote, peer);
-        if (m.channelPeerOf(SANCTIONS_CLEARANCE_CHANNEL, remote) == peer) return;
         m.setChannelPeer(SANCTIONS_CLEARANCE_CHANNEL, remote, peer);
         console.log("  channel: peer set for chain", remote, peer);
     }
@@ -385,12 +363,18 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
     ///      chains, no timelock chain twice, and this chain one of them.
     function _requireTopology(uint256 attestorChainId, uint256[] memory timelockChainIds) internal view {
         require(timelockChainIds.length != 0, "ConfigureSanctionsClearance: name at least one timelock chain");
-        require(TestnetChains.isTestnet(attestorChainId), "ConfigureSanctionsClearance: the attestor chain must be a testnet");
+        require(
+            TestnetChains.isTestnet(attestorChainId),
+            "ConfigureSanctionsClearance: the attestor chain must be a testnet"
+        );
         bool here = block.chainid == attestorChainId;
         for (uint256 i; i < timelockChainIds.length; ++i) {
             uint256 cid = timelockChainIds[i];
             require(TestnetChains.isTestnet(cid), "ConfigureSanctionsClearance: every timelock chain must be a testnet");
-            require(cid != attestorChainId, "ConfigureSanctionsClearance: the attestor chain cannot also be a timelock chain");
+            require(
+                cid != attestorChainId,
+                "ConfigureSanctionsClearance: the attestor chain cannot also be a timelock chain"
+            );
             for (uint256 j; j < i; ++j) {
                 require(timelockChainIds[j] != cid, "ConfigureSanctionsClearance: a timelock chain is named twice");
             }

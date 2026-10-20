@@ -21,8 +21,9 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
  *         Failing this rule means "do not reuse", never "replace silently": a
  *         script that would deploy a replacement while the unfit contract
  *         still holds a role (a remover of the list, the handler of a
- *         channel) refuses instead, before deploying or recording anything,
- *         so two live contracts never hold one role.
+ *         channel) refuses instead, so two live contracts never hold one
+ *         role. The refusal is a revert, and each script records its
+ *         artifact last, so a refused run sends nothing and records nothing.
  */
 library AdminControl {
     /// @notice Whether `target` answers to `admin` alone: owned by it, with no

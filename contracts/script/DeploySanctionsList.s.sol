@@ -64,7 +64,7 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         require(adder != remover, "DeploySanctionsList: the adder and the remover must be different keys");
         require(adder != admin, "DeploySanctionsList: the adder must not be the owner");
 
-        SanctionsList list = _listFor(admin, writes);
+        (SanctionsList list, bool deployed) = _listFor(admin);
 
         bool needsAdder = !list.isAdder(adder);
         bool needsRemover = !list.isRemover(remover);
@@ -76,6 +76,10 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         }
         require(list.isAdder(adder) && list.isRemover(remover), "DeploySanctionsList: roles not set");
         require(!list.isRemover(adder), "DeploySanctionsList: the adder is also a remover - remove that role first");
+        // Recorded last, once every step has succeeded: an artifact write
+        // survives a later revert in a `--broadcast` run's simulation, which
+        // would leave it naming a list that was never sent.
+        if (writes && deployed) Deployments.writeSanctionsList(address(list));
 
         console.log("SanctionsList:", address(list));
         console.log("  owner  :", admin);
@@ -86,8 +90,9 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
 
     /// @dev The recorded list while the admin alone controls it
     ///      ({AdminControl.aloneControls}) and it composes no secondary;
-    ///      otherwise a new one, recorded.
-    function _listFor(address admin, bool writes) internal returns (SanctionsList) {
+    ///      otherwise a new one (`deployed`), which the caller records once
+    ///      the run has succeeded.
+    function _listFor(address admin) internal returns (SanctionsList, bool deployed) {
         address recorded = Deployments.readSanctionsListOptional();
         if (recorded.code.length != 0) {
             SanctionsList existing = SanctionsList(recorded);
@@ -95,7 +100,7 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
                 try existing.secondary() returns (ISanctionsList secondary) {
                     if (address(secondary) == address(0)) {
                         console.log("Reusing the recorded SanctionsList");
-                        return existing;
+                        return (existing, false);
                     }
                 } catch {}
             }
@@ -104,7 +109,6 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         SanctionsList list = new SanctionsList(admin, address(0));
         vm.stopBroadcast();
-        if (writes) Deployments.writeSanctionsList(address(list));
-        return list;
+        return (list, true);
     }
 }

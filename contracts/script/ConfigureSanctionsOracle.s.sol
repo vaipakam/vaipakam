@@ -72,7 +72,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         address owner = IERC173(diamond).owner();
 
         address current = ProfileFacet(diamond).getSanctionsOracle();
-        address target = _overlayFor(current, admin, writes);
+        (address target, bool recordOverlay) = _overlayFor(current, admin);
 
         if (current != target) {
             if (owner != admin) {
@@ -84,6 +84,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
                 // is deployed and recorded, and the oracle is reported as NOT
                 // configured: the configured-oracle record is written only
                 // once the Diamond reports `target`.
+                if (writes && recordOverlay) Deployments.writeSanctionsTestnetOverlay(target);
                 console.log("NOT CONFIGURED: the Diamond owner is not the ADMIN key (timelock?).");
                 console.log("  owner  :", owner);
                 console.log("  Schedule through it, then re-run this script to record:");
@@ -98,6 +99,10 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
 
         _verify(diamond, target, admin);
 
+        // Recorded last, once every step has succeeded: an artifact write
+        // survives a later revert in a `--broadcast` run's simulation, which
+        // would leave it naming an overlay that was never sent.
+        if (writes && recordOverlay) Deployments.writeSanctionsTestnetOverlay(target);
         // One object, replaced whole: no field from an earlier configuration
         // can outlive it (Codex #2442 r3).
         if (writes) Deployments.writeSanctionsRecord(target, KIND_TESTNET_OVERLAY);
@@ -114,24 +119,25 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
     ///         record is backfilled to it if missing or stale (a manual setup,
     ///         a restored artifact);
     ///      2. the recorded overlay, when it is fit to reuse;
-    ///      3. a fresh one, owned by the chain's admin and recorded under
-    ///         `.sanctionsTestnetOverlay` as soon as it is deployed — a separate
-    ///         fact from which oracle the Diamond is configured with, so a run
-    ///         that cannot configure (a timelock owner) still lets the next run
-    ///         reuse the overlay instead of deploying another.
-    function _overlayFor(address current, address admin, bool writes) internal returns (address) {
+    ///      3. a fresh one, owned by the chain's admin.
+    ///      `recordOverlay` says the `.sanctionsTestnetOverlay` record must be
+    ///      written (a fresh overlay, or a backfill), which the caller does at
+    ///      the END of the run — a separate fact from which oracle the Diamond
+    ///      is configured with, so a run that cannot configure (a timelock
+    ///      owner) still records it and lets the next run reuse the overlay
+    ///      instead of deploying another.
+    function _overlayFor(address current, address admin) internal returns (address, bool recordOverlay) {
         address recorded = Deployments.readSanctionsTestnetOverlayOptional();
         if (current != address(0) && current.code.length != 0) {
             if (_reusable(TestnetSanctionsOverlay(current), admin)) {
                 console.log("Keeping the overlay the Diamond already screens against:", current);
-                if (writes && recorded != current) Deployments.writeSanctionsTestnetOverlay(current);
-                return current;
+                return (current, recorded != current);
             }
         }
         if (recorded != address(0) && recorded.code.length != 0) {
             if (_reusable(TestnetSanctionsOverlay(recorded), admin)) {
                 console.log("Reusing the recorded overlay:", recorded);
-                return recorded;
+                return (recorded, false);
             }
             console.log("Recorded overlay not reusable (upstream, owner or pending owner differs):", recorded);
         }
@@ -139,8 +145,7 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         TestnetSanctionsOverlay overlay = new TestnetSanctionsOverlay(admin, address(0));
         vm.stopBroadcast();
         console.log("Deployed TestnetSanctionsOverlay:", address(overlay));
-        if (writes) Deployments.writeSanctionsTestnetOverlay(address(overlay));
-        return address(overlay);
+        return (address(overlay), true);
     }
 
     /// @dev True iff `overlay` has no upstream (so it is the whole screen, not
