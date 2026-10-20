@@ -18,11 +18,17 @@
 //
 // Per chain, per run (hourly):
 //
+//   0. PAUSE — read the protocol's pause state. While it is paused no touch can
+//      land and no clock runs, so the run sends nothing and leaves every
+//      queue-wide report as it stands (see step 4).
 //   1. DISCOVER — read the global entry sequence from the keeper's cursor
 //      (`getRewardEntriesRange`; ids are allocated from 1), queue every entry
-//      not yet settled, and move the cursor to the end of what exists.
+//      not yet settled, and move the cursor to the end of what exists. The
+//      run's line says whether discovery reached that end (`discovery=caught-up`)
+//      or stopped short of it (`discovery=behind`).
 //   2. READ the due entries (not finished with for most of a heartbeat), the
-//      longest-waiting first: the entry itself and the contract's removal
+//      least recently tried first, so entries that keep failing rotate to the
+//      back instead of holding the slice: the entry itself and the contract's removal
 //      estimate (`getRewardEntryExpiry`). A settled entry (claimed, expired,
 //      forfeited) leaves the queue. The pass decides nothing about
 //      executability: that is the sweep's own gate, re-run on every touch.
@@ -40,7 +46,11 @@
 //      (whatever the cause: touches not landing, or more live entries than a
 //      heartbeat can reach — the alert states the capacity); and, while the
 //      horizon is armed, for entries whose clock did not advance across two
-//      consecutive landed touches (see {@link pausedRunsAfter}).
+//      consecutive landed touches, with the two readings compared (see
+//      {@link pausedRunsAfter}). While the protocol is paused, none of the
+//      queue-wide reports (refused, overdue, paused clock) is raised or
+//      cleared: a pause is an operator's deliberate act, and what it stops is
+//      not a fault of the pass.
 //
 // The pass needs no notification code: the indexer files the free final
 // notice and the removal rows from `RewardEntryExpiryArmed` /
@@ -52,7 +62,7 @@
 // Gated by KEEPER_ENABLED + REWARD_HORIZON_HEARTBEAT_ENABLED.
 
 import { BaseError, ContractFunctionRevertedError, createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
-import { ConfigFacetABI, InteractionRewardsLensFacetABI, RewardHorizonSweepFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ConfigFacetABI, InteractionRewardsLensFacetABI, RewardHorizonSweepFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -70,13 +80,16 @@ import {
   listOpsAlertKeys,
   listOverdueHorizonEntries,
   listPausedHorizonEntries,
+  markHorizonTried,
   putHorizonCursor,
   recordHorizonTouches,
   type HorizonEntryRow,
+  type PausedHorizonEntry,
 } from './db';
 import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
 
 const ABI = [
+  ...(AdminFacetABI as Abi),
   ...(ConfigFacetABI as Abi),
   ...(InteractionRewardsLensFacetABI as Abi),
   ...(RewardHorizonSweepFacetABI as Abi),
@@ -135,7 +148,9 @@ const ALERT_NAMES = 10;
 /** Reverts that refuse the WHOLE sweep on this chain, whatever the entries. */
 const CHAIN_WIDE_REFUSALS = new Set(['EnforcedPause', 'InteractionEmissionsNotStarted', 'VPFITokenNotSet']);
 /** Of those, the one that is an operator's deliberate act and needs no alert:
- *  no clock runs during a pause anyway (the sweep drops a paused interval). */
+ *  no clock runs during a pause anyway (the sweep drops a paused interval). The
+ *  run reads the pause state first; this catches a pause that begins between
+ *  that read and a send. */
 const PAUSED_REFUSAL = 'EnforcedPause';
 
 /** `LibVaipakam.RewardEntry` as the lens returns it. */
@@ -296,8 +311,9 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   const horizonDays = Number(
     (await client.readContract({ address: diamond, abi: ABI, functionName: 'getRewardClaimHorizonDays' })) as number,
   );
+  const pausedAtStart = Boolean(await client.readContract({ address: diamond, abi: ABI, functionName: 'paused' }));
 
-  const discovered = await discover(env, chainId, client, diamond, nowSec);
+  const discovery = await discover(env, chainId, client, diamond, nowSec);
 
   const dueBefore = nowSec - DUE_AFTER_SEC;
   const rows = await listDueHorizonEntries(env.KEEPER_DB, chainId, diamond, dueBefore, DUE_SLICE);
@@ -305,23 +321,27 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
   const reads = await readEntries(deps.readClient, diamond, rows.map((r) => r.entryId), deps.sendDeadline, chainId);
   const plan = planHeartbeat(rows, reads, horizonDays, nowSec);
 
+  await markHorizonTried(env.KEEPER_DB, chainId, diamond, rows.map((r) => r.entryId), nowSec);
   await finishHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.settled);
   await checkHorizonEntries(env.KEEPER_DB, chainId, diamond, plan.idle, nowSec);
 
-  const ctx = plan.touch.length > 0 ? deps.context() : null;
-  if (plan.touch.length > 0 && !ctx) {
+  const ctx = plan.touch.length > 0 && !pausedAtStart ? deps.context() : null;
+  if (plan.touch.length > 0 && !pausedAtStart && !ctx) {
     console.log(`[keeper] rewardHorizonHeartbeat ${where}: no signing key — ${plan.touch.length} due touch(es) not sent`);
   }
   const outcome: TouchOutcome = ctx
     ? await touchAll(ctx, plan.touch.map((t) => t.entryId))
     : { landed: new Set(), reverted: new Map(), refused: null, attempted: false };
+  const protocolPaused = pausedAtStart || outcome.refused === PAUSED_REFUSAL;
   const landedTouches = plan.touch.filter((t) => outcome.landed.has(t.entryId));
   await recordHorizonTouches(env.KEEPER_DB, chainId, diamond, landedTouches, Math.floor(Date.now() / 1000));
 
   console.log(
-    `[keeper] rewardHorizonHeartbeat ${where} horizonDays=${horizonDays} discovered=${discovered} due=${dueTotal} read=${rows.length - plan.unread.length}/${rows.length} ` +
+    `[keeper] rewardHorizonHeartbeat ${where} horizonDays=${horizonDays} discovered=${discovery.queued} ` +
+      `discovery=${discovery.caughtUp ? 'caught-up' : `behind (next id ${discovery.next})`} due=${dueTotal} read=${rows.length - plan.unread.length}/${rows.length} ` +
       `settled=${plan.settled.length} idle=${plan.idle.length} touch=${plan.touch.length} landed=${outcome.landed.size} reverted=${outcome.reverted.size}` +
       (outcome.refused ? ` refused=${outcome.refused}` : '') +
+      (pausedAtStart ? ' (protocol paused: nothing sent)' : '') +
       (horizonDays === 0 ? ' (horizon dark: only entries whose removal has begun are touched)' : ''),
   );
 
@@ -329,19 +349,29 @@ export async function heartbeatOnce(env: Env, chainId: number, diamond: Address,
     horizonDays,
     reverted: outcome.reverted,
     clearedIds: new Set([...outcome.landed, ...plan.settled]),
-    // A deliberate pause refuses every touch and is not a fault: the overdue
-    // report is neither raised nor cleared while it stands (Codex #2596 r1).
-    measureOverdue: outcome.refused !== PAUSED_REFUSAL,
+    protocolPaused,
     refused: outcome.attempted ? outcome.refused : 'unmeasured',
     nowSec,
     deadline: deps.runDeadline,
   });
 }
 
-/** Queue the entries allocated since the cursor. Returns how many it queued. */
-async function discover(env: Env, chainId: number, client: PublicClient, diamond: Address, nowSec: number): Promise<number> {
+/** What one discovery did: how many entries it queued, the next id it will
+ *  read, and whether it reached the end of the allocated sequence. */
+export interface Discovery {
+  queued: number;
+  next: number;
+  caughtUp: boolean;
+}
+
+/** Queue the entries allocated since the cursor. `caughtUp` is true only when
+ *  a read showed the end of the sequence — not when the run's page budget ran
+ *  out or a read failed — so a long history still being caught up is never
+ *  mistaken for a complete queue (Codex #2596 r2). */
+async function discover(env: Env, chainId: number, client: PublicClient, diamond: Address, nowSec: number): Promise<Discovery> {
   let next = BigInt(await getHorizonCursor(env.KEEPER_DB, chainId, diamond));
   let queued = 0;
+  let caughtUp = false;
   for (let p = 0; p < DISCOVER_PAGES_PER_RUN; p++) {
     let page: readonly RewardEntryView[];
     try {
@@ -374,9 +404,12 @@ async function discover(env: Env, chainId: number, client: PublicClient, diamond
     // eslint-disable-next-line no-await-in-loop
     await putHorizonCursor(env.KEEPER_DB, chainId, diamond, Number(next));
     queued += live.length;
-    if (end || consumed === 0) break;
+    if (end || consumed === 0) {
+      caughtUp = true;
+      break;
+    }
   }
-  return queued;
+  return { queued, next: Number(next), caughtUp };
 }
 
 /** The entry and its removal estimate for each id, or null where either read failed. */
@@ -412,7 +445,7 @@ async function readEntries(
 }
 
 /** What the touches did. `refused` names a chain-wide refusal that stopped
- *  them; `attempted` is false when nothing was simulated at all. */
+ *  them; `attempted` is false when no simulation ran to a result. */
 interface TouchOutcome {
   landed: Set<number>;
   reverted: Map<number, string>;
@@ -434,10 +467,12 @@ async function touchAll(ctx: KeeperContext, ids: readonly number[]): Promise<Tou
   while (pending.length > 0 && writes > 0) {
     if (Date.now() >= ctx.notAfterMs) break;
     const group = pending.shift()!;
-    out.attempted = true;
     // eslint-disable-next-line no-await-in-loop
     const sim = await simulate(ctx, group);
+    // A simulation the deadline refused observed nothing: only one that ran
+    // makes the run's refusal state a measurement (Codex #2596 r2).
     if (sim === 'deadline') break;
+    out.attempted = true;
     if (sim !== 'ok') {
       if (CHAIN_WIDE_REFUSALS.has(sim)) {
         out.refused = sim;
@@ -522,9 +557,9 @@ export interface HeartbeatAlertInput {
   reverted: ReadonlyMap<number, string>;
   /** Entries whose earlier revert alert this run disproves (landed or settled). */
   clearedIds: ReadonlySet<number>;
-  /** False when the overdue report must be neither raised nor cleared (a
-   *  deliberate pause refused this run's touches). */
-  measureOverdue: boolean;
+  /** The protocol is paused: no queue-wide report (refused, overdue, paused
+   *  clock) is raised or cleared this run. */
+  protocolPaused: boolean;
   /** A chain-wide refusal; null when the sends ran; 'unmeasured' when none was tried. */
   refused: string | null | 'unmeasured';
   nowSec: number;
@@ -562,8 +597,12 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     if (m.clearedIds.has(id)) await toggle(key, false, () => '');
   }
 
+  // A deliberate pause stops every touch and every clock, so nothing below is
+  // measured while it stands: each report keeps the state it had (Codex #2596 r1, r2).
+  if (m.protocolPaused) return;
+
   if (m.refused !== 'unmeasured') {
-    const refused = m.refused !== null && m.refused !== PAUSED_REFUSAL ? m.refused : null;
+    const refused = m.refused;
     await toggle(`horizon-refused:${chainId}:all`, refused !== null, () =>
       `${tag}: every touch on this chain is refused (${refused}). No horizon clock is observed while it stands.`,
     );
@@ -571,7 +610,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
 
   // The overdue report reads the queue as the run left it, so it covers every
   // queued entry — those this run never reached as well as those it touched.
-  if (m.measureOverdue) {
+  {
     let overdue: { ids: number[]; total: number; queued: number };
     try {
       overdue = await listOverdueHorizonEntries(env.KEEPER_DB, chainId, diamond, m.nowSec - OVERDUE_AFTER_SEC, ALERT_NAMES);
@@ -593,7 +632,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     await toggle(pausedKey, false, () => '');
     return;
   }
-  let paused: { ids: number[]; total: number };
+  let paused: { entries: PausedHorizonEntry[]; total: number };
   try {
     paused = await listPausedHorizonEntries(env.KEEPER_DB, chainId, diamond, PAUSED_ALERT_RUNS, ALERT_NAMES);
   } catch (err) {
@@ -604,10 +643,23 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     pausedKey,
     paused.total > 0,
     () =>
-      `${tag}: the horizon clock of ${paused.total} reward entr${paused.total === 1 ? 'y' : 'ies'} did not advance across the last ${PAUSED_ALERT_RUNS} or more landed touches (${names(paused.ids, paused.total)}). ` +
+      `${tag}: the horizon clock of ${paused.total} reward entr${paused.total === 1 ? 'y' : 'ies'} did not advance across the last ${PAUSED_ALERT_RUNS} or more landed touches (${names(paused.entries.map((e) => e.entryId), paused.total)}). ` +
+      `The last comparison, per entry: ${paused.entries.map(describeComparison).join('; ')}. ` +
       `A clock advances only while its owner could actually claim; it pauses while the reward pool, the recycle bucket or the chain's delivered funding cannot pay the claim, while the owner is barred by the sanctions screen, or while the protocol is paused. ` +
       `Nothing expires while a clock is paused. If none of those holds, the touches are landing without being credited, which is a fault.`,
     PAUSED_REPEAT_SEC,
+  );
+}
+
+/** One paused clock's last comparison, in the alert's words: the removal
+ *  estimate read before each of two landed touches, and how far it moved
+ *  against the time between them. Pure. */
+export function describeComparison(e: PausedHorizonEntry): string {
+  const iso = (sec: number) => new Date(sec * 1000).toISOString().replace(/:\d\d\.\d{3}Z$/, 'Z');
+  const hours = (sec: number) => `${(sec / 3600).toFixed(1)}h`;
+  return (
+    `id ${e.entryId}: removal estimate ${iso(e.prevExpiresAt)} at the touch of ${iso(e.prevTouchedAt)}, ` +
+    `${iso(e.expiresAt)} at the touch of ${iso(e.touchedAt)} (moved ${hours(e.expiresAt - e.prevExpiresAt)} over ${hours(e.touchedAt - e.prevTouchedAt)})`
   );
 }
 

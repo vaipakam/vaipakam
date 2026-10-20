@@ -2366,8 +2366,11 @@ begun), so arm it BEFORE this step and let it run. "Verified" means, on that
 chain, from the keeper machine's journal:
 
 1. a `rewardHorizonHeartbeat chain=<id> horizonDays=0 discovered=…` line every
-   hour, with `due` and `read` equal and no `failed` line — the queue is being
-   read in full;
+   hour carrying `discovery=caught-up`, with `due` and `read` equal and no
+   `failed` line — discovery has reached the end of the reward sequence and the
+   queue is being read in full. `discovery=behind (next id N)` means a long
+   history is still being caught up (about 1,000 ids an hour): wait for
+   `caught-up`, since entries not yet discovered are in no queue and no alert;
 2. after arming the knob, the next due run shows `touch=N landed=N` with no
    `reverted`, and the indexer files `RewardEntryHorizonStamped` for the
    claimable entries it touched;

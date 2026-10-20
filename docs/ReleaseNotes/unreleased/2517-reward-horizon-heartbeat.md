@@ -24,10 +24,14 @@ landed touches, saying both readings: an owner who could not claim in that time
 (expected), or touches landing without being credited (a fault). A stalled
 clock is recognised by its removal estimate moving forward by exactly the time
 between two readings, so a change to the horizon setting, which restarts the
-notice and moves the estimate by days, is not mistaken for one. A deliberate
-protocol pause raises none of these reports. Each transaction carries exactly
-the rewards just simulated together, so a batch that only fails as a whole is
-split rather than resent. Its moves of value go only to the recycle bucket, never to
+notice and moves the estimate by days, is not mistaken for one. The pass reads
+the protocol's pause state first: while it is paused it sends nothing and
+leaves every one of these reports as it stands, raising none and clearing none.
+Each transaction carries exactly the rewards just simulated together, so a
+batch that only fails as a whole is split rather than resent. Rewards that keep
+failing go to the back of the line, so they cannot hold a round's capacity
+against the rest. Each run's log line says whether discovery has reached the
+end of the reward sequence or is still catching up a long history. Its moves of value go only to the recycle bucket, never to
 the keeper.
 
 The pass ships disarmed behind its own flag, `REWARD_HORIZON_HEARTBEAT_ENABLED`,

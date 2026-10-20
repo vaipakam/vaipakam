@@ -1379,7 +1379,9 @@ export async function enqueueHorizonEntries(db: KeeperD1, chainId: number, diamo
 }
 
 /** The entries due: last finished with at or before `dueBeforeSec`, the
- *  longest-waiting first, at most `limit`. */
+ *  least recently TRIED first (then the longest-waiting), at most `limit`.
+ *  Ordering by the last try rather than the last finish rotates the slice past
+ *  entries that keep failing, which keep their `checked_at` (Codex #2596 r2). */
 export async function listDueHorizonEntries(
   db: KeeperD1,
   chainId: number,
@@ -1391,7 +1393,7 @@ export async function listDueHorizonEntries(
     .prepare(
       `SELECT entry_id, checked_at, touched_at, expires_at, paused_runs, added_at FROM keeper_horizon_entry
         WHERE chain_id = ?1 AND diamond = ?2 AND checked_at <= ?3
-        ORDER BY checked_at ASC, entry_id ASC LIMIT ?4`,
+        ORDER BY tried_at ASC, checked_at ASC, entry_id ASC LIMIT ?4`,
     )
     .bind(chainId, diamond.toLowerCase(), dueBeforeSec, limit)
     .all<{ entry_id: number; checked_at: number; touched_at: number; expires_at: number; paused_runs: number; added_at: number }>();
@@ -1413,6 +1415,17 @@ export async function countDueHorizonEntries(db: KeeperD1, chainId: number, diam
     .bind(chainId, diamond.toLowerCase(), dueBeforeSec)
     .first<{ n: number }>();
   return Number(row?.n ?? 0);
+}
+
+/** Stamp the entries a run took into its slice as tried, whatever came of them. */
+export async function markHorizonTried(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[], nowSec: number): Promise<void> {
+  if (entryIds.length === 0) return;
+  for (const c of chunkD1InList(entryIds, { before: [nowSec, chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(`UPDATE keeper_horizon_entry SET tried_at = ? WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
 }
 
 /** Retire entries — only on an on-chain read showing them settled. */
@@ -1439,7 +1452,8 @@ export async function checkHorizonEntries(db: KeeperD1, chainId: number, diamond
 }
 
 /** Record a LANDED touch: the estimate read just before it and the pause count
- *  it measured, per entry. */
+ *  it measured, per entry. The touch it replaces moves to `prev_*` (SQLite
+ *  reads the right-hand sides from the row as it was). */
 export async function recordHorizonTouches(
   db: KeeperD1,
   chainId: number,
@@ -1452,12 +1466,23 @@ export async function recordHorizonTouches(
     touches.map((t) =>
       db
         .prepare(
-          `UPDATE keeper_horizon_entry SET checked_at = ?1, touched_at = ?1, expires_at = ?2, paused_runs = ?3
+          `UPDATE keeper_horizon_entry SET prev_touched_at = touched_at, prev_expires_at = expires_at,
+                  checked_at = ?1, touched_at = ?1, expires_at = ?2, paused_runs = ?3
             WHERE chain_id = ?4 AND diamond = ?5 AND entry_id = ?6`,
         )
         .bind(nowSec, t.expiresAt, t.pausedRuns, chainId, diamond.toLowerCase(), t.entryId),
     ),
   );
+}
+
+/** A paused clock's last comparison: the two landed touches and the removal
+ *  estimate read before each. */
+export interface PausedHorizonEntry {
+  entryId: number;
+  prevTouchedAt: number;
+  prevExpiresAt: number;
+  touchedAt: number;
+  expiresAt: number;
 }
 
 /** Queued entries whose clock did not advance across at least `minRuns`
@@ -1468,16 +1493,28 @@ export async function listPausedHorizonEntries(
   diamond: string,
   minRuns: number,
   limit: number,
-): Promise<{ ids: number[]; total: number }> {
+): Promise<{ entries: PausedHorizonEntry[]; total: number }> {
   const total = await db
     .prepare('SELECT COUNT(*) AS n FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND paused_runs >= ?3')
     .bind(chainId, diamond.toLowerCase(), minRuns)
     .first<{ n: number }>();
   const rows = await db
-    .prepare('SELECT entry_id FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND paused_runs >= ?3 ORDER BY entry_id LIMIT ?4')
+    .prepare(
+      'SELECT entry_id, prev_touched_at, prev_expires_at, touched_at, expires_at FROM keeper_horizon_entry ' +
+        'WHERE chain_id = ?1 AND diamond = ?2 AND paused_runs >= ?3 ORDER BY entry_id LIMIT ?4',
+    )
     .bind(chainId, diamond.toLowerCase(), minRuns, limit)
-    .all<{ entry_id: number }>();
-  return { ids: (rows.results ?? []).map((r) => Number(r.entry_id)), total: Number(total?.n ?? 0) };
+    .all<{ entry_id: number; prev_touched_at: number; prev_expires_at: number; touched_at: number; expires_at: number }>();
+  return {
+    entries: (rows.results ?? []).map((r) => ({
+      entryId: Number(r.entry_id),
+      prevTouchedAt: Number(r.prev_touched_at),
+      prevExpiresAt: Number(r.prev_expires_at),
+      touchedAt: Number(r.touched_at),
+      expiresAt: Number(r.expires_at),
+    })),
+    total: Number(total?.n ?? 0),
+  };
 }
 
 /** The heartbeat's OVERDUE entries (#2517): queued, live entries the pass has

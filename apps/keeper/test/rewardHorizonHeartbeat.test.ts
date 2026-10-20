@@ -21,6 +21,7 @@ import {
   SWEEP_BATCH,
   DUE_SLICE,
   OVERDUE_AFTER_SEC,
+  describeComparison,
   heartbeatOnce,
   isSettled,
   isTouchable,
@@ -32,6 +33,7 @@ import {
 import type { HorizonEntryRow } from '../src/db';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
+import { PastRunDeadline } from '../src/batchRead';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { SqliteD1 } from './helpers/sqliteD1';
 
@@ -148,6 +150,10 @@ class FakeChain {
   refuse: string | null = null;
   /** Make every receipt revert. */
   receiptReverts = false;
+  /** `paused()`: the protocol's pause state. */
+  protocolPaused = false;
+  /** Every simulation is refused past the run's deadline. */
+  pastDeadline = false;
   /** A batch of more than this many entries reverts as a WHOLE (a pool limit
    *  on the batch's total), though each entry goes through alone. */
   maxTogether = Number.POSITIVE_INFINITY;
@@ -155,6 +161,7 @@ class FakeChain {
 
   readContract = async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
     if (functionName === 'getRewardClaimHorizonDays') return this.horizonDays;
+    if (functionName === 'paused') return this.protocolPaused;
     if (functionName === 'getRewardEntriesRange') {
       const [from, count] = args as [bigint, bigint];
       return Array.from({ length: Number(count) }, (_, i) => this.entries.get(Number(from) + i) ?? unallocated());
@@ -178,6 +185,7 @@ class FakeChain {
     );
 
   simulateContract = async ({ args }: { args: readonly unknown[] }) => {
+    if (this.pastDeadline) throw new PastRunDeadline('past the run deadline');
     if (this.refuse) throw revert(this.refuse);
     const ids = (args[0] as bigint[]).map(Number);
     const bad = ids.find((id) => this.failing.has(id));
@@ -214,6 +222,7 @@ describe('a run', () => {
   let env: Env;
   let chain: FakeChain;
   let warned: string[];
+  let logged: string[];
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -222,8 +231,9 @@ describe('a run', () => {
     env = { DB: createSharedD1().d1, KEEPER_DB: keeper.d1 } as unknown as Env;
     chain = new FakeChain();
     warned = [];
+    logged = [];
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(' ')));
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
@@ -244,6 +254,9 @@ describe('a run', () => {
   const cursor = () => (keeper.db.prepare('SELECT next_entry_id FROM keeper_horizon_cursor').get() as { next_entry_id: number } | undefined)?.next_entry_id;
   const alerts = (re: RegExp) => warned.filter((w) => re.test(w));
   const later = (sec: number) => vi.setSystemTime(Date.now() + sec * 1000);
+  const openAlert = (key: string) =>
+    keeper.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id) VALUES (?, ?, ?, ?)`).run(key, 1, 1, CHAIN);
+  const openKeys = () => (keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
 
   it('discovers the live entries, touches them, and leaves them until the next heartbeat', async () => {
     chain.entries.set(1, entry({ processed: true }));
@@ -383,5 +396,69 @@ describe('a run', () => {
     const paused = alerts(/did not advance/);
     expect(paused).toHaveLength(1);
     expect(paused[0]).toMatch(/the horizon clock of 1 reward entry did not advance .* \(id 2\)/);
+    // Both readings of the comparison that raised it (Codex #2596 r2).
+    expect(paused[0]).toContain(`moved ${(DUE_AFTER_SEC / 3600).toFixed(1)}h over ${(DUE_AFTER_SEC / 3600).toFixed(1)}h`);
+    expect(paused[0]).toContain(`removal estimate ${new Date((base + DUE_AFTER_SEC) * 1000).toISOString().slice(0, 16)}Z`);
+  });
+
+  it('rotates past entries that keep failing instead of retrying only them (Codex #2596 r2)', async () => {
+    for (let id = 1; id <= DUE_SLICE + 5; id++) chain.entries.set(id, entry());
+    for (let id = 1; id <= DUE_SLICE; id++) chain.failing.add(id);
+    await run();
+    expect(chain.sent.flat(), 'the first slice is all failing entries').toEqual([]);
+    await run();
+    const tried = chain.sent.flat();
+    for (let id = DUE_SLICE + 1; id <= DUE_SLICE + 5; id++) expect(tried, `entry ${id} gets its turn`).toContain(id);
+  });
+
+  it('while the protocol is paused: sends nothing, and raises or clears no queue-wide report (Codex #2596 r2)', async () => {
+    chain.entries.set(1, entry());
+    chain.entries.set(2, entry());
+    await run();
+    for (const k of ['overdue', 'paused', 'refused']) openAlert(`horizon-${k}:${CHAIN}:all`);
+    keeper.db.prepare('UPDATE keeper_horizon_entry SET paused_runs = ? WHERE entry_id = 2').run(PAUSED_ALERT_RUNS);
+    chain.protocolPaused = true;
+    for (let k = 0; k < 3; k++) {
+      later(OVERDUE_AFTER_SEC);
+      // eslint-disable-next-line no-await-in-loop
+      await run();
+    }
+    expect(chain.sent, 'only the first run, before the pause, sent').toHaveLength(1);
+    expect(alerts(/did not advance|not been reached|is refused/)).toHaveLength(0);
+    expect(openKeys()).toEqual([`horizon-overdue:${CHAIN}:all`, `horizon-paused:${CHAIN}:all`, `horizon-refused:${CHAIN}:all`]);
+    expect(logged.some((l) => l.includes('protocol paused: nothing sent'))).toBe(true);
+  });
+
+  it('a simulation the deadline refused measures nothing: an open refusal stays open (Codex #2596 r2)', async () => {
+    chain.entries.set(1, entry());
+    openAlert(`horizon-refused:${CHAIN}:all`);
+    chain.pastDeadline = true;
+    await run();
+    expect(openKeys()).toContain(`horizon-refused:${CHAIN}:all`);
+    chain.pastDeadline = false;
+    later(DUE_AFTER_SEC);
+    await run();
+    expect(openKeys(), 'a run whose sends ran clears it').not.toContain(`horizon-refused:${CHAIN}:all`);
+  });
+
+  it('says whether discovery reached the end of the sequence (Codex #2596 r2)', async () => {
+    // More settled history than one run's discovery budget reads (5 pages of 200).
+    for (let id = 1; id <= 1_200; id++) chain.entries.set(id, entry({ processed: true }));
+    chain.entries.set(1_201, entry());
+    await run();
+    expect(logged.at(-1)).toContain('discovery=behind (next id 1001)');
+    expect(queued()).toEqual([]);
+    await run();
+    expect(logged.at(-1)).toContain('discovery=caught-up');
+    expect(queued()).toEqual([1_201]);
+  });
+});
+
+describe('describeComparison', () => {
+  it('states both readings and how far the estimate moved against the time between them', () => {
+    const t = Date.UTC(2026, 9, 20, 0, 0, 0) / 1000;
+    expect(
+      describeComparison({ entryId: 7, prevTouchedAt: t, prevExpiresAt: t + 86_400, touchedAt: t + 11 * 3600, expiresAt: t + 86_400 + 11 * 3600 }),
+    ).toBe('id 7: removal estimate 2026-10-21T00:00Z at the touch of 2026-10-20T00:00Z, 2026-10-21T11:00Z at the touch of 2026-10-20T11:00Z (moved 11.0h over 11.0h)');
   });
 });

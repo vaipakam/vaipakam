@@ -18,9 +18,13 @@
 --
 --   checked_at  when the pass last finished with the entry: a touch that
 --               landed, or a read that showed nothing to send (the horizon is
---               dark and the entry has not begun expiring). It orders the work
---               and decides what is due. A touch that does NOT land leaves it,
---               so the entry is retried on the next run, not a heartbeat later.
+--               dark and the entry has not begun expiring). It decides what is
+--               due. A touch that does NOT land leaves it, so the entry stays
+--               due and is retried, not left for a heartbeat.
+--   tried_at    when a run last took the entry into its slice, whatever came
+--               of it (0 = never). It orders the due entries, least recently
+--               tried first, so entries that keep failing go to the back of the
+--               line and cannot hold the slice against the rest (Codex #2596 r2).
 --   touched_at  when a sweep including the entry last LANDED (0 = never). What
 --               the "touches are not landing" alert measures.
 --   expires_at  the contract's removal estimate (`getRewardEntryExpiry`), read
@@ -30,6 +34,10 @@
 --               is how the pass sees a clock that did not advance.
 --   paused_runs consecutive landed touches across which the estimate moved
 --               forward (the clock did not advance). Reset by one that did.
+--   prev_touched_at, prev_expires_at
+--               the previous landed touch and its estimate: the other half of
+--               the comparison `paused_runs` was last measured on, kept so the
+--               paused-clock alert can state both readings.
 CREATE TABLE IF NOT EXISTS keeper_horizon_entry (
   chain_id    INTEGER NOT NULL,
   diamond     TEXT    NOT NULL,  -- lowercased
@@ -38,11 +46,14 @@ CREATE TABLE IF NOT EXISTS keeper_horizon_entry (
   touched_at  INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = never
   expires_at  INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = no countdown
   paused_runs INTEGER NOT NULL DEFAULT 0,
+  tried_at    INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = never
+  prev_touched_at INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = none
+  prev_expires_at INTEGER NOT NULL DEFAULT 0,  -- unix seconds; 0 = none
   added_at    INTEGER NOT NULL,            -- unix seconds
   PRIMARY KEY (chain_id, diamond, entry_id)
 );
 CREATE INDEX IF NOT EXISTS idx_keeper_horizon_entry_due
-  ON keeper_horizon_entry (chain_id, diamond, checked_at, entry_id);
+  ON keeper_horizon_entry (chain_id, diamond, checked_at, tried_at, entry_id);
 
 -- The heartbeat's DISCOVERY cursor: the first entry id not yet read. It moves
 -- forward only, past entries already queued or already settled, and never past
