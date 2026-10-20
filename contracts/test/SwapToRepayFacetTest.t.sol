@@ -19,6 +19,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
+import {PartialFillSwapAdapter} from "./mocks/PartialFillSwapAdapter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -494,6 +495,43 @@ contract SwapToRepayFacetTest is SetupTest {
             IERC20(address(collateralAsset)).balanceOf(borrowerVault),
             LOAN_COLLATERAL - toSell,
             "unsold collateral stays in borrower vault"
+        );
+    }
+
+    /// @dev #2472 — swap-to-repay is the one sale allowed to spend less than
+    ///      it offered (the debt is paid in full either way). The spend that
+    ///      leaves the borrower is the one measured on the Diamond, and the
+    ///      unspent part returns to the borrower's vault; nothing stays on the
+    ///      Diamond's shared balance.
+    function test_swapToRepayFull_PartialFill_UnspentReturnsToBorrowerVault() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        PartialFillSwapAdapter venue = new PartialFillSwapAdapter();
+        venue.setSpendBps(9_000);
+        venue.setOutputPerInputBps(12_000);
+        ERC20Mock(address(principalAsset)).mint(address(venue), 10_000 ether);
+        AdminFacet(address(diamond)).addSwapAdapter(address(venue)); // index 3
+        uint256 maxCollateralIn = 1_100 ether;
+        (uint256 toSell, , ) =
+            SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, maxCollateralIn);
+        uint256 diamondBefore = IERC20(address(collateralAsset)).balanceOf(address(diamond));
+
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(3), maxCollateralIn);
+
+        uint256 spent = (toSell * 9_000) / 10_000;
+        assertEq(
+            IERC20(address(collateralAsset)).balanceOf(borrowerVault),
+            LOAN_COLLATERAL - spent,
+            "everything the sale did not spend is back in the borrower's vault"
+        );
+        assertEq(
+            IERC20(address(collateralAsset)).balanceOf(address(diamond)),
+            diamondBefore,
+            "nothing is left on the Diamond"
+        );
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(1).status),
+            uint256(LibVaipakam.LoanStatus.Repaid)
         );
     }
 

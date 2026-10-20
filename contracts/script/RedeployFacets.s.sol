@@ -24,6 +24,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -206,6 +207,11 @@ contract RedeployFacets is Script {
         // from before vault-held fallback custody never reaches this point:
         // `runWith` refuses it first (`_requireVaultHeldFallbackCustody`).
         FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
+        // #2472 - the swap-attempt host. Risk, Defaulted, RepayPeriodic and
+        // FallbackCustody run every failover attempt by self-calling it, so it
+        // rides the same cut as those callers. On a pre-#2472 Diamond its one
+        // selector is unrouted and partitions to an Add below.
+        SwapAttemptFacet swapAttemptFacet = new SwapAttemptFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -224,6 +230,7 @@ contract RedeployFacets is Script {
         console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
         console.log("EncumbranceMutate:    ", address(encumbranceMutateFacet));
         console.log("FallbackCustodyFacet: ", address(fallbackCustodyFacet));
+        console.log("SwapAttemptFacet:     ", address(swapAttemptFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -352,6 +359,9 @@ contract RedeployFacets is Script {
         // also cuts.
         (bytes4[] memory fcToAdd, bytes4[] memory fcToReplace) =
             _partitionByRouting(diamond, FacetSelectors.fallbackCustody());
+        // #2472 - the swap-attempt host, from the one list the deploy cuts.
+        (bytes4[] memory saToAdd, bytes4[] memory saToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.swapAttempt());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -370,7 +380,8 @@ contract RedeployFacets is Script {
             (encToRemove.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0) +
             (rpToRemove.length > 0 ? 1 : 0) +
-            (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0);
+            (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0) +
+            (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -528,6 +539,13 @@ contract RedeployFacets is Script {
         if (fcToAdd.length > 0) {
             cuts[idx++] = _add(address(fallbackCustodyFacet), fcToAdd);
         }
+        // #2472 - and the swap-attempt host, in the same cut for the same reason.
+        if (saToReplace.length > 0) {
+            cuts[idx++] = _replace(address(swapAttemptFacet), saToReplace);
+        }
+        if (saToAdd.length > 0) {
+            cuts[idx++] = _add(address(swapAttemptFacet), saToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -554,6 +572,8 @@ contract RedeployFacets is Script {
         console.log("  Retired resident-payout removed:", encToRemove.length);
         console.log("  FallbackCustody selectors added: ", fcToAdd.length);
         console.log("  FallbackCustody selectors repl.: ", fcToReplace.length);
+        console.log("  SwapAttempt selectors added:     ", saToAdd.length);
+        console.log("  SwapAttempt selectors repl.:     ", saToReplace.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback

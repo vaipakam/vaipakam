@@ -28,6 +28,7 @@ import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -128,7 +129,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -193,6 +194,16 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

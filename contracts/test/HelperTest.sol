@@ -2735,6 +2735,12 @@ contract HelperTest {
         selectors = FacetSelectors.fallbackCustody();
     }
 
+    /// #2472 - the swap-attempt host. Returns the one list in
+    /// `FacetSelectors.swapAttempt()` (the same one `DeployDiamond` cuts).
+    function getSwapAttemptFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.swapAttempt();
+    }
+
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
     function getRewardClosureFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](6);

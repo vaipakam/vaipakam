@@ -10,6 +10,7 @@ import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -391,5 +392,26 @@ library FacetSelectors {
         s[1] = FallbackCustodyFacet.retryFallbackSwap.selector;
         s[2] = FallbackCustodyFacet.disposeFallbackCustody.selector;
         s[3] = FallbackCustodyFacet.getFallbackCustody.selector;
+    }
+
+    /// @notice Full external selector surface of {SwapAttemptFacet} (1).
+    ///
+    /// @dev    #2472. Every facet that sells through `LibSwap`'s failover —
+    ///         `RiskFacet`, `DefaultedFacet`, `RepayPeriodicFacet` and
+    ///         `FallbackCustodyFacet` among the ones `RedeployFacets` refreshes
+    ///         — runs each attempt by self-calling this selector. A curated
+    ///         refresh of those WITHOUT this facet installs code whose every
+    ///         attempt finds no host; `LibSwap` refuses that by name
+    ///         (`SwapAttemptHostMissing`) instead of reading it as "no route
+    ///         filled", but every liquidation would still revert until the
+    ///         host is cut. `RedeployFacets` therefore cuts it from this list.
+    ///
+    ///         The ONLY copy of the list, as for {fallbackCustody}:
+    ///         `DeployDiamond` (`_getSwapAttemptSelectors`) and `HelperTest`
+    ///         (`getSwapAttemptFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function swapAttempt() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = SwapAttemptFacet.swapAttempt.selector;
     }
 }

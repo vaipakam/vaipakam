@@ -10,7 +10,6 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
-import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -670,8 +669,16 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///      reverts `NoEnabledSwapRoute` (#1005, which guards the fallback
     ///      ENTRY against a zero-attempt forced close). A retry that
     ///      soft-fails leaves the in-kind distribution as the outcome; the
-    ///      callers never pass an empty list. Approvals are exact-scope per
-    ///      attempt and reset to zero after it.
+    ///      callers never pass an empty list.
+    ///      Each attempt IS {LibSwap.attempt}, the one every failover shares
+    ///      (#2472): exact-scope approvals, its own call frame, and an
+    ///      EXACT-input delivery rule. The retry sells the whole recorded
+    ///      custody, so an attempt that would spend less than `inputAmount`,
+    ///      or deliver less than it reports, is unwound as a failed attempt
+    ///      rather than leaving the remainder on the Diamond after the custody
+    ///      row has been debited in full; if every route fails that way the
+    ///      retry soft-fails into the in-kind distribution like any other.
+    ///      Only the loop shape differs from LibSwap, never the attempt.
     function _swapWithFailoverMem(
         uint256 loanId,
         address inputToken,
@@ -687,6 +694,9 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         uint256 n = calls.length;
         if (n == 0) return (false, 0);
 
+        LibSwap.Sale memory sale = LibSwap.Sale(
+            loanId, inputToken, outputToken, inputAmount, minOutputAmount, recipient, true
+        );
         for (uint256 i = 0; i < n; ++i) {
             uint256 idx = calls[i].adapterIdx;
             if (idx >= registered) {
@@ -696,26 +706,8 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             // #633 — skip a governance-paused venue (mirrors LibSwap.swapWithFailover),
             // so the per-venue kill-switch also covers claim/backstop retry swaps.
             if (s.swapAdapterDisabled[adapter]) continue;
-            SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-            SafeERC20.forceApprove(IERC20(inputToken), adapter, inputAmount);
-            try
-                ISwapAdapter(adapter).execute(
-                    inputToken,
-                    outputToken,
-                    inputAmount,
-                    minOutputAmount,
-                    recipient,
-                    calls[i].data
-                )
-            returns (uint256 out_) {
-                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, true);
-                emit LibSwap.SwapAdapterSucceeded(loanId, idx, adapter, out_);
-                return (true, out_);
-            } catch {
-                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, false);
-            }
+            (bool ok, uint256 out_, ) = LibSwap.attempt(sale, idx, adapter, calls[i].data);
+            if (ok) return (true, out_);
         }
         emit LibSwap.SwapAllAdaptersFailed(loanId);
         return (false, 0);

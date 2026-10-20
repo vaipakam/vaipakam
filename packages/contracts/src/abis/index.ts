@@ -51,6 +51,8 @@ import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
 // #1566 slice 2 — the liquidation-fallback custody host (vault-held custody row,
 // `FallbackCustodyMoved`); the custody census reads `getFallbackCustody`.
 import FallbackCustodyFacetABI from './FallbackCustodyFacet.json';
+// #2472 — the swap-attempt host (each failover swap attempt in its own frame).
+import SwapAttemptFacetABI from './SwapAttemptFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -194,6 +196,7 @@ export {
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
   FallbackCustodyFacetABI,
+  SwapAttemptFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

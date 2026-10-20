@@ -14,6 +14,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {PartialFillSwapAdapter} from "./mocks/PartialFillSwapAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -86,6 +87,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -259,7 +261,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -427,6 +429,16 @@ contract RiskFacetTest is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -2324,10 +2336,14 @@ contract RiskFacetTest is Test {
         // proceeds=900 vs expected=1800 → realized slippage 50% clamps to
         // MAX(6%) so incentive = 6% − 6% = 0; afterBonus = 900 < principal
         // (1000) → undercollateralized.
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(uint256(900 ether));
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(uint256(900 ether))
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + uint256(900 ether)
         );
         // Deal the proceeds amount to diamond (simulating swap output)
         deal(mockERC20, address(diamond), 1800 ether + 900 ether);
@@ -2414,6 +2430,114 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2472 — a route that spends only part of the collateral (99%
+    ///      here, with output that clears the oracle floor) at the head of
+    ///      the try-list. Before the fix the liquidation completed as a full
+    ///      sale and the unspent 1% stayed on the Diamond's shared balance,
+    ///      in no one's claim. Now that attempt is refused and unwound, and
+    ///      the next route sells the WHOLE collateral, so the lender is paid
+    ///      in the lending asset rather than pushed into the in-kind fallback
+    ///      by a stale quote (owner decision 2026-10-20, lender first).
+    function test_TriggerLiquidation_PartialRouteFallsThroughToNextRoute() public {
+        uint256 loanId = createAndAcceptOffer();
+        (PartialFillSwapAdapter partialVenue, uint256 idx) = _addPartialVenue(9_900, 11_000);
+        _mockForcedSale(loanId);
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](2);
+        calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
+        calls[1] = LibSwap.AdapterCall({adapterIdx: 0, data: ""}); // the 0x shim, rate 11/10
+
+        vm.expectEmit(true, true, false, true);
+        emit LibSwap.SwapAdapterAttempted(loanId, idx, address(partialVenue), false);
+        vm.expectEmit(true, true, false, true);
+        emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, calls);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted)
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            0,
+            "the whole collateral was sold; nothing stranded"
+        );
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(partialVenue)), 0, "partial sale unwound");
+        assertEq(IERC20(mockERC20).balanceOf(address(partialVenue)), 10_000 ether, "no partial proceeds paid");
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2472 — when the only route sells part of the collateral, no
+    ///      route can sell the whole of it, so the liquidation takes the
+    ///      existing fallback (which pays the lender first) instead of
+    ///      completing as a sale that strands the remainder.
+    function test_TriggerLiquidation_PartialOnlyRouteEntersFallback() public {
+        uint256 loanId = createAndAcceptOffer();
+        (PartialFillSwapAdapter partialVenue, uint256 idx) = _addPartialVenue(9_900, 11_000);
+        _mockForcedSale(loanId);
+        // The fallback path looks up the parties' vaults.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
+            abi.encode(address(diamond))
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
+        calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
+
+        vm.expectEmit(true, false, false, true);
+        emit RiskFacet.LiquidationFallback(loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, calls);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending)
+        );
+        assertEq(IERC20(mockCollateralERC20).balanceOf(address(partialVenue)), 0, "partial sale unwound");
+        assertEq(IERC20(mockERC20).balanceOf(address(partialVenue)), 10_000 ether, "no partial proceeds paid");
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Registers a {PartialFillSwapAdapter} spending `spendBps` of what
+    ///      it is offered at `outBps` output per input, funded with the
+    ///      lending asset, and returns it with its adapter index.
+    function _addPartialVenue(uint256 spendBps, uint256 outBps)
+        internal
+        returns (PartialFillSwapAdapter venue, uint256 idx)
+    {
+        venue = new PartialFillSwapAdapter();
+        venue.setSpendBps(spendBps);
+        venue.setOutputPerInputBps(outBps);
+        deal(mockERC20, address(venue), 10_000 ether);
+        AdminFacet(address(diamond)).addSwapAdapter(address(venue));
+        idx = AdminFacet(address(diamond)).getSwapAdapters().length - 1;
+    }
+
+    /// @dev The mocks a forced HF sale of `loanId` needs in this suite: an
+    ///      unhealthy HF, a vault withdraw that moves nothing (the test deals
+    ///      the collateral to the Diamond), and the NFT status updates.
+    function _mockForcedSale(uint256 loanId) internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+    }
+
     /// @dev #1009 (L-g) — on an underwater liquidation (proceeds < debt) the 2%
     ///      treasury handling fee is SUBORDINATED to full lender recovery: the
     ///      lender receives the FULL swap proceeds (no handling fee skimmed off
@@ -2443,10 +2567,14 @@ contract RiskFacetTest is Test {
         // handling fee must be waived (no surplus above debt) and no interest is
         // recovered (allocated < principal), so the lender receives the FULL 900.
         uint256 proceeds = 900 ether;
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(proceeds);
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(proceeds)
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + proceeds
         );
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2506,10 +2634,14 @@ contract RiskFacetTest is Test {
         // Were interest NOT netted, `allocated` would be 1000 + ~2.7, so the
         // surplus would be ~3747.3 — strictly less than 3750.
         uint256 proceeds = 5000 ether;
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(proceeds);
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(proceeds)
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + proceeds
         );
         deal(mockERC20, address(diamond), 8000 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2596,10 +2728,14 @@ contract RiskFacetTest is Test {
 
         // Mock the swap call to return very high proceeds (bypass ZeroExProxyMock slippage check)
         uint256 highProceeds = 5000 ether; // >> totalDebt (~1005 ether)
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(highProceeds);
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(highProceeds)
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + highProceeds
         );
         deal(mockERC20, address(diamond), 1800 ether + highProceeds); // enough for all transfers
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2750,10 +2886,14 @@ contract RiskFacetTest is Test {
         // Realized slippage 80% clamps to 6%, dynamic incentive = 0, so
         // bonus = 0 and afterBonus = 360 < principal(1000) → no treasury fee.
         uint256 lowProceeds = 360 ether;
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(lowProceeds);
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(lowProceeds)
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + lowProceeds
         );
         deal(mockERC20, address(diamond), 1800 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -3375,10 +3515,14 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(uint256(1e8), uint8(8))
         );
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(uint256(1980 ether));
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(uint256(1980 ether))
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + uint256(1980 ether)
         );
         deal(mockERC20, address(diamond), 1980 ether); // simulate swap proceeds in diamond
         address borrowerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);

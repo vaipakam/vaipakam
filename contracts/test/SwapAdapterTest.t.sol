@@ -5,6 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockAggregatorRouter, MockUniV3SwapRouter, MockBalancerV2Vault} from "./mocks/MockSwapVenues.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
+import {PartialFillSwapAdapter} from "./mocks/PartialFillSwapAdapter.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {SwapFailoverHarness} from "./helpers/SwapFailoverHarness.sol";
 import {ZeroExAggregatorAdapter} from "../src/adapters/ZeroExAggregatorAdapter.sol";
 import {OneInchAggregatorAdapter} from "../src/adapters/OneInchAggregatorAdapter.sol";
@@ -19,6 +21,10 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
  * Tests structured as:
  *   Section A — individual adapter happy paths + input validation.
  *   Section B — LibSwap.swapWithFailover chain behaviour.
+ *   Section C — #2472 delivery rule: what an attempt spent and delivered
+ *               is measured on the caller's side, and an attempt that
+ *               breaks the rule is refused and unwound so the failover
+ *               moves on to the next route.
  */
 contract SwapAdapterTest is Test {
     // Shared fixtures
@@ -785,5 +791,284 @@ contract SwapAdapterTest is Test {
         );
         assertTrue(ok);
         assertEq(a.callCount(), 1); // first succeeded, second never tried
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // SECTION C — #2472 delivery rule
+    // ─────────────────────────────────────────────────────────────
+
+    /// @dev A harness with one 0x adapter (slot 0) over a mock router, the
+    ///      harness funded with `fund` of the input token.
+    function _harnessWithZeroEx(uint256 fund)
+        internal
+        returns (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router)
+    {
+        h = new SwapFailoverHarness();
+        router = new MockAggregatorRouter();
+        tokenOut.mint(address(router), 10_000 ether);
+        adapter = _newZeroExAdapter(address(router));
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(adapter);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), fund);
+    }
+
+    /// @dev One-route try-list for slot 0 whose aggregator calldata sells
+    ///      `quotedIn` (not necessarily the amount the caller offers).
+    function _zeroExCall(
+        address router,
+        address adapter,
+        uint256 quotedIn,
+        uint256 quotedOut
+    ) internal view returns (LibSwap.AdapterCall[] memory calls) {
+        calls = new LibSwap.AdapterCall[](1);
+        calls[0] = LibSwap.AdapterCall({
+            adapterIdx: 0,
+            data: _zeroExAdapterData(router, adapter, quotedIn, quotedOut)
+        });
+    }
+
+    /// @notice The #2472 defect: calldata quoted for 600 while the caller
+    ///         offers 1,000. The router spends 600, the adapter hands back
+    ///         400, and the failover used to report a full sale, leaving the
+    ///         400 on the caller's balance in nobody's claim. A forced sale
+    ///         now refuses the attempt: its sale and approval unwind, nothing
+    ///         reaches the recipient, and with no other route the caller gets
+    ///         the ordinary "every route failed" result.
+    function test_ExactSwap_PartialFillIsRefusedAndUnwound() public {
+        (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router) =
+            _harnessWithZeroEx(1000 ether);
+        LibSwap.AdapterCall[] memory calls =
+            _zeroExCall(address(router), address(adapter), 600 ether, 900 ether);
+
+        vm.expectEmit(true, true, false, true, address(h));
+        emit LibSwap.SwapAdapterAttempted(7, 0, address(adapter), false);
+        (bool ok, uint256 out_, ) =
+            h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+
+        assertFalse(ok, "a partial sale is not a sale");
+        assertEq(out_, 0);
+        assertEq(tokenIn.balanceOf(address(h)), 1000 ether, "the whole offer is back on the caller");
+        assertEq(tokenIn.balanceOf(address(router)), 0, "the venue's partial sale unwound");
+        assertEq(tokenIn.balanceOf(address(adapter)), 0);
+        assertEq(tokenOut.balanceOf(recipient), 0, "no proceeds were booked");
+        assertEq(tokenIn.allowance(address(h), address(adapter)), 0, "approval unwound");
+    }
+
+    /// @notice The lender-first point of falling through: a stale quote at
+    ///         the head of the try-list does not stop the routes behind it.
+    ///         The partial attempt unwinds and the next route sells the whole
+    ///         amount, so the sale completes in the lending asset.
+    function test_ExactSwap_PartialFillFallsThroughToNextRoute() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockAggregatorRouter router = new MockAggregatorRouter();
+        tokenOut.mint(address(router), 10_000 ether);
+        ZeroExAggregatorAdapter stale = _newZeroExAdapter(address(router));
+        MockSwapAdapter full = new MockSwapAdapter("full");
+        tokenOut.mint(address(full), 10_000 ether);
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(stale);
+        adapters[1] = address(full);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](2);
+        calls[0] = LibSwap.AdapterCall({
+            adapterIdx: 0,
+            data: _zeroExAdapterData(address(router), address(stale), 600 ether, 900 ether)
+        });
+        calls[1] = LibSwap.AdapterCall({adapterIdx: 1, data: bytes("")});
+
+        (bool ok, uint256 out_, uint256 idx) =
+            h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+
+        assertTrue(ok);
+        assertEq(idx, 1, "the second route committed");
+        assertEq(out_, 1000 ether);
+        assertEq(full.callCount(), 1);
+        assertEq(tokenIn.balanceOf(address(h)), 0, "the whole offer was sold");
+        assertEq(tokenIn.balanceOf(address(router)), 0, "the stale route's sale unwound");
+        assertEq(tokenOut.balanceOf(recipient), 1000 ether, "only the committed route's proceeds");
+    }
+
+    /// @notice A Diamond that routes the failover callers but not the
+    ///         attempt host is a deploy defect. It is refused by name rather
+    ///         than read as "every route failed", which would send a
+    ///         liquidation into the in-kind fallback with a working route
+    ///         available.
+    function test_Swap_RevertsWhenAttemptHostMissing() public {
+        (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router) =
+            _harnessWithZeroEx(1000 ether);
+        h.setAttemptHostRouted(false);
+        LibSwap.AdapterCall[] memory calls =
+            _zeroExCall(address(router), address(adapter), 1000 ether, 900 ether);
+
+        vm.expectRevert(LibSwap.SwapAttemptHostMissing.selector);
+        h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+    }
+
+    /// @notice The up-to entry (swap-to-repay's) accepts the same partial
+    ///         fill and reports what it spent, measured on the caller; the
+    ///         unspent 400 is back on the caller for it to place.
+    function test_UpToSwap_ReportsMeasuredSpendOnPartialFill() public {
+        (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router) =
+            _harnessWithZeroEx(1000 ether);
+        LibSwap.AdapterCall[] memory calls =
+            _zeroExCall(address(router), address(adapter), 600 ether, 900 ether);
+
+        (bool ok, uint256 out_, uint256 idx, uint256 spent) =
+            h.doSwapUpTo(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+
+        assertTrue(ok);
+        assertEq(out_, 900 ether);
+        assertEq(idx, 0);
+        assertEq(spent, 600 ether, "spend is the measured 600, not the offered 1000");
+        assertEq(tokenIn.balanceOf(address(h)), 400 ether, "unspent input is back on the caller");
+        assertEq(tokenIn.balanceOf(address(adapter)), 0, "adapter keeps nothing of the call");
+        assertEq(tokenOut.balanceOf(recipient), 900 ether);
+    }
+
+    /// @notice A full fill still commits under the exact rule.
+    function test_ExactSwap_CommitsOnFullFill() public {
+        (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router) =
+            _harnessWithZeroEx(1000 ether);
+        LibSwap.AdapterCall[] memory calls =
+            _zeroExCall(address(router), address(adapter), 1000 ether, 900 ether);
+
+        (bool ok, uint256 out_, ) =
+            h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+        assertTrue(ok);
+        assertEq(out_, 900 ether);
+        assertEq(tokenIn.balanceOf(address(h)), 0);
+    }
+
+    /// @notice A balance an adapter already held (a donation) is not part of
+    ///         any call: the adapter must not sweep it to the caller, where it
+    ///         would read as unspent input and make every exact sale through
+    ///         that adapter revert.
+    function test_AggregatorAdapter_DonationIsNotSweptToCaller() public {
+        (SwapFailoverHarness h, ZeroExAggregatorAdapter adapter, MockAggregatorRouter router) =
+            _harnessWithZeroEx(1000 ether);
+        tokenIn.mint(address(adapter), 5 ether); // donation
+        LibSwap.AdapterCall[] memory calls =
+            _zeroExCall(address(router), address(adapter), 1000 ether, 900 ether);
+
+        (bool ok, , ) =
+            h.doSwap(7, address(tokenIn), address(tokenOut), 1000 ether, 800 ether, recipient, calls);
+
+        assertTrue(ok, "a full fill commits despite the donation");
+        assertEq(tokenIn.balanceOf(address(adapter)), 5 ether, "donation stays on the adapter");
+        assertEq(tokenIn.balanceOf(address(h)), 0, "caller spent exactly its offer");
+    }
+
+    function test_UniV3Adapter_DonationIsNotSweptToCaller() public {
+        MockUniV3SwapRouter router = new MockUniV3SwapRouter();
+        tokenOut.mint(address(router), 10_000 ether);
+        UniV3Adapter adapter = new UniV3Adapter(address(router));
+        tokenIn.mint(address(adapter), 5 ether); // donation
+
+        uint256 traderBefore = tokenIn.balanceOf(trader);
+        vm.startPrank(trader);
+        tokenIn.approve(address(adapter), 1000 ether);
+        adapter.execute(address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, abi.encode(uint24(3000)));
+        vm.stopPrank();
+
+        assertEq(tokenIn.balanceOf(address(adapter)), 5 ether, "donation stays on the adapter");
+        assertEq(traderBefore - tokenIn.balanceOf(trader), 1000 ether, "caller spent exactly its offer");
+    }
+
+    function test_BalancerV2Adapter_DonationIsNotSweptToCaller() public {
+        MockBalancerV2Vault vault = new MockBalancerV2Vault();
+        tokenOut.mint(address(vault), 10_000 ether);
+        BalancerV2Adapter adapter = new BalancerV2Adapter(address(vault));
+        tokenIn.mint(address(adapter), 5 ether); // donation
+
+        uint256 traderBefore = tokenIn.balanceOf(trader);
+        vm.startPrank(trader);
+        tokenIn.approve(address(adapter), 1000 ether);
+        adapter.execute(address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, abi.encode(bytes32(uint256(1))));
+        vm.stopPrank();
+
+        assertEq(tokenIn.balanceOf(address(adapter)), 5 ether, "donation stays on the adapter");
+        assertEq(traderBefore - tokenIn.balanceOf(trader), 1000 ether, "caller spent exactly its offer");
+    }
+
+    /// @notice Proceeds are never booked above what arrived: an output token
+    ///         that takes a fee on transfer delivers less than the adapter
+    ///         reports, so the attempt is refused and unwound like any other
+    ///         failed route.
+    function test_Swap_ShortDeliveredOutputIsRefused() public {
+        FeeOnTransferERC20Mock fotOut = new FeeOnTransferERC20Mock("FoT", "FOT", 18);
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("A");
+        fotOut.mint(address(a), 10_000 ether);
+        fotOut.setFeeBps(100); // 1%
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(a);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        (bool ok, uint256 out_, ) =
+            h.doSwap(7, address(tokenIn), address(fotOut), 1000 ether, 900 ether, recipient, _seqCalls(1));
+
+        assertFalse(ok);
+        assertEq(out_, 0);
+        assertEq(tokenIn.balanceOf(address(h)), 1000 ether, "input unwound");
+        assertEq(fotOut.balanceOf(recipient), 0, "no short proceeds kept");
+        assertEq(fotOut.balanceOf(address(a)), 10_000 ether, "venue float untouched");
+    }
+
+    /// @notice A split leg that spends less than its share would leave the
+    ///         rest on the caller after the loan is written down as sold; the
+    ///         whole split reverts and every leg unwinds.
+    function test_Split_RevertsWhenALegPartiallyFills() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter full = new MockSwapAdapter("full");
+        PartialFillSwapAdapter partialLeg = new PartialFillSwapAdapter();
+        tokenOut.mint(address(full), 10_000 ether);
+        tokenOut.mint(address(partialLeg), 10_000 ether);
+        partialLeg.setSpendBps(6_000);
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(full);
+        adapters[1] = address(partialLeg);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({adapterIdx: 0, splitAmount: 500 ether, data: ""});
+        splits[1] = LibSwap.SplitCall({adapterIdx: 1, splitAmount: 500 ether, data: ""});
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSwap.SwapInputSpendMismatch.selector,
+                uint256(7),
+                uint256(1),
+                uint256(300 ether),
+                uint256(500 ether)
+            )
+        );
+        h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 0, recipient, splits);
+    }
+
+    /// @notice A split whose legs each spend their full share still commits.
+    function test_Split_CommitsWhenEveryLegFills() public {
+        SwapFailoverHarness h = new SwapFailoverHarness();
+        MockSwapAdapter a = new MockSwapAdapter("a");
+        MockSwapAdapter b = new MockSwapAdapter("b");
+        tokenOut.mint(address(a), 10_000 ether);
+        tokenOut.mint(address(b), 10_000 ether);
+        address[] memory adapters = new address[](2);
+        adapters[0] = address(a);
+        adapters[1] = address(b);
+        h.setAdapters(adapters);
+        tokenIn.mint(address(h), 1000 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({adapterIdx: 0, splitAmount: 400 ether, data: ""});
+        splits[1] = LibSwap.SplitCall({adapterIdx: 1, splitAmount: 600 ether, data: ""});
+
+        uint256 total = h.doSplit(7, address(tokenIn), address(tokenOut), 1000 ether, 900 ether, recipient, splits);
+        assertEq(total, 1000 ether);
+        assertEq(tokenIn.balanceOf(address(h)), 0);
     }
 }

@@ -41,6 +41,18 @@ contract ZeroExProxyMock {
         rateDenominator = denominator;
     }
 
+    /// @notice When non-zero, {swap} delivers exactly this output, whatever
+    ///         the rate and the caller's floor, while still pulling the full
+    ///         input. A test knob that REPLACES mocking `swap`'s return value:
+    ///         a mocked return books proceeds that never arrive, which the
+    ///         Diamond's delivery check refuses (#2472). Bypassing the floor
+    ///         keeps the semantics those mocks had.
+    uint256 public fixedOutput;
+
+    function setFixedOutput(uint256 v) external {
+        fixedOutput = v;
+    }
+
     /**
      * @notice Simulates a 0x swap call.
      * @dev Matches the expected calldata in swapData (e.g., abi.encodeWithSelector(this.swap.selector, ...)).
@@ -63,10 +75,13 @@ contract ZeroExProxyMock {
         // Calculate output first so we can enforce minOutputAmount BEFORE
         // pulling any input — the conversion must literally not happen above
         // the slippage threshold (README §3, §7).
-        outputAmount = (inputAmount * rateNumerator) / rateDenominator;
-
-        if (outputAmount < minOutputAmount) {
-            revert SlippageExceeded();
+        if (fixedOutput != 0) {
+            outputAmount = fixedOutput;
+        } else {
+            outputAmount = (inputAmount * rateNumerator) / rateDenominator;
+            if (outputAmount < minOutputAmount) {
+                revert SlippageExceeded();
+            }
         }
 
         // Check output balance

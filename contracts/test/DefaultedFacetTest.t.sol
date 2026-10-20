@@ -55,6 +55,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -219,7 +220,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -352,6 +353,16 @@ contract DefaultedFacetTest is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -2598,10 +2609,14 @@ contract DefaultedFacetTest is Test {
 
         // Mock swap to return low proceeds directly (below principal)
         uint256 lowProceeds = 500 ether;
-        vm.mockCall(
+        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
+        // `swap` return books proceeds that never arrive, which the
+        // Diamond's delivery check refuses.
+        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(lowProceeds);
+        deal(
+            mockERC20,
             address(mockZeroExProxy),
-            abi.encodeWithSelector(IZeroExProxy.swap.selector),
-            abi.encode(lowProceeds)
+            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + lowProceeds
         );
         deal(mockERC20, address(diamond), 2000 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 2000 ether + lowProceeds);

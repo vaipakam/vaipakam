@@ -83,6 +83,9 @@ contract BalancerV2Adapter is ISwapAdapter {
         if (poolId == bytes32(0)) revert InvalidPoolId();
 
         IERC20 input = IERC20(inputToken);
+        // #2472 — snapshot before the pull: only this call's unspent input
+        // is handed back below, never a balance the adapter already held.
+        uint256 inputBalanceBefore = input.balanceOf(address(this));
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
         input.forceApprove(address(VAULT), 0);
         input.forceApprove(address(VAULT), inputAmount);
@@ -112,9 +115,12 @@ contract BalancerV2Adapter is ISwapAdapter {
         );
 
         input.forceApprove(address(VAULT), 0);
-        uint256 residualInput = input.balanceOf(address(this));
-        if (residualInput != 0) {
-            input.safeTransfer(msg.sender, residualInput);
+        // GIVEN_IN spends the whole `amount`, so this call's unspent input
+        // is zero on success; whatever is above the pre-pull snapshot is
+        // handed back all the same (#2472), and nothing below it.
+        uint256 balanceNow = input.balanceOf(address(this));
+        if (balanceNow > inputBalanceBefore) {
+            input.safeTransfer(msg.sender, balanceNow - inputBalanceBefore);
         }
         return outputAmount;
     }

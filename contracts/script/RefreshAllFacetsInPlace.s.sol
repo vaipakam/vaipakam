@@ -97,6 +97,7 @@ import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -250,7 +251,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // #1566 build stack's 92 (87 + the stack's five).
     // 93 -> 94: FallbackCustodyFacet (#1566 slice 2) - the fallback entry, retry
     // swap and disposal hosted once, self-called by Risk / Defaulted / Claim.
-    uint256 public constant EXPECTED_FACETS = 94;
+    // 94 -> 95: SwapAttemptFacet (#2472) - each failover swap attempt runs in
+    // its frame, self-called by every facet that sells through LibSwap.
+    uint256 public constant EXPECTED_FACETS = 95;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1421,6 +1424,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[92] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
         // #1566 slice 2 - the fallback-custody host its three callers self-call.
         items[93] = Item("fallbackCustodyFacet", address(new FallbackCustodyFacet()), _getFallbackCustodySelectors());
+        // #2472 - the swap-attempt host every failover seller self-calls.
+        items[94] = Item("swapAttemptFacet", address(new SwapAttemptFacet()), _getSwapAttemptSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
