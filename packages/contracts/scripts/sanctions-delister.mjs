@@ -94,6 +94,7 @@ import {
   downloadToFile,
   parseSdnAdvancedFile,
   readCurrentFromChain,
+  samePublication,
   sanctionsListAbi,
 } from './ofac-sanctions-diff.mjs';
 import { OFAC_SDN_PLAIN_URL, parseSdnPlainFile, plainWitness } from './ofac-sdn-plain.mjs';
@@ -230,8 +231,8 @@ function publicationGate(snap) {
 
 /** Whether a proposal names the publication the list records: hash AND
  *  date, the pair `execute` compares (PublicationChanged otherwise). */
-function samePublication(snap, p) {
-  return lower(p.sourceHash) === lower(snap.list.sourceHash) && Number(p.publicationDate) === Number(snap.list.publicationDate);
+function proposalOfListPublication(snap, p) {
+  return samePublication({ date: p.publicationDate, hash: p.sourceHash }, { date: snap.list.publicationDate, hash: snap.list.sourceHash });
 }
 
 /**
@@ -244,7 +245,7 @@ function samePublication(snap, p) {
 function stage(snap, p) {
   if (!p.proposerAppointed) return 'unappointed';
   if (p.unlisted.length) return 'unlisted';
-  if (!samePublication(snap, p)) return 'stale';
+  if (!proposalOfListPublication(snap, p)) return 'stale';
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
   const next = p.ready ? 'ready' : p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
   if (!ADVANCING.has(next)) return next;
@@ -280,7 +281,7 @@ function canPropose(snap) {
 
 /** This key's pending proposals left behind by a newer publication. */
 function ownStale(snap, key) {
-  return snap.proposals.filter((p) => sameAddress(p.proposer, key) && p.proposerAppointed && p.unlisted.length === 0 && !samePublication(snap, p));
+  return snap.proposals.filter((p) => sameAddress(p.proposer, key) && p.proposerAppointed && p.unlisted.length === 0 && !proposalOfListPublication(snap, p));
 }
 
 /**

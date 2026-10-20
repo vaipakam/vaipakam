@@ -226,17 +226,64 @@ the installed release).
   `/var/lib/vaipakam-sanctions-delister/last-run.json`, and the journal, with
   one section per chain. Any chain refused, stopped or partly failed, or an
   alert not delivered, fails the unit, so it shows in `systemctl --failed`.
+  An alert Telegram refuses is recorded with Telegram's own reason (for
+  example "chat not found": a wrong `TG_OPS_CHAT_ID`, or a bot that is not a
+  member of that chat).
   For the delister, "partly failed" includes work a chain needed that an
   error put off (no conclusive reading of OFAC's files it needed, such as a
   failed download or two files that disagree, or candidates it could not
   check), reported as NOT DONE; work that waits by design (a
   window, RedStone's answer, the adder recording a newer publication) does
   not fail it.
-- **The adder** marks a chain `applied` only once its transactions are final
-  and still in the blocks they were included in. A chain that stops part-way
-  is `stopped`, and lists each transaction it broadcast as final, included but
-  not final, included and reverted, or broadcast with no receipt (it may still
-  land); check those before acting.
+- **The adder** marks a chain `applied` only once ONE reading of the list,
+  at one finalized block, holds exactly the update it planned: at the
+  update's last version, the planned addresses (the reading the update was
+  built on plus every addition, nothing more and nothing removed), this
+  publication, and the outstanding counts the update declared. That is the
+  same reading every update is computed from (one snapshot, every read
+  pinned to the finalized block's hash), and nothing is carried from one
+  reading to the next, since two readings may come from different servers.
+  Finality is a fact about the list, never about a transaction: no reading
+  can say which transaction produced the list's state, so the report names
+  the transactions it sent and the reading that holds the update. No
+  transaction receipt decides it, since a load-balanced RPC can answer a
+  receipt and the finalized block from replicas on different forks. So from
+  the first broadcast the list decides, however the sends ended: when every
+  transaction was broadcast and none is known to have failed (the last
+  receipt may simply never have come), the run waits for finality just as
+  when every receipt came; otherwise one transaction was never sent or is
+  known to have listed nothing, and one reading of the list says what it
+  holds. A reading that holds exactly the planned update makes the chain
+  `applied` either way, and the report still names the transactions no
+  receipt confirmed. Only a reading that holds the update ends the wait
+  early: any other reading, or a failed read, is one server's view that
+  another's may contradict, so the list is read again every 15 seconds, for
+  up to 40 minutes. "This publication" means the same date AND file hash, the pair
+  the list records; this file's hash recorded under another date is a
+  conflicting record, reported as such and never as this publication. A
+  chain that stops part-way is `stopped`: it lists each transaction it broadcast as
+  included (not confirmed final), included and reverted, or broadcast with
+  no receipt (it may still land), and says what the last reading showed
+  when the wait ran out: the list at the update's last version holding
+  something else (other updates took its versions, so on that reading it
+  can never apply as planned), the list already past it (its outcome is
+  unknown), the list not there yet (it may still land), or the list could
+  not be read (unknown). Check those before acting. Every report, a refused or stopped
+  one included, states what the last finalized reading of the list declares
+  outstanding and for which publication, from the reading taken after its
+  last broadcast, and says it is unknown when no such reading could be
+  taken. A run whose publication cannot be downloaded or read still reports
+  every chain, as refused, with what its list declares outstanding and for
+  which recorded publication (or unknown). The transactions a report lists
+  as sent are only those that reached the network. This run's delistings
+  are named only for the reading they were computed from or the update's
+  planned outcome, and only when they account for the whole count the list
+  declares; for any other state of the list, even of the same publication,
+  the report gives the count and the command that works them out from the
+  list itself, and a declared count larger than the publication accounts
+  for is reported as a disagreement for a person to reconcile. Every run rebuilds from
+  the list at the finalized block, so the next run follows whatever really
+  happened.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
   its outcome unknown, and every pending proposal's state. "Refused" needs

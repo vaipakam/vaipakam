@@ -99,6 +99,14 @@ test('notifyOps: skips without a token, never throws, reports a failed delivery,
   assert.ok(!body.includes('T0KEN'));
   assert.equal(JSON.parse(body).text, '[sanctions adder] hello');
   assert.deepEqual(await notifyOps({ label: 'l', token: 'T', chatId: '5', text: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), { delivered: false, reason: 'Telegram answered HTTP 401' });
+  // A refusal names Telegram's own reason, so the cause is in the report; never the token.
+  const refused = (description) => async () => ({ ok: false, status: 400, json: async () => ({ ok: false, error_code: 400, description }) });
+  assert.deepEqual(await notifyOps({ label: 'l', token: 'T0KEN', chatId: '5', text: 'x', fetchImpl: refused('Bad Request: chat not found') }), { delivered: false, reason: 'Telegram answered HTTP 400: Bad Request: chat not found' });
+  const echoed = await notifyOps({ label: 'l', token: 'T0KEN', chatId: '5', text: 'x', fetchImpl: refused(`bot T0KEN ${'z'.repeat(500)}`) });
+  assert.ok(!echoed.reason.includes('T0KEN'));
+  assert.ok(echoed.reason.length < 260, 'the reason is cut short');
+  // An answer that is not JSON leaves the status alone.
+  assert.deepEqual(await notifyOps({ label: 'l', token: 'T', chatId: '5', text: 'x', fetchImpl: async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('Unexpected token <'); } }) }), { delivered: false, reason: 'Telegram answered HTTP 502' });
   const down = await notifyOps({ label: 'l', token: 'S3CRET', chatId: '5', text: 'x', fetchImpl: async () => { throw new Error('fetch https://api.telegram.org/botS3CRET/sendMessage failed'); } });
   assert.equal(down.delivered, false);
   assert.ok(!down.reason.includes('S3CRET'));
