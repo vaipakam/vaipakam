@@ -58,7 +58,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { resolveOpsAlert, sendOpsAlert } from './opsAlert';
+import { resolveOpsAlert, sendOpsAlert, sendOpsAlertDigest } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWorkPage, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
@@ -377,6 +377,10 @@ async function proveOnMirror(
   /** Of those, the ones at least one of whose calls landed or was already
    *  done: their state may have moved, so they are read again before counting. */
   const moved = new Set<string>();
+  // Whatever ends the work — a read that throws, a queue write that fails —
+  // the refusals this run measured are still raised (Codex #2599 r4): they
+  // live only in memory until then.
+  let workErr: unknown = null;
   try {
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
@@ -404,7 +408,7 @@ async function proveOnMirror(
         continue;
       }
       notWhole.add(key);
-      let failed: string | null = null;
+      const refused: string[] = [];
       let reached = true;
       for (const a of plan.actions) {
         if (budget.writes <= 0 || Date.now() >= deadline) {
@@ -413,11 +417,17 @@ async function proveOnMirror(
         }
         // eslint-disable-next-line no-await-in-loop
         const out = await send(ctx!, budget, a);
-        if (out.kind === 'failed') failed ??= out.reason;
-        else if (out.kind === 'stopped') reached = false;
+        if (out.kind === 'failed') {
+          // Named in the journal the moment it is measured, scoped to the days
+          // the call covers (Codex #2599 r4): an alert names only as many as
+          // fit, and points here for the rest.
+          const what = `${actionScope(a)}: ${out.reason}`;
+          console.warn(`[keeper] deliveryProof chain=${chain.id} packet=${key} refused: ${what}`);
+          refused.push(what);
+        } else if (out.kind === 'stopped') reached = false;
         else moved.add(key);
       }
-      if (failed !== null) failures.set(key, failed);
+      if (refused.length > 0) failures.set(key, refused.join('; '));
       else if (reached && plan.actions.length > 0) clean.add(key);
     }
     // MEASURE what the sends did (Codex #2599 r1): a delivery counts as whole
@@ -432,10 +442,15 @@ async function proveOnMirror(
         else remeasured.add(key);
       }
     }
-  } finally {
+  } catch (err) {
+    workErr = err;
+  }
+  try {
     await finishWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...finished]);
     // The rest of the slice goes to the back of the rotation.
     await touchOpenWork(env.KEEPER_DB, chain.id, diamond, WORK_KIND, [...examined].filter((k) => !finished.has(k)));
+  } catch (err) {
+    workErr ??= err;
   }
 
   // A delivery this run READ as not whole — and, if its sends may have moved
@@ -445,6 +460,8 @@ async function proveOnMirror(
   // budget never reached, a re-read that did not land, a slice that is not the
   // whole queue — can raise the alert but never clear it.
   const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, finished, notWhole, moved, remeasured, nowSec });
+  // A run whose work ended early has not measured what is awaiting.
+  const measured = workErr === null;
   // A delivery this run measured whole has nothing a refusal could be holding
   // back (another caller finished it, say): no revert alert for it (Codex
   // #2599 r3). Its refusal stays in the journal.
@@ -453,11 +470,31 @@ async function proveOnMirror(
     failures,
     cleared: new Set([...clean, ...finished]),
     openWork,
-    awaiting,
-    awaitingMeasured: unreadPackets.size === 0 && undetermined === 0 && !overflow && unreadRows === 0,
+    awaiting: measured ? awaiting : [],
+    awaitingMeasured: measured && unreadPackets.size === 0 && undetermined === 0 && !overflow && unreadRows === 0,
     nowSec,
     deadline: alertDeadline,
   });
+  if (workErr !== null) throw workErr;
+}
+
+/** Which days a call covers, for an alert that names a refusal (Codex #2599
+ *  r4): a delivery proven in chunks is held back only by the chunk refused —
+ *  its other chunks prove on their own — while a flat list indexes page by
+ *  page, so a refused page holds every later one too. Pure. */
+export function actionScope(a: ProofAction): string {
+  const days = a.dayIds.length;
+  const range = days === 0 ? '' : ` (days ${a.dayIds.reduce((x, y) => (y < x ? y : x))}–${a.dayIds.reduce((x, y) => (y > x ? y : x))})`;
+  switch (a.kind) {
+    case 'indexChunk':
+    case 'proveChunk':
+      return `chunk ${a.chunkIndex}, ${days} day${days === 1 ? '' : 's'}${range}`;
+    case 'indexPage':
+      return `next page of its day list, ${days} day${days === 1 ? '' : 's'}${range}, and every page after it`;
+    case 'proveList':
+    case 'admitBatch':
+      return `its whole day list, ${days} day${days === 1 ? '' : 's'}${range}`;
+  }
 }
 
 /**
@@ -529,19 +566,27 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   // What the next run can MEASURE again — a clear, the "not whole" state —
   // waits for it once this run is out of time. A refusal cannot be measured
   // again (a later call may go through), so it is raised even past the
-  // deadline (Codex #2599 r3): never dropped. The ops bot's send is bounded by
-  // its own timeout.
-  const toggle = async (key: string, on: boolean, text: () => string, always = false): Promise<void> => {
-    if (!always && Date.now() >= m.deadline) return;
+  // deadline (Codex #2599 r3): never dropped. All of them go in one post, so
+  // that overrun is one send's own timeout, however many refused.
+  const toggle = async (key: string, on: boolean, text: () => string): Promise<void> => {
+    if (Date.now() >= m.deadline) return;
     if (on) await sendOpsAlert(env, key, text(), ALERT_REPEAT_SEC, m.nowSec, chainId);
     else if (open.has(key)) await resolveOpsAlert(env, key);
   };
   const tag = `[chain ${chainId}] reward delivery proofs`;
-  for (const [packet, why] of m.failures) {
-    // eslint-disable-next-line no-await-in-loop
-    await toggle(`${prefix}${packet}`, true, () =>
-      `${tag}: the proof for delivery ${packet} reverts (${why}). Until it goes through, that delivery's days fund nothing a claim can find, and an armed day-delivery gate holds them.`,
-      true,
+  // Every refusal in ONE post (Codex #2599 r4), so however many deliveries
+  // refuse, raising them costs one bounded send; each keeps its own key, so it
+  // repeats and clears on its own.
+  if (m.failures.size > 0) {
+    const n = m.failures.size;
+    await sendOpsAlertDigest(
+      env,
+      `${tag}: a proof or index call for ${n} deliver${n === 1 ? 'y' : 'ies'} was refused by the contract:`,
+      [...m.failures].map(([packet, why]) => ({ key: `${prefix}${packet}`, line: `${packet} — ${why}` })),
+      'Until a refused call goes through, the days it covers fund nothing a claim can find, and an armed day-delivery gate holds them. Days of the same delivery that are already indexed or proven are not affected.',
+      ALERT_REPEAT_SEC,
+      m.nowSec,
+      chainId,
     );
   }
   // Open revert alerts this run did not re-raise: cleared when this run
@@ -571,7 +616,7 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
     await toggle(`delivery-awaiting:${chainId}:all`, n > 0, () =>
       `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (${order}: ` +
       shown.map((a) => `${a.packetHash} arrived ${new Date(a.arrivedAt * 1000).toISOString()}`).join('; ') +
-      `${more > 0 ? `; and ${more} more` : ''}). Their days fund nothing a claim can find until indexed or proven, and an armed day-delivery gate holds them.`,
+      `${more > 0 ? `; and ${more} more` : ''}). Their days not yet indexed or proven fund nothing a claim can find, and an armed day-delivery gate holds them.`,
     );
   }
 }
@@ -1060,15 +1105,27 @@ export function receiptTimeoutMs(notAfterMs: number, nowMs: number = Date.now())
  *  that carries no contract reason, which stops the run's sends. Pure;
  *  exported for the tests. */
 export function refusedBeforeBroadcast(err: unknown, fn: string): SendOutcome | null {
-  return revertName(err) !== undefined ? outcomeOf(err, fn) : null;
+  return contractRefused(err) ? outcomeOf(err, fn) : null;
 }
 
-/** A refused simulation as a send outcome. A deadline refusal stops the run. */
-function outcomeOf(err: unknown, fn: string): SendOutcome {
-  if (err instanceof PastRunDeadline) return { kind: 'stopped' };
+/**
+ * A failed call as a send outcome, by ONE rule (Codex #2599 r4): it is a
+ * refusal only when the CONTRACT refused it — the chain evaluated the call and
+ * reverted, with or without a reason the ABI decodes. A timeout, a transport
+ * error or a deadline is not: the chain never judged the call, so nothing is
+ * reported and the next run tries again. Exported for the tests.
+ */
+export function outcomeOf(err: unknown, fn: string): SendOutcome {
+  if (err instanceof PastRunDeadline || !contractRefused(err)) return { kind: 'stopped' };
   const c = classifyRevert(err);
   if (c.kind === 'done') return { kind: 'ok' };
   return { kind: 'failed', reason: `${fn}: ${c.reason}` };
+}
+
+/** Whether the chain evaluated the call and reverted it: viem carries that as
+ *  a {@link ContractFunctionRevertedError}, decoded or not. */
+function contractRefused(err: unknown): boolean {
+  return err instanceof BaseError && err.walk((e) => e instanceof ContractFunctionRevertedError) instanceof ContractFunctionRevertedError;
 }
 
 /** The decoded custom error a call reverted with, when the ABI names it. */

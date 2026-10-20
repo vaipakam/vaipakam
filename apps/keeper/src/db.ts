@@ -1287,6 +1287,32 @@ export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: numb
     .run();
 }
 
+/** When each of `keys` was last delivered, for the keys that have been (#2599
+ *  r4: one read for a digest, not one per key). */
+export async function getOpsAlertsSentAt(db: KeeperD1, keys: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const c of chunkD1InList(keys)) {
+    const rows = await db
+      .prepare(`SELECT alert_key, last_sent_at FROM keeper_ops_alert WHERE alert_key IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .all<{ alert_key: string; last_sent_at: number }>();
+    for (const r of rows.results ?? []) out.set(r.alert_key, r.last_sent_at);
+  }
+  return out;
+}
+
+/** Record several DELIVERED ops alerts in one batch — the keys a single digest
+ *  post carried (first delivery keeps `first_seen_at`). */
+export async function recordOpsAlertsSent(db: KeeperD1, keys: readonly string[], nowSec: number, chainId: number | null = null): Promise<void> {
+  if (keys.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
+     VALUES (?1, ?2, ?2, ?3)
+     ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
+  );
+  await db.batch(keys.map((k) => stmt.bind(k, nowSec, chainId)));
+}
+
 /** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
  *  prefix), so a pass clears only the alerts that are actually open. */
 export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {

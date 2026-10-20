@@ -15,7 +15,9 @@ import {
   AWAITING_ALERT_SEC,
   awaitingDeliveries,
   classifyRevert,
+  actionScope,
   minedRevertOutcome,
+  outcomeOf,
   receiptTimeoutMs,
   refusedBeforeBroadcast,
   raiseDeliveryAlerts,
@@ -25,6 +27,10 @@ import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import { listOpenWorkPage, type KeeperD1 } from '../src/db';
 import type { SqliteD1 } from './helpers/sqliteD1';
+import { digestText, sendOpsAlertDigest } from '../src/opsAlert';
+import { disarmEpochFence } from '../src/epochFence';
+import { armHeldFence } from './helpers/epochFence';
+import { HttpRequestError } from 'viem';
 
 const ABI = RewardEpochFacetABI as Abi;
 const CHAIN = 421614;
@@ -88,7 +94,7 @@ describe('raiseDeliveryAlerts', () => {
 
   it('names a reverting delivery and why, and clears it once the delivery goes through', async () => {
     await raiseDeliveryAlerts(env, CHAIN, input({ failures: new Map([[P1, 'proveDeliveryDayChunk: TransportChunkProofInvalid']]) }));
-    expect(warned.filter((w) => w.includes(`the proof for delivery ${P1} reverts (proveDeliveryDayChunk: TransportChunkProofInvalid)`))).toHaveLength(1);
+    expect(warned.filter((w) => w.includes('refused by the contract') && w.includes(`${P1} — proveDeliveryDayChunk: TransportChunkProofInvalid`))).toHaveLength(1);
 
     recorded(`delivery-revert:${CHAIN}:${P1}`);
     recorded(`delivery-revert:${CHAIN}:${P2}`);
@@ -164,7 +170,7 @@ describe('raiseDeliveryAlerts', () => {
       CHAIN,
       input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]), awaiting: [{ packetHash: P1, arrivedAt: 0 }], deadline: 0 }),
     );
-    expect(warned.filter((w) => w.includes(`the proof for delivery ${P1} reverts`)), 'a refusal is never dropped').toHaveLength(1);
+    expect(warned.filter((w) => w.includes('refused by the contract') && w.includes(`${P1} — x`)), 'a refusal is never dropped').toHaveLength(1);
     expect(warned.filter((w) => w.includes('not yet whole')), 'the "not whole" alert waits').toEqual([]);
     expect(keys(), 'no clear past the deadline').toContain(`delivery-revert:${CHAIN}:${P2}`);
   });
@@ -180,7 +186,7 @@ describe('raiseDeliveryAlerts', () => {
     recorded(`delivery-revert:${CHAIN}:${P2}`);
     const e = { ...env, KEEPER_DB: failing } as unknown as Env;
     await raiseDeliveryAlerts(e, CHAIN, input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]) }));
-    expect(warned.filter((w) => w.includes(`the proof for delivery ${P1} reverts`))).toHaveLength(1);
+    expect(warned.filter((w) => w.includes('refused by the contract') && w.includes(`${P1} — x`))).toHaveLength(1);
     expect(keys()).toContain(`delivery-revert:${CHAIN}:${P2}`);
   });
 });
@@ -276,5 +282,83 @@ describe('listOpenWorkPage', () => {
     expect(page.items.map((i) => i.item)).toEqual(['a']);
     expect(page.rows, 'an unreadable row is counted, so the run knows it did not see it').toBe(2);
     vi.restoreAllMocks();
+  });
+});
+
+describe('refusal digest (Codex #2599 r4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    disarmEpochFence();
+  });
+  const configured = (k: SqliteD1) =>
+    ({ DB: createSharedD1().d1, KEEPER_DB: k.d1, TG_OPS_BOT_TOKEN: 'tok', TG_OPS_CHAT_ID: '-100' }) as unknown as Env;
+  const sentKeys = (k: SqliteD1) =>
+    (k.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+
+  it('raises every refusal of a run in ONE post, and records each under its own key', async () => {
+    const k = createKeeperD1();
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const failures = new Map(Array.from({ length: 200 }, (_, i) => [`0x${i.toString(16).padStart(64, '0')}`, 'chunk 0, 1 day (days 1–1): x'] as const));
+    await raiseDeliveryAlerts(configured(k), CHAIN, {
+      failures,
+      cleared: new Set(),
+      openWork: async (ps) => new Set(ps),
+      awaiting: [],
+      awaitingMeasured: false,
+      nowSec: NOW,
+      deadline: 0,
+    });
+    expect(fetchSpy, 'one post, however many refused').toHaveBeenCalledTimes(1);
+    expect(sentKeys(k)).toHaveLength(200);
+    const body = JSON.parse((fetchSpy.mock.calls[0] as unknown as [string, { body: string }])[1].body) as { text: string };
+    expect(body.text.length).toBeLessThanOrEqual(4096);
+    expect(body.text).toContain('each named in the keeper journal');
+  });
+
+  it('posts only the refusals that are due, and nothing when none is', async () => {
+    const k = createKeeperD1();
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const e = configured(k);
+    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW)).toBe('sent');
+    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW + 1)).toBe('suppressed');
+    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }, { key: 'b', line: 'B' }], 'f', 600, NOW + 2)).toBe('sent');
+    const last = JSON.parse((fetchSpy.mock.calls[1] as unknown as [string, { body: string }])[1].body) as { text: string };
+    expect(last.text, 'a key still inside its interval is not repeated').toBe('h\nB\nf');
+  });
+
+  it('records nothing when the post fails, so the next run tries again', async () => {
+    const k = createKeeperD1();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await sendOpsAlertDigest(configured(k), 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW)).toBe('failed');
+    expect(sentKeys(k)).toEqual([]);
+  });
+
+  it('fits one message and counts what it could not name', () => {
+    const t = digestText('H', Array.from({ length: 100 }, () => 'x'.repeat(100)), 'F');
+    expect(t.length).toBeLessThanOrEqual(4096);
+    expect(t).toMatch(/…and \d+ more, each named in the keeper journal\./);
+    expect(digestText('H', ['a', 'b'], 'F')).toBe('H\na\nb\nF');
+  });
+});
+
+describe('outcomeOf (Codex #2599 r4)', () => {
+  it('reports only what the contract refused; a transport failure is not a refusal', () => {
+    expect(outcomeOf(revert('TransportChunkProofInvalid', [P1, 1n, P2]), 'f')).toEqual({ kind: 'failed', reason: 'f: TransportChunkProofInvalid' });
+    expect(outcomeOf(revert('TransportChunkAlreadyIndexed', [P1, 2n]), 'f')).toEqual({ kind: 'ok' });
+    expect(outcomeOf(new HttpRequestError({ url: 'https://rpc.example/KEY', details: 'timeout' }), 'f')).toEqual({ kind: 'stopped' });
+    expect(outcomeOf(new Error('socket hang up'), 'f')).toEqual({ kind: 'stopped' });
+  });
+});
+
+describe('actionScope (Codex #2599 r4)', () => {
+  it('names only the chunk a chunked proof refused, and every later page for a paged index', () => {
+    expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 2, dayIds: [12n, 10n, 11n], proof: [] })).toBe('chunk 2, 3 days (days 10–12)');
+    expect(actionScope({ kind: 'indexPage', batchId: P1 as never, dayIds: [5n] })).toBe('next page of its day list, 1 day (days 5–5), and every page after it');
+    expect(actionScope({ kind: 'proveList', packetHash: P1 as never, dayIds: [1n, 2n] })).toBe('its whole day list, 2 days (days 1–2)');
   });
 });

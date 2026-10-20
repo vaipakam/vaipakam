@@ -21,7 +21,7 @@
 // a deploy that forgot the ops channel is visible in the Worker logs.
 
 import type { Env } from './env';
-import { clearOpsAlert, getOpsAlert, recordOpsAlertSent } from './db';
+import { clearOpsAlert, getOpsAlert, getOpsAlertsSentAt, recordOpsAlertSent, recordOpsAlertsSent } from './db';
 import { assertEpochsHold, EpochFenceRefusal } from './epochFence';
 
 const TELEGRAM_API = 'https://api.telegram.org';
@@ -73,6 +73,78 @@ export async function sendOpsAlert(
     console.error(`[keeper] ops alert ${key} failed: ${redact(String(err), token)}`);
     return 'failed';
   }
+}
+
+/** One condition a digest reports: its own de-duplication key, and its line. */
+export interface OpsAlertEntry {
+  key: string;
+  line: string;
+}
+
+/**
+ * Deliver several conditions in ONE post (#2599 r4): each keeps its own key —
+ * so each re-sends after `minIntervalSec` and clears on its own — but however
+ * many are due, the run spends one bounded post on them, not one per
+ * condition. The post names as many as fit and counts the rest; the caller
+ * logs every one, so the journal names each. The entries that went out are
+ * recorded together; nothing is recorded when the post fails. Never throws.
+ */
+export async function sendOpsAlertDigest(
+  env: Env,
+  header: string,
+  entries: readonly OpsAlertEntry[],
+  footer: string,
+  minIntervalSec: number,
+  nowSec: number = Math.floor(Date.now() / 1000),
+  chainId: number | null = null,
+): Promise<OpsAlertOutcome> {
+  if (entries.length === 0) return 'suppressed';
+  const token = env.TG_OPS_BOT_TOKEN;
+  const chatId = env.TG_OPS_CHAT_ID;
+  if (!token || !chatId) {
+    console.warn(
+      `[keeper] ops alert NOT delivered (TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset): ${header} ` +
+        entries.map((e) => e.line).join('; ') +
+        ` ${footer}`,
+    );
+    return 'unconfigured';
+  }
+  try {
+    const prior = await getOpsAlertsSentAt(env.KEEPER_DB, entries.map((e) => e.key));
+    const due = entries.filter((e) => {
+      const at = prior.get(e.key);
+      return at === undefined || nowSec - at >= minIntervalSec;
+    });
+    if (due.length === 0) return 'suppressed';
+    if (chainId !== null) await assertEpochsHold();
+    const ok = await postToTelegram(token, chatId, digestText(header, due.map((e) => e.line), footer));
+    if (!ok) return 'failed';
+    await recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId);
+    return 'sent';
+  } catch (err) {
+    if (err instanceof EpochFenceRefusal) {
+      console.warn(`[keeper] ops alert digest refused: ${err.message}`);
+      return 'refused';
+    }
+    console.error(`[keeper] ops alert digest failed: ${redact(String(err), token)}`);
+    return 'failed';
+  }
+}
+
+/** A digest's text: the header, then as many lines as fit in one Telegram
+ *  message, a count of the rest, then the footer. Pure; exported for tests. */
+export function digestText(header: string, lines: readonly string[], footer: string): string {
+  const budget = TELEGRAM_MAX_CHARS - header.length - footer.length - 80;
+  const shown: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length + 1 > budget) break;
+    shown.push(line);
+    used += line.length + 1;
+  }
+  const rest = lines.length - shown.length;
+  const more = rest > 0 ? `\n…and ${rest} more, each named in the keeper journal.` : '';
+  return `${header}\n${shown.join('\n')}${more}\n${footer}`;
 }
 
 /** The condition behind `key` has cleared: the next occurrence alerts at once. */
