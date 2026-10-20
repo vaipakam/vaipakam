@@ -11,8 +11,11 @@
     "deploy:dry": "wrangler deploy --dry-run",
     "cutover": "node scripts/keeper-cutover.mjs",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && tsc -p host --noEmit && node scripts/check-keep-vars.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && tsc -p host --noEmit && tsc -p e2e --noEmit && node scripts/check-keep-vars.mjs",
     "test": "vitest run",
+    "e2e:anvil": "pnpm run e2e:anvil:single && pnpm run e2e:anvil:mesh",
+    "e2e:anvil:single": "vitest run --config e2e/vitest.config.ts",
+    "e2e:anvil:mesh": "vitest run --config e2e/vitest.mesh.config.ts",
     "bench:cpu": "tsx bench/passCpu.ts",
     "start:host": "tsx host/main.ts",
     "build:host": "esbuild host/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/keeper-host.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
@@ -26,6 +29,8 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "@types/node": "^22",
+    "@vaipakam/anvil-harness": "workspace:*",
     "esbuild": "^0.27.7",
     "tsx": "^4.19.2",
     "typescript": "^6.0.0",

@@ -46,6 +46,7 @@
     "@types/node": "^22",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vaipakam/anvil-harness": "workspace:*",
     "@vitejs/plugin-react": "^6.0.1",
     "acorn": "^8.16.0",
     "eslint": "^9.39.4",

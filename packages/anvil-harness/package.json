@@ -1,0 +1,40 @@
+{
+  "name": "@vaipakam/anvil-harness",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Node-only test harness for the local-Anvil tiers: JSON-RPC control of an anvil node (time travel, balances, state dump), spawning one, and deploying the repository's CURRENT contracts onto it from source (contracts/script/e2e/DeployE2EFixture.s.sol), and a local CCIP lane between two such nodes with the relay that carries it (contracts/script/e2e/E2ELocalCcip.sol). Shared by the connected app's e2e suite (apps/app/e2e) and the keeper's Anvil scenarios (apps/keeper/e2e). Never imported by runtime code: it spawns processes and reads the filesystem.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./rpc": {
+      "types": "./src/rpc.ts",
+      "default": "./src/rpc.ts"
+    },
+    "./process": {
+      "types": "./src/process.ts",
+      "default": "./src/process.ts"
+    },
+    "./fixture": {
+      "types": "./src/fixture.ts",
+      "default": "./src/fixture.ts"
+    },
+    "./ccipLane": {
+      "types": "./src/ccipLane.ts",
+      "default": "./src/ccipLane.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "~6.0.2",
+    "viem": "^2.48.4"
+  }
+}
