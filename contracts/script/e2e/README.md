@@ -13,6 +13,10 @@ a canonical reward chain.
 | `Permit2.runtime.hex` | The runtime bytecode of Uniswap's canonical Permit2. The harness installs it at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. |
 | `Multicall3.runtime.hex` | The runtime bytecode of the canonical Multicall3. The harness installs it at `0xcA11bde05977b3631167028862bE2a173976CA11`. |
 | `ConfigureKeeperRewardsFixture.s.sol` | Keeper scenarios only. Run after the deploy, once the chain presents 84532, it makes the Diamond a canonical reward chain: a VPFI token with the Diamond as minter, the interaction-reward launch, reward custody activated, the reward pool funded, and a `TestnetSanctionsOverlay` set as the sanctions oracle. It writes `deployments/.forge-test/e2e/keeper/rewards.json`. |
+| `E2ELocalCcip.sol` | Keeper two-chain scenarios only (#2516). The two halves of a local CCIP lane that sit where Chainlink's DONs sit on a live lane: `E2ELocalOnRamp` (registered on the REAL `Router` as the on-ramp toward the other chain; calls each token pool's real `lockOrBurn` and emits the message) and `E2ELocalOffRamp` (registered as the off-ramp from it; executable only by the harness relay's key, once per message; calls the real pool's `releaseOrMint`, checks the receiver got exactly the reported amount, then routes the message through the real router). Test doubles, and kept here, never under `src/`. |
+| `DeployE2ELocalCcip.s.sol` | Keeper two-chain scenarios only. One node's half of the lane: the REAL `RMNRemote` behind the REAL `RMNProxy`, the REAL `Router` (native fees wrapped into the canonical WETH9), the REAL `TokenAdminRegistry` with the REAL `RegistryModuleOwnerCustom`, and the two ramps above. Records the addresses under `deployments/.forge-test/`; the selectors and the fee are written as decimal strings because a CCIP selector is past 2^53. |
+| `E2EOperatorScripts.s.sol` | Keeper two-chain scenarios only. The operator scripts themselves (`DeployVPFIToken`, `DeployCrosschain`, `ConfigureVPFIToken`, `ConfigureCcip`, `ConfigureRewardReporter`, `SetInteractionLaunch`), each inherited unchanged with one addition: `setUp()` redirects that script instance's artifact root under `deployments/.forge-test/`, so it reads and writes only scratch artifacts. Run with `--tc <Contract>`. |
+| `ConfigureKeeperMeshFixture.s.sol` | Keeper two-chain scenarios only. The admin steps no operator script performs: reward custody activated on each chain; on the canonical chain, the reward pool funded and the keeper authorized to remit (`setRewardRemittanceKeeper`). |
 
 The harness side is `packages/anvil-harness/src/fixture.ts` (shared by both
 suites since #2496; the app's entry point is still `apps/app/e2e/lib/fixture.ts`,
@@ -23,8 +27,11 @@ which calls it). The steps it runs around this script:
    WETH9 is constructed normally and then cloned (code and storage), because
    its `decimals` lives in storage its constructor writes; the other two keep
    no constructor state, so their runtime is copied as is.
-2. Run the script on Anvil's own chain id, 31337. That is the only id on
-   which `Deployments` lets a script redirect its artifact.
+2. Run the script on Anvil's own chain id, 31337. A script may redirect
+   its artifact only on 31337, under `forge test`, or on a node that answers
+   `anvil_nodeInfo` (a local Anvil, whatever id it presents — which is what
+   lets the keeper's two-chain scenarios run the operator scripts unchanged
+   on nodes presenting 84532 and 11155111).
 3. Switch the chain id to 84532, so the app's Base Sepolia wiring applies
    unchanged. Every contract reads `block.chainid` at call time.
 4. Write the e2e deployments bundle that the app, the harness and the

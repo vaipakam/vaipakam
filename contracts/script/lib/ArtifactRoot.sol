@@ -147,13 +147,24 @@ abstract contract ArtifactRootBase {
 
     /// @notice Redirect this script instance's artifact. LOCAL-ONLY.
     ///
-    /// @dev    Refused unless this is the Anvil chain or a `forge test` run —
-    ///         the same two contexts `Deployments.artifactWriteMode` honours
-    ///         `DEPLOY_SKIP_ARTIFACTS` in, and for the same reason: a
-    ///         deployment that reaches a real chain must publish its artifact
-    ///         where the census inventory looks for it. A redirect is a way to
-    ///         write an artifact NOWHERE anyone reads, which on a live broadcast
-    ///         is the #2070 failure wearing a different hat.
+    /// @dev    Refused unless this is a local Anvil node or a `forge test`
+    ///         run, for the reason `Deployments.artifactWriteMode` honours
+    ///         `DEPLOY_SKIP_ARTIFACTS` only in local contexts: a deployment
+    ///         that reaches a real chain must publish its artifact where the
+    ///         census inventory looks for it. A redirect is a way to write an
+    ///         artifact NOWHERE anyone reads, which on a live broadcast is the
+    ///         #2070 failure wearing a different hat.
+    ///
+    ///         "A local Anvil node" is either chain id 31337 or a node that
+    ///         answers Anvil's own `anvil_nodeInfo` method (see
+    ///         {_isAnvilNode}). The second form exists for the e2e harnesses
+    ///         (#2516): a two-chain scenario runs one Anvil node PRESENTING
+    ///         Base Sepolia and one presenting Sepolia, and the operator
+    ///         scripts it runs on them (`DeployCrosschain`, `ConfigureCcip`,
+    ///         `ConfigureRewardReporter`) decide canonical-versus-mirror and
+    ///         read every chain's artifact by `block.chainid`. Without this
+    ///         they could run there only by writing the COMMITTED per-chain
+    ///         artifact, which is the one thing a redirect exists to prevent.
     ///
     ///         The refusal is a `require`, not a silent ignore: a test that
     ///         believes it redirected a live deploy and did not would assert
@@ -161,8 +172,9 @@ abstract contract ArtifactRootBase {
     function setArtifactRootOverride(string memory newRoot) public {
         require(
             block.chainid == 31337 ||
-                CHEATS.isContext(VmSafe.ForgeContext.TestGroup),
-            "ArtifactRootBase: the artifact root may only be redirected on Anvil (31337) or under forge test - a deployment that reaches a real chain must publish its artifact where the census inventory reads it"
+                CHEATS.isContext(VmSafe.ForgeContext.TestGroup) ||
+                _isAnvilNode(),
+            "ArtifactRootBase: the artifact root may only be redirected on a local Anvil node or under forge test - a deployment that reaches a real chain must publish its artifact where the census inventory reads it"
         );
         require(
             bytes(newRoot).length != 0,
@@ -177,6 +189,20 @@ abstract contract ArtifactRootBase {
             "ArtifactRootBase: a redirected artifact root must contain no `..` segment - with one it can climb back out of the scratch directory and reach the committed artifact"
         );
         artifactRootState().rootOverride = newRoot;
+    }
+
+    /// @dev TRUE when the node this script runs against is an Anvil node: it
+    ///      answers `anvil_nodeInfo`, a method only Anvil serves. A live
+    ///      chain's RPC rejects the unknown method, and a script run with no
+    ///      RPC at all has nothing to ask; `vm.rpc` reverts in both cases and
+    ///      the answer is FALSE. Asked only after the two cheaper tests above
+    ///      have failed, so a 31337 or `forge test` run never makes the call.
+    function _isAnvilNode() private returns (bool) {
+        try CHEATS.rpc("anvil_nodeInfo", "[]") returns (bytes memory info) {
+            return info.length != 0;
+        } catch {
+            return false;
+        }
     }
 
     /// @dev Total test: does `s` begin with `prefix`?
