@@ -104,9 +104,10 @@ else
 fi
 
 # ── 1b. Storage-layout guard ──────────────────────────────────────────
-# Reads the `storageLayout` the build above just wrote (foundry.toml's
-# `extra_output`), so it runs only on a successful build: stale artifacts
-# would describe code that is no longer there. Node is a REQUIRED dependency
+# The guard builds its own artifacts (src/ under the quick profile, with the
+# storage layouts and ASTs it reads, into out-storage-layout/), so it never
+# depends on what step 1 left in out/. It is skipped when step 1 failed: the
+# same sources would fail its build too. Node is a REQUIRED dependency
 # here, like python3 for step 2c: a deploy gate that drops a storage check
 # when an interpreter is missing is the silent in-place corruption #2092
 # found, waiting to happen again.
@@ -119,7 +120,7 @@ elif ! command -v node >/dev/null 2>&1; then
   echo "    dependency and cannot be skipped. Install node (>= 18)." >&2
   FAIL=1
 else
-  LAYOUT_ARGS=(check --out "$CONTRACTS_DIR/out")
+  LAYOUT_ARGS=(check)
   if [ -n "${STORAGE_LAYOUT_BASE:-}" ]; then
     LAYOUT_ARGS+=(--base "$STORAGE_LAYOUT_BASE")
     if [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" = "1" ]; then

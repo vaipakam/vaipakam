@@ -23,6 +23,9 @@ import {
   applyExemption,
   applyRenames,
   appendOnlyVerdict,
+  BUILD_CACHE_DIR,
+  BUILD_OUT_DIR,
+  buildCommand,
   contractArtifact,
   erc7201,
   GOLDEN_FILE,
@@ -598,6 +601,23 @@ test('a malformed acknowledgement is an error, not a silent ack', () => {
 });
 
 // ─── CLI ─────────────────────────────────────────────────────────────────
+
+test('the guard builds its own artifacts, apart from the shared out/', () => {
+  const { cmd, args, env } = buildCommand();
+  assert.equal(cmd, 'forge');
+  assert.equal(env.FOUNDRY_PROFILE, 'quick');
+  const flag = (f) => args[args.indexOf(f) + 1];
+  assert.equal(args[0], 'build');
+  assert.ok(args.includes('--ast'));
+  assert.equal(flag('--extra-output'), 'storageLayout');
+  assert.equal(flag('--out'), BUILD_OUT_DIR);
+  assert.equal(flag('--cache-path'), BUILD_CACHE_DIR);
+  // Neither output is configured in foundry.toml: setting one there changes
+  // CI's forge cache key for every forge job (#2600).
+  const toml = readFileSync(join(dirname(GOLDEN_FILE), '..', 'foundry.toml'), 'utf8');
+  assert.doesNotMatch(toml, /^\s*ast\s*=/m);
+  assert.doesNotMatch(toml, /storageLayout/);
+});
 
 test('the command line is parsed strictly', () => {
   assert.deepEqual(parseArgs(['check']), { mode: 'check' });

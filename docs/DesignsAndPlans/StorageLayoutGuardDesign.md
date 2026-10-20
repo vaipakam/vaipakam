@@ -63,9 +63,15 @@ Every layout that survives an upgrade is a **root**, listed in
 - **UUPS implementations.** These are the 13 contracts behind `ERC1967Proxy`s;
   their own state variables are the layout.
 
-`forge build` writes each root's `storageLayout` because foundry.toml carries
-`extra_output = ["storageLayout"]`, and each source's AST because it sets
-`ast = true`.
+The guard builds the artifacts it reads itself: `forge build --ast
+--extra-output storageLayout` under the `quick` profile (src/ and lib/ only),
+into `contracts/out-storage-layout`, with its own cache. It never reads the
+shared `out/`, so what it checks is always the tree on disk, whatever was built
+before it. Neither output is set in foundry.toml. The first version of this
+change set both there for every profile; that changed CI's forge cache key, so
+the contracts job had no warm cache, and its cold deploy-sanity compile lost
+the runner twice. Storage layouts and ASTs do not depend on the optimizer or
+on which tests exist, so the narrow build gives the same ledger.
 
 ### Source facts come from the AST, never the text
 
@@ -227,7 +233,7 @@ itself an error.
   hand-written AST would test the guard against its author's idea of solc.
 
 Changing a contract's storage therefore means running
-`node contracts/script/storage-layout-guard.mjs write` after `forge build` and
+`node contracts/script/storage-layout-guard.mjs write` (it builds first) and
 committing the golden file with the change.
 
 ## Not in this change: the deploy-time refusal (#2092 item 1)

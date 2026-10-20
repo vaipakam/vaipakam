@@ -496,9 +496,14 @@ they use — is listed in `contracts/storage-layout/roots.json` and recorded,
 from the compiler's own `storageLayout`, in
 `contracts/storage-layout/layout.golden.json`. Everything the guard checks
 about the SOURCE (storage pointers, position constants, enum members, value
-types, which contracts are UUPS) it reads from the compiler's AST
-(`ast = true` in foundry.toml), never from the text, and it refuses any
-artifact that was not compiled from the files as they are on disk.
+types, which contracts are UUPS) it reads from the compiler's AST, never
+from the text. It builds its own artifacts (src/ under the `quick` profile,
+both outputs requested on the command line, into `out-storage-layout/`), so
+its inputs are current by construction and foundry.toml carries neither
+output: setting `ast = true` there changes CI's forge cache key and put the
+whole cold deploy-sanity compile in the job (#2600, which lost its runner
+twice). It still refuses any artifact not compiled from the files as they are
+on disk.
 `predeploy-check.sh` step 1b refuses a tree whose golden file is stale or
 whose roots are incomplete; CI also compares it against the base commit's
 golden file and refuses any change that removes a line (a field moved,
@@ -506,10 +511,10 @@ removed, retyped, renamed or inserted mid-layout, an enum reordered, a stride
 or a namespace position changed). The rule and its reasons are in
 [`docs/DesignsAndPlans/StorageLayoutGuardDesign.md`](docs/DesignsAndPlans/StorageLayoutGuardDesign.md).
 
-**When you change storage**, after `forge build --skip test`:
+**When you change storage**:
 
 ```bash
-node contracts/script/storage-layout-guard.mjs write   # commit the golden file with the change
+node contracts/script/storage-layout-guard.mjs write   # builds src/, then writes; commit the golden file with the change
 ```
 
 - **New field → append it at the TAIL of its struct.** An inline struct in

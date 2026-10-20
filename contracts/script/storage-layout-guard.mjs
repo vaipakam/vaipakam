@@ -12,13 +12,22 @@
  * stated the rule ("append-only post-launch") only in comments.
  *
  * This module turns the rule into a check, from the COMPILER's own output and
- * never from a reading of the source text. Two outputs are read, both from the
- * forge artifacts in out/: each contract's `storageLayout` (foundry.toml
- * `extra_output`) for the layouts, and each source's AST (foundry.toml
- * `ast = true`) for everything about the source itself: storage pointers,
- * position constants, enum members, value types. The AST is what the compiler
- * resolved, so formatting, aliases and qualified names cannot hide anything
- * from it the way they hide things from a text match.
+ * never from a reading of the source text. Two outputs are read: each
+ * contract's `storageLayout` for the layouts, and each source's AST for
+ * everything about the source itself: storage pointers, position constants,
+ * enum members, value types. The AST is what the compiler resolved, so
+ * formatting, aliases and qualified names cannot hide anything from it the way
+ * they hide things from a text match.
+ *
+ * The guard BUILDS ITS OWN ARTIFACTS (`buildArtifacts` below): src/ only,
+ * under the `quick` profile, with both outputs requested on the command line,
+ * into contracts/out-storage-layout. It never reads the shared out/, and
+ * foundry.toml carries neither output. Two reasons. Its inputs are then
+ * current by construction, whatever was or was not built before it. And the
+ * AST of every test and script source is not added to every other build:
+ * #2600 first set `ast = true` for all profiles, which changed CI's forge
+ * cache key, and the cold deploy-sanity compile that followed lost its runner
+ * twice.
  *
  *   1. Every surviving layout is a ROOT (contracts/storage-layout/roots.json):
  *      each namespaced storage struct, read through a probe contract
@@ -71,8 +80,10 @@
  *   node contracts/script/storage-layout-guard.mjs check --base <file>   ... and append-only vs <file>
  *   ... check --base <file> --honour-acks                                ... with breaks.ack.json (CI only)
  *
- * `--out <dir>` overrides the forge artifact directory (default contracts/out).
- * Any other argument is refused. Anything non-zero must stop the caller.
+ * `--out <dir>` reads an existing artifact directory instead of building one
+ * (tests and diagnosis). The artifacts must carry both outputs, and are still
+ * refused when stale. Any other argument is refused. Anything non-zero must
+ * stop the caller.
  *
  * NO DEPENDENCIES, on purpose: it runs inside `predeploy-check.sh`, in CI's
  * contracts-fast job and on a deploy machine, none of which installs the pnpm
@@ -81,6 +92,7 @@
  * checks it against viem's.
  */
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
@@ -96,6 +108,36 @@ export const ACKS_FILE = join(LAYOUT_DIR, 'breaks.ack.json');
 export const RENAMES_FILE = join(LAYOUT_DIR, 'renames.json');
 export const FACETS_FILE = join(REPO_ROOT, 'packages', 'contracts', 'scripts', 'diamond-facets.json');
 export const GOLDEN_FORMAT = 2;
+export const BUILD_OUT_DIR = join(CONTRACTS_DIR, 'out-storage-layout');
+export const BUILD_CACHE_DIR = join(CONTRACTS_DIR, 'cache-storage-layout');
+
+/**
+ * The forge command that produces the guard's artifacts. `quick` compiles src/
+ * and lib/ only, which is every root and every source a root's contract
+ * compiles; storage layouts and ASTs do not depend on the optimizer or on
+ * which tests exist. Both outputs are requested here rather than in
+ * foundry.toml, and the directories are the guard's own.
+ */
+export function buildCommand() {
+  return {
+    cmd: 'forge',
+    args: ['build', '--ast', '--extra-output', 'storageLayout', '--out', BUILD_OUT_DIR, '--cache-path', BUILD_CACHE_DIR],
+    env: { ...process.env, FOUNDRY_PROFILE: 'quick' },
+  };
+}
+
+/** Build the guard's artifacts. Returns an error message, or undefined on success. */
+export function buildArtifacts() {
+  const { cmd, args, env } = buildCommand();
+  console.log(`storage-layout-guard: building src/ (FOUNDRY_PROFILE=quick ${cmd} ${args.map((a) => relative(CONTRACTS_DIR, a) || a).join(' ')})`);
+  const r = spawnSync(cmd, args, { cwd: CONTRACTS_DIR, env, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  if (r.error) return `could not run forge: ${r.error.message}. forge is a required dependency of this guard.`;
+  if (r.status !== 0) {
+    const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-30).join('\n');
+    return `forge build failed (exit ${r.status ?? r.signal}):\n${tail}`;
+  }
+  return undefined;
+}
 
 /** The file's contents, or `undefined` if it does not exist. One read, no separate existence check. */
 function readIfPresent(path, encoding) {
@@ -452,7 +494,7 @@ export function loadBuild(outDir, { root = CONTRACTS_DIR } = {}) {
     contracts.push({ name, target, art, meta });
     units.set(art.ast.absolutePath, art.ast);
   }
-  if (missingAst) problems.push('artifacts carry no AST — foundry.toml must set `ast = true` in the active profile');
+  if (missingAst) problems.push('artifacts carry no AST — build them with `forge build --ast`, or omit --out so the guard builds its own');
 
   const scope = new Set();
   for (const c of contracts) if (c.target.startsWith('src/')) Object.keys(c.meta.sources).forEach((p) => scope.add(p));
@@ -472,7 +514,7 @@ export function contractArtifact(build, name) {
     throw new Error(`${name}: expected exactly one current artifact compiled from src/, found ${hits.length}${hits.length ? ` (${hits.map((h) => h.target).join(', ')})` : ' (run forge build first)'}`);
   }
   if (!hits[0].art.storageLayout) {
-    throw new Error(`${name}: artifact has no storageLayout — foundry.toml must carry extra_output = ["storageLayout"] in the active profile`);
+    throw new Error(`${name}: artifact has no storageLayout — build with \`--extra-output storageLayout\`, or omit --out so the guard builds its own`);
   }
   return hits[0].art;
 }
@@ -1019,10 +1061,14 @@ export function main(argv = process.argv.slice(2)) {
   } catch (e) {
     return fail(e.message);
   }
+  if (!opts.out) {
+    const err = buildArtifacts();
+    if (err) return fail(err);
+  }
   let golden;
   let problems;
   try {
-    ({ golden, problems } = buildLedger({ outDir: opts.out ?? join(CONTRACTS_DIR, 'out') }));
+    ({ golden, problems } = buildLedger({ outDir: opts.out ?? BUILD_OUT_DIR }));
   } catch (e) {
     return fail(e.message);
   }

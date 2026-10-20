@@ -16,17 +16,6 @@ threads = 8
 # keeps headroom as the Diamond keeps growing.
 gas_limit = "18446744073709551615" # uint64 max — effectively unmetered for tests
 
-# #1274 / #2092 — the storage-layout guard (script/storage-layout-guard.mjs,
-# run by predeploy-check.sh step 1b) reads each root's compiler-reported
-# `storageLayout` from the artifacts in out/, and the compiler's AST of each
-# source (`ast = true`) for everything it checks about the source itself:
-# storage pointers, enum members, value types, position constants. Neither
-# is emitted by default. Every other profile inherits both from default; none
-# may override them without breaking the guard, which then refuses with an
-# instruction.
-extra_output = ["storageLayout"]
-ast = true
-
 # T-068 — the vendored Chainlink `chainlink-ccip` / `chainlink-evm` trees
 # carry Chainlink's OWN Foundry test files (`*.t.sol`) and test helpers.
 # `forge test` test-discovery would otherwise try to compile them, and they
