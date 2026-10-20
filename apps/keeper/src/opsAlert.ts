@@ -75,10 +75,12 @@ export async function sendOpsAlert(
   }
 }
 
-/** One condition a digest reports: its own de-duplication key, and its line. */
+/** One condition a digest reports: its own de-duplication key, what it is
+ *  about (always shown in full), and what to say about it (cut to fit). */
 export interface OpsAlertEntry {
   key: string;
-  line: string;
+  id: string;
+  detail: string;
 }
 
 /**
@@ -91,7 +93,9 @@ export interface OpsAlertEntry {
  */
 export async function sendOpsAlertDigest(
   env: Env,
-  header: string,
+  /** The heading, given how many entries the post actually carries — the
+   *  due ones, not every entry passed (Codex #2599 r5). */
+  header: (count: number) => string,
   entries: readonly OpsAlertEntry[],
   footer: string,
   minIntervalSec: number,
@@ -103,8 +107,8 @@ export async function sendOpsAlertDigest(
   const chatId = env.TG_OPS_CHAT_ID;
   if (!token || !chatId) {
     console.warn(
-      `[keeper] ops alert NOT delivered (TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset): ${header} ` +
-        entries.map((e) => e.line).join('; ') +
+      `[keeper] ops alert NOT delivered (TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset): ${header(entries.length)} ` +
+        entries.map(entryLine).join('; ') +
         ` ${footer}`,
     );
     return 'unconfigured';
@@ -117,7 +121,7 @@ export async function sendOpsAlertDigest(
     });
     if (due.length === 0) return 'suppressed';
     if (chainId !== null) await assertEpochsHold();
-    const ok = await postToTelegram(token, chatId, digestText(header, due.map((e) => e.line), footer));
+    const ok = await postToTelegram(token, chatId, digestText(header(due.length), due.map(entryLine), footer));
     if (!ok) return 'failed';
     await recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId);
     return 'sent';
@@ -131,13 +135,30 @@ export async function sendOpsAlertDigest(
   }
 }
 
+/** Longest a digest line may run, so even the first one always fits and
+ *  names what it is about (Codex #2599 r5). */
+const MAX_LINE_CHARS = 600;
+
+function entryLine(e: OpsAlertEntry): string {
+  return `${e.id} — ${e.detail}`;
+}
+
+/** One line, cut to {@link MAX_LINE_CHARS} at its end so its start — what the
+ *  line is about — is always kept. */
+function capLine(line: string): string {
+  return line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS - 1)}…` : line;
+}
+
 /** A digest's text: the header, then as many lines as fit in one Telegram
- *  message, a count of the rest, then the footer. Pure; exported for tests. */
+ *  message — each cut at its end to {@link MAX_LINE_CHARS}, so every line
+ *  shown names what it is about — a count of the rest, then the footer.
+ *  Pure; exported for tests. */
 export function digestText(header: string, lines: readonly string[], footer: string): string {
   const budget = TELEGRAM_MAX_CHARS - header.length - footer.length - 80;
   const shown: string[] = [];
   let used = 0;
-  for (const line of lines) {
+  for (const raw of lines) {
+    const line = capLine(raw);
     if (used + line.length + 1 > budget) break;
     shown.push(line);
     used += line.length + 1;

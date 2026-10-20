@@ -189,7 +189,7 @@ describe('discoverWork — the cursor stops at the indexed watermark read BEFORE
 
   it('queues only what is completely recorded and moves the cursor just past it', async () => {
     const { env, keeper } = setup(20);
-    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 20, 25]))).toBe(2);
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 20, 25]))).toEqual({ found: 2, caughtUp: true });
     expect((await listOpenWork(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 10)).map((o) => o.item)).toEqual(['10', '20']);
     const row = keeper.db.prepare('SELECT next_block FROM keeper_work_cursor').get() as { next_block: number };
     expect(row.next_block).toBe(21);
@@ -197,7 +197,7 @@ describe('discoverWork — the cursor stops at the indexed watermark read BEFORE
 
   it('reads nothing while the watermark is unreadable, and never moves the cursor back', async () => {
     const { env, keeper } = setup(null);
-    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10]))).toBe(0);
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10])), 'an unknown watermark is never caught up').toEqual({ found: 0, caughtUp: false });
     expect(keeper.db.prepare('SELECT COUNT(*) AS n FROM keeper_work_cursor').get()).toEqual({ n: 0 });
     const { putWorkCursor } = await import('../src/db');
     await putWorkCursor(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 50);
@@ -212,8 +212,15 @@ describe('discoverWork — the cursor stops at the indexed watermark read BEFORE
     keeper.db.prepare('UPDATE keeper_work_open SET checked_at = 1').run();
     (env.DB as unknown as { prepare: (q: string) => { bind: (...a: unknown[]) => { run: () => Promise<unknown> } } })
       .prepare(`UPDATE indexer_cursor SET last_block = 200 WHERE chain_id = 1 AND kind = 'diamond'`).bind().run();
-    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 150]))).toBe(1);
+    expect(await discoverWork(env, 1, '0xab', 'late_ack', 0, reader([10, 150]))).toEqual({ found: 1, caughtUp: true });
     expect((await listOpenWork(keeper.d1 as KeeperD1, 1, '0xab', 'late_ack', 10)).map((o) => o.item).sort()).toEqual(['10', '150']);
+  });
+
+  it('is not caught up while its pages for the run run out before the watermark (Codex #2599 r5)', async () => {
+    const { env } = setup(100);
+    // A reader that advances one block per page never reaches block 100 in a run.
+    const slow = async (from: number) => ({ items: [], next: from + 1 });
+    expect((await discoverWork(env, 1, '0xab', 'late_ack', 0, slow)).caughtUp).toBe(false);
   });
 });
 

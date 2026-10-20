@@ -323,18 +323,20 @@ describe('refusal digest (Codex #2599 r4)', () => {
     const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
     const e = configured(k);
-    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW)).toBe('sent');
-    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW + 1)).toBe('suppressed');
-    expect(await sendOpsAlertDigest(e, 'h', [{ key: 'a', line: 'A' }, { key: 'b', line: 'B' }], 'f', 600, NOW + 2)).toBe('sent');
+    expect(await sendOpsAlertDigest(e, () => 'h', [{ key: 'a', id: 'A', detail: 'x' }], 'f', 600, NOW)).toBe('sent');
+    expect(await sendOpsAlertDigest(e, () => 'h', [{ key: 'a', id: 'A', detail: 'x' }], 'f', 600, NOW + 1)).toBe('suppressed');
+    expect(
+      await sendOpsAlertDigest(e, (n) => `${n} refused:`, [{ key: 'a', id: 'A', detail: 'x' }, { key: 'b', id: 'B', detail: 'y' }], 'f', 600, NOW + 2),
+    ).toBe('sent');
     const last = JSON.parse((fetchSpy.mock.calls[1] as unknown as [string, { body: string }])[1].body) as { text: string };
-    expect(last.text, 'a key still inside its interval is not repeated').toBe('h\nB\nf');
+    expect(last.text, 'a key still inside its interval is not repeated, nor counted').toBe('1 refused:\nB — y\nf');
   });
 
   it('records nothing when the post fails, so the next run tries again', async () => {
     const k = createKeeperD1();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await sendOpsAlertDigest(configured(k), 'h', [{ key: 'a', line: 'A' }], 'f', 600, NOW)).toBe('failed');
+    expect(await sendOpsAlertDigest(configured(k), () => 'h', [{ key: 'a', id: 'A', detail: 'x' }], 'f', 600, NOW)).toBe('failed');
     expect(sentKeys(k)).toEqual([]);
   });
 
@@ -343,6 +345,35 @@ describe('refusal digest (Codex #2599 r4)', () => {
     expect(t.length).toBeLessThanOrEqual(4096);
     expect(t).toMatch(/…and \d+ more, each named in the keeper journal\./);
     expect(digestText('H', ['a', 'b'], 'F')).toBe('H\na\nb\nF');
+  });
+
+  it('keeps what an oversized line is about, cutting only its end (Codex #2599 r5)', () => {
+    const t = digestText('H', [`${P1} — ${'chunk refused; '.repeat(500)}`], 'F');
+    expect(t).toContain(P1);
+    expect(t).not.toContain('more, each named');
+    expect(t.length).toBeLessThanOrEqual(4096);
+  });
+
+  it('names every overdue delivery that fits, not a fixed few, and journals all of them', async () => {
+    const k = createKeeperD1();
+    const warned: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
+    const awaiting = Array.from({ length: 8 }, (_, i) => ({ packetHash: `0x${i.toString(16).padStart(64, '0')}`, arrivedAt: NOW - 3600 - i }));
+    await raiseDeliveryAlerts({ DB: createSharedD1().d1, KEEPER_DB: k.d1 } as unknown as Env, CHAIN, {
+      failures: new Map(),
+      cleared: new Set(),
+      openWork: async (ps) => new Set(ps),
+      awaiting,
+      awaitingMeasured: true,
+      nowSec: NOW,
+      deadline: Number.POSITIVE_INFINITY,
+    });
+    const alert = warned.find((w) => w.includes('reward delivery proofs'))!;
+    const journal = warned.find((w) => w.includes('not whole past'))!;
+    for (const a of awaiting) {
+      expect(alert).toContain(a.packetHash);
+      expect(journal).toContain(a.packetHash);
+    }
   });
 });
 
@@ -358,7 +389,9 @@ describe('outcomeOf (Codex #2599 r4)', () => {
 describe('actionScope (Codex #2599 r4)', () => {
   it('names only the chunk a chunked proof refused, and every later page for a paged index', () => {
     expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 2, dayIds: [12n, 10n, 11n], proof: [] })).toBe('chunk 2, 3 days (days 10–12)');
-    expect(actionScope({ kind: 'indexPage', batchId: P1 as never, dayIds: [5n] })).toBe('next page of its day list, 1 day (days 5–5), and every page after it');
+    expect(actionScope({ kind: 'indexPage', batchId: P1 as never, dayIds: [5n, 6n, 7n, 8n], indexedFrom: 2 }), 'only the days not yet indexed').toBe(
+      'the days its epoch has not indexed yet, 2 days (days 7–8), from the next page on',
+    );
     expect(actionScope({ kind: 'proveList', packetHash: P1 as never, dayIds: [1n, 2n] })).toBe('its whole day list, 2 days (days 1–2)');
   });
 });

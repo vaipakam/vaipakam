@@ -58,7 +58,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
-import { resolveOpsAlert, sendOpsAlert, sendOpsAlertDigest } from './opsAlert';
+import { digestText, resolveOpsAlert, sendOpsAlert, sendOpsAlertDigest } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWorkPage, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
@@ -95,8 +95,6 @@ export const AWAITING_ALERT_SEC = 2 * PASS_CADENCE_SEC;
 export const PASS_ALERT_WINDOW_MS = 15_000;
 /** Repeat an open alert at most this often. */
 const ALERT_REPEAT_SEC = 6 * 3600;
-/** Packets an alert names before it says "and N more". */
-const ALERT_NAMES = 5;
 /** Reverts that mean the work is ALREADY DONE (another caller, or this pass
  *  last run, got there first). Never a failure. */
 export const ALREADY_DONE = new Set(['TransportChunkAlreadyIndexed', 'TransportBatchFullyIndexed', 'TransportBatchAlreadyAdmitted']);
@@ -155,7 +153,9 @@ export interface BatchProgress {
 }
 
 export type ProofAction =
-  | { kind: 'indexPage'; batchId: Hex; dayIds: bigint[] }
+  /** `indexedFrom`: how many of the list's days the epoch had already indexed
+   *  when planned — the page writer starts there (Codex #2599 r5). */
+  | { kind: 'indexPage'; batchId: Hex; dayIds: bigint[]; indexedFrom: number }
   | { kind: 'indexChunk'; batchId: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
   | { kind: 'proveChunk'; packetHash: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
   | { kind: 'proveList'; packetHash: Hex; dayIds: bigint[] }
@@ -207,7 +207,7 @@ export function planDelivery(args: {
     if (batched) {
       // One page per call; the page writer refuses once the index is whole.
       return batch && batch.indexedDays < batch.dayCount
-        ? [{ kind: 'indexPage', batchId: packet.batchId, dayIds: days }]
+        ? [{ kind: 'indexPage', batchId: packet.batchId, dayIds: days, indexedFrom: batch.indexedDays }]
         : [];
     }
     // An epoch the rollout can still open comes first (#2571 r1): the next
@@ -317,7 +317,7 @@ async function proveOnMirror(
   // slice of what is open (#2497 r8, `workQueue.ts`). A delivery leaves the
   // queue only when the chain shows it whole; one that never completes holds
   // only its own slot and pins no read.
-  await discoverWork<BudgetDeliveryRow>(env, chain.id, diamond, WORK_KIND, deploymentFloor(chain.id), async (from, through, limit) => {
+  const discovery = await discoverWork<BudgetDeliveryRow>(env, chain.id, diamond, WORK_KIND, deploymentFloor(chain.id), async (from, through, limit) => {
     const page = await discoverBudgetDeliveries(env.DB, chain.id, from, through, limit);
     return { items: page.rows.map((r) => ({ item: r.packetHash.toLowerCase(), block: r.block, payload: r })), next: page.next };
   });
@@ -326,7 +326,10 @@ async function proveOnMirror(
   // The slice is the whole queue only when the page did not overflow AND every
   // row in it could be read (Codex #2599 r3): an unreadable row stays queued
   // but unseen, so a run that skipped one has not measured every delivery.
-  const overflow = page.rows > OPEN_SLICE;
+  // Nor is the queue every delivery until discovery has caught up with what
+  // the indexer has recorded (Codex #2599 r5): a backlog past this run's
+  // discovery pages may hold one already overdue.
+  const overflow = page.rows > OPEN_SLICE || !discovery.caughtUp;
   const unreadRows = Math.min(page.rows, OPEN_SLICE + 1) - page.items.length;
   const open = page.items.slice(0, OPEN_SLICE);
   const nowSec = Math.floor(Date.now() / 1000);
@@ -483,17 +486,22 @@ async function proveOnMirror(
  *  its other chunks prove on their own — while a flat list indexes page by
  *  page, so a refused page holds every later one too. Pure. */
 export function actionScope(a: ProofAction): string {
-  const days = a.dayIds.length;
-  const range = days === 0 ? '' : ` (days ${a.dayIds.reduce((x, y) => (y < x ? y : x))}–${a.dayIds.reduce((x, y) => (y > x ? y : x))})`;
+  const span = (ids: readonly bigint[]): string => {
+    const n = ids.length;
+    const range = n === 0 ? '' : ` (days ${ids.reduce((x, y) => (y < x ? y : x))}–${ids.reduce((x, y) => (y > x ? y : x))})`;
+    return `${n} day${n === 1 ? '' : 's'}${range}`;
+  };
   switch (a.kind) {
     case 'indexChunk':
     case 'proveChunk':
-      return `chunk ${a.chunkIndex}, ${days} day${days === 1 ? '' : 's'}${range}`;
+      return `chunk ${a.chunkIndex}, ${span(a.dayIds)}`;
     case 'indexPage':
-      return `next page of its day list, ${days} day${days === 1 ? '' : 's'}${range}, and every page after it`;
+      // Only the days the epoch has not indexed yet: the writer starts at its
+      // own progress, and the days before it are landed.
+      return `the days its epoch has not indexed yet, ${span(a.dayIds.slice(a.indexedFrom))}, from the next page on`;
     case 'proveList':
     case 'admitBatch':
-      return `its whole day list, ${days} day${days === 1 ? '' : 's'}${range}`;
+      return `its whole day list, ${span(a.dayIds)}`;
   }
 }
 
@@ -578,11 +586,10 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   // refuse, raising them costs one bounded send; each keeps its own key, so it
   // repeats and clears on its own.
   if (m.failures.size > 0) {
-    const n = m.failures.size;
     await sendOpsAlertDigest(
       env,
-      `${tag}: a proof or index call for ${n} deliver${n === 1 ? 'y' : 'ies'} was refused by the contract:`,
-      [...m.failures].map(([packet, why]) => ({ key: `${prefix}${packet}`, line: `${packet} — ${why}` })),
+      (n) => `${tag}: a proof or index call for ${n} deliver${n === 1 ? 'y' : 'ies'} was refused by the contract:`,
+      [...m.failures].map(([packet, why]) => ({ key: `${prefix}${packet}`, id: packet, detail: why })),
       'Until a refused call goes through, the days it covers fund nothing a claim can find, and an armed day-delivery gate holds them. Days of the same delivery that are already indexed or proven are not affected.',
       ALERT_REPEAT_SEC,
       m.nowSec,
@@ -606,17 +613,22 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
     }
   }
   if (m.awaiting.length > 0 || m.awaitingMeasured) {
-    const shown = [...m.awaiting].sort((a, b) => a.arrivedAt - b.arrivedAt).slice(0, ALERT_NAMES);
-    const more = m.awaiting.length - shown.length;
+    const sorted = [...m.awaiting].sort((a, b) => a.arrivedAt - b.arrivedAt);
+    const lines = sorted.map((a) => `${a.packetHash} arrived ${new Date(a.arrivedAt * 1000).toISOString()}`);
     const n = m.awaiting.length;
+    // Every one is named in the journal on every run that finds it; the alert
+    // names as many as one message holds and counts the rest (Codex #2599 r5).
+    if (n > 0) console.warn(`[keeper] deliveryProof chain=${chainId} not whole past ${AWAITING_ALERT_SEC / 60} min: ${lines.join('; ')}`);
     // A run that could not read every open delivery knows only a lower bound,
     // and only the order of the ones it read: say so.
     const count = m.awaitingMeasured ? `${n}` : `at least ${n}`;
     const order = m.awaitingMeasured ? 'oldest first' : 'oldest of those this run could read first; it could not look at every open delivery';
     await toggle(`delivery-awaiting:${chainId}:all`, n > 0, () =>
-      `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (${order}: ` +
-      shown.map((a) => `${a.packetHash} arrived ${new Date(a.arrivedAt * 1000).toISOString()}`).join('; ') +
-      `${more > 0 ? `; and ${more} more` : ''}). Their days not yet indexed or proven fund nothing a claim can find, and an armed day-delivery gate holds them.`,
+      digestText(
+        `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (${order}):`,
+        lines,
+        'Their days not yet indexed or proven fund nothing a claim can find, and an armed day-delivery gate holds them.',
+      ),
     );
   }
 }
