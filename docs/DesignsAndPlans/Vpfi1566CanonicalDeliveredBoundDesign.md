@@ -5214,6 +5214,102 @@ chain that has one.
 
 ### Sequencing
 
+> **RETIRED — owner decision 2026-10-20: the census is not finished, and no
+> decision depends on it any more.** The census exists to answer one question:
+> is there grandfathered custody to MOVE on a Diamond this programme will run
+> on? That question matters only where real value sits. On those Diamonds, the
+> answer is now "nothing" by construction.
+>
+> **Mainnet: no row, by construction, for all four classes.** Under O1 = A
+> (2026-10-07, under "Owner decisions" in slice 2), every Diamond that runs
+> slices 2–3 is a fresh deploy. `deploy-mainnet.sh` refuses to broadcast from a
+> dirty source tree, so a mainnet Diamond's code is attributable to a committed
+> tree from its first block.
+>
+> - **`vpfiHeld` and `rebateAmount`.** No source path writes a non-zero
+>   `vpfiHeld`. Every assignment in `contracts/src` clears it
+>   (`LibVPFIDiscount.sol` 996, 1013 and 1164). A non-zero `rebateAmount` is only
+>   ever derived from a non-zero `vpfiHeld` at settlement (1014). The path that
+>   charged the LIF into `vpfiHeld` was retired by #1352, so a Diamond deployed
+>   after it can hold neither row.
+> - **Fallback custody and live intent lots.** From slices 2–3 both are
+>   vault-held from the first loan. A pre-slice row fails closed by name
+>   (`FallbackCustodyNotVaultHeld`, `IntentCustodyNotVaultHeld`) instead of
+>   being paid from the Diamond.
+>
+> **Testnets: the guarantee is weaker, and it does not need to be stronger.**
+> This note does NOT certify any testnet Diamond empty under the provenance
+> standard ratified on 2026-09-12. It records that no decision now waits on
+> that certification. Every testnet Diamond holds only test assets, so a row
+> found there would be a defect to fix, not a loss to anyone.
+>
+> The three active testnet Diamonds are fresh deploys made after slices 2–3
+> merged (#2521, 2026-10-16):
+>
+> - **Base Sepolia `0x2535baC8…`**, 2026-10-17 (#2545). Its source record reads
+>   `719172c (dirty)`. That commit descends from #2521, but the uncommitted
+>   delta is unrecorded, so its initial code is attributable only to the
+>   recorded commit plus that delta. `deploy-testnet.sh` permits a dirty tree.
+>   Ten of its facets were re-cut on 2026-10-19 from the clean `dc72b36`
+>   (#2581).
+> - **Arbitrum Sepolia `0x50199e30…`**, 2026-10-17 (#2545). Its source record
+>   names the clean `4edfa02`, a commit on #2545's branch. The squash merge did
+>   not carry that commit into `main`'s history, so this repository cannot show
+>   its ancestry. On 2026-10-20 GitHub still served it, two commits ahead of
+>   #2521's merge commit. That is an observation from outside the repository,
+>   not a retained attestation. Ten of its facets were also re-cut on
+>   2026-10-19 from `dc72b36`.
+> - **BNB testnet `0xfa7685Eb…`**, 2026-10-18 (#2551), from the clean `872545d`.
+>
+> The RETIRED Diamonds keep whatever custody they hold. That covers the earlier
+> Base Sepolia and Arbitrum Sepolia stacks, the archives, and the Ethereum
+> Sepolia and OP Sepolia stacks no longer in use. The census found zero rows on
+> each wherever rows could be read. Rewards never entered the loop on any of
+> them: as of the 2026-09-12 readback, the recycle bucket was 0, the backing
+> snapshot was all-zero and the fee entitlement was disabled.
+>
+> Their claim paths stay deployed and are NOT contained. A legacy-slice or
+> canonical payout there is still balance-backed (§2), so a claim could in
+> principle draw on whatever VPFI that Diamond holds, including any custody row
+> the census could not read. **This is accepted, not closed**, and the
+> acceptance rests on one fact: those Diamonds hold only test assets.
+>
+> One rule keeps it that way. **A retired Diamond is never armed, never funded
+> with reward VPFI, and never refreshed.** If containment is ever wanted
+> anyway, the lever is pausing that Diamond, which is an owner-gated write.
+>
+> **What brings the census question back.** Any of these:
+>
+> - a proposal to arm, fund or upgrade a retired Diamond;
+> - a mainnet Diamond deployed from a dirty tree;
+> - an in-place upgrade of a pre-slice Diamond that holds real value.
+>
+> Each would reverse a premise above.
+>
+> **What this retires.**
+>
+> - PR #2095 (the calibrated, era-complete storage read, closed unmerged at
+>   review round 28).
+> - The census items still listed as outstanding below: the calibrated read,
+>   the artifact corrections and the authoritative arb-sepolia scope.
+> - The archive-RPC rerun.
+> - The migration halves of slices 0–3 for every class, and with them the
+>   slice-0 shortfall disposition, which could only arise from a found row.
+>
+> **What it does NOT retire.**
+>
+> - **The prospective isolation.** Slices 2–3 and the delivered bound are
+>   shipped behaviour, and the ⚠️ paragraph below still holds.
+> - **The arming gate's deployment assertion.** Before arming a Diamond, assert
+>   per chain that it runs the fixed code and that its reward-custody cutover
+>   has run (`docs/ops/GovernanceRunbook.md`, Gate A).
+>
+> **What stays as history, not as a live gate.**
+>
+> - The committed artifact (`census/grandfathered-custody-census.json`, run 26
+>   and later): zero rows in every class wherever rows could be read.
+> - The tooling that produced it.
+
 **RATIFIED 2026-09-07: a read-only GRANDFATHERED CENSUS runs FIRST, before
 any migration machinery is written.** Slices 0–3 exist only to move four
 GRANDFATHERED custody classes; the path that creates `vpfiHeld` was retired

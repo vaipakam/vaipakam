@@ -730,7 +730,7 @@ afterwards, governance cannot move `D*` and the affected mirrors' claims stay
 halted until the setup is repaired. Nothing below the arm is recoverable by
 re-arming, so nothing that can fail belongs after it.
 
-### Gate A — backing separation (NOT yet discharged)
+### Gate A — backing separation (code complete; assert it per Diamond before arming)
 
 Reward payouts must be bounded by funding **delivered for rewards**, not by the
 Diamond's un-earmarked VPFI **balance**. Two of that balance's other claimants
@@ -743,13 +743,38 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   components will not fit the un-earmarked balance. It **reverts rather than
   truncating** on purpose: `backingRoom` rises when a remit lands, so truncating
   would delete value that was about to become payable.
-- **The fund-safety half is #1566, and it is OPEN.** Do not arm until it closes
-  — and **not until the fix is DEPLOYED on every Diamond you are arming.** Issue
+- **The fund-safety half is #1566. Its code is complete on `main`.** The
+  build-first programme landed it in three PRs: #2459, #2489 and #2521 (the
+  last, vault-held fallback custody and swap-to-repay lots, merged
+  2026-10-16). The grandfathered-custody census was retired on 2026-10-20,
+  because every Diamond the programme runs on is a fresh deploy (O1 = A). The
+  "RETIRED" note at the head of the census in
+  `docs/DesignsAndPlans/Vpfi1566CanonicalDeliveredBoundDesign.md` gives the
+  reasoning. **Do not arm a Diamond until the fix is DEPLOYED on it.** Issue
   closure is not an on-chain safeguard: the arming setter checks authorization,
   canonical role, one-shot state and the future day, and nothing about which
   implementation is routed. A merged fix on an un-refreshed Diamond leaves the
   vulnerable claim path live. Assert the deployment, per chain, the same way the
   other code-slice gates in this section are asserted.
+
+  **Deployed code is necessary, not sufficient: the custody cutover must also
+  have run on every chain whose reward role is active.** On a fresh Diamond,
+  `rewardCustodyActivated()` reads **false** until the per-chain ceremony
+  (`contracts/script/ActivateRewardCustody.s.sol`, design §5d) calls
+  `activateRewardCustody`. The deploy only stamps the cutover record. Until
+  activation, `fundRewardPool` reverts `RewardCustodyNotActivated`. Once the
+  reward role is `Canonical` or `Mirror`, the delivered bound reads zero, so
+  every fresh claim is unfundable. Arming such a chain makes the
+  irreversible `D*` cutover over a pool nobody can fund.
+
+  Before arming, read back on each chain whose role is `Canonical` or `Mirror`:
+  - `getRewardRole()`;
+  - `rewardCustodyActivated()` = true, with the ceremony record that
+    activation leaves;
+  - that the holder is bound.
+
+  An `Unconfigured` single-chain deployment never runs the ceremony. Its column
+  stays at Diamond custody by design.
 
   **And on the ACTIVE-MIRROR branch, deployment is not the gate — the per-day
   funding property is.** Step 5 forbids propagation while any reachable mirror
@@ -2257,8 +2282,8 @@ Whether or not the pause is used:
   wire cannot arm, or a lane that is gone. Those remain protocol questions
   rather than runbook steps.
 
-**⛔ While #1566 is open, an early broadcast is a FUND-LOSS exposure, not a UX
-one — and an earlier revision of this paragraph asserted the opposite.** The
+**⛔ On a mirror that does not run #1566's fix, an early broadcast is a
+FUND-LOSS exposure, not a UX one — and an earlier revision of this paragraph asserted the opposite.** The
 claim gate opening ahead of its funding does not simply revert on an empty
 balance: `LibVpfiRecycle.backingPosition` derives `unearmarked` from
 `balanceOf(address(this))` less the bucket, the stranded-recovery reservation and
@@ -2396,9 +2421,8 @@ verified live first:
   so a mirror can receive the horizon while running its own expiry sweep against
   its own balance-based backing. A Base-only verification does not satisfy this.
   It is also the same gate Step 4 carries, and it
-  belongs here TOO rather than only there. Step 4's version reads *"the
-  fund-safety half is #1566, and it is OPEN. Do not arm until it closes"*, which
-  binds arming. This step is deliberately separate and can be performed later,
+  belongs here TOO rather than only there. Step 4's version (Gate A) reads *"Do
+  not arm a Diamond until the fix is DEPLOYED on it"*, which binds arming. This step is deliberately separate and can be performed later,
   ad hoc — which is precisely the route by which a precondition gets skipped, and
   the reason this list exists. While payouts are bounded by un-earmarked BALANCE
   rather than by funding delivered for rewards, the bucket's backing shares one
