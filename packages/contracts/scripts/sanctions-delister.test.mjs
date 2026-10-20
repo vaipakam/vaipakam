@@ -30,6 +30,7 @@ import {
   readConfig,
   readRelayCache,
   readState,
+  refusal,
   runDelister,
   shouldAlert,
   standInControl,
@@ -80,13 +81,12 @@ function snapOf(o = {}) {
     timelock: TL,
     timelockList: LIST,
     timelockIsRemover: true,
-    roles: { proposer: true, controls: { holds: [], unknown: [] } },
+    roles: { proposer: true, controls: { holds: [], unknown: [], reasons: [] } },
     route: 2,
     reservedDelistings: 0,
     proposalCount: 0,
     now: 1_000_000n,
     balance: 10n ** 18n,
-    relayPath: { ok: true },
     clearanceAttestor: OTHER,
     clearanceSourceChainId: 97n,
     // The only clearance oracle a test network carries.
@@ -314,9 +314,9 @@ test('refuses a key that is not the proposer alone, and a timelock serving anoth
   const load = async () => assert.fail('nothing may be downloaded');
   for (const [snap, re] of [
     [snapOf({ roles: { proposer: false } }), /not a proposer of this timelock/],
-    [snapOf({ roles: { proposer: true, controls: { holds: ["the timelock's owner"], unknown: [] } } }), /also the timelock's owner — an unattended key must be the proposer alone/],
-    [snapOf({ roles: { proposer: true, controls: { holds: [`${STAND_IN_NAME}'s pending owner`], unknown: [] } } }), /also the testnet stand-in for RedStone's pending owner/],
-    [snapOf({ roles: { proposer: true, controls: { holds: [], unknown: ["this chain's clearance messenger"] } } }), /who controls this chain's clearance messenger could not be read, so the key is not used on this chain this run/],
+    [snapOf({ roles: { proposer: true, controls: { holds: ["the timelock's owner"], unknown: [], reasons: [] } } }), /also the timelock's owner — an unattended key must be the proposer alone/],
+    [snapOf({ roles: { proposer: true, controls: { holds: [`${STAND_IN_NAME}'s pending owner`], unknown: [], reasons: [] } } }), /also the testnet stand-in for RedStone's pending owner/],
+    [snapOf({ roles: { proposer: true, controls: { holds: [], unknown: ["this chain's clearance messenger"], reasons: [] } } }), /who controls this chain's clearance messenger could not be read, so the key is not used on this chain this run/],
     [snapOf({ timelockList: OTHER }), /serves list/],
   ]) {
     const { report } = await runDelister({ chains: [chain(snap)], key: KEY, loadPublication: load });
@@ -620,26 +620,28 @@ test('env template: exactly the settings the runner reads, as the file already o
   assert.deepEqual(names, ['SANCTIONS_DELISTER_PRIVATE_KEY', ...SERVICE_CHAINS.map((c) => c.rpcEnv), 'TG_OPS_BOT_TOKEN', 'TG_OPS_CHAT_ID'].sort());
 });
 
-test('a cross-chain clearance is requested only when its answer can come back', async () => {
-  const noWay = { ok: false, detail: 'no RPC is configured for chain 421614, where its attestor runs' };
-  for (const reason of ['ClearanceNotRequested', 'ClearanceExpired']) {
-    const p = proposal({ id: 1n, reason });
-    // Every outstanding delisting is reserved, so nothing new could be proposed.
-    const snap = snapOf({ reservedDelistings: 5, relayPath: noWay, proposals: [p] });
-    const plan = planChain(snap, KEY, evaluatePublication(snap, PUBLICATION), facts({}));
-    assert.deepEqual(plan.actions, [], `${reason}: a paid request with no way back is never sent`);
-    assert.ok(plan.review.some((r) => r.includes('could not be relayed back') && r.includes('no RPC is configured for chain 421614')), reason);
-    // Nothing to advance, so it costs no download either.
-    assert.equal(wantsPublication(snap, KEY, undefined, 1), false, reason);
-    // Once the way back is proven, the stage changes, so a cached reading
-    // never stands in for a fresh one.
-    const fixed = snapOf({ reservedDelistings: 5, proposals: [p] });
-    assert.equal(wantsPublication(fixed, KEY, undefined, 1), true, `${reason}: a request is checked against OFAC first`);
-    assert.notEqual(fingerprint(snap), fingerprint(fixed));
-    assert.deepEqual(planChain(fixed, KEY, evaluatePublication(fixed, PUBLICATION), facts({})).actions.map((a) => a.kind), ['request']);
+test('an unreachable attestor chain refuses the whole chain: no request, relay or execute', () => {
+  const noWay = { ok: false, detail: 'no RPC is configured for chain 97, where its attestor runs' };
+  const none = { owner: OTHER, pendingOwner: ZERO };
+  // What readSnapshot builds when the attestor chain cannot be read: the
+  // oracle and the far messenger are unknown, from the route alone.
+  const controls = keyControls(
+    delistingControllers({ route: 2, timelock: none, clearanceOracle: { address: null, identity: 'unknown', updatedAt: null, detail: noWay.detail }, clearanceMessenger: none, relayPath: noWay }),
+    KEY,
+  );
+  for (const reason of ['ready', 'ClearanceNotRequested', 'ClearanceExpired']) {
+    const p = reason === 'ready' ? proposal({ id: 1n, ready: true, reason: null }) : proposal({ id: 1n, reason });
+    const snap = snapOf({ reservedDelistings: 5, roles: { proposer: true, controls }, proposals: [p] });
+    const refused = refusal(snap);
+    assert.equal(
+      refused,
+      `who controls the clearance oracle and the attestor chain's messenger could not be read (${noWay.detail}), so the key is not used on this chain this run`,
+      reason,
+    );
+    assert.equal(wantsPublication(snap, KEY, undefined, 1), false, `${reason}: nothing is downloaded for a refused chain`);
   }
-  // A local route needs no relay: nothing to prove.
-  const local = snapOf({ route: 1, relayPath: null, reservedDelistings: 1, proposals: [proposal({ id: 1n, ready: true, reason: null })] });
+  // A local route needs no attestor chain: its controllers are this chain's.
+  const local = snapOf({ route: 1, reservedDelistings: 1, proposals: [proposal({ id: 1n, ready: true, reason: null })] });
   assert.deepEqual(planChain(local, KEY, evaluatePublication(local, PUBLICATION), facts({})).actions.map((a) => a.kind), ['execute']);
 });
 
@@ -828,7 +830,7 @@ test('a stale clearance names the remedy from what the oracle holds now, not fro
   // An unidentified oracle stale: nobody here refreshes it.
   assert.match(stale({ identity: 'unknown', updatedAt: now - 9n * DAY }), /the clearance oracle itself was last updated .*, also too old; nothing here can move it on until it updates/);
   // The local route judged the oracle itself at this block.
-  assert.match(stale({ ...owned, updatedAt: now - 9n * DAY }, { route: 1, relayPath: null }), new RegExp(`${STAND_IN_NAME} was last updated .*, older than the timelock accepts; its owner ${STAND_IN_OWNER} re-publishes it with markUpdated`));
+  assert.match(stale({ ...owned, updatedAt: now - 9n * DAY }, { route: 1 }), new RegExp(`${STAND_IN_NAME} was last updated .*, older than the timelock accepts; its owner ${STAND_IN_OWNER} re-publishes it with markUpdated`));
 });
 
 test('the report names the clearance oracle, and says the stand-in is not RedStone', async () => {
@@ -882,28 +884,45 @@ test("the stand-in's control is reported from both reads independently", () => {
 
 test('the key may control nothing a delisting depends on, an oracle or a messenger included', () => {
   const none = { owner: OTHER, pendingOwner: ZERO };
-  // Owner and pending owner are both control; a contract known to have an
-  // owner whose controller cannot be read is unknown.
-  assert.deepEqual(keyControls([{ what: 'the timelock', ...none, ownable: true }], KEY), { holds: [], unknown: [] });
-  assert.deepEqual(keyControls([{ what: 'the timelock', owner: KEY, pendingOwner: ZERO, ownable: true }], KEY).holds, ["the timelock's owner"]);
-  assert.deepEqual(keyControls([{ what: 'x', owner: OTHER, pendingOwner: KEY.toLowerCase(), ownable: true }], KEY).holds, ["x's pending owner"]);
-  assert.deepEqual(keyControls([{ what: 'x', owner: null, pendingOwner: ZERO, ownable: true }], KEY).unknown, ['x']);
-  // An oracle of unknown interface: no answer is not judged, the key's address is.
-  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: null, pendingOwner: null, ownable: false }], KEY), { holds: [], unknown: [] });
-  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: KEY, pendingOwner: null, ownable: false }], KEY).holds, ["the clearance oracle's owner"]);
+  // Owner and pending owner are both control; a contract whose controller
+  // cannot be read is unknown, whatever it is.
+  assert.deepEqual(keyControls([{ what: 'the timelock', ...none }], KEY), { holds: [], unknown: [], reasons: [] });
+  assert.deepEqual(keyControls([{ what: 'the timelock', owner: KEY, pendingOwner: ZERO }], KEY).holds, ["the timelock's owner"]);
+  assert.deepEqual(keyControls([{ what: 'x', owner: OTHER, pendingOwner: KEY.toLowerCase() }], KEY).holds, ["x's pending owner"]);
+  assert.deepEqual(keyControls([{ what: 'x', owner: null, pendingOwner: ZERO }], KEY).unknown, ['x']);
+  // No exemption for an oracle that does not say what it is: no answer is
+  // unknown, and the key's address is still control.
+  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: null, pendingOwner: null }], KEY).unknown, ['the clearance oracle']);
+  assert.deepEqual(keyControls([{ what: 'the clearance oracle', owner: KEY, pendingOwner: null }], KEY).holds, ["the clearance oracle's owner"]);
+  // Each distinct reason is given once.
+  assert.deepEqual(keyControls([{ what: 'a', owner: null, pendingOwner: null, why: 'r' }, { what: 'b', owner: null, pendingOwner: null, why: 'r' }], KEY).reasons, ['r']);
 
   const standIn = { address: ORACLE, identity: 'stand-in', updatedAt: 1n, owner: STAND_IN_OWNER, pendingOwner: KEY };
   const relay = { ok: true, messenger: { address: OTHER, owner: KEY, pendingOwner: ZERO } };
   const cross = delistingControllers({ route: 2, timelock: none, clearanceOracle: standIn, clearanceMessenger: none, relayPath: relay });
   assert.deepEqual(cross.map((c) => c.what), ['the timelock', STAND_IN_NAME, "this chain's clearance messenger", "the attestor chain's messenger"]);
   assert.deepEqual(keyControls(cross, KEY).holds, [`${STAND_IN_NAME}'s pending owner`, "the attestor chain's messenger's owner"]);
-  // An unreadable messenger on this chain refuses; an unreachable attestor
-  // chain lists nothing for that side (nothing that needs it is sent).
-  assert.deepEqual(keyControls(delistingControllers({ route: 2, timelock: none, clearanceOracle: null, clearanceMessenger: { owner: null, pendingOwner: null }, relayPath: { ok: false } }), KEY), { holds: [], unknown: ["this chain's clearance messenger"] });
-  // The local route: the list's secondary, no messengers.
+  // Which contracts are judged follows from the route, not from what was
+  // read: an unreadable messenger here, and an attestor chain that cannot be
+  // read (its oracle and messenger), are all unknown, with the reason.
+  const unread = keyControls(
+    delistingControllers({ route: 2, timelock: none, clearanceOracle: null, clearanceMessenger: { owner: null, pendingOwner: null }, relayPath: { ok: false, detail: 'chain 97 is down' } }),
+    KEY,
+  );
+  assert.deepEqual(unread, { holds: [], unknown: ['the clearance oracle', "this chain's clearance messenger", "the attestor chain's messenger"], reasons: ['it was not read this run', 'chain 97 is down'] });
+  // The local route: the list's secondary, no messengers; an unreadable
+  // secondary is unknown too.
   const local = delistingControllers({ route: 1, timelock: none, clearanceOracle: { ...standIn, pendingOwner: ZERO, owner: null }, clearanceMessenger: null, relayPath: null });
   assert.deepEqual(local.map((c) => c.what), ['the timelock', STAND_IN_NAME]);
-  assert.deepEqual(keyControls(local, KEY).unknown, [STAND_IN_NAME], "the stand-in has an owner, so an unreadable one is unknown");
+  assert.deepEqual(keyControls(local, KEY).unknown, [STAND_IN_NAME], 'an unreadable owner is unknown');
+  const noSecondary = { address: null, identity: 'unknown', updatedAt: null, detail: "the list's secondary oracle could not be read: rpc down" };
+  assert.deepEqual(keyControls(delistingControllers({ route: 1, timelock: none, clearanceOracle: noSecondary }), KEY), {
+    holds: [],
+    unknown: ['the clearance oracle'],
+    reasons: ["the list's secondary oracle could not be read: rpc down"],
+  });
+  // No clearance check: only the timelock.
+  assert.deepEqual(delistingControllers({ route: 0, timelock: none }).map((c) => c.what), ['the timelock']);
 });
 
 test('an oracle is the stand-in only on its own answer, and never RedStone', async () => {

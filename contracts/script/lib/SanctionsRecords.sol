@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SanctionsDelistingTimelock} from "../../src/compliance/SanctionsDelistingTimelock.sol";
 import {Deployments} from "./Deployments.sol";
+import {TotalRead} from "./TotalRead.sol";
 
 /// @dev The one read {SanctionsRecords.serves} makes, as an interface so its
 ///      selector can be named (a public state variable's getter has none on
@@ -38,14 +39,14 @@ interface ITimelockList {
  *         binding against the contract itself.
  */
 library SanctionsRecords {
-    /// @notice Whether `timelock` serves `list`: `list()` answers with exactly
-    ///         one word holding that address. Any other outcome — no code, a
+    /// @notice Whether `timelock` serves `list`: `list()` answers, as a
+    ///         {TotalRead}, with that address. Any other outcome — no code, a
     ///         revert, another interface, a malformed answer — is false, never
     ///         a revert.
     function serves(address timelock, address list) internal view returns (bool) {
-        if (timelock.code.length == 0 || list == address(0)) return false;
-        (bool ok, bytes memory ret) = timelock.staticcall(abi.encodeWithSelector(ITimelockList.list.selector));
-        return ok && ret.length == 32 && abi.decode(ret, (uint256)) == uint256(uint160(list));
+        if (list == address(0)) return false;
+        (bool ok, address served) = TotalRead.addressOf(timelock, ITimelockList.list.selector);
+        return ok && served == list;
     }
 
     /// @notice This chain's recorded timelock, required to serve this chain's

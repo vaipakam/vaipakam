@@ -16,6 +16,15 @@ import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
 import {SanctionsRecords} from "./lib/SanctionsRecords.sol";
 import {SanctionsClearanceReport} from "./lib/SanctionsClearanceReport.sol";
+import {TotalRead} from "./lib/TotalRead.sol";
+
+/// @dev The two reads {ConfigureSanctionsClearance._recordedAttestorToReuse}
+///      makes of a recorded attestor, as an interface so their selectors can
+///      be named (a public immutable's getter has none on the contract type).
+interface IClearanceAttestorReads {
+    function oracle() external view returns (address);
+    function messenger() external view returns (address);
+}
 
 /**
  * @title  ConfigureSanctionsClearance
@@ -226,18 +235,20 @@ contract ConfigureSanctionsClearance is Script, ArtifactRootBase {
 
     /// @dev The recorded attestor while it reads `standIn_` (a reused
     ///      stand-in) through this messenger; otherwise address(0), for a new
-    ///      one.
+    ///      one. Both getters are {TotalRead}s, so a recorded address that
+    ///      answers neither, only one, or either malformed (a stale record, a
+    ///      contract sharing one selector) is "not reusable", never a stop.
     function _recordedAttestorToReuse(address standIn_, CcipMessenger m) internal view returns (address) {
         address recorded = Deployments.readSanctionsClearanceAttestorOptional();
         if (recorded.code.length == 0) return address(0);
-        SanctionsClearanceAttestor existing = SanctionsClearanceAttestor(payable(recorded));
-        try existing.oracle() returns (ISanctionsList o) {
-            if (address(o) == standIn_ && address(existing.messenger()) == address(m)) {
-                console.log("Reusing the recorded attestor");
-                return recorded;
-            }
-        } catch {}
-        console.log("The recorded attestor reads another oracle or messenger; deploying a new one");
+        (bool oracleRead, address oracle) = TotalRead.addressOf(recorded, IClearanceAttestorReads.oracle.selector);
+        (bool messengerRead, address messenger) =
+            TotalRead.addressOf(recorded, IClearanceAttestorReads.messenger.selector);
+        if (oracleRead && messengerRead && oracle == standIn_ && messenger == address(m)) {
+            console.log("Reusing the recorded attestor");
+            return recorded;
+        }
+        console.log("The recorded attestor does not read this stand-in through this messenger; deploying a new one");
         return address(0);
     }
 

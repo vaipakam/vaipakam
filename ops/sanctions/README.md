@@ -71,9 +71,10 @@ Every hour it, for every configured chain with a timelock recorded:
    execute (an address vetoed, flagged by RedStone, already delisted another
    way, or no longer delisted by OFAC's newer file); reconfirms one of its own
    onto a newer publication (the window is kept); after the window, on the
-   cross-chain route, requests RedStone's answer (only once the attestor's
-   chain is reachable from here, since a request costs a CCIP fee and its
-   answer must be relayed back) and relays it back; and
+   cross-chain route, requests RedStone's answer and relays it back (a chain
+   whose attestor chain cannot be read from here is refused for the run, see
+   below, so no CCIP fee is paid for a request whose answer could not be
+   relayed); and
    executes it once the timelock reports it ready. Each of those steps, for
    anyone's proposal, needs a reading of OFAC's files made in that same state
    that supports delisting every address the proposal names: with a failed,
@@ -99,7 +100,10 @@ RPC for, the attestor's chain included, checked before the key is used on
 that chain at all (a chain with no timelock whose list it holds a role on is
 reported refused, and fails the run), or the owner or pending owner of the
 clearance oracle or of either clearance messenger, so the key can never also
-decide a clearance; a recorded timelock that serves another list; publication work against
+decide a clearance; for the run, a chain where it cannot read who controls
+any of these — which ones follows from the route, so an unreachable attestor
+chain, whose oracle and messenger then go unread, refuses it too, every step
+included; a recorded timelock that serves another list; publication work against
 a file the list does not record, a delisting the advanced file still
 witnesses, a count that differs from what the list declares outstanding, two
 OFAC files that disagree, or a digital-currency value in either file that is

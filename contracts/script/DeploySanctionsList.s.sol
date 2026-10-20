@@ -8,6 +8,7 @@ import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {AdminControl} from "./lib/AdminControl.sol";
+import {TotalRead} from "./lib/TotalRead.sol";
 
 /**
  * @title  DeploySanctionsList
@@ -120,12 +121,11 @@ contract DeploySanctionsList is Script, ArtifactRootBase {
                 AdminControl.aloneControls(recorded, admin),
                 "DeploySanctionsList: the recorded SanctionsList is not one the admin alone controls (another owner, or an ownership transfer pending). A list holds the listings every consumer reads, so this script never replaces one: cancel or complete the transfer, or remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
             );
-            // A total read: any answer but one zero word (a secondary, a
+            // A total read: any answer but a zero address (a secondary, a
             // revert, a malformed reply) is "not the rehearsal list".
-            (bool ok, bytes memory ret) =
-                recorded.staticcall(abi.encodeWithSelector(SanctionsList.secondary.selector));
+            (bool ok, address secondary) = TotalRead.addressOf(recorded, SanctionsList.secondary.selector);
             require(
-                ok && ret.length == 32 && abi.decode(ret, (uint256)) == 0,
+                ok && secondary == address(0),
                 "DeploySanctionsList: the recorded SanctionsList composes a secondary oracle (or its secondary cannot be read), and the rehearsal list composes none. This script never replaces a list: remove .sanctionsList and the .sanctionsDelistingTimelock that serves it from the artifact to start a new list deliberately, then re-run. Nothing was sent or recorded"
             );
             console.log("Reusing the recorded SanctionsList");

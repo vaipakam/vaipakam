@@ -344,51 +344,58 @@ export function fingerprint(snap) {
  * timelock could push a delisting through with only the Safe's veto in the
  * way, so a stolen copy would need nothing else.
  *
- * `controllers` is `[{ what, owner, pendingOwner, ownable }]`, the owner and
- * pending owner as read this run (null when unreadable). A pending owner is
- * control too: it takes the contract whenever it accepts. `holds` names each
- * such role the key has; `unknown` names each contract known to have an
- * owner (`ownable`) whose controller could not be read, since the key is not
- * used where its control is unknown. For an oracle of unknown interface
- * (`ownable` false) an owner read that does not answer is not judged — but
- * one that answers with the key is.
+ * `controllers` is `[{ what, owner, pendingOwner, why }]`, the owner and
+ * pending owner as read this run (null when unreadable or not read), and
+ * `why` the reason a contract could not be read at all, when known. A
+ * pending owner is control too: it takes the contract whenever it accepts.
+ * `holds` names each such role the key has; `unknown` names each contract
+ * whose controller could not be read, since the key is not used where its
+ * control is unknown, and `reasons` gives each distinct `why` among them. There is no exemption: every contract on the path, the clearance
+ * oracle included, must answer `owner()` and `pendingOwner()`. On the test
+ * networks this release runs on, the only clearance oracle is the stand-in,
+ * which answers both; a mainnet release that reads RedStone identifies it
+ * positively (see {@link identifyOracle}) and decides then how its control
+ * is established — never by exempting an answer that did not come.
  */
 export function keyControls(controllers, key) {
   const holds = [];
   const unknown = [];
+  const reasons = [];
   for (const c of controllers) {
     if (sameAddress(c.owner, key)) holds.push(`${c.what}'s owner`);
     if (sameAddress(c.pendingOwner, key)) holds.push(`${c.what}'s pending owner`);
-    if (c.ownable && (c.owner == null || c.pendingOwner == null)) unknown.push(c.what);
+    if (c.owner == null || c.pendingOwner == null) {
+      unknown.push(c.what);
+      if (c.why && !reasons.includes(c.why)) reasons.push(c.why);
+    }
   }
-  return { holds, unknown };
+  return { holds, unknown, reasons };
 }
 
 /**
- * Every contract with an owner that a delisting on this chain depends on, as
- * read this run, for {@link keyControls}: the timelock; the oracle the
- * clearance is read from (the list's secondary, or the attestor's oracle);
- * and on the cross-chain route the messenger at each end, which carry the
- * request and the answer. On a cross-chain route whose attestor chain could
- * not be read this run (`relayPath` not ok), that side is not listed — and
- * nothing that depends on it, a request or a relay, is sent (see
- * {@link planChain}).
+ * Every contract with an owner that a delisting on this chain depends on, for
+ * {@link keyControls}. WHICH contracts those are follows from the route
+ * alone, never from what this run managed to read: the timelock; on the
+ * local or cross-chain route, the oracle the clearance is read from (the
+ * list's secondary, or the attestor's oracle); and on the cross-chain route
+ * the messenger at each end, which carry the request and the answer. A
+ * dependency this run could not read — an unreadable secondary, an
+ * unreachable attestor chain — is still listed, with its controller unknown,
+ * so the chain is refused for the run instead of being judged on the part
+ * that was readable: a clearance answer already delivered would otherwise
+ * let a proposal execute while the key's control of the far side was never
+ * checked.
  */
 export function delistingControllers({ route, timelock, clearanceOracle, clearanceMessenger, relayPath }) {
-  const controllers = [{ what: 'the timelock', owner: timelock.owner ?? null, pendingOwner: timelock.pendingOwner ?? null, ownable: true }];
-  if (clearanceOracle?.address) {
-    controllers.push({
-      what: clearanceOracleName({ clearanceOracle }),
-      owner: clearanceOracle.owner ?? null,
-      pendingOwner: clearanceOracle.pendingOwner ?? null,
-      ownable: clearanceOracle.identity === ORACLE_IDENTITY.STAND_IN,
-    });
+  const entry = (what, read, why) => ({ what, owner: read?.owner ?? null, pendingOwner: read?.pendingOwner ?? null, ...(read ? {} : { why }) });
+  const controllers = [entry('the timelock', timelock)];
+  if (route === LOCAL || route === CROSS_CHAIN) {
+    const read = clearanceOracle?.address ? clearanceOracle : null;
+    controllers.push(entry(clearanceOracleName({ clearanceOracle }), read, clearanceOracle?.detail ?? 'it was not read this run'));
   }
   if (route === CROSS_CHAIN) {
-    controllers.push({ what: "this chain's clearance messenger", owner: clearanceMessenger?.owner ?? null, pendingOwner: clearanceMessenger?.pendingOwner ?? null, ownable: true });
-    if (relayPath?.ok) {
-      controllers.push({ what: "the attestor chain's messenger", owner: relayPath.messenger?.owner ?? null, pendingOwner: relayPath.messenger?.pendingOwner ?? null, ownable: true });
-    }
+    controllers.push(entry("this chain's clearance messenger", clearanceMessenger));
+    controllers.push(entry("the attestor chain's messenger", relayPath?.ok ? relayPath.messenger : null, relayPath?.detail ?? 'the attestor chain was not read this run'));
   }
   return controllers;
 }
@@ -407,7 +414,8 @@ export function refusal(snap) {
     return `the signing key is also ${r.controls.holds.join(' and ')} — an unattended key must be the proposer alone, so that it cannot also decide a clearance or steer the timelock; move that control before it runs again`;
   }
   if (r.controls.unknown.length) {
-    return `who controls ${r.controls.unknown.join(' and ')} could not be read, so the key is not used on this chain this run`;
+    const why = r.controls.reasons.length ? ` (${r.controls.reasons.join('; ')})` : '';
+    return `who controls ${r.controls.unknown.join(' and ')} could not be read${why}, so the key is not used on this chain this run`;
   }
   return null;
 }
@@ -476,19 +484,16 @@ function stage(snap, p) {
   if (BigInt(snap.now) < BigInt(p.eta)) return 'window';
   const next = p.ready ? 'ready' : p.reason === 'ClearanceNotAnswered' ? `${p.reason}:${p.relay?.status ?? 'unknown'}` : String(p.reason);
   if (!ADVANCING.has(next)) return next;
-  // Two things close every step toward a delisting, whatever the proposal:
-  // a timelock that is no longer a remover can complete none (`readiness`
-  // does not check the list's own authorization, so this is the one place
-  // that does; revoking it is the owner's one-call shutdown of the route),
-  // and a cross-chain request, a paid CCIP message, with no proven way back
-  // for its answer would be paid for again at every expiry.
+  // A timelock that is no longer a remover can complete no proposal
+  // (`readiness` does not check the list's own authorization, so this is the
+  // one place that does; revoking it is the owner's one-call shutdown of the
+  // route). A cross-chain route whose attestor chain cannot be read never
+  // reaches here: the far side's controllers are then unknown, so the whole
+  // chain is refused for the run (`refusal`, {@link delistingControllers}),
+  // a request, a relay and an execute alike.
   if (!snap.timelockIsRemover) return `${next}:closed`;
-  if (NEEDS_REQUEST.has(next) && snap.route === CROSS_CHAIN && !snap.relayPath?.ok) return `${next}:no-relay`;
   return next;
 }
-
-/** The readiness reasons whose next step is a (paid) clearance request. */
-const NEEDS_REQUEST = new Set(['ClearanceNotRequested', 'ClearanceExpired']);
 
 /** The stages with a step that moves a proposal toward a delisting:
  *  executing, requesting the clearance, relaying RedStone's answer. */
@@ -668,12 +673,6 @@ export function planChain(snap, key, evaluation, facts = new Map(), { factsError
     }
     if (at.endsWith(':closed')) {
       notes.push(`${tag} is not moved on: the timelock is not a remover of the list, so it cannot complete any proposal`);
-      continue;
-    }
-    if (at.endsWith(':no-relay')) {
-      const why = `its clearance is not requested, because the answer from ${who} could not be relayed back: ${snap.relayPath?.detail ?? 'the way back was not checked'}`;
-      notes.push(`${tag}: ${why}`);
-      review.push(`${tag}: ${why}. A request costs a CCIP fee, so none is sent until the attestor's chain is reachable from here.`);
       continue;
     }
     switch (p.reason) {
@@ -1353,8 +1352,10 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
 
   /** Whether the clearance answer could come back from here: the attestor's
    *  chain has an RPC that serves that chain, and the attestor answers on
-   *  it. Read once per run on a cross-chain route; a clearance request (a
-   *  paid CCIP message) is sent only when it holds. Also identifies the
+   *  it. Read once per run on a cross-chain route; when it does not hold,
+   *  the far side's oracle and messenger go unread, so the chain is refused
+   *  for the run ({@link delistingControllers}) and no paid CCIP request is
+   *  sent for an answer that could not come back. Also identifies the
    *  oracle the attestor reads (`oracle`, see {@link identifyOracle}) and
    *  reads who controls the messenger its answers leave through
    *  (`messenger`), both judged by {@link keyControls}. */
@@ -1484,7 +1485,6 @@ function chainEffects({ c, account, clientFor, queues, relayCache, abis }) {
         route: Number(route),
         clearanceSourceChainId: sourceChainId,
         clearanceAttestor: attestor,
-        relayPath: crossChain,
         clearanceOracle,
         oracleMaxAge: Number(oracleMaxAge),
         reservedDelistings: Number(reserved),

@@ -1446,7 +1446,10 @@ to a decision. Listed by category.
   Where the adder runs is still open, so
   `ConfigureSanctionsOracle.s.sol` still refuses every mainnet.
   On a testnet that script installs the admin's `TestnetSanctionsOverlay`
-  as the whole screen. It is a SEPARATE step: `deploy-testnet.sh` does not
+  as the whole screen. A re-run keeps the oracle the Diamond already
+  screens against while the admin alone controls it, and otherwise REFUSES
+  rather than replacing it (its flags live only in it); dropping it is a
+  deliberate `setSanctionsOracle` call. It is a SEPARATE step: `deploy-testnet.sh` does not
   run it yet (wiring it in, with a verify-time check, is #946), so a fresh
   testnet screens against nothing until it is run. Tier-1 entry points
   revert for flagged callers; Tier-2 close-out paths stay open so the

@@ -25,7 +25,14 @@ leave the old one answering, and the timelock deploy script never deploys a
 second timelock while the recorded one can still delist, so a list never has
 two automated delisting routes. The list deploy script no longer replaces a
 recorded list it cannot reuse with a new, empty one: it refuses and says how
-to resolve it, since a list's listings are what every consumer reads. Nor
+to resolve it, since a list's listings are what every consumer reads. The
+oracle configure script now does the same for the test list a Diamond
+already screens against: where it used to switch the Diamond to a fresh,
+empty test list when the live one was controlled by another account, about
+to be handed over, extended another list or was not a test list at all, it
+now stops and says how to resolve it, since that list's flags live only in
+it. Reads of a recorded contract that decide whether to reuse it never stop
+a run on a malformed answer; they answer "not reusable" instead. Nor
 does it start a new list while a delisting timelock is still recorded, since
 a timelock belongs to its list for good, and the wiring script wires only the
 timelock of the recorded list. Each
@@ -50,7 +57,11 @@ a pending owner is named even when the current owner could not be read.
 The bot also refuses to run on a chain where its key controls, or is about
 to control, anything a delisting depends on beyond its proposer role: the
 timelock, the list, the oracle a clearance is read from, or a messenger
-carrying the request or the answer. Any other oracle is "the clearance oracle", and the bot
+carrying the request or the answer. Which of these a chain depends on
+follows from its clearance route, not from what the bot managed to read, so
+a chain where it cannot read who controls one of them, including one whose
+attestor chain it cannot reach, is refused for that run, completing a
+proposal included. Any other oracle is "the clearance oracle", and the bot
 never calls an oracle RedStone, since RedStone has no deployment on the test
 networks it runs on and nothing it could read would establish it. The
 attestor chain's

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {TotalRead} from "./TotalRead.sol";
 
 /**
  * @title  AdminControl
@@ -20,10 +21,10 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
  *         itself is owned in one step, `IERC173`, so it has no pending state
  *         to rule out and is checked by its owner alone.)
  *
- *         Every read is a low-level `staticcall` judged here, so ANY read that
- *         does not return one well-formed address — no code, a revert, another
- *         interface, a fallback that returns nothing — is a no, never a revert
- *         that would stop the script on a decoding failure.
+ *         Every read is a {TotalRead}, so ANY read that does not return one
+ *         well-formed address — no code, a revert, another interface, a
+ *         fallback that returns nothing — is a no, never a revert that would
+ *         stop the script on a decoding failure.
  *
  *         Failing this rule means "do not reuse" or "do not act", never
  *         "replace silently": a script that would deploy a replacement while
@@ -57,23 +58,11 @@ library AdminControl {
 
     /// @notice `target.owner()`, and whether it returned one address.
     function ownerOf(address target) internal view returns (bool ok, address value) {
-        return _readAddress(target, Ownable.owner.selector);
+        return TotalRead.addressOf(target, Ownable.owner.selector);
     }
 
     /// @notice `target.pendingOwner()`, and whether it returned one address.
     function pendingOwnerOf(address target) internal view returns (bool ok, address value) {
-        return _readAddress(target, Ownable2Step.pendingOwner.selector);
-    }
-
-    /// @dev One no-argument view returning an address, judged here: a call
-    ///      that fails, returns anything but one 32-byte word, or a word with
-    ///      high bits set is `ok == false`.
-    function _readAddress(address target, bytes4 selector) private view returns (bool ok, address value) {
-        if (target.code.length == 0) return (false, address(0));
-        (bool success, bytes memory ret) = target.staticcall(abi.encodeWithSelector(selector));
-        if (!success || ret.length != 32) return (false, address(0));
-        uint256 word = abi.decode(ret, (uint256));
-        if (word > type(uint160).max) return (false, address(0));
-        return (true, address(uint160(word)));
+        return TotalRead.addressOf(target, Ownable2Step.pendingOwner.selector);
     }
 }

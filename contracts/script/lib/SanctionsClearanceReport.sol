@@ -7,6 +7,7 @@ import {TestnetChains} from "../../src/compliance/TestnetChains.sol";
 import {TestnetSanctionsOracleStandIn} from "../../src/compliance/TestnetSanctionsOracleStandIn.sol";
 import {AdminControl} from "./AdminControl.sol";
 import {Deployments} from "./Deployments.sol";
+import {TotalRead} from "./TotalRead.sol";
 
 /**
  * @title  SanctionsClearanceReport
@@ -36,10 +37,8 @@ library SanctionsClearanceReport {
     ///         outcome — no code, a revert, another interface, a fallback
     ///         that returns nothing — is false, never a revert.
     function isStandIn(address oracle) internal view returns (bool) {
-        if (oracle.code.length == 0) return false;
-        (bool ok, bytes memory ret) =
-            oracle.staticcall(abi.encodeCall(TestnetSanctionsOracleStandIn.isTestnetStandIn, ()));
-        return ok && ret.length == 32 && abi.decode(ret, (uint256)) == 1;
+        (bool ok, bool standIn) = TotalRead.boolOf(oracle, TestnetSanctionsOracleStandIn.isTestnetStandIn.selector);
+        return ok && standIn;
     }
 
     /// @notice Logs which clearance check `tl` has, read from the contract,
@@ -113,18 +112,27 @@ library SanctionsClearanceReport {
             return;
         }
         console.log("    It says it is the TESTNET STAND-IN - NOT RedStone. It flags only what its owner flags.");
+        // Both reads first, each reported on its own: what one established is
+        // never dropped because the other failed, and "renounced" is said
+        // only when the owner reads as zero AND no transfer reads as pending
+        // (the delister's `standInControl` follows the same rule).
         (bool ownerRead, address owner) = AdminControl.ownerOf(oracle);
+        (bool pendingRead, address pending) = AdminControl.pendingOwnerOf(oracle);
         if (!ownerRead) {
             console.log("    Its owner could not be read, so who controls its flags is not known.");
-        } else if (owner == address(0)) {
+        } else if (owner != address(0)) {
+            console.log("    owner:", owner);
+        } else if (pendingRead && pending == address(0)) {
             console.log(
-                "    It has no owner (renounced): its flags can no longer change and it can no longer be re-published."
+                "    It has no owner (renounced) and no transfer pending: its flags can no longer change and it can no longer be re-published."
             );
         } else {
-            console.log("    owner:", owner);
+            console.log("    It has no owner now.");
         }
-        (bool pendingRead, address pending) = AdminControl.pendingOwnerOf(oracle);
-        if (!pendingRead) console.log("    Its pending owner could not be read.");
-        else if (pending != address(0)) console.log("    An ownership transfer is PENDING to:", pending);
+        if (!pendingRead) {
+            console.log("    Its pending owner could not be read.");
+        } else if (pending != address(0)) {
+            console.log("    An ownership transfer is PENDING to (it controls it once it accepts):", pending);
+        }
     }
 }

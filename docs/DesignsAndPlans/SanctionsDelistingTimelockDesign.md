@@ -248,9 +248,17 @@ Both accept native value only as their messenger's fee refund.
   pending owner of the timelock, of the oracle the clearance is read from,
   or, on the cross-chain route, of the messenger at either end. A key that
   could also decide the clearance would leave only the Safe's veto between a
-  stolen copy and a delisting. A contract known to have an owner whose
-  controller cannot be read refuses the chain for that run; for an oracle of
-  unknown interface, only an owner read that answers with the key refuses. Per chain, each run:
+  stolen copy and a delisting. Which contracts are judged follows from the
+  route alone, never from what a run managed to read, and any whose
+  controller cannot be read refuses the chain for that run — request, relay
+  and execution alike. That includes an attestor chain the bot cannot read
+  (no RPC, an RPC serving another chain, a key holding a role on that
+  chain's list): a clearance answer already delivered would otherwise let a
+  proposal execute while the far side's control was never checked. There is
+  no exemption for an oracle that does not identify itself: on the test
+  networks the only clearance oracle is the stand-in, which answers both
+  reads, and a mainnet release that reads RedStone decides how its control
+  is established when it identifies RedStone. Per chain, each run:
   - discards a removed proposer's proposals; withdraws its own proposals that
     can no longer complete (vetoed, flagged by RedStone, already delisted
     another way, beyond the outstanding count, or no longer called for by a
