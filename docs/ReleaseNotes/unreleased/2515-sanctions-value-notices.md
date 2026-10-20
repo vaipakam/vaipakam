@@ -19,12 +19,18 @@ reported as a failure, a late successful settlement can clear a failure alert
 the run had open, and a transaction whose outcome is still unknown is said to be unknown rather
 than left untold.
 
-When a held claimant's observation chain had lapsed and was then started again,
-a notice names the wallet and when the new chain began. The lapse is judged from
-the contract's own state read in a single block, and the restart from the
-observing transaction's own event, so both are exact. The contract no
-longer reports a lapsed chain's last observation, so the notice says so and
-gives the gap only as more than the maximum observation gap.
+When one of the keeper's own transactions restarts a held claimant's observation
+chain, a notice names the wallet and when the new chain began, read from that
+transaction's own event. The cause is stated only as far as the contract's state
+proves it. A chain that had already lapsed when the run first read it is reported
+as lapsed, with the gap given only as more than the maximum observation gap,
+because the contract no longer reports its last observation. A chain that was
+live at that read but lapsed while the transaction waited to be included is
+reported with its last observation and the exact gap. Any other restart is
+reported as one whose cause the run's reads do not determine. A transaction
+whose broadcast got no answer may still have reached the chain, so it is now
+treated as unknown and its receipt is looked up, instead of being counted as a
+failure that moved nothing.
 
 All of a run's notices go out as one post per chain, after the pass's standing
 alerts, so a burst of them can never use up the time those alerts need. Each

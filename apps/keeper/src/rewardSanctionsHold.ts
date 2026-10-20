@@ -61,7 +61,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { reportSendError } from './submissionQueue';
+import { possiblyRelayedHash, reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import {
@@ -221,22 +221,60 @@ export function storedChainLapsed(
   );
 }
 
-/** The notice for a lapsed chain this run saw RESTART (#2515): lapsed before
- *  the run's writes, and restarted at `restartedAt` by a landed send's own
- *  event. The lapsed chain's last observation is not readable once it lapses,
- *  so the gap is given as the bound the contract proves — more than its
- *  maximum gap — with that gap as a figure only when the new chain's own pair
- *  was read (`post`). Pure. */
-export function lapseRestartLine(owner: string, restartedAt: number, post: OwnerSanctionsStatus | null | undefined): string {
-  const gap =
-    post && post.flaggedAt === restartedAt && post.observeBy !== 0 && post.lastSeenAt !== 0
-      ? `more than ${((post.observeBy - post.lastSeenAt) / 3600).toFixed(1)}h (the contract's maximum gap)`
-      : `more than the contract's maximum observation gap`;
+/**
+ * The notice for an owner whose STORED evidence chain a landed send of this
+ * run replaced with a new one (#2515), read from that send's own
+ * `RewardSanctionsEvidenceRecorded` (`restartedAt`), with the cause stated
+ * only as far as the run's reads prove it (Codex #2602 r6):
+ *  - the chain had already lapsed at the run's first read
+ *    ({@link storedChainLapsed}): its last observation is no longer readable,
+ *    so the gap is the bound the contract proves — more than its maximum gap
+ *    — and a figure only when the new chain's own pair was read (`post`);
+ *  - the chain was LIVE at that read but the restart came after its
+ *    observation deadline (`observeBy`): it lapsed while the run's
+ *    transaction waited for inclusion, and its last observation and the gap
+ *    are both known exactly from that read;
+ *  - otherwise the run's reads do not determine which of the contract's
+ *    restart causes applied, and the line says so.
+ * A first flag (no chain stored) replaces nothing and is not told here.
+ * Pure; pinned by the tests.
+ */
+export function restartLine(
+  pre: OwnerSanctionsStatus,
+  restartedAt: number,
+  post: OwnerSanctionsStatus | null | undefined,
+): string {
+  const at = new Date(restartedAt * 1000).toISOString();
+  const restarted = `was observed again at ${at}, which started a new chain, so its confirmation window restarted and its hold runs on.`;
+  if (pre.chainLapsed === true) {
+    const gap =
+      post && post.flaggedAt === restartedAt && post.observeBy !== 0 && post.lastSeenAt !== 0
+        ? `more than ${((post.observeBy - post.lastSeenAt) / 3600).toFixed(1)}h (the contract's maximum gap)`
+        : `more than the contract's maximum observation gap`;
+    return (
+      `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap) and ${restarted} ` +
+      `The lapsed chain's last observation is not readable once it lapses; it was ${gap} before that observation.`
+    );
+  }
+  if (pre.flaggedAt !== 0 && pre.observeBy !== 0 && restartedAt > pre.observeBy) {
+    return (
+      `${pre.owner}: its evidence chain, last observed at ${new Date(pre.lastSeenAt * 1000).toISOString()}, lapsed at its observation deadline ` +
+      `${new Date(pre.observeBy * 1000).toISOString()} while this run's transaction waited for inclusion, and ${restarted} ` +
+      `The gap was ${((restartedAt - pre.lastSeenAt) / 3600).toFixed(1)}h.`
+    );
+  }
   return (
-    `${owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap) and was observed again at ${new Date(restartedAt * 1000).toISOString()}, ` +
-    `which started a new chain, so its confirmation window restarted and its hold runs on. The lapsed chain's last observation is not readable once it lapses; ` +
-    `it was ${gap} before that observation.`
+    `${pre.owner}: its stored evidence chain was replaced by a new one at ${at}, so its confirmation window restarted and its hold runs on. ` +
+    `This run's reads do not determine which of the contract's restart causes applied (a lapse, another oracle, or a cleared flag marker).`
   );
+}
+
+/** Whether a send of this run that is still UNKNOWN could have restarted the
+ *  owner's stored chain: it had lapsed, or it was live and its observation
+ *  deadline has passed by `nowSec`. Pure. */
+export function restartPossible(pre: OwnerSanctionsStatus, nowSec: number): boolean {
+  if (!pre.evidenceOracle || /^0x0{40}$/i.test(pre.evidenceOracle)) return false;
+  return pre.chainLapsed === true || (pre.flaggedAt !== 0 && pre.observeBy !== 0 && nowSec > pre.observeBy);
 }
 
 /** `LibRewardSanctions.Decision`. */
@@ -317,6 +355,8 @@ export interface OwnerSanctionsStatus {
    *  the oracle configured in the SAME block. Absent when that oracle read
    *  failed: then it is unknown, and no lapse is told. */
   chainLapsed?: boolean;
+  /** The oracle the stored chain was recorded under (zero when none). */
+  evidenceOracle?: string;
 }
 
 export interface SanctionsHoldPlan {
@@ -871,8 +911,8 @@ export function applyLateOutcome(maps: OutcomeMaps, t: SentTx): void {
 /** The run's one-off notices (#2515), on the OPS channel, as ONE bounded post
  *  (Codex #2602 r1): each landed settlement or staging resolution that moved
  *  value, with the amounts its receipt's events state ({@link valueMoveLines}),
- *  each such send whose outcome is still unknown, and each lapsed evidence
- *  chain this run saw restart. Every line is
+ *  each such send whose outcome is still unknown, and each stored evidence
+ *  chain a landed send restarted ({@link restartLine}). Every line is
  *  journaled first, so one the post cannot carry — or a post not made, past
  *  `deadline` — is still named. Exported for tests. */
 export async function sendSanctionsNotices(
@@ -894,22 +934,27 @@ export async function sendSanctionsNotices(
         `that transaction's own events on chain are the record.`,
     );
   }
+  // Every restart a landed receipt shows, of a chain the run's first read
+  // found STORED (Codex #2602 r6): judged from the receipt, whenever in the
+  // run the chain lapsed.
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const pre of before) {
-    if (pre.chainLapsed !== true) continue;
+    if (!pre.evidenceOracle || /^0x0{40}$/i.test(pre.evidenceOracle)) continue;
     const owner = pre.owner.toLowerCase();
     const restartedAt = ledger.restarts.get(owner);
     if (restartedAt !== undefined) {
-      lines.push(lapseRestartLine(pre.owner, restartedAt, after.get(owner)));
+      lines.push(restartLine(pre, restartedAt, after.get(owner)));
       continue;
     }
     // No receipt shows a restart. One still UNKNOWN may have made it, which
-    // the next run's read would take as its starting point, so it is said. A
-    // lapsed owner nothing was sent for is the held-without-chain alert's.
+    // the next run's read would take as its starting point, so it is said
+    // wherever a restart was possible.
     const sentFor = ledger.unknown.find((t) => t.owner === owner);
-    if (sentFor) {
+    if (sentFor && restartPossible(pre, nowSec)) {
       lines.push(
-        `${pre.owner}: its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's ${sentFor.fn} (tx ${sentFor.tx}) was not seen by the end of the run, ` +
-          `so whether it restarted the chain, and when, is UNKNOWN here; a restart would begin a new confirmation window.`,
+        `${pre.owner}: its evidence chain ${pre.chainLapsed === true ? 'had lapsed (unobserved past the contract\'s maximum gap)' : 'was past its observation deadline'}. ` +
+          `This run's ${sentFor.fn} (tx ${sentFor.tx}) was not seen by the end of the run, so whether it restarted the chain, and when, is UNKNOWN here; ` +
+          `a restart would begin a new confirmation window.`,
       );
     }
   }
@@ -1043,6 +1088,7 @@ async function readStatuses(
         forfeitableAt: Number(t[3]),
         observeBy: Number(t[4]),
         stored: !/^0x0{40}$/i.test(evidenceOracle) || t[6] === true,
+        evidenceOracle,
       };
       if (configuredOracle !== null) st.chainLapsed = storedChainLapsed({ ...st, evidenceOracle, marker: t[6] === true }, configuredOracle);
       out.push(st);
@@ -1377,7 +1423,18 @@ async function send(
       err,
       `send failed: ${shortErr(err)}`,
     );
-    return deferred ? 'skipped' : 'failed';
+    if (deferred) return 'skipped';
+    // Signed and possibly relayed, with no answer (Codex #2602 r6): its
+    // outcome is UNKNOWN, not failed. It joins the ledger under the signed
+    // bytes' own hash, so its receipt is asked for like any other unseen one.
+    const relayed = possiblyRelayedHash(err);
+    if (relayed) {
+      budget.touched?.add(owner.toLowerCase());
+      budget.sent?.push({ owner: owner.toLowerCase(), fn, tx: relayed });
+      console.error(`[keeper] rewardSanctionsHold ${fn} owner=${owner} may have been relayed: tx=${relayed}; its receipt is asked for before the run's alerts`);
+      return 'unknown';
+    }
+    return 'failed';
   }
   try {
     budget.writes -= 1;

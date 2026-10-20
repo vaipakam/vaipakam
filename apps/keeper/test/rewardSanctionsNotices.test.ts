@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, parseUnits, type Abi, type AbiEvent, type Address, type Hex, type Log } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { applyLateOutcome, lapseRestartLine, readLedger, reconcileSent, sendSanctionsNotices, storedChainLapsed, valueMoveLines, valueMovesOf, type OutcomeMaps, type OwnerSanctionsStatus, type SentTx, type ValueMove } from '../src/rewardSanctionsHold';
+import { applyLateOutcome, readLedger, reconcileSent, restartLine, restartPossible, sendSanctionsNotices, storedChainLapsed, valueMoveLines, valueMovesOf, type OutcomeMaps, type OwnerSanctionsStatus, type SentTx, type ValueMove } from '../src/rewardSanctionsHold';
 import type { Env } from '../src/env';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 
@@ -128,6 +128,7 @@ const st = (over: Partial<OwnerSanctionsStatus> = {}): OwnerSanctionsStatus => (
   forfeitableAt: 1_000 + 3 * 86_400,
   observeBy: 5_000 + 86_400,
   stored: true,
+  evidenceOracle: ORACLE,
   ...over,
 });
 const LAPSED = st({ flaggedAt: 0, lastSeenAt: 0, forfeitableAt: 0, observeBy: 0, chainLapsed: true });
@@ -220,10 +221,28 @@ describe('reconcileSent', () => {
   });
 });
 
-describe('lapseRestartLine', () => {
-  it("states the gap as a bound, as a figure only when the new chain's own pair was read", () => {
-    expect(lapseRestartLine(OWNER, RESTART, RESTARTED)).toContain('more than 24.0h (the contract\'s maximum gap) before that observation');
-    expect(lapseRestartLine(OWNER, RESTART, null)).toContain("more than the contract's maximum observation gap before that observation");
+describe('restartLine', () => {
+  it("a chain lapsed before the run: the gap as a bound, a figure only when the new chain's own pair was read", () => {
+    expect(restartLine(LAPSED, RESTART, RESTARTED)).toContain('more than 24.0h (the contract\'s maximum gap) before that observation');
+    expect(restartLine(LAPSED, RESTART, null)).toContain("more than the contract's maximum observation gap before that observation");
+  });
+  it('a chain live at the first read but restarted after its deadline lapsed during the run, with the exact gap (Codex #2602 r6)', () => {
+    const line = restartLine(st(), RESTART, null);
+    expect(line).toContain(`last observed at ${new Date(5_000 * 1000).toISOString()}, lapsed at its observation deadline ${new Date((5_000 + 86_400) * 1000).toISOString()}`);
+    expect(line).toContain(`The gap was ${((RESTART - 5_000) / 3600).toFixed(1)}h.`);
+  });
+  it('a restart the reads cannot explain says the cause is undetermined', () => {
+    expect(restartLine(st(), 6_000, null)).toContain("This run's reads do not determine which of the contract's restart causes applied");
+    expect(restartLine(st({ flaggedAt: 0, observeBy: 0 }), RESTART, null)).toContain('do not determine');
+  });
+});
+
+describe('restartPossible', () => {
+  it('only for a stored chain that had lapsed, or is past its deadline now', () => {
+    expect(restartPossible(LAPSED, 0)).toBe(true);
+    expect(restartPossible(st(), 5_000 + 86_400 + 1)).toBe(true);
+    expect(restartPossible(st(), 5_000 + 86_400)).toBe(false);
+    expect(restartPossible(st({ evidenceOracle: ZERO, chainLapsed: true }), RESTART)).toBe(false);
   });
 });
 
@@ -277,6 +296,16 @@ describe('sendSanctionsNotices', () => {
     expect(logged[0]).toContain(`its evidence chain had lapsed (unobserved past the contract's maximum gap). This run's recordRewardSanctionsEvidence (tx ${TX}) was not seen`);
     logged.length = 0;
     await sendSanctionsNotices(env, CHAIN, ledgerOf([]), [LAPSED], new Map(), Number.POSITIVE_INFINITY);
+    expect(logged).toEqual([]);
+  });
+
+  it('tells a restart of a chain that lapsed during the run, never a first flag (Codex #2602 r6)', async () => {
+    const restarted = ledgerOf([sent('recordRewardSanctionsEvidence', TX, { status: 'success', logs: [restartLog()] })]);
+    await sendSanctionsNotices(env, CHAIN, restarted, [st()], new Map(), Number.POSITIVE_INFINITY);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain('lapsed at its observation deadline');
+    logged.length = 0;
+    await sendSanctionsNotices(env, CHAIN, restarted, [st({ flaggedAt: 0, lastSeenAt: 0, observeBy: 0, evidenceOracle: ZERO, stored: false })], new Map(), Number.POSITIVE_INFINITY);
     expect(logged).toEqual([]);
   });
 
