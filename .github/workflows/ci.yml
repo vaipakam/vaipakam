@@ -346,7 +346,11 @@ jobs:
           # PR mechanically mergeable with only the non-required unconditional
           # job red. `wrangler*.toml` stays listed because TOML is identified
           # by name alone.
-          WORKSPACES_RE='^(apps/|packages/|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # contracts/script/storage-layout-guard.mjs is in here because its
+          # tests live in packages/contracts (where viem can cross-check its
+          # Keccak), and are run by THIS job — so an edit to the guard alone
+          # must still run them (#1274 / #2092).
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -618,6 +622,37 @@ jobs:
       # 2,012-test regression is operator-local at end-of-step (no longer
       # in CI post-#296; see CLAUDE.md "Executing forge" + memory
       # `feedback_no_local_forge_builds.md`).
+      # #1274 / #2092 — the storage-layout guard (predeploy-check step 1b)
+      # compares this tree's layout against the BASE's committed golden file,
+      # so an in-place-upgrade-breaking change fails here instead of
+      # corrupting a refreshed Diamond. The base is the PR's base commit, or
+      # the pre-push tip on a push to main. A base with no golden file is the
+      # change that introduces the guard; any other failure to read one fails
+      # the job rather than silently skipping the comparison. Schedule and
+      # manual runs have no base and check only freshness + completeness.
+      - name: Fetch the base storage layout (append-only guard)
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base commit for this event; append-only comparison skipped."
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          golden="contracts/storage-layout/layout.golden.json"
+          if ! git cat-file -e "$BASE_SHA:$golden" 2>/dev/null; then
+            echo "The base ($BASE_SHA) has no $golden — this change introduces the guard; append-only comparison skipped."
+            exit 0
+          fi
+          git show "$BASE_SHA:$golden" > "$RUNNER_TEMP/base-layout.golden.json"
+          echo "STORAGE_LAYOUT_BASE=$RUNNER_TEMP/base-layout.golden.json" >> "$GITHUB_ENV"
+          # This comparison gates a MERGE, so it reads breaks.ack.json; the
+          # deploy-time comparison against a chain's own layout never does.
+          echo "STORAGE_LAYOUT_HONOUR_ACKS=1" >> "$GITHUB_ENV"
+          echo "Comparing against the layout committed at $BASE_SHA."
+
       - name: Pre-deploy check (deploy-sanity suite)
         run: bash script/predeploy-check.sh
 

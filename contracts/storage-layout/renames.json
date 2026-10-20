@@ -1,0 +1,4 @@
+{
+  "_readme": "Declared renames for the storage-layout guard (#1274 / #2092). A field that kept its slot and its meaning under a new name is declared here ONCE and honoured forever, by CI and by the deploy-time check, because a chain refreshed long after the rename still needs it. Each entry anchors on the field's exact OLD line in the golden file: { region, slot, offset, from, to, reason } for a field (region is the root id, or a nested region such as vaipakam@57[uint256]; from/to are full paths), or { enum, index, from, to, reason } for an enum member. A field given a NEW MEANING is a break, never a rename. See docs/DesignsAndPlans/StorageLayoutGuardDesign.md.",
+  "renames": []
+}

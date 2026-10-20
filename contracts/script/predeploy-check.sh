@@ -11,6 +11,17 @@
 #
 #   1. forge build — the contracts compile.
 #
+#   1b. Storage-layout guard (#1274 / #2092) — the committed
+#       `storage-layout/layout.golden.json` describes the code just built,
+#       and every namespaced storage struct and UUPS implementation is a
+#       listed root. With STORAGE_LAYOUT_BASE=<golden file> it also checks
+#       append-only against that base (CI passes the PR base's file).
+#       Acknowledged breaks (storage-layout/breaks.ack.json) are read only
+#       when STORAGE_LAYOUT_HONOUR_ACKS=1, which CI's pull-request check
+#       sets. Never set it for a comparison against a deployed chain's
+#       layout: an acknowledged break is still one no chain may be upgraded
+#       in place across.
+#
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*):
 #            FacetSizeLimitTest    (every facet within EIP-170; #66),
@@ -90,6 +101,38 @@ if forge build --skip test; then
 else
   echo "  ✗ forge build failed" >&2
   FAIL=1
+fi
+
+# ── 1b. Storage-layout guard ──────────────────────────────────────────
+# The guard builds its own artifacts (src/ under the quick profile, with the
+# storage layouts and ASTs it reads, into out-storage-layout/), so it never
+# depends on what step 1 left in out/. It is skipped when step 1 failed: the
+# same sources would fail its build too. Node is a REQUIRED dependency
+# here, like python3 for step 2c: a deploy gate that drops a storage check
+# when an interpreter is missing is the silent in-place corruption #2092
+# found, waiting to happen again.
+echo
+echo "[predeploy 1b/4] storage-layout guard (#1274 / #2092)"
+if [ "$FAIL" -ne 0 ]; then
+  echo "  ✗ skipped — the build failed, so its storage layouts are not current" >&2
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  ✗ node not installed — this guard is a REQUIRED predeploy" >&2
+  echo "    dependency and cannot be skipped. Install node (>= 18)." >&2
+  FAIL=1
+else
+  LAYOUT_ARGS=(check)
+  if [ -n "${STORAGE_LAYOUT_BASE:-}" ]; then
+    LAYOUT_ARGS+=(--base "$STORAGE_LAYOUT_BASE")
+    if [ "${STORAGE_LAYOUT_HONOUR_ACKS:-}" = "1" ]; then
+      LAYOUT_ARGS+=(--honour-acks)
+    fi
+  fi
+  if node "$SCRIPT_DIR/storage-layout-guard.mjs" "${LAYOUT_ARGS[@]}"; then
+    : # the script prints its own lines
+  else
+    echo "  ✗ storage-layout guard failed — see above" >&2
+    FAIL=1
+  fi
 fi
 
 # ── 2. Forge test suite ───────────────────────────────────────────────
