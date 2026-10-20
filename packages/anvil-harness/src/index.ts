@@ -1,4 +1,4 @@
-export { anvilControl, type AnvilControl } from './rpc';
+export { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
 export { assertNothingListening, childHasExited, spawnAnvil, type SpawnAnvilOptions, type SpawnedAnvil } from './process';
 export {
   bundleWith,

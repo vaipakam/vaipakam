@@ -25,7 +25,29 @@ export interface AnvilControl {
   waitForChainId(chainId: number, timeoutMs?: number): Promise<void>;
 }
 
+/** The hosts a disposable node may be reached on: this machine only. */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/**
+ * Refuse any node URL that is not on this machine. The harness sends state a
+ * fixture read from disk (a `--load-state` dump, `anvil_setCode` bytecode) and
+ * time-travel and balance commands that only make sense against a disposable
+ * local node, so a URL elsewhere is a misconfiguration, never a target.
+ */
+export function assertLoopbackUrl(url: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error(`anvil-harness: not a URL: ${url}`);
+  }
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new Error(`anvil-harness: refusing ${url}: the harness drives only a local node (127.0.0.1, localhost or ::1)`);
+  }
+}
+
 export function anvilControl(url: string): AnvilControl {
+  assertLoopbackUrl(url);
   let rpcId = 1;
   const rpc = async <T = unknown>(method: string, params: unknown[] = []): Promise<T> => {
     const res = await fetch(url, {
