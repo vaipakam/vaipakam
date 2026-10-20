@@ -303,7 +303,8 @@ const TELEGRAM_CUT = '\n… (cut to fit the chat; the full report is in the jour
  * `label`. Never throws and never prints the token. Returns
  * `{ skipped: true }` when the chat is not configured, `{ delivered: true }`
  * on success, and `{ delivered: false, reason }` otherwise, so the caller can
- * record and surface a failed delivery.
+ * record and surface a failed delivery; a refusal's `reason` carries
+ * Telegram's own explanation when it gives one.
  */
 export async function notifyOps({ label, token, chatId, text, fetchImpl = fetch }) {
   if (!token || !chatId) return { skipped: true };
@@ -315,9 +316,21 @@ export async function notifyOps({ label, token, chatId, text, fetchImpl = fetch 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: message, disable_web_page_preview: true }),
     });
-    return res.ok ? { delivered: true } : { delivered: false, reason: `Telegram answered HTTP ${res.status}` };
+    return res.ok ? { delivered: true } : { delivered: false, reason: `Telegram answered HTTP ${res.status}${await telegramReason(res, token)}` };
   } catch (e) {
     return { delivered: false, reason: `Telegram unreachable: ${redact(e?.message ?? e, [token])}` };
+  }
+}
+
+/** Telegram's own reason for refusing a message ("Bad Request: chat not
+ *  found"), so a refused alert names its cause; empty when the answer carries
+ *  none. Cut short, and with the token removed should it ever appear. */
+async function telegramReason(res, token) {
+  try {
+    const { description } = await res.json();
+    return typeof description === 'string' && description ? `: ${redact(description, [token]).slice(0, 200)}` : '';
+  } catch {
+    return '';
   }
 }
 

@@ -1,0 +1,7 @@
+## Thread — The sanctions adder reads finality from the chain, not from one read (PR #NNNN)
+
+The sanctions adder's first run on the keeper machine updated both test lists, yet reported the Base Sepolia update as "reorganized out" and marked the run failed. The update was in fact final. The finality check had compared the transaction's block against the one first seen in a single read, and treated any failure of that read as a lost transaction.
+
+The adder now decides finality from the chain's settled history. A transaction is final when its receipt sits in a block at or below the chain's finalized block and that block is the chain's block at that height. That may not be the block the run first saw, since a reorg can include the same transaction again at the same height under a new block hash; the report then records both blocks. A failed read, a node that has no receipt yet, or one answering a different block is read again every 15 seconds for up to 40 minutes instead of becoming a verdict. A transaction that is final and reverted still stops the chain at once. When the wait runs out, the report says for each transaction what is known: included but not yet final, no receipt found (it may still land), or unreadable.
+
+The same run's ops alert was refused by Telegram with HTTP 400, and the report carried only the status code. Both sanctions services now record Telegram's own reason, such as "chat not found", so a refused alert names its cause. Refs #2443.

@@ -226,17 +226,29 @@ the installed release).
   `/var/lib/vaipakam-sanctions-delister/last-run.json`, and the journal, with
   one section per chain. Any chain refused, stopped or partly failed, or an
   alert not delivered, fails the unit, so it shows in `systemctl --failed`.
+  An alert Telegram refuses is recorded with Telegram's own reason (for
+  example "chat not found": a wrong `TG_OPS_CHAT_ID`, or a bot that is not a
+  member of that chat).
   For the delister, "partly failed" includes work a chain needed that an
   error put off (no conclusive reading of OFAC's files it needed, such as a
   failed download or two files that disagree, or candidates it could not
   check), reported as NOT DONE; work that waits by design (a
   window, RedStone's answer, the adder recording a newer publication) does
   not fail it.
-- **The adder** marks a chain `applied` only once its transactions are final
-  and still in the blocks they were included in. A chain that stops part-way
-  is `stopped`, and lists each transaction it broadcast as final, included but
-  not final, included and reverted, or broadcast with no receipt (it may still
-  land); check those before acting.
+- **The adder** marks a chain `applied` only once every transaction it sent
+  is final: its receipt is in a block at or below the chain's finalized
+  block, and that is the chain's block at that height. It need not be the
+  block the run first saw: a reorg of the unsafe head can include a
+  transaction again at the same height under a new block hash, and the report
+  then records both blocks. No single read decides. A failed RPC read, a node
+  with no receipt yet, or one answering a different block at that height is
+  read again every 15 seconds, for up to 40 minutes. A chain that stops
+  part-way is `stopped`, and lists each transaction it broadcast as final,
+  included but not final, included and reverted, no receipt found when last
+  read (reorganized out or dropped; it may still land), receipt unreadable
+  (unknown), or broadcast with no receipt (it may still land); check those
+  before acting. Every run rebuilds from the list at the finalized block, so
+  the next run follows whatever really happened.
 - **The delister** lists each transaction it sent as included, reverted,
   refused by the node (not broadcast), failed (not sent), or broadcast with
   its outcome unknown, and every pending proposal's state. "Refused" needs

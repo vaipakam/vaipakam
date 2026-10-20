@@ -18,8 +18,9 @@
  *      list at the finalized block, builds the update in ADDER-ONLY mode
  *      (every addition, in batches, and for a new publication its delistings
  *      DECLARED outstanding on-chain but not applied), simulates and sends
- *      each call, then waits for the last to be final and every one still
- *      in its block — only then is that chain "applied";
+ *      each call, then waits until every one is final in the chain's
+ *      settled history (see {@link awaitFinality}) — only then is that chain
+ *      "applied";
  *   4. reports once: the journal always, the ops Telegram chat when
  *      configured, and last-run.json, with one section per chain and whether
  *      the alert was delivered. A chain that stops part-way names what it
@@ -54,7 +55,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getAddress } from 'viem';
+import { BaseError, TransactionReceiptNotFoundError, getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { isEntryPoint } from './entry-point.mjs';
 import {
@@ -85,8 +86,11 @@ import {
 
 export const DEFAULT_KEEP_FILES = 14;
 
-/** How long a run waits for its last transaction to become final. */
+/** How long a run waits for its transactions to become final. */
 export const FINALITY_TIMEOUT_MS = 40 * 60_000;
+
+/** How often it reads the chain again while it waits. */
+export const FINALITY_POLL_MS = 15_000;
 
 /** Download (via `fetchSource`), parse and keep one publication. */
 export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAULT_KEEP_FILES }) {
@@ -115,19 +119,23 @@ export async function loadPublication({ fetchSource, stateDir, keepFiles = DEFAU
  *                     the node accepted it) is still reported by hash; returns
  *                     { hash, blockNumber, blockHash }
  *   confirmFinal(entries)
- *                   → waits until every included call is FINAL and still in
- *                     the block it was included in; throws otherwise
+ *                   → waits until every included call is FINAL and returns,
+ *                     per entry, what it established ({@link awaitFinality}'s
+ *                     outcomes); throws otherwise, with `outcomes` on the
+ *                     error saying what is known of each
  *
  * `progress` (an array the caller passes in and keeps) receives one entry per
  * call before it is broadcast, and each entry's `state` moves from
- * `submitted` (signed, broadcast attempted) to `included` to `final`. The caller reads it after a failure, so a chain that
- * stops part-way says what it already sent and what may still land, rather
- * than reporting a refusal as if nothing had happened.
+ * `submitted` (signed, broadcast attempted) to `included` to `final`, or to
+ * whatever the finality check could establish instead. The caller reads it
+ * after a failure, so a chain that stops part-way says what it already sent
+ * and what may still land, rather than reporting a refusal as if nothing had
+ * happened. The chain is `applied` only when every entry is `final`.
  *
  * Returns the chain's report; throws on any refusal, before anything is sent
  * if the refusal is the tool's.
  */
-export async function runChain({ publication, readCurrent, latestVersion, roles, send, confirmFinal = async () => {}, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
+export async function runChain({ publication, readCurrent, latestVersion, roles, send, confirmFinal, progress = [], maxRemove = DEFAULT_MAX_REMOVE, abi = sanctionsListAbi() }) {
   const { parsed, sourceHash } = publication;
   const current = await readCurrent();
   // The update is computed from the finalized state and sent at the latest
@@ -179,8 +187,16 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
     Object.assign(entry, { tx: included.hash, blockNumber: included.blockNumber?.toString(), blockHash: included.blockHash, state: 'included' });
   }
   if (progress.length) {
-    await confirmFinal(progress);
-    for (const entry of progress) entry.state = 'final';
+    let outcomes;
+    try {
+      outcomes = await confirmFinal(progress);
+    } catch (e) {
+      settleEntries(progress, e?.outcomes);
+      throw e;
+    }
+    settleEntries(progress, outcomes);
+    const open = progress.filter((e) => e.state !== 'final');
+    if (open.length) throw new Error(`${open.length} transaction(s) were not confirmed final: ${open.map((e) => e.tx).join(', ')}`);
   }
   const last = update.calls[update.calls.length - 1];
   return {
@@ -195,6 +211,112 @@ export async function runChain({ publication, readCurrent, latestVersion, roles,
     pendingDelistings: last ? last.delistingsLeft : Number(current.recordedPendingDelistings),
     delistingsForRemover: update.withheldRemovals,
   };
+}
+
+/**
+ * Record on each sent entry what the finality check established. A
+ * transaction final in a different block from the one it was first seen in
+ * (a reorg included it again) names the block it is final in, and keeps the
+ * first under `firstIncludedIn`, so the report shows both.
+ */
+function settleEntries(entries, outcomes = []) {
+  entries.forEach((entry, i) => {
+    const o = outcomes[i];
+    if (!o) return;
+    entry.state = o.state;
+    if (o.blockHash && o.blockHash !== entry.blockHash) {
+      entry.firstIncludedIn ??= { blockNumber: entry.blockNumber, blockHash: entry.blockHash };
+      Object.assign(entry, { blockNumber: o.blockNumber.toString(), blockHash: o.blockHash });
+    }
+  });
+}
+
+/** Whether a failed receipt read is the node's answer that it has none. */
+const receiptNotFound = (e) => e instanceof TransactionReceiptNotFoundError || (e instanceof BaseError && Boolean(e.walk((x) => x instanceof TransactionReceiptNotFoundError)));
+
+/** What each not-yet-final outcome means, for the error a timeout throws. */
+const NOT_FINAL = {
+  included: (o) => `is in block ${o.blockNumber}, not yet shown final`,
+  unseen: () => 'has no receipt (reorganized out or dropped, or a node that has not seen it); it may still land',
+  unread: () => 'could not be read (RPC error), so its state is unknown',
+};
+
+/** One read of the chain: the finalized head, then every transaction not
+ *  already final. Finality does not reverse, so a final one is not read
+ *  again, and a later answer from a lagging node cannot unsettle it. */
+async function readFinality(client, hashes, known) {
+  const head = await client.getBlock({ blockTag: 'finalized' }).then((b) => b.number, () => null);
+  const outcomes = await Promise.all(
+    hashes.map(async (hash, i) => {
+      if (known[i]?.state === 'final') return known[i];
+      let receipt;
+      try {
+        receipt = await client.getTransactionReceipt({ hash });
+      } catch (e) {
+        return { state: receiptNotFound(e) ? 'unseen' : 'unread' };
+      }
+      const at = { blockNumber: receipt.blockNumber, blockHash: receipt.blockHash };
+      if (head === null || receipt.blockNumber > head) return { state: 'included', ...at };
+      const canonical = await client.getBlock({ blockNumber: receipt.blockNumber }).then((b) => b.hash, () => null);
+      if (!canonical || canonical.toLowerCase() !== String(receipt.blockHash).toLowerCase()) return { state: 'included', ...at };
+      return { state: receipt.status === 'success' ? 'final' : 'reverted', ...at };
+    }),
+  );
+  return { head, outcomes };
+}
+
+/**
+ * Wait until every transaction in `hashes` is FINAL on `client`'s chain, and
+ * return, per transaction, `{ state: 'final', blockNumber, blockHash }`: the
+ * block it is final in.
+ *
+ * Finality is read from the chain's settled history, never from the block a
+ * transaction was first seen in. A reorg of the unsafe head (an OP-stack
+ * sequencer re-deriving from L1, say) can replace that block with one of the
+ * same height and a different hash that holds the same transaction, which is
+ * then final in the new block; the result names that block.
+ *
+ * No single read decides. Each poll reads the finalized head and every
+ * receipt not yet final. A transaction is final when its receipt is in a
+ * block at or below that head AND the chain's block at that height carries
+ * the receipt's block hash. Anything short of that — a read that failed, a
+ * receipt not found, one above the head, a block hash that does not match —
+ * is "not yet", and the next poll reads again: behind a load-balanced RPC a
+ * lagging node can give any of those answers for a transaction that is in
+ * fact final, and one a reorg really dropped can be included again from the
+ * pool. Each outcome's `state` is one of:
+ *   final    — final, and it succeeded;
+ *   reverted — final, and it reverted (it listed nothing);
+ *   included — a receipt was read, not yet shown final;
+ *   unseen   — the node answered that it has no receipt;
+ *   unread   — the receipt could not be read at all.
+ *
+ * Throws, with `outcomes` on the error saying what the last poll established
+ * for each: at once when a transaction is final and REVERTED, the one
+ * conclusive failure; otherwise at the deadline, when any is still not final.
+ * A verdict here shapes the run's report and nothing else: every run computes
+ * its update from the list at the finalized block, and the list applies an
+ * update only to the version it was computed against, so the next run
+ * follows whatever really happened.
+ */
+export async function awaitFinality({ client, hashes, timeoutMs = FINALITY_TIMEOUT_MS, pollMs = FINALITY_POLL_MS, now = Date.now, wait = sleep }) {
+  const deadline = now() + timeoutMs;
+  let outcomes = [];
+  for (;;) {
+    const poll = await readFinality(client, hashes, outcomes);
+    ({ outcomes } = poll);
+    const reverted = outcomes.findIndex((o) => o.state === 'reverted');
+    if (reverted >= 0) {
+      throw Object.assign(new Error(`${hashes[reverted]} is final in block ${outcomes[reverted].blockNumber} and REVERTED`), { outcomes });
+    }
+    if (outcomes.every((o) => o.state === 'final')) return outcomes;
+    if (now() >= deadline) {
+      const head = poll.head === null ? 'the finalized block could not be read' : `finalized block ${poll.head}`;
+      const open = hashes.flatMap((h, i) => (outcomes[i].state === 'final' ? [] : [`${h} ${NOT_FINAL[outcomes[i].state](outcomes[i])}`]));
+      throw Object.assign(new Error(`not final after ${timeoutMs / 60_000} minutes (${head}): ${open.join('; ')}`), { outcomes });
+    }
+    await wait(pollMs);
+  }
 }
 
 /**
@@ -260,7 +382,14 @@ export function failureReport(reason, progress) {
 /** The lines a person reads for one chain that did not complete. */
 export function summarizeFailure(report) {
   if (report.status === 'refused') return `REFUSED, nothing sent: ${report.error}`;
-  const word = { final: 'final', included: 'included, NOT yet final', reverted: 'included but REVERTED — it listed nothing', submitted: 'signed and broadcast attempted, no receipt seen — it may still land' };
+  const word = {
+    final: 'final',
+    included: 'included, NOT yet final',
+    reverted: 'included but REVERTED — it listed nothing',
+    submitted: 'signed and broadcast attempted, no receipt seen — it may still land',
+    unseen: 'was included, but NO receipt was found when last read — reorganized out or dropped; it may still land',
+    unread: 'was included, but its receipt could NOT be read when last checked (RPC errors) — whether it is final is unknown',
+  };
   const lines = [`STOPPED after broadcasting ${report.sent.length} transaction(s); later calls were not sent. ${report.error}`];
   for (const e of report.sent) lines.push(`  applyUpdate at version ${e.expectedVersion} (+${e.add.length}): ${e.tx} — ${word[e.state] ?? e.state}`);
   lines.push('  Check these on-chain before the next run; it rebuilds from the finalized list either way.');
@@ -274,6 +403,8 @@ export function summarizeChain(c, sourceFile) {
   const lines = [];
   if (c.status === 'applied') {
     lines.push(`listed ${c.added.length} new address(es) in ${c.sent.length} transaction(s), all final: ${c.sent.map((e) => e.tx).join(', ')}.`);
+    const moved = c.sent.filter((e) => e.firstIncludedIn);
+    if (moved.length) lines.push(`${moved.length} of them became final in a different block from the one the run first saw (a reorg included it again); last-run.json records both blocks.`);
   } else lines.push(c.pendingAdditions > 0 ? 'nothing left to list from this publication; nothing sent.' : 'already follows this publication; nothing sent.');
   if (c.pendingAdditions > 0) {
     // After this run sent every missing address, a non-zero count means the
@@ -375,25 +506,8 @@ function chainEffects(c, account, abi) {
       console.log(`${c.name}: ${label}: +${call.add.length}, included in ${included.hash} (block ${included.blockNumber})`);
       return included;
     },
-    // "Applied" means final: wait for the finalized block to pass the last
-    // inclusion, then check every transaction is still in the block it was
-    // included in. A reorg that dropped one stops the chain as such.
-    confirmFinal: async (entries) => {
-      const highest = entries.reduce((m, e) => (BigInt(e.blockNumber) > m ? BigInt(e.blockNumber) : m), 0n);
-      const deadline = Date.now() + FINALITY_TIMEOUT_MS;
-      for (;;) {
-        const finalized = await client.getBlock({ blockTag: 'finalized' });
-        if (finalized.number >= highest) break;
-        if (Date.now() > deadline) throw new Error(`not final after ${FINALITY_TIMEOUT_MS / 60_000} minutes (finalized block ${finalized.number}, needed ${highest})`);
-        await sleep(15_000);
-      }
-      for (const e of entries) {
-        const receipt = await client.getTransactionReceipt({ hash: e.tx }).catch(() => null);
-        if (!receipt || receipt.blockHash !== e.blockHash || receipt.status !== 'success') {
-          throw new Error(`${e.tx} is no longer in block ${e.blockNumber} at finality — it was reorganized out`);
-        }
-      }
-    },
+    // "Applied" means final in the chain's settled history (awaitFinality).
+    confirmFinal: (entries) => awaitFinality({ client, hashes: entries.map((e) => e.tx) }),
   };
 }
 
