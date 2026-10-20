@@ -50,6 +50,45 @@ export function assertLoopbackUrl(url: string): void {
   }
 }
 
+/** Where a disposable local node listens, in the one form both anvil and its
+ *  clients read the same way. */
+export interface LocalEndpoint {
+  /** The URL every client uses: the bind address and the port, written out. */
+  url: string;
+  /** The bare IP address anvil binds (`--host` takes an IP, not a hostname). */
+  host: '127.0.0.1' | '::1';
+  port: number;
+}
+
+/**
+ * Read a node URL into the address anvil binds and the URL clients reach it
+ * on, so the two can never disagree (Codex #2604 r6, r8). A URL and anvil read
+ * the same text differently in three ways, and each one used to leave a
+ * healthy node unreachable by its own readiness probe:
+ *
+ *   - IPv6 is bracketed in a URL (`[::1]`) and bare for anvil;
+ *   - `localhost` is a hostname, which anvil refuses, and which a client may
+ *     resolve to either loopback family — so it is pinned to `127.0.0.1`;
+ *   - an omitted port is the scheme's default (80) for a client and 8545 for
+ *     anvil, and `URL` erases an explicitly written default the same way — so
+ *     the port must be written, and not as the default.
+ *
+ * Refuses anything off this machine first ({@link assertLoopbackUrl}).
+ */
+export function localEndpoint(url: string): LocalEndpoint {
+  assertLoopbackUrl(url);
+  const u = new URL(url);
+  if (u.protocol !== 'http:') throw new Error(`anvil-harness: refusing ${url}: a local node is reached over plain http`);
+  if (u.port === '') {
+    throw new Error(
+      `anvil-harness: refusing ${url}: name the node's port explicitly, and not 80 — without one, a client reads port 80 and anvil listens on 8545`,
+    );
+  }
+  const host = u.hostname === '[::1]' || u.hostname === '::1' ? '::1' : '127.0.0.1';
+  const port = Number(u.port);
+  return { url: `http://${host === '::1' ? '[::1]' : host}:${port}`, host, port };
+}
+
 export function anvilControl(url: string): AnvilControl {
   assertLoopbackUrl(url);
   let rpcId = 1;

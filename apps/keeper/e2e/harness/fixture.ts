@@ -79,12 +79,15 @@ export interface KeeperFixture {
 /** Build the chain and publish `.state/` — vitest global setup. */
 export async function prepareFixture(): Promise<void> {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  for (const f of [BUNDLE_PATH, CHAIN_STATE_PATH, FIXTURE_PATH]) fs.rmSync(f, { force: true });
+  // The completion marker goes first, so no interruption can leave it
+  // standing over parts that are already gone.
+  for (const f of [FIXTURE_PATH, BUNDLE_PATH, CHAIN_STATE_PATH]) fs.rmSync(f, { force: true });
   const node = await spawnAnvil({
     url: `http://127.0.0.1:${FIXTURE_PORT}`,
     chainId: DEPLOY_CHAIN_ID,
     dumpStatePath: CHAIN_STATE_PATH,
   });
+  let fixture: KeeperFixture;
   try {
     const log = (l: string) => console.log(l.replace('[e2e]', '[keeper-e2e]'));
     const d = await deployFromSource(node.url, { log });
@@ -99,7 +102,7 @@ export async function prepareFixture(): Promise<void> {
     });
     const rewards = readContractsJson<KeeperRewardsSeed>(REWARDS_OUT);
     const artifact = { ...d.artifact, vpfiToken: rewards.vpfiToken };
-    const fixture: KeeperFixture = {
+    fixture = {
       diamond: d.diamond,
       admin: d.admin,
       adminKey: d.adminKey,
@@ -109,13 +112,15 @@ export async function prepareFixture(): Promise<void> {
       rewards,
     };
     fs.writeFileSync(BUNDLE_PATH, JSON.stringify(bundleWith(artifact), null, 2));
-    // Last: a scenario that finds this file finds a complete fixture.
-    fs.writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2));
   } finally {
     // Exiting is what writes the state dump.
     await node.stop();
   }
   if (!fs.existsSync(CHAIN_STATE_PATH)) throw new Error(`anvil wrote no state dump at ${CHAIN_STATE_PATH}`);
+  // Last, once the node has exited and its dump exists: this file is the
+  // fixture's completion marker, so finding it means every part is in place
+  // (a run interrupted earlier leaves none, and the next run rebuilds).
+  fs.writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2));
 }
 
 /** The fixture global setup published. */

@@ -136,12 +136,15 @@ function seedArtifact(chainId: number, d: FixtureDeployment): void {
 /** Build both chains and publish `.state/mesh/` — the mesh config's global setup. */
 export async function prepareMeshFixture(): Promise<void> {
   fs.mkdirSync(MESH_STATE_DIR, { recursive: true });
-  for (const f of [MESH_BUNDLE_PATH, FIXTURE_PATH, ...Object.values(STATE_PATHS)]) fs.rmSync(f, { force: true });
+  // The completion marker goes first, so no interruption can leave it
+  // standing over parts that are already gone.
+  for (const f of [FIXTURE_PATH, MESH_BUNDLE_PATH, ...Object.values(STATE_PATHS)]) fs.rmSync(f, { force: true });
   // A previous run's artifacts must not be read as this run's.
   fs.rmSync(contractsFile(ARTIFACT_ROOT), { recursive: true, force: true });
 
   const log = (l: string) => console.log(l.replace('[e2e]', '[keeper-e2e mesh]'));
   const nodes: Record<number, SpawnedAnvil> = {};
+  let fixture: MeshFixture;
   try {
     nodes[BASE_ID] = await spawnAnvil({ url: `http://127.0.0.1:${FIXTURE_PORT}`, chainId: DEPLOY_CHAIN_ID, dumpStatePath: STATE_PATHS[BASE_ID] });
     nodes[MIRROR_ID] = await spawnAnvil({ url: `http://127.0.0.1:${FIXTURE_PORT + 1}`, chainId: DEPLOY_CHAIN_ID, dumpStatePath: STATE_PATHS[MIRROR_ID] });
@@ -280,7 +283,7 @@ export async function prepareMeshFixture(): Promise<void> {
         rewards: { interactionLaunchTimestamp: launch },
       };
     };
-    const fixture: MeshFixture = {
+    fixture = {
       base: chainFixture(BASE_ID, base),
       mirror: chainFixture(MIRROR_ID, mirror),
       relayerKey,
@@ -292,8 +295,6 @@ export async function prepareMeshFixture(): Promise<void> {
       MESH_BUNDLE_PATH,
       JSON.stringify(bundleWithChains({ [BASE_ID]: fixture.base.artifact, [MIRROR_ID]: fixture.mirror.artifact }), null, 2),
     );
-    // Last: a scenario that finds this file finds a complete fixture.
-    fs.writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2));
   } finally {
     // Exiting is what writes each state dump.
     await Promise.all(Object.values(nodes).map((n) => n.stop()));
@@ -301,6 +302,10 @@ export async function prepareMeshFixture(): Promise<void> {
   for (const p of Object.values(STATE_PATHS)) {
     if (!fs.existsSync(p)) throw new Error(`anvil wrote no state dump at ${p}`);
   }
+  // Last, once both nodes have exited and both dumps exist: this file is the
+  // fixture's completion marker, so finding it means every part is in place
+  // (a run interrupted earlier leaves none, and the next run rebuilds).
+  fs.writeFileSync(FIXTURE_PATH, JSON.stringify(fixture, null, 2));
 }
 
 /** The fixture global setup published. */

@@ -2,7 +2,7 @@
  * Spawning a local anvil node and knowing whether it is still running.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { anvilControl, assertLoopbackUrl, type AnvilControl } from './rpc';
+import { anvilControl, localEndpoint, type AnvilControl } from './rpc';
 
 /**
  * Has the spawned anvil already exited? (#2019 round 1 P2.)
@@ -42,7 +42,8 @@ export async function assertNothingListening(url: string, what: string): Promise
 }
 
 export interface SpawnAnvilOptions {
-  /** Where it listens, e.g. `http://127.0.0.1:8545`. */
+  /** Where it listens, e.g. `http://127.0.0.1:8545` — a loopback address
+   *  with its port written out (see {@link localEndpoint}). */
   url: string;
   /** The chain id it presents from genesis. */
   chainId: number;
@@ -60,6 +61,8 @@ export interface SpawnAnvilOptions {
 }
 
 export interface SpawnedAnvil {
+  /** Where the node listens, as {@link localEndpoint} wrote it (use this,
+   *  not the option: `localhost` reads as `127.0.0.1` here). */
   readonly url: string;
   readonly child: ChildProcess;
   readonly control: AnvilControl;
@@ -100,14 +103,14 @@ export async function stopAllAnvils(): Promise<void> {
 export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil> {
   // Before anything reaches the URL: the listener probe and the spawn both
   // act on it, and a node started on a non-local address would have no handle.
-  assertLoopbackUrl(opts.url);
-  const endpoint = new URL(opts.url);
-  await assertNothingListening(opts.url, 'anvil');
+  // From here on, the bind address and every client URL come from this one
+  // reading, so anvil and its probe cannot disagree about where it listens.
+  const endpoint = localEndpoint(opts.url);
+  await assertNothingListening(endpoint.url, 'anvil');
   const args = [
     '--chain-id', String(opts.chainId),
-    // `--host` takes a bare IP address; a URL writes IPv6 in brackets.
-    '--host', endpoint.hostname.replace(/^\[(.*)\]$/, '$1'),
-    '--port', endpoint.port || '8545',
+    '--host', endpoint.host,
+    '--port', String(endpoint.port),
     '--gas-limit', String(opts.gasLimit ?? 60_000_000),
   ];
   if (opts.genesisNumber !== undefined) args.push('--number', String(opts.genesisNumber));
@@ -128,7 +131,7 @@ export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil>
   live.add(child);
   exitOf.set(child, exited);
   void exited.then(() => live.delete(child));
-  const control = anvilControl(opts.url);
+  const control = anvilControl(endpoint.url);
   // The readiness wait ends with the race: a child that exits first must not
   // leave the probe loop polling a dead port until its own deadline.
   const waiting = new AbortController();
@@ -147,10 +150,10 @@ export async function spawnAnvil(opts: SpawnAnvilOptions): Promise<SpawnedAnvil>
   }
   if (outcome !== 'ready') {
     const why = launchError ? `could not start (${launchError.message})` : `exited with code ${outcome}`;
-    throw new Error(`anvil ${why} before it was ready at ${opts.url}`);
+    throw new Error(`anvil ${why} before it was ready at ${endpoint.url}`);
   }
   return {
-    url: opts.url,
+    url: endpoint.url,
     child,
     control,
     stop: () => stopChild(child, exited),

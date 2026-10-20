@@ -3,6 +3,10 @@
  * chains and the lane between them once per run (`fixture.ts`). Set
  * `KEEPER_E2E_REUSE_FIXTURE=1` to keep a `.state/mesh/` an earlier run built
  * — an inner-loop convenience only; CI always builds afresh.
+ *
+ * `fixture.json` is the fixture's completion marker: the build writes it last,
+ * after its nodes have exited and every state dump exists, so reuse never
+ * starts from a half-built fixture.
  */
 import fs from 'node:fs';
 import path from 'node:path';
