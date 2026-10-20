@@ -2354,10 +2354,29 @@ RL-3 is live when nothing sweeps.
 **Precondition — the keeper's horizon heartbeat (#2517) must be deployed and
 verified on the chain first.** An entry's executable-time accumulator advances
 only when something touches it (`sweepExpiredInteractionRewards`,
-permissionless); the spec assigns that heartbeat to the platform keeper and no
-production caller exists yet. Armed without it, nothing expires, no final notice
-is filed and the knob reads as live while the path is dark (Codex #2489 r14).
-Arm only after #2517 is running there.
+permissionless), and the spec assigns that heartbeat to the platform keeper.
+Armed without it, nothing expires, no final notice is filed and the knob reads
+as live while the path is dark (Codex #2489 r14).
+
+The heartbeat is the keeper pass `rewardHorizonHeartbeat`, armed by
+`REWARD_HORIZON_HEARTBEAT_ENABLED` (on top of `KEEPER_ENABLED`). It runs
+hourly at :44 and touches every live reward entry about every 12 hours. While
+the knob is dark it only discovers entries (and touches those whose removal has
+begun), so arm it BEFORE this step and let it run. "Verified" means, on that
+chain, from the keeper machine's journal:
+
+1. a `rewardHorizonHeartbeat chain=<id> horizonDays=0 discovered=…` line every
+   hour, with `due` and `read` equal and no `failed` line — the queue is being
+   read in full;
+2. after arming the knob, the next due run shows `touch=N landed=N` with no
+   `reverted`, and the indexer files `RewardEntryHorizonStamped` for the
+   claimable entries it touched;
+3. no `horizon-unlanded` or `horizon-refused` ops alert open for the chain.
+
+A `horizon-paused` alert after arming is not by itself a fault: it names
+entries whose clock did not advance across two landed touches, which is what an
+owner who cannot currently claim (a drought, the pool cap, a sanctions bar)
+looks like. Read it against the claim posture before treating it as one.
 
 **Read back the RL-4 allocation weights — and do it BEFORE Step 4, not here.**
 The register is consulted during armed-day finalization independently of the

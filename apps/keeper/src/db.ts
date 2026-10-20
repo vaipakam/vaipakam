@@ -1326,3 +1326,156 @@ export async function putSanctionsScreenCursor(
     .bind(chainId, diamond.toLowerCase(), cursor.toLowerCase(), Math.floor(Date.now() / 1000))
     .run();
 }
+
+// ─── #2517 — the reward claim-horizon heartbeat's private state ─────────────
+//
+// KEEPER-PRIVATE (apps/keeper/migrations/0005), namespaced by Diamond like the
+// open-work queue: a redeploy restarts entry ids at 1.
+
+/** One queued reward entry, as the heartbeat last left it. */
+export interface HorizonEntryRow {
+  entryId: number;
+  checkedAt: number;
+  touchedAt: number;
+  expiresAt: number;
+  pausedRuns: number;
+  addedAt: number;
+}
+
+/** The first reward-entry id discovery has not yet read (1 when none is recorded). */
+export async function getHorizonCursor(db: KeeperD1, chainId: number, diamond: string): Promise<number> {
+  const row = await db
+    .prepare('SELECT next_entry_id FROM keeper_horizon_cursor WHERE chain_id = ?1 AND diamond = ?2')
+    .bind(chainId, diamond.toLowerCase())
+    .first<{ next_entry_id: number }>();
+  const n = Number(row?.next_entry_id ?? 1);
+  return Number.isSafeInteger(n) && n > 1 ? n : 1;
+}
+
+/** Move discovery forward — never back (`MAX`). */
+export async function putHorizonCursor(db: KeeperD1, chainId: number, diamond: string, nextEntryId: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_horizon_cursor (chain_id, diamond, next_entry_id, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (chain_id, diamond) DO UPDATE SET next_entry_id = MAX(next_entry_id, excluded.next_entry_id), updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, diamond.toLowerCase(), nextEntryId, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** Queue live entries. Idempotent: an entry already queued keeps its row. */
+export async function enqueueHorizonEntries(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[], nowSec: number): Promise<void> {
+  if (entryIds.length === 0) return;
+  await db.batch(
+    entryIds.map((id) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO keeper_horizon_entry (chain_id, diamond, entry_id, checked_at, touched_at, expires_at, paused_runs, added_at)
+           VALUES (?1, ?2, ?3, 0, 0, 0, 0, ?4)`,
+        )
+        .bind(chainId, diamond.toLowerCase(), id, nowSec),
+    ),
+  );
+}
+
+/** The entries due: last finished with at or before `dueBeforeSec`, the
+ *  longest-waiting first, at most `limit`. */
+export async function listDueHorizonEntries(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  dueBeforeSec: number,
+  limit: number,
+): Promise<HorizonEntryRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT entry_id, checked_at, touched_at, expires_at, paused_runs, added_at FROM keeper_horizon_entry
+        WHERE chain_id = ?1 AND diamond = ?2 AND checked_at <= ?3
+        ORDER BY checked_at ASC, entry_id ASC LIMIT ?4`,
+    )
+    .bind(chainId, diamond.toLowerCase(), dueBeforeSec, limit)
+    .all<{ entry_id: number; checked_at: number; touched_at: number; expires_at: number; paused_runs: number; added_at: number }>();
+  return (rows.results ?? []).map((r) => ({
+    entryId: Number(r.entry_id),
+    checkedAt: Number(r.checked_at),
+    touchedAt: Number(r.touched_at),
+    expiresAt: Number(r.expires_at),
+    pausedRuns: Number(r.paused_runs),
+    addedAt: Number(r.added_at),
+  }));
+}
+
+/** How many queued entries are due (the backlog a run did not reach is this
+ *  less what it read). */
+export async function countDueHorizonEntries(db: KeeperD1, chainId: number, diamond: string, dueBeforeSec: number): Promise<number> {
+  const row = await db
+    .prepare('SELECT COUNT(*) AS n FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND checked_at <= ?3')
+    .bind(chainId, diamond.toLowerCase(), dueBeforeSec)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+/** Retire entries — only on an on-chain read showing them settled. */
+export async function finishHorizonEntries(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[]): Promise<void> {
+  if (entryIds.length === 0) return;
+  for (const c of chunkD1InList(entryIds, { before: [chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(`DELETE FROM keeper_horizon_entry WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/** Mark entries finished-with for this heartbeat WITHOUT a touch (nothing was
+ *  due to send for them). */
+export async function checkHorizonEntries(db: KeeperD1, chainId: number, diamond: string, entryIds: readonly number[], nowSec: number): Promise<void> {
+  if (entryIds.length === 0) return;
+  for (const c of chunkD1InList(entryIds, { before: [nowSec, chainId, diamond.toLowerCase()] })) {
+    await db
+      .prepare(`UPDATE keeper_horizon_entry SET checked_at = ? WHERE chain_id = ? AND diamond = ? AND entry_id IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .run();
+  }
+}
+
+/** Record a LANDED touch: the estimate read just before it and the pause count
+ *  it measured, per entry. */
+export async function recordHorizonTouches(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  touches: readonly { entryId: number; expiresAt: number; pausedRuns: number }[],
+  nowSec: number,
+): Promise<void> {
+  if (touches.length === 0) return;
+  await db.batch(
+    touches.map((t) =>
+      db
+        .prepare(
+          `UPDATE keeper_horizon_entry SET checked_at = ?1, touched_at = ?1, expires_at = ?2, paused_runs = ?3
+            WHERE chain_id = ?4 AND diamond = ?5 AND entry_id = ?6`,
+        )
+        .bind(nowSec, t.expiresAt, t.pausedRuns, chainId, diamond.toLowerCase(), t.entryId),
+    ),
+  );
+}
+
+/** Queued entries whose clock did not advance across at least `minRuns`
+ *  consecutive landed touches, lowest id first, at most `limit`, with the total. */
+export async function listPausedHorizonEntries(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  minRuns: number,
+  limit: number,
+): Promise<{ ids: number[]; total: number }> {
+  const total = await db
+    .prepare('SELECT COUNT(*) AS n FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND paused_runs >= ?3')
+    .bind(chainId, diamond.toLowerCase(), minRuns)
+    .first<{ n: number }>();
+  const rows = await db
+    .prepare('SELECT entry_id FROM keeper_horizon_entry WHERE chain_id = ?1 AND diamond = ?2 AND paused_runs >= ?3 ORDER BY entry_id LIMIT ?4')
+    .bind(chainId, diamond.toLowerCase(), minRuns, limit)
+    .all<{ entry_id: number }>();
+  return { ids: (rows.results ?? []).map((r) => Number(r.entry_id)), total: Number(total?.n ?? 0) };
+}

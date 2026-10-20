@@ -6,7 +6,7 @@
  * ways to come apart quietly, and each cell below closes one:
  *
  *   1. The private schema drifts from the stated set — a table added to the
- *      keeper's migrations that something else reads, or one of the thirteen left
+ *      keeper's migrations that something else reads, or one of the fifteen left
  *      behind. The set is stated HERE, once, and compared to what the keeper's
  *      migrations actually create.
  *   2. A NEW shared (indexer) migration creates, alters or writes one of these
@@ -43,6 +43,8 @@ const EXPECTED_PRIVATE = [
   'keeper_cutover',
   'keeper_cutover_row',
   'keeper_deployment',
+  'keeper_horizon_cursor',
+  'keeper_horizon_entry',
   'keeper_ops_alert',
   'keeper_remit_ack',
   'keeper_remit_ack_frontier',
@@ -64,7 +66,7 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
 ]);
 
 describe("the keeper's private database", () => {
-  it('its migrations create exactly the thirteen keeper-private tables', () => {
+  it('its migrations create exactly the fifteen keeper-private tables', () => {
     expect([...KEEPER_PRIVATE_TABLES].sort()).toEqual(EXPECTED_PRIVATE);
   });
 
