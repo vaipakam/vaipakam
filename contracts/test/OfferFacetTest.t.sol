@@ -9,6 +9,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -132,7 +133,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -151,6 +152,13 @@ contract OfferFacetTest is Test {
             facetAddress: address(new OfferAcceptFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferAcceptFeeFacetSelectors()
+        });
+        // #2440 — that charge moves the treasury's cut through a self-call into
+        // the treasury fee host, so it needs its cut too.
+        cuts[13] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),

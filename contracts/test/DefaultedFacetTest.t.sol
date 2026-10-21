@@ -56,6 +56,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -220,7 +221,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -363,6 +364,16 @@ contract DefaultedFacetTest is Test {
             facetAddress: address(new SwapAttemptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
+        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
+        // fee into the treasury by a self-call into TreasuryFeeFacet. A
+        // hand-built Diamond that cuts any of them must cut this host too, or
+        // the fee reverts FunctionDoesNotExist at that self-call.
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

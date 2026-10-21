@@ -105,6 +105,14 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("SwapAttemptFacet", FacetSelectors.swapAttempt());
     }
 
+    /// @dev #2440 - every fee-charging facet self-calls this host for a fee
+    ///      into the treasury, so both curated scripts refresh it with them.
+    ///      Pinned for the same reason as the swap-attempt host: an unrouted
+    ///      selector here fails a live repayment or default, not a compile.
+    function test_TreasuryFeeSelectors_MatchCompiledAbi() public view {
+        _assertParity("TreasuryFeeFacet", FacetSelectors.treasuryFee());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

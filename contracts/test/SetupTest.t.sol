@@ -163,6 +163,7 @@ import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -372,6 +373,7 @@ contract SetupTest is Test {
     OfferMatchIntentFacet offerMatchIntentFacet;
     FallbackCustodyFacet fallbackCustodyFacet;
     SwapAttemptFacet swapAttemptFacet;
+    TreasuryFeeFacet treasuryFeeFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -510,6 +512,7 @@ contract SetupTest is Test {
         offerMatchIntentFacet = new OfferMatchIntentFacet();
         fallbackCustodyFacet = new FallbackCustodyFacet();
         swapAttemptFacet = new SwapAttemptFacet();
+        treasuryFeeFacet = new TreasuryFeeFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -542,7 +545,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](96);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](97);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -920,6 +923,12 @@ contract SetupTest is Test {
             facetAddress: address(swapAttemptFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - the treasury fee host every fee-charging facet self-calls.
+        cuts[96] = IDiamondCut.FacetCut({
+            facetAddress: address(treasuryFeeFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

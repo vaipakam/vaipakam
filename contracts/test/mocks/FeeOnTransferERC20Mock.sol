@@ -13,6 +13,12 @@ import {ERC20Mock} from "./ERC20Mock.sol";
 contract FeeOnTransferERC20Mock is ERC20Mock {
     uint256 public feeBps;
 
+    /// @notice When set, only transfers OUT of this address are charged, so a
+    ///         test can make one leg of a flow short (a vault withdrawal)
+    ///         while every later leg delivers in full. Zero charges every
+    ///         transfer.
+    address public chargedSender;
+
     constructor(string memory name, string memory symbol, uint8 decimals_)
         ERC20Mock(name, symbol, decimals_)
     {}
@@ -21,8 +27,15 @@ contract FeeOnTransferERC20Mock is ERC20Mock {
         feeBps = v;
     }
 
+    function setChargedSender(address v) external {
+        chargedSender = v;
+    }
+
     function _update(address from, address to, uint256 value) internal override {
-        if (from == address(0) || to == address(0) || feeBps == 0) {
+        if (
+            from == address(0) || to == address(0) || feeBps == 0
+                || (chargedSender != address(0) && from != chargedSender)
+        ) {
             super._update(from, to, value);
             return;
         }

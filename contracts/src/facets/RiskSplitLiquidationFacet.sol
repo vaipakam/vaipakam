@@ -184,11 +184,15 @@ contract RiskSplitLiquidationFacet is
         // P1) — move-out-exempt so a borrower flagged after init doesn't brick
         // the split liquidation (collateral pushed OUT to the already-screened
         // swap recipients).
-        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+        // #2440 — a forced close-out acts on what arrived: the loan's collateral
+        // becomes what reached the Diamond, and the split must sum to that
+        // figure. A short delivery is never made up from the Diamond's other
+        // balance; splits sized for the requested amount then revert on the
+        // sum check, and the single-route liquidation sells what arrived.
+        loan.collateralAmount = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(),
             loan.borrower,
             loan.collateralAsset,
-            address(this),
             loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
@@ -298,7 +302,8 @@ contract RiskSplitLiquidationFacet is
         // #821 — vault-lock the lender's share through the receive-side exemption
         // so a flagged stored lender doesn't brick the liquidation; the proceeds
         // park locked behind the claim-side freeze (self-guards a zero amount).
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim names what the vault received.
+        lenderProceeds = LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
         // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
@@ -320,7 +325,8 @@ contract RiskSplitLiquidationFacet is
             );
         }
         if (borrowerSurplus > 0) {
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim names what the vault received.
+            borrowerSurplus = LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are

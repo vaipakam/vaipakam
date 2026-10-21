@@ -197,8 +197,6 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             }
         }
 
-        address treasury = LibFacet.getTreasury();
-
         // #569 D-1 (2026-06-13) — NFT rentals carry no collateral lien
         // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
         // has no side-door drain to protect against). No decrement here.
@@ -233,19 +231,9 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
 
         // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
-        // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op, so
-        // this stays unconditional as before.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.prepayAsset,
-                treasury,
-                treasuryShare
-            ),
-            TreasuryTransferFailed.selector
-        );
-        LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
+        // VPFI-payment path; the fee leg skips a zero amount. #2440 — the
+        // treasury accrues what reached it.
+        LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryShare);
 
         // Pass-2 D1 (#1188) — do NOT decrement `durationDays`. The term tuple
         // (`startTime + durationDays`) is the FIXED maturity every default/
@@ -606,15 +594,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         _decrementLienAtPeriodicAutoLiq(loanId, toSell);
 
         // Withdraw collateral to Diamond for swap (mirrors the HF-
-        // liquidation withdraw shape).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                toSell
-            ),
+        // liquidation withdraw shape). #2440 — a forced close-out acts on
+        // what arrived: the vault gives up the whole slice (its tracked
+        // balance and the loan's collateral fall by `toSell`), and the quote
+        // and the sale use what reached the Diamond, so a short delivery is
+        // never made up from the Diamond's other balance.
+        uint256 sliceReceived = LibFacet.vaultWithdrawDelivered(
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            toSell,
             VaultWithdrawFailed.selector
         );
         // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
@@ -631,7 +620,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             address(this),
             loan.collateralAsset,
             loan.principalAsset,
-            toSell
+            sliceReceived
         );
         uint256 minOutput = (expectedProceeds *
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
@@ -641,7 +630,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             loanId,
             loan.collateralAsset,
             loan.principalAsset,
-            toSell,
+            sliceReceived,
             minOutput,
             address(this),
             adapterCalls

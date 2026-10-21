@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -71,7 +72,8 @@ library LibCloseoutFreeze {
         LibVaipakam.Loan storage loan,
         uint256 lenderDue
     ) internal {
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim and the reservation name what the vault received.
+        lenderDue = LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderDue
         );
         // #998 S10 (#1006) — freeze the lender payout fail-closed if the CURRENT
@@ -132,7 +134,8 @@ library LibCloseoutFreeze {
             IERC20(loan.principalAsset).safeTransfer(currentHolder, surplus);
             return;
         }
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim and the reservation name what the vault received.
+        surplus = LibSanctionedLock.depositLocked(
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
         // #998 S10 (#1006) — the surplus is frozen precisely because
@@ -257,7 +260,8 @@ library LibCloseoutFreeze {
             }
             return;
         }
-        LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
+        // #2440 — park what the vault received.
+        amount = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }
 
@@ -278,8 +282,9 @@ library LibCloseoutFreeze {
         if (amount == 0) return;
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // slither-disable-next-line arbitrary-send-erc20
-            IERC20(asset).safeTransferFrom(payer, lenderRecipient, amount);
+            // #1281-011 — the lender is recorded as paid through now, so the
+            // payment must have arrived in full; a short arrival is refused.
+            LibDelivery.pullExact(asset, payer, lenderRecipient, amount);
             // #1503 item 28 (Codex #1801 r4 P1) — DELIVERED, so the seller is
             // paid through NOW. Unlike the resident-payout helper this one needs
             // no boundary parameter: every caller pays interest accrued to the
@@ -333,7 +338,8 @@ library LibCloseoutFreeze {
             }
             return;
         }
-        LibSanctionedLock.depositLockedFromVault(
+        // #2440 — park what the stored lender's vault received.
+        amount = LibSanctionedLock.depositLockedFromVault(
             s, fromUser, loan.lender, loanId, asset, amount
         );
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);

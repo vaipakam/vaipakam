@@ -319,6 +319,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      write each field as computed (never all six live on the stack at
     ///      once), which freed the headroom the consolidation + restamp hooks
     ///      need. 2-way leaves `movedZ`/`incentiveZ` zero.
+    ///      #2440 — `paid*` is the principal a leg actually settled: what the
+    ///      receiving lender's vault received plus the matcher incentive. It
+    ///      equals `moved*` unless the collateral delivered less than it sent,
+    ///      and the difference then stays owed by that loan's borrower (lender
+    ///      first) instead of being counted as paid.
     struct MatchResult {
         uint256 movedX;
         uint256 movedY;
@@ -326,6 +331,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 incentiveX;
         uint256 incentiveY;
         uint256 incentiveZ;
+        uint256 paidX;
+        uint256 paidY;
+        uint256 paidZ;
     }
 
     /// @dev #691 / #658 — single-copy cross-facet bridges to the eager
@@ -442,21 +450,22 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // Leg Y consumes C's, Leg Z consumes A's.
         _consumeLeg(loanIdB, r.movedX, r.incentiveX, la.lender, matcher);
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
+        r.paidX = _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
         _consumeLeg(loanIdC, r.movedY, r.incentiveY, lb.lender, matcher);
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(loanIdB, lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
+        r.paidY = _settleLeg(loanIdB, lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
         _consumeLeg(loanIdA, r.movedZ, r.incentiveZ, lc.lender, matcher);
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(loanIdC, la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher);
+        r.paidZ = _settleLeg(loanIdC, la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher);
 
-        // State updates — each loan's principal cleared by its leg,
-        // each borrower's collateral debited by the NEXT loan's leg.
-        la.principal -= r.movedX;
+        // State updates — each loan's principal cleared by what its leg
+        // paid (#2440), each borrower's collateral debited by the NEXT
+        // loan's leg (the whole moved amount left that vault).
+        la.principal -= r.paidX;
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.movedY;
+        lb.principal -= r.paidY;
         lc.collateralAmount -= r.movedY;
-        lc.principal -= r.movedZ;
+        lc.principal -= r.paidZ;
         la.collateralAmount -= r.movedZ;
 
         // EC-003 Phase 1 — collateral consumed per leg:
@@ -467,9 +476,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // is consumed by the NEXT leg, but its OWN lender is paid by its own
         // leg). A.lender ← Leg X (movedX − incentiveX); B.lender ← Leg Y;
         // C.lender ← Leg Z.
-        _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.movedX, r.movedX - r.incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY, r.movedY - r.incentiveY);
-        _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.movedZ, r.movedZ - r.incentiveZ);
+        _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.paidX, r.paidX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.paidY, r.paidY - r.incentiveY);
+        _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.paidZ, r.paidZ - r.incentiveZ);
 
         // #691 / #658 — each leg's collateral was withdrawn for the swap;
         // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
@@ -555,6 +564,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      (row moves + lien decrement), so the withdraw guard sees the
     ///      reduced lien. `loanId` here is the RECEIVING loan; it only keys
     ///      the receiving vault's sanctions-lock event.
+    ///      #2440 — returns the principal the leg paid: what the receiving
+    ///      lender's vault received (measured by the withdraw, and the only
+    ///      figure recorded under that lender) plus the incentive. A
+    ///      collateral that delivers less than it sends makes it smaller
+    ///      than `moved`; the caller clears only this much debt.
     /// @param matcher Beneficiary of the 1% per-leg incentive. The
     ///        caller MUST pass the genuine matcher explicitly — NOT
     ///        rely on `msg.sender`. On the auto-dispatch path the
@@ -571,8 +585,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 moved,
         uint256 incentive,
         address matcher
-    ) private {
-        if (moved == 0) return;
+    ) private returns (uint256 paid) {
+        if (moved == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderShare = moved - incentive;
         // #821 (Codex #832 P1) — resolve the receiving (stored) lender's vault
@@ -590,13 +604,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // (collateral pushed OUT to the already-screened lender / matcher).
         LibSanctionedLock.beginMoveOut(s, payingBorrower);
         if (lenderShare > 0) {
-            VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+            lenderShare = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
                 payingBorrower, asset, lenderVault, lenderShare
             );
             VaultFactoryFacet(address(this)).recordVaultDepositERC20(
                 receivingLender, asset, lenderShare
             );
         }
+        paid = lenderShare + incentive;
         if (incentive > 0) {
             // #21 matcher-recipient fix: pay the incentive to `matcher`
             // (never `msg.sender` — see the @param note).
@@ -679,17 +694,20 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // (`movedY`).
         _consumeLeg(loanIdB, r.movedX, r.incentiveX, la.lender, matcher);
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
+        r.paidX = _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher);
         _consumeLeg(loanIdA, r.movedY, r.incentiveY, lb.lender, matcher);
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(loanIdB, la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
+        r.paidY = _settleLeg(loanIdB, la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher);
 
-        // State updates — debt cleared by the gross moved amount
+        // State updates — debt cleared by the gross amount the leg paid
         // (borrower forfeits the full amount; the incentive % they
         // "would have paid the lender" is reallocated to the matcher).
-        la.principal -= r.movedX;
+        // #2440 — `paid*` is `moved*` less any delivery shortfall, which
+        // stays owed; each borrower's collateral falls by the whole amount
+        // that left their vault.
+        la.principal -= r.paidX;
         lb.collateralAmount -= r.movedX;
-        lb.principal -= r.movedY;
+        lb.principal -= r.paidY;
         la.collateralAmount -= r.movedY;
 
         // Status transitions + snapshot scaling. Full match → loan
@@ -701,8 +719,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // #585 — lender proceeds per leg (asymmetric, as in the 3-way case):
         // la's collateral is consumed by Leg Y (movedY), but A.lender is paid
         // by Leg X (movedX − incentiveX); symmetrically for lb.
-        _settleFallbackOrTransitionPostMatch(la, r.movedY, r.movedX, r.movedX - r.incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY, r.movedY - r.incentiveY);
+        _settleFallbackOrTransitionPostMatch(la, r.movedY, r.paidX, r.paidX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.paidY, r.paidY - r.incentiveY);
 
         // #691 / #658 — both legs' collateral was withdrawn for the swap;
         // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed

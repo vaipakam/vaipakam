@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -278,7 +279,9 @@ contract BackstopFacet is
         address proxy = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             vault
         );
-        IERC20(lend).safeTransfer(proxy, amount);
+        // #2440 — the tracked balance, the intent lien and the event record
+        // what the backstop vault received (the treasury gave up `amount`).
+        amount = LibDelivery.pushMeasured(lend, proxy, amount);
         LibVaipakam.recordVaultDeposit(vault, lend, amount);
         LibEncumbrance.lienIntentCapital(vault, lend, coll, amount);
         // #625 WI-2a — the backstop seeds intent capital DIRECTLY (not via
@@ -695,7 +698,9 @@ contract BackstopFacet is
         address proxy = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             vault
         );
-        IERC20(principal).safeTransfer(proxy, amount);
+        // #2440 — the tracked balance, the absorb bucket and the event record
+        // what the backstop vault received (the treasury gave up `amount`).
+        amount = LibDelivery.pushMeasured(principal, proxy, amount);
         // Record the tracked deposit but DO NOT lien — this is free absorb cash,
         // not intent capital.
         LibVaipakam.recordVaultDeposit(vault, principal, amount);

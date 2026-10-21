@@ -9,6 +9,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -248,14 +249,13 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // here so a full release would leave the residual collateral
         // unprotected from other ERC20 withdraw surfaces.
         _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                collateralSwapAmount
-            ),
+        // #2440 — the borrower chose this repayment, so a short arrival is
+        // refused: the sale never spends the Diamond's other balance.
+        LibFacet.vaultWithdrawExact(
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            collateralSwapAmount,
             VaultWithdrawFailed.selector
         );
 
@@ -274,9 +274,16 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // Refund partial-fill leftover collateral to borrower vault.
         uint256 partialFillRefund = collateralSwapAmount - actualCollateralConsumed;
         if (partialFillRefund > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(
-                LibFacet.getOrCreateVault(loan.borrower),
-                partialFillRefund
+            // #2440 — refused unless the vault got all of it back, so the
+            // re-lien and the loan's collateral match what the vault holds.
+            LibDelivery.requireFull(
+                loan.collateralAsset,
+                partialFillRefund,
+                LibDelivery.pushMeasured(
+                    loan.collateralAsset,
+                    LibFacet.getOrCreateVault(loan.borrower),
+                    partialFillRefund
+                )
             );
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,

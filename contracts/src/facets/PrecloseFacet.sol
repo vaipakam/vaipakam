@@ -333,14 +333,8 @@ contract PrecloseFacet is
             }
 
             // Treasury fee transferred immediately (skipped when satisfied in VPFI).
-            if (plan.treasuryShare > 0) {
-                IERC20(loan.principalAsset).safeTransferFrom(
-                    msg.sender,
-                    LibFacet.getTreasury(),
-                    plan.treasuryShare
-                );
-                LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-            }
+            // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
 
             // T-037 — Lender's due: direct borrower → lender's vault.
             // Routed through the cross-payer chokepoint variant so the
@@ -510,19 +504,8 @@ contract PrecloseFacet is
             // (worse) letting a transferred-away borrower redirect the prepay
             // out of someone else's vault. The fee belongs to the prepay, so
             // it must come from where the prepay lives.
-            if (treasuryFee > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.borrower,
-                        loan.prepayAsset,
-                        LibFacet.getTreasury(),
-                        treasuryFee
-                    ),
-                    IVaipakamErrors.TreasuryTransferFailed.selector
-                );
-                LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
-            }
+            // #2440 — the treasury accrues what reached it.
+            LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryFee);
 
             // T-037 — vault → vault direct, no Diamond intermediate.
             // `vaultWithdrawERC20` accepts an arbitrary recipient
@@ -539,17 +522,19 @@ contract PrecloseFacet is
             // to the PrecloseFacet-split follow-up (#1124); the S10 markers here
             // protect the transferred-flagged-holder case, which resolves a clean
             // stored `loan.lender` and succeeds.
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    loan.prepayAsset,
-                    lenderVault,
-                    lenderShare
-                ),
+            // #2440 — a voluntary close: refused unless the lender's vault
+            // received the whole share, and the credit is recorded under
+            // `loan.lender`, whose vault the claim below is paid from. (Before
+            // #2440 the share reached the vault untracked, so the lender's
+            // claim withdraw underflowed the tracked balance it debits.)
+            LibFacet.vaultWithdrawExact(
+                loan.borrower,
+                loan.prepayAsset,
+                LibFacet.getOrCreateVault(loan.lender),
+                lenderShare,
                 IVaipakamErrors.VaultWithdrawFailed.selector
             );
+            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, lenderShare);
 
             // Record lender's claimable (rental fees in prepayAsset)
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -904,14 +889,8 @@ contract PrecloseFacet is
         uint256 lenderShare = accruedInterest - treasuryFee + shortfall;
 
         address payAsset = _paymentAsset(loan);
-        if (treasuryFee > 0) {
-            IERC20(payAsset).safeTransferFrom(
-                msg.sender,
-                LibFacet.getTreasury(),
-                treasuryFee
-            );
-            LibFacet.recordTreasuryAccrual(payAsset, treasuryFee);
-        }
+        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
+        LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee);
         if (lenderShare > 0) {
             // T-037 — direct borrower → lender's vault via the cross-payer
             // chokepoint. Counter ticks up under the lender even though the
@@ -1064,19 +1043,8 @@ contract PrecloseFacet is
                     ),
                     bytes4(0)
                 );
-                if (rentTreasury > 0) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC20.selector,
-                            loan.borrower,
-                            loan.prepayAsset,
-                            LibFacet.getTreasury(),
-                            rentTreasury
-                        ),
-                        bytes4(0)
-                    );
-                    LibFacet.recordTreasuryAccrual(loan.prepayAsset, rentTreasury);
-                }
+                // #2440 — the treasury accrues what reached it.
+                LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, rentTreasury);
                 // Reduce the tracked prepay by the settled rent. Section 5b then
                 // installs the incoming offer's prepay/buffer; the exiting
                 // borrower's remaining prepay stays in their (un-liened) vault to
@@ -1724,14 +1692,9 @@ contract PrecloseFacet is
         }
 
         address payAssetOffset = _paymentAsset(loan);
-        if (treasuryFee > 0) {
-            IERC20(payAssetOffset).safeTransferFrom(
-                loan.borrower,               // payer — Alice (standing allowance)
-                LibFacet.getTreasury(),
-                treasuryFee
-            );
-            LibFacet.recordTreasuryAccrual(payAssetOffset, treasuryFee);
-        }
+        // #1281-011 — the one payer -> treasury pull (refuses a short arrival);
+        // the payer is Alice, on her standing allowance.
+        LibFacet.transferFromPayerToTreasury(loan.borrower, payAssetOffset, treasuryFee);
         // Repay original principal + interest/shortfall into the CURRENT old
         // lender's vault via the cross-payer chokepoint (keeps the Diamond out
         // of the funds path AND ticks protocolTrackedVaultBalance under the

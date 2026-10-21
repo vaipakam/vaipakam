@@ -6,9 +6,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title LibFacet
@@ -154,6 +156,48 @@ library LibFacet {
         return ret;
     }
 
+    /// @dev #2440 — `VaultFactoryFacet.vaultWithdrawERC20` with its measured
+    ///      delivery decoded: returns what `recipient` received, never more
+    ///      than `amount`. For a caller that books the arrival; a payout to a
+    ///      wallet books nothing and keeps the plain {crossFacetCall}.
+    function vaultWithdrawDelivered(
+        address user,
+        address token,
+        address recipient,
+        uint256 amount,
+        bytes4 fallbackSelector
+    ) internal returns (uint256) {
+        return abi.decode(
+            crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    user,
+                    token,
+                    recipient,
+                    amount
+                ),
+                fallbackSelector
+            ),
+            (uint256)
+        );
+    }
+
+    /// @dev #2440 — outcome 2 of {LibDelivery} for a VOLUNTARY flow: the vault
+    ///      withdraw, refused unless `recipient` received all of `amount`.
+    function vaultWithdrawExact(
+        address user,
+        address token,
+        address recipient,
+        uint256 amount,
+        bytes4 fallbackSelector
+    ) internal {
+        LibDelivery.requireFull(
+            token,
+            amount,
+            vaultWithdrawDelivered(user, token, recipient, amount, fallbackSelector)
+        );
+    }
+
     /// @dev Deposits `amount` of `asset` into the new lender's vault and
     ///      records it in `heldForLender`. No-op on zero.
     function depositForNewLender(
@@ -164,7 +208,9 @@ library LibFacet {
     ) internal {
         if (amount == 0) return;
         address vault = getOrCreateVault(newLender);
-        IERC20(asset).safeTransfer(vault, amount);
+        // #2440 — outcome 3 of {LibDelivery}: the held claim and the tracked
+        // balance record what the vault received, never more than `amount`.
+        amount = LibDelivery.pushMeasured(asset, vault, amount);
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
         // #597 Codex #672 P2 — tick the protocol-tracked vault balance, like the
         // sibling `depositFromPayerForLender` (via `vaultDepositERC20From`) does.
@@ -185,25 +231,55 @@ library LibFacet {
     ///      Records the accrual via {recordTreasuryAccrual} the same way
     ///      the Diamond-resident variant does, so `treasuryBalances` stays
     ///      self-consistent on Diamond-as-treasury deployments. No-op on
-    ///      zero.
+    ///      zero. The pull and the accrual run in
+    ///      `TreasuryFeeFacet.collectFeeFromPayer` (#2440).
     function transferFromPayerToTreasury(
         address payer,
         address asset,
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        // Slither flags non-msg.sender `from` as "arbitrary-send-erc20".
-        // Here `payer` consented to the move via `IERC20.approve(diamond,
-        // ≥amount)` (every caller is a Diamond facet that gated the
-        // approval upstream — e.g. acceptOffer / repayLoan). The
-        // recipient is the admin-owned treasury address. Not a vuln.
-        // slither-disable-next-line arbitrary-send-erc20
-        IERC20(asset).safeTransferFrom(
-            payer,
-            LibVaipakam.storageSlot().treasury,
-            amount
+        // #1281-011 / #2440 — hosted on TreasuryFeeFacet, which refuses the pull
+        // unless the treasury received all of it, so the accrual never records
+        // a fee that did not arrive. `payer` approved the Diamond for this
+        // move upstream (every caller is a Diamond facet that gated it, e.g.
+        // repayLoan / precloseDirect), and the recipient is the admin-set
+        // treasury.
+        crossFacetCall(
+            abi.encodeWithSelector(
+                ITreasuryFeeHost.collectFeeFromPayer.selector,
+                payer,
+                asset,
+                amount
+            ),
+            IVaipakamErrors.TreasuryTransferFailed.selector
         );
-        recordTreasuryAccrual(asset, amount);
+    }
+
+    /// @dev #2440 — draw a fee from `user`'s vault into the treasury and
+    ///      accrue what the treasury received, which is returned. Hosted on
+    ///      `TreasuryFeeFacet.collectFeeFromVault`; never refuses a short
+    ///      delivery (the treasury bears a token's own transfer charge, since
+    ///      no party is booked as paid by this leg). Returns 0 without a call
+    ///      when `amount` is zero.
+    function vaultFeeToTreasury(
+        address user,
+        address asset,
+        uint256 amount
+    ) internal returns (uint256) {
+        if (amount == 0) return 0;
+        return abi.decode(
+            crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    ITreasuryFeeHost.collectFeeFromVault.selector,
+                    user,
+                    asset,
+                    amount
+                ),
+                IVaipakamErrors.TreasuryTransferFailed.selector
+            ),
+            (uint256)
+        );
     }
 
     /// @dev T-037 — `safeTransferFrom`-based variant of

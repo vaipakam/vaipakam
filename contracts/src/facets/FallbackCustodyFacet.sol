@@ -164,20 +164,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     /// @param held          The custody row.
     error FallbackSnapshotMismatch(uint256 loanId, uint256 snapshotTotal, uint256 held);
 
-    /// @notice The retry pull delivered to the Diamond a different amount than
-    ///         the custody row it debited.
-    /// @dev    The retry is the one place the custody passes through the
-    ///         Diamond (for the length of the swap). The swap and, on failure,
-    ///         the restore spend exactly the debited amount out of the
-    ///         Diamond's commingled balance, so a short delivery (a
-    ///         fee-on-transfer or rebasing collateral) would be made up out of
-    ///         another owner's funds. Measured as the Diamond's balance delta
-    ///         across the pull.
-    /// @param loanId   The FallbackPending loan.
-    /// @param received What the Diamond's balance actually rose by.
-    /// @param expected The custody row debited.
-    error FallbackRetryShortDelivery(uint256 loanId, uint256 received, uint256 expected);
-
     /// @notice {disposeFallbackCustody} was asked to label the lender slice
     ///         with a move that is not a lender-slice move.
     /// @dev    The lender slice goes vault to vault, labelled `ToLender` (the
@@ -225,18 +211,23 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///         reverted (approvals reset). After this returns the Diamond
     ///         keeps NOTHING of it.
     ///         The order is load-bearing:
-    ///         1. Write the snapshot and the claim rows (the split sums to
-    ///            `loan.collateralAmount`, {LibFallback.computeFallbackEntitlements}).
-    ///         2. {_custodyIntoVault} (`Entered`), shared with the retry
+    ///         1. {_custodyIntoVault} (`Entered`), shared with the retry
     ///            restore so custody always goes back into the vault one way:
     ///            `depositLocked` into `loan.borrower`'s vault (the vault
     ///            resolves behind the receive-side pin, so a borrower flagged
     ///            after init cannot brick the forced close-out; the
     ///            protocol-tracked balance ticks; NO tier rollup), the row
-    ///            credit, the lien re-created for the deposited amount
-    ///            (create-if-absent on the row the caller released), then the
-    ///            check that the row equals the snapshot total, so the row and
-    ///            the split agree from birth.
+    ///            credit and the lien re-created (create-if-absent on the row
+    ///            the caller released), both for what the vault RECEIVED.
+    ///            #2440 — the loan's collateral then becomes that figure: a
+    ///            token that delivers less than it sends shrinks this loan's
+    ///            custody, never another owner's balance.
+    ///         2. Write the snapshot and the claim rows (the split sums to
+    ///            `loan.collateralAmount`, {LibFallback.computeFallbackEntitlements}),
+    ///            computed on the custody actually held, so the waterfall
+    ///            gives the lender their due first out of what exists.
+    ///            Then the check that the row equals the snapshot total, so
+    ///            the row and the split agree from birth.
     ///         3. The Active -> FallbackPending transition. Its exclusion sync
     ///            installs the FallbackPending clause (VPFI collateral) and
     ///            restamps the borrower ONCE, at the deposited balance minus
@@ -252,6 +243,18 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     function enterFallback(uint256 loanId) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // #1566 S2b - the custody goes back to the borrower's vault in this
+        // transaction, under the lien, and the row records it (step 1).
+        // #2440 - the loan's collateral is what the vault received.
+        loan.collateralAmount = _custodyIntoVault(
+            s,
+            loanId,
+            loan.borrower,
+            loan.collateralAsset,
+            loan.collateralAmount,
+            LibFallbackCustody.Move.Entered
+        );
 
         (
             uint256 lenderCol,
@@ -292,17 +295,7 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             quantity: 0,
             claimed: borrowerCol == 0
         });
-
-        // #1566 S2b - the custody goes back to the borrower's vault in this
-        // transaction, under the lien, and the row records it (step 2).
-        _custodyIntoVault(
-            s,
-            loanId,
-            loan.borrower,
-            loan.collateralAsset,
-            loan.collateralAmount,
-            LibFallbackCustody.Move.Entered
-        );
+        _requireSnapshotMatchesRow(loanId);
 
         // #998 S10 (#1006 / #1132) - capture a confirmed freeze at fallback ENTRY,
         // where the oracle is up (both producers are HF- or grace-gated). Unlike an atomic
@@ -375,19 +368,25 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///         top-up shares the vault and the lien but is owed to the
     ///         borrower, and the snapshot's principal-due figures the caller
     ///         distributes against describe only the fallback episode. The
-    ///         expected output and the floor are computed on the row.
+    ///         expected output and the floor are computed on what reached the
+    ///         Diamond.
     ///         Fail closed on a legacy row (`FallbackCustodyNotVaultHeld`);
     ///         a zero row (a snapshot a partial internal match scaled to
     ///         nothing) returns `(false, 0)` without a pull.
-    ///         The pull is a {_moveOut} (`RetryPulled`) whose delivery is
-    ///         checked against the Diamond's balance delta. On failure the
+    ///         The pull is a {_moveOut} (`RetryPulled`) that returns what
+    ///         reached the Diamond. #2440 — the retry acts on that figure, as
+    ///         every forced close-out does: the expected output, the floor and
+    ///         the sale use it, so a token that delivers less than it sends is
+    ///         never made up from the Diamond's other balance. On failure the
     ///         custody is RESTORED before returning ({_custodyIntoVault}): the
     ///         tokens go back into the vault through the pinned deposit (a
     ///         borrower flagged after entry must not brick the lender's
     ///         recovery), the row is re-credited (`RetryRestored`; its notify
     ///         re-derives the exclusion against the restored balance, so no
-    ///         dip), and the lien is raised back by the same amount. The
-    ///         restore is required, not cosmetic: the backstop path may
+    ///         dip), and the lien is raised back by what the vault received.
+    ///         When that is less than the row the pull debited, the snapshot
+    ///         gives up the difference lender last ({_absorbCustodyShortfall}).
+    ///         The restore is required, not cosmetic: the backstop path may
     ///         return without disposing after a failed retry (zero lender
     ///         slice), and the custody must then be exactly where it was.
     ///         Ends with one local restamp when the collateral is VPFI.
@@ -417,15 +416,16 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         address borrower = loan.borrower;
         address c = loan.collateralAsset;
 
+        uint256 pulled =
+            _moveOut(s, loanId, borrower, c, held, LibFallbackCustody.Move.RetryPulled, address(this));
+
         uint256 minOut = (LibFallback.expectedSwapOutput(
             address(this),
             c,
             loan.principalAsset,
-            held
+            pulled
         ) * (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxLiquidationSlippageBps())) /
             LibVaipakam.BASIS_POINTS;
-
-        _moveOut(s, loanId, borrower, c, held, LibFallbackCustody.Move.RetryPulled, address(this));
 
         // Soft-fail failover, NOT LibSwap.swapWithFailover: see
         // {_swapWithFailoverMem} for the two differences and why they hold.
@@ -433,15 +433,18 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             loanId,
             c,
             loan.principalAsset,
-            held,
+            pulled,
             minOut,
             address(this),
             retryCalls
         );
         if (!ok) {
             // Every adapter reverted, so its transfer rolled back and the
-            // Diamond still holds exactly `held` of the pulled custody.
-            _custodyIntoVault(s, loanId, borrower, c, held, LibFallbackCustody.Move.RetryRestored);
+            // Diamond still holds exactly `pulled` of the pulled custody.
+            uint256 restored =
+                _custodyIntoVault(s, loanId, borrower, c, pulled, LibFallbackCustody.Move.RetryRestored);
+            if (restored < held) _absorbCustodyShortfall(s, loanId, held - restored);
+            _requireSnapshotMatchesRow(loanId);
         }
         _restampIfVpfi(s, c, borrower);
     }
@@ -513,8 +516,13 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             );
         }
 
-        _moveOut(s, loanId, borrower, c, toTreasury, LibFallbackCustody.Move.ToTreasury, s.treasury);
-        _moveOut(s, loanId, borrower, c, toLenderSlice, lenderMove, lenderSliceOwner);
+        // #2440 — each return is what actually arrived, so the treasury
+        // accrual and the lender slice the caller books never name tokens
+        // that a fee-charging collateral kept back.
+        toTreasury =
+            _moveOut(s, loanId, borrower, c, toTreasury, LibFallbackCustody.Move.ToTreasury, s.treasury);
+        toLenderSlice =
+            _moveOut(s, loanId, borrower, c, toLenderSlice, lenderMove, lenderSliceOwner);
         if (retainedForBorrower > 0) {
             LibFallbackCustody.debit(
                 loanId, retainedForBorrower, LibFallbackCustody.Move.RetainedForBorrower, borrower
@@ -573,11 +581,15 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///      2. The row credit; its notify re-derives the exclusion against a
     ///         balance that already includes the deposit, so no dip.
     ///      3. The lien rises by the same amount (create-if-absent).
-    ///      Afterwards the row must equal the snapshot total
-    ///      (`FallbackSnapshotMismatch` otherwise): at entry that pins the
-    ///      split to the collateral actually placed under the row (and a row
-    ///      a previous episode left non-zero); on a restore the row returns to
-    ///      the total the pull took it from.
+    ///      #2440 — steps 2 and 3 use what the vault RECEIVED (returned), not
+    ///      `amount`: a token that delivers less than it sends leaves the row
+    ///      and the lien equal to the tokens actually there.
+    ///      The caller then requires the row to equal the snapshot total
+    ///      ({_requireSnapshotMatchesRow}): at entry that pins the split to
+    ///      the collateral actually placed under the row (and a row a
+    ///      previous episode left non-zero); on a restore the row returns to
+    ///      the total the pull took it from, less any delivery shortfall the
+    ///      snapshot has absorbed.
     ///      At entry the loan is still Active and carries no exclusion
     ///      record, so steps 2 and 3 notify nothing whichever comes first and
     ///      the transition's sync does the one restamp; on a restore the
@@ -590,13 +602,46 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         address asset,
         uint256 amount,
         LibFallbackCustody.Move move
-    ) private {
-        LibSanctionedLock.depositLocked(s, borrower, loanId, asset, amount);
-        LibFallbackCustody.credit(loanId, amount, move, borrower);
-        LibEncumbrance.incrementCollateralLien(loanId, amount);
+    ) private returns (uint256 credited) {
+        credited = LibSanctionedLock.depositLocked(s, borrower, loanId, asset, amount);
+        LibFallbackCustody.credit(loanId, credited, move, borrower);
+        LibEncumbrance.incrementCollateralLien(loanId, credited);
+    }
+
+    /// @dev The row must equal the snapshot total: the custody discriminator
+    ///      ({LibFallbackCustody.isLegacy}) stays false and no unit of the row
+    ///      is attributed to no slice.
+    function _requireSnapshotMatchesRow(uint256 loanId) private view {
         uint256 total = LibFallbackCustody.snapshotTotal(loanId);
         uint256 row = LibFallbackCustody.held(loanId);
         if (total != row) revert FallbackSnapshotMismatch(loanId, total, row);
+    }
+
+    /// @dev #2440 — a failed retry restored less than the row its pull
+    ///      debited (a collateral that delivers less than it sends lost some
+    ///      on the way out and back). The snapshot gives up exactly that
+    ///      difference, lender LAST (owner decision 2026-10-20: on a
+    ///      liquidation the lender is made whole first): the borrower's slice
+    ///      first, then the treasury's, then the lender's. The principal-due
+    ///      figures are untouched — the debt did not change, only the
+    ///      collateral that secures it. The two claim rows follow their
+    ///      slices, as every snapshot rescale keeps them.
+    function _absorbCustodyShortfall(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 shortfall
+    ) private {
+        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
+        uint256 take = shortfall < snap.borrowerCollateral ? shortfall : snap.borrowerCollateral;
+        snap.borrowerCollateral -= take;
+        shortfall -= take;
+        take = shortfall < snap.treasuryCollateral ? shortfall : snap.treasuryCollateral;
+        snap.treasuryCollateral -= take;
+        snap.lenderCollateral -= shortfall - take;
+        s.lenderClaims[loanId].amount = snap.lenderCollateral;
+        LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
+        borrowerClaim.amount = snap.borrowerCollateral;
+        borrowerClaim.claimed = snap.borrowerCollateral == 0;
     }
 
     /// @dev The one move-out sequence for every slice that leaves the
@@ -607,10 +652,13 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///        exemption, then the treasury accrual record (credits
     ///        `treasuryBalances` when the Diamond is the treasury).
     ///      - `RetryPulled`: vault -> the Diamond under the from-side
-    ///        exemption, delivery checked against the Diamond's balance delta
-    ///        (`FallbackRetryShortDelivery`).
+    ///        exemption.
     ///      - `ToLender` / `ToBackstop`: vault -> `to`'s vault through the
     ///        pinned vault-to-vault deposit, which ticks `to`'s tracked balance.
+    ///      #2440 — returns what arrived at `to`, never more than `amount`
+    ///      (the row and the lien fall by `amount`: that is what left the
+    ///      vault). The treasury accrual and `to`'s tracked balance record
+    ///      the arrival, and a caller books only the returned figure.
     ///      A zero amount moves nothing and emits nothing.
     function _moveOut(
         LibVaipakam.Storage storage s,
@@ -620,24 +668,17 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         uint256 amount,
         LibFallbackCustody.Move move,
         address to
-    ) private {
-        if (amount == 0) return;
+    ) private returns (uint256 arrived) {
+        if (amount == 0) return 0;
         LibFallbackCustody.debit(loanId, amount, move, to);
         LibEncumbrance.decrementCollateralLien(loanId, amount);
         if (move == LibFallbackCustody.Move.ToTreasury) {
-            LibSanctionedLock.vaultWithdrawERC20MoveOut(s, borrower, asset, to, amount);
-            LibFacet.recordTreasuryAccrual(asset, amount);
+            arrived = LibSanctionedLock.vaultWithdrawERC20MoveOut(s, borrower, asset, to, amount);
+            LibFacet.recordTreasuryAccrual(asset, arrived);
         } else if (move == LibFallbackCustody.Move.RetryPulled) {
-            uint256 before = IERC20(asset).balanceOf(address(this));
-            LibSanctionedLock.vaultWithdrawERC20MoveOut(s, borrower, asset, address(this), amount);
-            uint256 afterPull = IERC20(asset).balanceOf(address(this));
-            if (afterPull != before + amount) {
-                revert FallbackRetryShortDelivery(
-                    loanId, afterPull > before ? afterPull - before : 0, amount
-                );
-            }
+            arrived = LibSanctionedLock.pullToDiamond(s, borrower, asset, amount);
         } else {
-            LibSanctionedLock.depositLockedFromVault(s, borrower, to, loanId, asset, amount);
+            arrived = LibSanctionedLock.depositLockedFromVault(s, borrower, to, loanId, asset, amount);
         }
     }
 

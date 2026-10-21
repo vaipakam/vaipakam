@@ -11,6 +11,7 @@ import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -413,5 +414,27 @@ library FacetSelectors {
     function swapAttempt() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = SwapAttemptFacet.swapAttempt.selector;
+    }
+
+    /// @notice Full external selector surface of {TreasuryFeeFacet} (2).
+    ///
+    /// @dev    #2440. Every facet that charges a fee from a payer's wallet or
+    ///         a user's vault moves it into the treasury by self-calling one
+    ///         of these selectors — `DefaultedFacet`, `PrecloseFacet`,
+    ///         `RefinanceFacet`, `EarlyWithdrawalFacet` and
+    ///         `RepayPeriodicFacet` among the ones `RedeployFacets` refreshes,
+    ///         and `OfferAcceptFeeFacet` among `ReplaceStaleFacets`'. A curated
+    ///         refresh of those WITHOUT this facet installs code whose every
+    ///         fee reverts `FunctionDoesNotExist` at the self-call, so both
+    ///         scripts cut it.
+    ///
+    ///         The ONLY copy of the list, as for {swapAttempt}:
+    ///         `DeployDiamond` (`_getTreasuryFeeSelectors`) and `HelperTest`
+    ///         (`getTreasuryFeeFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function treasuryFee() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
+        s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
     }
 }

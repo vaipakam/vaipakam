@@ -10,6 +10,7 @@ import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -775,14 +776,13 @@ contract EarlyWithdrawalDirectFacet is
 
         // Pull Noah's principal into the diamond in a single withdraw,
         // then fan out to liam / treasury / Noah's heldForLender.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                buyOffer.creator, // Noah
-                loan.principalAsset,
-                address(this),
-                loan.principal
-            ),
+        // #2440 — a voluntary sale: refused unless the whole principal
+        // arrived, so the fan-out never draws on the Diamond's other balance.
+        LibFacet.vaultWithdrawExact(
+            buyOffer.creator, // Noah
+            loan.principalAsset,
+            address(this),
+            loan.principal,
             VaultWithdrawFailed.selector
         );
 
@@ -906,15 +906,15 @@ contract EarlyWithdrawalDirectFacet is
             // unflagged seller. Open the address-scoped exemption around ONLY
             // this from-side withdrawal (same primitive as the #594 consolidation
             // move). The host is `nonReentrant`; cleared immediately after.
+            // #2440 — both hops of the held migration are refused unless all
+            // of it arrived, so `heldForLender` keeps naming exactly what the
+            // buyer's vault holds.
             s.consolidationMoveFromUser = loan.lender;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.lender, // stored (old) lender — where the held VPFI sits
-                    payAsset,
-                    address(this),
-                    priorHeld
-                ),
+            LibFacet.vaultWithdrawExact(
+                loan.lender, // stored (old) lender — where the held VPFI sits
+                payAsset,
+                address(this),
+                priorHeld,
                 VaultWithdrawFailed.selector
             );
             s.consolidationMoveFromUser = address(0);
@@ -943,7 +943,9 @@ contract EarlyWithdrawalDirectFacet is
                 );
             }
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
-            IERC20(payAsset).safeTransfer(newVault, priorHeld);
+            LibDelivery.requireFull(
+                payAsset, priorHeld, LibDelivery.pushMeasured(payAsset, newVault, priorHeld)
+            );
             // T-051 — Diamond-side transfer to new lender's vault
             // ticks the protocolTrackedVaultBalance counter.
             LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);

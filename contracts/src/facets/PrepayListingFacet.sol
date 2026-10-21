@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
@@ -420,7 +421,9 @@ contract PrepayListingFacet is
         // round-2 `OfferConsumedBySale` gate in `_acceptOffer`
         // rejects the reentrant accept.
         s.offerConsumedBySale[uint256(offerId)] = true;
-        SafeERC20.safeTransfer(IERC20(principalAsset), vaultAddr, amount);
+        // #2440 — the tracked balance and the event record what the vault
+        // received.
+        amount = LibDelivery.pushMeasured(principalAsset, vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
     }
@@ -547,8 +550,12 @@ contract PrepayListingFacet is
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
         if (remainder > 0) {
-            SafeERC20.safeTransfer(IERC20(principalAsset), remainderVault, remainder);
-            LibVaipakam.recordVaultDeposit(remainderRecipient, principalAsset, remainder);
+            // #2440 — the tracked balance records what the vault received.
+            LibVaipakam.recordVaultDeposit(
+                remainderRecipient,
+                principalAsset,
+                LibDelivery.pushMeasured(principalAsset, remainderVault, remainder)
+            );
         }
 
         // Codex round-10 P2 #2 + round-11 P1 — BLOCK fills while a

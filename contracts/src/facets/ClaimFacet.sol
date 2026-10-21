@@ -1684,7 +1684,9 @@ contract ClaimFacet is
         } else {
             // The lender slice goes into the STORED lender's vault, where the
             // lender claim's payout withdraws it to the verified NFT owner.
-            _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
+            // #2440 — the claim names the slice the vault received.
+            s.lenderClaims[loanId].amount =
+                _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
         }
         snap.active = false;
         // Partial-match / no-match / retry-swap: the (scaled) residual is
@@ -1798,7 +1800,8 @@ contract ClaimFacet is
             // doesn't brick the retry distribution (T-051 — the Diamond-side
             // transfer ticks protocolTrackedVaultBalance so the eventual
             // claimAsLender's vaultWithdrawERC20 doesn't underflow).
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim below names what the vault received.
+            lenderGets = LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.principalAsset, lenderGets
             );
             // #998 S10 (#1006) — no per-site marker: the fail-closed freeze of a
@@ -1810,7 +1813,8 @@ contract ClaimFacet is
         if (borrowerGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
             // flagged stored borrower doesn't brick the retry distribution.
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim below names what the vault received.
+            borrowerGets = LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerGets
             );
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH

@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
@@ -418,8 +419,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // `IERC20.approve(diamond, ≥amount)` first, so they consented
         // to the move. The vault proxy receiving the funds is the
         // user's own vault (one-per-user, deterministic). Not a vuln.
-        // slither-disable-next-line arbitrary-send-erc20
-        IERC20(token).safeTransferFrom(user, proxy, amount);
+        // #667 — measured at the proxy and refused unless it arrived in
+        // full, so the tracked balance (and every lien and offer amount set
+        // from `amount`) never exceeds what the vault holds.
+        LibDelivery.pullExact(token, user, proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
     }
 
@@ -457,8 +460,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // Same shape as `vaultDepositERC20` — see the rationale block
         // there. `payer` consented via `IERC20.approve(diamond,≥amount)`;
         // the proxy receiving the funds is `user`'s own vault.
-        // slither-disable-next-line arbitrary-send-erc20
-        IERC20(token).safeTransferFrom(payer, proxy, amount);
+        // #1281-011 — measured and refused unless it arrived in full, so a
+        // repayment can never record a lender's due above what reached the
+        // lender's vault.
+        LibDelivery.pullExact(token, payer, proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
     }
 
@@ -671,10 +676,23 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      protocol-side movements. Underflow reverts loudly if a
      *      withdraw fires for more than was tracked — that's an
      *      accounting bug somewhere upstream.
+     *
+     *      #2440 — the one place a vault's ERC-20 outflow is measured: the
+     *      vault always sends `amount` (its tracked balance falls by exactly
+     *      that), and the return value is what `recipient`'s balance actually
+     *      rose by, never more than `amount` ({LibDelivery.measured}). A token
+     *      that delivers less than it sends (a fee switched on after the token
+     *      entered, a rebase) makes the two differ. The withdraw itself never
+     *      refuses on that: a payout to a wallet books nothing, and refusing
+     *      it would trap the owner's funds. A caller that BOOKS the arrival
+     *      (the Diamond selling or forwarding it, a vault credited with it)
+     *      decides with the returned figure — a voluntary flow refuses a
+     *      short arrival, a forced close-out acts on it (see {LibDelivery}).
      * @param user The user whose vault to withdraw from.
      * @param token The ERC-20 token address.
      * @param recipient The recipient address.
      * @param amount The amount to withdraw.
+     * @return delivered What `recipient` received, capped at `amount`.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function vaultWithdrawERC20(
@@ -682,7 +700,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address token,
         address recipient,
         uint256 amount
-    ) external onlyDiamondInternal {
+    ) external onlyDiamondInternal returns (uint256 delivered) {
         address proxy = getOrCreateUserVault(user);
         // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance guard. Block
         // any withdraw whose amount would dip into the active lien
@@ -715,6 +733,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             amount,
             rawForGuard
         );
+        uint256 recipientBefore = IERC20(token).balanceOf(recipient);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC20.selector,
@@ -724,6 +743,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
+        delivered = LibDelivery.measured(token, recipient, recipientBefore, amount);
         LibVaipakam.recordVaultWithdraw(user, token, amount);
         // RL-2 — VPFI outflow observability for the reward-retention
         // ledger. This and {recordVaultOutflowERC20} are the two

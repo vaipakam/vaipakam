@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 
 /**
  * @title LibPermit2
@@ -118,6 +120,11 @@ library LibPermit2 {
      *      and creating unfunded offers. Reverts
      *      `Permit2TokenMismatch(expected, signed)` on mismatch.
      *
+     *      A second check follows the transfer: `to` must have received all
+     *      of `amount` (#667, {LibDelivery}). Every caller records the pull
+     *      as funding `amount`, so a fee-on-transfer or rounding token that
+     *      delivers less is refused with `TokenDeliveryShort`.
+     *
      *      Other invariants (Permit2 enforces, not this wrapper):
      *        - `amount <= permit.permitted.amount`
      *        - `permit.deadline > block.timestamp`
@@ -146,6 +153,7 @@ library LibPermit2 {
                 permit.permitted.token
             );
         }
+        uint256 before = IERC20(expectedToken).balanceOf(to);
         ISignatureTransfer(PERMIT2).permitTransferFrom(
             permit,
             ISignatureTransfer.SignatureTransferDetails({
@@ -154,6 +162,11 @@ library LibPermit2 {
             }),
             owner,
             signature
+        );
+        // #667 — every caller records `amount` as funded; refuse a short
+        // arrival by name (LibDelivery outcome 1).
+        LibDelivery.requireFull(
+            expectedToken, amount, LibDelivery.measured(expectedToken, to, before, amount)
         );
     }
 
@@ -201,6 +214,7 @@ library LibPermit2 {
                 permit.permitted.token
             );
         }
+        uint256 before = IERC20(expectedToken).balanceOf(to);
         ISignatureTransfer(PERMIT2).permitWitnessTransferFrom(
             permit,
             ISignatureTransfer.SignatureTransferDetails({
@@ -211,6 +225,10 @@ library LibPermit2 {
             witness,
             witnessTypeString,
             signature
+        );
+        // #667 — as in {pull}: the offer is recorded as funded at `amount`.
+        LibDelivery.requireFull(
+            expectedToken, amount, LibDelivery.measured(expectedToken, to, before, amount)
         );
     }
 }

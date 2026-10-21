@@ -308,7 +308,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         uint256 interest; // Or rental fee
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        address treasury = LibFacet.getTreasury();
 
         // #569 Codex #572 round-4 P2 — the collateral-lien release is NO
         // LONGER done here. On the ERC20-loan path the borrower's
@@ -366,14 +365,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
             // Treasury share transferred immediately (no claim needed).
             // Skipped entirely when the VPFI discount path satisfied it.
-            if (plan.treasuryShare > 0) {
-                IERC20(loan.principalAsset).safeTransferFrom(
-                    msg.sender,
-                    treasury,
-                    plan.treasuryShare
-                );
-                LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-            }
+            // #1281-011 — through the one payer -> treasury pull, which
+            // refuses a short arrival by name.
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
 
             // T-037 — Lender's due: borrower → lender's vault in ONE
             // transfer. The Diamond carries the borrower's allowance
@@ -523,28 +517,19 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // rental repayment (Tier-2 stays open) — the prepay is pushed OUT to
             // the already-screened treasury / lender, the payer loses custody.
             LibSanctionedLock.beginMoveOut(s, msg.sender);
-            // Treasury share: immediate from borrower's vault
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
-                    loan.prepayAsset,
-                    treasury,
-                    treasuryShare
-                ),
-                TreasuryTransferFailed.selector
-            );
-            LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
+            // Treasury share: immediate from borrower's vault. #2440 — the
+            // treasury accrues what reached it.
+            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
 
-            // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
-                    loan.prepayAsset,
-                    address(this),
-                    lenderShare
-                ),
+            // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault.
+            // #2440 — a voluntary repayment: refused unless the whole share
+            // reached the Diamond, so the lender is never paid out of the
+            // Diamond's other balance and the loan never closes on less.
+            LibFacet.vaultWithdrawExact(
+                msg.sender,
+                loan.prepayAsset,
+                address(this),
+                lenderShare,
                 VaultWithdrawFailed.selector
             );
             LibSanctionedLock.endMoveOut(s);
@@ -553,7 +538,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lands in the lender's OWN vault, frozen behind the claim gate
             // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
             // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim names what the vault received.
+            lenderShare = LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.prepayAsset, lenderShare
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
@@ -769,7 +755,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibVaipakam.ONE_DAY;
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
-        address treasury = LibFacet.getTreasury();
 
         // Pass-2 A2 (#1190) — capture the PRE-partial health factor for the
         // monotonicity gate at the end. Only liquid-on-both-legs loans carry an
@@ -869,15 +854,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 bytes4(0)
             );
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
-            // VPFI-payment path; a 0-value `safeTransferFrom` is a harmless no-op
-            // (and `recordTreasuryAccrual(asset, 0)` is a no-op), so the transfer
-            // stays unconditional as before.
-            IERC20(loan.principalAsset).safeTransferFrom(
-                msg.sender,
-                treasury,
-                treasuryShare
-            );
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
+            // VPFI-payment path; the shared pull is a no-op at zero.
+            // #1281-011 — and it refuses a short arrival by name.
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare);
 
             unchecked {
                 loan.principal -= partialAmount;
@@ -1075,18 +1054,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op
             // (0-value ERC-20 transfer), so this stays unconditional as before.
             LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
-                    loan.prepayAsset,
-                    treasury,
-                    treasuryShare
-                ),
-                TreasuryTransferFailed.selector
-            );
+            // #2440 — the treasury accrues what reached it.
+            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
             LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
-            LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
             // Pass-2 D1 (#1188) — keep `durationDays` immutable (fixed
             // maturity); advance `lastDeductTime` by the days paid so

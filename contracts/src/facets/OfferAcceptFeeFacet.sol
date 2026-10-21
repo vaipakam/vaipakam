@@ -147,17 +147,8 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         if (initiationFee > 0) {
             uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
             uint256 treasuryCut = initiationFee - matcherCut;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    lender,
-                    lendingAsset,
-                    LibFacet.getTreasury(),
-                    treasuryCut
-                ),
-                TreasuryTransferFailed.selector
-            );
-            LibFacet.recordTreasuryAccrual(lendingAsset, treasuryCut);
+            // #2440 — the treasury accrues what reached it.
+            LibFacet.vaultFeeToTreasury(lender, lendingAsset, treasuryCut);
             if (matcherCut > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(

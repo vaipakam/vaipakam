@@ -29,6 +29,7 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -129,7 +130,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -204,6 +205,16 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             facetAddress: address(new SwapAttemptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
+        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
+        // fee into the treasury by a self-call into TreasuryFeeFacet. A
+        // hand-built Diamond that cuts any of them must cut this host too, or
+        // the fee reverts FunctionDoesNotExist at that self-call.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

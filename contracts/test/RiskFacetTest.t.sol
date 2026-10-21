@@ -88,6 +88,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -261,7 +262,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -439,6 +440,16 @@ contract RiskFacetTest is Test {
             facetAddress: address(new SwapAttemptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
+        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
+        // fee into the treasury by a self-call into TreasuryFeeFacet. A
+        // hand-built Diamond that cuts any of them must cut this host too, or
+        // the fee reverts FunctionDoesNotExist at that self-call.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

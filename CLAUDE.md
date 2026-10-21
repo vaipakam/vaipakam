@@ -153,6 +153,18 @@ of it on old code:
   and `RedeployFacets` both carry the host. This family is ordinary in-place
   refresh material; the fresh-deploy rule below is about the #1566 slices only.
 
+- **TreasuryFeeFacet + every facet that charges a fee into the treasury
+  (#2440).** RepayFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet,
+  DefaultedFacet, RepayPeriodicFacet and OfferAcceptFeeFacet move each fee drawn
+  from a payer's wallet or a user's vault through a self-call to
+  `collectFeeFromPayer` / `collectFeeFromVault`, which measure what the
+  treasury received and record the accrual once (a wallet fee is refused unless
+  it all arrived; a vault fee is accrued as it arrived). A caller refreshed
+  without the host reverts `FunctionDoesNotExist` on every fee it charges (a
+  hard revert, never a skipped fee). `RefreshAllFacetsInPlace`,
+  `RedeployFacets` and `ReplaceStaleFacets` all carry the host; ordinary
+  in-place refresh material.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

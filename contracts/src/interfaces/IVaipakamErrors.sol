@@ -38,6 +38,15 @@ interface IVaipakamErrors {
     error VaultWithdrawFailed();
     error VaultDepositFailed();
     error VaultTransferFailed();
+    /// @notice #2440 / #667 — a token move delivered less than was
+    ///         requested: the receiving balance rose by `received`, below
+    ///         `requested` (a fee-on-transfer, rounding or rebasing token).
+    ///         Raised where the protocol would otherwise book the requested
+    ///         amount — a wallet-funded payment or deposit, or a voluntary
+    ///         move out of a vault into the protocol — so nothing is booked
+    ///         for more than arrived. Forced close-outs never raise it: they
+    ///         act on what arrived instead (see {LibDelivery}).
+    error TokenDeliveryShort(address token, uint256 requested, uint256 received);
     /// @dev Stuck-token recovery: caller passed an `amount` greater
     ///      than `max(0, balanceOf(vault, token) - tracked)`. The
     ///      cap is the load-bearing safety property — recovery can
