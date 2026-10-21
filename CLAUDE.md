@@ -110,9 +110,9 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-**Refresh-together families (#1566 slices 2–3, #2472).** Three facet sets each
-carry one behaviour across a self-call or a fill, so refreshing a subset runs half
-of it on old code:
+**Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
+below carries one behaviour across a self-call or a fill, so refreshing a subset
+runs half of it on old code:
 
 - **FallbackCustodyFacet + RiskFacet + DefaultedFacet + ClaimFacet +
   AddCollateralFacet + RepayFacet + RiskMatchLiquidationFacet.** From S2a, Risk,
@@ -164,6 +164,16 @@ of it on old code:
   hard revert, never a skipped fee). `RefreshAllFacetsInPlace`,
   `RedeployFacets` and `ReplaceStaleFacets` all carry the host; ordinary
   in-place refresh material.
+
+- **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
+  `vaultWithdrawERC20` now returns what the recipient received, and every
+  caller compiled against it decodes that return, including the plain
+  high-level calls that ignore it. A caller refreshed onto a Diamond whose
+  VaultFactoryFacet predates #2440 reverts on every vault withdrawal, because
+  the old route returns no data (a hard revert, never a misread amount). The
+  set is effectively every facet that moves ERC-20s out of a vault, so refresh
+  VaultFactoryFacet in the same cut as any of them. All three refresh scripts
+  carry it.
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place

@@ -680,7 +680,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      #2440 — the one place a vault's ERC-20 outflow is measured: the
      *      vault always sends `amount` (its tracked balance falls by exactly
      *      that), and the return value is what `recipient`'s balance actually
-     *      rose by, never more than `amount` ({LibDelivery.measured}). A token
+     *      rose by, never more than `amount` ({LibDelivery.measured}). When
+     *      `recipient` is this same vault (two positions one user holds, as
+     *      after a consolidation), the balance cannot rise, and the return
+     *      value is what the vault kept: `amount` for an ordinary token. A token
      *      that delivers less than it sends (a fee switched on after the token
      *      entered, a rebase) makes the two differ. The withdraw itself never
      *      refuses on that: a payout to a wallet books nothing, and refusing
@@ -743,7 +746,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
-        delivered = LibDelivery.measured(token, recipient, recipientBefore, amount);
+        delivered = LibDelivery.measured(token, proxy, recipient, recipientBefore, amount);
         LibVaipakam.recordVaultWithdraw(user, token, amount);
         // RL-2 — VPFI outflow observability for the reward-retention
         // ledger. This and {recordVaultOutflowERC20} are the two

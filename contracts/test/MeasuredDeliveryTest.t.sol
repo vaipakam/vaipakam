@@ -19,6 +19,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibDelivery} from "../src/libraries/LibDelivery.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
@@ -28,6 +29,13 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+
+/// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
+contract LibDeliveryHarness {
+    function pullExact(address token, address from, address to, uint256 amount) external {
+        LibDelivery.pullExact(token, from, to, amount);
+    }
+}
 
 /**
  * @title  MeasuredDeliveryTest
@@ -531,6 +539,64 @@ contract MeasuredDeliveryTest is SetupTest {
         );
         assertEq(_bal(mockERC20, bVault), 6 ether, "the vault gave up the whole fee");
         assertEq(_tracked(borrower, mockERC20), 6 ether, "and tracks that");
+    }
+
+    // -- A move whose source is its recipient --------------------------------
+
+    /// @notice A vault-to-vault move between two positions one user holds
+    ///         (lender on one loan, borrower on another, as after a
+    ///         consolidation) cannot raise the vault's balance. It delivered
+    ///         everything the vault kept, which is the whole amount for an
+    ///         ordinary token: a measured rise of zero would book nothing and
+    ///         leave the moved tokens outside every ledger.
+    function test_SameVaultMove_DeliversWhatTheVaultKept() public {
+        ERC20Mock(mockERC20).mint(bVault, 10 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
+
+        vm.prank(address(diamond));
+        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            borrower, mockERC20, bVault, 4 ether
+        );
+
+        assertEq(delivered, 4 ether, "the whole amount stayed where it was sent");
+        assertEq(_bal(mockERC20, bVault), 10 ether, "nothing left the vault");
+        assertEq(_tracked(borrower, mockERC20), 6 ether, "the caller credits the receiving record");
+    }
+
+    /// @notice The same move of a token that charges on transfer delivered the
+    ///         amount less the charge the vault paid, never more.
+    function test_SameVaultMove_ChargedTokenDeliversLessTheCharge() public {
+        ERC20Mock(mockERC20).mint(bVault, 10 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
+        _chargesFee(mockERC20, address(0));
+
+        vm.prank(address(diamond));
+        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            borrower, mockERC20, bVault, 4 ether
+        );
+
+        assertEq(delivered, _less(4 ether), "the amount less the charge");
+        assertEq(_bal(mockERC20, bVault), 10 ether - (4 ether - _less(4 ether)), "the vault paid the charge");
+    }
+
+    /// @notice A wallet payment whose payer is also the payee (a lender-NFT
+    ///         holder repaying part of the loan it is owed) is paid in full
+    ///         for an ordinary token, and refused by name for a charged one.
+    function test_SelfPayment_PaidInFull_RefusedWhenCharged() public {
+        LibDeliveryHarness harness = new LibDeliveryHarness();
+        ERC20Mock(mockERC20).mint(lender, 5 ether);
+        vm.prank(lender);
+        IERC20(mockERC20).approve(address(harness), type(uint256).max);
+        uint256 before = _bal(mockERC20, lender);
+
+        harness.pullExact(mockERC20, lender, lender, 5 ether);
+        assertEq(_bal(mockERC20, lender), before, "paid to itself, in full");
+
+        _chargesFee(mockERC20, address(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, 5 ether, _less(5 ether))
+        );
+        harness.pullExact(mockERC20, lender, lender, 5 ether);
     }
 
     // -- Offer fixtures -----------------------------------------------------

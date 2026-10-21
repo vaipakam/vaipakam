@@ -51,14 +51,28 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 library LibDelivery {
     using SafeERC20 for IERC20;
 
-    /// @dev What `who`'s balance of `token` rose by since `before`, never
-    ///      more than `cap` (and zero when it did not rise).
-    function measured(address token, address who, uint256 before, uint256 cap)
+    /// @dev What a move of `cap` of `token` from `from` delivered to `to`,
+    ///      given `to`'s balance `before` the move: what that balance rose by,
+    ///      never more than `cap` (and zero when it did not rise).
+    ///
+    ///      A move whose source IS its recipient (`from == to`: a vault-to-
+    ///      vault move between two positions one user holds, a payer who is
+    ///      also the payee) cannot raise the balance it starts from, so a
+    ///      rise would read zero although nothing was lost. Such a holder
+    ///      kept the whole amount less anything the move cost it (a token's
+    ///      own charge), and that is what it delivered — `cap` for an
+    ///      ordinary token. Every measurement goes through here, so the rule
+    ///      holds for every outcome above.
+    function measured(address token, address from, address to, uint256 before, uint256 cap)
         internal
         view
         returns (uint256 received)
     {
-        uint256 balanceNow = IERC20(token).balanceOf(who);
+        uint256 balanceNow = IERC20(token).balanceOf(to);
+        if (from == to) {
+            uint256 cost = before > balanceNow ? before - balanceNow : 0;
+            return cost < cap ? cap - cost : 0;
+        }
         received = balanceNow > before ? balanceNow - before : 0;
         if (received > cap) received = cap;
     }
@@ -80,7 +94,7 @@ library LibDelivery {
         // move (the payer named by the calling flow). Not an arbitrary send.
         // slither-disable-next-line arbitrary-send-erc20
         IERC20(token).safeTransferFrom(from, to, amount);
-        requireFull(token, amount, measured(token, to, before, amount));
+        requireFull(token, amount, measured(token, from, to, before, amount));
     }
 
     /// @dev Outcome 3: the Diamond pushes `amount` to `to` and learns what
@@ -91,6 +105,6 @@ library LibDelivery {
     {
         uint256 before = IERC20(token).balanceOf(to);
         IERC20(token).safeTransfer(to, amount);
-        delivered = measured(token, to, before, amount);
+        delivered = measured(token, address(this), to, before, amount);
     }
 }

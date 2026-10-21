@@ -166,7 +166,7 @@ library LibPermit2 {
         // #667 — every caller records `amount` as funded; refuse a short
         // arrival by name (LibDelivery outcome 1).
         LibDelivery.requireFull(
-            expectedToken, amount, LibDelivery.measured(expectedToken, to, before, amount)
+            expectedToken, amount, LibDelivery.measured(expectedToken, owner, to, before, amount)
         );
     }
 
@@ -228,7 +228,7 @@ library LibPermit2 {
         );
         // #667 — as in {pull}: the offer is recorded as funded at `amount`.
         LibDelivery.requireFull(
-            expectedToken, amount, LibDelivery.measured(expectedToken, to, before, amount)
+            expectedToken, amount, LibDelivery.measured(expectedToken, owner, to, before, amount)
         );
     }
 }

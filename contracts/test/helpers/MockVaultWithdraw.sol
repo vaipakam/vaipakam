@@ -37,6 +37,13 @@ interface IVaultWithdrawTestSwitch {
  *         `vm.mockCall` / `vm.mockCallRevert` on `vaultWithdrawERC20` still wins
  *         (it intercepts at the Diamond before any code runs), and the call
  *         still reaches the Diamond for `vm.expectCall`.
+ *
+ *         Two limits. In stub mode the route skips the lien guard and the
+ *         tracked-balance debit, exactly as the selector-wide mock it replaces
+ *         did, so a test that needs either must leave stub mode off. And the
+ *         hook is installed by rewriting the route's facet address in storage
+ *         without touching the loupe's per-facet selector lists, so a test
+ *         must not also `diamondCut` the `vaultWithdrawERC20` selector.
  */
 contract VaultWithdrawTestHook {
     /// @notice The VaultFactoryFacet the route pointed at before the hook.
