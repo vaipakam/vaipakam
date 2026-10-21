@@ -693,6 +693,25 @@ describe('a run', () => {
     expect(openKeys()).not.toContain(`dayclose-notexpected:${MIRROR}:all`);
   });
 
+  it('keeps a late alert open when the destination stops being readable, since nothing has shown delivery', async () => {
+    finalizedDayZero();
+    await run(base);
+    later(BROADCAST_LATE_AFTER_SEC);
+    await run(base);
+    openAlert(`dayclose-broadcast:${BASE}:0`);
+    // The keeper loses the mirror's RPC: it is now unserved.
+    await dayCloseOnce(env, base.chainId, base.diamond, {
+      client: base.client(),
+      readClient: base.client(),
+      context: () => base.ctx(),
+      peer: (id) => (id === MIRROR ? null : peers(id)),
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(openKeys(), 'not read holding it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0`]);
+    expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
+  });
+
   it('sends a day once when no destination can be confirmed, keeping its marker for the window', async () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper

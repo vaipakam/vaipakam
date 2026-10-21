@@ -394,7 +394,10 @@ interface RunFindings {
   /** Base: the messenger's broadcast destinations could not be read, so no
    *  day was broadcast this run (null = not attempted). */
   destinationsUnread: boolean | null;
-  /** Base: finalized days no served destination still lacks, as read. */
+  /** Base: finalized days every destination was READ holding this run. A
+   *  day with a destination this keeper cannot read is never confirmed, even
+   *  when there is nothing left to send it, so a late alert raised while that
+   *  destination could be read is not cleared by losing the read. */
   broadcastConfirmed: Set<number>;
   /** Base: days a destination sent to has not been read as holding, past the
    *  late mark since its last send. */
@@ -687,8 +690,8 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       if (plan.late.length > 0) f.lateBroadcast.push({ day: d, late: plan.late });
       if (plan.done) {
         f.settled.add(`broadcast:${d}`);
-        f.broadcastConfirmed.add(d);
         if (plan.unconfirmed.length > 0) unconfirmed.push(d);
+        else f.broadcastConfirmed.add(d);
         continue;
       }
       if (plan.send.length === 0) continue;
