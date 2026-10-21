@@ -18,6 +18,8 @@ import {
   BROADCAST_RESEND_AFTER_SEC,
   GRACE_WARNING_SEC,
   LOOKBACK_DAYS,
+  MAX_SENDS_PER_RUN,
+  READ_CHUNK,
   ROLE_CANONICAL,
   ROLE_MIRROR,
   dayCloseOnce,
@@ -174,6 +176,12 @@ class FakeDiamond {
   quoteShapes = new Set([8, 7, 5, 3]);
   /** Single-destination quotes refuse with this, when set. */
   refuseTo: string | null = null;
+  /** Destinations the contract gives no standing in any day. */
+  noStanding = new Set<number>();
+  /** What the node answers a send with instead of taking it, when set. */
+  writeError: Error | null = null;
+  /** The largest aggregate read asked of this chain. */
+  largestRead = 0;
   /** Reports that land between the pass's reads and its finalization, by day. */
   landsAtFinalize = new Map<number, number>();
   /** Receipts are never seen (the send may still have landed). */
@@ -245,6 +253,7 @@ class FakeDiamond {
       case 'quoteBroadcastGlobal':
         return BROADCAST_FEE;
       case 'quoteBroadcastGlobalTo':
+        if (this.noStanding.has(Number(args![1]))) throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
         if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
         return BROADCAST_TO_FEE;
       default:
@@ -252,8 +261,9 @@ class FakeDiamond {
     }
   };
 
-  multicall = async ({ contracts }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[] }) =>
-    Promise.all(
+  multicall = async ({ contracts }: { contracts: { address: Address; functionName: string; args?: readonly unknown[] }[] }) => {
+    this.largestRead = Math.max(this.largestRead, contracts.length);
+    return Promise.all(
       contracts.map(async (c) => {
         try {
           return { status: 'success' as const, result: await this.readContract(c) };
@@ -262,6 +272,7 @@ class FakeDiamond {
         }
       }),
     );
+  };
 
   simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
     if (this.rpcDown) throw new Error('fetch failed');
@@ -319,6 +330,7 @@ class FakeDiamond {
         account: { address: '0x00000000000000000000000000000000000000ee' },
         writeContract: async ({ functionName, args, value }: { functionName: string; args: readonly unknown[]; value: bigint }) => {
           const day = Number(args[0] as bigint);
+          if (this.writeError) throw this.writeError;
           this.sent.push(functionName === 'broadcastGlobalTo' ? { fn: functionName, day, value, to: Number(args[1] as bigint) } : { fn: functionName, day, value });
           this.apply(functionName, day);
           return `0x${'1'.repeat(64)}`;
@@ -551,11 +563,88 @@ describe('a run', () => {
     finalizedDayZero();
     await run(base);
     base.destinations = [];
-    base.refuseTo = 'DestinationHasNoDayStanding';
+    base.refuseTo = 'MessengerPredatesV3';
     later(BROADCAST_RESEND_AFTER_SEC);
     await run(base);
     expect(base.sent.map((s) => s.fn), 'no send to every destination: it would not reach this one').toEqual(['broadcastGlobal']);
-    expect(alerts(/chain 421614 is no longer a broadcast destination and the Diamond will not send the day to it alone \(DestinationHasNoDayStanding\)/)).toHaveLength(1);
+    expect(alerts(/chain 421614 is not a broadcast destination and the Diamond will not send the day to it alone \(MessengerPredatesV3\)/)).toHaveLength(1);
+  });
+
+  const frontier = () => (keeper.db.prepare(`SELECT next_block FROM keeper_work_cursor WHERE kind = 'day_close'`).get() as { next_block: number } | undefined)?.next_block;
+
+  it('owes a day nothing to a destination off the list that has no standing in it', async () => {
+    finalizedDayZero();
+    await run(base);
+    base.destinations = [];
+    base.expected = [BASE];
+    base.noStanding.add(MIRROR);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'nothing sent to a chain that had no part in the day').toEqual(['broadcastGlobal']);
+    expect(alerts(/not a broadcast destination|has not reached/)).toEqual([]);
+    expect(frontier(), 'the day is worked through').toBe(1);
+  });
+
+  it('keeps a day in view while an expected mirror is off the broadcast list, and sends it once the mirror is listed', async () => {
+    finalizedDayZero();
+    base.destinations = [];
+    base.refuseTo = 'MessengerPredatesV3'; // the messenger cannot send to it alone either
+    await run(base);
+    expect(base.sent, 'no send could reach it').toEqual([]);
+    expect(alerts(/chain 421614 is not a broadcast destination/)).toHaveLength(1);
+    expect(frontier(), 'the day is not worked through').toBe(0);
+
+    later(LOOKBACK_DAYS * 86_400); // long enough for the day to have left a lookback-only window
+    base.today = LOOKBACK_DAYS + 2;
+    base.destinations = [MIRROR];
+    base.refuseTo = null;
+    for (let d = 1; d < base.today; d++) {
+      base.reported.set(d, new Set([BASE, MIRROR]));
+      base.sentAt.set(d, NOW - 60);
+      base.finalized.add(d);
+      mirror.known.add(d);
+    }
+    await run(base);
+    expect(base.sent, 'day 0 reaches the mirror once it is listed').toEqual([{ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE }]);
+    mirror.known.add(0);
+    await run(base);
+    expect(frontier()).toBe(LOOKBACK_DAYS + 2);
+  });
+
+  it('treats a Base day finalized before its own close as worked through once broadcast', async () => {
+    base.today = 1;
+    base.finalized.add(0); // an admin force-finalized it before Base closed it
+    base.refuse.set('closeDay:0', 'ReportAfterFinalization');
+    mirror.known.add(0);
+    await run(base);
+    expect(base.sent, 'no close, and nothing owed to the mirror').toEqual([]);
+    expect(frontier(), 'the close it can never make does not hold the day').toBe(1);
+  });
+
+  it('counts a send the node refused outright as not made, and one it did not answer as made', async () => {
+    finalizedDayZero();
+    base.writeError = Object.assign(new Error('insufficient funds for gas * price + value'), { code: -32000 });
+    await run(base);
+    base.writeError = null;
+    await run(base);
+    expect(base.sent, 'refused outright: sent on the next run').toEqual([{ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE }]);
+
+    base.finalized.add(1);
+    base.today = 2;
+    base.reported.set(1, new Set([BASE, MIRROR]));
+    base.sentAt.set(1, NOW - 60);
+    base.writeError = new Error('fetch failed'); // no answer: it may have gone out
+    await run(base);
+    base.writeError = null;
+    await run(base);
+    expect(base.sent.filter((s) => s.day === 1), 'not repeated before the re-send interval').toEqual([]);
+  });
+
+  it('reads a long-open window in bounded aggregates', async () => {
+    mirror.today = 3 * READ_CHUNK;
+    await run(mirror);
+    expect(mirror.largestRead).toBeLessThanOrEqual(READ_CHUNK);
+    expect(mirror.sent.map((s) => s.day), 'the oldest days are closed, the read did not starve them').toEqual(Array.from({ length: MAX_SENDS_PER_RUN }, (_, i) => i));
   });
 
   it('names the chains a day was finalized without when another caller finalized it', async () => {

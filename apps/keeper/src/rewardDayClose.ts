@@ -73,16 +73,21 @@
 //      when the day or the messenger cannot take a single-destination send
 //      (the mirror ingress is idempotent, so a re-send cannot double-apply).
 //      The destinations a day must reach are every one it has had while
-//      worked: a mirror taken off the list after a send that never reached it
-//      is still checked and healed alone (the contract admits a destination
-//      with standing in the day), and is named as unreachable if the contract
-//      refuses that. A destination list that cannot be read stops only this
+//      worked, and every mirror on Base's expected-source list, listed as a
+//      destination or not: a mirror off the list (taken off after a send that
+//      never reached it, or never put on) is still checked and sent the day
+//      alone (the contract admits a destination with standing in the day),
+//      and is named as unreachable if that send is refused, the day staying
+//      in view until it can be sent. Off the list, a destination the contract
+//      gives no standing in the day (it had no part in it) is owed nothing. A destination list that cannot be read stops only this
 //      step. A destination this keeper does not serve cannot be read, so it
 //      is sent to once and never confirmed: the run's line says so. A send's
 //      time is recorded, for the destinations it covers, before it goes out
 //      and kept unless nothing went out, so a send whose receipt was not seen
 //      (it may have landed, paying every lane it covered) is not repeated
-//      before the re-send interval.
+//      before the re-send interval. A send the node refused outright
+//      (insufficient funds, a coded RPC refusal) went nowhere, and is not
+//      counted as made.
 //
 // A call the RPC gives no answer about (a transport error, a timeout) is not
 // the contract's refusal: nothing is said about the day, and the run stops
@@ -96,8 +101,11 @@
 // The window runs from the chain's close frontier (`day_close`, the oldest day
 // not yet worked through) or the last {@link LOOKBACK_DAYS} elapsed days,
 // whichever starts earlier, to yesterday. A day is worked through once nothing
-// more is owed on it here: closed on a mirror; closed, finalized and broadcast
-// on Base. The frontier only moves forward, so no elapsed day is skipped,
+// more is owed on it here: closed on a mirror; finalized and broadcast on Base
+// (Base's own close is owed only until the day is finalized, which an admin's
+// force-finalize can do first; after that a close is refused for good). The
+// window's reads go in bounded aggregates ({@link READ_CHUNK}), so a window
+// held open by a stuck day costs more reads, never one too large to answer. The frontier only moves forward, so no elapsed day is skipped,
 // whenever the pass was first armed or however long the keeper was down, and a
 // day stuck for any reason is worked, and alerted on, every run until it goes
 // through. A day leaves the window, and its alerts with it, only once it is
@@ -156,7 +164,7 @@ import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { reportSendError } from './submissionQueue';
+import { isDefinitiveRejection, reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { getWorkCursor, getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, putWorkCursor, type WorkItem } from './db';
@@ -182,6 +190,13 @@ export const PASS_CADENCE_SEC = 15 * 60;
 export const LOOKBACK_DAYS = 14;
 /** Transactions one run may send per chain. Each waits for its receipt. */
 export const MAX_SENDS_PER_RUN = 8;
+
+/** Entries per aggregate read. A window held open by a day that is stuck
+ *  grows by a day each day it stays stuck; reading it in slices of this size
+ *  keeps every aggregate the size of one ordinary run's, so a long-open
+ *  window costs more reads and never one aggregate too large for the node to
+ *  answer, which would leave every day in it, the newest included, unread. */
+export const READ_CHUNK = 64;
 /** Warn when grace ends within this long and an expected chain is missing… */
 export const GRACE_WARNING_SEC = 60 * 60;
 
@@ -218,7 +233,8 @@ const PAUSED_REFUSAL = 'EnforcedPause';
 /** Refusals of the single-destination re-send (`broadcastGlobalTo`) that mean
  *  this day or this messenger cannot take one: the re-send then goes to every
  *  destination (`broadcastGlobal`) instead. */
-const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', 'DestinationHasNoDayStanding']);
+const NO_STANDING = 'DestinationHasNoDayStanding';
+const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', NO_STANDING]);
 
 /** A step that exists only to let another one through: its refusal is over
  *  once the step it serves is done, by anyone. */
@@ -733,7 +749,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
               await sendCovering(d, [c], sentTo, save, () => sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(c)], q.fee));
         if (r === 'landed' || r === 'skipped') continue;
         if (RESEND_TO_ALL.has(r) && current.includes(c)) toAll = true;
-        else if (RESEND_TO_ALL.has(r)) said.push(`chain ${c} is no longer a broadcast destination and the Diamond will not send the day to it alone (${r})`);
+        else if (RESEND_TO_ALL.has(r)) said.push(`chain ${c} is not a broadcast destination and the Diamond will not send the day to it alone (${r})`);
         else if ('refused' in q) said.push(`the Diamond would not quote the send to chain ${c} (${q.refused})`);
         else said.push(`the send to chain ${c} was refused (${r})`);
       }
@@ -747,6 +763,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     };
 
     const current = destinations ?? [];
+    const mirrors = expected.filter((c) => c !== chainId);
     const days = destinations === null ? [] : [...finalizedDays].sort((a, b) => a - b);
     await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_broadcast', window[0]);
     const marks = await getWorkItems<BroadcastRecord>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', days.map(String));
@@ -760,12 +777,28 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
           block: d,
           payload: { sentTo: Object.fromEntries([...sentTo].sort(([a], [b]) => a - b).map(([c, t]) => [String(c), t])) },
         } as WorkItem<BroadcastRecord>);
-      const fresh = current.filter((c) => !sentTo.has(c));
+      // The destinations the day is owed to: those it has had while worked,
+      // the current list, and every expected mirror, listed or not. A mirror
+      // Base expects reports from has users who claim against the day, so a
+      // day is not done while one lacks it because it is missing from the
+      // list: it stays in view (and the topology alert stands) until the
+      // mirror can be sent it.
+      const fresh = [...new Set([...current, ...mirrors])].filter((c) => !sentTo.has(c));
       for (const c of fresh) sentTo.set(c, null);
       // eslint-disable-next-line no-await-in-loop
       if (fresh.length > 0) await save();
       // eslint-disable-next-line no-await-in-loop
       const dest = await destinationStates(deps, [...sentTo.keys()].sort((a, b) => a - b), d);
+      // Off the list, a destination is owed the day only where the contract
+      // gives it standing in it (it reported the day, was zeroed from it, or
+      // carries its commitments): one with none had no part in the day, and
+      // the single-destination send that alone could reach it refuses it.
+      for (const [c, state] of dest) {
+        if (state === 'received' || current.includes(c)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const q = await quote(deps.client, diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(c)]);
+        if ('refused' in q && q.refused === NO_STANDING) dest.delete(c);
+      }
       const plan = planBroadcast(dest, sentTo, nowSec);
       if (plan.late.length > 0) f.lateBroadcast.push({ day: d, late: plan.late });
       if (plan.done) {
@@ -783,12 +816,14 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }
 
   // A day is worked through once nothing more is owed on it here: closed on a
-  // mirror; closed, finalized and broadcast (nothing left to send) on Base.
-  // The frontier only moves forward, and a day short of it keeps the window
-  // open from there, so a day stuck for any reason is worked, and alerted on,
-  // every run until it goes through.
+  // mirror; finalized and broadcast (nothing left to send) on Base. Base's
+  // own close is owed only until the day is finalized: once it is, a close is
+  // refused for good (an admin's force-finalize can come first), and the day
+  // needs nothing more from it. The frontier only moves forward, and a day
+  // short of it keeps the window open from there, so a day stuck for any
+  // reason is worked, and alerted on, every run until it goes through.
   const through = (d: number): boolean =>
-    f.settled.has(`close:${d}`) && (!canonical || (f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`)));
+    canonical ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) : f.settled.has(`close:${d}`);
   await putWorkCursor(env.KEEPER_DB, chainId, diamond, 'day_close', nextFrontier(window, today, through));
 
   console.log(
@@ -809,11 +844,22 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
 
 // ─── Reads ──────────────────────────────────────────────────────────────
 
+/** `contracts` read in aggregates of {@link READ_CHUNK}, results in order. A
+ *  slice that fails reads as failures for its own entries only. */
+async function chunkedRead(client: never, contracts: readonly unknown[], label: string, deadline: number): Promise<Awaited<ReturnType<typeof boundedRead>>> {
+  const out: Awaited<ReturnType<typeof boundedRead>> = [];
+  for (let i = 0; i < contracts.length; i += READ_CHUNK) {
+    // eslint-disable-next-line no-await-in-loop
+    out.push(...(await boundedRead(client, contracts.slice(i, i + READ_CHUNK), label, deadline)));
+  }
+  return out;
+}
+
 /** One per-day view over the window, batched; a failed read is absent. */
 async function readDays<T>(deps: DayCloseDeps, diamond: Address, days: readonly number[], functionName: string, where: string): Promise<Map<number, T>> {
   const out = new Map<number, T>();
   if (days.length === 0) return out;
-  const res = await boundedRead(
+  const res = await chunkedRead(
     deps.readClient as never,
     days.map((d) => ({ address: diamond, abi: ABI, functionName, args: [BigInt(d)] })),
     `rewardDayClose ${where} ${functionName}`,
@@ -839,7 +885,7 @@ async function readReported(
   for (const d of days) out.set(d, { reported: new Set(), unknown: new Set() });
   const pairs = days.flatMap((d) => expected.map((c) => [d, c] as const));
   if (pairs.length === 0) return out;
-  const res = await boundedRead(
+  const res = await chunkedRead(
     deps.readClient as never,
     pairs.map(([d, c]) => ({ address: diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), c] })),
     `rewardDayClose ${where} isChainReported`,
@@ -864,7 +910,7 @@ async function baseView(
 ): Promise<Map<number, { finalized: boolean; counted: boolean }>> {
   const out = new Map<number, { finalized: boolean; counted: boolean }>();
   if (!base || days.length === 0) return out;
-  const res = await boundedRead(
+  const res = await chunkedRead(
     base.client as never,
     days.flatMap((d) => [
       { address: base.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
@@ -1086,9 +1132,13 @@ class Sender {
         account: ctx.wallet.account ?? null,
       } as never)) as Hex;
     } catch (err) {
-      reportSendError(label, err, `send failed: ${shortErr(err)}`);
-      // The node may have taken it before failing to answer.
-      this.maybeSent += 1;
+      // A deferral at the deadline sent nothing, and says so.
+      if (reportSendError(label, err, `send failed: ${shortErr(err)}`)) return this.stop('deadline');
+      // Only a send the node did not answer may have gone out (a timeout, a
+      // lost response, a nonce already taken): one the node refused outright
+      // (insufficient funds, a coded RPC refusal) left nothing, so the
+      // destinations it covered are not counted as sent.
+      if (!isDefinitiveRejection(err)) this.maybeSent += 1;
       return this.stop('send-failed');
     }
     console.log(`${label} value=${value} tx=${hash}`);
