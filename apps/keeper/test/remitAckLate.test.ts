@@ -8,7 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ackOrder, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
+import { ackOrder, chargeAck, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
 import { enqueueWork, finishWork, listOpenWork, listReleasedRemitIds, pageByBlock, touchOpenWork } from '../src/db';
 import { discoverWork } from '../src/workQueue';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -232,6 +232,38 @@ describe('ackOrder — the Pending acks rotate, so no id waits behind ever-retri
       [3, { lastAttemptAt: 900 }],
     ]);
     expect(ackOrder([1, 2, 3, 76, 77], at)).toEqual([76, 77, 2, 1, 3]);
+  });
+});
+
+describe('ackOrder moves the never-attempted start each run (Codex #2607 r13)', () => {
+  it('an id that is never recorded as attempted is not first every run', () => {
+    const none = new Map<number, { lastAttemptAt: number }>();
+    const firsts = new Set(Array.from({ length: 12 }, (_, run) => ackOrder([5, 1, 9, 3], none, run)[0]));
+    expect(firsts.size).toBeGreaterThan(1);
+  });
+
+  it('still puts every never-attempted id before the attempted ones, the attempted least recent first', () => {
+    const at = new Map([
+      [1, { lastAttemptAt: 900 }],
+      [2, { lastAttemptAt: 100 }],
+    ]);
+    for (let run = 0; run < 6; run++) {
+      const order = ackOrder([1, 2, 76, 77], at, run);
+      expect(new Set(order.slice(0, 2))).toEqual(new Set([76, 77]));
+      expect(order.slice(2)).toEqual([2, 1]);
+    }
+  });
+});
+
+describe('chargeAck keeps the Pending acks\' first claim on the budget (#2497 r13, Codex #2607 r13)', () => {
+  it('a late ack spends only what the unsettled Pending acks cannot claim', () => {
+    const budget = { remaining: 2, pendingUnsettled: 2, deadline: Infinity };
+    expect(chargeAck(budget, 'late')).toBe(false);
+    expect(chargeAck(budget, 'pending')).toBe(true);
+    budget.pendingUnsettled = 0; // both Pending acks settled; one budget left
+    expect(chargeAck(budget, 'late')).toBe(true);
+    expect(budget.remaining).toBe(0);
+    expect(chargeAck(budget, 'pending')).toBe(false);
   });
 });
 

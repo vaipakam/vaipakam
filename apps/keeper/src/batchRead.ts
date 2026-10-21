@@ -172,15 +172,34 @@ export async function settledRead(
   label: string,
   deadline: number,
 ): Promise<BatchResult[]> {
+  return settleBy(boundedRead(client, contracts, label, deadline), deadline, () => {
+    const error = new Error(`${label}: still in flight at the read deadline — read next run`);
+    return contracts.map(() => ({ status: 'failure' as const, error }));
+  });
+}
+
+/**
+ * `work`, or what `onCut` gives (or throws) if `work` is still in flight at
+ * `deadline` — the one primitive behind every "abandon it at the cutoff" in
+ * the keeper (`runWindow.ts` rule 3). An abandoned `work` keeps running; its
+ * late outcome, a rejection included, is discarded rather than left
+ * unhandled. Use it for READS: abandoning a broadcast would lose the record
+ * that it was sent.
+ */
+export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () => T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const cut = new Promise<BatchResult[]>((resolve) => {
+  work.catch(() => undefined);
+  const cut = new Promise<T>((resolve, reject) => {
     timer = setTimeout(() => {
-      const error = new Error(`${label}: still in flight at the read deadline — read next run`);
-      resolve(contracts.map(() => ({ status: 'failure' as const, error })));
+      try {
+        resolve(onCut());
+      } catch (err) {
+        reject(err);
+      }
     }, Math.max(0, deadline - Date.now()));
   });
   try {
-    return await Promise.race([boundedRead(client, contracts, label, deadline), cut]);
+    return await Promise.race([work, cut]);
   } finally {
     clearTimeout(timer);
   }

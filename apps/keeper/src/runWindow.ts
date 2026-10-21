@@ -20,7 +20,8 @@
  *      Refusing new reads at the cutoff is not enough on its own: a read
  *      already in flight can outlast it, so a read phase whose callers must
  *      not wait past the cutoff reads through `settledRead` (`batchRead.ts`),
- *      which abandons such a read at the cutoff. A read stage that feeds a
+ *      which abandons such a read at the cutoff (`settleBy` for a single
+ *      read, such as a fee quote ahead of a send). A read stage that feeds a
  *      LATER read stage leaves that stage a reserve the same way
  *      ({@link priorStageCutoffMs}), so a stage that runs to its cutoff never
  *      leaves the one after it no time at all.

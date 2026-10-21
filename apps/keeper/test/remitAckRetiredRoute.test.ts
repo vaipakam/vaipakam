@@ -114,6 +114,8 @@ const BASE = 84532;
 const ARB = 421614;
 const BASE_RPC = 'https://mock-rpc.invalid/base-sepolia';
 const ARB_RPC = 'https://mock-rpc.invalid/arb-sepolia';
+const BNB = 97;
+const BNB_RPC = 'https://mock-rpc.invalid/bnb-testnet';
 const OLD = '0x00000000000000000000000000000000000a11ce' as const;
 const NEW = '0x00000000000000000000000000000000000a11c2' as const;
 const MESSAGE_ID = `0x${'ab'.repeat(32)}`;
@@ -174,9 +176,13 @@ type Book = {
   zeroStranded?: boolean;
   /** Make the compensation-gate read revert. */
   failGate?: boolean;
+  /** Configure BNB Testnet as a second mirror. */
+  bnb?: boolean;
+  /** Hold the fee quote only on this RPC (default: every mirror). */
+  slowQuoteRpc?: string;
 };
 
-function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; quoteRpcs: string[]; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
   const routeIds: number[] = [];
@@ -184,6 +190,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
   const posts: number[] = [];
   const postTexts: string[] = [];
   let quotes = 0;
+  const quoteRpcs: string[] = [];
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
     if (s === SEL.cfg) {
@@ -237,17 +244,20 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
     }
     const body = JSON.parse(init?.body ?? '{}');
     const reqs = Array.isArray(body) ? body : [body];
-    if (JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) quotes += 1;
+    if (JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
+      quotes += 1;
+      quoteRpcs.push(rpc);
+    }
     const wire = JSON.stringify(reqs).toLowerCase();
     if (book.slowReceipt && wire.includes(SEL.received.slice(2)) && wire.includes(book.slowReceipt.id.toString(16).padStart(64, '0'))) {
       await new Promise((r) => setTimeout(r, book.slowReceipt!.ms));
     }
-    if (book.slowQuoteMs && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
+    if (book.slowQuoteMs && (book.slowQuoteRpc ?? rpc) === rpc && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
       await new Promise((r) => setTimeout(r, book.slowQuoteMs));
     }
     const out = reqs.map((req: { method: string; params?: unknown[]; id?: unknown }) => {
       const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id ?? 1, result });
-      if (req.method === 'eth_chainId') return ok(rpc === BASE_RPC ? '0x14a34' : '0x66eee');
+      if (req.method === 'eth_chainId') return ok(rpc === BASE_RPC ? '0x14a34' : rpc === BNB_RPC ? '0x61' : '0x66eee');
       if (req.method === 'eth_blockNumber') return ok('0x1312d00');
       if (req.method !== 'eth_call') return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32601, message: `unexpected ${req.method}` } };
       const data = (((req.params?.[0] ?? {}) as { data?: string }).data ?? '0x').toLowerCase();
@@ -275,7 +285,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, routeIds, posts, postTexts, quotes: () => quotes, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, posts, postTexts, quotes: () => quotes, quoteRpcs, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
@@ -315,7 +325,7 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
 }
 
 async function tick(book: Book) {
-  const { routeReads, routeIds, posts, postTexts, quotes, restore } = install(book);
+  const { routeReads, routeIds, posts, postTexts, quotes, quoteRpcs, restore } = install(book);
   const shared = d1();
   const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList, book.failAttempts);
   const warns: string[] = [];
@@ -325,6 +335,8 @@ async function tick(book: Book) {
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void errors.push(a.map(String).join(' '))),
     vi.spyOn(console, 'log').mockImplementation(() => {}),
   ];
+  const started = Date.now();
+  let elapsedMs = 0;
   try {
     await runRemitAck(
       {
@@ -335,10 +347,12 @@ async function tick(book: Book) {
         KEEPER_PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
         RPC_BASE_SEPOLIA: BASE_RPC,
         RPC_ARB_SEPOLIA: ARB_RPC,
+        ...(book.bnb ? { RPC_BNB_TESTNET: BNB_RPC } : {}),
         ...(book.telegramDelayMs === undefined ? {} : { TG_OPS_BOT_TOKEN: 'test-token', TG_OPS_CHAT_ID: '-1' }),
       } as never,
       { scheduledTimeMs: undefined, deadlineMs: Date.now() + (book.deadlineInMs ?? 60_000) },
     );
+    elapsedMs = Date.now() - started;
   } finally {
     restore();
     spies.forEach((s) => s.mockRestore());
@@ -347,7 +361,7 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes() };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, elapsedMs };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -391,6 +405,28 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts).toHaveLength(1);
     expect(t.alerts[0]).toContain('remit 2');
     expect(t.alerts[0]).not.toContain('remit 1');
+  });
+
+  it('a quote stalled on one mirror does not hold up another mirror\'s acknowledgement', async () => {
+    // Reservation 1 goes to Arbitrum Sepolia, whose fee quote stalls past the
+    // deadline; reservation 2 goes to BNB Testnet. Both hold a receipt and
+    // neither was attempted. Each mirror sends in its own lane, so BNB is
+    // quoted whatever Arbitrum does (Codex #2607 r13).
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      receiptIds: [1, 2],
+      dstById: { 2: BNB },
+      bnb: true,
+      route: { sent: NEW, live: NEW },
+      slowQuoteMs: 5_000,
+      slowQuoteRpc: ARB_RPC,
+      deadlineInMs: 1_000,
+    });
+    expect(t.quoteRpcs).toContain(BNB_RPC);
+    // The stalled quote is abandoned at the deadline: the pass does not wait
+    // the stall out.
+    expect(t.elapsedMs).toBeLessThan(3_000);
   });
 
   it('a slow ops channel on one path cannot starve the other path', async () => {

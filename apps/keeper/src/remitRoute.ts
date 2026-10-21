@@ -31,6 +31,7 @@ import type { Abi, Address, PublicClient } from 'viem';
 import { RewardRemittanceLensFacetABI } from '@vaipakam/contracts/abis';
 import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
 import { settledRead, type BatchResult } from './batchRead';
+import { walkFrom } from './rotate';
 
 const LENS_ABI = RewardRemittanceLensFacetABI as Abi;
 /** Route reads per `aggregate3` (#1946). */
@@ -73,10 +74,14 @@ export function remitRouteVerdict(r: BatchResult | undefined): RemitRouteVerdict
 export async function readRemitRoutes(
   client: PublicClient,
   diamond: Address,
-  ids: readonly number[],
+  held: readonly number[],
   deadline: number,
+  /** The run, so the cutoff leaves a different tail unread each run (Codex
+   *  #2607 r13, `runWindow.ts` rule 2). */
+  run = 0,
 ): Promise<Map<number, RemitRouteVerdict>> {
   const out = new Map<number, RemitRouteVerdict>();
+  const ids = walkFrom(held, run);
   for (let i = 0; i < ids.length; i += ROUTE_READ_CHUNK) {
     const chunk = ids.slice(i, i + ROUTE_READ_CHUNK);
     // eslint-disable-next-line no-await-in-loop
