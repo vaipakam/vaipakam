@@ -1,4 +1,4 @@
-## Keeper — reward days now close, finalize and broadcast by themselves (PR #<n>)
+## Keeper — reward days now close, finalize and broadcast by themselves (PR #2616)
 
 The cross-chain interaction-reward cycle needs three permissionless calls every UTC day: each chain reports the day's interest (`closeDay`), Base finalizes the day once every expected chain has reported or the grace window has run out (`finalizeDay`), and Base broadcasts the finalized totals back to the mirrors (`broadcastGlobal`). Until now nothing made those calls on a live chain. The keeper's simulations made them by hand, so a launched reward programme would have sat with every day open: mirrors unreported, nothing finalized, nothing for the remit pass to fund, and nothing mirror users could claim.
 
