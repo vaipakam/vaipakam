@@ -3,9 +3,10 @@
 // #2612 — what the day-close pass calls, and the numbers it works by. One
 // place, so a timing or a refusal name is never restated in two modules.
 
-import { toEventSelector, type Abi } from 'viem';
+import { toEventSelector, toFunctionSelector, type Abi } from 'viem';
 import {
   AdminFacetABI,
+  DiamondLoupeFacetABI,
   InteractionRewardsLensFacetABI,
   RewardAggregatorFacetABI,
   RewardBroadcastFacetABI,
@@ -28,6 +29,13 @@ export const ABI = [
   ...MESSENGER_ABI.filter((x) => x.type === 'error'),
   ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
+
+export const LOUPE_ABI = DiamondLoupeFacetABI as Abi;
+/** `closeDay`, and `getInterestFrontiers`: the reporter facet gained the
+ *  second in the same change (#2459) that gave its `closeDay` the B4 report
+ *  send, so the two routed to one facet mean that facet sends B4. */
+export const CLOSE_DAY_SELECTOR = toFunctionSelector('closeDay(uint256)');
+export const B4_REPORTER_SELECTOR = toFunctionSelector('getInterestFrontiers()');
 
 /** This pass's cadence in seconds (passSchedule). */
 export const PASS_CADENCE_SEC = 15 * 60;

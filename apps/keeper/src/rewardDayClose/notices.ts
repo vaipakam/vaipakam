@@ -15,6 +15,7 @@ import { sendOpsNoticeDigest } from '../opsAlert';
 import { ABI, REASON_FINALIZED } from './constants';
 import type { ChainRun } from './deps';
 import { shortErr } from './errors';
+import type { Fact } from './fact';
 import type { DayStore, ZeroedRecord } from './store';
 import type { AbiEvent } from 'viem';
 
@@ -73,7 +74,9 @@ async function zeroedByEvents(c: ChainRun, d: number, from: bigint): Promise<num
  * without. The source is the finalization's own ChainContributionZeroed
  * events, searched from the block at which this keeper last saw the day open
  * (`openSeen`), so a change to the expected-source list after finalization
- * cannot change what is said. A day this keeper never saw open, or whose
+ * cannot change what is said. While that record cannot be read, no day is
+ * recorded (each is `note`d), since a day seen open would otherwise be taken
+ * for one never seen. A day this keeper never saw open, or whose
  * events cannot be found, is judged instead from Base's record of who
  * reported it against the list as read now, in one aggregate (one block)
  * together with the day's finalization, and the record says so. A day whose
@@ -81,14 +84,18 @@ async function zeroedByEvents(c: ChainRun, d: number, from: bigint): Promise<num
  * empty list still gets a record (naming no chain), since a finalized day is
  * worked through only once its record exists.
  */
-export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[], openSeen: ReadonlyMap<number, bigint>, note: Note): Promise<void> {
+export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[], openSeen: Fact<ReadonlyMap<number, bigint>>, note: Note): Promise<void> {
   if (finalizedDays.length === 0) return;
   let pending: readonly number[] = finalizedDays;
   try {
     const have = await store.zeroed(finalizedDays);
     pending = finalizedDays.filter((x) => !have.has(x));
     for (const d of pending) {
-      const from = openSeen.get(d);
+      if (!openSeen.known) {
+        note(`notice:${d}`, `the block this keeper last saw the day open from (its database: ${openSeen.why})`);
+        continue;
+      }
+      const from = openSeen.value.get(d);
       // eslint-disable-next-line no-await-in-loop
       const ev = from === undefined ? 'absent' : await zeroedByEvents(c, d, from);
       if (ev === 'unread') {

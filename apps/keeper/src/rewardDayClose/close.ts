@@ -11,9 +11,11 @@
 // what it says about the CHAIN (its custody era and its cumulative
 // recycled-availability and commitment ratchets). Only the B4 report carries
 // that late path: an older shape reaching a finalized day is refused on Base
-// after its fee is paid, so a mirror whose messenger cannot quote the B4
-// report sends none for a day Base has finalized or can finalize now, nor for
-// one whose finalization it cannot read.
+// after its fee is paid, so a mirror that sends an older shape sends none for
+// a day Base has finalized or can finalize now, nor for one whose
+// finalization it cannot read. Which shape goes out takes two reads: the
+// messenger must quote B4, and the Diamond's reporter must send it (a B4
+// messenger also takes the older shapes an older reporter sends).
 //
 // The checks are reads before the transaction, which sends through whatever
 // messenger the Diamond then holds: a rotation in between cannot be prevented
@@ -29,7 +31,8 @@ import { FRONTIER_SHORT } from './constants';
 import type { ChainRun } from './deps';
 import { shortErr } from './errors';
 import type { BaseDay } from './reads';
-import { reportFee } from './reads';
+import { diamondSendsB4, reportFee } from './reads';
+import { known, type Fact } from './fact';
 import { reportSentVia } from './plan';
 import type { Sender } from './sender';
 import type { DayStore, DispatchRecord } from './store';
@@ -39,9 +42,11 @@ import type { DayStore, DispatchRecord } from './store';
 export type BaseDays = Map<number, BaseDay> | 'unserved';
 
 const PRE_B4_FINALIZED =
-  "Base has finalized this day or can finalize it now, and this chain's messenger cannot quote the B4 report, the only shape whose chain-wide figures Base applies after finalization; an older report landing after finalization is refused on Base after its fee is paid, so it is not sent";
+  "Base has finalized this day or can finalize it now, and this chain sends an older report than B4, the only shape whose chain-wide figures Base applies after finalization; an older report landing after finalization is refused on Base after its fee is paid, so it is not sent";
 const PRE_B4_UNSERVED =
-  "this keeper does not serve Base, so whether Base has finalized this day cannot be read, and this chain's messenger cannot quote the B4 report, the only shape safe to send for a finalized day; an older report would be refused on Base after its fee is paid if the day is finalized, so it is not sent";
+  "this keeper does not serve Base, so whether Base has finalized this day cannot be read, and this chain sends an older report than B4, the only shape safe to send for a finalized day; an older report would be refused on Base after its fee is paid if the day is finalized, so it is not sent";
+const MESSENGER_PRE_B4 = "its messenger cannot quote the B4 report";
+const DIAMOND_PRE_B4 = "its Diamond's reporter facet predates the B4 send: closeDay is not routed to the facet that hosts getInterestFrontiers";
 
 /** Close `days` (each unreported here), oldest first. Mirror only: `mirror`
  *  carries the messenger the checks read and Base's state per day. Returns
@@ -56,6 +61,7 @@ export async function closeDays(
 ): Promise<{ closed: number[]; dispatched: Map<number, DispatchRecord> }> {
   const closed: number[] = [];
   const dispatched = new Map<number, DispatchRecord>();
+  let diamondB4: Fact<boolean> | null = null;
   for (const d of days) {
     if (sender.stopped) break;
     let fee = 0n;
@@ -71,23 +77,35 @@ export async function closeDays(
         sender.refused.set(`close:${d}`, 'the messenger would not quote the report fee');
         continue;
       }
-      if (!q.b4) {
+      // The B4 report goes out only when the messenger takes it AND the
+      // Diamond's reporter sends it; read once, on the first day that needs it.
+      // eslint-disable-next-line no-await-in-loop
+      if (q.b4 && diamondB4 === null) diamondB4 = await diamondSendsB4(c);
+      const b4: Fact<boolean> = q.b4 ? diamondB4! : known(false);
+      if (!b4.known || !b4.value) {
+        const why = !q.b4 ? MESSENGER_PRE_B4 : DIAMOND_PRE_B4;
         const onBase = mirror.baseDays === 'unserved' ? null : mirror.baseDays.get(d);
-        if (onBase === null) {
-          sender.refused.set(`close:${d}`, PRE_B4_UNSERVED);
-          continue;
-        }
-        // A day Base can finalize now is as unsafe for an older report as one
-        // it has finalized: anyone may finalize it before the report lands.
-        if (onBase?.finalized.known && onBase.ready.known && (onBase.finalized.value || onBase.ready.value)) {
-          sender.refused.set(`close:${d}`, PRE_B4_FINALIZED);
-          continue;
-        }
         // Fail closed: an older shape is safe only for a day Base is known
-        // not to have finalized. A failed read is retried next run.
-        if (!onBase?.finalized.known || !onBase.ready.known) {
-          console.error(`[keeper] rewardDayClose ${c.where}: day ${d} not closed: whether Base has finalized it is unread, and this chain's messenger cannot quote the B4 report; left for the next run`);
-          sender.noteUnread(`close:${d}`, "whether Base has finalized the day (needed for this messenger's older report shape)");
+        // not to have finalized and not to be able to finalize now (anyone
+        // may finalize it before the report lands). A failed read is retried
+        // next run.
+        const safe = onBase?.finalized.known && onBase.ready.known && !onBase.finalized.value && !onBase.ready.value;
+        if (!safe && !b4.known) {
+          console.error(`[keeper] rewardDayClose ${c.where}: day ${d} not closed: whether this Diamond sends the B4 report is unread, and the day may be finalized on Base first; left for the next run`);
+          sender.noteUnread(`close:${d}`, `whether this Diamond sends the B4 report: ${b4.why}`);
+          continue;
+        }
+        if (onBase === null) {
+          sender.refused.set(`close:${d}`, `${PRE_B4_UNSERVED} (${why})`);
+          continue;
+        }
+        if (onBase?.finalized.known && onBase.ready.known && (onBase.finalized.value || onBase.ready.value)) {
+          sender.refused.set(`close:${d}`, `${PRE_B4_FINALIZED} (${why})`);
+          continue;
+        }
+        if (!safe) {
+          console.error(`[keeper] rewardDayClose ${c.where}: day ${d} not closed: whether Base has finalized it is unread, and this chain sends an older report than B4; left for the next run`);
+          sender.noteUnread(`close:${d}`, "whether Base has finalized the day (needed for this chain's older report shape)");
           continue;
         }
       }

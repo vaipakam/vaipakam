@@ -9,7 +9,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
-import { ABI, MESSENGER_ABI, READ_CHUNK, REASON_FINALIZED } from './constants';
+import { ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
@@ -174,6 +174,24 @@ export async function destinationStates(c: ChainRun, destinations: readonly numb
     out.set(x, !f.known ? 'unread' : f.value[2] ? 'received' : 'missing');
   }
   return out;
+}
+
+/** Whether this Diamond's `closeDay` sends the B4 report when its messenger
+ *  takes it. The messenger accepts every shape, so its quote says only what it
+ *  can take; which shape goes out is the reporter facet's, and a Diamond whose
+ *  reporter predates B4 sends B3 to a B4 messenger. Read from the Diamond's
+ *  own routing: `closeDay` is hosted by a facet that also hosts
+ *  `getInterestFrontiers`, which the reporter gained in the change that gave
+ *  it the B4 send. A facet without it predates B4; should a later split move
+ *  that view elsewhere, this reads false and the older-shape holds apply,
+ *  which fail closed and are said. */
+export async function diamondSendsB4(c: ChainRun): Promise<Fact<boolean>> {
+  const host = (sel: `0x${string}`, what: string) => readOne<Address>(c.deps.client, c.diamond, LOUPE_ABI, 'facetAddress', [sel], `${c.where}: the facet routed for ${what}`);
+  const close = await host(CLOSE_DAY_SELECTOR, 'closeDay');
+  if (!close.known) return unknown(`the facet this Diamond routes closeDay to (${close.why})`);
+  const frontiers = await host(B4_REPORTER_SELECTOR, 'getInterestFrontiers');
+  if (!frontiers.known) return unknown(`the facet this Diamond routes getInterestFrontiers to (${frontiers.why})`);
+  return known(BigInt(close.value) !== 0n && close.value.toLowerCase() === frontiers.value.toLowerCase());
 }
 
 /** The messenger's fee for the report `closeDay` sends. The Diamond sends the

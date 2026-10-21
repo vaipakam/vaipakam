@@ -22,7 +22,7 @@ import type { Address } from 'viem';
 import { baseClock, clockHold, peerClock, type ClockFacts, type PeerClock } from './clock';
 import { graceWarningSec, REASON_FINALIZED } from './constants';
 import type { ChainRun } from './deps';
-import { dayFact, type Fact, type PerDay } from './fact';
+import { dayFact, known, unknown, type Fact, type PerDay } from './fact';
 import type { BaseFindings, Wait } from './findings';
 import { broadcastDays } from './broadcast';
 import { recordZeroed } from './notices';
@@ -133,19 +133,28 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     if (nearEnd) waiting.set(d, { ...pending, sent: await peerSentAt(c, pending.missing, d) });
   }
   // Each open day's latest open-seen block; a day finalized since keeps the
-  // block it was last seen open from, which its events lie after.
-  const openSeen = new Map<number, bigint>();
+  // block it was last seen open from, which its events lie after. A record
+  // that could not be read is unknown, never "not seen open": that would put
+  // a finalized day's notice on the list as it reads now instead of on the
+  // finalization's own events. One that could not be saved is only logged:
+  // a day without a record is judged against the list, and its notice says so.
+  let openSeen: Fact<Map<number, bigint>>;
   try {
-    for (const [d, b] of await store.openSeen(x.window)) openSeen.set(d, BigInt(b));
-    if (seenAt !== null) {
-      for (const d of open) {
-        openSeen.set(d, seenAt);
+    openSeen = known(new Map([...(await store.openSeen(x.window))].map(([d, b]) => [d, BigInt(b)])));
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose ${c.where}: open-seen blocks unread: ${shortErr(err)}`);
+    openSeen = unknown(shortErr(err));
+  }
+  if (seenAt !== null) {
+    for (const d of open) {
+      if (openSeen.known) openSeen.value.set(d, seenAt);
+      try {
         // eslint-disable-next-line no-await-in-loop
         await store.saveOpenSeen(d, seenAt);
+      } catch (err) {
+        console.error(`[keeper] rewardDayClose ${c.where}: open-seen block of day ${d} unsaved: ${shortErr(err)}`);
       }
     }
-  } catch (err) {
-    console.error(`[keeper] rewardDayClose ${c.where}: open-seen blocks unread or unsaved: ${shortErr(err)}`);
   }
   if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value, openSeen, (k, what) => sender.noteUnread(k, what));
 

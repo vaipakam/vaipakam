@@ -11,7 +11,7 @@
  *     the alerts, raised AND cleared.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, pad, toEventSelector, toHex, type Abi, type Address, type Log, type PublicClient } from 'viem';
+import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, pad, toEventSelector, toFunctionSelector, toHex, type Abi, type Address, type Log, type PublicClient } from 'viem';
 import { RewardAggregatorFacetABI, RewardReporterFacetABI, VaipakamDiamondABI } from '@vaipakam/contracts/abis';
 import {
   BROADCAST_LATE_AFTER_SEC,
@@ -33,6 +33,7 @@ import {
   type PeerReader,
 } from '../src/rewardDayClose';
 import { retireUnworkedAlerts } from '../src/rewardDayClose/alerts';
+import { DayStore } from '../src/rewardDayClose/store';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -243,6 +244,9 @@ class FakeDiamond {
   baseChain = BASE;
   /** The Diamond routes no single-destination broadcast (a partial upgrade). */
   noSingleSend = false;
+  /** Where the loupe says `getInterestFrontiers` is routed: with `closeDay`
+   *  (a B4 reporter), elsewhere (a reporter that predates B4), or unread. */
+  reporterHost: 'b4' | 'preB4' | 'unread' = 'b4';
   /** Governance changes the destination list to this right after the run
    *  first reads it (null = no change). */
   destinationsChangeTo: number[] | null = null;
@@ -322,6 +326,9 @@ class FakeDiamond {
       throw new Error(`unexpected messenger read ${functionName}`);
     }
     switch (functionName) {
+      case 'facetAddress':
+        if (this.reporterHost === 'unread') throw new Error('fetch failed');
+        return args![0] === toFunctionSelector('getInterestFrontiers()') && this.reporterHost === 'preB4' ? ZERO : '0x00000000000000000000000000000000000000f1';
       case 'getRewardRole':
         if (this.roleUnread) throw new Error('rpc down');
         return this.role;
@@ -1173,6 +1180,20 @@ describe('a run', () => {
     expect(base.sent.filter((s) => s.fn !== 'closeDay'), 'the contract says it has standing: it is owed the day').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
   });
 
+  it('keeps a day owed to a chain on neither list when the Diamond cannot say whether it is owed it', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE, MIRROR])); // the mirror is in the day
+    base.firstAt.set(0, NOW - 60);
+    base.finalizeByOther(0);
+    base.expected = [BASE]; // then taken off both lists
+    base.destinations = [];
+    base.noSingleSend = true; // and the Diamond routes no single-destination broadcast
+    await run(base);
+    expect(base.sent.filter((s) => s.fn !== 'closeDay'), 'no send can reach it').toEqual([]);
+    expect(alerts(/chain 421614 is not a broadcast destination and this Diamond routes no single-destination broadcast, so whether it is owed the day cannot be read and no send can reach it/)).toHaveLength(1);
+    expect(owed(), 'the day is not worked through').toEqual([0]);
+  });
+
   it('does not call an RPC that gives no answer a refusal', async () => {
     mirror.rpcDown = true;
     await run(mirror);
@@ -1410,7 +1431,26 @@ describe('a run', () => {
     mirror.quoteShapes = new Set([7, 5, 3]);
     await run(mirror);
     expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
-    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain's messenger cannot quote the B4 report/)).toHaveLength(1);
+    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain sends an older report than B4.*\(its messenger cannot quote the B4 report\)/)).toHaveLength(1);
+  });
+
+  it("a mirror sends no report for a day Base has finalized when its Diamond's reporter predates B4, whatever its messenger quotes", async () => {
+    base.finalized.add(1);
+    mirror.sentAt.set(0, NOW - 86_400);
+    mirror.sentAt.set(2, NOW - 86_400);
+    mirror.reporterHost = 'preB4'; // a B4 messenger also takes the B3 report an older reporter sends
+    await run(mirror);
+    expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
+    expect(alerts(/reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain sends an older report than B4.*\(its Diamond's reporter facet predates the B4 send/)).toHaveLength(1);
+  });
+
+  it("holds a close Base may finalize first while whether the Diamond sends B4 is unread, and closes a day Base cannot finalize yet", async () => {
+    base.finalized.add(1);
+    mirror.sentAt.set(0, NOW - 86_400);
+    mirror.reporterHost = 'unread';
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day), 'day 2 is not finalized and cannot be yet: any shape is safe').toEqual([2]);
+    expect(alerts(/for day 1 \(whether this Diamond sends the B4 report: the facet this Diamond routes closeDay to/)).toHaveLength(1);
   });
 
   it('a mirror sends no pre-B4 report for a day Base can finalize now, though it has not', async () => {
@@ -1738,6 +1778,24 @@ describe('a run', () => {
     await run(base);
     expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l))).toHaveLength(1);
     expect(openKeys()).not.toContain(held);
+  });
+
+  it('records no zeroed-day notice while the block it last saw the day open from cannot be read', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60); // inside grace: the keeper waits, and sees the day open
+    await run(base);
+    base.finalizeByOther(0); // zeroes the mirror
+    base.expected = [BASE]; // then the mirror leaves the list: only the events still name it
+    const read = vi.spyOn(DayStore.prototype, 'openSeen').mockRejectedValueOnce(new Error('D1_ERROR'));
+    await run(base);
+    expect(read).toHaveBeenCalled();
+    expect(logged.filter((l) => /notice: reward day 0/.test(l)), 'not judged against the list as it reads now').toEqual([]);
+    expect(alerts(/for day 0 \(the block this keeper last saw the day open from \(its database: /)).toHaveLength(1);
+    expect(owed()).toContain(0);
+    later(60);
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the events: the mirror, though off the list now, and not marked as judged against it').toHaveLength(1);
   });
 
   it('says a zeroed-day notice was judged against the list when the keeper never saw the day open', async () => {

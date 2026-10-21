@@ -76,14 +76,11 @@ export async function broadcastDays(c: ChainRun, store: DayStore, sender: Sender
         changed = true;
         continue;
       }
-      // A Diamond that routes no single-destination broadcast reaches only its
-      // destination list, so a chain on neither list is one it cannot send the
-      // day to at all: not owed here, and said in the log.
-      if ('refused' in q && q.refused === NO_SELECTOR) {
-        console.log(`[keeper] rewardDayClose ${c.where}: day ${d}: chain ${k} is on neither list and this Diamond routes no single-destination broadcast, so it cannot be sent the day`);
-        continue;
-      }
-      // Standing, or not known: owed until a read says otherwise.
+      // Standing, or not known: owed until a read says otherwise. A Diamond
+      // that routes no single-destination broadcast cannot say (its standing
+      // read is that send's quote) and cannot send the day to a chain on
+      // neither list either: the chain stays owed, and the send's refusal
+      // says it cannot be reached, holding the day until it can.
       if ('unread' in q) sender.noteUnread(`broadcast:${d}`, `whether chain ${k} has standing in the day`);
       sentTo.set(k, null);
       changed = true;
@@ -179,6 +176,8 @@ async function deliver(c: ChainRun, sender: Sender, x: BroadcastInput, d: number
           await sendCovering(c, sender, x.messenger, d, [k], sentTo, save, () => sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(k)], q.fee));
     if (r === 'landed' || r === 'skipped') continue;
     if (RESEND_TO_ALL.has(r) && x.current.includes(k)) toAll = true;
+    else if (r === NO_SELECTOR)
+      said.push(`chain ${k} is not a broadcast destination and this Diamond routes no single-destination broadcast, so whether it is owed the day cannot be read and no send can reach it`);
     else if (RESEND_TO_ALL.has(r)) said.push(`chain ${k} is not a broadcast destination and the Diamond will not send the day to it alone (${r})`);
     else if ('refused' in q) said.push(`the Diamond would not quote the send to chain ${k} (${q.refused})`);
     else said.push(`the send to chain ${k} was refused (${r})`);
