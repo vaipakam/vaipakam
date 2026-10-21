@@ -228,8 +228,18 @@ library LibCloseoutFreeze {
     /// @notice Class B — pay-or-freeze an Active-loan lender share whose funds are
     ///         sitting in the DIAMOND (e.g. periodic-interest auto-liquidation
     ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
-    ///         holder → direct `safeTransfer` (unchanged behaviour). Frozen holder
-    ///         → `depositLocked` (Diamond → stored lender vault) + the shared park.
+    ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
+    ///         → stored lender vault) + the shared park.
+    /// @dev    #2440 — every caller is a forced flow (periodic-interest
+    ///         auto-liquidation, a partial HF liquidation), so it acts on what
+    ///         arrived. Both branches return what reached the payee, and the
+    ///         caller credits the loan by that figure, never by `amount`: a
+    ///         token that delivers less than it sends leaves the difference
+    ///         owed on the loan rather than settled. The paid-through mark moves
+    ///         only on a delivery in full, because "paid through" has to mean
+    ///         paid.
+    /// @return delivered What the lender-position holder (clean) or the stored
+    ///         lender's vault (frozen) received, never more than `amount`.
     function freezeOrPayActiveLenderResident(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -237,32 +247,37 @@ library LibCloseoutFreeze {
         address asset,
         uint256 amount,
         uint256 deliveredThroughAt
-    ) internal {
-        if (amount == 0) return;
+    ) internal returns (uint256 delivered) {
+        if (amount == 0) return 0;
         // Resolve the CURRENT lender-position holder here (the loan is Active, so
         // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
         // party the fail-closed marker keys on. Resolving inside the helper keeps
         // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            IERC20(asset).safeTransfer(lenderRecipient, amount);
+            delivered = LibDelivery.pushMeasured(asset, lenderRecipient, amount);
             // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
             // period this payout settles, so a later sale must not forfeit that
             // stretch a second time. Advanced on THIS branch only: the freeze
             // branch below parks the tokens in `heldForLender`, which migrates to
             // the BUYER on a sale, so treating a frozen payout as delivered would
             // pay the seller for tokens they never held and do not keep.
+            // #2440 — and only when the payout arrived in full: a short arrival
+            // leaves part of the period owed, so its window stays open.
             //
             // Monotone: a caller settling an older boundary after a newer one can
             // never walk the mark backwards and re-open a window already paid.
-            if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
+            if (
+                delivered == amount &&
+                deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]
+            ) {
                 LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
             }
-            return;
+            return delivered;
         }
         // #2440 — park what the vault received.
-        amount = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+        delivered = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, delivered);
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share funded by a
@@ -316,6 +331,12 @@ library LibCloseoutFreeze {
     /// @dev    Both branches arm the move-out exemption around the withdraw (the
     ///         payer LOSES custody either way) — Tier-2 servicing must not brick a
     ///         `fromUser` flagged after init.
+    ///         #2440 — every caller books this share as paid in full (a rental
+    ///         day by `autoDeductDaily`, the lender's share of a rental repay or
+    ///         preclose), so both branches refuse a delivery that fell short
+    ///         ({LibDelivery.requireFull}). A rental whose prepay token starts
+    ///         charging on transfer therefore stops being serviced and settles
+    ///         through the time-based default, which acts on what arrives.
     function freezeOrPayActiveLenderFromVault(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -327,8 +348,12 @@ library LibCloseoutFreeze {
         if (amount == 0) return;
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            LibSanctionedLock.vaultWithdrawERC20MoveOut(
-                s, fromUser, asset, lenderRecipient, amount
+            LibDelivery.requireFull(
+                asset,
+                amount,
+                LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                    s, fromUser, asset, lenderRecipient, amount
+                )
             );
             // #1503 item 28 — DELIVERED, paid through now. Same reasoning as the
             // from-payer helper above, including why the freeze branch below does
@@ -338,9 +363,12 @@ library LibCloseoutFreeze {
             }
             return;
         }
-        // #2440 — park what the stored lender's vault received.
-        amount = LibSanctionedLock.depositLockedFromVault(
-            s, fromUser, loan.lender, loanId, asset, amount
+        LibDelivery.requireFull(
+            asset,
+            amount,
+            LibSanctionedLock.depositLockedFromVault(
+                s, fromUser, loan.lender, loanId, asset, amount
+            )
         );
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }

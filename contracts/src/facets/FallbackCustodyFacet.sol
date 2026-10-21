@@ -625,12 +625,18 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///      first, then the treasury's, then the lender's. The principal-due
     ///      figures are untouched — the debt did not change, only the
     ///      collateral that secures it. The two claim rows follow their
-    ///      slices, as every snapshot rescale keeps them.
+    ///      slices, as every snapshot rescale keeps them, and so does the
+    ///      loan's collateral: `collateralAmount` is the row plus any
+    ///      FallbackPending top-up (the figure the internal match and the
+    ///      cure read), so it falls by the same difference the row did.
     function _absorbCustodyShortfall(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         uint256 shortfall
     ) private {
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        loan.collateralAmount -=
+            shortfall < loan.collateralAmount ? shortfall : loan.collateralAmount;
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
         uint256 take = shortfall < snap.borrowerCollateral ? shortfall : snap.borrowerCollateral;
         snap.borrowerCollateral -= take;

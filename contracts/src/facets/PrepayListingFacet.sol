@@ -515,7 +515,13 @@ contract PrepayListingFacet is
         // it back (the revert-loses-the-marker failure the sync is designed around).
         LibVaipakam.assertRecipientNotBarred(lenderHolder);
         address treasury = s.treasury;
-        SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
+        // #2440 — the loan settles below as if the lender received all of
+        // `lenderLeg`, so the leg must arrive in full. A short arrival is
+        // refused, which reverts the whole Seaport fill (the buyer's funds are
+        // never committed) and leaves the default path open.
+        LibDelivery.requireFull(
+            principalAsset, lenderLeg, LibDelivery.pushMeasured(principalAsset, lenderHolder, lenderLeg)
+        );
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
         // Codex round-5 P2 #3 — every treasury-fee site MUST pair the
         // transfer with `LibFacet.recordTreasuryAccrual` so the

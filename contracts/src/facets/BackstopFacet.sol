@@ -728,14 +728,17 @@ contract BackstopFacet is
         if (amount > bucket) revert TreasuryInsufficient();
         s.backstopAbsorbCash[principal][collateral] = bucket - amount;
         // Pull the free cash from the vault back to the Diamond (treasury custody).
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+        // #2440 — the treasury is credited with what reached the Diamond: the
+        // bucket gave up `amount`, and a token's own charge on the move is the
+        // treasury's, never drawn from the Diamond's other holdings.
+        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             vault,
             principal,
             address(this),
             amount
         );
-        s.treasuryBalances[principal] += amount;
-        emit BackstopAbsorbWithdrawn(principal, collateral, amount);
+        s.treasuryBalances[principal] += received;
+        emit BackstopAbsorbWithdrawn(principal, collateral, received);
     }
 
     /// @notice Sweep WAREHOUSED absorb collateral out of the backstop vault (e.g.
@@ -760,7 +763,8 @@ contract BackstopFacet is
         uint256 warehoused = s.backstopWarehousedCollateral[collateral];
         if (amount > warehoused) revert BackstopAbsorbCollateralInsufficient();
         s.backstopWarehousedCollateral[collateral] = warehoused - amount;
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+        // #2440 — what `to` received; the treasury credit below books that.
+        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             vault,
             collateral,
             to,
@@ -772,7 +776,7 @@ contract BackstopFacet is
         // can't claim (it only sweeps tracked `treasuryBalances`). Mirrors the
         // other backstop recovery paths.
         if (to == address(this) && s.treasury == address(this)) {
-            s.treasuryBalances[collateral] += amount;
+            s.treasuryBalances[collateral] += received;
         }
         emit BackstopAbsorbCollateralSwept(collateral, to, amount);
     }

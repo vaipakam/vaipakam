@@ -1289,17 +1289,28 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         //
         // `deliveredThroughAt` is 0: this payout settles no interest period, and
         // the host's NatSpec asks for 0 from such callers.
+        //
+        // #2440 — a forced payout acts on what arrived. The host returns what
+        // reached the lender; a token that delivers less than it sends repays
+        // that much less principal, so the difference stays owed on the
+        // residual loan. The interest was settled first from these proceeds
+        // and the accrual restarts below, so a shortfall beyond the principal
+        // part is the lender's receipt charge, recorded nowhere as paid.
         if (lenderProceeds > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
-                    loanId,
-                    loan.principalAsset,
-                    lenderProceeds,
-                    uint256(0)
+            uint256 undelivered = lenderProceeds - abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                        loanId,
+                        loan.principalAsset,
+                        lenderProceeds,
+                        uint256(0)
+                    ),
+                    bytes4(0)
                 ),
-                bytes4(0)
+                (uint256)
             );
+            principalRepaid -= undelivered < principalRepaid ? undelivered : principalRepaid;
         }
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value

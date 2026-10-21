@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -12,6 +13,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -209,6 +211,15 @@ contract MeasuredDeliveryTest is SetupTest {
         (amount, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN);
     }
 
+    /// @dev The loan's paid-through mark (`lenderInterestDeliveredThroughAt`),
+    ///      which has no getter: slot 480 of the Diamond's namespace, per
+    ///      `storage-layout/layout.golden.json`. Every cell that reads it first
+    ///      proves the slot by writing a known value through the mutator.
+    function _paidThrough(uint256 loanId) internal view returns (uint256) {
+        bytes32 slot = keccak256(abi.encode(loanId, uint256(LibVaipakam.VANGKI_STORAGE_POSITION) + 480));
+        return uint256(vm.load(address(diamond), slot));
+    }
+
     /// @dev The fallback custody fixture: a liquid default whose every swap
     ///      route fails, so the producer returns the collateral to the
     ///      borrower's vault under the lien. Fixture-live: FallbackPending and
@@ -345,6 +356,11 @@ contract MeasuredDeliveryTest is SetupTest {
         assertEq(tc, tc0, "the treasury's slice is untouched");
         assertEq(bc, bc0 - (row - restored), "the borrower's slice absorbed the shortfall");
         assertEq(lc + tc + bc, restored, "the snapshot still splits the row exactly");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount,
+            restored,
+            "the loan's collateral follows the row"
+        );
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
     }
 
@@ -408,6 +424,25 @@ contract MeasuredDeliveryTest is SetupTest {
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
 
         assertEq(_bal(col, borrower), walletBefore, "nothing left the borrower's wallet");
+    }
+
+    /// @notice #2440 — the net principal delivered at acceptance must reach the
+    ///         borrower in full: the loan records the borrower as owing the
+    ///         whole principal, so a lending asset that delivers less than it
+    ///         sends is refused at acceptance, as the collateral is.
+    /// @dev    Kills: the borrower owing principal they never received.
+    function test_Accept_PrincipalRefusedUnlessAllArrives() public {
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(_lenderErc20Offer());
+        _chargesFee(mockERC20, _vault(lender));
+
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+
+        vm.expectPartialRevert(IVaipakamErrors.TokenDeliveryShort.selector);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
     }
 
     // -- Rentals ------------------------------------------------------------
@@ -488,6 +523,69 @@ contract MeasuredDeliveryTest is SetupTest {
             _less(l.bufferAmount) + _less(treasuryFee - shortfall),
             "the treasury bore the shortfall"
         );
+    }
+
+    /// @notice A rental day is booked as paid to the lender in full, so a
+    ///         prepay token that starts charging on transfer stops the daily
+    ///         deduction by name; the rental then settles through the
+    ///         time-based default, which acts on what arrives.
+    /// @dev    Kills: the daily deduction paying the lender short while the
+    ///         prepay pool is debited the whole day.
+    function test_RentalDailyDeduct_RefusedUnlessAllArrives() public {
+        uint256 loanId = _openRental();
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 snap = vm.snapshotState();
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
+        vm.revertToState(snap);
+
+        _chargesFee(mockERC20, address(0));
+        vm.expectPartialRevert(IVaipakamErrors.TokenDeliveryShort.selector);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
+    }
+
+    /// @notice A forced payout of resident tokens to the lender (the periodic
+    ///         auto-liquidation, a partial liquidation) reports what the
+    ///         lender received, and a short arrival leaves the period it
+    ///         settles open instead of marking the lender paid through it.
+    /// @dev    Kills: the caller booking the requested figure as settled, and
+    ///         the paid-through mark advancing over tokens that never arrived.
+    function test_ResidentLenderPayout_ReportsWhatArrived() public {
+        _scaffold(true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
+        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
+        _chargesFee(mockERC20, address(diamond));
+        uint256 lender0 = _bal(mockERC20, lender);
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, block.timestamp + 30 days
+        );
+
+        assertEq(delivered, _less(amount), "the helper reports what arrived");
+        assertEq(_bal(mockERC20, lender) - lender0, delivered, "and the lender received it");
+        assertEq(_paidThrough(LOAN), 1, "a short payout leaves the period open");
+    }
+
+    /// @notice The control for the cell above: a payout that arrives in full
+    ///         reports the whole amount and marks the lender paid through.
+    function test_ResidentLenderPayout_FullArrivalMarksPaidThrough() public {
+        _scaffold(true);
+        uint256 amount = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
+        assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
+        uint256 boundary = block.timestamp + 30 days;
+
+        vm.prank(address(diamond));
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+            LOAN, mockERC20, amount, boundary
+        );
+
+        assertEq(delivered, amount, "the whole payout arrived");
+        assertEq(_paidThrough(LOAN), boundary, "the lender is paid through the boundary");
     }
 
     // -- The treasury fee host ----------------------------------------------

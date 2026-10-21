@@ -379,7 +379,15 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // `repayPartial`'s Tier-1 screen on the discretionary payout.
         LibVaipakam._assertNotSanctioned(currentLenderHolder);
         uint256 lenderTotal = lenderShare + partialPrincipal;
-        IERC20(loan.principalAsset).safeTransfer(currentLenderHolder, lenderTotal);
+        // #2440 — the loan is booked below as repaid by `partialPrincipal` and
+        // paid through now, and this is the borrower's own choice, so the
+        // payout must reach the lender in full; a short arrival is refused, as
+        // `repayPartial`'s lender payout is.
+        LibDelivery.requireFull(
+            loan.principalAsset,
+            lenderTotal,
+            LibDelivery.pushMeasured(loan.principalAsset, currentLenderHolder, lenderTotal)
+        );
 
         // Any leftover principal (above accrued + partialPrincipal) →
         // current borrower-NFT holder's EOA directly (Codex round-4

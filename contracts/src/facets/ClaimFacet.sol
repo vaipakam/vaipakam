@@ -523,19 +523,6 @@ contract ClaimFacet is
         // permissionless close-out path (`claimAsLender` proper) never calls it.
         LibBackstopOracleGate.assertCoverage(c);
 
-        // Par-guard — compare the lender slice's oracle VALUE directly (not the
-        // rounded-down required-collateral, which could accept a low-decimal slice
-        // up to one base unit of value below par). `sliceValue == 0` ⇒ oracle
-        // unavailable ⇒ refuse. Tolerate only 1 PRINCIPAL wei (sub-economic) for
-        // the snapshot's integer-division rounding, so a solvent absorb isn't
-        // spuriously rejected while an underwater slice still reverts.
-        uint256 sliceValue = LibFallback.principalEquivalent(
-            address(this), snap.lenderCollateral, c, p
-        );
-        if (sliceValue == 0 || sliceValue + 1 < due) {
-            revert BackstopUndercollateralized();
-        }
-
         // Absorb-cash + cap accounting. The exposure counter tracks cash spent on
         // collateral NOT yet resold; released only on realized-cash sale (§5.1).
         if (s.backstopAbsorbCash[p][c] < due) {
@@ -562,11 +549,26 @@ contract ClaimFacet is
         //    BOTH holders; the burned lender side no-ops, the live borrower side is
         //    stamped).
         //    `absorbed` is the slice the host actually moved (its return value),
-        //    never a snapshot field re-read afterwards. The par guard above priced
-        //    the same slice: the host reads the snapshot and never mutates it.
+        //    never a snapshot field re-read afterwards.
         uint256 absorbed = _disposeFallbackCustody(
             loanId, vault, LibFallbackCustody.Move.ToBackstop
         );
+
+        // Par-guard — compare the oracle VALUE of the slice the backstop vault
+        // actually RECEIVED (#2440: a collateral that delivers less than it
+        // sends makes `absorbed` smaller than the snapshot's slice, and the
+        // treasury's cash must buy what arrived, not what was sent) directly
+        // (not the rounded-down required-collateral, which could accept a
+        // low-decimal slice up to one base unit of value below par).
+        // `sliceValue == 0` ⇒ oracle unavailable ⇒ refuse. Tolerate only 1
+        // PRINCIPAL wei (sub-economic) for the snapshot's integer-division
+        // rounding, so a solvent absorb isn't spuriously rejected while an
+        // underwater slice still reverts. The revert unwinds the whole absorb,
+        // the disposal above included.
+        uint256 sliceValue = LibFallback.principalEquivalent(address(this), absorbed, c, p);
+        if (sliceValue == 0 || sliceValue + 1 < due) {
+            revert BackstopUndercollateralized();
+        }
         // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`
         // can never reach seeded absorb CASH sharing the same vault/token.
         if (absorbed > 0) s.backstopWarehousedCollateral[c] += absorbed;
@@ -592,17 +594,11 @@ contract ClaimFacet is
         LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
 
         // Pay the lender (current NFT owner) CASH = lenderPrincipalDue from the
-        // backstop vault's absorb-cash balance.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                vault,
-                p,
-                nftOwner,
-                due
-            ),
-            VaultWithdrawFailed.selector
-        );
+        // backstop vault's absorb-cash balance. #2440 — the lender claim is
+        // marked cash-satisfied above, so the cash must arrive in full; the
+        // absorb is optional, and a short payment refuses it, leaving the
+        // lender the ordinary claim.
+        LibFacet.vaultWithdrawExact(vault, p, nftOwner, due, VaultWithdrawFailed.selector);
 
         // Release any heldForLender (prior partial-rescue proceeds) from the
         // lender's OWN vault reservation to the NFT owner — its existing balance,

@@ -688,7 +688,14 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // encumber + marker) when the holder is registry-flagged. Hosted on
             // `EncumbranceMutateFacet` so the registry-aware freeze machinery stays
             // out of this EIP-170-tight facet; the host resolves `ownerOf` itself.
-            LibFacet.crossFacetCall(
+            //
+            // #2440 — a forced payout acts on what arrived. `lenderProceeds`
+            // becomes what reached the lender, so the `interestSettled` credit,
+            // the over-buffer signal and the event below name tokens the
+            // lender actually has; a short delivery leaves the difference in
+            // the borrower's obligation. The host moves the paid-through mark
+            // only on a delivery in full.
+            lenderProceeds = abi.decode(LibFacet.crossFacetCallReturn(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                     loanId,
@@ -721,7 +728,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     lenderProceeds >= shortfall ? boundary : 0
                 ),
                 bytes4(0)
-            );
+            ), (uint256));
             // #408 / #410 / #413 (2026-06-12) — credit
             // `interestSettled` by the interest just forwarded to the
             // lender so a later full repay / preclose nets the

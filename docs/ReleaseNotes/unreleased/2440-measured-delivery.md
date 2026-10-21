@@ -34,6 +34,24 @@ default, so tokens move from that user's vault into the same vault, or a
 payer who is also the payee) counts as delivered in full for an ordinary
 token, because the tokens stay where they were sent.
 
+Review of the change added the remaining moves that are recorded as a payment
+in full. Accepting an offer now refuses a lending asset whose net principal
+reaches the borrower short, as it already refused short collateral. A rental
+day's fee, a partial swap-to-repay, an in-place extension and the lender's
+share of a marketplace collateral sale are refused the same way, so a rental
+whose prepay token starts charging is no longer serviced day by day and
+settles through the time-based default at the end of its term (the renter's
+buffer then goes to the treasury, as on any rental default). The forced
+payouts to a lender out of resident tokens (periodic auto-liquidation and
+partial liquidation) now report what the lender received, and the loan books
+only that; a short payout leaves the period it settles open. A failed
+fallback retry that restores less than it pulled lowers the loan's recorded
+collateral along with the custody. The optional backstop purchase of fallback
+collateral is priced on what actually reached the backstop, and its cash to
+the lender must arrive in full. Moving parked lender proceeds to a new holder
+shrinks the reservations beside them to what arrived. Two backstop
+withdrawals credit the treasury with what reached it.
+
 Every fee into the treasury drawn from a wallet or a vault now runs through
 one small new facet, TreasuryFeeFacet, which measures what the treasury
 received and records the accrual once. A wallet fee is refused unless it all

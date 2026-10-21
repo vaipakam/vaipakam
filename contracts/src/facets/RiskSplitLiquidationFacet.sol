@@ -187,8 +187,13 @@ contract RiskSplitLiquidationFacet is
         // #2440 — a forced close-out acts on what arrived: the loan's collateral
         // becomes what reached the Diamond, and the split must sum to that
         // figure. A short delivery is never made up from the Diamond's other
-        // balance; splits sized for the requested amount then revert on the
-        // sum check, and the single-route liquidation sells what arrived.
+        // balance. Splits sized for the recorded amount revert on the sum
+        // check, whose `SplitSumMismatch(sum, inputAmount)` names the figure
+        // that arrived; legs quoted for that figure settle, and the
+        // single-route liquidation sells what arrived either way. The legs are
+        // NOT rescaled here: a split leg is an aggregator quote for a fixed
+        // amount and is held to spend exactly its `splitAmount`, so a rescaled
+        // leg would revert in the adapter instead.
         loan.collateralAmount = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(),
             loan.borrower,

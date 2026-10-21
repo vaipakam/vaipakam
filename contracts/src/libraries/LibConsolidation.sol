@@ -358,9 +358,14 @@ library LibConsolidation {
         // principal asset. (NFT-rental lender positions are excluded upstream,
         // so the prepay-asset case does not reach here.)
         asset = loan.principalAsset;
-        // #2440 — the held claim follows what the holder's vault received.
-        amount = _moveERC20(stored, current, asset, amount, toProxy);
-        s.heldForLender[loanId] = amount;
+        // #2440 — the held claim follows what the holder's vault received, and
+        // the reservations re-keyed beside it in step 5 never exceed it.
+        uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
+        if (credited < amount) {
+            s.heldForLender[loanId] = credited;
+            LibEncumbrance.capLenderHeldReservations(loanId, current, asset, credited);
+        }
+        amount = credited;
     }
 
     /// @dev ERC-20 vault→vault: withdraw from `stored` (decrements its tracked

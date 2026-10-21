@@ -167,15 +167,16 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             }
         }
 
-        // Deliver the net principal (principal − fee) to the borrower.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                lender,
-                lendingAsset,
-                borrower,
-                effectivePrincipal - initiationFee
-            ),
+        // Deliver the net principal (principal − fee) to the borrower. #2440 —
+        // the loan records the borrower as owing all of `effectivePrincipal`,
+        // so the net principal must arrive in full: a lending asset that
+        // delivers less than it sends is refused at acceptance, as the
+        // collateral is (the platform does not support such tokens).
+        LibFacet.vaultWithdrawExact(
+            lender,
+            lendingAsset,
+            borrower,
+            effectivePrincipal - initiationFee,
             VaultWithdrawFailed.selector
         );
     }
