@@ -134,6 +134,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     line =
       ` finalized=${r.finalizedNow} broadcast=${r.broadcastNow}` +
       (r.b.finalizeHold !== null ? ` finalize-held(${r.b.finalizeHold})` : '') +
+      (r.b.broadcastHold !== null ? ` broadcast-held(${r.b.broadcastHold})` : '') +
       (unconfirmed.length > 0 ? ` broadcast-unconfirmed(unserved destinations)=${unconfirmed.join(',')}` : '') +
       (unproven.length > 0 ? ` broadcast-unproven(unserved, no receipt seen)=${unproven.join(',')}` : '') +
       stale;

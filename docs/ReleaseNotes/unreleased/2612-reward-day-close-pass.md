@@ -4,7 +4,7 @@ The cross-chain interaction-reward cycle needs three permissionless calls every 
 
 A new keeper pass, `rewardDayClose`, makes them. It runs every 15 minutes on every reward chain and works every elapsed day not yet worked through, however late it is first armed or however long the keeper is down, plus at least the last 14 days. Days stuck longer are worked a bounded number per run, each in turn, after the recent days, so a stuck day never takes the sends a recent day still inside Base's grace needs.
 
-**Nothing irreversible is done on an assumption.** A close stamps a report sent for good, and a finalization is final, so each waits while any of its preconditions is unknown, and the ops channel is told what it is waiting on:
+**Nothing irreversible is done on an assumption.** A close stamps a report sent for good, and a finalization is final, so each waits while any of its preconditions is unknown, and the ops channel is told what it is waiting on. One standing alert per chain names every held step and why, taken from the same judgement that holds it, so no hold is silent; it also says when finalized days are not broadcast because a list cannot be read:
 
 - every reward clock involved must be known to start at the same moment as Base's (a day number has to cover the same hours everywhere). A clock that differs holds closes and finalizations, and so does one that is not known: never read, read from a Diamond the chain no longer names, or on a chain the keeper does not serve;
 - a mirror's messenger must route reports to the chain its Diamond names as Base, read rather than assumed;

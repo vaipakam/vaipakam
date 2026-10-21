@@ -229,14 +229,24 @@ const KINDS: readonly AlertKind[] = [
     },
   },
   {
-    kind: 'destunread',
+    // Every hold on an irreversible or user-facing step is said here, whatever
+    // its cause, read from the same value that holds the step. The alerts
+    // naming a cause (clock, route) say what to fix; this one says what is
+    // held, so no hold can be silent, including one with no alert of its own.
+    kind: 'held',
     perDay: false,
     raised: () => ['all'],
     judge(f, _s, tag) {
-      const b = f.base;
-      if (b === null || b.destinations.known) return GONE;
+      const parts: string[] = [];
+      if (f.base !== null) {
+        if (f.base.finalizeHold !== null) parts.push(`finalizes no reward day while ${f.base.finalizeHold} (finalizing is irreversible; any other caller still can)`);
+        if (f.base.broadcastHold !== null) parts.push(`broadcasts no finalized day while ${f.base.broadcastHold}, so users on the mirrors cannot claim those days yet`);
+      } else if (f.mirror !== null) {
+        if (f.mirror.closeHold !== null) parts.push(`closes no reward day while ${f.mirror.closeHold} (a report is sent once and cannot be recalled)`);
+      } else return UNJUDGED;
+      if (parts.length === 0) return GONE;
       return HOLDS(
-        `${tag}: the reward messenger's broadcast destinations could not be read (the messenger is unset, too old to list them, or the read failed), so no finalized day was broadcast this run and users on the mirrors cannot claim those days yet. Finalizing goes on; the broadcast resumes on the first run that reads the list.`,
+        `${tag}: this keeper ${parts.join('; and it ')}. Each step resumes on the first run that reads what it waits on as safe. Any alert naming a cause says what to fix; an unread value usually means the keeper's RPC for that chain failed, or the contract does not answer that read.`,
       );
     },
   },

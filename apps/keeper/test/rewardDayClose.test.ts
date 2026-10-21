@@ -210,6 +210,8 @@ class FakeDiamond {
   knownUnreadable = false;
   /** The messenger's destination list cannot be read. */
   destinationsUnreadable = false;
+  /** The expected-source list cannot be read. */
+  expectedUnreadable = false;
   /** Chains whose `isChainReported` read fails. */
   unreadable = new Set<number>();
   /** The reward clock's launch read fails. */
@@ -269,6 +271,7 @@ class FakeDiamond {
       case 'getDailyFirstReportAt':
         return BigInt(this.firstAt.get(d) ?? 0);
       case 'getExpectedSourceChainIds':
+        if (this.expectedUnreadable) throw new Error('rpc down');
         return this.expected;
       case 'isChainReported':
         if (this.unreadable.has(Number(args![1]))) throw new Error('rpc down');
@@ -721,11 +724,29 @@ describe('a run', () => {
     base.destinationsUnreadable = true;
     await run(base);
     expect(base.sent.map((s) => s.fn), 'closed and finalized, not broadcast').toEqual(['closeDay', 'finalizeDay']);
-    expect(alerts(/broadcast destinations could not be read/)).toHaveLength(1);
-    openAlert(`dayclose-destunread:${BASE}:all`);
+    expect(alerts(/broadcasts no finalized day while the reward messenger's broadcast destinations could not be read/)).toHaveLength(1);
+    openAlert(`dayclose-held:${BASE}:all`);
     base.destinationsUnreadable = false;
     await run(base);
     expect(base.sent.map((s) => s.fn).slice(2), 'broadcast once the list reads').toEqual(['broadcastGlobal']);
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('says it finalizes and broadcasts nothing while the expected-source list cannot be read, until it can', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([MIRROR]));
+    base.firstAt.set(0, NOW - 60);
+    base.expectedUnreadable = true;
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'closed, not finalized').toEqual(['closeDay']);
+    expect(
+      alerts(/finalizes no reward day while Base's expected-source list could not be read .*; and it broadcasts no finalized day while Base's expected-source list could not be read/),
+      'the hold is said though no other alert names its cause',
+    ).toHaveLength(1);
+    openAlert(`dayclose-held:${BASE}:all`);
+    base.expectedUnreadable = false;
+    await run(base);
+    expect(base.sent.map((s) => s.fn).slice(1), 'finalized and broadcast once the list reads').toEqual(['finalizeDay', 'broadcastGlobal']);
     expect(openKeys()).toEqual([]);
   });
 

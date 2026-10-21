@@ -57,6 +57,13 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     clock = baseClock(x.launch, mirrors);
   }
   const finalizeHold = !expected.known ? "Base's expected-source list could not be read" : clockHold(clock!);
+  // The broadcast needs both lists: the destinations it sends to, and the
+  // expected mirrors, which are owed the day too.
+  const broadcastHold = !destinations.known
+    ? "the reward messenger's broadcast destinations could not be read (the messenger is unset, too old to list them, or the read failed)"
+    : !expected.known
+      ? "Base's expected-source list could not be read"
+      : null;
 
   const ready = await readDays<readonly [boolean, number]>(c, x.window, 'isDayReadyToFinalize');
   const firstAt = await readDays<bigint>(c, x.window, 'getDailyFirstReportAt');
@@ -110,11 +117,9 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
   }
   if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value);
 
-  // An unread destination list stops only the broadcast; so does an unread
-  // expected-source list, since the mirrors it names are owed the day too.
   let plans = new Map<number, BroadcastPlan>();
   let broadcastNow = 0;
-  if (destinations.known && expected.known) {
+  if (broadcastHold === null && destinations.known && expected.known) {
     const r = await broadcastDays(c, store, sender, {
       days: x.window.filter((d) => finalized.has(d)),
       current: destinations.value,
@@ -126,6 +131,6 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     broadcastNow = r.sent;
   }
 
-  const b: BaseFindings = { expected, destinations, topology, finalizeHold, judged, waiting, finalized, broadcast: plans, noticed: new Set() };
+  const b: BaseFindings = { expected, destinations, topology, finalizeHold, broadcastHold, judged, waiting, finalized, broadcast: plans, noticed: new Set() };
   return { b, clock, finalizedNow, broadcastNow };
 }

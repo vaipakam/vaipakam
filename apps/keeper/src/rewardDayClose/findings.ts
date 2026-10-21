@@ -28,6 +28,8 @@ export interface BaseFindings {
   topology: Topology | null;
   /** Why this run finalizes no day (null = none). */
   finalizeHold: string | null;
+  /** Why this run broadcasts no finalized day (null = none). */
+  broadcastHold: string | null;
   /** Open days this run judged for finalization (readiness, grace and
    *  reports all read). */
   judged: Set<number>;
