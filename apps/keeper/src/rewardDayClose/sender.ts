@@ -27,6 +27,13 @@ export class Sender {
   private pendingChecked = false;
   stopped = false;
   stopReason = '';
+  /** Why the run stopped sending, when that is a fault that can repeat run
+   *  after run (no key, an RPC that does not answer, a send the node refused,
+   *  a receipt not seen, a transaction of this keeper's still unmined): said
+   *  by the `held` alert, so a stalled pass is never visible only in logs.
+   *  Null for an ordinary stop (the send budget or the run's deadline, which
+   *  the next run continues from) and for a pause, which is said apart. */
+  stall: string | null = null;
   /** Writes that went out and may have landed: landed, or sent with no
    *  receipt seen. A write known to have reverted is not counted. */
   maybeSent = 0;
@@ -57,9 +64,10 @@ export class Sender {
     return this.stopReason === PAUSED_REFUSAL;
   }
 
-  private stop(why: string): 'skipped' {
+  private stop(why: string, stall: string | null = null): 'skipped' {
     this.stopped = true;
     this.stopReason = why;
+    this.stall = stall;
     return 'skipped';
   }
 
@@ -70,7 +78,7 @@ export class Sender {
     if (Date.now() >= this.deps.sendDeadline) return this.stop('deadline');
     if (this.ctx === undefined) this.ctx = this.deps.context();
     const ctx = this.ctx;
-    if (!ctx) return this.stop('no-signing-key');
+    if (!ctx) return this.stop('no-signing-key', 'it has no signing key for this chain, so it sent nothing');
     // A transaction of this keeper's still unmined (an earlier run's whose
     // receipt was not seen, or another pass's) may be this very step: the
     // state reads as before it, and a second send would queue behind it only
@@ -83,9 +91,9 @@ export class Sender {
       } catch (err) {
         if (err instanceof PastRunDeadline) return this.stop('deadline');
         console.error(`[keeper] rewardDayClose chain=${ctx.chainId} the keeper's pending transactions could not be read: ${shortErr(err)}`);
-        return this.stop('rpc-unavailable');
+        return this.stop('rpc-unavailable', `it could not read whether a transaction of its own is still unmined (${shortErr(err)}), so it sent nothing`);
       }
-      if (pending !== null) return this.stop(pending);
+      if (pending !== null) return this.stop(pending, `a transaction of its own is still unmined on this chain (${pending}), so it sent nothing behind it`);
       this.pendingChecked = true;
     }
     const key = `${step}:${day}`;
@@ -99,7 +107,7 @@ export class Sender {
         // the day, and stop sending on this RPC for the run.
         console.error(`[keeper] rewardDayClose chain=${ctx.chainId} ${functionName}(${day}) not simulated, the RPC did not answer: ${c.unread}`);
         this.noteUnread(`${step}:${day}`, 'the simulation of the call (the RPC did not answer)');
-        return this.stop('rpc-unavailable');
+        return this.stop('rpc-unavailable', `the RPC did not answer the simulation of ${functionName} for day ${day}, so it sent nothing more`);
       }
       const reason = c.refused;
       if (reason === PAUSED_REFUSAL) return this.stop(PAUSED_REFUSAL);
@@ -118,8 +126,12 @@ export class Sender {
       // Only a send the node did not answer may have gone out (a timeout, a
       // lost response, a nonce already taken): one the node refused outright
       // (insufficient funds, a coded RPC refusal) left nothing.
-      if (!isDefinitiveRejection(err)) this.maybeSent += 1;
-      return this.stop('send-failed');
+      const refused = isDefinitiveRejection(err);
+      if (!refused) this.maybeSent += 1;
+      return this.stop(
+        'send-failed',
+        `the node ${refused ? 'refused' : 'did not answer'} its send of ${functionName} for day ${day} (${shortErr(err)})${refused ? ', so nothing went out' : ', which may still have gone out'}; a refusal like insufficient funds for the gas and CCIP fee repeats every run until it is fixed`,
+      );
     }
     console.log(`${label} value=${value} tx=${hash}`);
     try {
@@ -132,7 +144,7 @@ export class Sender {
     } catch (err) {
       console.error(`${label} receipt not seen in time: ${shortErr(err)}`);
       this.maybeSent += 1;
-      return this.stop('receipt-timeout');
+      return this.stop('receipt-timeout', `it saw no receipt for ${functionName} for day ${day} (tx ${hash}) in time; it may still land`);
     }
     this.maybeSent += 1;
     this.landed.add(key);

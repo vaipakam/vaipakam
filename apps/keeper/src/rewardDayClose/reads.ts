@@ -125,12 +125,6 @@ export async function expectedSources(p: PeerReader, where: string): Promise<Fac
   return f.known ? known(f.value.map(Number)) : f;
 }
 
-/** The chain the messenger sends reports to (its own `baseChainId`). */
-export async function messengerRoute(client: PublicClient, messenger: Address, where: string): Promise<Fact<number>> {
-  const f = await readOne<bigint>(client, messenger, MESSENGER_ABI, 'baseChainId', [], `${where}: the messenger's report route (baseChainId)`);
-  return f.known ? known(Number(f.value)) : f;
-}
-
 /** The reward messenger the Diamond held at `blockNumber` (or now). */
 export async function messengerAt(c: ChainRun, blockNumber: bigint | 'latest'): Promise<Fact<Address>> {
   const at = blockNumber === 'latest' ? undefined : blockNumber;

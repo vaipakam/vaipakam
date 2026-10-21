@@ -19,6 +19,8 @@
 //   sender      simulate-then-send within the run's budget
 //   close       step 1: close each day (both roles)
 //   mirror      a mirror's reads of Base, and when its closes are safe
+//   wire        whether the report channel to Base would accept a report,
+//               read link by link on both ends
 //   base        Base's finalization
 //   broadcast   Base's broadcast of each finalized day
 //   findings    what a run established: the one input to its alerts

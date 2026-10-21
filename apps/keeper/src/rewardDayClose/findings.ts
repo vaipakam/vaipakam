@@ -50,9 +50,10 @@ export interface MirrorFindings {
   baseServed: boolean;
   /** Base's expected-source list leaves this chain out. */
   notExpectedOnBase: Fact<boolean> | 'unserved';
-  /** The messenger this run checked, and where it routes reports. */
+  /** The messenger this run checked, and the faults on the report channel
+   *  from it to Base (empty = every link reads as wired; wire.ts). */
   messenger: Address;
-  route: Fact<number>;
+  wire: Fact<string[]>;
   /** Why this run closes no day (null = none). */
   closeHold: string | null;
   /** Per window day: Base's outcome for this chain is final and learned (the
@@ -77,6 +78,9 @@ export interface RunFindings {
   /** `step:day` → what could not be read, for steps a failed read kept from
    *  being tried this run. */
   unread: ReadonlyMap<string, string>;
+  /** Why the run stopped sending, when that is a fault that can repeat run
+   *  after run (null = it did not, or stopped only at its budget or deadline). */
+  stall: string | null;
   /** Other chains read as unreadable this run (not attested), with why. */
   unattested: ReadonlyMap<number, string>;
   /** `step:day` work that is done (as read, or landed this run). */

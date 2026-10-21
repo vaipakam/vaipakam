@@ -38,7 +38,7 @@ import { getChainConfigs } from '../env';
 import { buildKeeperContext, passIsArmed } from '../keeper';
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
-import { retireChainAlerts, retireUnservedChainAlerts, settleAlerts, settleGate } from './alerts';
+import { retireChainAlerts, retireUnworkedAlerts, settleAlerts, settleGate } from './alerts';
 import { listsStand, runBase } from './base';
 import { closeDays } from './close';
 import { ABI, LOOKBACK_DAYS, PASS_ALERT_WINDOW_MS, ROLE_CANONICAL, ROLE_MIRROR } from './constants';
@@ -77,7 +77,7 @@ export async function runRewardDayClose(env: Env, tick: PassTick): Promise<void>
       }
     }),
   );
-  await retireUnservedChainAlerts(env, new Set(chains.map((c) => c.id)), tick.deadlineMs);
+  await retireUnworkedAlerts(env, new Map(chains.map((c) => [c.id, (c.diamond as string).toLowerCase()])), tick.deadlineMs);
 }
 
 function peerReader(chains: readonly ChainConfig[], id: number, deadline: number): PeerReader | null {
@@ -181,7 +181,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     return s.known && !s.value;
   });
 
-  const f: RunFindings = { chainId, canonical, window, refused: sender.refused, unread: sender.unread, unattested: c.peers.unattested, done: () => false, clock: null, base: null, mirror: null };
+  const f: RunFindings = { chainId, canonical, window, refused: sender.refused, unread: sender.unread, stall: null, unattested: c.peers.unattested, done: () => false, clock: null, base: null, mirror: null };
   let line = '';
   let closed: number[] = [];
   if (canonical) {
@@ -249,6 +249,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     await store.settle(today, window, () => false);
     return;
   }
+  f.stall = sender.stall;
   if (f.base !== null) f.base.noticed = await postZeroedNotices(env, store, window, deps.runDeadline);
   const held = await settleAlerts(env, store, f, nowSec, deps.runDeadline);
   // On Base, a day leaves only on plans made against the lists as they still

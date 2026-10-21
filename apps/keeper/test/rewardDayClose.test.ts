@@ -32,7 +32,7 @@ import {
   type FinalizeInput,
   type PeerReader,
 } from '../src/rewardDayClose';
-import { retireUnservedChainAlerts } from '../src/rewardDayClose/alerts';
+import { retireUnworkedAlerts } from '../src/rewardDayClose/alerts';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -46,6 +46,20 @@ const LANE_FEE = 123n;
 const BROADCAST_FEE = 456n;
 const BROADCAST_TO_FEE = 78n;
 const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
+/** Each chain's reward messenger and its CCIP transport, as the fakes are
+ *  wired by default: every report channel link reads as wired. */
+const MESSENGER_OF: Record<number, Address> = {
+  [BASE]: '0x00000000000000000000000000000000000000b2',
+  [MIRROR]: '0x00000000000000000000000000000000000000c2',
+  [OTHER]: '0x00000000000000000000000000000000000000d2',
+};
+const TRANSPORT_OF: Record<number, Address> = {
+  [BASE]: '0x00000000000000000000000000000000000000b3',
+  [MIRROR]: '0x00000000000000000000000000000000000000c3',
+  [OTHER]: '0x00000000000000000000000000000000000000d3',
+};
+const REWARD_CHANNEL = `0x${'ab'.repeat(32)}` as const;
+const ZERO = '0x0000000000000000000000000000000000000000';
 const NOW = Math.floor(T0 / 1000);
 
 describe('the pure rules', () => {
@@ -234,6 +248,9 @@ class FakeDiamond {
   destinationsChangeTo: number[] | null = null;
   /** The current reporter config read fails. */
   reporterConfigUnread = false;
+  /** Report-channel reads answered otherwise than wired, by function name, on
+   *  this chain's reward messenger or its transport ('unread' = the read fails). */
+  wire = new Map<string, unknown>();
   /** The chain the Diamond names itself in its reporter config, when not its
    *  own (an RPC pointed at another chain's same-address Diamond). */
   namesItself: number | null = null;
@@ -256,7 +273,34 @@ class FakeDiamond {
 
   readContract = async ({ address, functionName, args, blockNumber }: { address: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }): Promise<unknown> => {
     const d = args && args.length > 0 ? Number(args[0] as bigint) : -1;
+    const reward = this.messengerNow ?? this.messenger;
+    const wired = (): unknown => {
+      const o = this.wire.get(functionName);
+      if (o === 'unread') throw new Error('fetch failed');
+      return o;
+    };
+    if (address === TRANSPORT_OF[this.chainId]) {
+      const o = wired();
+      if (o !== undefined) return o;
+      switch (functionName) {
+        case 'channelOf':
+          return args![0] === reward ? REWARD_CHANNEL : `0x${'00'.repeat(32)}`;
+        case 'remoteMessengerOf':
+          return TRANSPORT_OF[Number(args![0] as bigint)] ?? ZERO;
+        case 'handlerOf':
+          return args![0] === REWARD_CHANNEL ? reward : ZERO;
+        case 'channelPeerOf':
+          return args![0] === REWARD_CHANNEL ? (MESSENGER_OF[Number(args![1] as bigint)] ?? ZERO) : ZERO;
+        default:
+          throw new Error(`unexpected transport read ${functionName}`);
+      }
+    }
     if (address === this.messenger || address === this.messengerNow) {
+      if (['messenger', 'isCanonical', 'diamond'].includes(functionName)) {
+        const o = wired();
+        if (o !== undefined) return o;
+        return functionName === 'messenger' ? TRANSPORT_OF[this.chainId] : functionName === 'isCanonical' ? this.role === ROLE_CANONICAL : this.diamond;
+      }
       if (functionName === 'quoteSendChainReport') {
         // A shape the messenger lacks: the contract answers with an unnamed revert.
         if (!this.quoteShapes.has(args?.length ?? 0)) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
@@ -525,15 +569,15 @@ describe('a run', () => {
     mirror.routeTo = 999;
     await run(mirror);
     expect(mirror.sent, 'a report sent now would never reach Base').toEqual([]);
-    expect(alerts(/sends its reports to chain 999, but this Diamond names chain/)).toHaveLength(1);
+    expect(alerts(/would not be accepted on Base .*sends its reports to chain 999, but this Diamond names chain 84532 as Base/)).toHaveLength(1);
     expect(owed(), 'and every day stays owed').toEqual([0, 1, 2]);
-    openAlert(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`); // as a delivered alert leaves it
+    openAlert(`dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`); // as a delivered alert leaves it
     await run(mirror);
-    expect(openKeys(), 'stands while the route still differs').toContain(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`);
+    expect(openKeys(), 'stands while the route still differs').toContain(`dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`);
     mirror.routeTo = null;
     await run(mirror);
     expect(mirror.sent.map((s) => s.day), 'closed once the route reads as Base').toEqual([0, 1, 2]);
-    expect(openKeys()).not.toContain(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`);
+    expect(openKeys()).not.toContain(`dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`);
   });
 
   it('says when a close sent its report through a messenger rotated in after the checks, until Base records the day', async () => {
@@ -585,6 +629,7 @@ describe('a run', () => {
     mirror.today += 1;
     base.launchUnread = true;
     const moved = (id: number): PeerReader | null => (id === BASE ? { diamond: NEW_BASE, client: base.client() } : peers(id));
+    base.wire.set('diamond', NEW_BASE); // Base's reward messenger forwards to the new Diamond
     const runMoved = () =>
       dayCloseOnce(env, mirror.chainId, mirror.diamond, {
         client: mirror.client(),
@@ -631,7 +676,88 @@ describe('a run', () => {
     mirror.routeTo = 'unread';
     await run(mirror);
     expect(mirror.sent).toEqual([]);
-    expect(alerts(/its baseChainId\) could not be read/)).toHaveLength(1);
+    expect(alerts(/is unknown: where this chain's reward messenger sends reports \(its baseChainId\) could not be read/)).toHaveLength(1);
+  });
+
+  describe('closes no day while the report channel would refuse the report on Base, naming the link', () => {
+    const wireKey = `dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`;
+    const cases: [string, () => void, RegExp][] = [
+      ["Base's transport takes the channel from an old reward messenger", () => base.wire.set('channelPeerOf', '0x00000000000000000000000000000000000000c9'), /accepts the reward channel from this chain only from 0x0+c9, not from this chain's reward messenger 0x0+c2 \(setChannelPeer on Base; delivery reverts UnauthorizedChannelPeer\)/],
+      ["Base's transport names no sender for this chain", () => base.wire.set('channelPeerOf', ZERO), /names no sender on the reward channel for this chain \(setChannelPeer on Base; delivery reverts NoChannelPeer\)/],
+      ["Base's transport has no handler for the channel", () => base.wire.set('handlerOf', ZERO), /has no handler for the reward channel \(registerChannel on Base; delivery reverts UnknownChannel\)/],
+      ["Base's transport delivers the channel elsewhere", () => base.wire.set('handlerOf', '0x00000000000000000000000000000000000000b9'), /delivers the reward channel to 0x0+b9, not to Base's reward messenger 0x0+b2/],
+      ["Base's transport accepts this chain's messages from another transport", () => base.wire.set('remoteMessengerOf', '0x00000000000000000000000000000000000000c9'), /accepts this chain's messages only from 0x0+c9, not from this chain's transport 0x0+c3 \(setRemoteMessenger on Base; delivery reverts UnauthorizedSourceMessenger\)/],
+      ["Base's reward messenger takes messages from another transport", () => base.wire.set('messenger', '0x00000000000000000000000000000000000000b9'), /takes messages only from transport 0x0+b9, not from 0x0+b3, the one this chain's transport sends to \(delivery reverts NotMessenger\)/],
+      ["Base's reward messenger is not the canonical instance", () => base.wire.set('isCanonical', false), /is not set as the canonical instance, so it refuses every report \(ReportOnMirror\)/],
+      ["Base's reward messenger forwards to another Diamond", () => base.wire.set('diamond', '0x00000000000000000000000000000000000000b9'), /forwards reports to 0x0+b9, not to Base's Diamond 0x0+b1/],
+      ["this chain's transport has no channel for the reward messenger", () => mirror.wire.set('channelOf', `0x${'00'.repeat(32)}`), /has no channel registered for the reward messenger 0x0+c2 \(registerChannel\)/],
+      ["this chain's reward messenger has no transport", () => mirror.wire.set('messenger', ZERO), /reward messenger 0x0+c2 has no transport set/],
+    ];
+    for (const [what, wireIt, said] of cases) {
+      it(what, async () => {
+        wireIt();
+        await run(mirror);
+        expect(mirror.sent, 'a report the receiving end refuses is still stamped sent here').toEqual([]);
+        expect(alerts(new RegExp(`would not be accepted on Base \\(chain 84532, as this Diamond names it\\): .*(${said.source})`))).toHaveLength(1);
+        expect(owed()).toEqual([0, 1, 2]);
+        openAlert(wireKey);
+        base.wire.clear();
+        mirror.wire.clear();
+        await run(mirror);
+        expect(mirror.sent.map((s) => s.day), 'closed once every link reads as wired').toEqual([0, 1, 2]);
+        expect(openKeys()).not.toContain(wireKey);
+      });
+    }
+
+    it("holds when this chain's transport names, as Base's, a contract that is not the one Base's reward messenger takes messages from", async () => {
+      mirror.wire.set('remoteMessengerOf', '0x00000000000000000000000000000000000000b9'); // answers none of a transport's reads
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/would not be accepted on Base .*takes messages only from transport 0x0+b3, not from 0x0+b9, the one this chain's transport sends to/)).toHaveLength(1);
+      expect(alerts(/the transport Base's transport accepts this chain's messages from could not be read/), 'the links it could not read are not a fault stated').toHaveLength(0);
+    });
+
+    it("holds when a link on Base cannot be read, and says which", async () => {
+      base.wire.set('channelPeerOf', 'unread');
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/is unknown: the sender Base's transport accepts on the reward channel from this chain could not be read/)).toHaveLength(1);
+    });
+
+    it('states a known fault even while another link is unread', async () => {
+      base.wire.set('channelPeerOf', 'unread');
+      base.wire.set('isCanonical', false);
+      await run(mirror);
+      expect(alerts(/would not be accepted on Base .*ReportOnMirror/)).toHaveLength(1);
+    });
+  });
+
+  it('says a run stopped sending on a fault that repeats, until a run sends without it', async () => {
+    mirror.writeError = Object.assign(new Error('insufficient funds for gas * price + value'), { code: -32000 });
+    const held = `dayclose-held:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/stopped sending this run: the node refused its send of closeDay for day 0 \(Error, rpc code -32000\), so nothing went out; a refusal like insufficient funds for the gas and CCIP fee repeats every run until it is fixed/)).toHaveLength(1);
+    expect(owed()).toEqual([0, 1, 2]);
+    openAlert(held);
+    mirror.writeError = null;
+    later(60);
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day)).toEqual([0, 1, 2]);
+    expect(openKeys(), 'cleared once a run sends without it').not.toContain(held);
+  });
+
+  it('says a run with no signing key sent nothing', async () => {
+    await dayCloseOnce(env, mirror.chainId, mirror.diamond, {
+      client: mirror.client(),
+      readClient: mirror.client(),
+      context: () => null,
+      peer: peers,
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/stopped sending this run: it has no signing key for this chain, so it sent nothing/)).toHaveLength(1);
   });
 
   it('keeps a closed day owed until Base finalizes it, counted or not: a counted report can still be left out before then', async () => {
@@ -1010,7 +1136,7 @@ describe('a run', () => {
     openAlert(`dayclose-route:999:0x00000000000000000000000000000000000000c1:all`);
     openAlert(`dayclose-refused:999:0x00000000000000000000000000000000000000c1:close:3`);
     openAlert(`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:canonical:all`); // a served chain's: untouched
-    await retireUnservedChainAlerts(env, new Set([BASE, MIRROR]), Date.now() + 60_000);
+    await retireUnworkedAlerts(env, new Map([[BASE, '0x00000000000000000000000000000000000000b1'], [MIRROR, '0x00000000000000000000000000000000000000c1']]), Date.now() + 60_000);
     expect(logged.filter((l) => /unserved, closed: dayclose-[a-z]+:999:\S+ \(this keeper no longer serves the chain\)/.test(l))).toHaveLength(2);
     expect(openKeys()).toEqual([`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:canonical:all`]);
   });
@@ -1359,15 +1485,31 @@ describe('a run', () => {
     expect(alerts(/did not try broadcasting the day \(broadcastGlobal\) this run for day 0 \(the fee of the send to chain 56 alone could not be read\)/), 'and the unread fee is said').toHaveLength(1);
   });
 
+  const configured = () => new Map([[BASE, base.diamond as string], [MIRROR, mirror.diamond as string]]);
+
   it("closes, with a notice, an alert about a Diamond the chain no longer names, and does not judge it against the new one", async () => {
     const OLD = '0x00000000000000000000000000000000000000ee';
-    openAlert(`dayclose-route:${MIRROR}:${OLD}:all`);
+    openAlert(`dayclose-wire:${MIRROR}:${OLD}:all`);
     openAlert(`dayclose-dispatch:${MIRROR}:${OLD}:0`);
-    openAlert(`dayclose-route:${MIRROR}:all`); // names no Diamond
+    openAlert(`dayclose-wire:${MIRROR}:all`); // names no Diamond
     await run(mirror);
-    expect(logged.some((l) => new RegExp(`closed: dayclose-dispatch:421614:${OLD}:0 \\(it is about Diamond ${OLD}, and this chain now names Diamond 0x0+c1`).test(l))).toBe(true);
-    expect(logged.some((l) => /closed: dayclose-route:421614:all \(it names no Diamond/.test(l))).toBe(true);
+    expect(openKeys(), "the chain's run judges only the Diamond it names").toHaveLength(3);
+    await retireUnworkedAlerts(env, configured(), Date.now() + 60_000);
+    expect(logged.some((l) => new RegExp(`old Diamond, closed: dayclose-dispatch:421614:${OLD}:0 \\(it is about Diamond ${OLD}, and this chain now names Diamond 0x0+c1`).test(l))).toBe(true);
+    expect(logged.some((l) => /closed: dayclose-wire:421614:all \(it names no Diamond/.test(l))).toBe(true);
     expect(openKeys()).toEqual([]);
+  });
+
+  it("closes the old Diamond's alerts, its gate alert included, though the new Diamond's gate keeps failing", async () => {
+    const OLD = '0x00000000000000000000000000000000000000ee';
+    openAlert(`dayclose-gate:${MIRROR}:${OLD}:all`);
+    openAlert(`dayclose-refused:${MIRROR}:${OLD}:mirror@84532:close:1`);
+    mirror.roleUnread = true; // the new Diamond's gate fails every run
+    await run(mirror);
+    await retireUnworkedAlerts(env, configured(), Date.now() + 60_000);
+    expect(logged.filter((l) => new RegExp(`old Diamond, closed: dayclose-[a-z]+:421614:${OLD}:`).test(l))).toHaveLength(2);
+    expect(alerts(/is not working this chain's reward days: its reward role could not be read/), "the new Diamond's gate alert is raised").toHaveLength(1);
+    expect(openKeys(), "none of the old Diamond's stands").toEqual([]);
   });
 
   it('clears a near-end grace warning once grace is lengthened', async () => {
@@ -1776,7 +1918,7 @@ describe('a run', () => {
 
   it('works no day on a chain whose gate reads fail, says so in the gate alert, and leaves every other alert as it stands', async () => {
     const gate = `dayclose-gate:${MIRROR}:0x00000000000000000000000000000000000000c1:all`;
-    const route = `dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`;
+    const route = `dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532:all`;
     openAlert(route);
     for (const fail of ['reporterConfigUnread', 'launchUnread', 'roleUnread'] as const) {
       mirror[fail] = true;
@@ -1836,7 +1978,7 @@ describe('a run', () => {
   });
 
   it('works a mirror rebound to another Base afresh, and resumes the same work when it returns to the same Base', async () => {
-    const route = (b: number) => `dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@${b}:all`;
+    const route = (b: number) => `dayclose-wire:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@${b}:all`;
     openAlert(route(BASE));
     mirror.baseChain = OTHER; // rebound: its reports now go to another Base
     await run(mirror);

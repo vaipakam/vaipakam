@@ -26,10 +26,13 @@
 // call. An alert belongs to the Diamond and the tenure it was raised about, as
 // the day ledger does: a chain repointed to another Diamond, a Diamond moved
 // between canonical and mirror, or a mirror rebound to another Base, starts
-// afresh, and the old
-// work's open alerts are closed with a notice rather than judged against the
-// new work's same-numbered days. A per-day alert whose day is no longer
-// worked (out of the window and not owed) is cleared with it.
+// afresh, and the old work's open alerts are closed with a notice rather than
+// judged against the new work's same-numbered days. Another tenure's are
+// closed by the chain's own run; another Diamond's, and a chain's no longer
+// served, by the run-wide sweep ({@link retireUnworkedAlerts}), which reads
+// only the configuration and so is not held by the new Diamond's gate. A
+// per-day alert whose day is no longer worked (out of the window and not
+// owed) is cleared with it.
 //
 // One alert sits outside the roles: the GATE (`dayclose-gate:<chain>:
 // <diamond>:all`), raised when a read every step depends on fails, or the
@@ -242,7 +245,7 @@ const KINDS: readonly AlertKind[] = [
   {
     // Every hold on an irreversible or user-facing step is said here, whatever
     // its cause, read from the same value that holds the step. The alerts
-    // naming a cause (clock, route) say what to fix; this one says what is
+    // naming a cause (clock, wire) say what to fix; this one says what is
     // held, so no hold can be silent, including one with no alert of its own.
     kind: 'held',
     perDay: false,
@@ -262,6 +265,9 @@ const KINDS: readonly AlertKind[] = [
         byStep.set(step, [...(byStep.get(step) ?? []), `day ${day} (${what} could not be read)`]);
       }
       for (const [step, days] of byStep) parts.push(`did not try ${STEP_WORDS[step] ?? step} this run for ${days.join(', ')}`);
+      // A run that stopped sending on a fault that repeats: until a run sends
+      // without it, whatever it would have sent stays owed.
+      if (f.stall !== null) parts.push(`stopped sending this run: ${f.stall}`);
       // A peer read as unreadable holds whatever waits on it; say why.
       for (const [chain, why] of [...f.unattested].sort(([a], [b]) => a - b)) parts.push(`read chain ${chain} as unreadable this run, because ${why}`);
       if (parts.length === 0) return GONE;
@@ -320,17 +326,19 @@ const KINDS: readonly AlertKind[] = [
     },
   },
   {
-    kind: 'route',
+    kind: 'wire',
     perDay: false,
     raised: () => ['all'],
     judge(f, _s, tag) {
       const m = f.mirror;
       if (m === null) return GONE;
-      if (m.route.known && m.route.value === m.baseChainId) return GONE;
+      if (m.wire.known && m.wire.value.length === 0) return GONE;
+      const after =
+        'A report is sent once and stamped sent here for good, its fee paid, and one the receiving end refuses is a failed CCIP message on Base until the wiring is fixed and it is executed again by hand; a day Base finalizes before then counts this chain as zero. So the pass closes no day here until every link of the channel reads as wired.';
       return HOLDS(
-        !m.route.known
-          ? `${tag}: where this chain's reward messenger sends its reports (its baseChainId) could not be read, so whether a report would reach Base (chain ${m.baseChainId}, as this Diamond names it) is unknown. A report is sent once and stamped sent here for good, so the pass closes no day until the route reads as Base.`
-          : `${tag}: this chain's reward messenger sends its reports to chain ${m.route.value}, but this Diamond names chain ${m.baseChainId} as Base. A report sent now would be stamped sent here for good and never reach Base, which would then finalize the day without this chain, so the pass closes no day until the two agree (the messenger's setBaseChainId or the Diamond's reporter config).`,
+        !m.wire.known
+          ? `${tag}: whether a report from this chain would be accepted on Base (chain ${m.baseChainId}, as this Diamond names it) is unknown: ${m.wire.why}. ${after}`
+          : `${tag}: a report from this chain would not be accepted on Base (chain ${m.baseChainId}, as this Diamond names it): ${m.wire.value.join('; ')}. ${after}`,
       );
     },
   },
@@ -383,25 +391,21 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
   const diamond = store.diamond.toLowerCase();
   const role = store.role;
   const open = new Map<string, { kind: string; subject: string }>();
-  // Another Diamond's alerts, or another role's, cannot be judged from this
-  // work's reads.
+  // Another tenure's alerts cannot be judged from this work's reads. Another
+  // Diamond's are not this run's to judge or close: they are closed for every
+  // served chain, gate or no gate, by {@link retireUnworkedAlerts}.
   const foreign: { key: string; why: string; day: null }[] = [];
   for (const k of openKeys) {
     const p = parseKey(k, chainId);
-    if (p === null) continue;
-    if (p.diamond === diamond && p.kind === GATE) continue; // settleGate's
-    if (p.diamond === diamond && p.role === role) open.set(k, p);
+    if (p === null || p.diamond !== diamond || p.kind === GATE) continue; // the sweep's, or settleGate's
+    if (p.role === role) open.set(k, p);
     else
       foreign.push({
         key: k,
         why:
-          p.diamond === null
-            ? 'it names no Diamond, so it cannot be judged against the one this chain names now'
-            : p.diamond !== diamond
-              ? `it is about Diamond ${p.diamond}, and this chain now names Diamond ${diamond}, whose days this keeper works afresh; check the old Diamond directly`
-              : p.role === null
-                ? 'it names no reward role, so it cannot be judged against the role this Diamond reads now'
-                : `it is about this Diamond's work as ${tenureWords(p.role)}, and the Diamond now works as ${tenureWords(role)}, whose days this keeper works afresh; what that work left owed is no longer done here, so check those days on the Diamond directly`,
+          p.role === null
+            ? 'it names no reward role, so it cannot be judged against the role this Diamond reads now'
+            : `it is about this Diamond's work as ${tenureWords(p.role)}, and the Diamond now works as ${tenureWords(role)}, whose days this keeper works afresh; what that work left owed is no longer done here, so check those days on the Diamond directly`,
         day: null,
       });
   }
@@ -512,37 +516,55 @@ export async function retireChainAlerts(env: Env, chainId: number, role: number,
 }
 
 /**
- * A chain this keeper no longer serves (its RPC or deployment is no longer
- * configured) is never run, so neither {@link settleAlerts} nor
- * {@link retireChainAlerts} reaches its open alerts. Each such chain's alerts
- * are closed here, once per run over every served chain, and the ops channel
- * told which and why. Should the chain be served again, a run judges it afresh.
+ * Alerts no run can judge, closed once per run over every configured chain,
+ * whatever any chain's gate read: a chain this keeper no longer serves (its
+ * RPC or deployment is no longer configured) is never run, and a chain
+ * repointed to another Diamond judges only the Diamond it names now, so
+ * neither {@link settleAlerts} nor {@link settleGate} reaches the old one's
+ * alerts (its gate alert included). `served` maps each served chain to the
+ * Diamond it is configured with. The ops channel is told, per chain, which
+ * alerts and why. Should a chain, or a Diamond, be worked again, a run judges
+ * it afresh.
  */
-export async function retireUnservedChainAlerts(env: Env, served: ReadonlySet<number>, deadline: number): Promise<void> {
+export async function retireUnworkedAlerts(env: Env, served: ReadonlyMap<number, string>, deadline: number): Promise<void> {
   let keys: string[];
   try {
     keys = await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-%');
   } catch (err) {
-    console.error(`[keeper] rewardDayClose: open alerts unread, unserved chains' alerts left for the next run: ${shortErr(err)}`);
+    console.error(`[keeper] rewardDayClose: open alerts unread, unworked alerts left for the next run: ${shortErr(err)}`);
     return;
   }
-  const byChain = new Map<number, string[]>();
+  const byChain = new Map<number, { key: string; why: string }[]>();
   for (const k of keys) {
     const m = /^dayclose-[a-z]+:(\d+):/.exec(k);
     if (m === null) continue;
     const chain = Number(m[1]);
-    if (!served.has(chain)) byChain.set(chain, [...(byChain.get(chain) ?? []), k]);
+    const configured = served.get(chain)?.toLowerCase();
+    let why: string | null = null;
+    if (configured === undefined) why = 'this keeper no longer serves the chain';
+    else {
+      const p = parseKey(k, chain);
+      if (p === null) continue;
+      if (p.diamond === null) why = 'it names no Diamond, so it cannot be judged against the one this chain names now';
+      else if (p.diamond !== configured) why = `it is about Diamond ${p.diamond}, and this chain now names Diamond ${configured}, whose days this keeper works afresh; check the old Diamond directly`;
+    }
+    if (why !== null) byChain.set(chain, [...(byChain.get(chain) ?? []), { key: k, why }]);
   }
-  for (const [chain, open] of [...byChain].sort(([a], [b]) => a - b)) {
+  for (const [chain, items] of [...byChain].sort(([a], [b]) => a - b)) {
+    const unserved = !served.has(chain);
     // eslint-disable-next-line no-await-in-loop
     await closeWithNotice(
       env,
       chain,
-      open.sort().map((key) => ({ key, why: 'this keeper no longer serves the chain' })),
-      `[chain ${chain}] reward day close: chain no longer served by this keeper, its alerts closed`,
-      "This keeper has no RPC or deployment configured for this chain any more, so the pass no longer works its days, and the conditions these alerts named are no longer retried or watched here. What they named may still hold; check the chain directly. If it is served again, the pass judges it afresh.",
+      items.sort((a, b) => a.key.localeCompare(b.key)),
+      unserved
+        ? `[chain ${chain}] reward day close: chain no longer served by this keeper, its alerts closed`
+        : `[chain ${chain}] reward day close: alerts about a Diamond this chain no longer names, closed`,
+      unserved
+        ? "This keeper has no RPC or deployment configured for this chain any more, so the pass no longer works its days, and the conditions these alerts named are no longer retried or watched here. What they named may still hold; check the chain directly. If it is served again, the pass judges it afresh."
+        : 'This chain is configured with another Diamond now, so the pass works only that one, and the conditions these alerts named about the old one are no longer retried or watched here. What they named may still hold there; check the old Diamond directly. If it is configured again, the pass judges it afresh.',
       Date.now() >= deadline,
-      'unserved, ',
+      unserved ? 'unserved, ' : 'old Diamond, ',
     );
   }
 }

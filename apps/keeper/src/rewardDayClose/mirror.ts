@@ -11,9 +11,10 @@
 //     reward chain (a non-canonical Diamond refuses the report; a role can
 //     change, so it is never taken from a record, and a keeper that does not
 //     serve Base closes no day); and
-//   - the messenger routes reports to the Diamond's Base (its own
-//     `baseChainId`), known, not assumed.
-// Either unknown holds every close, and the alerts say which and why. A day's
+//   - the report channel to Base is wired to ACCEPT the report, every link
+//     read this run on both ends (wire.ts): a report the receiving end
+//     refuses is still sent and stamped sent here, its fee paid.
+// Any of them unknown holds every close, and the alerts say which and why. A day's
 // report is still sent when this chain is off Base's expected-source list
 // (Base refuses it, and the run says so) and when Base has finalized the day
 // (the B4 report's chain-wide figures still apply).
@@ -30,10 +31,11 @@ import { closeDays, type BaseDays } from './close';
 import type { ChainRun } from './deps';
 import { known, unknown, type Fact, type PerDay } from './fact';
 import type { MirrorFindings } from './findings';
-import { expectedSources, messengerRoute, readBaseDays } from './reads';
+import { expectedSources, readBaseDays } from './reads';
 import type { Sender } from './sender';
 import type { ClockFacts } from './clock';
 import type { DayStore } from './store';
+import { reportWire } from './wire';
 
 export interface MirrorInput {
   window: readonly number[];
@@ -50,7 +52,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   const listed = base === null ? null : await expectedSources(base, c.where);
   const baseClock = await peerClock(store, x.baseChainId, base, c.where);
   const clock = mirrorClock(c.chainId, x.launch, x.baseChainId, baseClock);
-  const route = await messengerRoute(c.deps.client, x.messenger, c.where);
+  const wire = await reportWire(c, base, x.messenger, x.baseChainId);
   // The chain this Diamond names as Base must be the canonical reward chain:
   // a report a non-canonical Diamond receives is refused there, and is sent
   // once and stamped sent here for good.
@@ -63,7 +65,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   const closeHold =
     clockHold(clock) ??
     roleHold ??
-    (!route.known ? "the messenger's report route is unread" : route.value !== x.baseChainId ? `the messenger routes reports to chain ${route.value}, not Base` : null);
+    (!wire.known ? `the report channel to Base could not be read whole: ${wire.why}` : wire.value.length > 0 ? 'the report channel to Base is not wired to accept a report' : null);
 
   const run = closeHold === null ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseDays }) : { closed: [], dispatched: new Map() };
   // This run's unchecked dispatches, and the earlier ones still recorded.
@@ -99,7 +101,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     baseServed: base !== null,
     notExpectedOnBase: listed === null ? 'unserved' : listed.known ? known(!listed.value.includes(c.chainId)) : listed,
     messenger: x.messenger,
-    route,
+    wire,
     closeHold,
     outcome,
     excluded,
