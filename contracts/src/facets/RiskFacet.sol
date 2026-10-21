@@ -1290,14 +1290,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // `deliveredThroughAt` is 0: this payout settles no interest period, and
         // the host's NatSpec asks for 0 from such callers.
         //
-        // #2440 — a forced payout acts on what arrived. The host returns what
-        // reached the lender; a token that delivers less than it sends repays
-        // that much less principal, so the difference stays owed on the
-        // residual loan. The interest was settled first from these proceeds
-        // and the accrual restarts below, so a shortfall beyond the principal
-        // part is the lender's receipt charge, recorded nowhere as paid.
+        // #2440 — a partial liquidation leaves the loan ACTIVE and books this
+        // payout as received in full: the interest settled from it, the
+        // principal it retires, and the accrual restart below. So, like the
+        // rest of this all-or-nothing call (see the function's NatSpec), it is
+        // refused unless the lender-position holder (or the frozen holder's
+        // vault) received all of `lenderProceeds`. The close-out that acts on
+        // what arrived is the FULL liquidation, which stays open: a keeper
+        // turned away here calls {triggerLiquidation}.
         if (lenderProceeds > 0) {
-            uint256 undelivered = lenderProceeds - abi.decode(
+            LibDelivery.requireFull(loan.principalAsset, lenderProceeds, abi.decode(
                 LibFacet.crossFacetCallReturn(
                     abi.encodeWithSelector(
                         EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
@@ -1309,8 +1311,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                     bytes4(0)
                 ),
                 (uint256)
-            );
-            principalRepaid -= undelivered < principalRepaid ? undelivered : principalRepaid;
+            ));
         }
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value

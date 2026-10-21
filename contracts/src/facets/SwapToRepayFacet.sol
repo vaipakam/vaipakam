@@ -420,14 +420,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibSanctionedLock.beginMoveOut(s, loan.borrower);
             // #2440 — refused unless the vault got all of it back, so the
             // re-lien and the borrower's claim match what the vault holds.
-            LibDelivery.requireFull(
+            LibDelivery.pushExact(
                 loan.collateralAsset,
-                partialFillRefund,
-                LibDelivery.pushMeasured(
-                    loan.collateralAsset,
-                    LibFacet.getOrCreateVault(loan.borrower),
-                    partialFillRefund
-                )
+                LibFacet.getOrCreateVault(loan.borrower),
+                partialFillRefund
             );
             LibSanctionedLock.endMoveOut(s);
             LibVaipakam.recordVaultDeposit(

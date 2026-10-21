@@ -16,29 +16,44 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         (FunctionalSpecs/WebsiteReadme: "the protocol's vault accounting
  *         cannot absorb fee-on-transfer tokens"), and this library is the
  *         on-chain half of that rule. Every move the protocol books is
- *         measured at the receiving end, and the measurement decides one of
- *         three outcomes by who is acting:
+ *         measured at the receiving end, and what a short arrival means is
+ *         decided by the FLOW the move belongs to, never by the move alone:
  *
- *         1. A payment or deposit funded from a WALLET (offer funding,
- *            repayment, preclose, refinance, a liquidator's payment, a
- *            treasury fee) is refused by name unless it arrived in full
- *            ({pullExact}). The books around it (offer amount, collateral
- *            lien, the lender's claim) are set at the requested figure, so a
- *            short arrival would leave a counterparty owed more than exists.
- *         2. A move out of a VAULT into the protocol is refused the same way
- *            when the owner chose to act now (a voluntary flow), and is acted
- *            on as it arrived when the protocol must complete it (a forced
- *            close-out: liquidation, default, the fallback retry). A forced
- *            close-out never stalls on a short arrival: the shortfall reduces
- *            that loan's own figures and is never drawn from tokens the
- *            protocol holds for anyone else, so the lender is still made
- *            whole as far as the position allows. A fee drawn from a vault
- *            into the TREASURY is accrued as it arrived in either case
- *            (`TreasuryFeeFacet.collectFeeFromVault`): no party is booked as
- *            paid by that leg, so the treasury bears the charge.
- *         3. A CREDIT into a vault records what the vault received, and the
- *            ledger written beside it (a custody row, a lien, a claim) uses
- *            that same figure ({pushMeasured}).
+ *         1. A VOLUNTARY flow (someone chose to act now and could choose not
+ *            to: a repayment, a preclose, a refinance, a swap-to-repay, a
+ *            sale of a position, an offer acceptance, a rental day, an
+ *            extension, a marketplace sale) refuses ANY short arrival by
+ *            name, at every hop: the wallet pull ({pullExact}), the vault
+ *            withdrawal (`LibFacet.vaultWithdrawExact`), the Diamond's own
+ *            push onward ({pushExact}) and the credit into the receiving
+ *            vault (`LibSanctionedLock.depositLockedInFull`). The party such a
+ *            flow pays is booked as paid in full, and a token can charge one
+ *            hop and not another, so measuring only the first hop is not
+ *            enough. Refusing costs the actor nothing they cannot avoid by
+ *            not acting.
+ *         2. A FORCED close-out (liquidation, default, the periodic
+ *            auto-liquidation, the fallback entry and retry) never stalls on a
+ *            short arrival: it acts on what arrived ({pushMeasured},
+ *            `LibFacet.vaultWithdrawDelivered`, `LibSanctionedLock.depositLocked`),
+ *            and the ledger written beside a credit (a custody row, a lien, a
+ *            claim) records that same figure. The shortfall reduces only that
+ *            loan's own figures and is never drawn from tokens the protocol
+ *            holds for anyone else, so the lender is still made whole as far
+ *            as the position allows.
+ *         3. Moves that book no counterparty as paid act on what arrived in
+ *            EITHER flow, because refusing them protects nobody:
+ *            - a fee drawn from a vault for the treasury
+ *              (`TreasuryFeeFacet.collectFeeFromVault`, accrued as it arrived)
+ *              or for a matcher: the fee's recipient bears the charge;
+ *            - a payout of a user's own balance, or of a recorded claim to the
+ *              claimant: refusing it would trap the recipient's own funds;
+ *            - a position's backing following a transferred position NFT
+ *              between the vaults of the SAME side of the loan
+ *              (`LibConsolidation`): that side bears its own token's charge,
+ *              its figures (collateral and lien, or the parked proceeds and
+ *              their reservations) fall to what arrived, and the calling
+ *              flow's own checks then run on those true figures. The
+ *              counterparty is never recorded as holding more than exists.
  *
  *         A delivery above the requested amount (a token that mints on
  *         transfer) is counted as the requested amount; the excess stays
@@ -84,10 +99,12 @@ library LibDelivery {
         }
     }
 
-    /// @dev Outcome 1: a wallet-funded pull, `from` -> `to`, on the allowance
-    ///      `from` granted the Diamond. Refused unless `to` received all of
-    ///      `amount`. A zero amount still runs the transfer, as the
-    ///      unmeasured call it replaces did.
+    /// @dev A wallet-funded pull, `from` -> `to`, on the allowance `from`
+    ///      granted the Diamond. Refused unless `to` received all of `amount`,
+    ///      in every flow: whoever pays from a wallet chose to pay (a
+    ///      liquidator's payment in a forced flow included), and the books
+    ///      around the pull are set at the requested figure. A zero amount
+    ///      still runs the transfer, as the unmeasured call it replaces did.
     function pullExact(address token, address from, address to, uint256 amount) internal {
         uint256 before = IERC20(token).balanceOf(to);
         // Every caller pulls from a party that approved the Diamond for this
@@ -97,8 +114,8 @@ library LibDelivery {
         requireFull(token, amount, measured(token, from, to, before, amount));
     }
 
-    /// @dev Outcome 3: the Diamond pushes `amount` to `to` and learns what
-    ///      `to` received, never more than `amount`.
+    /// @dev A FORCED flow's push (outcome 2): the Diamond pushes `amount` to
+    ///      `to` and learns what `to` received, never more than `amount`.
     function pushMeasured(address token, address to, uint256 amount)
         internal
         returns (uint256 delivered)
@@ -106,5 +123,11 @@ library LibDelivery {
         uint256 before = IERC20(token).balanceOf(to);
         IERC20(token).safeTransfer(to, amount);
         delivered = measured(token, address(this), to, before, amount);
+    }
+
+    /// @dev A VOLUNTARY flow's push (outcome 1): the Diamond pushes `amount`
+    ///      to `to`, refused unless `to` received all of it.
+    function pushExact(address token, address to, uint256 amount) internal {
+        requireFull(token, amount, pushMeasured(token, to, amount));
     }
 }

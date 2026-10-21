@@ -72,8 +72,11 @@ library LibCloseoutFreeze {
         LibVaipakam.Loan storage loan,
         uint256 lenderDue
     ) internal {
-        // #2440 — the claim and the reservation name what the vault received.
-        lenderDue = LibSanctionedLock.depositLocked(
+        // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
+        // a filled intent), so the deposit is refused unless the lender's vault
+        // received all of `lenderDue`: the loan closes on that figure, and the
+        // claim and the reservation name it.
+        LibSanctionedLock.depositLockedInFull(
             s, loan.lender, loanId, loan.principalAsset, lenderDue
         );
         // #998 S10 (#1006) — freeze the lender payout fail-closed if the CURRENT
@@ -130,12 +133,14 @@ library LibCloseoutFreeze {
         // paying the surplus straight to their EOA and bypassing the claim-side
         // fail-closed gate entirely. `mustFreezeParty` stays frozen on a prior
         // confirmation while the oracle is down.
+        // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
+        // a filled intent), so the surplus is refused unless it all arrived, on
+        // either branch: the claim and the reservation below name `surplus`.
         if (!LibSanctionedLock.mustFreezeParty(s, currentHolder)) {
-            IERC20(loan.principalAsset).safeTransfer(currentHolder, surplus);
+            LibDelivery.pushExact(loan.principalAsset, currentHolder, surplus);
             return;
         }
-        // #2440 — the claim and the reservation name what the vault received.
-        surplus = LibSanctionedLock.depositLocked(
+        LibSanctionedLock.depositLockedInFull(
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
         // #998 S10 (#1006) — the surplus is frozen precisely because
@@ -230,14 +235,15 @@ library LibCloseoutFreeze {
     ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
     ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
     ///         → stored lender vault) + the shared park.
-    /// @dev    #2440 — every caller is a forced flow (periodic-interest
-    ///         auto-liquidation, a partial HF liquidation), so it acts on what
-    ///         arrived. Both branches return what reached the payee, and the
-    ///         caller credits the loan by that figure, never by `amount`: a
-    ///         token that delivers less than it sends leaves the difference
-    ///         owed on the loan rather than settled. The paid-through mark moves
-    ///         only on a delivery in full, because "paid through" has to mean
-    ///         paid.
+    /// @dev    #2440 — this host acts on what arrived and returns it; the
+    ///         CALLER decides what a short return means. The periodic-interest
+    ///         auto-liquidation (a forced flow) credits the loan by the returned
+    ///         figure, never by `amount`, so a token that delivers less than it
+    ///         sends leaves the difference owed on the loan rather than
+    ///         settled. A partial HF liquidation refuses a short return, since
+    ///         it books the payout as received in full on a loan that stays
+    ///         open. The paid-through mark moves only on a delivery in full,
+    ///         because "paid through" has to mean paid.
     /// @return delivered What the lender-position holder (clean) or the stored
     ///         lender's vault (frozen) received, never more than `amount`.
     function freezeOrPayActiveLenderResident(

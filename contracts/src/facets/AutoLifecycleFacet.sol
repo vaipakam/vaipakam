@@ -931,9 +931,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // #2440 — the extension re-terms the loan as if the lender received
             // all of `lenderShare`, and it is consented, not forced, so a short
             // arrival is refused like step 1's withdrawal.
-            uint256 credited = LibDelivery.pushMeasured(principalAsset, lenderVault, lenderShare);
-            LibDelivery.requireFull(principalAsset, lenderShare, credited);
-            LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, credited);
+            LibDelivery.pushExact(principalAsset, lenderVault, lenderShare);
+            LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, lenderShare);
         }
     }
 

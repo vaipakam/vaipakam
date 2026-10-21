@@ -469,6 +469,22 @@ contract CollateralListingExecutor is
     ///         `auctionEndTime > startTime`, `auctionEndTime` non-
     ///         zero) were violated at the executor boundary.
     error DutchModeShapeViolation();
+    /// @notice #2440 — the leg the protocol books as paid (the lender leg of
+    ///         a loan-keyed sale, or the Diamond's proceeds leg of an
+    ///         offer-keyed one; consideration index `idx`) reached its
+    ///         recipient short: the recipient's balance rose by `received`,
+    ///         less than the `expected` the order pays. A sale is voluntary and
+    ///         its settlement books that leg as paid in full, so the whole fill
+    ///         is refused (Seaport reverts it and the buyer's funds are never
+    ///         committed).
+    error ListingLegDeliveryShort(bytes32 orderHash, uint256 idx, uint256 expected, uint256 received);
+    /// @notice #2440 — `validateOrder` ran for a fill whose
+    ///         `authorizeOrder` did not run in this transaction, so there is
+    ///         no balance to measure the protocol legs' arrival from. Seaport
+    ///         1.6 calls `authorizeOrder` before the transfers of every
+    ///         restricted order it fills for a caller other than this zone,
+    ///         so this is refused rather than accepted unmeasured.
+    error ListingArrivalUnmeasured(bytes32 orderHash);
 
     // ─── Initializer / UUPS ─────────────────────────────────────────────
 
@@ -1313,9 +1329,16 @@ contract CollateralListingExecutor is
     /// @dev    Reverts on every failure mode; returns the
     ///         `authorizeOrder` magic selector on acceptance. The check
     ///         stack is implemented in {_checkOrderPreconditions} and
-    ///         re-run from {validateOrder} verbatim per design doc §5.7
-    ///         (defends against `Seaport.validate()` pre-registration
-    ///         path which SKIPS this hook).
+    ///         re-run from {validateOrder} verbatim per design doc §5.7.
+    ///         #2440 — Seaport 1.6 calls this hook for every restricted
+    ///         order whenever the caller is not this zone, pre-validated
+    ///         or not (`_assertRestrictedAdvancedOrderAuthorization`,
+    ///         `_checkRestrictedAdvancedOrderAuthorization`,
+    ///         `_assertRestrictedBasicOrderAuthorization`); what
+    ///         `Seaport.validate()` pre-registration skips is the order
+    ///         SIGNATURE check, not this hook. The arrival base recorded
+    ///         here is therefore present at every `validateOrder` of a
+    ///         genuine fill, and its absence is refused there.
     function authorizeOrder(ZoneParameters calldata params)
         external
         override
@@ -1332,6 +1355,7 @@ contract CollateralListingExecutor is
         } else {
             _checkOrderPreconditions(params);
         }
+        _snapshotBookedLeg(params);
         return ISeaportZone.authorizeOrder.selector;
     }
 
@@ -1349,10 +1373,15 @@ contract CollateralListingExecutor is
             return ISeaportZone.validateOrder.selector;
         }
 
-        // Re-run the full precondition stack — `Seaport.validate()`
-        // pre-registration path SKIPS {authorizeOrder}, so the same
-        // checks MUST run here too (design doc §5.7).
+        // Re-run the full precondition stack here too (design doc §5.7):
+        // defence in depth for the state the two hooks read. (The design
+        // doc's reason, that `Seaport.validate()` pre-registration skips
+        // {authorizeOrder}, does not hold for Seaport 1.6; see that hook.)
         uint256 loanId = _checkOrderPreconditions(params);
+
+        // #2440 — refuse the fill unless the lender leg reached the lender in
+        // full: the settlement below closes the loan as repaid on it.
+        uint256 balanceAtCheck = _consumeBookedLeg(params);
 
         // ── Atomic settlement: callback to the diamond ──────────────────
         // The diamond's privileged facet method asserts
@@ -1364,6 +1393,7 @@ contract CollateralListingExecutor is
         // filled hash can't double-fill (Seaport itself blocks re-fills
         // on the same order, but defense-in-depth).
         IVaipakamPrepayCallbacks(vaipakamDiamond).executorFinalizePrepaySale(loanId);
+        _excludeCallbackMove(params, balanceAtCheck);
         delete orderContext[params.orderHash];
         // T-086 Round-5 Block A (#313) — Codex P2 round-1 cleanup
         // (PR #324 Raja review): also clear the per-order fee-leg
@@ -1415,6 +1445,11 @@ contract CollateralListingExecutor is
     ///      the diamond side (round-3.2 against Codex P1 #4).
     function _finalizeOfferSale(ZoneParameters calldata params) private {
         _checkOfferOrderPreconditions(params);
+        // #2440 — refuse the fill unless the Diamond received the proceeds leg
+        // in full: the callbacks below credit and split exactly that figure,
+        // and would otherwise draw the difference from what the Diamond holds
+        // for others.
+        uint256 balanceAtCheck = _consumeBookedLeg(params);
 
         OfferContext memory ctx = offerContext[params.orderHash];
 
@@ -1449,6 +1484,7 @@ contract CollateralListingExecutor is
             netProceeds
         );
         IVaipakamPrepayCallbacks(vaipakamDiamond).markOfferConsumedBySale(ctx.offerId);
+        _excludeCallbackMove(params, balanceAtCheck);
 
         emit OfferOrderFilled(params.orderHash, ctx.offerId, netProceeds);
     }
@@ -1782,6 +1818,132 @@ contract CollateralListingExecutor is
     }
 
     // ─── Internal helpers ──────────────────────────────────────────────
+
+    // ── #2440 — measured arrival of the booked leg ─────────────────────
+    //
+    // Seaport pays the consideration straight from the buyer to each
+    // recipient, so the zone is the only party that sees a recipient's
+    // balance both before the transfers (`authorizeOrder`) and after them
+    // (`validateOrder`). Exactly one leg of each order is BOOKED by the
+    // protocol as paid, and it is consideration[0] in both branches (pinned by
+    // the precondition stacks): the lender leg of a loan-keyed sale, on which
+    // the loan closes as repaid, and the Diamond's proceeds leg of an
+    // offer-keyed sale, which the Diamond credits and splits. That leg must
+    // arrive in full, as every leg a voluntary flow books does
+    // (`LibDelivery` outcome 1). The other legs book nobody as paid: the
+    // treasury leg is a fee its recipient bears the charge on, the borrower
+    // leg is the seller's own remainder, and the fee legs go to third parties
+    // (`LibDelivery` outcome 3), so they are not measured.
+    //
+    // A booked leg whose recipient is the fill's own `fulfiller` (a lender
+    // buying the collateral of their own loan) is a payment to oneself: it
+    // books no one else as paid, and the payer's balance falls by the other
+    // legs it pays, so a rise cannot be read. It is not measured, the rule
+    // `LibDelivery.measured` applies to a move whose source is its recipient.
+    // The Diamond never pays a listing's consideration itself (when it calls
+    // Seaport it matches a bidder's order, and the bidder pays), so this
+    // exemption never applies to the Diamond's proceeds leg.
+    //
+    // One Seaport call may fill several of these orders, and Seaport runs
+    // every `authorizeOrder` before any transfer and every `validateOrder`
+    // after all of them. So the record is per (token, recipient), not per
+    // order: `authorizeOrder` stores the recipient's balance as the base; each
+    // `validateOrder` requires its leg among the arrivals above the base not
+    // yet claimed by an earlier order, and claims it by raising the base. A
+    // settlement callback can move the same token to or from the same
+    // recipient (an offer-keyed fill's Diamond pays its proceeds onward), so
+    // the base is then shifted by exactly that move: what one order's
+    // settlement moves is never read as another order's arrival.
+    //
+    // The record lives in transient storage (EIP-1153), so it never outlives
+    // the transaction and touches no persistent slot of this proxy.
+    //
+    // Two residues, both reachable only with a token outside the supported
+    // set. A transfer someone else makes to the same recipient between the two
+    // hooks counts as arrival; it is real tokens reaching that recipient. And
+    // a lender whose OWN marketplace bid pays a listing that a third party
+    // matches is not the `fulfiller`, so that self-payment is measured, reads
+    // short, and the fill is refused (the lender can fill the listing
+    // directly instead).
+
+    /// @dev Namespace of the transient arrival record.
+    bytes32 private constant ARRIVAL_BASE_TAG = keccak256("vaipakam.listing.arrival-base");
+
+    function _arrivalKey(address token, address recipient) private pure returns (bytes32) {
+        return keccak256(abi.encode(ARRIVAL_BASE_TAG, token, recipient));
+    }
+
+    /// @dev Stored as `base + 1`, so zero means "no base this transaction".
+    function _arrivalBase(bytes32 key) private view returns (uint256 storedPlusOne) {
+        assembly {
+            storedPlusOne := tload(key)
+        }
+    }
+
+    function _setArrivalBase(bytes32 key, uint256 base) private {
+        uint256 storedPlusOne = base + 1;
+        assembly {
+            tstore(key, storedPlusOne)
+        }
+    }
+
+    /// @dev Whether the booked leg is measured: not when its recipient is the
+    ///      fill's payer, i.e. its `fulfiller` (see the section comment).
+    function _bookedLegMeasured(ZoneParameters calldata params) private view returns (bool) {
+        address recipient = params.consideration[0].recipient;
+        return recipient != params.fulfiller || recipient == vaipakamDiamond;
+    }
+
+    /// @dev `authorizeOrder` (before any transfer of the Seaport call): the
+    ///      base of the booked leg's recipient is its balance now. Overwriting
+    ///      is correct: inside one Seaport call every `authorizeOrder` precedes
+    ///      every transfer, so a second order paying the same recipient writes
+    ///      the same figure; across two Seaport calls in one transaction, the
+    ///      earlier call's legs were all claimed by its own `validateOrder`s,
+    ///      and the current balance is the right base.
+    function _snapshotBookedLeg(ZoneParameters calldata params) private {
+        if (!_bookedLegMeasured(params)) return;
+        ReceivedItem calldata item = params.consideration[0];
+        _setArrivalBase(
+            _arrivalKey(item.token, item.recipient),
+            IERC20(item.token).balanceOf(item.recipient)
+        );
+    }
+
+    /// @dev `validateOrder`: refuse unless the booked leg arrived in full,
+    ///      then claim it. Returns the recipient's balance at the check, which
+    ///      {_excludeCallbackMove} needs after the settlement callback.
+    function _consumeBookedLeg(ZoneParameters calldata params)
+        private
+        returns (uint256 balanceAtCheck)
+    {
+        if (!_bookedLegMeasured(params)) return 0;
+        ReceivedItem calldata item = params.consideration[0];
+        bytes32 key = _arrivalKey(item.token, item.recipient);
+        uint256 storedPlusOne = _arrivalBase(key);
+        if (storedPlusOne == 0) revert ListingArrivalUnmeasured(params.orderHash);
+        uint256 base = storedPlusOne - 1;
+        balanceAtCheck = IERC20(item.token).balanceOf(item.recipient);
+        uint256 unclaimed = balanceAtCheck > base ? balanceAtCheck - base : 0;
+        if (unclaimed < item.amount) {
+            revert ListingLegDeliveryShort(params.orderHash, 0, item.amount, unclaimed);
+        }
+        _setArrivalBase(key, base + item.amount);
+    }
+
+    /// @dev After the settlement callback: shift the recipient's base by what
+    ///      the callback moved, so the arrivals still unclaimed above it are
+    ///      exactly those before the callback. If the callback took out more
+    ///      than the unclaimed arrivals, the base floors at zero and a later
+    ///      order sees only what is left (it is refused rather than
+    ///      over-counted).
+    function _excludeCallbackMove(ZoneParameters calldata params, uint256 balanceAtCheck) private {
+        if (!_bookedLegMeasured(params)) return;
+        ReceivedItem calldata item = params.consideration[0];
+        bytes32 key = _arrivalKey(item.token, item.recipient);
+        uint256 raised = (_arrivalBase(key) - 1) + IERC20(item.token).balanceOf(item.recipient);
+        _setArrivalBase(key, raised > balanceAtCheck ? raised - balanceAtCheck : 0);
+    }
 
     /// @notice #1144 (S10 Invariant B) — at-fill recipient bar. Delegates to the
     ///         diamond's registry-aware, outage-hardened `isRecipientBarred`: it

@@ -814,7 +814,10 @@ contract EarlyWithdrawalDirectFacet is
 
         uint256 toLiam = loan.principal - liamCost;
         if (toLiam > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, toLiam);
+            // #2440 — a voluntary sale: the seller's net is refused unless it
+            // all arrived, so the `minSellerNet` the seller set is what they
+            // actually receive, never a figure a token shrank on the way.
+            LibDelivery.pushExact(loan.principalAsset, msg.sender, toLiam);
         }
         LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
         LibFacet.depositForNewLender(
@@ -943,9 +946,7 @@ contract EarlyWithdrawalDirectFacet is
                 );
             }
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
-            LibDelivery.requireFull(
-                payAsset, priorHeld, LibDelivery.pushMeasured(payAsset, newVault, priorHeld)
-            );
+            LibDelivery.pushExact(payAsset, newVault, priorHeld);
             // T-051 — Diamond-side transfer to new lender's vault
             // ticks the protocolTrackedVaultBalance counter.
             LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);

@@ -818,10 +818,10 @@ contract EarlyWithdrawalFacet is
 
             uint256 toLiam = proceeds - liamCost;
             if (toLiam > 0) {
-                IERC20(loan.principalAsset).safeTransfer(
-                    originalLender,
-                    toLiam
-                );
+                // #2440 — a voluntary sale: the seller's net is refused unless
+                // it all arrived, so the seller floor checked above is what
+                // the seller actually receives.
+                LibDelivery.pushExact(loan.principalAsset, originalLender, toLiam);
             }
             LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
             if (saleShortfall > 0) {
@@ -1224,11 +1224,7 @@ contract EarlyWithdrawalFacet is
         if (loan.principalAsset == s.vpfiToken) {
             _restampVpfiParty(originalLender, originalLender == newLender);
         }
-        LibDelivery.requireFull(
-            payAsset,
-            priorHeldSale,
-            LibSanctionedLock.depositLocked(s, newLender, loanId, payAsset, priorHeldSale)
-        );
+        LibSanctionedLock.depositLockedInFull(s, newLender, loanId, payAsset, priorHeldSale);
         if (loan.principalAsset == s.vpfiToken) {
             _restampVpfiParty(newLender, false);
         }

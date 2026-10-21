@@ -59,6 +59,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 
 /**
  * @title EarlyWithdrawalFacetTest
@@ -880,6 +881,43 @@ contract EarlyWithdrawalFacetTest is Test {
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+    }
+
+    /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net
+    ///      (`toLiam`) is refused unless it all arrives, so the seller floor is
+    ///      what the seller actually receives. Only transfers out of the Diamond
+    ///      are charged, so the refusal names exactly that payout. Kills: an
+    ///      unmeasured payout that completes the sale with the seller short.
+    function testSellLoanViaBuyOffer_SellerNetShort_Refused() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        uint256 snap = vm.snapshotState();
+        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        assertGt(net, 0, "fixture: the seller is paid a net");
+        vm.revertToState(snap);
+
+        _chargeFeeOutOfDiamond();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The fee-on-transfer switch for the two seller-net cells: etched
+    ///      over the live mock (it only appends state), 1%, charged only on
+    ///      transfers out of the Diamond.
+    function _chargeFeeOutOfDiamond() internal {
+        vm.etch(mockERC20, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(mockERC20).setFeeBps(100);
+        FeeOnTransferERC20Mock(mockERC20).setChargedSender(address(diamond));
     }
 
     /// @dev #1503 item 25 — a lender migration must carry the position-token →
@@ -3672,6 +3710,36 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Repaid),
             "fixture: the sale did not settle inside the accept"
         );
+    }
+
+    /// @dev #2440 (audit sweep) — the listed sale's completion is voluntary
+    ///      too: the seller's net is refused unless it all arrives, as the
+    ///      direct sale's is. Kills: an unmeasured payout that settles the sale
+    ///      with the seller below the floor they listed at.
+    function testListedSale_SellerNetShort_Refused() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = _fundedBuyer("fotBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        uint256 snap = vm.snapshotState();
+        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        assertGt(net, 0, "fixture: the seller is paid a net");
+        vm.revertToState(snap);
+
+        _chargeFeeOutOfDiamond();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
     /// @dev LEGACY vehicles — accepted BEFORE this upgrade — were counted into

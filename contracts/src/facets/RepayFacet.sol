@@ -538,8 +538,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lands in the lender's OWN vault, frozen behind the claim gate
             // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
             // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
-            // #2440 — the claim names what the vault received.
-            lenderShare = LibSanctionedLock.depositLocked(
+            // #2440 — the same voluntary repayment's second hop: refused unless
+            // the lender's vault received the whole share, so the claim below
+            // names the share the loan closes on and never a shrunk figure.
+            LibSanctionedLock.depositLockedInFull(
                 s, loan.lender, loanId, loan.prepayAsset, lenderShare
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are

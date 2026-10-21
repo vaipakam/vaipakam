@@ -276,14 +276,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (partialFillRefund > 0) {
             // #2440 — refused unless the vault got all of it back, so the
             // re-lien and the loan's collateral match what the vault holds.
-            LibDelivery.requireFull(
+            LibDelivery.pushExact(
                 loan.collateralAsset,
-                partialFillRefund,
-                LibDelivery.pushMeasured(
-                    loan.collateralAsset,
-                    LibFacet.getOrCreateVault(loan.borrower),
-                    partialFillRefund
-                )
+                LibFacet.getOrCreateVault(loan.borrower),
+                partialFillRefund
             );
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
@@ -383,11 +379,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // paid through now, and this is the borrower's own choice, so the
         // payout must reach the lender in full; a short arrival is refused, as
         // `repayPartial`'s lender payout is.
-        LibDelivery.requireFull(
-            loan.principalAsset,
-            lenderTotal,
-            LibDelivery.pushMeasured(loan.principalAsset, currentLenderHolder, lenderTotal)
-        );
+        LibDelivery.pushExact(loan.principalAsset, currentLenderHolder, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
         // current borrower-NFT holder's EOA directly (Codex round-4

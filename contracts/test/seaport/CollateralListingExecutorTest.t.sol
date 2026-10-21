@@ -6,12 +6,15 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
 import {
     FeeLeg,
+    OfferContext,
     PREPAY_MODE_FIXED_PRICE,
     PREPAY_MODE_DUTCH
 } from "../../src/seaport/PrepayTypes.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {
     ISeaportZone,
     ZoneParameters,
@@ -72,6 +75,14 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         markConsumedCalled = true;
         markConsumedOfferId = offerId;
     }
+    /// @dev #2440 — when set, `recordOfferSaleProceeds` pays the proceeds
+    ///      onward as the real Diamond does (into the borrower's vault), so a
+    ///      test can show one fill's settlement is never read as another's
+    ///      arrival.
+    address public forwardProceedsTo;
+    function setForwardProceedsTo(address to) external {
+        forwardProceedsTo = to;
+    }
     function recordOfferSaleProceeds(
         uint96 offerId,
         address principalAsset,
@@ -81,6 +92,9 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         recordProceedsOfferId = offerId;
         recordProceedsAsset = principalAsset;
         recordProceedsAmount = amount;
+        if (forwardProceedsTo != address(0)) {
+            IERC20(principalAsset).transfer(forwardProceedsTo, amount);
+        }
     }
     function assertOfferFillNotSanctioned(uint96 offerId, address borrowerWallet)
         external
@@ -110,6 +124,38 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
     }
 }
 
+/// @notice #2440 — stands in for Seaport at the `seaport` address (etched
+///         there). Seaport 1.6 runs every restricted order's `authorizeOrder`
+///         before any transfer and every `validateOrder` after all of them,
+///         inside ONE call. The zone's arrival record is transient, and forge
+///         >= 1.8 does not carry transient storage across a test's top-level
+///         calls, so the whole fill has to run inside one call, as here.
+///         `delivered[k][i]` is what consideration item `i` of order `k`
+///         actually brings its recipient (a short figure models a token that
+///         delivers less than it sends).
+contract SeaportFillHarness {
+    function fill(
+        CollateralListingExecutor zone,
+        ZoneParameters[] calldata orders,
+        uint256[][] calldata delivered
+    ) external {
+        for (uint256 k = 0; k < orders.length; k++) {
+            zone.authorizeOrder(orders[k]);
+        }
+        for (uint256 k = 0; k < orders.length; k++) {
+            for (uint256 i = 0; i < delivered[k].length; i++) {
+                ERC20Mock(orders[k].consideration[i].token).mint(
+                    orders[k].consideration[i].recipient,
+                    delivered[k][i]
+                );
+            }
+        }
+        for (uint256 k = 0; k < orders.length; k++) {
+            zone.validateOrder(orders[k]);
+        }
+    }
+}
+
 contract CollateralListingExecutorTest is Test {
     CollateralListingExecutor internal executor;
     MockVaipakamDiamond internal diamond;
@@ -134,7 +180,9 @@ contract CollateralListingExecutorTest is Test {
         lenderHolder = makeAddr("lenderHolder");
         borrowerHolder = makeAddr("borrowerHolder");
         treasury = makeAddr("treasury");
-        principalAsset = makeAddr("principalAsset");
+        // #2440 — a real token: the zone reads each protocol leg recipient's
+        // balance in both hooks.
+        principalAsset = address(new ERC20Mock("Principal", "PRN", 18));
         collateralAsset = makeAddr("collateralAsset");
         buyer = makeAddr("buyer");
 
@@ -833,10 +881,10 @@ contract CollateralListingExecutorTest is Test {
         _recordValidOrder();
         ZoneParameters memory p = _validZoneParams();
 
-        vm.prank(seaport);
-        bytes4 result = executor.validateOrder(p);
+        // #2440 — through the one-call fill: authorize, every leg arrives in
+        // full, validate.
+        _fillOne(p, _amountsOf(p));
 
-        assertEq(result, ISeaportZone.validateOrder.selector);
         assertTrue(diamond.finalizeCalled());
         assertEq(diamond.finalizeLoanId(), TEST_LOAN_ID);
         assertEq(diamond.finalizeCaller(), address(executor));
@@ -846,6 +894,280 @@ contract CollateralListingExecutorTest is Test {
         (uint96 storedLoanId, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
         assertEq(uint256(storedLoanId), 0);
     }
+    // ─── #2440 — measured arrival of the protocol legs ───────────────────
+
+    function _etchFillHarness() internal {
+        vm.etch(seaport, address(new SeaportFillHarness()).code);
+    }
+
+    function _amountsOf(ZoneParameters memory p) internal pure returns (uint256[] memory a) {
+        a = new uint256[](p.consideration.length);
+        for (uint256 i = 0; i < a.length; i++) {
+            a[i] = p.consideration[i].amount;
+        }
+    }
+
+    function _fillOne(ZoneParameters memory p, uint256[] memory delivered) internal {
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory d = new uint256[][](1);
+        d[0] = delivered;
+        _fill(orders, d);
+    }
+
+    function _fill(ZoneParameters[] memory orders, uint256[][] memory delivered) internal {
+        _etchFillHarness();
+        SeaportFillHarness(seaport).fill(executor, orders, delivered);
+    }
+
+    function _recordOrderAs(bytes32 orderHash, uint256 loanId) internal {
+        vm.prank(address(diamond));
+        executor.recordOrder(
+            orderHash,
+            loanId,
+            conduit,
+            bytes32(0),
+            uint256(0),
+            uint256(block.timestamp),
+            TEST_ASK_PRICE
+        , TEST_ASK_PRICE, 0, PREPAY_MODE_FIXED_PRICE, _emptyFeeLegs(), uint256(0), uint256(0));
+    }
+
+    function test_fill_loanKeyed_lenderLegShort_refused() public {
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        uint256[] memory d = _amountsOf(p);
+        d[0] = 109e18; // the lender leg pays 110e18; 1e18 is lost on the way
+
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory dd = new uint256[][](1);
+        dd[0] = d;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                TEST_ORDER_HASH, uint256(0), uint256(110e18), uint256(109e18)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+        assertFalse(diamond.finalizeCalled());
+    }
+
+    function test_fill_loanKeyed_onlyTheBookedLegIsMeasured() public {
+        // The treasury leg is a fee its recipient bears the charge on, and the
+        // borrower leg is the seller's own remainder: neither books anyone as
+        // paid, so a short arrival there does not stop the sale.
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        uint256[] memory d = _amountsOf(p);
+        d[1] = 1e18 - 1;
+        d[2] = 4e18;
+        _fillOne(p, d);
+        assertTrue(diamond.finalizeCalled());
+    }
+
+    function test_fill_lenderBuysOwnCollateral_selfPaymentNotMeasured() public {
+        // A lender filling the listing of their own loan pays the lender leg to
+        // themselves, while their balance falls by the other legs: a rise
+        // cannot be read, and the leg books no one else as paid.
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        p.fulfiller = lenderHolder;
+        uint256[] memory d = _amountsOf(p);
+        d[0] = 0;
+        _fillOne(p, d);
+        assertTrue(diamond.finalizeCalled());
+    }
+
+    function test_fill_balanceHeldBeforeAuthorize_isNotArrival() public {
+        // A recipient's existing balance never counts: only the rise
+        // between the two hooks does.
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        ERC20Mock(principalAsset).mint(lenderHolder, 1_000e18);
+        uint256[] memory d = _amountsOf(p);
+        d[0] = 0;
+
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory dd = new uint256[][](1);
+        dd[0] = d;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                TEST_ORDER_HASH, uint256(0), uint256(110e18), uint256(0)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+    }
+
+    function test_validateOrder_withoutAuthorize_refusedAsUnmeasured() public {
+        // A fill whose `authorizeOrder` did not run in this transaction has
+        // no base to measure from, and is refused rather than accepted.
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingArrivalUnmeasured.selector,
+                TEST_ORDER_HASH
+            )
+        );
+        executor.validateOrder(p);
+    }
+
+    function test_fill_twoLoanKeyedOrders_sameRecipients_eachNeedsItsOwnArrival() public {
+        // Both orders pay the same lender, treasury and borrower (the mock
+        // context answers every loan id alike). Seaport authorizes both, then
+        // transfers, then validates both: the second must find its own legs
+        // above what the first claimed.
+        bytes32 hashB = keccak256("test-order-b");
+        _recordValidOrder();
+        _recordOrderAs(hashB, TEST_LOAN_ID + 1);
+        ZoneParameters memory pa = _validZoneParams();
+        ZoneParameters memory pb = _validZoneParams();
+        pb.orderHash = hashB;
+
+        ZoneParameters[] memory orders = new ZoneParameters[](2);
+        orders[0] = pa;
+        orders[1] = pb;
+        uint256[][] memory dd = new uint256[][](2);
+        dd[0] = _amountsOf(pa);
+        dd[1] = new uint256[](3); // the second order's legs never arrive
+        _etchFillHarness();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                hashB, uint256(0), uint256(110e18), uint256(0)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+
+        // Both arriving in full settles both.
+        dd[1] = _amountsOf(pb);
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+        (uint96 a, , , , , , , , ) = executor.orderContext(TEST_ORDER_HASH);
+        (uint96 b, , , , , , , , ) = executor.orderContext(hashB);
+        assertEq(uint256(a) + uint256(b), 0);
+    }
+
+    // ── Offer-keyed branch: the Diamond is the proceeds recipient ──
+
+    uint96 internal constant TEST_OFFER_ID = 77;
+    uint192 internal constant TEST_OFFER_ASK = 50e18;
+
+    function _recordOfferOrderAs(bytes32 orderHash, uint96 offerId) internal {
+        OfferContext memory c;
+        c.offerId = offerId;
+        c.conduit = conduit;
+        c.startTime = uint64(block.timestamp);
+        c.askPrice = TEST_OFFER_ASK;
+        c.endTime = uint64(block.timestamp + 1 days);
+        c.principalAsset = principalAsset;
+        c.mode = PREPAY_MODE_FIXED_PRICE;
+        c.borrowerVault = makeAddr("mockBorrowerVault");
+        c.borrowerWallet = borrowerHolder;
+        c.collateralAsset = collateralAsset;
+        c.collateralAssetType = uint8(LibVaipakam.AssetType.ERC721);
+        c.collateralTokenId = TEST_COLLATERAL_TOKEN_ID;
+        c.collateralQuantity = 1;
+        vm.prank(address(diamond));
+        executor.recordOfferOrder(orderHash, c, _emptyFeeLegs());
+    }
+
+    function _validOfferZoneParams(bytes32 orderHash) internal returns (ZoneParameters memory p) {
+        p.orderHash = orderHash;
+        p.fulfiller = buyer;
+        p.offerer = makeAddr("mockBorrowerVault");
+        p.offer = new SpentItem[](1);
+        p.offer[0] = SpentItem({
+            itemType: ItemType.ERC721,
+            token: collateralAsset,
+            identifier: TEST_COLLATERAL_TOKEN_ID,
+            amount: 1
+        });
+        p.consideration = new ReceivedItem[](1);
+        p.consideration[0] = ReceivedItem({
+            itemType: ItemType.ERC20,
+            token: principalAsset,
+            identifier: 0,
+            amount: TEST_OFFER_ASK,
+            recipient: payable(address(diamond))
+        });
+        p.startTime = block.timestamp;
+        p.endTime = block.timestamp + 1 days;
+    }
+
+    function test_fill_offerKeyed_fullArrival_recordsProceeds() public {
+        bytes32 h = keccak256("offer-order");
+        _recordOfferOrderAs(h, TEST_OFFER_ID);
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.recordProceedsCalled());
+        assertEq(diamond.recordProceedsAmount(), TEST_OFFER_ASK);
+        assertTrue(diamond.markConsumedCalled());
+    }
+
+    function test_fill_offerKeyed_proceedsShort_refused() public {
+        bytes32 h = keccak256("offer-order");
+        _recordOfferOrderAs(h, TEST_OFFER_ID);
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        uint256[] memory d = _amountsOf(p);
+        d[0] = TEST_OFFER_ASK - 1e18;
+
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory dd = new uint256[][](1);
+        dd[0] = d;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                h, uint256(0), uint256(TEST_OFFER_ASK), uint256(TEST_OFFER_ASK - 1e18)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+        assertFalse(diamond.recordProceedsCalled());
+    }
+
+    function test_fill_twoOfferKeyedOrders_settlementOutflowIsNotReadAsArrival() public {
+        // The first fill's settlement pays its proceeds onward out of the
+        // Diamond before the second fill is checked. The second must still be
+        // measured against its own arrival: neither refused for the first
+        // one's outflow, nor credited with it.
+        diamond.setForwardProceedsTo(makeAddr("borrowerVaultSink"));
+        bytes32 h1 = keccak256("offer-order-1");
+        bytes32 h2 = keccak256("offer-order-2");
+        _recordOfferOrderAs(h1, TEST_OFFER_ID);
+        _recordOfferOrderAs(h2, TEST_OFFER_ID + 1);
+
+        ZoneParameters[] memory orders = new ZoneParameters[](2);
+        orders[0] = _validOfferZoneParams(h1);
+        orders[1] = _validOfferZoneParams(h2);
+        uint256[][] memory dd = new uint256[][](2);
+        dd[0] = _amountsOf(orders[0]);
+        dd[1] = _amountsOf(orders[1]);
+        _fill(orders, dd);
+        assertEq(IERC20(principalAsset).balanceOf(makeAddr("borrowerVaultSink")), 2 * uint256(TEST_OFFER_ASK));
+
+        // Second order short: refused, although the Diamond's balance briefly
+        // held the first order's proceeds.
+        _recordOfferOrderAs(keccak256("offer-order-3"), TEST_OFFER_ID + 2);
+        _recordOfferOrderAs(keccak256("offer-order-4"), TEST_OFFER_ID + 3);
+        orders[0] = _validOfferZoneParams(keccak256("offer-order-3"));
+        orders[1] = _validOfferZoneParams(keccak256("offer-order-4"));
+        dd[1][0] = TEST_OFFER_ASK - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                keccak256("offer-order-4"), uint256(0), uint256(TEST_OFFER_ASK), uint256(TEST_OFFER_ASK - 1)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+    }
+
     /// @dev Round-5 Block A (#313) — most executor tests don't care
     ///      about the new feeLegs arg; this helper supplies an empty
     ///      array for back-compat with the pre-#313 call shape.

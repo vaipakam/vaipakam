@@ -98,6 +98,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 
 contract RiskFacetTest is Test {
     VaipakamDiamond diamond;
@@ -3965,6 +3966,50 @@ contract RiskFacetTest is Test {
             "HF must strictly improve (PartialMustImproveHF gate)"
         );
 
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2440 (Codex r2) — a partial liquidation leaves the loan open and
+    ///      books its payout to the lender as received in full (the interest
+    ///      it settles, the principal it retires, the accrual restart), so a
+    ///      payout that reaches the lender short is refused by name. The full
+    ///      liquidation, which acts on what arrived, stays open. Only
+    ///      transfers out of the Diamond are charged, so the refusal names
+    ///      exactly the lender payout. Kills: the clamp that forgave an
+    ///      interest shortfall by retiring less principal (or none) while the
+    ///      accrual restarted as if the interest had been paid.
+    function testPartialLiq_LenderPayoutShort_Refused() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(0.65e8, 8)
+        );
+        MockVaultWithdraw.deliversAll(address(diamond));
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+
+        // Learn the lender payout from an uncharged run, then rewind.
+        uint256 snap = vm.snapshotState();
+        uint256 lender0 = IERC20(mockERC20).balanceOf(lender);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+        uint256 payout = IERC20(mockERC20).balanceOf(lender) - lender0;
+        assertGt(payout, 0, "fixture: the partial pays the lender");
+        vm.revertToState(snap);
+
+        vm.etch(mockERC20, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(mockERC20).setFeeBps(100);
+        FeeOnTransferERC20Mock(mockERC20).setChargedSender(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector,
+                mockERC20,
+                payout,
+                payout - (payout * 100) / 10_000
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 

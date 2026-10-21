@@ -311,9 +311,13 @@ library LibConsolidation {
             amount = loan.collateralAmount;
             if (amount == 0) return (asset, 0);
             uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
-            // #2440 — a collateral that delivers less than it sends shrinks
-            // this position, never another: the loan's collateral and its
-            // (already re-keyed) lien fall to what the holder's vault holds.
+            // #2440 — outcome 3 of {LibDelivery} in every flow, voluntary or
+            // forced: this relocates the borrower side's own backing between
+            // that side's vaults and pays nobody. A collateral that delivers
+            // less than it sends shrinks this position, never another: the
+            // loan's collateral and its (already re-keyed) lien fall to what
+            // the holder's vault holds, and the calling flow's health-factor
+            // and LTV checks run on that figure.
             if (credited < amount) {
                 LibEncumbrance.decrementCollateralLien(loanId, amount - credited);
                 loan.collateralAmount = credited;
@@ -358,8 +362,10 @@ library LibConsolidation {
         // principal asset. (NFT-rental lender positions are excluded upstream,
         // so the prepay-asset case does not reach here.)
         asset = loan.principalAsset;
-        // #2440 — the held claim follows what the holder's vault received, and
-        // the reservations re-keyed beside it in step 5 never exceed it.
+        // #2440 — outcome 3 of {LibDelivery} in every flow: the lender side's
+        // own parked proceeds following its position to the current holder.
+        // The held claim follows what the holder's vault received, and the
+        // reservations re-keyed beside it in step 5 never exceed it.
         uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
         if (credited < amount) {
             s.heldForLender[loanId] = credited;

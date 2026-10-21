@@ -199,11 +199,13 @@ library LibSanctionedLock {
     ///      vault-to-vault / NFT and the caller needs the vault address.
     ///      A zero `amount` is a no-op (no vault is force-created, nothing is
     ///      transferred, no event) — matching the prior `if (amount > 0)` guards.
-    ///      #2440 — outcome 3 of {LibDelivery}: records and returns what the
-    ///      vault actually received ({LibDelivery.pushMeasured}), never more
-    ///      than `amount`. A caller that writes a ledger beside the credit (a
-    ///      claim, a lien, a custody row) writes the returned figure, so the
-    ///      ledger never names tokens the vault does not hold.
+    ///      #2440 — outcome 2 of {LibDelivery} (a FORCED flow): records and
+    ///      returns what the vault actually received
+    ///      ({LibDelivery.pushMeasured}), never more than `amount`. A caller
+    ///      that writes a ledger beside the credit (a claim, a lien, a custody
+    ///      row) writes the returned figure, so the ledger never names tokens
+    ///      the vault does not hold. A VOLUNTARY flow uses
+    ///      {depositLockedInFull} instead.
     function depositLocked(
         LibVaipakam.Storage storage s,
         address owner,
@@ -220,6 +222,22 @@ library LibSanctionedLock {
         if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, credited);
         }
+    }
+
+    /// @dev #2440 — {depositLocked} for a VOLUNTARY flow (outcome 1 of
+    ///      {LibDelivery}: a repayment, a swap-to-repay, a sale): the party
+    ///      credited is booked as paid in full, so the deposit is refused
+    ///      unless the vault received all of `amount`. The Diamond's own push
+    ///      is measured here even when the hop into the Diamond was measured
+    ///      already, because a token can charge one hop and not the other.
+    function depositLockedInFull(
+        LibVaipakam.Storage storage s,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        LibDelivery.requireFull(asset, amount, depositLocked(s, owner, loanId, asset, amount));
     }
 
     /// @dev Cross-PAYER variant of {depositLocked}: parks a close-out payoff that
@@ -267,10 +285,12 @@ library LibSanctionedLock {
     ///      the receive-side exemption is pinned around the vault resolution (a
     ///      flagged `owner`'s EXISTING vault resolves without minting a new proxy).
     ///      Emits the lock event when `owner` is flagged. Zero `amount` is a no-op.
-    ///      #2440 — outcome 3 of {LibDelivery}: `fromUser`'s vault sends
-    ///      `amount`, and `owner`'s vault is credited with, and the call
-    ///      returns, what actually arrived (measured by the withdraw), so a
-    ///      ledger written beside it never names tokens `owner`'s vault lacks.
+    ///      #2440 — `fromUser`'s vault sends `amount`, and `owner`'s vault is
+    ///      credited with, and the call returns, what actually arrived
+    ///      (measured by the withdraw), so a ledger written beside it never
+    ///      names tokens `owner`'s vault lacks. A forced caller books the
+    ///      returned figure; a voluntary one refuses a short return
+    ///      ({LibDelivery.requireFull}).
     function depositLockedFromVault(
         LibVaipakam.Storage storage s,
         address fromUser,

@@ -519,9 +519,7 @@ contract PrepayListingFacet is
         // `lenderLeg`, so the leg must arrive in full. A short arrival is
         // refused, which reverts the whole Seaport fill (the buyer's funds are
         // never committed) and leaves the default path open.
-        LibDelivery.requireFull(
-            principalAsset, lenderLeg, LibDelivery.pushMeasured(principalAsset, lenderHolder, lenderLeg)
-        );
+        LibDelivery.pushExact(principalAsset, lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
         // Codex round-5 P2 #3 — every treasury-fee site MUST pair the
         // transfer with `LibFacet.recordTreasuryAccrual` so the

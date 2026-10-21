@@ -182,7 +182,7 @@ library LibFacet {
         );
     }
 
-    /// @dev #2440 — outcome 2 of {LibDelivery} for a VOLUNTARY flow: the vault
+    /// @dev #2440 — outcome 1 of {LibDelivery} (a VOLUNTARY flow): the vault
     ///      withdraw, refused unless `recipient` received all of `amount`.
     function vaultWithdrawExact(
         address user,
@@ -208,9 +208,10 @@ library LibFacet {
     ) internal {
         if (amount == 0) return;
         address vault = getOrCreateVault(newLender);
-        // #2440 — outcome 3 of {LibDelivery}: the held claim and the tracked
-        // balance record what the vault received, never more than `amount`.
-        amount = LibDelivery.pushMeasured(asset, vault, amount);
+        // #2440 — outcome 1 of {LibDelivery}: this funds the new lender's held
+        // claim inside a voluntary sale, so it is refused unless the vault
+        // received all of `amount`, and the claim names `amount`.
+        LibDelivery.pushExact(asset, vault, amount);
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
         // #597 Codex #672 P2 — tick the protocol-tracked vault balance, like the
         // sibling `depositFromPayerForLender` (via `vaultDepositERC20From`) does.
@@ -219,7 +220,8 @@ library LibFacet {
         // decrements tracked) would underflow on this Diamond-resident deposit,
         // AND the #597 VPFI reservation of the full held would subtract an
         // untracked amount from the lender's free balance (over-locking unrelated
-        // stake). Single caller (`sellLoanViaBuyOffer`'s option-1 shortfall).
+        // stake). Callers: the option-1 shortfall of both sale routes
+        // (`sellLoanViaBuyOffer` and the listed sale's completion).
         LibVaipakam.recordVaultDeposit(newLender, asset, amount);
     }
 

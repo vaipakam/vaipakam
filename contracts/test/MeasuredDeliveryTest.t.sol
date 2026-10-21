@@ -545,9 +545,11 @@ contract MeasuredDeliveryTest is SetupTest {
     }
 
     /// @notice A forced payout of resident tokens to the lender (the periodic
-    ///         auto-liquidation, a partial liquidation) reports what the
-    ///         lender received, and a short arrival leaves the period it
-    ///         settles open instead of marking the lender paid through it.
+    ///         auto-liquidation) reports what the lender received, and a short
+    ///         arrival leaves the period it settles open instead of marking
+    ///         the lender paid through it. (A partial liquidation, which keeps
+    ///         the loan open, refuses that short report instead; see
+    ///         RiskFacetTest.)
     /// @dev    Kills: the caller booking the requested figure as settled, and
     ///         the paid-through mark advancing over tokens that never arrived.
     function test_ResidentLenderPayout_ReportsWhatArrived() public {
@@ -586,6 +588,69 @@ contract MeasuredDeliveryTest is SetupTest {
 
         assertEq(delivered, amount, "the whole payout arrived");
         assertEq(_paidThrough(LOAN), boundary, "the lender is paid through the boundary");
+    }
+
+    // -- Voluntary flows refuse a short arrival at every hop ----------------
+
+    /// @notice #2440 (Codex r2) — the rental repayment's SECOND hop, Diamond to
+    ///         the lender's vault, is refused when it lands short, as its first
+    ///         hop is: the lender's claim names the whole share.
+    /// @dev    Only transfers out of the Diamond are charged, so the first hop
+    ///         (borrower vault to Diamond) and the treasury fee arrive in full
+    ///         and the refusal names exactly the second hop. Kills: the claim
+    ///         shrinking to what the vault received while the loan closes as
+    ///         repaid in full.
+    function test_RentalRepay_LenderCreditRefusedUnlessAllArrives() public {
+        uint256 loanId = _openRental();
+        vm.warp(block.timestamp + RENTAL_DAYS * 1 days);
+
+        uint256 snap = vm.snapshotState();
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        (, uint256 share, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertGt(share, 0, "fixture: the lender has a rental share");
+        vm.revertToState(snap);
+
+        _chargesFee(mockERC20, address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, share, _less(share))
+        );
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+    }
+
+    /// @notice #2440 (Codex r2) — a swap-to-repay's lender proceeds are
+    ///         deposited into the lender's vault in full or not at all: the
+    ///         loan closes on that figure and the lender's claim names it.
+    /// @dev    Kills: the claim and the reservation shrinking to what arrived.
+    function test_SwapToRepayLenderProceeds_RefusedUnlessAllArrives() public {
+        _scaffold(true);
+        uint256 due = 100 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), due);
+        _chargesFee(mockERC20, address(diamond));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, due, _less(due))
+        );
+        vm.prank(address(diamond));
+        EncumbranceMutateFacet(address(diamond)).freezeLenderProceeds(LOAN, due);
+    }
+
+    /// @notice #2440 — the same swap-to-repay's principal surplus to the
+    ///         borrower-position holder is refused when it lands short.
+    function test_SwapToRepaySurplus_RefusedUnlessAllArrives() public {
+        _scaffold(true);
+        uint256 surplus = 40 ether;
+        ERC20Mock(mockERC20).mint(address(diamond), surplus);
+        _chargesFee(mockERC20, address(diamond));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, surplus, _less(surplus)
+            )
+        );
+        vm.prank(address(diamond));
+        EncumbranceMutateFacet(address(diamond)).freezeOrPayBorrowerSurplus(LOAN, borrower, surplus);
     }
 
     // -- The treasury fee host ----------------------------------------------
