@@ -1006,6 +1006,43 @@ export async function putWork<T>(db: KeeperD1, chainId: number, diamond: string,
     .run();
 }
 
+/** The rows of `items` that are queued, by item (#2612: the day-close pass
+ *  reads exactly its window's send markers, never a bounded slice of the
+ *  queue, so a backlog cannot hide one). A row whose payload is unreadable is
+ *  left out, as in {@link listOpenWorkPage}. */
+export async function getWorkItems<T>(
+  db: KeeperD1,
+  chainId: number,
+  diamond: string,
+  kind: WorkKind,
+  items: readonly string[],
+): Promise<Map<string, WorkItem<T>>> {
+  const out = new Map<string, WorkItem<T>>();
+  for (const c of chunkD1InList(items, { before: [chainId, diamond.toLowerCase(), kind] })) {
+    const rows = await db
+      .prepare(`SELECT item, block, payload FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND item IN (${c.placeholders})`)
+      .bind(...c.binds)
+      .all<{ item: string; block: number; payload: string }>();
+    for (const r of rows.results ?? []) {
+      try {
+        out.set(r.item, { item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+      } catch {
+        console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
+      }
+    }
+  }
+  return out;
+}
+
+/** Delete every `kind` row on `(chainId, diamond)` whose block is below
+ *  `block` (#2612: a day's send marker leaves with the day's window). */
+export async function pruneWorkBelow(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, block: number): Promise<void> {
+  await db
+    .prepare(`DELETE FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND block < ?`)
+    .bind(chainId, diamond.toLowerCase(), kind, block)
+    .run();
+}
+
 /** A bounded slice of the open items, the least recently checked first (then
  *  the oldest), so every open item is reached in turn however many there are,
  *  and one that never finishes holds back nothing but its own slot. */

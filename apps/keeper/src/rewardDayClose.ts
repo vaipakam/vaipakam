@@ -24,9 +24,10 @@
 //      the lane did not use. On Base it records Base's own report, fee-free. A
 //      mirror first asks Base (when this keeper also serves Base) whether the
 //      day is already finalized there: a report that lands after finalization
-//      is refused by Base's ingress, so sending it would only spend the fee,
-//      and the run says instead that the day was finalized without this
-//      chain. A close refused because the interest fold has not reached the
+//      is refused by Base's ingress, so sending it would only spend the fee.
+//      For every window day, sent or not, a day Base finalized without this
+//      chain's report is reported as such (an in-flight report that missed
+//      grace is excluded just as surely as one never sent). A close refused because the interest fold has not reached the
 //      day (`ChainReportFrontierShort`) is preceded by `advanceInterestFrontiers`.
 //   2. FINALIZES (Base only) each day whose own report is recorded, when
 //      either every chain on Base's expected-source list has reported, or the
@@ -37,17 +38,21 @@
 //      not on the list counts too), and finalizing then would zero a report
 //      still in flight inside grace. A day finalized at grace with a chain
 //      missing zeroes that chain's interest for the day, so the run says so,
-//      naming each one. An empty expected-source list is never finalized
+//      naming each one from the finalization's own `ChainContributionZeroed`
+//      events (not from the read before the send, which can be stale). An empty expected-source list is never finalized
 //      against: every day would finalize as zero, irreversibly.
 //   3. BROADCASTS (Base only) each finalized day to the messenger's
 //      destinations (`broadcastGlobal`, the quoted fee, paid exactly), and
 //      confirms delivery by reading each destination this keeper also serves
 //      (`getKnownGlobalInterestNumeraire18(d).isSet` on that mirror). A day
 //      is sent once and re-sent only when a served destination still lacks
-//      the pair {@link BROADCAST_RESEND_AFTER_SEC} after the last send (the
-//      mirror ingress is idempotent, so a re-send cannot double-apply). A
-//      destination this keeper does not serve cannot be read, so it is sent
-//      to once and never confirmed: the run's line says so.
+//      the pair {@link BROADCAST_RESEND_AFTER_SEC} after the last send, and
+//      then only to the destinations still lacking it (`broadcastGlobalTo`),
+//      falling back to every destination when the day or the messenger cannot
+//      take a single-destination send (the mirror ingress is idempotent, so a
+//      re-send cannot double-apply). A destination this keeper does not serve
+//      cannot be read, so it is sent to once and never confirmed: the run's
+//      line says so.
 //
 // What the run sends is bounded ({@link MAX_SENDS_PER_RUN} per chain), each
 // send is simulated first on the current state, and each waits for its
@@ -65,7 +70,10 @@
 //     ({@link graceWarningSec}), naming each missing chain and whether it has
 //     sent its report (read on that chain, when served) or not;
 //   - on Base, an empty expected-source list, or one that leaves Base itself
-//     out (Base's own interest is then summed into no day's global total);
+//     out (Base's own interest is then summed into no day's global total), or
+//     an expected mirror that is not a broadcast destination (its users could
+//     never claim); each read every run and cleared only on a read showing
+//     the fix;
 //   - on Base, a broadcast a served destination has not received
 //     {@link BROADCAST_LATE_AFTER_SEC} after it was sent;
 //   - on a mirror, a day Base finalized without this chain's report.
@@ -74,12 +82,13 @@
 //
 // The broadcast's last send time is the only state the pass keeps: one row
 // per (chain, Diamond, day) in the keeper's private open-work queue
-// (`keeper_work_open`, kind `day_broadcast`), removed once every served
-// destination has the pair. Losing it costs at most one extra broadcast.
+// (`keeper_work_open`, kind `day_broadcast`), kept while the day is in the
+// window and dropped when it leaves it. Losing it costs at most one extra
+// broadcast.
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
 
-import { BaseError, ContractFunctionRevertedError, createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseEventLogs, type Abi, type Address, type Hex, type Log, type PublicClient } from 'viem';
 import {
   AdminFacetABI,
   InteractionRewardsLensFacetABI,
@@ -95,7 +104,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
-import { finishWork, listOpsAlertKeys, listOpenWork, putWork, type WorkItem } from './db';
+import { getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from './opsAlert';
 
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
@@ -150,6 +159,10 @@ const REASON_FINALIZED = 1;
 /** Reverts that mean another caller got there first: re-read next run. */
 const RACES = new Set(['ChainDayAlreadyReported', 'DayAlreadyFinalized', 'ReportAfterFinalization']);
 const PAUSED_REFUSAL = 'EnforcedPause';
+/** Refusals of the single-destination re-send (`broadcastGlobalTo`) that mean
+ *  this day or this messenger cannot take one: the re-send then goes to every
+ *  destination (`broadcastGlobal`) instead. */
+const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', 'DestinationHasNoDayStanding']);
 const FRONTIER_SHORT = 'ChainReportFrontierShort';
 
 // ─── Pure planning ──────────────────────────────────────────────────────
@@ -302,10 +315,14 @@ interface RunFindings {
   waiting: { day: number; missing: number[]; graceEndsAt: number | null; sent: Map<number, number | null> }[];
   /** Base: days finalized this run with expected chains missing. */
   zeroed: { day: number; missing: number[] }[];
-  /** Base: the expected-source list is empty. */
-  noExpected: boolean;
-  /** Base: the expected-source list leaves Base itself out. */
-  selfNotExpected: boolean;
+  /** Base: the expected-source list is empty. Null = not read this run, so
+   *  neither raised nor cleared. */
+  noExpected: boolean | null;
+  /** Base: the expected-source list leaves Base itself out (null = not read). */
+  selfNotExpected: boolean | null;
+  /** Base: expected mirrors that are not broadcast destinations, so a
+   *  finalized day never reaches them (null = not read). */
+  undeliverable: number[] | null;
   /** Base: days a served destination has not received, past the late mark. */
   lateBroadcast: { day: number; missing: number[]; sentAt: number }[];
   /** Mirror: days Base finalized without this chain's report. */
@@ -341,7 +358,18 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const window = dayWindow(today);
   const canonical = role === ROLE_CANONICAL;
 
-  const f: RunFindings = { refused: new Map(), settled: new Set(), waiting: [], zeroed: [], noExpected: false, selfNotExpected: false, lateBroadcast: [], excluded: [], window };
+  const f: RunFindings = {
+    refused: new Map(),
+    settled: new Set(),
+    waiting: [],
+    zeroed: [],
+    noExpected: null,
+    selfNotExpected: null,
+    undeliverable: null,
+    lateBroadcast: [],
+    excluded: [],
+    window,
+  };
   const sender = new Sender(deps, f);
 
   // ── 1. Close ──
@@ -349,10 +377,14 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const unclosed = window.filter((d) => sentAt.get(d) === 0n);
   for (const d of window) if ((sentAt.get(d) ?? 0n) > 0n) f.settled.add(`close:${d}`);
   let closeable = unclosed;
-  if (!canonical && unclosed.length > 0) {
-    const finalizedOnBase = await baseFinalized(deps.peer(baseChainId), unclosed, deps.sendDeadline);
-    f.excluded = unclosed.filter((d) => finalizedOnBase.get(d) === true);
-    closeable = unclosed.filter((d) => finalizedOnBase.get(d) !== true);
+  if (!canonical) {
+    // Every window day, sent or not: Base may have finalized a day at grace
+    // while this chain's report was still in flight, and that report is then
+    // refused when it lands. Either way the day is finalized without this
+    // chain, and it stays so.
+    const onBase = await baseView(deps.peer(baseChainId), window, chainId, deps.sendDeadline);
+    f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
+    closeable = unclosed.filter((d) => onBase.get(d)?.finalized !== true);
   }
   let closed = 0;
   for (const d of closeable) {
@@ -381,10 +413,14 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   let finalized = 0;
   let broadcast = 0;
   const unconfirmed: number[] = [];
-  if (canonical && !sender.stopped) {
+  if (canonical) {
+    // The topology is read every run, whatever the send budget left: its
+    // alerts are raised and cleared only on what this run actually read.
     const expected = (await read<readonly number[]>('getExpectedSourceChainIds')).map(Number);
+    const destinations = await broadcastDestinations(deps.client, messenger);
     f.noExpected = expected.length === 0;
     f.selfNotExpected = !f.noExpected && !expected.includes(chainId);
+    f.undeliverable = expected.filter((c) => c !== chainId && !destinations.includes(c));
     const ready = await readDays<readonly [boolean, number]>(deps, diamond, window, 'isDayReadyToFinalize', where);
     const firstAt = await readDays<bigint>(deps, diamond, window, 'getDailyFirstReportAt', where);
     const open = window.filter((d) => ready.has(d) && Number(ready.get(d)![1]) !== REASON_FINALIZED);
@@ -412,7 +448,11 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
         if (r === 'landed') {
           finalized += 1;
           finalizedDays.add(d);
-          if (decision.missing.length > 0) f.zeroed.push({ day: d, missing: decision.missing });
+          // What the finalization itself zeroed, from its own events: the
+          // pre-send read can be stale (a report landing in between) or
+          // partial (a failed read is judged as all missing).
+          const zeroed = zeroedChains(sender.lastLogs, diamond, d);
+          if (zeroed.length > 0) f.zeroed.push({ day: d, missing: zeroed });
         }
       } else if (decision.kind === 'wait' && decision.missing.length > 0) {
         const nearEnd = decision.graceEndsAt !== null && decision.graceEndsAt - nowSec <= graceWarningSec(graceSec);
@@ -423,43 +463,73 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     for (const d of finalizedDays) f.settled.add(`finalize:${d}`);
 
     // ── 3. Broadcast ──
-    const destinations = sender.stopped ? [] : await broadcastDestinations(deps.client, messenger);
-    const work = new Map(
-      (await listOpenWork<{ sentAt: number }>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', LOOKBACK_DAYS * 4)).map((w) => [Number(w.item), w]),
-    );
-    for (const d of [...finalizedDays].sort((a, b) => a - b)) {
+    /** Send day `d` to every destination (`broadcastGlobal`). */
+    const broadcastAll = async (d: number): Promise<boolean> => {
+      const q = await quote(deps.client, diamond, 'quoteBroadcastGlobal', [BigInt(d)]);
+      if ('refused' in q) {
+        f.refused.set(`broadcast:${d}`, `the Diamond would not quote the broadcast fee (${q.refused})`);
+        return false;
+      }
+      return (await sender.call('broadcast', d, 'broadcastGlobal', [BigInt(d)], q.fee)) === 'landed';
+    };
+    /** Re-send day `d` only to the destinations still lacking it
+     *  (`broadcastGlobalTo`), so a lane that delivered is not paid again; to
+     *  every destination when the day or the messenger cannot take a
+     *  single-destination send. */
+    const resendMissing = async (d: number, missing: readonly number[]): Promise<boolean> => {
+      let landed = false;
+      for (const c of missing) {
+        if (sender.stopped) break;
+        // eslint-disable-next-line no-await-in-loop
+        const q = await quote(deps.client, diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(c)]);
+        // eslint-disable-next-line no-await-in-loop
+        const r = 'refused' in q ? q.refused : await sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(c)], q.fee);
+        if (r === 'landed') {
+          landed = true;
+          continue;
+        }
+        if (RESEND_TO_ALL.has(r)) {
+          f.refused.delete(`broadcast:${d}`);
+          // eslint-disable-next-line no-await-in-loop
+          return (await broadcastAll(d)) || landed;
+        }
+        if ('refused' in q) f.refused.set(`broadcast:${d}`, `the Diamond would not quote the re-send to chain ${c} (${q.refused})`);
+      }
+      return landed;
+    };
+
+    // A day's send marker lives exactly as long as the day is in the window:
+    // kept while it is worked (so a day whose destinations cannot all be
+    // confirmed is still sent only once), dropped when the day leaves it. The
+    // window's markers are read by day, never as a slice of the queue.
+    await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_broadcast', window[0]);
+    const days = [...finalizedDays].sort((a, b) => a - b);
+    const marks = await getWorkItems<{ sentAt: number }>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', days.map(String));
+    for (const d of days) {
       if (sender.stopped) break;
       // eslint-disable-next-line no-await-in-loop
       const dest = await destinationStates(deps, destinations, d);
-      const item = work.get(d);
-      const decision = planBroadcast(dest, item ? item.payload.sentAt : null, nowSec);
+      const lastSent = marks.get(String(d))?.payload.sentAt ?? null;
+      const decision = planBroadcast(dest, lastSent, nowSec);
       const missing = [...dest].filter(([, s]) => s === 'missing').map(([c]) => c);
       if (decision.kind === 'done') {
-        // eslint-disable-next-line no-await-in-loop
-        if (item) await finishWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', [String(d)]);
         f.settled.add(`broadcast:${d}`);
         if ([...dest.values()].some((s) => s === 'unserved')) unconfirmed.push(d);
         continue;
       }
       if (decision.kind === 'wait') {
-        if (decision.late && item) f.lateBroadcast.push({ day: d, missing, sentAt: item.payload.sentAt });
+        if (decision.late && lastSent !== null) f.lateBroadcast.push({ day: d, missing, sentAt: lastSent });
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
-      const fee = await broadcastFee(deps.client, diamond, d);
-      if (fee === null) {
-        f.refused.set(`broadcast:${d}`, 'the Diamond would not quote the broadcast fee');
-        continue;
-      }
-      // eslint-disable-next-line no-await-in-loop
-      const r = await sender.call('broadcast', d, 'broadcastGlobal', [BigInt(d)], fee);
-      if (r === 'landed') {
+      const landed = decision.resend ? await resendMissing(d, missing) : await broadcastAll(d);
+      if (landed) {
         broadcast += 1;
         const row: WorkItem<{ sentAt: number }> = { item: String(d), block: d, payload: { sentAt: Math.floor(Date.now() / 1000) } };
         // eslint-disable-next-line no-await-in-loop
         await putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', row);
-      } else if (decision.resend && item && missing.length > 0) {
-        f.lateBroadcast.push({ day: d, missing, sentAt: item.payload.sentAt });
+      } else if (decision.resend && lastSent !== null && missing.length > 0) {
+        f.lateBroadcast.push({ day: d, missing, sentAt: lastSent });
       }
     }
   }
@@ -523,19 +593,31 @@ async function readReported(deps: DayCloseDeps, diamond: Address, days: readonly
   return out;
 }
 
-/** On a mirror: which of `days` Base has already finalized (absent = unknown:
- *  Base not served, or its read failed). */
-async function baseFinalized(base: PeerReader | null, days: readonly number[], deadline: number): Promise<Map<number, boolean>> {
-  const out = new Map<number, boolean>();
-  if (!base) return out;
+/** On a mirror: for each of `days`, whether Base has finalized it and whether
+ *  Base holds this chain's report for it (absent = unknown: Base not served,
+ *  or a read failed). */
+async function baseView(
+  base: PeerReader | null,
+  days: readonly number[],
+  self: number,
+  deadline: number,
+): Promise<Map<number, { finalized: boolean; counted: boolean }>> {
+  const out = new Map<number, { finalized: boolean; counted: boolean }>();
+  if (!base || days.length === 0) return out;
   const res = await boundedRead(
     base.client as never,
-    days.map((d) => ({ address: base.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] })),
-    'rewardDayClose base isDayReadyToFinalize',
+    days.flatMap((d) => [
+      { address: base.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
+      { address: base.diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), self] },
+    ]),
+    'rewardDayClose base day view',
     deadline,
   );
   days.forEach((d, i) => {
-    if (res[i]?.status === 'success') out.set(d, Number((res[i].result as readonly [boolean, number])[1]) === REASON_FINALIZED);
+    const ready = res[2 * i];
+    const counted = res[2 * i + 1];
+    if (ready?.status !== 'success' || counted?.status !== 'success') return;
+    out.set(d, { finalized: Number((ready.result as readonly [boolean, number])[1]) === REASON_FINALIZED, counted: counted.result === true });
   });
   return out;
 }
@@ -560,32 +642,43 @@ async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], day: nu
   return out;
 }
 
-/** The messenger's fee for the report `closeDay` sends: the current (B4) shape,
- *  or the eight-word one a messenger without it dispatches. The payload is
- *  fixed-width, so zero figures price it exactly. Null when neither quotes. */
+/** The messenger's fee for the report `closeDay` sends. The Diamond sends the
+ *  newest report shape the messenger has (B4, then B3, B1 and the legacy one,
+ *  each downgrade on a selector the messenger lacks), and the quote walks the
+ *  same ladder, stopping at a refusal the messenger names. The payload is
+ *  fixed-width, so zero figures price it exactly. Null when no shape quotes.
+ *  A quote that does not match the shape sent cannot overpay silently: the
+ *  `closeDay` simulation is the judge, and refuses an underpaid send. */
 async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<bigint | null> {
   const z = 0n;
-  const attempts: readonly (readonly unknown[])[] = [
-    [BigInt(day), z, z, z, z, z, z, 0n],
-    [BigInt(day), z, z, z, z, z, z],
+  const d = BigInt(day);
+  const ladder: readonly (readonly unknown[])[] = [
+    [d, z, z, z, z, z, z, 0n], // B4: + custody era
+    [d, z, z, z, z, z, z], // B3
+    [d, z, z, z, z], // B1
+    [d, z, z], // legacy
   ];
-  for (const args of attempts) {
+  for (const args of ladder) {
     try {
       // eslint-disable-next-line no-await-in-loop
       return (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args })) as bigint;
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
+      if (revertName(err) !== undefined) return null;
     }
   }
   return null;
 }
 
-async function broadcastFee(client: PublicClient, diamond: Address, day: number): Promise<bigint | null> {
+type Quote = { fee: bigint } | { refused: string };
+
+/** A Diamond fee quote, or the reason it was refused. */
+async function quote(client: PublicClient, diamond: Address, functionName: string, args: readonly unknown[]): Promise<Quote> {
   try {
-    return (await client.readContract({ address: diamond, abi: ABI, functionName: 'quoteBroadcastGlobal', args: [BigInt(day)] })) as bigint;
+    return { fee: (await client.readContract({ address: diamond, abi: ABI, functionName, args })) as bigint };
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
-    return null;
+    return { refused: revertName(err) ?? shortErr(err) };
   }
 }
 
@@ -629,6 +722,8 @@ class Sender {
   private sends = 0;
   stopped = false;
   stopReason = '';
+  /** The logs of the last call that landed. */
+  lastLogs: readonly Log[] = [];
 
   constructor(
     private readonly deps: DayCloseDeps,
@@ -681,6 +776,7 @@ class Sender {
     console.log(`${label} value=${value} tx=${hash}`);
     try {
       const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      this.lastLogs = receipt.logs ?? [];
       if (receipt.status !== 'success') {
         this.f.refused.set(key, `reverted on chain (tx ${hash})`);
         return `reverted on chain (tx ${hash})`;
@@ -751,6 +847,12 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
       `${tag}: Base's expected-source list is empty, so no day is finalized: a day finalized against an empty list sums no chain and finalizes as zero, irreversibly. Set the list (setExpectedSourceChainIds) before rewards can be finalized.`,
     );
   }
+  if (canonical && f.undeliverable && f.undeliverable.length > 0) {
+    await raise(
+      `dayclose-nodest:${chainId}:all`,
+      `${tag}: chain(s) ${f.undeliverable.join(', ')} are on Base's expected-source list but not among the reward messenger's broadcast destinations, so no finalized day is ever broadcast to them and their users cannot claim. Add them (setBroadcastDestinations on the messenger).`,
+    );
+  }
   if (canonical && f.selfNotExpected) {
     await raise(
       `dayclose-selfmissing:${chainId}:all`,
@@ -785,8 +887,10 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     let gone = false;
     if (kind === 'dayclose-refused') gone = f.settled.has(`${parts[2]}:${parts[3]}`) || !inWindow.has(day);
     else if (kind === 'dayclose-waiting') gone = f.settled.has(`finalize:${day}`) || !inWindow.has(day);
-    else if (kind === 'dayclose-noexpected') gone = canonical && !f.noExpected;
-    else if (kind === 'dayclose-selfmissing') gone = canonical && !f.selfNotExpected;
+    // A topology alert clears only on a read that shows the fix.
+    else if (kind === 'dayclose-noexpected') gone = canonical && f.noExpected === false;
+    else if (kind === 'dayclose-selfmissing') gone = canonical && f.selfNotExpected === false;
+    else if (kind === 'dayclose-nodest') gone = canonical && f.undeliverable !== null && f.undeliverable.length === 0;
     else if (kind === 'dayclose-broadcast') gone = f.settled.has(`broadcast:${day}`) || !inWindow.has(day);
     else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
     if (gone && Date.now() < deadline) {
@@ -803,6 +907,16 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+/** The chains a landed `finalizeDay(day)` zeroed, from its own
+ *  `ChainContributionZeroed` events. */
+function zeroedChains(logs: readonly Log[], diamond: Address, day: number): number[] {
+  return parseEventLogs({ abi: ABI, logs: logs as Log[], eventName: 'ChainContributionZeroed' })
+    .filter((l) => l.address.toLowerCase() === diamond.toLowerCase())
+    .map((l) => l.args as unknown as { dayId: bigint; sourceChainId: number })
+    .filter((a) => Number(a.dayId) === day)
+    .map((a) => Number(a.sourceChainId));
+}
 
 /** The decoded custom error a simulation reverted with, when the ABI names it. */
 function revertName(err: unknown): string | undefined {

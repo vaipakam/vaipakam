@@ -11,8 +11,8 @@
  *     the alerts, raised AND cleared.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ContractFunctionRevertedError, encodeErrorResult, type Abi, type Address, type PublicClient } from 'viem';
-import { RewardReporterFacetABI } from '@vaipakam/contracts/abis';
+import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, type Abi, type Address, type Log, type PublicClient } from 'viem';
+import { RewardAggregatorFacetABI, RewardReporterFacetABI } from '@vaipakam/contracts/abis';
 import {
   BROADCAST_LATE_AFTER_SEC,
   BROADCAST_RESEND_AFTER_SEC,
@@ -40,6 +40,7 @@ const OTHER = 97;
 const GRACE = 4 * 3600;
 const LANE_FEE = 123n;
 const BROADCAST_FEE = 456n;
+const BROADCAST_TO_FEE = 78n;
 const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 const NOW = Math.floor(T0 / 1000);
 
@@ -109,10 +110,12 @@ describe('the pure rules', () => {
 // ─── whole runs against fake chains ─────────────────────────────────────────
 
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
+const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
+const ERRORS_ABI = [...REPORTER_ABI, ...(AGGREGATOR_ABI as Abi), { type: 'error', name: 'MessengerPredatesV3', inputs: [] }] as Abi;
 function revert(errorName: string, args: readonly unknown[] = []): ContractFunctionRevertedError {
   return new ContractFunctionRevertedError({
-    abi: REPORTER_ABI,
-    data: encodeErrorResult({ abi: REPORTER_ABI, errorName, args } as never),
+    abi: ERRORS_ABI,
+    data: encodeErrorResult({ abi: ERRORS_ABI, errorName, args } as never),
     functionName: 'closeDay',
   });
 }
@@ -132,7 +135,14 @@ class FakeDiamond {
   destinations: number[] = [];
   /** `fn:day` → error name a simulation reverts with. */
   refuse = new Map<string, string>();
-  sent: { fn: string; day: number; value: bigint }[] = [];
+  /** `quoteSendChainReport` arities the messenger has (the rest are unknown selectors). */
+  quoteShapes = new Set([8, 7, 5, 3]);
+  /** Single-destination quotes refuse with this, when set. */
+  refuseTo: string | null = null;
+  /** Reports that land between the pass's reads and its finalization, by day. */
+  landsAtFinalize = new Map<number, number>();
+  private logs: Log[] = [];
+  sent: { fn: string; day: number; value: bigint; to?: number }[] = [];
 
   constructor(
     readonly chainId: number,
@@ -151,7 +161,10 @@ class FakeDiamond {
   readContract = async ({ address, functionName, args }: { address: Address; functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
     const d = args && args.length > 0 ? Number(args[0] as bigint) : -1;
     if (address === this.messenger) {
-      if (functionName === 'quoteSendChainReport') return LANE_FEE;
+      if (functionName === 'quoteSendChainReport') {
+        if (!this.quoteShapes.has(args?.length ?? 0)) throw new Error('execution reverted');
+        return LANE_FEE;
+      }
       if (functionName === 'getBroadcastDestinations') return this.destinations.map(BigInt);
       throw new Error(`unexpected messenger read ${functionName}`);
     }
@@ -178,6 +191,9 @@ class FakeDiamond {
         return [0n, 0n, this.known.has(d)];
       case 'quoteBroadcastGlobal':
         return BROADCAST_FEE;
+      case 'quoteBroadcastGlobalTo':
+        if (this.refuseTo) throw revert(this.refuseTo);
+        return BROADCAST_TO_FEE;
       default:
         throw new Error(`unexpected read ${functionName}`);
     }
@@ -202,7 +218,11 @@ class FakeDiamond {
     return { result: undefined };
   };
 
-  waitForTransactionReceipt = async () => ({ status: 'success' });
+  waitForTransactionReceipt = async () => {
+    const logs = this.logs;
+    this.logs = [];
+    return { status: 'success', logs };
+  };
 
   /** The state change a landed call makes. */
   apply(fn: string, day: number): void {
@@ -215,7 +235,19 @@ class FakeDiamond {
       }
     }
     if (fn === 'advanceInterestFrontiers') this.refuse.delete(`closeDay:${day}`);
-    if (fn === 'finalizeDay') this.finalized.add(day);
+    if (fn === 'finalizeDay') {
+      const late = this.landsAtFinalize.get(day);
+      if (late !== undefined) this.reported.get(day)?.add(late);
+      this.finalized.add(day);
+      for (const c of this.expected) {
+        if (this.reported.get(day)?.has(c)) continue;
+        this.logs.push({
+          address: this.diamond,
+          topics: encodeEventTopics({ abi: AGGREGATOR_ABI, eventName: 'ChainContributionZeroed', args: { dayId: BigInt(day), sourceChainId: c } } as never),
+          data: encodeAbiParameters([{ type: 'bool' }], [true]),
+        } as unknown as Log);
+      }
+    }
   }
 
   client(): PublicClient {
@@ -232,7 +264,7 @@ class FakeDiamond {
         account: { address: '0x00000000000000000000000000000000000000ee' },
         writeContract: async ({ functionName, args, value }: { functionName: string; args: readonly unknown[]; value: bigint }) => {
           const day = Number(args[0] as bigint);
-          this.sent.push({ fn: functionName, day, value });
+          this.sent.push(functionName === 'broadcastGlobalTo' ? { fn: functionName, day, value, to: Number(args[1] as bigint) } : { fn: functionName, day, value });
           this.apply(functionName, day);
           return `0x${'1'.repeat(64)}`;
         },
@@ -376,14 +408,14 @@ describe('a run', () => {
 
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
     await run(base);
-    expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal', 'broadcastGlobal']);
+    expect(base.sent[1], 're-sent to the missing destination only').toEqual({ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR });
 
     mirror.known.add(0);
     openAlert(`dayclose-broadcast:${BASE}:0`);
     await run(base);
     expect(base.sent, 'delivered: nothing more').toHaveLength(2);
     expect(openKeys(), 'the late alert cleared').toEqual([]);
-    expect(keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_broadcast'`).get()).toEqual({ n: 0 });
+    expect(keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_broadcast'`).get(), 'the send marker stays with the window').toEqual({ n: 1 });
   });
 
   it('never finalizes against an empty expected-source list, and says so', async () => {
@@ -420,6 +452,137 @@ describe('a run', () => {
   it('a race with another caller is not a refusal', async () => {
     mirror.refuse.set('closeDay:0', 'ChainDayAlreadyReported');
     await run(mirror);
+    expect(alerts(/refused/)).toEqual([]);
+  });
+  /** Base with day 0 finalized and its own report recorded: ready to broadcast. */
+  const finalizedDayZero = () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE, MIRROR]));
+    base.sentAt.set(0, NOW - 60);
+    base.firstAt.set(0, NOW - 60);
+    base.finalized.add(0);
+  };
+
+  it('re-sends to every destination when the single-destination send is not available', async () => {
+    finalizedDayZero();
+    await run(base);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    base.refuseTo = 'MessengerPredatesV3';
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal', 'broadcastGlobal']);
+    expect(alerts(/refused/), 'a fallback is not a refusal').toEqual([]);
+  });
+
+  it('a re-send leaves a destination that already has the day alone', async () => {
+    finalizedDayZero();
+    base.expected = [BASE, MIRROR, OTHER];
+    base.destinations = [MIRROR, OTHER];
+    const other = new FakeDiamond(OTHER, '0x00000000000000000000000000000000000000d1', '0x00000000000000000000000000000000000000d2');
+    other.known.add(0);
+    const peers3 = (id: number): PeerReader | null => (id === OTHER ? other.peer() : peers(id));
+    const run3 = () =>
+      dayCloseOnce(env, base.chainId, base.diamond, {
+        client: base.client(),
+        readClient: base.client(),
+        context: () => base.ctx(),
+        peer: peers3,
+        sendDeadline: Number.POSITIVE_INFINITY,
+        runDeadline: Number.POSITIVE_INFINITY,
+      });
+    await run3();
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run3();
+    expect(base.sent.slice(1)).toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
+  });
+
+  it('sends a day once when no destination can be confirmed, keeping its marker for the window', async () => {
+    finalizedDayZero();
+    base.destinations = [OTHER]; // not served by this keeper
+    base.expected = [BASE, OTHER];
+    await run(base);
+    await run(base);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'sent once, never again').toEqual(['broadcastGlobal']);
+    expect(logged.some((l) => /broadcast-unconfirmed\(unserved destinations\)=0/.test(l))).toBe(true);
+  });
+
+  it('drops send markers whose day has left the window, so a backlog cannot hide a current one', async () => {
+    finalizedDayZero();
+    base.today = 61;
+    for (let d = 0; d < 60; d++) {
+      keeper.db
+        .prepare(`INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, 'day_broadcast', ?, ?, ?, 0, 0)`)
+        .run(BASE, base.diamond, String(d), d, JSON.stringify({ sentAt: NOW }));
+    }
+    // A current day already sent: its marker must still be seen.
+    base.finalized.add(60);
+    base.reported.set(60, new Set([BASE, MIRROR]));
+    base.sentAt.set(60, NOW - 60);
+    base.firstAt.set(60, NOW - 60);
+    keeper.db
+      .prepare(`INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, 'day_broadcast', '60', 60, ?, 9, 0)`)
+      .run(BASE, base.diamond, JSON.stringify({ sentAt: NOW }));
+    for (let d = 47; d < 60; d++) base.sentAt.set(d, NOW);
+    await run(base);
+    expect(base.sent.filter((s) => s.day === 60), 'day 60 was already sent').toEqual([]);
+    const left = keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_broadcast' AND block < 47`).get();
+    expect(left).toEqual({ n: 0 });
+  });
+
+  it('says when an expected mirror is not a broadcast destination, and clears it once it is', async () => {
+    finalizedDayZero();
+    base.destinations = [];
+    await run(base);
+    expect(alerts(/chain\(s\) 421614 are on Base's expected-source list but not among the reward messenger's broadcast destinations/)).toHaveLength(1);
+    openAlert(`dayclose-nodest:${BASE}:all`);
+    base.destinations = [MIRROR];
+    await run(base);
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('reads the topology even when it cannot send, and keeps its alerts open', async () => {
+    base.today = 1;
+    base.expected = [MIRROR];
+    openAlert(`dayclose-selfmissing:${BASE}:all`);
+    await dayCloseOnce(env, base.chainId, base.diamond, {
+      client: base.client(),
+      readClient: base.client(),
+      context: () => null, // no signing key: the first send stops the run
+      peer: peers,
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(openKeys(), 'not cleared on a run that sent nothing').toEqual([`dayclose-selfmissing:${BASE}:all`]);
+  });
+
+  it('names what the finalization zeroed from its own events, not from the read before it', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.sentAt.set(0, NOW - GRACE);
+    base.firstAt.set(0, NOW - GRACE);
+    base.landsAtFinalize.set(0, MIRROR); // the mirror's report lands just before finalization
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).toContain('finalizeDay');
+    expect(alerts(/finalized with expected reports missing/), 'nothing was zeroed').toEqual([]);
+  });
+
+  it('a mirror says Base finalized a day without it even when its report was sent', async () => {
+    mirror.sentAt.set(0, NOW - GRACE);
+    base.finalized.add(0);
+    base.reported.set(0, new Set([BASE]));
+    await run(mirror);
+    expect(alerts(/Base finalized reward day 0 before this chain reported it/)).toHaveLength(1);
+  });
+
+  it('prices the report on the newest shape the messenger has', async () => {
+    mirror.quoteShapes = new Set([5, 3]); // a B1 messenger
+    await run(mirror);
+    expect(mirror.sent.map((s) => [s.fn, s.value])).toEqual([
+      ['closeDay', LANE_FEE],
+      ['closeDay', LANE_FEE],
+      ['closeDay', LANE_FEE],
+    ]);
     expect(alerts(/refused/)).toEqual([]);
   });
 });
