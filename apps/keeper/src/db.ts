@@ -923,7 +923,7 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  `day_broadcast` (#2612, the reward day-close pass) records a finalized day
  *  it has broadcast, with when: its `item` is the day, its `block` the day too
  *  (no ledger block applies), and it carries no discovery cursor. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast';
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

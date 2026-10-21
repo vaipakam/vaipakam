@@ -74,7 +74,12 @@ describe('the pure rules', () => {
     });
     it('waits for a missing chain inside grace, even when the contract would accept (a report COUNT is not coverage)', () => {
       const x = { ...base, reported: new Set([BASE, OTHER]) };
-      expect(planFinalize(x, GRACE, NOW)).toEqual({ kind: 'wait', missing: [MIRROR], graceEndsAt: NOW - 600 + GRACE });
+      expect(planFinalize(x, GRACE, NOW)).toEqual({ kind: 'wait', missing: [MIRROR], unknown: [], graceEndsAt: NOW - 600 + GRACE });
+    });
+    it('an unread chain is neither reported nor missing, and never completes coverage', () => {
+      const x = { ...base, reported: new Set([BASE]), unknown: new Set([MIRROR]) };
+      expect(planFinalize(x, GRACE, NOW)).toEqual({ kind: 'wait', missing: [], unknown: [MIRROR], graceEndsAt: NOW - 600 + GRACE });
+      expect(planFinalize({ ...x, firstReportAt: NOW - GRACE }, GRACE, NOW).kind, 'grace still finalizes').toBe('finalize');
     });
     it('finalizes at grace with the missing chains named', () => {
       const x = { ...base, reported: new Set([BASE]), firstReportAt: NOW - GRACE };
@@ -102,6 +107,8 @@ describe('the pure rules', () => {
       expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
       expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW)).toEqual({ kind: 'send', resend: true });
       expect(planBroadcast(d([MIRROR, 'unread']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW), 'an unread destination is judged next run').toEqual({ kind: 'wait', late: false });
+      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW), 'an unread peer does not hold back a known-missing lane').toEqual({ kind: 'send', resend: true });
+      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
       expect(planBroadcast(d(), null, NOW), 'no destinations').toEqual({ kind: 'done' });
     });
   });
@@ -141,6 +148,8 @@ class FakeDiamond {
   refuseTo: string | null = null;
   /** Reports that land between the pass's reads and its finalization, by day. */
   landsAtFinalize = new Map<number, number>();
+  /** Chains whose `isChainReported` read fails. */
+  unreadable = new Set<number>();
   private logs: Log[] = [];
   sent: { fn: string; day: number; value: bigint; to?: number }[] = [];
 
@@ -186,6 +195,7 @@ class FakeDiamond {
       case 'getExpectedSourceChainIds':
         return this.expected;
       case 'isChainReported':
+        if (this.unreadable.has(Number(args![1]))) throw new Error('rpc down');
         return this.reported.get(d)?.has(Number(args![1])) ?? false;
       case 'getKnownGlobalInterestNumeraire18':
         return [0n, 0n, this.known.has(d)];
@@ -345,11 +355,11 @@ describe('a run', () => {
     expect(mirror.sent).toEqual([]);
   });
 
-  it('a mirror does not send a report for a day Base already finalized, and says so', async () => {
+  it('a mirror still closes a day Base already finalized (its chain-wide figures still apply), and says the day excluded it', async () => {
     base.finalized.add(0);
     await run(mirror);
-    expect(mirror.sent.map((s) => s.day)).toEqual([1, 2]);
-    expect(alerts(/Base finalized reward day 0 before this chain reported it/)).toHaveLength(1);
+    expect(mirror.sent.map((s) => s.day)).toEqual([0, 1, 2]);
+    expect(alerts(/Base finalized reward day 0 without this chain's report/)).toHaveLength(1);
   });
 
   it('advances the interest fold first when the close says it is short', async () => {
@@ -407,11 +417,12 @@ describe('a run', () => {
     expect(alerts(/broadcast of reward day 0 has not reached chain\(s\) 421614/)).toHaveLength(1);
 
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
+    openAlert(`dayclose-broadcast:${BASE}:0`);
     await run(base);
+    expect(openKeys(), 'a re-send landing is not a delivery').toEqual([`dayclose-broadcast:${BASE}:0`]);
     expect(base.sent[1], 're-sent to the missing destination only').toEqual({ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR });
 
     mirror.known.add(0);
-    openAlert(`dayclose-broadcast:${BASE}:0`);
     await run(base);
     expect(base.sent, 'delivered: nothing more').toHaveLength(2);
     expect(openKeys(), 'the late alert cleared').toEqual([]);
@@ -534,8 +545,8 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [];
     await run(base);
-    expect(alerts(/chain\(s\) 421614 are on Base's expected-source list but not among the reward messenger's broadcast destinations/)).toHaveLength(1);
-    openAlert(`dayclose-nodest:${BASE}:all`);
+    expect(alerts(/chain\(s\) 421614 are on Base's expected-source list but are not broadcast destinations/)).toHaveLength(1);
+    openAlert(`dayclose-topology:${BASE}:all`);
     base.destinations = [MIRROR];
     await run(base);
     expect(openKeys()).toEqual([]);
@@ -572,7 +583,7 @@ describe('a run', () => {
     base.finalized.add(0);
     base.reported.set(0, new Set([BASE]));
     await run(mirror);
-    expect(alerts(/Base finalized reward day 0 before this chain reported it/)).toHaveLength(1);
+    expect(alerts(/Base finalized reward day 0 without this chain's report/)).toHaveLength(1);
   });
 
   it('prices the report on the newest shape the messenger has', async () => {
@@ -584,5 +595,46 @@ describe('a run', () => {
       ['closeDay', LANE_FEE],
     ]);
     expect(alerts(/refused/)).toEqual([]);
+  });
+  it('says when a broadcast destination is not on the expected-source list', async () => {
+    finalizedDayZero();
+    base.destinations = [MIRROR, OTHER];
+    await run(base);
+    expect(alerts(/chain\(s\) 97 are broadcast destinations but not on Base's expected-source list, so Base refuses their reports/)).toHaveLength(1);
+  });
+
+  it('states an unread report as unread in the grace warning, never as missing', async () => {
+    base.today = 1;
+    base.expected = [BASE, MIRROR, OTHER];
+    base.destinations = [MIRROR, OTHER];
+    base.unreadable.add(MIRROR);
+    later(GRACE - GRACE_WARNING_SEC);
+    await run(base);
+    const w = alerts(/reward day 0 /);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/is still missing 1 expected report\(s\): chain 97 /);
+    expect(w[0]).toMatch(/could not be read this run for chain\(s\) 421614/);
+  });
+
+  it('keeps a zeroed-day notice queued until it is posted', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.sentAt.set(0, NOW - GRACE);
+    base.firstAt.set(0, NOW - GRACE);
+    await dayCloseOnce(env, base.chainId, base.diamond, {
+      client: base.client(),
+      readClient: base.client(),
+      context: () => base.ctx(),
+      peer: peers,
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: 0, // the alert window is already spent
+    });
+    expect(logged.some((l) => /notice: reward day 0: finalized at grace without chain\(s\) 421614/.test(l)), 'journaled at once').toBe(true);
+    expect(alerts(/finalized with expected reports missing/), 'not posted').toEqual([]);
+    const queued = () => keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_zeroed'`).get();
+    expect(queued()).toEqual({ n: 1 });
+    await run(base);
+    expect(alerts(/finalized with expected reports missing/), 'posted on the next run').toHaveLength(1);
+    expect(queued()).toEqual({ n: 0 });
   });
 });

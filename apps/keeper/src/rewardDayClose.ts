@@ -22,13 +22,15 @@
 //      the messenger's own quote for the report shape the Diamond sends
 //      (`quoteSendChainReport`), paid exactly; the messenger refunds any part
 //      the lane did not use. On Base it records Base's own report, fee-free. A
-//      mirror first asks Base (when this keeper also serves Base) whether the
-//      day is already finalized there: a report that lands after finalization
-//      is refused by Base's ingress, so sending it would only spend the fee.
-//      For every window day, sent or not, a day Base finalized without this
-//      chain's report is reported as such (an in-flight report that missed
-//      grace is excluded just as surely as one never sent). A close refused because the interest fold has not reached the
-//      day (`ChainReportFrontierShort`) is preceded by `advanceInterestFrontiers`.
+//      mirror closes a day even when Base has already finalized it: Base drops
+//      that report's DAY figures, but still applies what it says about the
+//      CHAIN (its custody era and its cumulative recycled-availability and
+//      commitment ratchets), which a mirror's last report before detaching
+//      must not lose. For every window day, sent or not, a day Base finalized
+//      without this chain's report is reported as such (when this keeper also
+//      serves Base). A close refused because the interest fold has not reached
+//      the day (`ChainReportFrontierShort`) is preceded by
+//      `advanceInterestFrontiers`.
 //   2. FINALIZES (Base only) each day whose own report is recorded, when
 //      either every chain on Base's expected-source list has reported, or the
 //      grace window since the day's first report has elapsed — and only when
@@ -39,7 +41,10 @@
 //      still in flight inside grace. A day finalized at grace with a chain
 //      missing zeroes that chain's interest for the day, so the run says so,
 //      naming each one from the finalization's own `ChainContributionZeroed`
-//      events (not from the read before the send, which can be stale). An empty expected-source list is never finalized
+//      events (not from the read before the send, which can be stale). That
+//      notice is journaled and queued the moment the finalization lands, and
+//      posted until it is delivered: on the next run the day is finalized and
+//      the receipt is gone, so nothing could rebuild it. An empty expected-source list is never finalized
 //      against: every day would finalize as zero, irreversibly.
 //   3. BROADCASTS (Base only) each finalized day to the messenger's
 //      destinations (`broadcastGlobal`, the quoted fee, paid exactly), and
@@ -71,20 +76,21 @@
 //     sent its report (read on that chain, when served) or not;
 //   - on Base, an empty expected-source list, or one that leaves Base itself
 //     out (Base's own interest is then summed into no day's global total), or
-//     an expected mirror that is not a broadcast destination (its users could
-//     never claim); each read every run and cleared only on a read showing
-//     the fix;
+//     an expected-source list and broadcast-destination list that disagree
+//     (an expected mirror no day is broadcast to, whose users could never
+//     claim; or a destination whose reports Base refuses as unexpected); each
+//     read every run and cleared only on a read showing the fix;
 //   - on Base, a broadcast a served destination has not received
 //     {@link BROADCAST_LATE_AFTER_SEC} after it was sent;
 //   - on a mirror, a day Base finalized without this chain's report.
 // And one NOTICE (a thing that happened): a day Base finalized at grace with
 // expected chains missing, naming each.
 //
-// The broadcast's last send time is the only state the pass keeps: one row
-// per (chain, Diamond, day) in the keeper's private open-work queue
-// (`keeper_work_open`, kind `day_broadcast`), kept while the day is in the
-// window and dropped when it leaves it. Losing it costs at most one extra
-// broadcast.
+// The pass keeps two kinds of row in the keeper's private open-work queue
+// (`keeper_work_open`), one per (chain, Diamond, day), each dropped when its
+// day leaves the window: a broadcast's last send time (kind `day_broadcast`;
+// losing it costs at most one extra broadcast), and an undelivered zeroed-day
+// notice (kind `day_zeroed`).
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
 
@@ -104,7 +110,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
-import { getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
+import { finishWork, getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from './opsAlert';
 
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
@@ -188,6 +194,9 @@ export interface FinalizeInput {
   /** Base's expected-source list and which of them have reported this day. */
   expected: readonly number[];
   reported: ReadonlySet<number>;
+  /** Expected chains whose report status could not be read this run: neither
+   *  reported nor missing, and never counted toward full coverage. */
+  unknown?: ReadonlySet<number>;
 }
 
 export type FinalizeDecision =
@@ -195,7 +204,7 @@ export type FinalizeDecision =
   | { kind: 'own-report-first' }
   | { kind: 'no-expected' }
   | { kind: 'finalize'; missing: number[] }
-  | { kind: 'wait'; missing: number[]; graceEndsAt: number | null };
+  | { kind: 'wait'; missing: number[]; unknown: number[]; graceEndsAt: number | null };
 
 /**
  * Whether to finalize a day now. Pure.
@@ -209,11 +218,13 @@ export function planFinalize(x: FinalizeInput, graceSec: number, nowSec: number)
   if (x.finalized) return { kind: 'done' };
   if (!x.ownReported) return { kind: 'own-report-first' };
   if (x.expected.length === 0) return { kind: 'no-expected' };
-  const missing = x.expected.filter((c) => !x.reported.has(c));
+  const unknown = x.expected.filter((c) => !x.reported.has(c) && x.unknown?.has(c) === true);
+  const missing = x.expected.filter((c) => !x.reported.has(c) && x.unknown?.has(c) !== true);
   const graceEndsAt = x.firstReportAt > 0 ? x.firstReportAt + graceSec : null;
   const graceElapsed = graceEndsAt !== null && nowSec >= graceEndsAt;
-  if ((missing.length === 0 || graceElapsed) && x.contractReady) return { kind: 'finalize', missing };
-  return { kind: 'wait', missing, graceEndsAt };
+  const complete = missing.length === 0 && unknown.length === 0;
+  if ((complete || graceElapsed) && x.contractReady) return { kind: 'finalize', missing };
+  return { kind: 'wait', missing, unknown, graceEndsAt };
 }
 
 /** One broadcast destination, as this run read it. */
@@ -229,10 +240,11 @@ export type BroadcastDecision =
  *
  * `sentAt` is the last send this keeper recorded (null = none). A day never
  * sent is sent. Once sent, it is done when no served destination still lacks
- * the pair (an unserved one cannot be confirmed, and one whose read failed is
- * judged next run); a served destination still missing it is reported late
- * after {@link BROADCAST_LATE_AFTER_SEC} and re-sent after
- * {@link BROADCAST_RESEND_AFTER_SEC}.
+ * the pair (an unserved one cannot be confirmed). A served destination still
+ * missing it is reported late after {@link BROADCAST_LATE_AFTER_SEC} and
+ * re-sent after {@link BROADCAST_RESEND_AFTER_SEC}, whatever another
+ * destination's read did; one whose read failed is judged next run, and holds
+ * back only "done".
  */
 export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentAt: number | null, nowSec: number): BroadcastDecision {
   const states = [...dest.values()];
@@ -244,8 +256,7 @@ export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentA
     if (served.length > 0 && served.length === states.length && served.every((s) => s === 'received')) return { kind: 'done' };
     return { kind: 'send', resend: false };
   }
-  if (states.some((s) => s === 'unread')) return { kind: 'wait', late: false };
-  if (!states.some((s) => s === 'missing')) return { kind: 'done' };
+  if (!states.some((s) => s === 'missing')) return states.some((s) => s === 'unread') ? { kind: 'wait', late: false } : { kind: 'done' };
   const since = nowSec - sentAt;
   if (since >= BROADCAST_RESEND_AFTER_SEC) return { kind: 'send', resend: true };
   return { kind: 'wait', late: since >= BROADCAST_LATE_AFTER_SEC };
@@ -312,17 +323,18 @@ interface RunFindings {
   /** `step:day` keys whose call landed, or whose work is done. */
   settled: Set<string>;
   /** Base: days waiting on expected chains, with what is known of each. */
-  waiting: { day: number; missing: number[]; graceEndsAt: number | null; sent: Map<number, number | null> }[];
-  /** Base: days finalized this run with expected chains missing. */
-  zeroed: { day: number; missing: number[] }[];
+  waiting: { day: number; missing: number[]; unknown: number[]; graceEndsAt: number | null; sent: Map<number, number | null> }[];
   /** Base: the expected-source list is empty. Null = not read this run, so
    *  neither raised nor cleared. */
   noExpected: boolean | null;
   /** Base: the expected-source list leaves Base itself out (null = not read). */
   selfNotExpected: boolean | null;
-  /** Base: expected mirrors that are not broadcast destinations, so a
-   *  finalized day never reaches them (null = not read). */
-  undeliverable: number[] | null;
+  /** Base: where the expected-source and broadcast-destination lists
+   *  disagree (null = not read). `undeliverable`: expected mirrors no day is
+   *  broadcast to; `unexpected`: destinations whose reports Base refuses. */
+  topology: { undeliverable: number[]; unexpected: number[] } | null;
+  /** Base: finalized days no served destination still lacks, as read. */
+  broadcastConfirmed: Set<number>;
   /** Base: days a served destination has not received, past the late mark. */
   lateBroadcast: { day: number; missing: number[]; sentAt: number }[];
   /** Mirror: days Base finalized without this chain's report. */
@@ -362,10 +374,10 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     refused: new Map(),
     settled: new Set(),
     waiting: [],
-    zeroed: [],
     noExpected: null,
     selfNotExpected: null,
-    undeliverable: null,
+    topology: null,
+    broadcastConfirmed: new Set(),
     lateBroadcast: [],
     excluded: [],
     window,
@@ -376,18 +388,17 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const sentAt = await readDays<bigint>(deps, diamond, window, 'getChainReportSentAt', where);
   const unclosed = window.filter((d) => sentAt.get(d) === 0n);
   for (const d of window) if ((sentAt.get(d) ?? 0n) > 0n) f.settled.add(`close:${d}`);
-  let closeable = unclosed;
   if (!canonical) {
     // Every window day, sent or not: Base may have finalized a day at grace
-    // while this chain's report was still in flight, and that report is then
-    // refused when it lands. Either way the day is finalized without this
-    // chain, and it stays so.
+    // while this chain's report was still in flight. Either way the day is
+    // finalized without this chain's interest, and it stays so. The day is
+    // still closed below: its report carries chain-wide figures Base applies
+    // after finalization too.
     const onBase = await baseView(deps.peer(baseChainId), window, chainId, deps.sendDeadline);
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
-    closeable = unclosed.filter((d) => onBase.get(d)?.finalized !== true);
   }
   let closed = 0;
-  for (const d of closeable) {
+  for (const d of unclosed) {
     // eslint-disable-next-line no-await-in-loop
     const fee = canonical ? 0n : await reportFee(deps.client, messenger, d);
     if (fee === null) {
@@ -420,7 +431,10 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     const destinations = await broadcastDestinations(deps.client, messenger);
     f.noExpected = expected.length === 0;
     f.selfNotExpected = !f.noExpected && !expected.includes(chainId);
-    f.undeliverable = expected.filter((c) => c !== chainId && !destinations.includes(c));
+    f.topology = {
+      undeliverable: expected.filter((c) => c !== chainId && !destinations.includes(c)),
+      unexpected: destinations.filter((c) => !expected.includes(c)),
+    };
     const ready = await readDays<readonly [boolean, number]>(deps, diamond, window, 'isDayReadyToFinalize', where);
     const firstAt = await readDays<bigint>(deps, diamond, window, 'getDailyFirstReportAt', where);
     const open = window.filter((d) => ready.has(d) && Number(ready.get(d)![1]) !== REASON_FINALIZED);
@@ -437,7 +451,8 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
           contractReady: Boolean(ready.get(d)![0]),
           firstReportAt: Number(firstAt.get(d) ?? 0n),
           expected,
-          reported: reported.get(d) ?? new Set(),
+          reported: reported.get(d)?.reported ?? new Set(),
+          unknown: reported.get(d)?.unknown ?? new Set(expected),
         },
         graceSec,
         nowSec,
@@ -452,12 +467,26 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
           // pre-send read can be stale (a report landing in between) or
           // partial (a failed read is judged as all missing).
           const zeroed = zeroedChains(sender.lastLogs, diamond, d);
-          if (zeroed.length > 0) f.zeroed.push({ day: d, missing: zeroed });
+          if (zeroed.length > 0) {
+            // Journaled and queued now: the receipt is the only record.
+            console.log(`[keeper] rewardDayClose ${where} notice: ${zeroedLine(d, zeroed)}`);
+            const row: WorkItem<{ missing: number[] }> = { item: String(d), block: d, payload: { missing: zeroed } };
+            // eslint-disable-next-line no-await-in-loop
+            await putWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', row);
+          }
         }
-      } else if (decision.kind === 'wait' && decision.missing.length > 0) {
+      } else if (decision.kind === 'wait' && (decision.missing.length > 0 || decision.unknown.length > 0)) {
         const nearEnd = decision.graceEndsAt !== null && decision.graceEndsAt - nowSec <= graceWarningSec(graceSec);
-        // eslint-disable-next-line no-await-in-loop
-        if (nearEnd) f.waiting.push({ day: d, missing: decision.missing, graceEndsAt: decision.graceEndsAt, sent: await peerSentAt(deps, decision.missing, d) });
+        if (nearEnd) {
+          f.waiting.push({
+            day: d,
+            missing: decision.missing,
+            unknown: decision.unknown,
+            graceEndsAt: decision.graceEndsAt,
+            // eslint-disable-next-line no-await-in-loop
+            sent: await peerSentAt(deps, decision.missing, d),
+          });
+        }
       }
     }
     for (const d of finalizedDays) f.settled.add(`finalize:${d}`);
@@ -514,6 +543,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       const missing = [...dest].filter(([, s]) => s === 'missing').map(([c]) => c);
       if (decision.kind === 'done') {
         f.settled.add(`broadcast:${d}`);
+        f.broadcastConfirmed.add(d);
         if ([...dest.values()].some((s) => s === 'unserved')) unconfirmed.push(d);
         continue;
       }
@@ -546,6 +576,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
 
   if (sender.stopReason === PAUSED_REFUSAL) return;
   await raiseDayCloseAlerts(env, chainId, canonical, f, nowSec, deps.runDeadline);
+  if (canonical) await postZeroedNotices(env, chainId, diamond, window, deps.runDeadline);
 }
 
 // ─── Reads ──────────────────────────────────────────────────────────────
@@ -566,10 +597,18 @@ async function readDays<T>(deps: DayCloseDeps, diamond: Address, days: readonly 
   return out;
 }
 
-/** Which expected chains Base has recorded a report from, per day. A day
- *  whose reads failed is absent, and so never finalizes this run on coverage. */
-async function readReported(deps: DayCloseDeps, diamond: Address, days: readonly number[], expected: readonly number[], where: string): Promise<Map<number, Set<number>>> {
-  const out = new Map<number, Set<number>>();
+/** Per day, which expected chains Base has recorded a report from, and which
+ *  it could not be read for: a failed read is UNKNOWN, never "missing", so it
+ *  can neither complete coverage nor be stated as an absent report. */
+async function readReported(
+  deps: DayCloseDeps,
+  diamond: Address,
+  days: readonly number[],
+  expected: readonly number[],
+  where: string,
+): Promise<Map<number, { reported: Set<number>; unknown: Set<number> }>> {
+  const out = new Map<number, { reported: Set<number>; unknown: Set<number> }>();
+  for (const d of days) out.set(d, { reported: new Set(), unknown: new Set() });
   const pairs = days.flatMap((d) => expected.map((c) => [d, c] as const));
   if (pairs.length === 0) return out;
   const res = await boundedRead(
@@ -578,18 +617,11 @@ async function readReported(deps: DayCloseDeps, diamond: Address, days: readonly
     `rewardDayClose ${where} isChainReported`,
     deps.sendDeadline,
   );
-  const failed = new Set<number>();
   pairs.forEach(([d, c], i) => {
-    if (res[i]?.status !== 'success') {
-      failed.add(d);
-      return;
-    }
-    if (!out.has(d)) out.set(d, new Set());
-    if (res[i].result === true) out.get(d)!.add(c);
+    const day = out.get(d)!;
+    if (res[i]?.status !== 'success') day.unknown.add(c);
+    else if (res[i].result === true) day.reported.add(c);
   });
-  // A day with any unread chain is judged on grace alone: treat every expected
-  // chain as missing, so coverage cannot be claimed from a partial read.
-  for (const d of failed) out.set(d, new Set());
   return out;
 }
 
@@ -827,6 +859,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
   }
   for (const w of f.waiting) {
     const ends = w.graceEndsAt === null ? 'unknown' : new Date(w.graceEndsAt * 1000).toISOString();
+    const unread = w.unknown.length > 0 ? `; Base's record of the report could not be read this run for chain(s) ${w.unknown.join(', ')}` : '';
     const each = w.missing
       .map((c) => {
         const s = w.sent.get(c);
@@ -838,7 +871,9 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     // eslint-disable-next-line no-await-in-loop
     await raise(
       `dayclose-waiting:${chainId}:${w.day}`,
-      `${tag}: reward day ${w.day} is still missing ${w.missing.length} expected report(s): ${each}. Grace ends ${ends}; at that point the day is finalized without them and each missing chain's interest counts as zero for the day.`,
+      `${tag}: reward day ${w.day} ` +
+        (w.missing.length > 0 ? `is still missing ${w.missing.length} expected report(s): ${each}` : 'has no expected report Base shows as missing') +
+        `${unread}. Grace ends ${ends}; at that point the day is finalized with the reports that have landed, and each expected chain still missing then counts as zero for the day.`,
     );
   }
   if (canonical && f.noExpected) {
@@ -847,10 +882,17 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
       `${tag}: Base's expected-source list is empty, so no day is finalized: a day finalized against an empty list sums no chain and finalizes as zero, irreversibly. Set the list (setExpectedSourceChainIds) before rewards can be finalized.`,
     );
   }
-  if (canonical && f.undeliverable && f.undeliverable.length > 0) {
+  if (canonical && f.topology && (f.topology.undeliverable.length > 0 || f.topology.unexpected.length > 0)) {
+    const parts: string[] = [];
+    if (f.topology.undeliverable.length > 0) {
+      parts.push(`chain(s) ${f.topology.undeliverable.join(', ')} are on Base's expected-source list but are not broadcast destinations, so no finalized day reaches them and their users cannot claim`);
+    }
+    if (f.topology.unexpected.length > 0) {
+      parts.push(`chain(s) ${f.topology.unexpected.join(', ')} are broadcast destinations but not on Base's expected-source list, so Base refuses their reports (SourceChainIdNotExpected) and every day finalizes without their interest`);
+    }
     await raise(
-      `dayclose-nodest:${chainId}:all`,
-      `${tag}: chain(s) ${f.undeliverable.join(', ')} are on Base's expected-source list but not among the reward messenger's broadcast destinations, so no finalized day is ever broadcast to them and their users cannot claim. Add them (setBroadcastDestinations on the messenger).`,
+      `dayclose-topology:${chainId}:all`,
+      `${tag}: Base's expected-source list and the reward messenger's broadcast destinations disagree: ${parts.join('; ')}. Make them list the same mirrors (setExpectedSourceChainIds on the Diamond, setBroadcastDestinations on the messenger).`,
     );
   }
   if (canonical && f.selfNotExpected) {
@@ -870,7 +912,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     // eslint-disable-next-line no-await-in-loop
     await raise(
       `dayclose-excluded:${chainId}:${d}`,
-      `${tag}: Base finalized reward day ${d} before this chain reported it, so this chain's interest counts as zero for that day. The report is not sent: Base refuses a report after finalization.`,
+      `${tag}: Base finalized reward day ${d} without this chain's report, so this chain's interest counts as zero for that day. The report is still sent (or was): Base drops its day figures but applies the chain-wide figures it carries.`,
       EXCLUDED_REPEAT_SEC,
     );
   }
@@ -890,8 +932,9 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     // A topology alert clears only on a read that shows the fix.
     else if (kind === 'dayclose-noexpected') gone = canonical && f.noExpected === false;
     else if (kind === 'dayclose-selfmissing') gone = canonical && f.selfNotExpected === false;
-    else if (kind === 'dayclose-nodest') gone = canonical && f.undeliverable !== null && f.undeliverable.length === 0;
-    else if (kind === 'dayclose-broadcast') gone = f.settled.has(`broadcast:${day}`) || !inWindow.has(day);
+    else if (kind === 'dayclose-topology') gone = canonical && f.topology !== null && f.topology.undeliverable.length === 0 && f.topology.unexpected.length === 0;
+    // Cleared on a read showing delivery, never on a re-send merely landing.
+    else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || !inWindow.has(day);
     else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
     if (gone && Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
@@ -899,10 +942,31 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     }
   }
 
-  if (f.zeroed.length > 0 && Date.now() < deadline) {
-    const lines = f.zeroed.map((z) => `reward day ${z.day}: finalized at grace without chain(s) ${z.missing.join(', ')}; their interest counts as zero for the day`);
-    for (const l of lines) console.log(`[keeper] rewardDayClose chain=${chainId} notice: ${l}`);
-    await sendOpsNoticeDigest(env, `${tag}: finalized with expected reports missing`, lines, 'Finalization is final: a missing chain\'s report for these days is refused when it lands.', chainId);
+}
+
+const ZEROED_FOOTER = "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply).";
+
+function zeroedLine(day: number, missing: readonly number[]): string {
+  return `reward day ${day}: finalized at grace without chain(s) ${missing.join(', ')}; their interest counts as zero for the day`;
+}
+
+/** Post the queued zeroed-day notices (Base). Each was journaled and queued
+ *  when its finalization landed; it leaves the queue once delivered (or once
+ *  the ops channel is not configured: the journal is then the record), and
+ *  otherwise stays for the next run until its day leaves the window. */
+async function postZeroedNotices(env: Env, chainId: number, diamond: Address, window: readonly number[], deadline: number): Promise<void> {
+  try {
+    await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window[0]);
+    const rows = [...(await getWorkItems<{ missing: number[] }>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window.map(String))).values()];
+    if (rows.length === 0 || Date.now() >= deadline) return;
+    rows.sort((a, b) => a.block - b.block);
+    const lines = rows.map((r) => zeroedLine(r.block, r.payload.missing));
+    const outcome = await sendOpsNoticeDigest(env, `[chain ${chainId}] reward day close: finalized with expected reports missing`, lines, ZEROED_FOOTER, chainId);
+    if (outcome === 'sent' || outcome === 'unconfigured') {
+      await finishWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', rows.map((r) => r.item));
+    }
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: zeroed-day notices left queued: ${shortErr(err)}`);
   }
 }
 
