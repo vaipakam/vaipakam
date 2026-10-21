@@ -202,13 +202,17 @@ function install(failId?: number): { seen: Seen; restore: () => void } {
 }
 
 /** A D1 stub that records every statement it was asked to prepare. */
-function db(): { handle: unknown; sql: string[] } {
+function db(): { handle: unknown; sql: string[]; bound: { sql: string; binds: unknown[] }[] } {
   const sql: string[] = [];
+  const bound: { sql: string; binds: unknown[] }[] = [];
   const handle = {
     prepare: (q: string) => {
       sql.push(q);
       const stmt: Record<string, unknown> = {};
-      stmt.bind = () => stmt;
+      stmt.bind = (...binds: unknown[]) => {
+        bound.push({ sql: q, binds });
+        return stmt;
+      };
       stmt.all = async () => ({ results: [], success: true, meta: {} });
       stmt.first = async () => null;
       stmt.run = async () => ({ results: [], success: true, meta: {} });
@@ -217,7 +221,7 @@ function db(): { handle: unknown; sql: string[] } {
     batch: async () => [],
     exec: async () => ({}),
   };
-  return { handle, sql };
+  return { handle, sql, bound };
 }
 
 /**
@@ -309,14 +313,15 @@ describe('remitAck reservation scan (#1896)', () => {
     expect(shared.sql.filter((q) => /keeper_remit_ack/.test(q))).toEqual([]);
   });
 
-  it('ABORTS the scan on a failed read rather than skipping the reservation', async () => {
-    // The behaviour the sequential version got for free by throwing. A batched
-    // read hands back a per-entry failure instead, so skipping it would advance
-    // the cursor past a reservation whose status was never read — dropping it
-    // from the scan until the rotating window came back around.
+  it('ENDS the window at a failed read rather than skipping the reservation', async () => {
+    // A batched read hands back a per-entry failure, so skipping it would
+    // advance the cursor past a reservation whose status was never read —
+    // dropping it from the scan until the rotating window came back around.
+    // The window ends there instead (Codex #2607 r15): the reservations read
+    // before it are worked, and neither the frontier nor the cursor passes it.
     const { seen, restore } = install(3);
     const shared = db();
-    const { handle, sql } = db();
+    const { handle, bound } = db();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warned: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
@@ -335,11 +340,40 @@ describe('remitAck reservation scan (#1896)', () => {
     // It did attempt the batch.
     expect(seen.batches.length).toBeGreaterThan(0);
 
-    // THE ASSERTION. Neither the frontier nor the cursor moved.
-    expect(wroteScanState(sql)).toBe(false);
+    // THE ASSERTION. Ids 1 and 2 were read (terminal), so the frontier and
+    // the cursor both stop AT 3, never past it.
+    const writes = bound.filter((b) => /INSERT INTO keeper_remit_ack_frontier/.test(b.sql));
+    expect(writes).toHaveLength(1);
+    expect(writes[0].binds.slice(2, 4)).toEqual([3, 3]);
 
     // And the operator can see which id stopped it.
-    expect(warned.join('\n')).toMatch(/scan aborted at remit=3/);
+    expect(warned.join('\n')).toMatch(/scan stopped at remit=3/);
+  });
+
+  it('a window whose first reservation is unread moves the cursor past it, never the frontier', async () => {
+    // Reservation 1's read fails every run. Ending the window there would pin
+    // every later run to it, so the cursor moves past it while the frontier
+    // stays (Codex #2607 r19): it is read again on the scan's next rotation.
+    const { restore } = install(1);
+    const shared = db();
+    const { handle, bound } = db();
+    const warned: string[] = [];
+    const spies = [
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+      vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' '))),
+      vi.spyOn(console, 'log').mockImplementation(() => {}),
+    ];
+    try {
+      await run(shared.handle, handle);
+    } finally {
+      restore();
+      spies.forEach((s) => s.mockRestore());
+    }
+    const writes = bound.filter((b) => /INSERT INTO keeper_remit_ack_frontier/.test(b.sql));
+    expect(writes).toHaveLength(1);
+    // Frontier 1, cursor 2: id 2 was read, so the next run resumes there.
+    expect(writes[0].binds.slice(2, 4)).toEqual([1, 2]);
+    expect(warned.join('\n')).toMatch(/read nothing; moves past remit=1/);
   });
 });
 

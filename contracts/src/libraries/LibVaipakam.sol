@@ -8146,6 +8146,15 @@ library LibVaipakam {
         ///      disarming (a zero price) stops sales, not credits already bought.
         ///      Appended — append-only.
         bool priorityRoutingPerkArmed;
+        /// @dev #2561 — per `remitId`, the remote adapter the remittance's
+        ///      message was bound to, read from the messenger at the send and
+        ///      never changed after (`LibRewardRemitDispatch.dispatchRemitTail`
+        ///      is the one writer). Zero only for a remit dispatched before the
+        ///      record existed. Kept beside the reservation rather than in
+        ///      `RemitReservation` so that struct's getter ABI is unchanged: a
+        ///      keeper reading a Diamond deployed before this field decodes the
+        ///      same reservation it always did. Appended — append-only.
+        mapping(uint256 => address) remitRemoteMessenger;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

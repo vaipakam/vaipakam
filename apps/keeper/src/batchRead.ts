@@ -1,5 +1,6 @@
 import { createPublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall3';
+import { walkFrom } from './rotate';
 
 /** Result shape viem's `multicall` returns under `allowFailure: true`. */
 export type BatchResult = { status: 'success' | 'failure'; result?: unknown; error?: unknown };
@@ -104,6 +105,18 @@ export function isAggregateRejection(results: readonly BatchResult[]): boolean {
   return results.length > 1 || namesAggregateCall(first);
 }
 
+/** Whether `r` failed on its OWN call (Codex #2607 r14): the contract answered
+ *  `functionName` with a revert, or with data that does not decode. viem names
+ *  the entry's function on that error and only on that one, so an aggregate
+ *  rejection (which names `aggregate3`), a run-deadline refusal and a read
+ *  abandoned at its cutoff are all excluded: those are values not read, not
+ *  answers. */
+export function failedOnOwnCall(r: BatchResult | undefined, functionName: string): boolean {
+  if (r?.status !== 'failure') return false;
+  const err = r.error;
+  return typeof err === 'object' && err !== null && (err as { functionName?: unknown }).functionName === functionName;
+}
+
 /** The error was raised for the `aggregate3` call itself (viem's `functionName` on it). */
 function namesAggregateCall(err: unknown): boolean {
   return (
@@ -155,6 +168,82 @@ export async function boundedRead(
     return contracts.map(() => ({ status: 'failure' as const, error }));
   }
   return batchedRead(client, contracts, label, undefined, 'unread');
+}
+
+/**
+ * {@link boundedRead} that also SETTLES by `deadline` (Codex #2607 r7): a read
+ * still in flight then is abandoned, and its entries read as failures like any
+ * other unread value. `boundedRead` refuses to START a read past its deadline
+ * but awaits one already started, so a single slow RPC can hold its caller
+ * well past it; a read phase that feeds sends must not be held so
+ * (`runWindow.ts` rule 3). The abandoned request finishes in the background
+ * and its answer is dropped.
+ */
+export async function settledRead(
+  client: ReturnType<typeof createPublicClient>,
+  contracts: readonly unknown[],
+  label: string,
+  deadline: number,
+): Promise<BatchResult[]> {
+  return settleBy(boundedRead(client, contracts, label, deadline), deadline, () => {
+    const error = new Error(`${label}: still in flight at the read deadline — read next run`);
+    return contracts.map(() => ({ status: 'failure' as const, error }));
+  });
+}
+
+/**
+ * The keeper's ONE chunked read under a cutoff (Codex #2607 r16): `keys` read
+ * `chunk` at a time through {@link settledRead}, starting at a point that moves
+ * each run (`runWindow.ts` rule 2). A cutoff ends a run's reads partway, so a
+ * fixed order would leave the same tail unread every run; owning the rotation
+ * here means no caller can forget it. Each key maps to its result; a key whose
+ * chunk was not read maps to a failure like any other unread value.
+ */
+export async function settledChunkedRead<K>(
+  client: ReturnType<typeof createPublicClient>,
+  keys: readonly K[],
+  chunk: number,
+  call: (key: K) => unknown,
+  label: string,
+  cutoff: number,
+  run: number,
+): Promise<Map<K, BatchResult>> {
+  const out = new Map<K, BatchResult>();
+  const order = walkFrom(keys, run);
+  for (let i = 0; i < order.length; i += chunk) {
+    const part = order.slice(i, i + chunk);
+    // eslint-disable-next-line no-await-in-loop
+    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff);
+    part.forEach((k, j) => out.set(k, res[j]));
+  }
+  return out;
+}
+
+/**
+ * `work`, or what `onCut` gives (or throws) if `work` is still in flight at
+ * `deadline` — the one primitive behind every "abandon it at the cutoff" in
+ * the keeper (`runWindow.ts` rule 3). An abandoned `work` keeps running; its
+ * late outcome, a rejection included, is discarded rather than left
+ * unhandled. Use it for READS: abandoning a broadcast would lose the record
+ * that it was sent.
+ */
+export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  work.catch(() => undefined);
+  const cut = new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      try {
+        resolve(onCut());
+      } catch (err) {
+        reject(err);
+      }
+    }, Math.max(0, deadline - Date.now()));
+  });
+  try {
+    return await Promise.race([work, cut]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** A read refused because the pass's run deadline has passed (#2497 re-cut). */

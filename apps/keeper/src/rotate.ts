@@ -54,3 +54,11 @@ export function pagedWalk(total: bigint, pageSize: bigint, run: number): WalkPag
   segment(0n, start);
   return pages;
 }
+
+/** A list held whole but read in chunks (#2607 r13): the items starting at
+ *  {@link walkStart}`(run, length)`, so the start moves by item, not by chunk,
+ *  and a run the deadline cuts partway through leaves a different tail unread
+ *  each time. Chunk the result in order. Pure. */
+export function walkFrom<T>(items: readonly T[], run: number): T[] {
+  return rotate(items, walkStart(run, items.length));
+}

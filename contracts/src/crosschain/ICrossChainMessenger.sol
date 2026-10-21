@@ -83,6 +83,21 @@ interface ICrossChainMessenger {
      * @notice EVM chain id this adapter is deployed on (its local chain).
      */
     function localChainId() external view returns (uint256);
+
+    /**
+     * @notice The adapter this adapter addresses on `destinationChainId`: the
+     *         receiver every message sent there is bound to. Zero when no
+     *         remote adapter is configured for that chain.
+     * @dev #2561 — a message is bound to this adapter and to nothing else:
+     *      which domain contract handles it is resolved on the destination
+     *      when it executes (its `handlerOf` there). So this is the one
+     *      destination fact a sender can record at dispatch that proves where
+     *      the message went, whatever the lane is pointed at later. A view: it
+     *      only reports the adapter's configuration.
+     * @param destinationChainId EVM chain id of the destination chain.
+     * @return The adapter on the destination chain the message is bound to.
+     */
+    function remoteMessengerOf(uint256 destinationChainId) external view returns (address);
 }
 
 /**

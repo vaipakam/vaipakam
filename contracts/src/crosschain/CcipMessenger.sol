@@ -155,7 +155,7 @@ contract CcipMessenger is
     /// @notice EVM chain id → the CcipMessenger deployed on that chain.
     ///         Outbound, this is the CCIP message receiver; inbound, the
     ///         allowlisted sender. Zero = no peer messenger.
-    mapping(uint256 => address) public remoteMessengerOf;
+    mapping(uint256 => address) public override remoteMessengerOf;
 
     /// @notice channelId → the local domain contract that handles that
     ///         channel's inbound messages. Zero = channel not registered
