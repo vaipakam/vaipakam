@@ -399,6 +399,11 @@ FACETS=(
   # deployment. NOT a diamond facet; the delister bot asks the oracle it reads
   # `isTestnetStandIn()` so every report names the stand-in as such.
   "TestnetSanctionsOracleStandIn"
+  # #2612 — the CCIP transport adapter (standalone; NOT a diamond facet). The
+  # keeper's reward day-close pass reads both ends of a mirror's report
+  # channel from it (`channelOf`, `remoteMessengerOf`, `handlerOf`,
+  # `channelPeerOf`) before sending a report that cannot be recalled.
+  "CcipMessenger"
   # #2612 — the reward messenger (standalone; NOT a diamond facet). The
   # keeper's reward day-close pass prices a mirror's `closeDay` with its
   # `quoteSendChainReport` and reads Base's broadcast destinations from it
