@@ -61,8 +61,8 @@
 // OPS alerts (conditions that hold, de-duplicated and cleared):
 //   - a call the contract refuses, by step and day, with the reason (a race —
 //     another caller closing or finalizing first — is not a refusal);
-//   - on Base, an expected chain still missing when grace ends within
-//     {@link GRACE_WARNING_SEC}, naming each missing chain and whether it has
+//   - on Base, an expected chain still missing in the last stretch of grace
+//     ({@link graceWarningSec}), naming each missing chain and whether it has
 //     sent its report (read on that chain, when served) or not;
 //   - on Base, an empty expected-source list, or one that leaves Base itself
 //     out (Base's own interest is then summed into no day's global total);
@@ -117,8 +117,17 @@ export const PASS_CADENCE_SEC = 15 * 60;
 export const LOOKBACK_DAYS = 14;
 /** Transactions one run may send per chain. Each waits for its receipt. */
 export const MAX_SENDS_PER_RUN = 8;
-/** Warn when grace ends within this long and an expected chain is missing. */
+/** Warn when grace ends within this long and an expected chain is missing… */
 export const GRACE_WARNING_SEC = 60 * 60;
+
+/** …or within the last quarter of a grace shorter than four hours. A report
+ *  still in flight early in grace is ordinary lane latency, not a fault, so
+ *  the warning window scales down with a short grace instead of covering all
+ *  of it (a one-hour grace would otherwise warn on every report the moment
+ *  Base's own landed first). */
+export function graceWarningSec(graceSec: number): number {
+  return Math.min(GRACE_WARNING_SEC, Math.floor(graceSec / 4));
+}
 /** A served destination still lacking the pair this long after a broadcast
  *  is reported LATE (a CCIP delivery normally lands well inside it)… */
 export const BROADCAST_LATE_AFTER_SEC = 2 * 3600;
@@ -406,7 +415,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
           if (decision.missing.length > 0) f.zeroed.push({ day: d, missing: decision.missing });
         }
       } else if (decision.kind === 'wait' && decision.missing.length > 0) {
-        const nearEnd = decision.graceEndsAt !== null && decision.graceEndsAt - nowSec <= GRACE_WARNING_SEC;
+        const nearEnd = decision.graceEndsAt !== null && decision.graceEndsAt - nowSec <= graceWarningSec(graceSec);
         // eslint-disable-next-line no-await-in-loop
         if (nearEnd) f.waiting.push({ day: d, missing: decision.missing, graceEndsAt: decision.graceEndsAt, sent: await peerSentAt(deps, decision.missing, d) });
       }

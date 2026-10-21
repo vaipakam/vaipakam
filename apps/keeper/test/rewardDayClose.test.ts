@@ -22,6 +22,7 @@ import {
   ROLE_MIRROR,
   dayCloseOnce,
   dayWindow,
+  graceWarningSec,
   planBroadcast,
   planFinalize,
   type DestinationState,
@@ -48,6 +49,13 @@ describe('the pure rules', () => {
     expect(dayWindow(1)).toEqual([0]);
     expect(dayWindow(3)).toEqual([0, 1, 2]);
     expect(dayWindow(LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
+  });
+
+  it('warns in the last hour of grace, or the last quarter of a shorter one', () => {
+    expect(graceWarningSec(4 * 3600)).toBe(GRACE_WARNING_SEC);
+    expect(graceWarningSec(24 * 3600)).toBe(GRACE_WARNING_SEC);
+    expect(graceWarningSec(3600)).toBe(900);
+    expect(graceWarningSec(0)).toBe(0);
   });
 
   describe('planFinalize', () => {
