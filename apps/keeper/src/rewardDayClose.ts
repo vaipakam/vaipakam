@@ -299,8 +299,11 @@ const NO_STANDING = 'DestinationHasNoDayStanding';
 const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', NO_STANDING]);
 
 /** A step that exists only to let another one through: its refusal is over
- *  once the step it serves is done, by anyone. */
+ *  once the step it serves is done, by anyone. On Base the day's own close
+ *  serves its finalization (it is owed only until the day is finalized,
+ *  which an admin's force-finalize can do first). */
 const SERVES: Readonly<Record<string, string>> = { advance: 'close' };
+const SERVES_ON_BASE: Readonly<Record<string, string>> = { advance: 'close', close: 'finalize' };
 const FRONTIER_SHORT = 'ChainReportFrontierShort';
 
 // ─── Pure planning ──────────────────────────────────────────────────────
@@ -1108,24 +1111,40 @@ async function settleLedger(env: Env, chainId: number, diamond: Address, today: 
   await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_dispatch', floor, 'day_owed');
 }
 
+/** A peer chain's last known Diamond and its reward-clock launch there
+ *  (`day_clock`, by peer chain; `launch` null = that Diamond's clock not yet
+ *  read). */
+interface ClockRecord {
+  diamond: string;
+  launch: number | null;
+}
+
 /** A peer chain's reward-clock launch: read now when it can be (and recorded,
  *  `day_clock`, with the peer Diamond it was read from), else as last read
  *  (`lastRead`), so a mismatch once seen is never forgotten because the peer
- *  stops answering; null = never read. A record from another Diamond than the
- *  one now configured for the peer says nothing about it (a fresh Diamond may
- *  run another clock): `moved`, and what depends on the clock waits for its
- *  first read. For a peer this keeper no
- *  longer serves the current Diamond is unknown, and the last record stands. */
+ *  stops answering; null = never read. A peer configured with another Diamond
+ *  than the one last read is recorded at once as that Diamond with its clock
+ *  unread, since a fresh Diamond may run another clock: `moved`, and what
+ *  depends on the clock waits for the new one's first read, however the peer
+ *  is served meanwhile. For a peer this keeper no longer serves, its current
+ *  Diamond is unknown and the last record stands. */
 async function peerClock(env: Env, chainId: number, diamond: Address, peerChain: number, p: PeerReader | null, where: string): Promise<{ launch: number; lastRead: boolean } | 'moved' | null> {
-  const now = p ? await launchOf(p, where) : null;
-  if (now !== null) {
-    await putWork(env.KEEPER_DB, chainId, diamond, 'day_clock', { item: String(peerChain), block: 0, payload: { launch: now, diamond: p!.diamond.toLowerCase() } });
-    return { launch: now, lastRead: false };
+  const record = (r: ClockRecord) => putWork(env.KEEPER_DB, chainId, diamond, 'day_clock', { item: String(peerChain), block: 0, payload: r });
+  if (p !== null) {
+    const now = await launchOf(p, where);
+    if (now !== null) {
+      await record({ diamond: p.diamond.toLowerCase(), launch: now });
+      return { launch: now, lastRead: false };
+    }
   }
-  const rec = (await getWorkItems<{ launch: number; diamond?: string }>(env.KEEPER_DB, chainId, diamond, 'day_clock', [String(peerChain)])).get(String(peerChain));
-  if (!rec || !Number.isSafeInteger(rec.payload.launch)) return null;
-  if (p !== null && rec.payload.diamond?.toLowerCase() !== p.diamond.toLowerCase()) return 'moved';
-  return { launch: rec.payload.launch, lastRead: true };
+  const rec = (await getWorkItems<ClockRecord>(env.KEEPER_DB, chainId, diamond, 'day_clock', [String(peerChain)])).get(String(peerChain))?.payload;
+  if (!rec) return null;
+  if (p !== null && rec.diamond?.toLowerCase() !== p.diamond.toLowerCase()) {
+    await record({ diamond: p.diamond.toLowerCase(), launch: null });
+    return 'moved';
+  }
+  if (rec.launch === null || !Number.isSafeInteger(rec.launch)) return 'moved';
+  return { launch: rec.launch, lastRead: true };
 }
 
 // ─── Reads ──────────────────────────────────────────────────────────────
@@ -1657,9 +1676,15 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, 
     const day = dayOfAlert(key) ?? Number.NaN;
     let gone = false;
     if (kind === 'dayclose-refused') {
-      const served = SERVES[parts[2]];
+      // Gone once the step is no longer owed: done, or what it serves done.
+      const serves = canonical ? SERVES_ON_BASE : SERVES;
       const done = (k: string) => f.settled.has(k) || f.landed.has(k);
-      gone = done(`${parts[2]}:${parts[3]}`) || (served !== undefined && done(`${served}:${parts[3]}`)) || dropped(day);
+      let step: string | undefined = parts[2];
+      while (step !== undefined && !gone) {
+        gone = done(`${step}:${parts[3]}`);
+        step = serves[step];
+      }
+      gone ||= dropped(day);
     }
     // A wait judged this run and not raised is no longer near its end (grace
     // was lengthened, or a report landed): its deadline no longer holds.

@@ -540,6 +540,28 @@ describe('a run', () => {
     expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:all`);
   });
 
+  it('keeps holding on a moved peer Diamond after the keeper stops serving that peer', async () => {
+    const NEW_BASE = '0x00000000000000000000000000000000000000b9' as Address;
+    await run(mirror); // Base's clock read and recorded at its old Diamond
+    mirror.today += 1;
+    base.launchUnread = true;
+    const runWith = (peer: (id: number) => PeerReader | null) =>
+      dayCloseOnce(env, mirror.chainId, mirror.diamond, {
+        client: mirror.client(),
+        readClient: mirror.client(),
+        context: () => mirror.ctx(),
+        peer,
+        sendDeadline: Number.POSITIVE_INFINITY,
+        runDeadline: Number.POSITIVE_INFINITY,
+      });
+    await runWith((id) => (id === BASE ? { diamond: NEW_BASE, client: base.client() } : peers(id)));
+    openAlert(`dayclose-clockmoved:${MIRROR}:all`);
+    later(60);
+    await runWith((id) => (id === BASE ? null : peers(id))); // Base no longer served
+    expect(mirror.sent.map((s) => s.day), 'the old Diamond\'s clock is not trusted again').toEqual([0, 1, 2]);
+    expect(openKeys()).toContain(`dayclose-clockmoved:${MIRROR}:all`);
+  });
+
   it('closes no day while its messenger route cannot be read', async () => {
     mirror.routeTo = 'unread';
     await run(mirror);
@@ -779,6 +801,21 @@ describe('a run', () => {
     await run(base);
     expect(base.sent, 'no close, and nothing owed to the mirror').toEqual([]);
     expect(owed(), 'the close it can never make does not hold the day').toEqual([]);
+  });
+
+  it("clears Base's refused-close alert once the day is finalized without it, so the alert does not hold the day", async () => {
+    base.today = 1;
+    base.refuse.set('closeDay:0', 'DayNotReadyToFinalize');
+    await run(base);
+    expect(alerts(/closing the day \(closeDay\) for reward day 0 is refused/)).toHaveLength(1);
+    openAlert(`dayclose-refused:${BASE}:close:0`); // as a delivered alert leaves it
+    base.finalized.add(0); // then an admin force-finalizes it
+    base.refuse.set('closeDay:0', 'ReportAfterFinalization');
+    mirror.known.add(0);
+    later(60);
+    await run(base);
+    expect(openKeys(), 'a close no longer owed is no longer refused').not.toContain(`dayclose-refused:${BASE}:close:0`);
+    expect(owed(), 'and the day goes').toEqual([]);
   });
 
   it('counts a send the node refused outright as not made, and one it did not answer as made', async () => {
