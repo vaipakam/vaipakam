@@ -47,7 +47,9 @@ the retired case, since fixing the destination would not reach a receipt
 behind the old adapter. The keeper's first reads of Base's ledger now stop
 early enough to leave the rest of the run time, and a ledger read that fails
 or does not answer in time no longer stops the released backlog from being
-classified and acknowledged that run. The runbook's recovery step that
+classified and acknowledged that run. A ledger scan cut short works the
+reservations it did read and resumes at the first one it did not, rather than
+starting the same window again from scratch. The runbook's recovery step that
 restores a retired adapter now requires the remittance automation to be
 switched off first and held off until the redeploy's values are back, since
 Base sends everything to that chain through the same record. A reservation with no

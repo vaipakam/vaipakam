@@ -233,9 +233,10 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
 /**
  * One bounded window of the reservation ledger (#1426, #1896): the Pending
  * reservations it holds, the terminal ones it marks acknowledged, and where
- * the frontier and the cursor move to. `undefined` when a read failed or did
- * not settle by `cutoff`, which aborts the window: neither the frontier nor
- * the cursor may advance past a reservation whose status is unknown.
+ * the frontier and the cursor move to. A read that failed or did not settle
+ * by `cutoff` ends the window there, since neither the frontier nor the cursor
+ * may advance past a reservation whose status is unknown; `undefined` only
+ * when not even the window's first reservation was read.
  */
 async function scanPendingWindow(
   env: Env,
@@ -293,23 +294,25 @@ async function scanPendingWindow(
     scanResults.push(...part);
   }
 
+  // The window ENDS at its first unread reservation (Codex #2607 r15): what
+  // was read before it is worked this run, and the cursor stops there, so the
+  // next run resumes at that id. Neither the frontier nor the cursor may pass
+  // an id whose status is unknown, and the ids read before it are never
+  // discarded with it: a cutoff that always lands in the same chunk would
+  // otherwise re-read that window forever and work none of it.
+  let end = to;
   for (let idx = 0; idx < windowIds.length; idx++) {
     const id = windowIds[idx];
     const res = scanResults[idx];
     if (!res || res.status !== 'success') {
-      // A read failure ABORTS the scan, which is what the sequential version
-      // did: the throw unwound to the per-chain catch, so `putRemitAckScanState`
-      // never ran and neither the frontier nor the cursor advanced past an id
-      // whose status is unknown. Advancing either on an unread reservation is
-      // the one outcome worth avoiding here, so the failure is preserved rather
-      // than turned into a per-id skip. Ids already processed above keep their
-      // (idempotent) acked marks, exactly as before.
       console.warn(
-        `[keeper] remitAck scan aborted at remit=${id}: ${String(
+        `[keeper] remitAck scan ${idx === 0 ? 'read nothing' : `stopped at remit=${id} (the ${idx} before it are worked)`}: ${String(
           res?.error ?? 'no result',
         ).slice(0, 200)}`,
       );
-      return undefined;
+      if (idx === 0) return undefined;
+      end = id;
+      break;
     }
     const r = res.result as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
@@ -326,7 +329,7 @@ async function scanPendingWindow(
     // status 0 past the frontier can only be the tail beyond the nonce —
     // the loop bound already excludes it.
   }
-  return { pendingIds, reservations, contiguousTerminal, terminalInWindow, to: Number(to) };
+  return { pendingIds, reservations, contiguousTerminal, terminalInWindow, to: Number(end) };
 }
 
 /**

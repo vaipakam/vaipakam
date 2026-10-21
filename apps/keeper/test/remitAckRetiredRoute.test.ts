@@ -383,7 +383,8 @@ async function tick(book: Book) {
   // "NOT delivered" line carrying its text.
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, elapsedMs };
+  const cursors = keeper.bound.filter((b) => b.sql.includes('INSERT INTO keeper_remit_ack_frontier')).map((b) => b.binds[3]);
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, elapsedMs, cursors };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -467,6 +468,24 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     });
     expect(t.alerts.join('\n')).toContain('remit 2');
     expect(t.elapsedMs).toBeLessThan(4_000);
+  });
+
+  it('a scan cut partway works what it read and resumes at the first unread reservation', async () => {
+    // A 150-reservation window reads in two chunks; the second (ids 101–150)
+    // stalls past the scan cutoff. The first chunk's reservations are still
+    // worked, so reservation 5's receipt is acknowledged, and the cursor
+    // stops at 101 rather than the window being re-read from scratch every
+    // run (Codex #2607 r15).
+    const t = await tick({
+      status: 1,
+      nonce: 150,
+      receiptIds: [5],
+      route: { sent: NEW, live: NEW },
+      slowReservation: { id: 120, ms: 8_000 },
+      deadlineInMs: 3_000,
+    });
+    expect(t.quotes).toBeGreaterThan(0);
+    expect(t.cursors).toEqual([101]);
   });
 
   it('reports a receipt read the destination answers with an error, never leaves it silent', async () => {
