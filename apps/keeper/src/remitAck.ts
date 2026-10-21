@@ -239,7 +239,6 @@ async function pendingPath(
       return { pending: none.pending, cleared: clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set()) };
     }
     const w = await scanPendingWindow(env, publicClient, baseChainId, diamond, frontier, scanCursor, nonce, scanCutoff);
-    if (!w) return none;
     await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, w.contiguousTerminal, w.to);
     return {
       pending: planPendingContained(env, publicClient as never, baseChainId, diamond, w.pendingIds, w.reservations, mirrorConfigs, mirrorClients, readCutoff, run),
@@ -255,9 +254,13 @@ async function pendingPath(
  * One bounded window of the reservation ledger (#1426, #1896): the Pending
  * reservations it holds, the terminal ones it marks acknowledged, and where
  * the frontier and the cursor move to. A read that failed or did not settle
- * by `cutoff` ends the window there, since neither the frontier nor the cursor
- * may advance past a reservation whose status is unknown; `undefined` only
- * when not even the window's first reservation was read.
+ * by `cutoff` ends the window there: the frontier never passes a reservation
+ * whose status is unknown, and the cursor resumes at it next run. When the
+ * window's FIRST reservation is unread, the cursor moves past the unread ids
+ * that lead it, never past its first chunk (Codex #2607 r19, `runWindow.ts`
+ * rule 2), so a chunk that never answers in time is revisited on the scan's
+ * next rotation instead of pinning every run to it. Each run therefore either
+ * works what it read or moves the cursor forward.
  */
 async function scanPendingWindow(
   env: Env,
@@ -268,7 +271,7 @@ async function scanPendingWindow(
   scanCursor: number,
   nonce: bigint,
   cutoff: number,
-): Promise<{ pendingIds: number[]; reservations: Map<number, RemitReservationView>; contiguousTerminal: number; terminalInWindow: Set<number>; to: number } | undefined> {
+): Promise<{ pendingIds: number[]; reservations: Map<number, RemitReservationView>; contiguousTerminal: number; terminalInWindow: Set<number>; to: number }> {
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
   // it is ahead of the frontier — a stuck early Pending pins the frontier,
   // and without the rotation the bounded window would re-read that range
@@ -326,13 +329,15 @@ async function scanPendingWindow(
     const id = windowIds[idx];
     const res = scanResults[idx];
     if (!res || res.status !== 'success') {
+      // Nothing read: move past the window's leading unread ids, never past
+      // its first chunk. Otherwise end the window at the first unread id,
+      // where the next run resumes.
+      end = idx === 0 ? pastLeadingUnread(windowIds, scanResults) : id;
       console.warn(
-        `[keeper] remitAck scan ${idx === 0 ? 'read nothing' : `stopped at remit=${id} (the ${idx} before it are worked)`}: ${String(
+        `[keeper] remitAck scan ${idx === 0 ? `read nothing; moves past remit=${id}–${end - 1n}, revisited on the scan's next rotation` : `stopped at remit=${id} (the ${idx} before it are worked)`}: ${String(
           res?.error ?? 'no result',
         ).slice(0, 200)}`,
       );
-      if (idx === 0) return undefined;
-      end = id;
       break;
     }
     const r = res.result as RemitReservationView;
@@ -351,6 +356,16 @@ async function scanPendingWindow(
     // the loop bound already excludes it.
   }
   return { pendingIds, reservations, contiguousTerminal, terminalInWindow, to: Number(end) };
+}
+
+/** Where a window that read nothing resumes: at its first id that WAS read
+ *  within its first chunk, or past that chunk when none was. A chunk that
+ *  stalled to the cutoff is passed whole; a single entry that failed is
+ *  passed alone. Pure. */
+function pastLeadingUnread(ids: readonly bigint[], results: readonly { status: 'success' | 'failure' }[]): bigint {
+  const bound = Math.min(SCAN_CHUNK, ids.length);
+  for (let k = 0; k < bound; k++) if (results[k]?.status === 'success') return ids[k];
+  return ids[bound - 1] + 1n;
 }
 
 /**

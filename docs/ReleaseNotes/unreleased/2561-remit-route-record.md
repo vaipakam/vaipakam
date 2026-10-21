@@ -55,7 +55,10 @@ or does not answer in time, or a failure to read the keeper's own record of
 where its scan stands, no longer stops the released backlog from being
 classified and acknowledged that run. A ledger scan cut short works the
 reservations it did read and resumes at the first one it did not, rather than
-starting the same window again from scratch. The runbook's recovery step that
+starting the same window again from scratch; a first stretch it cannot read at
+all is passed and read again on the scan's next round, rather than holding
+every later run at it, and the record of how far the ledger is settled never
+passes an unread reservation. The runbook's recovery step that
 restores a retired adapter now requires the remittance automation to be
 switched off first and held off until the redeploy's values are back, since
 Base sends everything to that chain through the same record. A reservation with no

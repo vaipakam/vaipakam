@@ -349,6 +349,32 @@ describe('remitAck reservation scan (#1896)', () => {
     // And the operator can see which id stopped it.
     expect(warned.join('\n')).toMatch(/scan stopped at remit=3/);
   });
+
+  it('a window whose first reservation is unread moves the cursor past it, never the frontier', async () => {
+    // Reservation 1's read fails every run. Ending the window there would pin
+    // every later run to it, so the cursor moves past it while the frontier
+    // stays (Codex #2607 r19): it is read again on the scan's next rotation.
+    const { restore } = install(1);
+    const shared = db();
+    const { handle, bound } = db();
+    const warned: string[] = [];
+    const spies = [
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+      vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' '))),
+      vi.spyOn(console, 'log').mockImplementation(() => {}),
+    ];
+    try {
+      await run(shared.handle, handle);
+    } finally {
+      restore();
+      spies.forEach((s) => s.mockRestore());
+    }
+    const writes = bound.filter((b) => /INSERT INTO keeper_remit_ack_frontier/.test(b.sql));
+    expect(writes).toHaveLength(1);
+    // Frontier 1, cursor 2: id 2 was read, so the next run resumes there.
+    expect(writes[0].binds.slice(2, 4)).toEqual([1, 2]);
+    expect(warned.join('\n')).toMatch(/read nothing; moves past remit=1/);
+  });
 });
 
 /**

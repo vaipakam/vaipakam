@@ -557,6 +557,21 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.cursors).toEqual([101]);
   });
 
+  it('a first scan chunk that stalls every run is passed, so the next run reads the rest', async () => {
+    // A 150-reservation window whose FIRST chunk (ids 1–100) stalls past the
+    // scan cutoff. Ending the window there would pin every run to that chunk;
+    // the cursor moves past it instead, to 101, while the frontier stays, so
+    // the chunk is revisited on the scan's next rotation (Codex #2607 r19).
+    const t = await tick({
+      status: 1,
+      nonce: 150,
+      route: { sent: NEW, live: NEW },
+      slowReservation: { id: 50, ms: 8_000 },
+      deadlineInMs: 3_000,
+    });
+    expect(t.cursors).toEqual([101]);
+  });
+
   it('reports a receipt read the destination answers with an error, never leaves it silent', async () => {
     // The mirror reverts reservation 1's receipt read (a deployment entry
     // naming a Diamond without the read, say). That is an answer, not a gap,
