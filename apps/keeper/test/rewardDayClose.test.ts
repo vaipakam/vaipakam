@@ -531,13 +531,13 @@ describe('a run', () => {
       });
     await runMoved();
     expect(mirror.sent.map((s) => s.day), 'the old record says nothing about the new Diamond').toEqual([0, 1, 2]);
-    expect(alerts(/now name\(s\) a different Diamond from the one whose reward clock this keeper last read/)).toHaveLength(1);
-    openAlert(`dayclose-clockmoved:${MIRROR}:all`); // as a delivered alert leaves it
+    expect(alerts(/the reward clock of chain 84532 \(it now names Diamond 0x0+b9, not the one whose clock this keeper last read, and the new clock has not been read\) is not known/)).toHaveLength(1);
+    openAlert(`dayclose-clockunknown:${MIRROR}:all`); // as a delivered alert leaves it
     base.launchUnread = false;
     later(60);
     await runMoved();
     expect(mirror.sent.map((s) => s.day), 'closed once the new clock reads as the same').toEqual([0, 1, 2, 3]);
-    expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:all`);
   });
 
   it('keeps holding on a moved peer Diamond after the keeper stops serving that peer', async () => {
@@ -555,11 +555,11 @@ describe('a run', () => {
         runDeadline: Number.POSITIVE_INFINITY,
       });
     await runWith((id) => (id === BASE ? { diamond: NEW_BASE, client: base.client() } : peers(id)));
-    openAlert(`dayclose-clockmoved:${MIRROR}:all`);
+    openAlert(`dayclose-clockunknown:${MIRROR}:all`);
     later(60);
     await runWith((id) => (id === BASE ? null : peers(id))); // Base no longer served
     expect(mirror.sent.map((s) => s.day), 'the old Diamond\'s clock is not trusted again').toEqual([0, 1, 2]);
-    expect(openKeys()).toContain(`dayclose-clockmoved:${MIRROR}:all`);
+    expect(openKeys()).toContain(`dayclose-clockunknown:${MIRROR}:all`);
   });
 
   it('closes no day while its messenger route cannot be read', async () => {
@@ -991,26 +991,19 @@ describe('a run', () => {
     expect(openKeys()).not.toContain(`dayclose-notexpected:${MIRROR}:all`);
   });
 
-  it('keeps a late alert open when the destination stops being readable, since nothing has shown delivery', async () => {
+  it('keeps a late alert open while the destination cannot be read, and closes it, saying why, once the keeper stops serving it', async () => {
     finalizedDayZero();
     await run(base);
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
     openAlert(`dayclose-broadcast:${BASE}:0`);
-    // The keeper loses the mirror's RPC: it is now unserved.
-    await dayCloseOnce(env, base.chainId, base.diamond, {
-      client: base.client(),
-      readClient: base.client(),
-      context: () => base.ctx(),
-      peer: (id) => (id === MIRROR ? null : peers(id)),
-      sendDeadline: Number.POSITIVE_INFINITY,
-      runDeadline: Number.POSITIVE_INFINITY,
-    });
+    mirror.knownUnreadable = true; // the mirror's read fails: unknown, not gone
+    later(60);
+    await run(base);
     expect(openKeys(), 'not read holding it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0`]);
-    expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
     expect(owed(), 'and its day stays owed while the alert stands').toContain(0);
-    // Long past the lookback, the alert is still not dropped with its day.
-    base.today += LOOKBACK_DAYS + 2;
+    // The keeper stops serving the mirror: whether the day arrived there can
+    // never be read here again.
     later(60);
     await dayCloseOnce(env, base.chainId, base.diamond, {
       client: base.client(),
@@ -1020,8 +1013,10 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       runDeadline: Number.POSITIVE_INFINITY,
     });
-    expect(openKeys(), 'no read has shown delivery').toContain(`dayclose-broadcast:${BASE}:0`);
-    expect(owed()).toContain(0);
+    expect(logged.some((l) => /closed: dayclose-broadcast:84532:0 \(the day was sent to chain\(s\) 421614, which this keeper no longer serves/.test(l)), 'closed, and why').toBe(true);
+    expect(openKeys(), 'not left standing for good').toEqual([]);
+    expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
+    expect(owed(), 'so the day can go').not.toContain(0);
   });
 
   it('works a day older than the lookback that was never worked through, and keeps a day owed until it is', async () => {
@@ -1443,5 +1438,90 @@ describe('a run', () => {
     await run(base);
     expect(alerts(/finalized with expected reports missing/), 'and is posted once the channel answers').toHaveLength(1);
     expect(queued()).toEqual({ n: 0 });
+  });
+
+  it("closes no day before Base's reward clock has ever been read, and says so until it is", async () => {
+    base.launchUnread = true;
+    await run(mirror);
+    expect(mirror.sent, 'alignment is never assumed').toEqual([]);
+    expect(alerts(/the reward clock of chain 84532 \(its clock has never been read \(the read failed\)\) is not known to this keeper/)).toHaveLength(1);
+    expect(owed()).toEqual([0, 1, 2]);
+    openAlert(`dayclose-clockunknown:${MIRROR}:all`); // as a delivered alert leaves it
+    base.launchUnread = false;
+    later(60);
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day), 'closed once the clock reads as the same').toEqual([0, 1, 2]);
+    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:all`);
+  });
+
+  it('closes no day on a mirror whose keeper does not serve Base and has never read its clock', async () => {
+    await dayCloseOnce(env, mirror.chainId, mirror.diamond, {
+      client: mirror.client(),
+      readClient: mirror.client(),
+      context: () => mirror.ctx(),
+      peer: (id) => (id === BASE ? null : peers(id)),
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/chain 84532 \(this keeper does not serve it and has never read its clock\)/)).toHaveLength(1);
+  });
+
+  it("finalizes no day while an expected mirror's reward clock is not known, and says so in the grace warning too", async () => {
+    const other = new FakeDiamond(OTHER, '0x00000000000000000000000000000000000000d1', '0x00000000000000000000000000000000000000d2');
+    base.today = 1;
+    base.expected = [BASE, MIRROR, OTHER];
+    base.destinations = [MIRROR, OTHER];
+    base.sentAt.set(0, NOW - GRACE);
+    base.reported.set(0, new Set([BASE, MIRROR]));
+    base.firstAt.set(0, NOW - GRACE + GRACE_WARNING_SEC / 2);
+    const runWith = (peer: (id: number) => PeerReader | null) =>
+      dayCloseOnce(env, base.chainId, base.diamond, {
+        client: base.client(),
+        readClient: base.client(),
+        context: () => base.ctx(),
+        peer,
+        sendDeadline: Number.POSITIVE_INFINITY,
+        runDeadline: Number.POSITIVE_INFINITY,
+      });
+    await runWith(peers); // chain 97 is not served: its clock has never been read
+    expect(alerts(/the reward clock of chain 97 \(this keeper does not serve it and has never read its clock\) is not known/)).toHaveLength(1);
+    expect(alerts(/reward day 0 is still missing 1 expected report\(s\): chain 97 .*This keeper finalizes no day while the reward clock of chain\(s\) 97 is not known; any other caller still can/)).toHaveLength(1);
+    base.firstAt.set(0, NOW - GRACE); // grace has run out: the contract would finalize
+    later(60);
+    await runWith(peers);
+    expect(base.sent.filter((s) => s.fn === 'finalizeDay'), 'an irreversible call waits for a known clock').toEqual([]);
+    expect(owed()).toEqual([0]);
+    later(60);
+    await runWith((id) => (id === OTHER ? other.peer() : peers(id)));
+    expect(base.sent.filter((s) => s.fn === 'finalizeDay').map((s) => s.day), 'finalized once every clock reads as Base\'s').toEqual([0]);
+  });
+
+  it('says once, and does not hold its day for, an unchecked dispatch whose outcome on Base cannot be learned here', async () => {
+    mirror.today = 1;
+    await run(mirror); // Base served: its clock read and recorded, day 0 closed
+    mirror.today = 2;
+    mirror.rotateTo = '0x0000000000000000000000000000000000000099';
+    const unservedBase = () =>
+      dayCloseOnce(env, mirror.chainId, mirror.diamond, {
+        client: mirror.client(),
+        readClient: mirror.client(),
+        context: () => mirror.ctx(),
+        peer: (id) => (id === BASE ? null : peers(id)),
+        sendDeadline: Number.POSITIVE_INFINITY,
+        runDeadline: Number.POSITIVE_INFINITY,
+      });
+    later(60);
+    await unservedBase(); // Base's clock as last read; day 1 closes through the rotated messenger
+    expect(mirror.sent.map((s) => s.day)).toEqual([0, 1]);
+    expect(alerts(/close of reward day 1 sent its report through messenger 0x0+99, .*This keeper does not serve Base, so the day's outcome cannot be learned here; this is said once and not followed/)).toHaveLength(1);
+    expect(owed(), 'a statement, not a condition: it does not hold its day').not.toContain(1);
+  });
+
+  it('closes, saying why, an open alert of a kind this pass no longer raises', async () => {
+    openAlert(`dayclose-clockmoved:${MIRROR}:all`);
+    await run(mirror);
+    expect(logged.some((l) => /closed: dayclose-clockmoved:421614:all \(this pass no longer raises this alert\)/.test(l))).toBe(true);
+    expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:all`);
   });
 });

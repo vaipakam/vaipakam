@@ -1,0 +1,458 @@
+// apps/keeper/src/rewardDayClose/alerts.ts
+//
+// The pass's ops alerts: conditions that hold, each under its own key,
+// de-duplicated, and cleared.
+//
+// ONE rule decides every alert's life. Each kind of alert has one judge, and
+// every run asks it about every subject that matters this run: the ones the
+// run found AND the ones already open. The same judgement raises, clears and
+// holds, so an alert can never be raised by one rule and cleared by another:
+//
+//   holds     raise it (repeated at most every ALERT_REPEAT_SEC). Its day
+//             stays owed while it stands, so no alert leaves with its day.
+//   gone      a read has shown the condition gone: clear it.
+//   unjudged  nothing this run read settles it: leave it as it stands (its
+//             day stays owed).
+//   retired   it can never be judged here again (the chain it is about is no
+//             longer served, its record is gone): close it, and say so once.
+//
+// A STATEMENT (Base finalized a day without this chain; a dispatch whose
+// outcome cannot be learned here) is a thing that happened, not a condition:
+// said once a window, it holds its day only until delivered.
+//
+// Keys: `dayclose-<kind>:<chain>:<day>` for a day, `dayclose-<kind>:<chain>:all`
+// for the chain, and `dayclose-refused:<chain>:<step>:<day>` for a refused
+// call. A per-day alert whose day is no longer worked (out of the window and
+// not owed) is cleared with it.
+
+import type { Env } from '../env';
+import { listOpsAlertKeys } from '../db';
+import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from '../opsAlert';
+import { ALERT_REPEAT_SEC, BROADCAST_RESEND_AFTER_SEC, SERVES, SERVES_ON_BASE, STATEMENT_REPEAT_SEC } from './constants';
+import { shortErr } from './errors';
+import type { RunFindings } from './findings';
+import { topologyFaults } from './plan';
+import type { DayStore } from './store';
+
+export type Judgement = { verdict: 'holds'; text: string; statement?: boolean } | { verdict: 'gone' } | { verdict: 'unjudged' } | { verdict: 'retired'; why: string };
+
+const HOLDS = (text: string, statement = false): Judgement => ({ verdict: 'holds', text, statement });
+const GONE: Judgement = { verdict: 'gone' };
+const UNJUDGED: Judgement = { verdict: 'unjudged' };
+const RETIRED = (why: string): Judgement => ({ verdict: 'retired', why });
+
+interface AlertKind {
+  kind: string;
+  /** Subjects are days (`<day>`, or `<step>:<day>` for refusals); otherwise 'all'. */
+  perDay: boolean;
+  /** Every alert of this kind is a statement. */
+  statement?: boolean;
+  /** Repeat interval when it holds. */
+  repeat?: number;
+  /** The subjects this run's findings raise. Open subjects are added. */
+  raised(f: RunFindings): string[];
+  judge(f: RunFindings, subject: string, tag: string): Judgement;
+}
+
+const iso = (t: number) => new Date(t * 1000).toISOString();
+
+const STEP_WORDS: Record<string, string> = {
+  close: 'closing the day (closeDay)',
+  advance: 'advancing the interest fold (advanceInterestFrontiers)',
+  finalize: 'finalizing the day (finalizeDay)',
+  broadcast: 'broadcasting the day (broadcastGlobal)',
+};
+
+const KINDS: readonly AlertKind[] = [
+  {
+    kind: 'refused',
+    perDay: true,
+    raised: (f) => [...f.refused.keys()],
+    judge(f, subject, tag) {
+      const why = f.refused.get(subject);
+      const [step, day] = subject.split(':');
+      if (why !== undefined) {
+        return HOLDS(`${tag}: ${STEP_WORDS[step] ?? step} for reward day ${day} is refused (${why}). The day stays open on this chain until the call goes through; the pass retries every run until it does.`);
+      }
+      // Over once the step is no longer owed: done, or what it serves done.
+      const serves = f.canonical ? SERVES_ON_BASE : SERVES;
+      for (let s: string | undefined = step; s !== undefined; s = serves[s]) if (f.done(`${s}:${day}`)) return GONE;
+      return UNJUDGED;
+    },
+  },
+  {
+    kind: 'waiting',
+    perDay: true,
+    raised: (f) => [...(f.base?.waiting.keys() ?? [])].map(String),
+    judge(f, subject, tag) {
+      const b = f.base;
+      const day = Number(subject);
+      if (b === null || b.finalized.has(day)) return GONE;
+      const w = b.waiting.get(day);
+      // Judged and not near its end with a chain missing: grace was
+      // lengthened, or the report landed.
+      if (w === undefined) return b.judged.has(day) ? GONE : UNJUDGED;
+      const each = w.missing
+        .map((c) => {
+          const s = w.sent.get(c);
+          if (!s?.known) return `chain ${c} (${s?.why === 'not served by this keeper' ? 'not served by this keeper' : 'its own record could not be read'}: whether it sent is unknown)`;
+          if (s.value === 0) return `chain ${c} (has not sent its report)`;
+          return `chain ${c} (sent at ${iso(s.value)}, not yet landed on Base)`;
+        })
+        .join('; ');
+      const unread = w.unknown.length > 0 ? `; Base's record of the report could not be read this run for chain(s) ${w.unknown.join(', ')}` : '';
+      const ends = w.graceEndsAt === null ? 'unknown' : iso(w.graceEndsAt);
+      const hold = b.finalizeHold === null ? '' : ` This keeper finalizes no day while ${b.finalizeHold}; any other caller still can.`;
+      return HOLDS(
+        `${tag}: reward day ${day} ` +
+          (w.missing.length > 0 ? `is still missing ${w.missing.length} expected report(s): ${each}` : 'has no expected report Base shows as missing') +
+          `${unread}. Grace ends ${ends}; from then the day can be finalized with the reports that have landed, and each expected chain still missing then counts as zero for the day.${hold}`,
+      );
+    },
+  },
+  {
+    kind: 'broadcast',
+    perDay: true,
+    raised: (f) => [...(f.base?.broadcast ?? [])].filter(([, p]) => p.late.length > 0).map(([d]) => String(d)),
+    judge(f, subject, tag) {
+      if (f.base === null) return GONE;
+      const day = Number(subject);
+      const plan = f.base.broadcast.get(day);
+      if (plan === undefined) return UNJUDGED;
+      if (plan.late.length > 0) {
+        const each = (state: 'missing' | 'unread') =>
+          plan.late
+            .filter((x) => x.state === state)
+            .map((x) => `chain ${x.chain} (last sent ${iso(x.sentAt)}, or sent then with no receipt seen)`)
+            .join(', ');
+        const missing = each('missing');
+        const unread = each('unread');
+        return HOLDS(
+          `${tag}: the broadcast of reward day ${day} ` +
+            [missing ? `has not reached ${missing}` : '', unread ? `could not be confirmed on ${unread}, whose state this keeper could not read, so whether it arrived there is unknown` : '']
+              .filter(Boolean)
+              .join('; and it ') +
+            `. Until it lands, users there cannot claim that day. The pass re-sends to a chain it reads as missing ${BROADCAST_RESEND_AFTER_SEC / 3600}h after each send to it, and this alert stands until every such chain is read holding the day; check the lane's CCIP delivery and the keeper's RPC for that chain.`,
+        );
+      }
+      if (plan.done && plan.unconfirmed.length === 0) return GONE;
+      if (plan.done) {
+        return RETIRED(
+          `the day was sent to chain(s) ${plan.unconfirmed.join(', ')}, which this keeper no longer serves, so whether it arrived there cannot be read here; check those chains directly`,
+        );
+      }
+      return UNJUDGED;
+    },
+  },
+  {
+    kind: 'excluded',
+    perDay: true,
+    statement: true,
+    repeat: STATEMENT_REPEAT_SEC,
+    raised: (f) => [...(f.mirror?.excluded ?? [])].filter(([, x]) => x.known && x.value).map(([d]) => String(d)),
+    judge(f, subject, tag) {
+      const x = f.mirror?.excluded.get(Number(subject));
+      if (f.mirror === null) return GONE;
+      if (x === undefined || !x.known) return UNJUDGED;
+      if (!x.value) return GONE;
+      return HOLDS(
+        `${tag}: Base finalized reward day ${subject} without this chain's report, so this chain's interest counts as zero for that day. The report is still sent (or was): Base drops its day figures but applies the chain-wide figures it carries.`,
+        true,
+      );
+    },
+  },
+  {
+    kind: 'dispatch',
+    perDay: true,
+    repeat: ALERT_REPEAT_SEC,
+    raised: (f) => [...(f.mirror?.dispatched.keys() ?? [])].map(String),
+    judge(f, subject, tag) {
+      const m = f.mirror;
+      if (m === null) return GONE;
+      const day = Number(subject);
+      const outcome = m.outcome.get(day);
+      if (outcome?.known && outcome.value) return GONE;
+      const rec = m.dispatched.get(day);
+      if (rec === undefined) return RETIRED("this keeper's record of the dispatch is gone, so it can no longer be followed here");
+      const via = rec.via.length > 0 ? `messenger ${rec.via.join(', ')}` : 'no messenger this keeper could see (the receipt carries no report event)';
+      const head =
+        `${tag}: the close of reward day ${day} sent its report through ${via}, not the reward messenger this run checked (${rec.checked}); it was rotated between the check and the transaction. ` +
+        'Whether that report is the shape Base applies after finalization, and whether it routes to Base, was not checked, and the day cannot be closed again. If Base finalizes the day before it lands, or it never reaches Base, this chain\'s interest counts as zero for the day.';
+      if (!m.baseServed) {
+        // Nothing here can learn the outcome: a statement, not a condition.
+        return HOLDS(`${head} This keeper does not serve Base, so the day's outcome cannot be learned here; this is said once and not followed. A contract-side guard is tracked in #2621.`, true);
+      }
+      return HOLDS(`${head} This alert stands until Base records the day's outcome. A contract-side guard is tracked in #2621.`);
+    },
+  },
+  {
+    kind: 'noexpected',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const b = f.base;
+      if (b === null) return GONE;
+      if (!b.expected.known) return UNJUDGED;
+      if (b.expected.value.length > 0) return GONE;
+      return HOLDS(
+        `${tag}: Base's expected-source list is empty, so no day is finalized: a day finalized against an empty list sums no chain and finalizes as zero, irreversibly. Set the list (setExpectedSourceChainIds) before rewards can be finalized.`,
+      );
+    },
+  },
+  {
+    kind: 'selfmissing',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const b = f.base;
+      if (b === null) return GONE;
+      if (!b.expected.known) return UNJUDGED;
+      if (b.expected.value.length === 0 || b.expected.value.includes(f.chainId)) return GONE;
+      return HOLDS(
+        `${tag}: this chain is not on its own expected-source list. Finalization sums only the listed chains, so this chain's own interest is left out of every day's global total while its users' shares are still worked out against it; and its own report still counts toward the contract's report count. Add it (setExpectedSourceChainIds). Until it is added, the pass finalizes no day: a day finalized now would leave this chain's interest out of its total for good.`,
+      );
+    },
+  },
+  {
+    kind: 'topology',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const b = f.base;
+      if (b === null) return GONE;
+      if (b.topology === null) return UNJUDGED;
+      const faults = topologyFaults(b.topology, f.chainId);
+      if (faults.length === 0) return GONE;
+      return HOLDS(
+        `${tag}: Base's expected-source list and the reward messenger's broadcast destinations do not line up: ${faults.join('; ')}. Make each mirror appear once on both lists, and Base on the expected-source list only (setExpectedSourceChainIds on the Diamond, setBroadcastDestinations on the messenger).`,
+      );
+    },
+  },
+  {
+    kind: 'destunread',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const b = f.base;
+      if (b === null || b.destinations.known) return GONE;
+      return HOLDS(
+        `${tag}: the reward messenger's broadcast destinations could not be read (the messenger is unset, too old to list them, or the read failed), so no finalized day was broadcast this run and users on the mirrors cannot claim those days yet. Finalizing goes on; the broadcast resumes on the first run that reads the list.`,
+      );
+    },
+  },
+  {
+    kind: 'notexpected',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const m = f.mirror;
+      if (m === null) return GONE;
+      if (m.notExpectedOnBase === 'unserved') return RETIRED("this keeper no longer serves Base, so Base's expected-source list cannot be read here");
+      if (!m.notExpectedOnBase.known) return UNJUDGED;
+      if (!m.notExpectedOnBase.value) return GONE;
+      return HOLDS(
+        `${tag}: this chain is not on Base's expected-source list, so Base refuses every report it sends (SourceChainIdNotExpected): its interest counts toward no day, and the chain-wide figures each report carries (its custody era, and its recycled-availability and commitment ratchets) do not reach Base, so commitments this chain has retired stay outstanding there. The pass still closes each day here. CCIP records each refused report as a failed message, which can be executed again by hand once the chain is back on the list. If this chain is being detached, keep it on the list until its last report has landed (#2618).`,
+      );
+    },
+  },
+  {
+    kind: 'clock',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const c = f.clock;
+      if (c === null) return UNJUDGED;
+      if (c.differ.length === 0) return c.unknown.length === 0 && !c.stale ? GONE : UNJUDGED;
+      const base = c.base === null ? 'unknown' : iso(c.base);
+      if (f.canonical) {
+        const each = c.differ.map((x) => `chain ${x.chain} (day 0 starts ${iso(x.launch)}${x.lastRead ? ', as last read; this run could not read it' : ''})`).join(', ');
+        return HOLDS(
+          `${tag}: ${each} run(s) a reward clock different from Base's (day 0 starts ${base}), so the same day number covers different hours there and here. A day finalized with such a report sums unrelated interest into one global total, irreversibly, so the pass finalizes no day until every listed chain runs Base's clock. Days already finalized are still broadcast.`,
+        );
+      }
+      return HOLDS(
+        `${tag}: this chain's reward clock (day 0 starts ${iso(c.differ[0].launch)}) differs from Base's (day 0 starts ${base}${c.stale ? ', as last read; this run could not read it' : ''}), so the same day number covers different hours here and on Base. A report sent now would be summed into Base's day with interest from other hours, irreversibly, so the pass closes no day here until the two match.`,
+      );
+    },
+  },
+  {
+    kind: 'clockunknown',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const c = f.clock;
+      if (c === null) return UNJUDGED;
+      if (c.unknown.length === 0) return GONE;
+      const each = c.unknown.map((x) => `chain ${x.chain} (${x.why})`).join('; ');
+      return HOLDS(
+        `${tag}: the reward clock of ${each} is not known to this keeper. A day number must cover the same hours on every chain, or interest from different hours is summed into one day irreversibly, so the pass ${f.canonical ? 'finalizes' : 'closes'} no day until that clock is read. Serve that chain's RPC to this keeper, or check its Diamond.`,
+      );
+    },
+  },
+  {
+    kind: 'route',
+    perDay: false,
+    raised: () => ['all'],
+    judge(f, _s, tag) {
+      const m = f.mirror;
+      if (m === null) return GONE;
+      if (m.route.known && m.route.value === m.baseChainId) return GONE;
+      return HOLDS(
+        !m.route.known
+          ? `${tag}: where this chain's reward messenger sends its reports (its baseChainId) could not be read, so whether a report would reach Base (chain ${m.baseChainId}, as this Diamond names it) is unknown. A report is sent once and stamped sent here for good, so the pass closes no day until the route reads as Base.`
+          : `${tag}: this chain's reward messenger sends its reports to chain ${m.route.value}, but this Diamond names chain ${m.baseChainId} as Base. A report sent now would be stamped sent here for good and never reach Base, which would then finalize the day without this chain, so the pass closes no day until the two agree (the messenger's setBaseChainId or the Diamond's reporter config).`,
+      );
+    },
+  },
+];
+
+const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
+
+/** An open key's parts, or null when it is not one of this chain's. */
+function parseKey(key: string, chainId: number): { kind: string; subject: string } | null {
+  const m = /^dayclose-([a-z]+):(\d+):(.+)$/.exec(key);
+  if (m === null || Number(m[2]) !== chainId) return null;
+  return { kind: m[1], subject: m[3] };
+}
+
+function keyOf(kind: string, chainId: number, subject: string): string {
+  return `dayclose-${kind}:${chainId}:${subject}`;
+}
+
+/** The day a per-day subject names (`<day>` or `<step>:<day>`). */
+function dayOf(subject: string): number | null {
+  const d = Number(subject.split(':').at(-1));
+  return Number.isSafeInteger(d) && d >= 0 ? d : null;
+}
+
+/** What became of the run's alerts: the days they hold owed, or 'all' when
+ *  the open alerts could not be read and nothing could be judged. */
+export type AlertsHeld = Set<number> | 'all';
+
+/**
+ * Judge every alert for one chain, raise and clear accordingly, and return
+ * the days the alerts hold: every day an alert still stands on, and every day
+ * whose due alert this run did not deliver (the deadline came first, or the
+ * post failed or was refused). Such a day stays owed, so an alert is never
+ * lost with a day leaving the ledger. A statement holds its day only until
+ * it is delivered.
+ */
+export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, nowSec: number, deadline: number): Promise<AlertsHeld> {
+  const chainId = f.chainId;
+  let openKeys: string[];
+  try {
+    openKeys = await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`);
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
+    return 'all';
+  }
+  const open = new Map<string, { kind: string; subject: string }>();
+  for (const k of openKeys) {
+    const p = parseKey(k, chainId);
+    if (p !== null) open.set(k, p);
+  }
+  const inWindow = new Set(f.window);
+  const outside = [...new Set([...open.values()].filter((p) => BY_KIND.get(p.kind)?.perDay).map((p) => dayOf(p.subject)).filter((d): d is number => d !== null && !inWindow.has(d)))];
+  let owed: Set<number>;
+  try {
+    owed = await store.owedAmong(outside);
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: owed days unread, their alerts left for the next run: ${shortErr(err)}`);
+    owed = new Set(outside);
+  }
+
+  const tag = `[chain ${chainId}] reward day close`;
+  const held = new Set<number>();
+  const retire: { key: string; why: string; day: number | null }[] = [];
+  const hold = (d: number | null) => {
+    if (d !== null) held.add(d);
+  };
+
+  for (const k of KINDS) {
+    const subjects = new Set(k.perDay ? k.raised(f) : ['all']);
+    for (const p of open.values()) if (p.kind === k.kind) subjects.add(p.subject);
+    for (const subject of subjects) {
+      const key = keyOf(k.kind, chainId, subject);
+      const isOpen = open.has(key);
+      const day = k.perDay ? dayOf(subject) : null;
+      let j: Judgement;
+      if (day !== null && !inWindow.has(day)) j = owed.has(day) ? UNJUDGED : GONE; // a day no longer worked takes its alerts with it
+      else j = k.judge(f, subject, tag);
+
+      if (j.verdict === 'holds') {
+        // eslint-disable-next-line no-await-in-loop
+        const outcome = Date.now() >= deadline ? 'deadline' : await sendOpsAlert(env, key, j.text, k.repeat ?? ALERT_REPEAT_SEC, nowSec, chainId);
+        // 'suppressed' was delivered before; 'unconfigured' is journaled.
+        const delivered = outcome === 'sent' || outcome === 'suppressed' || outcome === 'unconfigured';
+        if (!delivered || !(j.statement || k.statement)) hold(day);
+      } else if (j.verdict === 'gone') {
+        if (!isOpen) continue;
+        if (Date.now() >= deadline) hold(day);
+        // eslint-disable-next-line no-await-in-loop
+        else await resolveOpsAlert(env, key);
+      } else if (j.verdict === 'unjudged') {
+        if (isOpen && !k.statement) hold(day);
+      } else if (isOpen) {
+        retire.push({ key, why: j.why, day });
+      }
+    }
+  }
+  // An open alert of a kind this pass no longer raises cannot be judged.
+  for (const [key, p] of open) {
+    if (!BY_KIND.has(p.kind)) retire.push({ key, why: 'this pass no longer raises this alert', day: null });
+  }
+  if (retire.length > 0) {
+    const ok = await closeWithNotice(
+      env,
+      chainId,
+      retire,
+      `${tag}: alerts closed, no longer judged here`,
+      'Each condition below can no longer be judged by this keeper, so it is no longer retried or watched here. What it named may still hold; the reason says where to look.',
+      Date.now() >= deadline,
+    );
+    if (!ok) for (const r of retire) hold(r.day);
+  }
+  return held;
+}
+
+/** Close `items` (open alerts), telling the ops channel which and why. Closed
+ *  only once said: a notice that did not go out is tried next run. Returns
+ *  whether they were closed. */
+export async function closeWithNotice(env: Env, chainId: number, items: readonly { key: string; why: string }[], header: string, footer: string, pastDeadline: boolean, logPrefix = ''): Promise<boolean> {
+  if (pastDeadline) return false;
+  const lines = items.map((i) => `closed: ${i.key} (${i.why})`);
+  for (const l of lines) console.log(`[keeper] rewardDayClose chain=${chainId}: ${logPrefix}${l}`);
+  const outcome = await sendOpsNoticeDigest(env, header, lines, footer, chainId);
+  if (outcome !== 'sent' && outcome !== 'unconfigured') return false;
+  for (const i of items) {
+    // eslint-disable-next-line no-await-in-loop
+    await resolveOpsAlert(env, i.key);
+  }
+  return true;
+}
+
+/**
+ * A chain that has left the reward set (its role is neither canonical nor
+ * mirror) is no longer worked, so nothing the pass said about it is still
+ * retried or watched. Its open alerts are closed, and the ops channel told
+ * once which and why. Should the chain rejoin, a run judges it afresh.
+ */
+export async function retireChainAlerts(env: Env, chainId: number, role: number, deadline: number): Promise<void> {
+  let open: string[];
+  try {
+    open = (await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`)).filter((k) => parseKey(k, chainId) !== null).sort();
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, left for the next run: ${shortErr(err)}`);
+    return;
+  }
+  if (open.length === 0) return;
+  await closeWithNotice(
+    env,
+    chainId,
+    open.map((key) => ({ key, why: `the chain left the reward set (role ${role})` })),
+    `[chain ${chainId}] reward day close: chain left the reward set (role ${role}), its alerts closed`,
+    'This chain is neither the canonical reward chain nor a mirror, so the pass no longer closes, finalizes or broadcasts its days, and the conditions these alerts named are no longer retried or watched. If the chain rejoins, the pass judges it afresh.',
+    Date.now() >= deadline,
+    `reward role ${role}, `,
+  );
+}
