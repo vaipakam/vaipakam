@@ -926,7 +926,10 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  notice) are open-work rows whose `item` and `block` are the day;
  *  `day_clock` holds a peer chain's reward clock as last read (`item` = that
  *  chain); `day_close` is a cursor only, the first day not yet entered into
- *  `day_owed`. */
+ *  `day_owed`; `day_open` (an open day on Base, the block it was last seen
+ *  open from) and `day_dispatch` (a mirror close whose report left through a
+ *  messenger other than the one checked) are per-day records like
+ *  `day_broadcast`. */
 export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open';
 
 /** The last block the shared indexer has completely recorded on `chainId`

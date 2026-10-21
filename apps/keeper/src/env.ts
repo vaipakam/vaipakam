@@ -141,7 +141,7 @@ interface BaseEnv {
   /** 'true' arms the horizon heartbeat (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_HORIZON_HEARTBEAT_ENABLED?: string;
 
-  // #2612 — the reward day-close pass (`rewardDayClose.ts`).
+  // #2612 — the reward day-close pass (`rewardDayClose/`).
   /** 'true' arms the reward day-close pass (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_DAY_CLOSE_ENABLED?: string;
 
