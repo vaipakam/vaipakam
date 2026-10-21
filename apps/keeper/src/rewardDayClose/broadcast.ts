@@ -51,16 +51,38 @@ export async function broadcastDays(c: ChainRun, store: DayStore, sender: Sender
   const plans = new Map<number, BroadcastPlan>();
   let sent = 0;
   const marks = await store.broadcasts(x.days);
+  // Chains that may be owed a day though neither list names them now (a
+  // mirror taken off both after the day was finalized, before this keeper
+  // first saw it): every chain this keeper serves, and every destination any
+  // window day has had. The contract's own day standing decides each.
+  const known = new Set([...(c.deps.served ?? []), ...[...marks.values()].flatMap((m) => Object.keys(m.sentTo).map(Number))]);
+  known.delete(c.chainId);
   for (const d of x.days) {
     const sentTo = new Map<number, SendMark | null>(Object.entries(marks.get(d)?.sentTo ?? {}).map(([k, t]) => [Number(k), t]));
-    const save = () => store.saveBroadcast(d, sentTo);
+    const noStanding = new Set(marks.get(d)?.noStanding ?? []);
+    const save = () => store.saveBroadcast(d, sentTo, noStanding);
     // The record only grows: a mirror taken off the list after a send that
     // never reached it still lacks the day; one added after the day was sent
     // has never been sent it.
     const fresh = [...new Set([...x.current, ...x.mirrors])].filter((k) => !sentTo.has(k));
     for (const k of fresh) sentTo.set(k, null);
+    let changed = fresh.length > 0;
+    for (const k of known) {
+      if (sentTo.has(k) || noStanding.has(k)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const q = await quote(c.deps.client, c.diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(k)]);
+      if ('refused' in q && q.refused === NO_STANDING) {
+        noStanding.add(k);
+        changed = true;
+        continue;
+      }
+      // Standing, or not known: owed until a read says otherwise.
+      if ('unread' in q) sender.noteUnread(`broadcast:${d}`, `whether chain ${k} has standing in the day`);
+      sentTo.set(k, null);
+      changed = true;
+    }
     // eslint-disable-next-line no-await-in-loop
-    if (fresh.length > 0) await save();
+    if (changed) await save();
     // eslint-disable-next-line no-await-in-loop
     const dest = await destinationStates(c.deps, [...sentTo.keys()].sort((a, b) => a - b), d, c.where);
     for (const [k, state] of dest) {
@@ -139,7 +161,10 @@ async function deliver(c: ChainRun, sender: Sender, x: BroadcastInput, d: number
     if (sender.stopped) break;
     // eslint-disable-next-line no-await-in-loop
     const q = await quote(c.deps.client, c.diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(k)]);
-    if ('unread' in q) continue;
+    if ('unread' in q) {
+      sender.noteUnread(key, `the fee of the send to chain ${k} alone`);
+      continue;
+    }
     const r =
       'refused' in q
         ? q.refused
@@ -157,7 +182,10 @@ async function deliver(c: ChainRun, sender: Sender, x: BroadcastInput, d: number
   if (toAll && !sender.stopped) {
     await sendCovering(c, sender, x.messenger, d, x.current, sentTo, save, async () => {
       const q = await quote(c.deps.client, c.diamond, 'quoteBroadcastGlobal', [BigInt(d)]);
-      if ('unread' in q) return 'skipped';
+      if ('unread' in q) {
+        sender.noteUnread(key, 'the fee of the send to every destination');
+        return 'skipped';
+      }
       if ('refused' in q) {
         sender.refused.set(key, `the Diamond would not quote the broadcast fee (${q.refused})`);
         return q.refused;

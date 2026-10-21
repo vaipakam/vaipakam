@@ -48,6 +48,8 @@ import { dayWindow } from './plan';
  *  while worked, with the last send that covered it (null = none yet). */
 export interface BroadcastRecord {
   sentTo: Record<string, SendMark | null>;
+  /** Chains the contract says have no standing in the day, so are not owed it. */
+  noStanding?: number[];
 }
 
 /** A finalized day's zeroed record: the expected chains Base holds no report
@@ -146,8 +148,11 @@ export class DayStore {
     return this.byDay('day_broadcast', days);
   }
 
-  saveBroadcast(day: number, sentTo: ReadonlyMap<number, SendMark | null>): Promise<void> {
-    return this.put<BroadcastRecord>('day_broadcast', day, { sentTo: Object.fromEntries([...sentTo].sort(([a], [b]) => a - b).map(([c, t]) => [String(c), t])) });
+  saveBroadcast(day: number, sentTo: ReadonlyMap<number, SendMark | null>, noStanding: ReadonlySet<number> = new Set()): Promise<void> {
+    return this.put<BroadcastRecord>('day_broadcast', day, {
+      sentTo: Object.fromEntries([...sentTo].sort(([a], [b]) => a - b).map(([c, t]) => [String(c), t])),
+      ...(noStanding.size > 0 ? { noStanding: [...noStanding].sort((a, b) => a - b) } : {}),
+    });
   }
 
   zeroed(days: readonly number[]): Promise<Map<number, ZeroedRecord>> {

@@ -42,6 +42,14 @@ export class Sender {
    *  here, so a day held by a read is never held silently. */
   readonly unread = new Map<string, string>();
 
+  /** Record that `what` could not be read, keeping `step:day` from being
+   *  worked this run. Several reads for one step are all named. */
+  noteUnread(key: string, what: string): void {
+    const had = this.unread.get(key);
+    if (had === undefined) this.unread.set(key, what);
+    else if (!had.split('; ').includes(what)) this.unread.set(key, `${had}; ${what}`);
+  }
+
   constructor(private readonly deps: DayCloseDeps) {}
 
   /** The run was stopped by a paused protocol. */
@@ -90,6 +98,7 @@ export class Sender {
         // No answer from the contract is not its refusal: say nothing about
         // the day, and stop sending on this RPC for the run.
         console.error(`[keeper] rewardDayClose chain=${ctx.chainId} ${functionName}(${day}) not simulated, the RPC did not answer: ${c.unread}`);
+        this.noteUnread(`${step}:${day}`, 'the simulation of the call (the RPC did not answer)');
         return this.stop('rpc-unavailable');
       }
       const reason = c.refused;

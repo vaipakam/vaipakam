@@ -83,7 +83,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     return r.known ? Number(r.value[1]) === REASON_FINALIZED : null;
   };
   const open = x.window.filter((d) => isFinalized(d) === false);
-  for (const d of x.window) if (isFinalized(d) === null) sender.unread.set(`finalize:${d}`, 'whether the day is finalized or ready');
+  for (const d of x.window) if (isFinalized(d) === null) sender.noteUnread(`finalize:${d}`, 'whether the day is finalized or ready');
   const finalized = new Set(x.window.filter((d) => isFinalized(d) === true));
   const reported = expected.known ? await readReported(c, open, expected.value) : new Map<number, { reported: Set<number>; unknown: Set<number> }>();
 
@@ -99,7 +99,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     if (!expected.known || !own.known || !first.known || !r.known) {
       // An unread list is the run's finalize hold, said as such.
       const what = [!own.known && "whether Base has closed it", !first.known && 'when its first report landed'].filter(Boolean).join(' and ');
-      if (expected.known && what) sender.unread.set(`finalize:${d}`, what);
+      if (expected.known && what) sender.noteUnread(`finalize:${d}`, what);
       continue;
     }
     judged.add(d);

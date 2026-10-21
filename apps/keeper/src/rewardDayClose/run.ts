@@ -62,6 +62,7 @@ export async function runRewardDayClose(env: Env, tick: PassTick): Promise<void>
           readClient: plain,
           context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
           peer: (id) => peerReader(chains, id, sendDeadline),
+          served: chains.map((x) => x.id),
           sendDeadline,
           runDeadline: tick.deadlineMs,
         });
@@ -117,7 +118,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }));
   const unclosed = window.filter((d) => {
     const s = dayFact(reportedHere, d);
-    if (!s.known) sender.unread.set(`close:${d}`, 'whether this chain has reported the day');
+    if (!s.known) sender.noteUnread(`close:${d}`, 'whether this chain has reported the day');
     return s.known && !s.value;
   });
 

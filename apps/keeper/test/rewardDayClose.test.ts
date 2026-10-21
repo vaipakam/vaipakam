@@ -211,6 +211,8 @@ class FakeDiamond {
   knownUnreadable = false;
   /** The messenger's destination list cannot be read. */
   destinationsUnreadable = false;
+  /** Chains with standing in every day though not reported in it. */
+  standing = new Set<number>();
   /** Destinations whose single-destination broadcast quote cannot be read. */
   quoteUnreadTo = new Set<number>();
   /** This chain's own report-sent reads fail. */
@@ -289,7 +291,10 @@ class FakeDiamond {
         return BROADCAST_FEE;
       case 'quoteBroadcastGlobalTo':
         if (this.quoteUnreadTo.has(Number(args![1]))) throw new Error('rpc down');
-        if (this.noStanding.has(Number(args![1]))) throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
+        // Day standing, as the contract keeps it: included in the day's
+        // finalization (it reported in time), or marked otherwise.
+        if (this.noStanding.has(Number(args![1])) || (!this.destinations.includes(Number(args![1])) && !this.reported.get(d)?.has(Number(args![1])) && !this.standing.has(Number(args![1]))))
+          throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
         if (this.refuseToChain.has(Number(args![1]))) throw revert(this.refuseToChain.get(Number(args![1]))!);
         if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
         return BROADCAST_TO_FEE;
@@ -473,6 +478,7 @@ describe('a run', () => {
       readClient: c.client(),
       context: () => c.ctx(),
       peer: peers,
+      served: [BASE, MIRROR],
       sendDeadline: Number.POSITIVE_INFINITY,
       runDeadline: Number.POSITIVE_INFINITY,
     });
@@ -978,6 +984,34 @@ describe('a run', () => {
     expect(openKeys()).toEqual([`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`]);
   });
 
+  it('never takes Base as canonical on a recorded role once a fresh read says otherwise, though its clock read fails', async () => {
+    await run(mirror); // Base's clock and role recorded
+    mirror.sent = [];
+    mirror.today += 1;
+    base.launchUnread = true; // the clock read fails this run...
+    base.role = ROLE_MIRROR; // ...while the role read says Base is no longer canonical
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/is not the canonical reward chain \(its role reads 1\)/)).toHaveLength(1);
+  });
+
+  it('says a call whose simulation got no answer was not tried', async () => {
+    mirror.rpcDown = true;
+    await run(mirror);
+    expect(alerts(/did not try closing the day \(closeDay\) this run for day 0 \(the simulation of the call \(the RPC did not answer\) could not be read\)/)).toHaveLength(1);
+  });
+
+  it('broadcasts a finalized day to a mirror that had part in it though both lists dropped it before the keeper first saw the day', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE, MIRROR])); // the mirror is in the day
+    base.firstAt.set(0, NOW - 60);
+    base.finalizeByOther(0);
+    base.expected = [BASE]; // then taken off both lists
+    base.destinations = [];
+    await run(base);
+    expect(base.sent.filter((s) => s.fn !== 'closeDay'), 'the contract says it has standing: it is owed the day').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
+  });
+
   it('does not call an RPC that gives no answer a refusal', async () => {
     mirror.rpcDown = true;
     await run(mirror);
@@ -1262,6 +1296,7 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.slice(1), 'one destination landed').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
     expect(owed(), 'one send landing is not the broadcast done').toEqual([0]);
+    expect(alerts(/did not try broadcasting the day \(broadcastGlobal\) this run for day 0 \(the fee of the send to chain 56 alone could not be read\)/), 'and the unread fee is said').toHaveLength(1);
   });
 
   it("closes, with a notice, an alert about a Diamond the chain no longer names, and does not judge it against the new one", async () => {
@@ -1289,6 +1324,7 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper
     base.expected = [BASE, OTHER];
+    base.reported.set(0, new Set([BASE, OTHER])); // as finalized: the mirror had no part in the day
     await run(base);
     await run(base);
     later(BROADCAST_RESEND_AFTER_SEC);
@@ -1301,6 +1337,7 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [MIRROR, OTHER]; // OTHER is not served by this keeper
     base.expected = [BASE, MIRROR, OTHER];
+    base.reported.set(0, new Set([BASE, MIRROR, OTHER])); // all three in the day
     base.listAtSend = [MIRROR]; // OTHER leaves the list after the run reads it
     await run(base);
     expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal']);
@@ -1314,6 +1351,7 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper
     base.expected = [BASE, OTHER];
+    base.reported.set(0, new Set([BASE, OTHER])); // as finalized: the mirror had no part in the day
     base.receiptLost = true;
     await run(base);
     base.receiptLost = false;
@@ -1333,6 +1371,7 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper
     base.expected = [BASE, OTHER];
+    base.reported.set(0, new Set([BASE, OTHER])); // as finalized: the mirror had no part in the day
     base.rotateTo = '0x0000000000000000000000000000000000000077';
     await run(base);
     later(BROADCAST_RESEND_AFTER_SEC);
@@ -1344,6 +1383,7 @@ describe('a run', () => {
     finalizedDayZero();
     base.destinations = [OTHER];
     base.expected = [BASE, OTHER];
+    base.reported.set(0, new Set([BASE, OTHER])); // as finalized: the mirror had no part in the day
     base.rotateTo = '0x0000000000000000000000000000000000000077';
     base.reporterConfigUnreadAtBlock = true;
     await run(base);

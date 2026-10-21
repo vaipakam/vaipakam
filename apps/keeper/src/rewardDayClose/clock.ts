@@ -26,8 +26,10 @@ export type PeerClock = { known: true; launch: number; lastRead: boolean; role: 
  * serve, its current Diamond is unknown and the last record stands.
  */
 export async function peerClock(store: DayStore, peerChain: number, p: PeerReader | null, where: string): Promise<PeerClock> {
+  let fresh: number | null = null;
   if (p !== null) {
     const [now, role] = await Promise.all([launchOf(p, where), roleOf(p, where)]);
+    if (role.known) fresh = role.value;
     if (now.known) {
       const diamond = p.diamond.toLowerCase();
       // A role unread now stands as last read for the same Diamond only.
@@ -48,7 +50,10 @@ export async function peerClock(store: DayStore, peerChain: number, p: PeerReade
   if (rec.launch === null || !Number.isSafeInteger(rec.launch)) {
     return { known: false, why: `its Diamond (${rec.diamond}) changed since its clock was last read, and the new clock has not been read` };
   }
-  return { known: true, launch: rec.launch, lastRead: true, role: rec.role ?? null };
+  // A role read this run supersedes the recorded one, whatever the clock read
+  // did: a peer read as no longer canonical is never taken as canonical.
+  if (fresh !== null && fresh !== rec.role) await store.saveClock(peerChain, { ...rec, role: fresh });
+  return { known: true, launch: rec.launch, lastRead: true, role: fresh ?? rec.role ?? null };
 }
 
 /** The run's judgement of clock alignment, for its holds and its alerts. */

@@ -19,6 +19,9 @@ export interface DayCloseDeps {
   readClient: PublicClient;
   /** The signing context, built only when there is something to send. */
   context: () => KeeperContext | null;
+  /** Every chain this keeper serves, probed for standing in a finalized day
+   *  it is owed (absent = none beyond the lists). */
+  served?: readonly number[];
   /** Another chain this keeper serves, by EVM chain id (null = not served). */
   peer: (chainId: number) => PeerReader | null;
   sendDeadline: number;
