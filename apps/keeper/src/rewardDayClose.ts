@@ -38,14 +38,15 @@
 //      rule is per CHAIN, never a report COUNT: a count can reach the expected
 //      number while an expected chain is still missing (a report from a chain
 //      not on the list counts too), and finalizing then would zero a report
-//      still in flight inside grace. A day finalized at grace with a chain
-//      missing zeroes that chain's interest for the day, so the run says so,
-//      naming each one from the finalization's own `ChainContributionZeroed`
-//      events (not from the read before the send, which can be stale). That
-//      notice is journaled and queued the moment the finalization lands, and
-//      posted until it is delivered: on the next run the day is finalized and
-//      the receipt is gone, so nothing could rebuild it. An empty expected-source list is never finalized
-//      against: every day would finalize as zero, irreversibly.
+//      still in flight inside grace. A day finalized with a chain missing
+//      zeroes that chain's interest for the day, so the run says so once,
+//      whoever finalized it (this keeper, another caller, an admin): the
+//      chains are read from Base's own record of who reported the day, at a
+//      block where the day is finalized (a report landing later is not
+//      recorded as the day's), journaled and recorded, and posted until it is
+//      delivered. An empty expected-source list, or one without Base, is never
+//      finalized against: every day would finalize as zero, or without Base's
+//      own interest, irreversibly.
 //   3. BROADCASTS (Base only) each finalized day to the messenger's
 //      destinations (`broadcastGlobal`, the quoted fee, paid exactly), and
 //      confirms delivery by reading each destination this keeper also serves
@@ -62,7 +63,14 @@
 //      as unreachable if the contract refuses that. A destination list that
 //      cannot be read stops only this step. A destination this keeper does not serve
 //      cannot be read, so it is sent to once and never confirmed: the run's
-//      line says so.
+//      line says so. A send's time is recorded before it goes out and kept
+//      unless nothing went out, so a send whose receipt was not seen (it may
+//      have landed, paying every lane) is not repeated before the re-send
+//      interval.
+//
+// A call the RPC gives no answer about (a transport error, a timeout) is not
+// the contract's refusal: nothing is said about the day, and the run stops
+// sending on that RPC.
 //
 // What the run sends is bounded ({@link MAX_SENDS_PER_RUN} per chain), each
 // send is simulated first on the current state, and each waits for its
@@ -83,25 +91,27 @@
 //     out (Base's own interest is then summed into no day's global total), or
 //     an expected-source list and broadcast-destination list that disagree
 //     (an expected mirror no day is broadcast to, whose users could never
-//     claim; or a destination whose reports Base refuses as unexpected); each
-//     read every run and cleared only on a read showing the fix;
+//     claim; a destination whose reports Base refuses as unexpected; Base
+//     itself, or a mirror twice, among the destinations); each read every run
+//     and cleared only on a read showing the fix;
 //   - on Base, a broadcast destination list that cannot be read;
-//   - on Base, a broadcast a served destination has not received
-//     {@link BROADCAST_LATE_AFTER_SEC} after it was sent;
+//   - on Base, a broadcast a served destination has not received, or whose
+//     arrival there cannot be read, {@link BROADCAST_LATE_AFTER_SEC} after it
+//     was sent;
 //   - on a mirror, a day Base finalized without this chain's report.
-// And one NOTICE (a thing that happened): a day Base finalized at grace with
-// expected chains missing, naming each.
+// And one NOTICE (a thing that happened): a day Base finalized with expected
+// chains missing, naming each.
 //
 // The pass keeps two kinds of row in the keeper's private open-work queue
 // (`keeper_work_open`), one per (chain, Diamond, day), each dropped when its
 // day leaves the window: a broadcast's last send time and every destination
 // the day has had (kind `day_broadcast`; losing it costs at most one extra
-// broadcast, and forgets a destination removed since), and an undelivered zeroed-day
-// notice (kind `day_zeroed`).
+// broadcast, and forgets a destination removed since), and a finalized day's
+// zeroed chains with whether that notice was delivered (kind `day_zeroed`).
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
 
-import { BaseError, ContractFunctionRevertedError, createPublicClient, http, parseEventLogs, type Abi, type Address, type Hex, type Log, type PublicClient } from 'viem';
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import {
   AdminFacetABI,
   InteractionRewardsLensFacetABI,
@@ -117,7 +127,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
-import { finishWork, getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
+import { getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from './opsAlert';
 
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
@@ -202,6 +212,8 @@ export interface FinalizeInput {
   contractReady: boolean;
   /** `getDailyFirstReportAt` (0 = no report yet). */
   firstReportAt: number;
+  /** Base's own chain id: a list without it is never finalized against. */
+  selfChainId: number;
   /** Base's expected-source list and which of them have reported this day. */
   expected: readonly number[];
   reported: ReadonlySet<number>;
@@ -214,6 +226,7 @@ export type FinalizeDecision =
   | { kind: 'done' }
   | { kind: 'own-report-first' }
   | { kind: 'no-expected' }
+  | { kind: 'self-not-expected' }
   | { kind: 'finalize'; missing: number[] }
   | { kind: 'wait'; missing: number[]; unknown: number[]; graceEndsAt: number | null };
 
@@ -229,6 +242,8 @@ export function planFinalize(x: FinalizeInput, graceSec: number, nowSec: number)
   if (x.finalized) return { kind: 'done' };
   if (!x.ownReported) return { kind: 'own-report-first' };
   if (x.expected.length === 0) return { kind: 'no-expected' };
+  // Base's own interest would be left out of the day's total, irreversibly.
+  if (!x.expected.includes(x.selfChainId)) return { kind: 'self-not-expected' };
   const unknown = x.expected.filter((c) => !x.reported.has(c) && x.unknown?.has(c) === true);
   const missing = x.expected.filter((c) => !x.reported.has(c) && x.unknown?.has(c) !== true);
   const graceEndsAt = x.firstReportAt > 0 ? x.firstReportAt + graceSec : null;
@@ -254,8 +269,8 @@ export type BroadcastDecision =
  * the pair (an unserved one cannot be confirmed). A served destination still
  * missing it is reported late after {@link BROADCAST_LATE_AFTER_SEC} and
  * re-sent after {@link BROADCAST_RESEND_AFTER_SEC}, whatever another
- * destination's read did; one whose read failed is judged next run, and holds
- * back only "done".
+ * destination's read did; one whose read failed is judged next run, holds back
+ * "done", and is reported late as unknown once past the late mark.
  */
 export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentAt: number | null, nowSec: number): BroadcastDecision {
   const states = [...dest.values()];
@@ -267,8 +282,10 @@ export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentA
     if (served.length > 0 && served.length === states.length && served.every((s) => s === 'received')) return { kind: 'done' };
     return { kind: 'send', resend: false };
   }
-  if (!states.some((s) => s === 'missing')) return states.some((s) => s === 'unread') ? { kind: 'wait', late: false } : { kind: 'done' };
   const since = nowSec - sentAt;
+  // An unread destination is never "done": its delivery is unknown, and is
+  // reported as unknown past the late mark.
+  if (!states.some((s) => s === 'missing')) return states.some((s) => s === 'unread') ? { kind: 'wait', late: since >= BROADCAST_LATE_AFTER_SEC } : { kind: 'done' };
   if (since >= BROADCAST_RESEND_AFTER_SEC) return { kind: 'send', resend: true };
   return { kind: 'wait', late: since >= BROADCAST_LATE_AFTER_SEC };
 }
@@ -343,14 +360,14 @@ interface RunFindings {
   /** Base: where the expected-source and broadcast-destination lists
    *  disagree (null = not read). `undeliverable`: expected mirrors no day is
    *  broadcast to; `unexpected`: destinations whose reports Base refuses. */
-  topology: { undeliverable: number[]; unexpected: number[] } | null;
+  topology: { undeliverable: number[]; unexpected: number[]; self: boolean; repeated: number[] } | null;
   /** Base: the messenger's broadcast destinations could not be read, so no
    *  day was broadcast this run (null = not attempted). */
   destinationsUnread: boolean | null;
   /** Base: finalized days no served destination still lacks, as read. */
   broadcastConfirmed: Set<number>;
   /** Base: days a served destination has not received, past the late mark. */
-  lateBroadcast: { day: number; missing: number[]; sentAt: number }[];
+  lateBroadcast: { day: number; missing: number[]; unread: number[]; sentAt: number }[];
   /** Mirror: days Base finalized without this chain's report. */
   excluded: number[];
   /** The days this run's window covered. */
@@ -416,7 +433,11 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   for (const d of unclosed) {
     // eslint-disable-next-line no-await-in-loop
     const fee = canonical ? 0n : await reportFee(deps.client, messenger, d);
-    if (fee === null) {
+    if (fee === 'unread') {
+      console.error(`[keeper] rewardDayClose ${where}: report fee for day ${d} unread, the RPC did not answer; left for the next run`);
+      continue;
+    }
+    if (fee === 'refused') {
       f.refused.set(`close:${d}`, 'the messenger would not quote the report fee');
       continue;
     }
@@ -454,6 +475,8 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       f.topology = {
         undeliverable: expected.filter((c) => c !== chainId && !destinations.includes(c)),
         unexpected: destinations.filter((c) => !expected.includes(c)),
+        self: destinations.includes(chainId),
+        repeated: [...new Set(destinations.filter((c, i) => destinations.indexOf(c) !== i))],
       };
     }
     const ready = await readDays<readonly [boolean, number]>(deps, diamond, window, 'isDayReadyToFinalize', where);
@@ -469,6 +492,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
           day: d,
           finalized: false,
           ownReported: (sentAt.get(d) ?? 0n) > 0n,
+          selfChainId: chainId,
           contractReady: Boolean(ready.get(d)![0]),
           firstReportAt: Number(firstAt.get(d) ?? 0n),
           expected,
@@ -484,17 +508,6 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
         if (r === 'landed') {
           finalized += 1;
           finalizedDays.add(d);
-          // What the finalization itself zeroed, from its own events: the
-          // pre-send read can be stale (a report landing in between) or
-          // partial (a failed read is judged as all missing).
-          const zeroed = zeroedChains(sender.lastLogs, diamond, d);
-          if (zeroed.length > 0) {
-            // Journaled and queued now: the receipt is the only record.
-            console.log(`[keeper] rewardDayClose ${where} notice: ${zeroedLine(d, zeroed)}`);
-            const row: WorkItem<{ missing: number[] }> = { item: String(d), block: d, payload: { missing: zeroed } };
-            // eslint-disable-next-line no-await-in-loop
-            await putWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', row);
-          }
         }
       } else if (decision.kind === 'wait' && (decision.missing.length > 0 || decision.unknown.length > 0)) {
         const nearEnd = decision.graceEndsAt !== null && decision.graceEndsAt - nowSec <= graceWarningSec(graceSec);
@@ -511,77 +524,85 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       }
     }
     for (const d of finalizedDays) f.settled.add(`finalize:${d}`);
+    await recordZeroed(env, deps, chainId, diamond, [...finalizedDays], expected, where);
 
     // ── 3. Broadcast ──
-    /** Send day `d` to every destination (`broadcastGlobal`). */
+    /** Send day `d` to every destination on the messenger's list
+     *  (`broadcastGlobal`). False when nothing was sent. */
     const broadcastAll = async (d: number): Promise<boolean> => {
       const q = await quote(deps.client, diamond, 'quoteBroadcastGlobal', [BigInt(d)]);
+      if ('unread' in q) return false;
       if ('refused' in q) {
         f.refused.set(`broadcast:${d}`, `the Diamond would not quote the broadcast fee (${q.refused})`);
         return false;
       }
       return (await sender.call('broadcast', d, 'broadcastGlobal', [BigInt(d)], q.fee)) === 'landed';
     };
-    /** Re-send day `d` only to the destinations still lacking it
-     *  (`broadcastGlobalTo`), so a lane that delivered is not paid again. When
-     *  the day or the messenger cannot take a single-destination send, a
-     *  destination still on the messenger's list is reached by sending to
-     *  every destination; one taken off the list since cannot be reached by
-     *  any send, and the run says so. */
-    const resendMissing = async (d: number, missing: readonly number[], current: readonly number[]): Promise<boolean> => {
-      let landed = false;
-      let toAll = false;
+    /**
+     * Deliver day `d` to `targets`, the destinations that still lack it. One
+     * rule for the first send and every re-send, by where each target is:
+     *   - one on the messenger's list is reached by the all-destination send
+     *     on the first send, and alone (`broadcastGlobalTo`) on a re-send, so
+     *     a lane that delivered is not paid again; when the day or the
+     *     messenger cannot take a single-destination send, by the
+     *     all-destination send after all;
+     *   - one taken off the list since is reachable only alone, the contract
+     *     admitting it by its standing in the day; when the contract will not,
+     *     no send can reach it, and the run says so.
+     */
+    const deliver = async (d: number, targets: readonly number[], current: readonly number[], first: boolean): Promise<void> => {
+      const onList = targets.filter((c) => current.includes(c));
+      let toAll = first && onList.length > 0;
       const unreachable: string[] = [];
-      for (const c of missing) {
+      for (const c of first ? targets.filter((t) => !current.includes(t)) : targets) {
         if (sender.stopped) break;
         // eslint-disable-next-line no-await-in-loop
         const q = await quote(deps.client, diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(c)]);
+        if ('unread' in q) continue;
         // eslint-disable-next-line no-await-in-loop
         const r = 'refused' in q ? q.refused : await sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(c)], q.fee);
-        if (r === 'landed') {
-          landed = true;
-          continue;
-        }
+        if (r === 'landed' || r === 'skipped') continue;
         if (RESEND_TO_ALL.has(r) && current.includes(c)) toAll = true;
         else if (RESEND_TO_ALL.has(r)) unreachable.push(`chain ${c} is no longer a broadcast destination and the Diamond will not send the day to it alone (${r})`);
         else if ('refused' in q) unreachable.push(`the Diamond would not quote the re-send to chain ${c} (${q.refused})`);
       }
       if (toAll && !sender.stopped) {
-        f.refused.delete(`broadcast:${d}`);
-        landed = (await broadcastAll(d)) || landed;
+        if (!first) f.refused.delete(`broadcast:${d}`);
+        await broadcastAll(d);
       }
       if (unreachable.length > 0) {
         const prior = f.refused.get(`broadcast:${d}`);
         f.refused.set(`broadcast:${d}`, [prior, ...unreachable].filter(Boolean).join('; '));
       }
-      return landed;
     };
 
     // A day's broadcast record lives exactly as long as the day is in the
     // window: kept while it is worked, dropped when the day leaves it, and
-    // read by day, never as a slice of the queue. It holds the last send (so
-    // a day whose destinations cannot all be confirmed is still sent only
-    // once) and every destination the day has had while worked, which only
-    // grows: a mirror taken off the messenger's list after a send that never
-    // reached it still lacks the day, and is still checked and re-sent to.
+    // read by day, never as a slice of the queue. It holds the last send and
+    // every destination the day has had while worked, which only grows: a
+    // mirror taken off the messenger's list after a send that never reached
+    // it still lacks the day, and is still checked and sent to. The send time
+    // is written BEFORE the send and kept unless no transaction went out, so
+    // a send whose receipt was not seen (it may have landed, paying every
+    // lane) is never repeated before the re-send interval.
     const days = destinations === null ? [] : [...finalizedDays].sort((a, b) => a - b);
     await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_broadcast', window[0]);
     const marks = await getWorkItems<BroadcastRecord>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', days.map(String));
+    const record = (d: number, payload: BroadcastRecord) =>
+      putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', { item: String(d), block: d, payload } as WorkItem<BroadcastRecord>);
     for (const d of days) {
       if (sender.stopped) break;
       const current = destinations ?? [];
       const mark = marks.get(String(d))?.payload;
       const lastSent = mark?.sentAt ?? null;
       const known = [...new Set([...(mark?.dests ?? []), ...current])].sort((a, b) => a - b);
-      if (known.length > (mark?.dests ?? []).length) {
-        const row: WorkItem<BroadcastRecord> = { item: String(d), block: d, payload: { sentAt: lastSent, dests: known } };
-        // eslint-disable-next-line no-await-in-loop
-        await putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', row);
-      }
+      // eslint-disable-next-line no-await-in-loop
+      if (known.length > (mark?.dests ?? []).length) await record(d, { sentAt: lastSent, dests: known });
       // eslint-disable-next-line no-await-in-loop
       const dest = await destinationStates(deps, known, d);
       const decision = planBroadcast(dest, lastSent, nowSec);
       const missing = [...dest].filter(([, s]) => s === 'missing').map(([c]) => c);
+      const unread = [...dest].filter(([, s]) => s === 'unread').map(([c]) => c);
       if (decision.kind === 'done') {
         f.settled.add(`broadcast:${d}`);
         f.broadcastConfirmed.add(d);
@@ -589,19 +610,24 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
         continue;
       }
       if (decision.kind === 'wait') {
-        if (decision.late && lastSent !== null) f.lateBroadcast.push({ day: d, missing, sentAt: lastSent });
+        if (decision.late && lastSent !== null) f.lateBroadcast.push({ day: d, missing, unread, sentAt: lastSent });
         continue;
       }
+      const targets = decision.resend ? missing : [...dest].filter(([, s]) => s !== 'received').map(([c]) => c);
+      const attemptAt = Math.floor(Date.now() / 1000);
+      const before = sender.maybeSent;
       // eslint-disable-next-line no-await-in-loop
-      const landed = decision.resend ? await resendMissing(d, missing, current) : await broadcastAll(d);
-      if (landed) {
+      await record(d, { sentAt: attemptAt, dests: known });
+      // eslint-disable-next-line no-await-in-loop
+      await deliver(d, targets, current, !decision.resend);
+      if (sender.maybeSent > before) {
         broadcast += 1;
-        const row: WorkItem<BroadcastRecord> = { item: String(d), block: d, payload: { sentAt: Math.floor(Date.now() / 1000), dests: known } };
-        // eslint-disable-next-line no-await-in-loop
-        await putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', row);
-      } else if (decision.resend && lastSent !== null && missing.length > 0) {
-        f.lateBroadcast.push({ day: d, missing, sentAt: lastSent });
+        continue;
       }
+      // Nothing went out: the record goes back to the last real send.
+      // eslint-disable-next-line no-await-in-loop
+      await record(d, { sentAt: lastSent, dests: known });
+      if (decision.resend && lastSent !== null && (missing.length > 0 || unread.length > 0)) f.lateBroadcast.push({ day: d, missing, unread, sentAt: lastSent });
     }
   }
 
@@ -722,7 +748,7 @@ async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], day: nu
  *  fixed-width, so zero figures price it exactly. Null when no shape quotes.
  *  A quote that does not match the shape sent cannot overpay silently: the
  *  `closeDay` simulation is the judge, and refuses an underpaid send. */
-async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<bigint | null> {
+async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<bigint | 'refused' | 'unread'> {
   const z = 0n;
   const d = BigInt(day);
   const ladder: readonly (readonly unknown[])[] = [
@@ -737,21 +763,28 @@ async function reportFee(client: PublicClient, messenger: Address, day: number):
       return (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args })) as bigint;
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
-      if (revertName(err) !== undefined) return null;
+      const c = classify(err);
+      if ('unread' in c) return 'unread';
+      // A named refusal is the messenger's answer; an unnamed one is a shape
+      // it does not have, so the next one is tried.
+      if (revertName(err) !== undefined) return 'refused';
     }
   }
-  return null;
+  return 'refused';
 }
 
-type Quote = { fee: bigint } | { refused: string };
+type Quote = { fee: bigint } | { refused: string } | { unread: string };
 
-/** A Diamond fee quote, or the reason it was refused. */
+/** A Diamond fee quote, the reason the contract refused it, or that the RPC
+ *  did not answer (logged; never reported as a refusal). */
 async function quote(client: PublicClient, diamond: Address, functionName: string, args: readonly unknown[]): Promise<Quote> {
   try {
     return { fee: (await client.readContract({ address: diamond, abi: ABI, functionName, args })) as bigint };
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
-    return { refused: revertName(err) ?? shortErr(err) };
+    const c = classify(err);
+    if ('unread' in c) console.error(`[keeper] rewardDayClose ${functionName} unread, the RPC did not answer: ${c.unread}`);
+    return c;
   }
 }
 
@@ -809,8 +842,9 @@ class Sender {
   private sends = 0;
   stopped = false;
   stopReason = '';
-  /** The logs of the last call that landed. */
-  lastLogs: readonly Log[] = [];
+  /** Writes that went out and may have landed: landed, or sent with no
+   *  receipt seen. A write known to have reverted is not counted. */
+  maybeSent = 0;
 
   constructor(
     private readonly deps: DayCloseDeps,
@@ -837,7 +871,14 @@ class Sender {
       await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, value, account: ctx.wallet.account! });
     } catch (err) {
       if (err instanceof PastRunDeadline) return this.stop('deadline');
-      const reason = revertName(err) ?? shortErr(err);
+      const c = classify(err);
+      if ('unread' in c) {
+        // No answer from the contract is not its refusal: say nothing about
+        // the day, and stop sending on this RPC for the run.
+        console.error(`[keeper] rewardDayClose chain=${ctx.chainId} ${functionName}(${day}) not simulated, the RPC did not answer: ${c.unread}`);
+        return this.stop('rpc-unavailable');
+      }
+      const reason = c.refused;
       if (reason === PAUSED_REFUSAL) return this.stop(PAUSED_REFUSAL);
       if (RACES.has(reason)) return 'skipped';
       if (reason !== FRONTIER_SHORT) this.f.refused.set(key, reason);
@@ -858,20 +899,23 @@ class Sender {
       } as never)) as Hex;
     } catch (err) {
       reportSendError(label, err, `send failed: ${shortErr(err)}`);
+      // The node may have taken it before failing to answer.
+      this.maybeSent += 1;
       return this.stop('send-failed');
     }
     console.log(`${label} value=${value} tx=${hash}`);
     try {
       const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
-      this.lastLogs = receipt.logs ?? [];
       if (receipt.status !== 'success') {
         this.f.refused.set(key, `reverted on chain (tx ${hash})`);
         return `reverted on chain (tx ${hash})`;
       }
     } catch (err) {
       console.error(`${label} receipt not seen in time: ${shortErr(err)}`);
+      this.maybeSent += 1;
       return this.stop('receipt-timeout');
     }
+    this.maybeSent += 1;
     this.f.settled.add(key);
     return 'landed';
   }
@@ -937,17 +981,11 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
       `${tag}: Base's expected-source list is empty, so no day is finalized: a day finalized against an empty list sums no chain and finalizes as zero, irreversibly. Set the list (setExpectedSourceChainIds) before rewards can be finalized.`,
     );
   }
-  if (canonical && f.topology && (f.topology.undeliverable.length > 0 || f.topology.unexpected.length > 0)) {
-    const parts: string[] = [];
-    if (f.topology.undeliverable.length > 0) {
-      parts.push(`chain(s) ${f.topology.undeliverable.join(', ')} are on Base's expected-source list but are not broadcast destinations, so no finalized day reaches them and their users cannot claim`);
-    }
-    if (f.topology.unexpected.length > 0) {
-      parts.push(`chain(s) ${f.topology.unexpected.join(', ')} are broadcast destinations but not on Base's expected-source list, so Base refuses their reports (SourceChainIdNotExpected) and every day finalizes without their interest`);
-    }
+  const faults = canonical && f.topology ? topologyFaults(f.topology, chainId) : [];
+  if (faults.length > 0) {
     await raise(
       `dayclose-topology:${chainId}:all`,
-      `${tag}: Base's expected-source list and the reward messenger's broadcast destinations disagree: ${parts.join('; ')}. Make them list the same mirrors (setExpectedSourceChainIds on the Diamond, setBroadcastDestinations on the messenger).`,
+      `${tag}: Base's expected-source list and the reward messenger's broadcast destinations do not line up: ${faults.join('; ')}. Make each mirror appear once on both lists, and Base on the expected-source list only (setExpectedSourceChainIds on the Diamond, setBroadcastDestinations on the messenger).`,
     );
   }
   if (canonical && f.destinationsUnread) {
@@ -959,14 +997,21 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
   if (canonical && f.selfNotExpected) {
     await raise(
       `dayclose-selfmissing:${chainId}:all`,
-      `${tag}: this chain is not on its own expected-source list. Finalization sums only the listed chains, so this chain's own interest is left out of every day's global total while its users' shares are still worked out against it; and its own report still counts toward the contract's report count. Add it (setExpectedSourceChainIds). The pass judges coverage chain by chain, so it does not finalize early meanwhile.`,
+      `${tag}: this chain is not on its own expected-source list. Finalization sums only the listed chains, so this chain's own interest is left out of every day's global total while its users' shares are still worked out against it; and its own report still counts toward the contract's report count. Add it (setExpectedSourceChainIds). Until it is added, the pass finalizes no day: a day finalized now would leave this chain's interest out of its total for good.`,
     );
   }
   for (const l of f.lateBroadcast) {
     // eslint-disable-next-line no-await-in-loop
     await raise(
       `dayclose-broadcast:${chainId}:${l.day}`,
-      `${tag}: the broadcast of reward day ${l.day} has not reached chain(s) ${l.missing.join(', ')} since it was sent at ${new Date(l.sentAt * 1000).toISOString()}. Until it lands, users there cannot claim that day. The pass re-sends it ${BROADCAST_RESEND_AFTER_SEC / 3600}h after each send; check the lane's CCIP delivery.`,
+      `${tag}: the broadcast of reward day ${l.day}, last sent at ${new Date(l.sentAt * 1000).toISOString()} (or sent then with no receipt seen), ` +
+        [
+          l.missing.length > 0 ? `has not reached chain(s) ${l.missing.join(', ')}` : '',
+          l.unread.length > 0 ? `could not be confirmed on chain(s) ${l.unread.join(', ')}, whose state this keeper could not read, so whether it arrived there is unknown` : '',
+        ]
+          .filter(Boolean)
+          .join('; and it ') +
+        `. Until it lands, users there cannot claim that day. The pass re-sends to a chain it reads as missing ${BROADCAST_RESEND_AFTER_SEC / 3600}h after each send; check the lane's CCIP delivery and the keeper's RPC for that chain.`,
     );
   }
   for (const d of f.excluded) {
@@ -997,7 +1042,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     else if (kind === 'dayclose-noexpected') gone = canonical && f.noExpected === false;
     else if (kind === 'dayclose-selfmissing') gone = canonical && f.selfNotExpected === false;
     else if (kind === 'dayclose-destunread') gone = canonical && f.destinationsUnread === false;
-    else if (kind === 'dayclose-topology') gone = canonical && f.topology !== null && f.topology.undeliverable.length === 0 && f.topology.unexpected.length === 0;
+    else if (kind === 'dayclose-topology') gone = canonical && f.topology !== null && topologyFaults(f.topology, chainId).length === 0;
     // Cleared on a read showing delivery, never on a re-send merely landing.
     else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || !inWindow.has(day);
     else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
@@ -1009,26 +1054,89 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
 
 }
 
-const ZEROED_FOOTER = "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply).";
+const ZEROED_FOOTER =
+  "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Read from Base's record of which chains reported each day, against Base's expected-source list as it stood when this keeper first saw the day finalized.";
 
 function zeroedLine(day: number, missing: readonly number[]): string {
-  return `reward day ${day}: finalized at grace without chain(s) ${missing.join(', ')}; their interest counts as zero for the day`;
+  return `reward day ${day}: finalized without chain(s) ${missing.join(', ')}; their interest counts as zero for the day`;
 }
 
-/** Post the queued zeroed-day notices (Base). Each was journaled and queued
- *  when its finalization landed; it leaves the queue once delivered (or once
- *  the ops channel is not configured: the journal is then the record), and
- *  otherwise stays for the next run until its day leaves the window. */
+/** A finalized day's zeroed record (`day_zeroed`): the expected chains Base
+ *  holds no report from, and whether the notice naming them was delivered. */
+interface ZeroedRecord {
+  missing: number[];
+  posted: boolean;
+}
+
+/**
+ * Record, once per finalized day, the expected chains it was finalized
+ * without (Base). One rule whoever finalized the day, this keeper, another
+ * caller or an admin: Base keeps no report for a chain that was not counted
+ * (a report landing after finalization drops its day figures and is not
+ * recorded as the day's), so the day's own record is the source, read at a
+ * block where the day is finalized. A day whose record cannot be fully read
+ * there is left for the next run. Exported for tests.
+ */
+export async function recordZeroed(
+  env: Env,
+  deps: DayCloseDeps,
+  chainId: number,
+  diamond: Address,
+  finalizedDays: readonly number[],
+  expected: readonly number[],
+  where: string,
+): Promise<void> {
+  if (finalizedDays.length === 0 || expected.length === 0) return;
+  try {
+    const have = await getWorkItems<ZeroedRecord>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', finalizedDays.map(String));
+    const fresh = finalizedDays.filter((d) => !have.has(String(d)));
+    for (const d of fresh) {
+      // One multicall, so one block: the day reads finalized at the same block
+      // its reports are read at, and a lagging node cannot record a report
+      // that landed just before finalization as missing.
+      // eslint-disable-next-line no-await-in-loop
+      const res = await boundedRead(
+        deps.readClient as never,
+        [
+          { address: diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
+          ...expected.map((c) => ({ address: diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), c] })),
+        ],
+        `rewardDayClose ${where} zeroed(${d})`,
+        deps.sendDeadline,
+      );
+      if (res.some((r) => r?.status !== 'success')) continue;
+      if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) continue;
+      const missing = expected.filter((_, i) => res[i + 1].result !== true);
+      if (missing.length > 0) console.log(`[keeper] rewardDayClose ${where} notice: ${zeroedLine(d, missing)}`);
+      const row: WorkItem<ZeroedRecord> = { item: String(d), block: d, payload: { missing, posted: missing.length === 0 } };
+      // eslint-disable-next-line no-await-in-loop
+      await putWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', row);
+    }
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${where}: zeroed-day records left for the next run: ${shortErr(err)}`);
+  }
+}
+
+/** Post the zeroed-day notices not yet delivered (Base). A record is marked
+ *  posted once delivered (or once the ops channel is not configured: the
+ *  journal line written with the record is then the record) and kept, so
+ *  the day is never noticed twice, until its day leaves the window. */
 async function postZeroedNotices(env: Env, chainId: number, diamond: Address, window: readonly number[], deadline: number): Promise<void> {
   try {
     await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window[0]);
-    const rows = [...(await getWorkItems<{ missing: number[] }>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window.map(String))).values()];
+    const rows = [...(await getWorkItems<ZeroedRecord>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window.map(String))).values()].filter(
+      (r) => !r.payload.posted && r.payload.missing.length > 0,
+    );
     if (rows.length === 0 || Date.now() >= deadline) return;
     rows.sort((a, b) => a.block - b.block);
     const lines = rows.map((r) => zeroedLine(r.block, r.payload.missing));
     const outcome = await sendOpsNoticeDigest(env, `[chain ${chainId}] reward day close: finalized with expected reports missing`, lines, ZEROED_FOOTER, chainId);
     if (outcome === 'sent' || outcome === 'unconfigured') {
-      await finishWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', rows.map((r) => r.item));
+      for (const r of rows) {
+        // eslint-disable-next-line no-await-in-loop
+        await putWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', { ...r, payload: { ...r.payload, posted: true } });
+      }
     }
   } catch (err) {
     console.error(`[keeper] rewardDayClose chain=${chainId}: zeroed-day notices left queued: ${shortErr(err)}`);
@@ -1037,14 +1145,28 @@ async function postZeroedNotices(env: Env, chainId: number, diamond: Address, wi
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-/** The chains a landed `finalizeDay(day)` zeroed, from its own
- *  `ChainContributionZeroed` events. */
-function zeroedChains(logs: readonly Log[], diamond: Address, day: number): number[] {
-  return parseEventLogs({ abi: ABI, logs: logs as Log[], eventName: 'ChainContributionZeroed' })
-    .filter((l) => l.address.toLowerCase() === diamond.toLowerCase())
-    .map((l) => l.args as unknown as { dayId: bigint; sourceChainId: number })
-    .filter((a) => Number(a.dayId) === day)
-    .map((a) => Number(a.sourceChainId));
+/** What is wrong with Base's lists, one sentence each (empty = nothing). The
+ *  one rule both the alert and its clearing read. */
+function topologyFaults(t: NonNullable<RunFindings['topology']>, self: number): string[] {
+  const out: string[] = [];
+  if (t.undeliverable.length > 0) {
+    out.push(`chain(s) ${t.undeliverable.join(', ')} are on Base's expected-source list but are not broadcast destinations, so no finalized day reaches them and their users cannot claim`);
+  }
+  const unexpected = t.unexpected.filter((c) => c !== self);
+  if (unexpected.length > 0) {
+    out.push(`chain(s) ${unexpected.join(', ')} are broadcast destinations but not on Base's expected-source list, so Base refuses their reports (SourceChainIdNotExpected) and every day finalizes without their interest`);
+  }
+  if (t.self) out.push(`Base itself (${self}) is a broadcast destination, so every broadcast pays for a message to itself that serves no one`);
+  if (t.repeated.length > 0) out.push(`chain(s) ${t.repeated.join(', ')} appear more than once among the broadcast destinations, so every broadcast pays for and sends each of them more than once`);
+  return out;
+}
+
+/** What a failed call says: the contract answered and refused it (with its
+ *  reason), or no answer came from the contract at all (a transport error, a
+ *  timeout, an RPC rejection), which says nothing about the call. */
+function classify(err: unknown): { refused: string } | { unread: string } {
+  const answered = err instanceof BaseError && err.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof ContractFunctionZeroDataError) !== null;
+  return answered ? { refused: revertName(err) ?? shortErr(err) } : { unread: shortErr(err) };
 }
 
 /** The decoded custom error a simulation reverted with, when the ABI names it. */

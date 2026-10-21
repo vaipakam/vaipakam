@@ -64,6 +64,7 @@ describe('the pure rules', () => {
       day: 3,
       finalized: false,
       ownReported: true,
+      selfChainId: BASE,
       contractReady: true,
       firstReportAt: NOW - 600,
       expected: [BASE, MIRROR],
@@ -85,10 +86,11 @@ describe('the pure rules', () => {
       const x = { ...base, reported: new Set([BASE]), firstReportAt: NOW - GRACE };
       expect(planFinalize(x, GRACE, NOW)).toEqual({ kind: 'finalize', missing: [MIRROR] });
     });
-    it('never finalizes against the contract, before its own report, or against an empty list', () => {
+    it('never finalizes against the contract, before its own report, or against an empty list or one without Base', () => {
       expect(planFinalize({ ...base, contractReady: false }, GRACE, NOW).kind).toBe('wait');
       expect(planFinalize({ ...base, ownReported: false }, GRACE, NOW)).toEqual({ kind: 'own-report-first' });
       expect(planFinalize({ ...base, expected: [], firstReportAt: NOW - GRACE }, GRACE, NOW)).toEqual({ kind: 'no-expected' });
+      expect(planFinalize({ ...base, expected: [MIRROR], reported: new Set([MIRROR]), firstReportAt: NOW - GRACE }, GRACE, NOW), 'never against a list without Base').toEqual({ kind: 'self-not-expected' });
       expect(planFinalize({ ...base, finalized: true }, GRACE, NOW)).toEqual({ kind: 'done' });
     });
   });
@@ -106,7 +108,8 @@ describe('the pure rules', () => {
       expect(planBroadcast(d([MIRROR, 'missing']), NOW, NOW)).toEqual({ kind: 'wait', late: false });
       expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
       expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW)).toEqual({ kind: 'send', resend: true });
-      expect(planBroadcast(d([MIRROR, 'unread']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW), 'an unread destination is judged next run').toEqual({ kind: 'wait', late: false });
+      expect(planBroadcast(d([MIRROR, 'unread']), NOW - 60, NOW), 'an unread destination is judged next run').toEqual({ kind: 'wait', late: false });
+      expect(planBroadcast(d([MIRROR, 'unread']), NOW - BROADCAST_LATE_AFTER_SEC, NOW), 'and reported as unknown past the late mark, never re-sent blind').toEqual({ kind: 'wait', late: true });
       expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW), 'an unread peer does not hold back a known-missing lane').toEqual({ kind: 'send', resend: true });
       expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
       expect(planBroadcast(d(), null, NOW), 'no destinations').toEqual({ kind: 'done' });
@@ -148,6 +151,12 @@ class FakeDiamond {
   refuseTo: string | null = null;
   /** Reports that land between the pass's reads and its finalization, by day. */
   landsAtFinalize = new Map<number, number>();
+  /** Receipts are never seen (the send may still have landed). */
+  receiptLost = false;
+  /** Simulations get no answer from the RPC. */
+  rpcDown = false;
+  /** This chain's known-global read fails. */
+  knownUnreadable = false;
   /** The messenger's destination list cannot be read. */
   destinationsUnreadable = false;
   /** Chains whose `isChainReported` read fails. */
@@ -173,7 +182,8 @@ class FakeDiamond {
     const d = args && args.length > 0 ? Number(args[0] as bigint) : -1;
     if (address === this.messenger) {
       if (functionName === 'quoteSendChainReport') {
-        if (!this.quoteShapes.has(args?.length ?? 0)) throw new Error('execution reverted');
+        // A shape the messenger lacks: the contract answers with an unnamed revert.
+        if (!this.quoteShapes.has(args?.length ?? 0)) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
         return LANE_FEE;
       }
       if (functionName === 'getBroadcastDestinations') {
@@ -203,6 +213,7 @@ class FakeDiamond {
         if (this.unreadable.has(Number(args![1]))) throw new Error('rpc down');
         return this.reported.get(d)?.has(Number(args![1])) ?? false;
       case 'getKnownGlobalInterestNumeraire18':
+        if (this.knownUnreadable) throw new Error('rpc down');
         return [0n, 0n, this.known.has(d)];
       case 'quoteBroadcastGlobal':
         return BROADCAST_FEE;
@@ -226,6 +237,7 @@ class FakeDiamond {
     );
 
   simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
+    if (this.rpcDown) throw new Error('fetch failed');
     const day = Number(args[0] as bigint);
     const why = this.refuse.get(`${functionName}:${day}`);
     if (why === 'ChainReportFrontierShort') throw revert(why, [BigInt(day), 0n, 0n]);
@@ -234,6 +246,7 @@ class FakeDiamond {
   };
 
   waitForTransactionReceipt = async () => {
+    if (this.receiptLost) throw new Error('timed out');
     const logs = this.logs;
     this.logs = [];
     return { status: 'success', logs };
@@ -314,7 +327,7 @@ describe('a run', () => {
     logged = [];
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logged.push(a.map(String).join(' ')));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void logged.push('ERR ' + a.map(String).join(' ')));
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -403,7 +416,7 @@ describe('a run', () => {
     base.firstAt.set(0, NOW - GRACE); // the fake's clock is fixed: grace has elapsed for it too
     await run(base);
     expect(base.sent.map((s) => s.fn)).toEqual(['closeDay', 'finalizeDay', 'broadcastGlobal']);
-    expect(logged.filter((l) => /notice: reward day 0: finalized at grace without chain\(s\) 421614/.test(l))).toHaveLength(1);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l))).toHaveLength(1);
     expect(alerts(/finalized with expected reports missing/), 'and posted as one notice').toHaveLength(1);
   });
 
@@ -419,7 +432,7 @@ describe('a run', () => {
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
     expect(base.sent, 'late, not yet re-sent').toHaveLength(1);
-    expect(alerts(/broadcast of reward day 0 has not reached chain\(s\) 421614/)).toHaveLength(1);
+    expect(alerts(/broadcast of reward day 0, last sent at .* has not reached chain\(s\) 421614/)).toHaveLength(1);
 
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
     openAlert(`dayclose-broadcast:${BASE}:0`);
@@ -446,8 +459,11 @@ describe('a run', () => {
   it('says when Base is not on its own expected-source list, and clears it once it is', async () => {
     base.today = 1;
     base.expected = [MIRROR];
+    base.reported.set(0, new Set([MIRROR]));
+    base.firstAt.set(0, NOW - GRACE);
     await run(base);
     expect(alerts(/not on its own expected-source list/)).toHaveLength(1);
+    expect(base.sent.some((s) => s.fn === 'finalizeDay'), 'no day finalized against a list without Base').toBe(false);
     openAlert(`dayclose-selfmissing:${BASE}:all`);
     base.expected = [BASE, MIRROR];
     await run(base);
@@ -498,7 +514,7 @@ describe('a run', () => {
     base.destinations = []; // the mirror is taken off the messenger's list
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
-    expect(alerts(/broadcast of reward day 0 has not reached chain\(s\) 421614/), 'still lacking it, still late').toHaveLength(1);
+    expect(alerts(/broadcast of reward day 0, last sent at .* has not reached chain\(s\) 421614/), 'still lacking it, still late').toHaveLength(1);
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
     await run(base);
     expect(base.sent.slice(1), 'healed alone, the way the contract admits').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
@@ -513,6 +529,64 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn), 'no send to every destination: it would not reach this one').toEqual(['broadcastGlobal']);
     expect(alerts(/chain 421614 is no longer a broadcast destination and the Diamond will not send the day to it alone \(DestinationHasNoDayStanding\)/)).toHaveLength(1);
+  });
+
+  it('names the chains a day was finalized without when another caller finalized it', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.sentAt.set(0, NOW - 60);
+    base.firstAt.set(0, NOW - 60);
+    base.finalized.add(0); // by someone else
+    await run(base);
+    expect(base.sent.some((s) => s.fn === 'finalizeDay'), 'not finalized by this keeper').toBe(false);
+    expect(logged.some((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l)), 'journaled').toBe(true);
+    expect(alerts(/finalized with expected reports missing/), 'and posted').toHaveLength(1);
+  });
+
+  it('never repeats a broadcast whose receipt was not seen before the re-send interval', async () => {
+    finalizedDayZero();
+    base.receiptLost = true;
+    await run(base);
+    base.receiptLost = false;
+    later(15 * 60);
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'sent once: it may have landed').toEqual(['broadcastGlobal']);
+  });
+
+  it('sends a day alone to a destination taken off the list before any send landed', async () => {
+    finalizedDayZero();
+    base.refuse.set('broadcastGlobal:0', 'RewardMessengerNotSet');
+    await run(base); // the first send is refused; the day's destinations are recorded
+    base.refuse.clear();
+    base.destinations = [];
+    await run(base);
+    expect(base.sent, 'reached alone, not by a send to the list').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
+  });
+
+  it('reports a destination it cannot read as unknown past the late mark, and never re-sends to it blind', async () => {
+    finalizedDayZero();
+    await run(base);
+    mirror.knownUnreadable = true;
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent, 'no re-send').toHaveLength(1);
+    expect(alerts(/could not be confirmed on chain\(s\) 421614, whose state this keeper could not read/)).toHaveLength(1);
+  });
+
+  it('does not call an RPC that gives no answer a refusal', async () => {
+    mirror.rpcDown = true;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/refused/)).toEqual([]);
+    expect(logged.some((l) => /stopped=rpc-unavailable/.test(l))).toBe(true);
+  });
+
+  it('says when Base or a repeated mirror is among the broadcast destinations', async () => {
+    base.today = 1;
+    base.destinations = [MIRROR, MIRROR, BASE];
+    await run(base);
+    expect(alerts(/Base itself \(84532\) is a broadcast destination/)).toHaveLength(1);
+    expect(alerts(/chain\(s\) 421614 appear more than once among the broadcast destinations/)).toHaveLength(1);
   });
 
   it('a race with another caller is not a refusal', async () => {
@@ -684,12 +758,14 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       runDeadline: 0, // the alert window is already spent
     });
-    expect(logged.some((l) => /notice: reward day 0: finalized at grace without chain\(s\) 421614/.test(l)), 'journaled at once').toBe(true);
+    expect(logged.some((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l)), 'journaled at once').toBe(true);
     expect(alerts(/finalized with expected reports missing/), 'not posted').toEqual([]);
-    const queued = () => keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_zeroed'`).get();
+    const queued = () => keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_zeroed' AND payload LIKE '%"posted":false%'`).get();
     expect(queued()).toEqual({ n: 1 });
     await run(base);
     expect(alerts(/finalized with expected reports missing/), 'posted on the next run').toHaveLength(1);
     expect(queued()).toEqual({ n: 0 });
+    await run(base);
+    expect(alerts(/finalized with expected reports missing/), 'and never again').toHaveLength(1);
   });
 });
