@@ -103,8 +103,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     ///         resolve + optional VPFI vault debit).
     error LenderYieldFeeResolveFailed();
 
-    /// @notice `LibSwap.swapWithFailover` returned `(success=false)` —
-    ///         every adapter in the caller's try-list reverted.
+    /// @notice `LibSwap.swapWithFailoverUpTo` returned `(success=false)` —
+    ///         every adapter in the caller's try-list reverted or was refused
+    ///         under the delivery rule (#2472), and each attempt was unwound.
     error SwapAllAdaptersFailed();
 
     /// @notice The loan isn't ERC20-on-ERC20 — NFT collateral / NFT
@@ -239,10 +240,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
 
         // ── Withdraw + swap ──────────────────────────────────────────
         // Codex round-3 P1 #2 — same partial-fill refund pattern
-        // as `swapToRepayFull`.
-        uint256 collateralBalanceBefore =
-            IERC20(loan.collateralAsset).balanceOf(address(this));
-
+        // as `swapToRepayFull`: `swapWithFailoverUpTo` (#2472) returns the
+        // input the committing attempt actually spent, measured on the
+        // Diamond, and the unspent part is refunded below.
         // #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — decrement the
         // lien by the slice we're moving out. The loan stays ACTIVE
         // here so a full release would leave the residual collateral
@@ -259,21 +259,19 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             VaultWithdrawFailed.selector
         );
 
-        (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            collateralSwapAmount,
-            minPrincipalOut,
-            address(this),
-            adapterCalls
-        );
+        (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
+            LibSwap.swapWithFailoverUpTo(
+                loanId,
+                loan.collateralAsset,
+                loan.principalAsset,
+                collateralSwapAmount,
+                minPrincipalOut,
+                address(this),
+                adapterCalls
+            );
         if (!success) revert SwapAllAdaptersFailed();
 
         // Refund partial-fill leftover collateral to borrower vault.
-        uint256 actualCollateralConsumed = collateralSwapAmount -
-            (IERC20(loan.collateralAsset).balanceOf(address(this)) -
-                collateralBalanceBefore);
         uint256 partialFillRefund = collateralSwapAmount - actualCollateralConsumed;
         if (partialFillRefund > 0) {
             IERC20(loan.collateralAsset).safeTransfer(

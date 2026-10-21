@@ -4765,6 +4765,11 @@
   },
   {
     "type": "error",
+    "name": "SwapAttemptHostMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SwapBoundsInsufficient",
     "inputs": []
   },

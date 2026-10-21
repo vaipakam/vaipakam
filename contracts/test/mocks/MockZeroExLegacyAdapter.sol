@@ -47,6 +47,9 @@ contract MockZeroExLegacyAdapter is ISwapAdapter {
         bytes calldata /* adapterData */
     ) external override returns (uint256 outputAmount) {
         IERC20 input = IERC20(inputToken);
+        // #2472 — snapshot before the pull so only this call's unspent input
+        // is handed back (ISwapAdapter's residual invariant).
+        uint256 inputBalanceBefore = input.balanceOf(address(this));
         // Pull input from caller (the diamond / harness) and approve the
         // proxy for the exact amount, mirroring the legacy inline pattern
         // that previously lived in RiskFacet / DefaultedFacet.
@@ -63,13 +66,12 @@ contract MockZeroExLegacyAdapter is ISwapAdapter {
         );
 
         input.forceApprove(PROXY, 0);
-        // Residual input (would be zero on a clean swap; non-zero would
-        // indicate a partial fill the proxy mock doesn't simulate)
-        // returned to the caller so the failover loop has full balance
-        // to retry the next adapter.
-        uint256 residual = input.balanceOf(address(this));
-        if (residual != 0) {
-            input.safeTransfer(msg.sender, residual);
+        // This call's unspent input (zero on a clean swap; non-zero would
+        // indicate a partial fill the proxy mock doesn't simulate) is handed
+        // back to the caller — and nothing the shim held before the pull.
+        uint256 balanceNow = input.balanceOf(address(this));
+        if (balanceNow > inputBalanceBefore) {
+            input.safeTransfer(msg.sender, balanceNow - inputBalanceBefore);
         }
     }
 }

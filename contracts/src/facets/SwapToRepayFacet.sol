@@ -114,8 +114,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
     error SwapBoundsInsufficient();
 
-    /// @notice `LibSwap.swapWithFailover` returned `(success=false)` —
-    ///         every adapter in the caller's try-list reverted.
+    /// @notice `LibSwap.swapWithFailoverUpTo` returned `(success=false)` —
+    ///         every adapter in the caller's try-list reverted or was refused
+    ///         under the delivery rule (#2472), and each attempt was unwound.
     error SwapAllAdaptersFailed();
 
     /// @notice The loan isn't ERC20-on-ERC20 — NFT collateral / NFT
@@ -258,14 +259,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         // ── Withdraw collateral to diamond + execute swap ────────────
         // Codex round-3 P1 #2 — aggregator adapters can partial-fill
-        // and return UNSPENT input to `msg.sender` (the diamond).
-        // Snapshot the collateral balance before to compute actual
-        // consumption after, refunding any residual to the current
-        // borrower-NFT holder's vault. Treating sellAmount as
-        // fully consumed would leave dust stuck on the diamond.
-        uint256 collateralBalanceBefore =
-            IERC20(loan.collateralAsset).balanceOf(address(this));
-
+        // and return UNSPENT input to `msg.sender` (the diamond). The
+        // swap runs through `swapWithFailoverUpTo` (#2472), which measures
+        // what the committing attempt actually spent on the Diamond and
+        // returns it; the unspent part is refunded to the borrower's vault
+        // below. Treating sellAmount as fully consumed would leave it stuck
+        // on the diamond.
         // #569 Codex #572 round-4 P2 — DECREMENT the lien by exactly
         // the collateral being withdrawn for the swap (`sellAmount`),
         // rather than fully releasing it. That clears the chokepoint
@@ -293,7 +292,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // brick this must-complete Tier-2 close-out when `getOrCreateUserVault`
         // screens the vault owner. Custody is LEAVING loan.borrower (to the
         // Diamond for the swap). The window is NARROW — closed inside the
-        // helper BEFORE `swapWithFailover` runs, so the receive-side exemption
+        // helper BEFORE `swapWithFailoverUpTo` runs, so the receive-side exemption
         // is never open across the untrusted adapter call (Codex #986 r3).
         LibSanctionedLock.vaultWithdrawERC20MoveOut(
             s,
@@ -303,24 +302,20 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             sellAmount
         );
 
-        (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            sellAmount,
-            minPrincipalOut,
-            address(this),
-            adapterCalls
-        );
+        (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
+            LibSwap.swapWithFailoverUpTo(
+                loanId,
+                loan.collateralAsset,
+                loan.principalAsset,
+                sellAmount,
+                minPrincipalOut,
+                address(this),
+                adapterCalls
+            );
         if (!success) revert SwapAllAdaptersFailed();
         // Slippage floor cleared the loan; the debt-cover bound is a
         // separate post-swap assertion (Codex round-1 P2 #2).
         if (outputAmount < requiredPrincipal) revert InsufficientProceeds();
-
-        // Refund partial-fill leftover collateral (Codex round-3 P1 #2).
-        uint256 actualCollateralConsumed = sellAmount -
-            (IERC20(loan.collateralAsset).balanceOf(address(this)) -
-                collateralBalanceBefore);
 
         // ── Lender Yield Fee discount (§F2 / #1354 / #1383) ──────────
         // Key on the CURRENT lender-NFT holder, not `loan.lender`. The lender

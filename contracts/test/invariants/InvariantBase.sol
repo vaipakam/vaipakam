@@ -27,6 +27,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
@@ -129,7 +130,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -183,6 +184,16 @@ contract InvariantBase is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

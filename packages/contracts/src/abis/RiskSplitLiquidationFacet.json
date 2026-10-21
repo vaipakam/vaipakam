@@ -4716,6 +4716,58 @@
   },
   {
     "type": "error",
+    "name": "SwapInputSpendMismatch",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "spent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SwapOutputShortDelivered",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reported",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SwapVenuePaused",
     "inputs": []
   },
