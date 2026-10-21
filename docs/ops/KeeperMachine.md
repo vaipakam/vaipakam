@@ -193,7 +193,8 @@ a commit. The template documents each line. In short:
   every such alert goes only to the journal,
   as `ops alert NOT delivered`. So set both, and confirm that line is absent,
   before arming any pass that alerts here: `REWARD_SANCTIONS_KEEPER_ENABLED`,
-  `REWARD_HORIZON_HEARTBEAT_ENABLED` or `REWARD_DELIVERY_PROOF_ENABLED`.
+  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED` or
+  `REWARD_DAY_CLOSE_ENABLED`.
 - **Knobs:** copy the live values from the keeper Worker's dashboard.
 
 An empty value is unset, as an unbound setting is on the Worker. A chain or
@@ -273,14 +274,19 @@ journalctl -u vaipakam-keeper -f
    `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
    `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
-   `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44). Arm one at a time and
+   `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44) and
+   `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10). Arm one at a time and
    validate that pass's own cadence: its `<pass> done in …` line on the
    minutes `src/passSchedule.ts` gives it, with no error line. A pass left
    unarmed logs that it skipped, so it is never silently off. Leaving the
    delivery-proof pass unarmed leaves mirror-funded days gated. Leaving the
    sanctions pass unarmed lets held owners' evidence chains lapse. Leaving the
    horizon heartbeat unarmed means no reward's claim-horizon clock is ever
-   observed, so an armed horizon expires nothing.
+   observed, so an armed horizon expires nothing. Leaving the day-close pass
+   unarmed means no reward day is reported, finalized or broadcast unless
+   someone makes those calls by hand. It pays each mirror's CCIP report fee
+   and Base's broadcast fees from the keeper key, so check that key's gas on
+   every reward chain before arming it.
 
 Rollback at any point: set `KEEPER_ENABLED=false` and restart, or stop the
 service (§6). The Worker side needs no change, because its schedule stayed

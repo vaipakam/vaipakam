@@ -915,7 +915,8 @@ artifacts and stay in their respective env / config:
 - apps/keeper Cloudflare secrets: `KEEPER_PRIVATE_KEY` +
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_DELIVERY_PROOF_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
-  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `RPC_*`,
+  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
+  `GRACE_DEFAULT_ENABLED`, `RPC_*`,
   `TG_BOT_TOKEN`,
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
   Telegram bots" below), `PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`,
@@ -927,8 +928,11 @@ artifacts and stay in their respective env / config:
   `REWARD_COMMIT_ENABLED`; `rewardSanctionsHold` (#2450) gates on
   `REWARD_SANCTIONS_KEEPER_ENABLED`, `deliveryProof` (#1944) on
   `REWARD_DELIVERY_PROOF_ENABLED`, `rewardHorizonHeartbeat` (#2517) on
-  `REWARD_HORIZON_HEARTBEAT_ENABLED` and `graceDefault` (#2483) on
-  `GRACE_DEFAULT_ENABLED`, all added after it. `graceDefault` submits
+  `REWARD_HORIZON_HEARTBEAT_ENABLED`, `rewardDayClose` (#2612) on
+  `REWARD_DAY_CLOSE_ENABLED` and `graceDefault` (#2483) on
+  `GRACE_DEFAULT_ENABLED`, all added after it. `rewardDayClose` makes the
+  daily `closeDay` / `finalizeDay` / `broadcastGlobal` calls and pays their
+  CCIP fees from the keeper key; it ships unset too. `graceDefault` submits
   `triggerDefault` for past-grace loans; it ships unset, so that pass is
   dark until an owner arms it. All are provisioned the same way when
   armed. Their `*_LOOKBACK_DAYS` /

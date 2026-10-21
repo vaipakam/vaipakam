@@ -1057,3 +1057,27 @@ everywhere else it is forced to choose.
 `CLAUDE.md` applies with full force here: the design states the stricter of the
 two behaviours, and softening it to "the operator decides" would retire a fund
 guarantee by edit.
+
+## Finalization coverage is a report COUNT, and Base's own report counts whether or not Base is listed (#2613)
+
+**Spec** (`TokenomicsTechSpec.md`, "Finalization on Base"): a day finalizes once
+every chain in the expected-source set has reported, and that set includes Base
+itself.
+
+**Code:** coverage is `chainDailyReportCount[day] >= expectedSourceChainIds.length`.
+A mirror's report is admitted only from a listed chain. Base's own report is
+recorded by its local day-close without that check. So when Base is not on its
+own list, which is the live Base Sepolia configuration as of 2026-10-20, two
+things follow:
+
+- the count can reach the listed number while a listed mirror is still
+  missing, and anyone may finalize the day "on full coverage" inside grace;
+- Base's own interest is summed into no day's global total.
+
+**Status:** candidate bug, open as #2613. The configuration is corrected
+separately, which needs an owner OK for an admin call. The keeper's day-close
+pass (#2612) judges coverage per listed chain, and alerts on a list that leaves
+Base out. That covers only the keeper's own calls, because `finalizeDay` is
+permissionless. **Do not resolve this by rewriting the spec to "a count of
+reports":** the per-chain rule is what stops a report still in flight from
+being zeroed.

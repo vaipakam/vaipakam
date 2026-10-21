@@ -919,8 +919,11 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
 
 // ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
 
-/** The passes that keep an open-work queue, by the `kind` each records under. */
-export type WorkKind = 'delivery_proof' | 'late_ack';
+/** The passes that keep an open-work queue, by the `kind` each records under.
+ *  `day_broadcast` (#2612, the reward day-close pass) records a finalized day
+ *  it has broadcast, with when: its `item` is the day, its `block` the day too
+ *  (no ledger block applies), and it carries no discovery cursor. */
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or
@@ -988,6 +991,19 @@ export async function enqueueWork<T>(
         .bind(chainId, diamond.toLowerCase(), kind, w.item, w.block, JSON.stringify(w.payload), now),
     ),
   );
+}
+
+/** Queue `w`, or REPLACE its payload when it is already queued (#2612: the
+ *  day-close pass re-records a broadcast's send time on each re-send). */
+export async function putWork<T>(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, w: WorkItem<T>): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+       ON CONFLICT (chain_id, diamond, kind, item) DO UPDATE SET payload = excluded.payload`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, w.item, w.block, JSON.stringify(w.payload), Math.floor(Date.now() / 1000))
+    .run();
 }
 
 /** A bounded slice of the open items, the least recently checked first (then

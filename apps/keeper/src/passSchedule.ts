@@ -44,6 +44,7 @@ import { runRewardHorizonHeartbeat } from './rewardHorizonHeartbeat';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
 import { runGraceDefault } from './graceDefault';
+import { runRewardDayClose } from './rewardDayClose';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -238,6 +239,16 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 44,
     why: 'touches every live reward entry about every 12 h, far inside the 7-day observation gap; hourly spreads the batches and retries a failed touch within the hour (#2517)',
     run: runRewardHorizonHeartbeat,
+  },
+  {
+    name: 'rewardDayClose',
+    cadenceMinutes: 15,
+    // :10/:25/:40/:55 — clear of every staggered pass (the 5-minute ones sit on
+    // :01–:03 modulo 5, preGraceWatcher on :04/:19/:34/:49, the hourly ones on
+    // :14 and :44).
+    offsetMinutes: 10,
+    why: 'a reward day closes once a day, then waits on CCIP and a 4 h grace; a quarter-hour keeps each step within minutes of becoming possible (#2612)',
+    run: runRewardDayClose,
   },
 ];
 
