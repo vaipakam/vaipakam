@@ -743,10 +743,13 @@ the keeper reads more than 8 hours after its send (CCIP's usual
 smart-execution window) is reported as "N remittance(s) still Pending on Base
 have no receipt on the mirror the keeper reads … The keeper does not know
 why", with the same evidence. Check the message on the CCIP explorer first.
-A remittance sent to a chain the keeper has no RPC secret or deployment entry
-for gets a third alert, "… went to a chain this keeper has no RPC or
-deployment for", with its route as Base records it: give the keeper both and
-it reads their receipts and acknowledges any it finds. One whose route is a
+A remittance whose receipt the keeper cannot read gets a third alert, "… went
+to a chain where this keeper cannot read their receipts", with its route as
+Base records it and the cause in its line. Either the keeper has no RPC secret
+or deployment entry for that chain (give it both), or that chain's Diamond
+answered the receipt read with an error (point the keeper's deployment entry
+at the Diamond that holds the receipts). Once it can read them it acknowledges
+any it finds. One whose route is a
 retired adapter gets the retired-route alert instead, with the missing
 configuration named in its line, because configuring the chain cannot reach a
 receipt behind the old adapter.
@@ -771,7 +774,22 @@ options, on the evidence:
    peer"). For a receiver replaced behind the same messenger, that means
    registering the old receiver's channel again. While the old adapter is
    restored the retired-route alert clears; the overdue alert stays while the
-   receipt is missing. Or, only when the destination receipt shows the
+   receipt is missing.
+
+   **Restoring the old remote messenger also points Base's OUTBOUND traffic
+   to that chain at the retired adapter**, because `CcipMessenger` sends every
+   message through the same per-chain record it accepts acknowledgements from.
+   Any remittance, reward broadcast or other message Base sends to that chain
+   while the old values are in place goes to the retired deployment. So, in
+   this order: set the keeper's `REWARD_REMIT_ENABLED` to `false` and restart
+   it (this stops both remittance passes, including the new remittances), and
+   hold every other send from Base to that chain, manual remittances
+   included; then restore the old values, send the acknowledgement, and put
+   the redeploy's values back as soon as it executes on Base; then check
+   Base's messenger for any message sent to that chain inside the window, and
+   treat each one as sent to the retired adapter (it gets the retired-route
+   alert); and only then re-arm `REWARD_REMIT_ENABLED` and restart. Arming
+   flags need the owner's OK as usual. Or, only when the destination receipt shows the
    remittance CONSUMED, finalize it on Base with
    `finalizeRemitReservation(remitId)`. That is the operator's consumption
    attestation: it records a zero received figure, books the reservation's

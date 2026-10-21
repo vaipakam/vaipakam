@@ -37,11 +37,20 @@ destination, nor a slow send, nor a slow alert channel can hide a remittance it
 cannot make or hold up one it can on another destination. An alert is still sent when the keeper cannot read its record of
 open alerts, or its record of past acknowledgement attempts; in that second
 case the run sends no acknowledgements, since that record is what paces them.
-A remittance sent to a chain the keeper has no RPC or deployment for is
-reported as one it can neither read nor acknowledge, rather than dropped with
-a log line, and its route is still read from Base and stated. If that route is
-a retired adapter, it is reported as the retired case, since configuring the
-chain would not reach a receipt behind the old adapter. A reservation with no
+A remittance whose receipt the keeper cannot read is reported as one it can
+neither read nor acknowledge, rather than dropped with a log line, and its
+route is still read from Base and stated. That covers a chain the keeper has
+no RPC or deployment for, and a chain whose Diamond answers the receipt read
+with an error, such as a deployment entry naming a Diamond without that read;
+the alert says which. If that route is a retired adapter, it is reported as
+the retired case, since fixing the destination would not reach a receipt
+behind the old adapter. The keeper's first reads of Base's ledger now stop
+early enough to leave the rest of the run time, and a ledger read that fails
+or does not answer in time no longer stops the released backlog from being
+classified and acknowledged that run. The runbook's recovery step that
+restores a retired adapter now requires the remittance automation to be
+switched off first and held off until the redeploy's values are back, since
+Base sends everything to that chain through the same record. A reservation with no
 receipt is reported to ops, never left waiting in silence, in two cases. The
 first is a remittance sent through an adapter the lane no longer names. The
 second is a Pending remittance still without a receipt more than 8 hours after

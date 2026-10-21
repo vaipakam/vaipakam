@@ -48,7 +48,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead, deadlineClient, PastRunDeadline, settleBy, settledRead } from './batchRead';
+import { batchedRead, deadlineClient, failedOnOwnCall, PastRunDeadline, settleBy, settledRead } from './batchRead';
 import { priorStageCutoffMs, readCutoffMs, runIndex } from './runWindow';
 import { walkFrom } from './rotate';
 import type { PassTick } from './passSchedule';
@@ -151,21 +151,35 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   const publicClient = deadlineClient(createPublicClient({ transport: http(chain.rpc) }), deadline);
   const diamond = chain.diamond as Address;
 
+  // The plans stop reading at the read cutoff, abandoning any read still in
+  // flight then (Codex #2607 r7, `runWindow.ts` rule 3), so the sends always
+  // keep their reserve whatever one destination's RPC does. The Base reads
+  // ahead of the plans stop earlier still (Codex #2607 r14): the ledger scan
+  // feeds the Pending plan's receipt reads, which stop at
+  // `priorStageCutoffMs(readCutoff)`, so it leaves them a stage reserve, and
+  // the reads before it settle by the same time.
+  const readCutoff = readCutoffMs(deadline);
+  const scanCutoff = priorStageCutoffMs(priorStageCutoffMs(readCutoff));
+  const settled = <T>(read: Promise<T>, what: string): Promise<T> =>
+    settleBy(read, scanCutoff, () => {
+      throw new PastRunDeadline(`${what}: still in flight at the scan cutoff — next run`);
+    });
+
   // The reservation ledger lives on Base only.
-  const cfg = (await publicClient.readContract({
+  const cfg = (await settled(publicClient.readContract({
     address: diamond,
     abi: REPORTER_ABI,
     functionName: 'getRewardReporterConfig',
-  })) as readonly [Address, number, number, boolean, bigint];
+  }), 'getRewardReporterConfig')) as readonly [Address, number, number, boolean, bigint];
   const baseChainId = Number(cfg[1]);
   const isCanonical = cfg[3];
   if (!isCanonical) return;
 
-  const nonce = (await publicClient.readContract({
+  const nonce = (await settled(publicClient.readContract({
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'getRemitReservationNonce',
-  })) as bigint;
+  }), 'getRemitReservationNonce')) as bigint;
   if (nonce === 0n) return;
 
   const { frontier, scanCursor } = await getRemitAckScanState(env.KEEPER_DB, baseChainId, diamond);
@@ -176,24 +190,63 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   for (const c of getChainConfigs(env)) mirrorConfigs.set(c.id, c);
   const mirrorClients = new Map<number, PublicClient>();
   for (const c of mirrorConfigs.values()) mirrorClient(mirrorClients, c, deadline);
-  // The plans stop reading at the read cutoff, abandoning any read still in
-  // flight then (Codex #2607 r7, `runWindow.ts` rule 3), so the sends always
-  // keep their reserve whatever one destination's RPC does.
-  const readCutoff = readCutoffMs(deadline);
   // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
   // more than the cap however its work splits between them.
   const ackBudget: AckBudget = { remaining: MAX_ACKS_PER_TICK, pendingUnsettled: 0, deadline };
-  if (BigInt(frontier) > nonce) {
-    // Caught up — the steady state. A released reservation may still see its
-    // delivery land late, so that step runs here too (#1461).
-    const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff, run);
-    await Promise.all([
-      clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set()),
-      alertAndSend(env, baseChainId, diamond, Promise.resolve(undefined), late, mirrorClients, ackBudget, deadline, run),
-    ]);
-    return;
+  // The late path needs nothing from the ledger scan, so it starts before it
+  // (Codex #2607 r14): a slow or failed scan never holds up, or stops, the
+  // late acknowledgements and their alerts. A released reservation may still
+  // see its delivery land late, so it runs in the caught-up state too (#1461).
+  const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff, run);
+  // ONE PIPELINE PER PATH, the two side by side (Codex #2607 r3–r6). Each
+  // path is read and classified, then its alerts post concurrently with its
+  // acknowledgement sends, so no slow ops channel, slow send or slow mirror
+  // spends the deadline another step needed. The late path is a backlog that
+  // can reach unhealthy destinations, so its planning never sits in front of
+  // the Pending sends; and a ledger scan that is slow, aborts or fails leaves
+  // the late path running (Codex #2607 r14).
+  // PENDING ACKS FIRST (#2497 r13): they are the ordinary work — a
+  // reservation stays reserved on Base until acked — so the late sends get only
+  // what the Pending acks cannot claim of the tick's one budget, never the
+  // other way round (`AckBudget`).
+  let pending: Promise<AckPlan | undefined> = Promise.resolve(undefined);
+  let cleared: Promise<void> = Promise.resolve();
+  try {
+    if (BigInt(frontier) > nonce) {
+      // Caught up — the steady state.
+      cleared = clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
+    } else {
+      const w = await scanPendingWindow(env, publicClient, baseChainId, diamond, frontier, scanCursor, nonce, scanCutoff);
+      if (w) {
+        await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, w.contiguousTerminal, w.to);
+        pending = planPendingContained(env, publicClient as never, baseChainId, diamond, w.pendingIds, w.reservations, mirrorConfigs, mirrorClients, readCutoff, run);
+        cleared = clearSettledPendingAlerts(env, baseChainId, diamond, w.contiguousTerminal, w.terminalInWindow);
+      }
+    }
+  } catch (err) {
+    console.error(`[keeper] remitAck ledger scan failed this tick (late deliveries continue): ${(err as Error).message}`);
   }
+  await Promise.all([cleared, alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline, run)]);
+}
+
+/**
+ * One bounded window of the reservation ledger (#1426, #1896): the Pending
+ * reservations it holds, the terminal ones it marks acknowledged, and where
+ * the frontier and the cursor move to. `undefined` when a read failed or did
+ * not settle by `cutoff`, which aborts the window: neither the frontier nor
+ * the cursor may advance past a reservation whose status is unknown.
+ */
+async function scanPendingWindow(
+  env: Env,
+  publicClient: PublicClient,
+  baseChainId: number,
+  diamond: Address,
+  frontier: number,
+  scanCursor: number,
+  nonce: bigint,
+  cutoff: number,
+): Promise<{ pendingIds: number[]; reservations: Map<number, RemitReservationView>; contiguousTerminal: number; terminalInWindow: Set<number>; to: number } | undefined> {
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
   // it is ahead of the frontier — a stuck early Pending pins the frontier,
   // and without the rotation the bounded window would re-read that range
@@ -226,7 +279,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   for (let i = 0; i < windowIds.length; i += SCAN_CHUNK) {
     const chunk = windowIds.slice(i, i + SCAN_CHUNK);
     // eslint-disable-next-line no-await-in-loop
-    const part = await batchedRead(
+    const part = await settledRead(
       publicClient as never,
       chunk.map((id) => ({
         address: diamond,
@@ -235,6 +288,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
         args: [id] as const,
       })),
       `remitAck getRemitReservation ${i}/${windowIds.length}`,
+      cutoff,
     );
     scanResults.push(...part);
   }
@@ -255,7 +309,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
           res?.error ?? 'no result',
         ).slice(0, 200)}`,
       );
-      return;
+      return undefined;
     }
     const r = res.result as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
@@ -272,23 +326,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
     // status 0 past the frontier can only be the tail beyond the nonce —
     // the loop bound already excludes it.
   }
-  await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, contiguousTerminal, Number(to));
-  // ONE PIPELINE PER PATH, the two side by side (Codex #2607 r3–r6). Each
-  // path is read and classified, then its alerts post concurrently with its
-  // acknowledgement sends, so no slow ops channel, slow send or slow mirror
-  // spends the deadline another step needed. The late path is a backlog that
-  // can reach unhealthy destinations, so its planning never sits in front of
-  // the Pending sends.
-  // PENDING ACKS FIRST (#2497 r13): they are the ordinary work — a
-  // reservation stays reserved on Base until acked — so the late sends get only
-  // what the Pending acks cannot claim of the tick's one budget, never the
-  // other way round (`AckBudget`).
-  const pending = planPendingContained(env, publicClient as never, baseChainId, diamond, pendingIds, reservations, mirrorConfigs, mirrorClients, readCutoff, run);
-  const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff, run);
-  await Promise.all([
-    clearSettledPendingAlerts(env, baseChainId, diamond, contiguousTerminal, terminalInWindow),
-    alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline, run),
-  ]);
+  return { pendingIds, reservations, contiguousTerminal, terminalInWindow, to: Number(to) };
 }
 
 /**
@@ -428,8 +466,8 @@ async function planPending(
   // The receipts leave the route reads that follow them a reserve (Codex
   // #2607 r8): a mirror stalled until the receipt cutoff is abandoned there,
   // and the healthy mirrors' missing receipts are still classified.
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, priorStageCutoffMs(deadline), run);
-  const undelivered = await classifyUndelivered(publicClient, 'pending', baseChainId, diamond, candidates, receipts, deadline, run);
+  const { receipts, unreadable } = await readReceipts(candidates, mirrorClients, diamond, priorStageCutoffMs(deadline), run);
+  const undelivered = await classifyUndelivered(publicClient, 'pending', baseChainId, diamond, candidates, receipts, unreadable, deadline, run);
   return { late: false, candidates, receipts, attempts, undelivered };
 }
 
@@ -521,6 +559,11 @@ const RECEIPT_READ_CHUNK = 100;
  * Each candidate's receipt on its configured mirror, read in bounded batches
  * per mirror (#2561 r2). A held receipt maps to it; a read that found NONE maps
  * to `null`; an unread one is absent, and nothing is decided about it this run.
+ * A read the destination ANSWERED with an error (a revert, or data that does
+ * not decode: a deployment entry naming a Diamond without the receipt surface,
+ * say) is not a transient gap, so it is listed under `unreadable` with the
+ * error and reported (Codex #2607 r14); it would otherwise stay Pending with
+ * nothing said, run after run.
  */
 async function readReceipts(
   candidates: readonly { remitId: number; mirrorCfg?: ChainConfig }[],
@@ -528,8 +571,9 @@ async function readReceipts(
   baseDiamond: Address,
   deadline: number,
   run: number,
-): Promise<Map<number, MirrorReceipt | null>> {
+): Promise<{ receipts: Map<number, MirrorReceipt | null>; unreadable: Map<number, string> }> {
   const out = new Map<number, MirrorReceipt | null>();
+  const unreadable = new Map<number, string>();
   const byMirror = new Map<number, { cfg: ChainConfig; ids: number[] }>();
   for (const c of candidates) {
     if (!c.mirrorCfg) continue;
@@ -563,13 +607,20 @@ async function readReceipts(
       );
       chunk.forEach((id, j) => {
         const r = res[j];
+        if (failedOnOwnCall(r, 'getReceivedRemit')) unreadable.set(id, shortError(r!.error));
         if (r?.status !== 'success') return;
         const receipt = r.result as MirrorReceipt;
         out.set(id, receipt.receivedAt === 0n ? null : receipt);
       });
     }
   }));
-  return out;
+  return { receipts: out, unreadable };
+}
+
+/** An error's one-line summary for an alert line. */
+function shortError(err: unknown): string {
+  const e = err as { shortMessage?: unknown; message?: unknown };
+  return String(e?.shortMessage ?? e?.message ?? err).split('\n')[0].slice(0, 160);
 }
 
 /** What one path's classification found (#2561): the reason that holds for
@@ -596,16 +647,18 @@ async function classifyUndelivered(
   diamond: Address,
   candidates: readonly { remitId: number; v: RemitReservationView; mirrorCfg?: ChainConfig; outstanding?: LateOutstanding }[],
   receipts: ReadonlyMap<number, MirrorReceipt | null>,
+  unreadable: ReadonlyMap<number, string>,
   deadline: number,
   run: number,
 ): Promise<UndeliveredReport | undefined> {
   if (candidates.length === 0 || Date.now() >= deadline) return undefined;
   try {
     const noReceipt = candidates.filter((c) => receipts.get(c.remitId) === null);
-    const unobservable = candidates.filter((c) => !c.mirrorCfg);
-    // An unobservable reservation's route is read too (Codex #2607 r11): it
-    // needs no destination RPC, and a retired route is evidence that adding
-    // one would not help.
+    // Unobservable: no destination configured, or one whose receipt read the
+    // destination answered with an error (Codex #2607 r14). Its route is read
+    // too (Codex #2607 r11): it needs no destination RPC, and a retired route
+    // is evidence that fixing the destination would not help.
+    const unobservable = candidates.filter((c) => !c.mirrorCfg || unreadable.has(c.remitId));
     const routed = [...noReceipt, ...unobservable];
     const routes = await readRemitRoutes(publicClient, diamond, routed.map((c) => c.remitId), deadline, run);
     const nowSec = Math.floor(Date.now() / 1000);
@@ -615,11 +668,13 @@ async function classifyUndelivered(
     for (const { remitId, v, outstanding, mirrorCfg } of routed) {
       const read = routes.get(remitId);
       const route = read && read.kind !== 'unread' ? read : undefined;
-      if (mirrorCfg && !route) continue;
-      // With no destination configured, a retired route is still the retired
-      // case (configuration would not reach a receipt behind the old adapter);
-      // otherwise the configuration gap is the reason.
-      const reason: UndeliveredReason | undefined = mirrorCfg
+      const receiptError = unreadable.get(remitId);
+      const observable = mirrorCfg !== undefined && receiptError === undefined;
+      if (observable && !route) continue;
+      // Where the receipt cannot be read, a retired route is still the retired
+      // case (fixing the destination would not reach a receipt behind the old
+      // adapter); otherwise the unreadable receipt is the reason.
+      const reason: UndeliveredReason | undefined = observable
         ? undeliveredReason(path, route!, v.sentAt, nowSec)
         : route?.kind === 'retired'
           ? 'retired'
@@ -631,6 +686,7 @@ async function classifyUndelivered(
         dstChainId: Number(v.dstChainId),
         route,
         unconfigured: !mirrorCfg,
+        receiptError,
         ageSec: Math.max(0, nowSec - Number(v.sentAt)),
         ccipMessageId: v.ccipMessageId,
         totalWei: BigInt(v.total),
@@ -979,8 +1035,8 @@ async function planLateDeliveries(
   // The receipts leave the route reads that follow them a reserve (Codex
   // #2607 r8): a mirror stalled until the receipt cutoff is abandoned there,
   // and the healthy mirrors' missing receipts are still classified.
-  const receipts = await readReceipts(candidates, mirrorClients, diamond, receiptCutoff, run);
-  const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, deadline, run);
+  const { receipts, unreadable } = await readReceipts(candidates, mirrorClients, diamond, receiptCutoff, run);
+  const undelivered = await classifyUndelivered(publicClient, 'late', baseChainId, diamond, candidates, receipts, unreadable, deadline, run);
   return { late: true, candidates, receipts, attempts, undelivered };
 }
 

@@ -104,6 +104,18 @@ export function isAggregateRejection(results: readonly BatchResult[]): boolean {
   return results.length > 1 || namesAggregateCall(first);
 }
 
+/** Whether `r` failed on its OWN call (Codex #2607 r14): the contract answered
+ *  `functionName` with a revert, or with data that does not decode. viem names
+ *  the entry's function on that error and only on that one, so an aggregate
+ *  rejection (which names `aggregate3`), a run-deadline refusal and a read
+ *  abandoned at its cutoff are all excluded: those are values not read, not
+ *  answers. */
+export function failedOnOwnCall(r: BatchResult | undefined, functionName: string): boolean {
+  if (r?.status !== 'failure') return false;
+  const err = r.error;
+  return typeof err === 'object' && err !== null && (err as { functionName?: unknown }).functionName === functionName;
+}
+
 /** The error was raised for the `aggregate3` call itself (viem's `functionName` on it). */
 function namesAggregateCall(err: unknown): boolean {
   return (

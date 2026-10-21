@@ -123,8 +123,10 @@ export type UndeliveredReason =
   /** Pending, past {@link REMIT_OVERDUE_SEC}, on the current or an unrecorded
    *  route: the cause is not known to the keeper. */
   | 'overdue'
-  /** Sent to a chain this keeper has no RPC or deployment for, so it can
-   *  neither read the receipt nor acknowledge it (Codex #2607 r6). */
+  /** Its receipt cannot be read: sent to a chain this keeper has no RPC or
+   *  deployment for (Codex #2607 r6), or one whose Diamond answers the
+   *  receipt read with an error (Codex #2607 r14). The keeper can neither
+   *  read the receipt nor acknowledge it. */
   | 'unobservable';
 
 const REASONS: readonly UndeliveredReason[] = ['retired', 'overdue', 'unobservable'];
@@ -203,6 +205,9 @@ export interface UndeliveredEvidence {
   /** The keeper has no RPC or deployment for the destination (Codex #2607
    *  r6/r11). */
   unconfigured?: boolean;
+  /** The destination answered the receipt read with this error (Codex #2607
+   *  r14), so the receipt cannot be read there. */
+  receiptError?: string;
   /** Seconds since the send. */
   ageSec: number;
   ccipMessageId: string;
@@ -215,7 +220,7 @@ export interface UndeliveredEvidence {
 export function undeliveredAlertHeader(path: RemitPath, reason: UndeliveredReason, baseChainId: number, count: number): string {
   if (reason === 'unobservable') {
     const which = path === 'late' ? 'released remittance(s) still waiting on a late acknowledgement' : 'remittance(s) still Pending on Base';
-    return `[chain ${baseChainId}] ${count} ${which} went to a chain this keeper has no RPC or deployment for, so it can neither read their receipts nor acknowledge them:`;
+    return `[chain ${baseChainId}] ${count} ${which} went to a chain where this keeper cannot read their receipts (each line says why), so it can neither read nor acknowledge them:`;
   }
   if (path === 'late') {
     return `[chain ${baseChainId}] ${count} released remittance(s) still wait on a late acknowledgement, and were sent through a remote adapter the lane no longer names. The keeper reads no receipt for them on any mirror it is configured for:`;
@@ -236,7 +241,7 @@ export function undeliveredAlertFooter(path: RemitPath, reason: UndeliveredReaso
   const valves =
     "Only if the destination receipt shows the remittance CONSUMED (not quarantined, not still provisional) may finalizeRemitReservation(remitId) be used: it attests consumption with a zero received figure, books the recycled share and clears any compensation gate. A quarantined or provisional receipt is not that evidence and must not be finalized this way: it is acknowledged from the Diamond that holds it, which Base accepts only from the lane's current peers (the runbook says how to restore one for the purpose). If it never executes, releaseRemitReservation(remitId) (seven days after the send) releases it.";
   if (reason === 'unobservable') {
-    return `None of these is known to have been sent through a retired adapter (a route Base holds no record of, or that could not be read this run, says so in its line). Give the keeper an RPC and a deployment entry for that chain; it then reads their receipts there and acknowledges any it finds, and reports the rest by their route. ${runbook}`;
+    return `None of these is known to have been sent through a retired adapter (a route Base holds no record of, or that could not be read this run, says so in its line). For a chain the keeper has no RPC or deployment for, give it both; where the destination answered the receipt read with an error, point the keeper's deployment entry for that chain at the Diamond that holds the receipts. It then reads their receipts there and acknowledges any it finds, and reports the rest by their route. ${runbook}`;
   }
   if (path === 'late') {
     return `A late acknowledgement resolves each, from the mirror Diamond that holds its receipt: the receiver its adapter had registered when the message executed, which the destination transaction shows (find it by CCIP message id). If the message has not executed, no mirror can acknowledge it yet. Recovery records also resolve each: recordRecoveryCeremony books value a governance ceremony brought back to the Diamond, and recordRecoveryTerminalLoss books governance-evidenced loss of the rest; a compensation gate clears once the two cover the remittance's total. ${runbook}`;
@@ -260,7 +265,9 @@ export function undeliveredAlertDetail(e: UndeliveredEvidence): string {
           : 'Base holds no record of the adapter it was sent to';
   const route = e.unconfigured
     ? `${routeText}; the keeper has no RPC or deployment for chain ${e.dstChainId}, so it cannot read the receipt`
-    : routeText;
+    : e.receiptError !== undefined
+      ? `${routeText}; chain ${e.dstChainId}'s Diamond answered the receipt read with an error (${e.receiptError}), so the keeper cannot read the receipt`
+      : routeText;
   const o = e.outstanding;
   const outstanding =
     o === undefined

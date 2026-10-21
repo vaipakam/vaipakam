@@ -180,7 +180,25 @@ type Book = {
   bnb?: boolean;
   /** Hold the fee quote only on this RPC (default: every mirror). */
   slowQuoteRpc?: string;
+  /** Hold Base's reservation read for this reservation this long. */
+  slowReservation?: { id: number; ms: number };
+  /** The mirror reverts the receipt read for these reservations. */
+  revertReceiptIds?: number[];
 };
+
+/** Whether a JSON-RPC batch reads `getRemitReservation(id)`, directly or
+ *  inside an `aggregate3` (decoded, so another argument cannot match). */
+function readsReservation(reqs: { method?: string; params?: unknown[] }[], id: number): boolean {
+  return reqs.some((req) => {
+    if (req.method !== 'eth_call') return false;
+    const data = (((req.params?.[0] ?? {}) as { data?: string }).data ?? '0x').toLowerCase() as `0x${string}`;
+    const calls = data.slice(0, 10) === SEL.agg
+      ? (decodeFunctionData({ abi: [AGGREGATE3] as Abi, data }).args[0] as readonly { callData: `0x${string}` }[]).map((c) => c.callData.toLowerCase())
+      : [data];
+    return calls.some((c) => c.slice(0, 10) === SEL.reservation
+      && Number((decodeFunctionData({ abi: [F.reservation] as Abi, data: c as `0x${string}` }).args as readonly bigint[])[0]) === id);
+  });
+}
 
 function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; quoteRpcs: string[]; restore: () => void } {
   const real = globalThis.fetch;
@@ -228,6 +246,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
     if (s === SEL.received) {
       const { args } = decodeFunctionData({ abi: [F.received] as Abi, data: data as `0x${string}` });
       const id = Number((args as readonly unknown[]).find((a) => typeof a === 'bigint'));
+      if (book.revertReceiptIds?.includes(id)) return { revert: '0x' };
       const held = book.receiptIds ? book.receiptIds.includes(id) : book.receipt;
       return { ok: tupleOut(F.received, held ? { receivedAt: 1_700_000_000n, srcChainId: BASE } : {}) };
     }
@@ -251,6 +270,9 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
     const wire = JSON.stringify(reqs).toLowerCase();
     if (book.slowReceipt && wire.includes(SEL.received.slice(2)) && wire.includes(book.slowReceipt.id.toString(16).padStart(64, '0'))) {
       await new Promise((r) => setTimeout(r, book.slowReceipt!.ms));
+    }
+    if (book.slowReservation && rpc === BASE_RPC && readsReservation(reqs, book.slowReservation.id)) {
+      await new Promise((r) => setTimeout(r, book.slowReservation!.ms));
     }
     if (book.slowQuoteMs && (book.slowQuoteRpc ?? rpc) === rpc && JSON.stringify(reqs).toLowerCase().includes(SEL.quote.slice(2))) {
       await new Promise((r) => setTimeout(r, book.slowQuoteMs));
@@ -429,6 +451,40 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.elapsedMs).toBeLessThan(3_000);
   });
 
+  it('a slow ledger scan neither holds the run nor stops the late path', async () => {
+    // Reservation 1 is Pending and Base's read of it stalls past the deadline.
+    // Reservation 2 is Released, open on the late queue, with no receipt and a
+    // retired route. The scan is bounded by its own cutoff, and the late path
+    // does not wait on it (Codex #2607 r14).
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      statusById: { 2: 3 },
+      lateOpenIds: [2],
+      route: { sent: OLD, live: NEW },
+      slowReservation: { id: 1, ms: 8_000 },
+      deadlineInMs: 3_000,
+    });
+    expect(t.alerts.join('\n')).toContain('remit 2');
+    expect(t.elapsedMs).toBeLessThan(4_000);
+  });
+
+  it('reports a receipt read the destination answers with an error, never leaves it silent', async () => {
+    // The mirror reverts reservation 1's receipt read (a deployment entry
+    // naming a Diamond without the read, say). That is an answer, not a gap,
+    // so it is reported with the cause (Codex #2607 r14).
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, revertReceiptIds: [1] });
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toMatch(/cannot read their receipts/);
+    expect(t.alerts[0]).toMatch(/answered the receipt read with an error/);
+    expect(t.alerts[0]).toContain('remit 1');
+  });
+
+  it('a receipt read abandoned at the cutoff is not reported as refused', async () => {
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, slowReceipt: { id: 1, ms: 1_500 }, deadlineInMs: 1_000 });
+    expect(t.alerts.join('\n')).not.toMatch(/answered the receipt read with an error/);
+  });
+
   it('a slow ops channel on one path cannot starve the other path', async () => {
     // Reservation 1 is Pending and reservation 2 is Released and open on the
     // late queue; neither has a receipt, both were sent to a retired adapter.
@@ -535,7 +591,7 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts[0]).toContain('no RPC or deployment for');
     expect(t.alerts[0]).toContain('remit 1');
     expect(t.alerts[0]).toContain('sent to the adapter the lane still names');
-    expect(t.alerts[0]).toContain('Give the keeper an RPC and a deployment entry');
+    expect(t.alerts[0]).toContain('no RPC or deployment for, give it both');
   });
 
   it('a remittance to an unconfigured chain behind a retired adapter is the retired case, not a configuration gap', async () => {
@@ -549,7 +605,7 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.alerts[0]).toMatch(/were sent through a remote adapter the lane no longer names/);
     expect(t.alerts[0].toLowerCase()).toContain(`sent to adapter ${OLD}`.toLowerCase());
     expect(t.alerts[0]).toContain('the keeper has no RPC or deployment for chain 97');
-    expect(t.alerts[0]).not.toContain('Give the keeper an RPC and a deployment entry');
+    expect(t.alerts[0]).not.toContain('no RPC or deployment for, give it both');
   });
 
   it('still alerts when the attempt log is unreadable, and sends nothing that run', async () => {
