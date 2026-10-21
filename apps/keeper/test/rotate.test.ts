@@ -4,7 +4,7 @@
  * first page does not leave that page's tail unreached run after run.
  */
 import { describe, expect, it } from 'vitest';
-import { pagedWalk, rotate, walkStart } from '../src/rotate';
+import { pagedWalk, rotate, walkFrom, walkStart } from '../src/rotate';
 
 describe('rotate', () => {
   it('starts at step mod length', () => {
@@ -64,5 +64,18 @@ describe('pagedWalk', () => {
 
   it('is empty for an empty list', () => {
     expect(pagedWalk(0n, 200n, 3)).toEqual([]);
+  });
+});
+
+describe('walkFrom — a held list read in chunks (Codex #2607 r13)', () => {
+  it('keeps every item once, and over runs puts every item in the first chunk', () => {
+    const items = Array.from({ length: 250 }, (_, i) => i);
+    const reached = new Set<number>();
+    for (let run = 0; run < 40; run++) {
+      const order = walkFrom(items, run);
+      expect([...order].sort((a, b) => a - b)).toEqual(items);
+      order.slice(0, 100).forEach((i) => reached.add(i));
+    }
+    expect(reached.size).toBe(items.length);
   });
 });

@@ -4,7 +4,7 @@
  * reads as unread, never one serial request per entry.
  */
 import { describe, expect, it } from 'vitest';
-import { PastRunDeadline, boundedRead, deadlineClient } from '../src/batchRead';
+import { PastRunDeadline, boundedRead, deadlineClient, settledChunkedRead, settledRead } from '../src/batchRead';
 
 function client(behaviour: 'reject' | 'ok') {
   const calls = { multicall: 0, readContract: 0 };
@@ -44,6 +44,48 @@ describe('boundedRead', () => {
     const { c } = client('ok');
     const res = await boundedRead(c, contracts, 'test', Date.now() + 60_000);
     expect(res.every((r) => r.status === 'success')).toBe(true);
+  });
+});
+
+describe('settledRead — a read in flight at the deadline is abandoned (Codex #2607 r7)', () => {
+  const contracts = Array.from({ length: 3 }, () => ({}));
+
+  it('settles at the deadline as unread when the aggregate is still in flight', async () => {
+    const stalled = { multicall: () => new Promise(() => {}), readContract: async () => 1 };
+    const started = Date.now();
+    const res = await settledRead(stalled as never, contracts, 'test', Date.now() + 100);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(res).toHaveLength(3);
+    expect(res.every((r) => r.status === 'failure')).toBe(true);
+  });
+
+  it('returns the read itself when it answers in time', async () => {
+    const { c } = client('ok');
+    const res = await settledRead(c, contracts, 'test', Date.now() + 60_000);
+    expect(res.every((r) => r.status === 'success')).toBe(true);
+  });
+});
+
+describe('settledChunkedRead — a cutoff never strands the same tail (Codex #2607 r16)', () => {
+  it('over runs, reaches every key even when one key\'s chunk always stalls to the cutoff', async () => {
+    const keys = Array.from({ length: 250 }, (_, i) => i);
+    // The chunk holding key 0 never answers, and every chunk after it in that
+    // run is refused at the cutoff, as on a live stalled RPC.
+    const stalling = {
+      multicall: ({ contracts }: { contracts: { key: number }[] }) =>
+        contracts.some((c) => c.key === 0)
+          ? new Promise(() => {})
+          : Promise.resolve(contracts.map(() => ({ status: 'success', result: 1 }))),
+      readContract: async () => 1,
+    };
+    const reached = new Set<number>();
+    for (let run = 0; run < 250; run++) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await settledChunkedRead(stalling as never, keys, 100, (key) => ({ key }), 'test', Date.now() + 5, run);
+      expect(res.size).toBe(keys.length);
+      for (const [k, r] of res) if (r.status === 'success') reached.add(k);
+    }
+    expect(reached.size).toBe(keys.length - 1);
   });
 });
 

@@ -1904,6 +1904,9 @@ contract RewardRemittanceFacet is
         // to `totalFresh`.
         (bytes memory payload, ) =
             _remitPayload(s, dstChainId, fundedDays, total, s.remitReservationNonce + 1, total - totalFresh);
+        // #2561 — the send refuses a remittance with no bound remote adapter,
+        // so the dry run refuses it too, by the same rule.
+        LibRewardRemitDispatch.boundRemoteMessenger(messenger, dstChainId);
         fee = ICrossChainMessenger(messenger).quoteMessageFee(
             dstChainId,
             payload,

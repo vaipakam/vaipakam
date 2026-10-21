@@ -30,8 +30,42 @@ library LibRewardRemitDispatch {
     ///      identically wherever the revert originates.
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
     error RemittanceRefundFailed();
+    /// @dev #2561 — the messenger names no remote adapter on `dstChainId`.
+    ///      Refused BEFORE any value moves: a remittance must leave bound to
+    ///      an adapter Base can name.
+    error RemitRouteUndeclared(uint32 dstChainId);
+
+    /// @notice #2561 — the remote adapter remittance `remitId` was bound to,
+    ///         as the messenger reported it at the send. One per dispatch;
+    ///         readable afterwards from `RewardRemittanceLensFacet.getRemitRoute`.
+    event RemitRouteRecorded(
+        uint256 indexed remitId,
+        uint32 indexed dstChainId,
+        address remoteMessenger
+    );
 
     using SafeERC20 for IERC20;
+
+    /**
+     * @notice #2561 — the remote adapter a remittance to `dstChainId` sent
+     *         through `messenger` right now is bound to.
+     * @dev    The ONE rule for "this remittance has a destination Base can
+     *         name". Only the adapter is recorded because only the adapter is
+     *         bound into the message: which handler receives it is resolved
+     *         on the destination when it executes, so a handler rotated
+     *         behind the same adapter still receives it. The send
+     *         ({dispatchRemitTail}) records what this returns, and the strict
+     *         fee dry run (`RewardRemittanceFacet.quoteRemittanceFee`) calls
+     *         it too, so a quote never prices a send this refuses. Reverts
+     *         {RemitRouteUndeclared} when no adapter is configured.
+     */
+    function boundRemoteMessenger(
+        address messenger,
+        uint32 dstChainId
+    ) internal view returns (address remoteMessenger) {
+        remoteMessenger = ICrossChainMessenger(messenger).remoteMessengerOf(dstChainId);
+        if (remoteMessenger == address(0)) revert RemitRouteUndeclared(dstChainId);
+    }
 
     /// @notice The gas a reward remittance asks the destination to run its
     ///         receiver with — the ONE constant the send and its quote both
@@ -98,6 +132,16 @@ library LibRewardRemitDispatch {
         uint256 remitId,
         LibRewardCustody.TransportDraw memory draw
     ) internal returns (bytes32 messageId) {
+        // #2561 — record WHERE the value goes before any of it moves: the
+        // remote adapter the message is bound to. The lane can later be
+        // re-pointed at a redeployed mirror; the message still executes at
+        // this adapter, so its receipt and acknowledgement live on the OLD
+        // mirror, and this record is what lets anyone see that. No adapter is
+        // refused rather than recorded as unknown.
+        address remoteMessenger = boundRemoteMessenger(messenger, dstChainId);
+        s.remitRemoteMessenger[remitId] = remoteMessenger;
+        emit RemitRouteRecorded(remitId, dstChainId, remoteMessenger);
+
         // #1566 slice 4 PR B — the tail takes the custody SOURCE as an
         // argument (design §5d): a `Live` draw is bounded and charged
         // against the delivered ledger by its fresh share FIRST (reject
