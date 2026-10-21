@@ -22,6 +22,11 @@
 #       layout: an acknowledged break is still one no chain may be upgraded
 #       in place across.
 #
+#   1c. Measured-delivery guard (#2440) — every ERC-20 move written in src/
+#       outside `src/libraries/LibDelivery.sol` is listed, with its reason,
+#       in `script/measured-delivery-allowlist.json`. Read from the
+#       compiler's AST, not the source text.
+#
 #   2. Forge test suite:
 #        • default            — the deploy-sanity suite (test/deploy/*):
 #            FacetSizeLimitTest    (every facet within EIP-170; #66),
@@ -96,8 +101,10 @@ FAIL=0
 # keeps the unit under the ceiling while still validating every contract a
 # deploy actually touches.
 echo "[predeploy 1/4] forge build (--skip test — see #636)"
+BUILD_OK=0
 if forge build --skip test; then
   echo "  ✓ contracts compile (src + scripts)"
+  BUILD_OK=1
 else
   echo "  ✗ forge build failed" >&2
   FAIL=1
@@ -133,6 +140,31 @@ else
     echo "  ✗ storage-layout guard failed — see above" >&2
     FAIL=1
   fi
+fi
+
+# ── 1c. Measured-delivery guard ───────────────────────────────────────
+# The protocol books only what a token move delivered, and LibDelivery is
+# where that rule is written (#2440). This fails on any ERC-20 move written
+# in src/ outside the library that the allowlist does not name with its
+# reason, so a settlement path cannot go back to booking a figure nobody
+# measured. It builds its own artifacts from scratch (AST node ids are
+# numbered per compilation job, so an incremental build cannot be read
+# across files), into out-measured-delivery/. Node is REQUIRED here for the
+# same reason as step 1b; skipped only when step 1 failed.
+echo
+echo "[predeploy 1c/4] measured-delivery guard (#2440)"
+if [ "$BUILD_OK" -ne 1 ]; then
+  echo "  ✗ skipped — the build failed" >&2
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  ✗ node not installed — this guard is a REQUIRED predeploy" >&2
+  echo "    dependency and cannot be skipped. Install node (>= 18)." >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-measured-delivery.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ measured-delivery guard failed — route the move through" >&2
+  echo "    LibDelivery, or list it with its reason (see above)" >&2
+  FAIL=1
 fi
 
 # ── 2. Forge test suite ───────────────────────────────────────────────

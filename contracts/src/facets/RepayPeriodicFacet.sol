@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -11,11 +12,9 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -50,7 +49,6 @@ import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
  *                                   auto-liquidating collateral on shortfall.
  */
 contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    using SafeERC20 for IERC20;
 
     /// @notice Emitted when auto daily deduct is triggered for an NFT rental.
     /// @param loanId The ID of the loan.
@@ -669,13 +667,12 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // lender → lender's vault (bookkeeping mirrors PartialRepaid
         // accounting on the lender side).
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            // #2440 — a bonus books nobody by what arrives (LibDelivery
+            // outcome 3); refused only if it cost the Diamond more than it sent.
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
-        if (handlingFee > 0) {
-            address treasury = LibFacet.getTreasury();
-            IERC20(loan.principalAsset).safeTransfer(treasury, handlingFee);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, handlingFee);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee);
         if (lenderProceeds > 0) {
             // #658 PR-B (Codex #685 P1) — route to the CURRENT lender-position
             // holder, not the stale `loan.lender`: the eager consolidation above
@@ -689,12 +686,14 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // `EncumbranceMutateFacet` so the registry-aware freeze machinery stays
             // out of this EIP-170-tight facet; the host resolves `ownerOf` itself.
             //
-            // #2440 — a forced payout acts on what arrived. `lenderProceeds`
-            // becomes what reached the lender, so the `interestSettled` credit,
-            // the over-buffer signal and the event below name tokens the
-            // lender actually has; a short delivery leaves the difference in
-            // the borrower's obligation. The host moves the paid-through mark
-            // only on a delivery in full.
+            // #2440 — `lenderProceeds` becomes what the host reports, so the
+            // `interestSettled` credit, the over-buffer signal and the event
+            // below name tokens the lender actually has. A payout to the
+            // holder's WALLET is refused unless it arrived in full (a wallet
+            // reading is trusted only to refuse: its owner could forward the
+            // tokens on mid-transfer and be paid again); a frozen holder's
+            // share credited to the stored lender's VAULT acts on what arrived
+            // there, and the difference stays in the borrower's obligation.
             lenderProceeds = abi.decode(LibFacet.crossFacetCallReturn(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,

@@ -310,7 +310,9 @@ contract BackstopFacet is
         if (s.treasury != address(this)) revert TreasuryNotDiamond();
         uint256 returned = BackstopVaultImplementation(vault)
             .withdrawIdleToDiamond(lend, coll, amount);
-        // Diamond-side record (the vault forwarded the raw tokens to the Diamond).
+        // Diamond-side record. #2440 — `returned` is what reached the Diamond
+        // (the vault measures its forward), so the treasury is credited with
+        // tokens it actually holds.
         if (returned > 0) s.treasuryBalances[lend] += returned;
         emit BackstopWithdrawnToTreasury(lend, coll, returned);
     }
@@ -512,6 +514,9 @@ contract BackstopFacet is
             address collateralAsset,
             uint256 collateralRecovered
         ) = BackstopVaultImplementation(vault).executeClaim(loanId, retryCalls);
+        // #2440 — both figures are what reached the Diamond (the vault measures
+        // each forward), so the credits and the events name tokens the treasury
+        // actually holds.
         if (principalRecovered > 0) {
             s.treasuryBalances[principalAsset] += principalRecovered;
         }
@@ -544,6 +549,7 @@ contract BackstopFacet is
             token,
             address(this)
         );
+        // #2440 — what reached the Diamond (the vault measures its forward).
         if (amount > 0) s.treasuryBalances[token] += amount;
         emit BackstopTokenSwept(token, amount);
     }

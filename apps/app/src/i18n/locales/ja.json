@@ -1502,6 +1502,8 @@
         "loan": "ローン",
         "prepaidBufferBack": "前払いバッファの返却",
         "repaidFunds": "返済された資金",
+        "nothingRecovered": "このポジションでは何も回収されませんでした — 請求するとポジションが閉じられます",
+        "nothingRecordedYet": "現時点であなたに記録されているものはありません",
         "recoveryNotComparable": "これはデフォルト時の清算で回収された額です。デフォルト時点でローンにまだ残っていた額はアプリでは分からないため、不足額は表示しません。",
         "compareInKind": "これは現金額ではなく担保そのものです。価値は市場価格によって変わります。",
         "owedAtDefault": "デフォルト時点で、ローンにはまだ {{total}} の残高がありました（元本 {{principal}} と、利息および遅延手数料 {{charges}}）。",

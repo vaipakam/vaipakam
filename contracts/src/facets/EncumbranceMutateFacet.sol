@@ -418,8 +418,11 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///        branch only, so a later position sale does not forfeit a stretch
     ///        the borrower has already paid for. Pass `0` from any caller whose
     ///        payout does not correspond to a settled interest period.
-    /// @return delivered #2440 — what reached the payee, never more than
-    ///         `amount`. The caller credits the loan by this figure.
+    /// @return delivered #2440 — `amount` when the clean holder's wallet was
+    ///         paid (a short arrival there is refused, since a wallet reading
+    ///         is trusted only to refuse); what the stored lender's vault
+    ///         received when the share was frozen, never more than `amount`.
+    ///         The caller credits the loan by this figure.
     function freezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,

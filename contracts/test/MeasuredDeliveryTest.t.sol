@@ -29,6 +29,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -544,31 +545,32 @@ contract MeasuredDeliveryTest is SetupTest {
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
     }
 
-    /// @notice A forced payout of resident tokens to the lender (the periodic
-    ///         auto-liquidation) reports what the lender received, and a short
-    ///         arrival leaves the period it settles open instead of marking
-    ///         the lender paid through it. (A partial liquidation, which keeps
-    ///         the loan open, refuses that short report instead; see
-    ///         RiskFacetTest.)
-    /// @dev    Kills: the caller booking the requested figure as settled, and
-    ///         the paid-through mark advancing over tokens that never arrived.
-    function test_ResidentLenderPayout_ReportsWhatArrived() public {
+    /// @notice #2440 (Codex r3) — the clean branch pays the lender-position
+    ///         holder's WALLET, and a reading at a wallet is trusted only to
+    ///         refuse: its owner can lower it mid-transfer (a receiving hook
+    ///         forwarding the tokens on) and would be paid again if the short
+    ///         figure were booked. So a short arrival is refused there, in the
+    ///         forced auto-liquidation too, and the paid-through mark does not
+    ///         move. Kills: reporting what arrived and leaving the rest owed to
+    ///         the same wallet.
+    function test_ResidentLenderPayout_WalletShortRefused() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(LOAN, 1, PRINCIPAL);
         assertEq(_paidThrough(LOAN), 1, "fixture: the slot read is the paid-through mark");
         _chargesFee(mockERC20, address(diamond));
-        uint256 lender0 = _bal(mockERC20, lender);
 
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, amount, _less(amount)
+            )
+        );
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
             LOAN, mockERC20, amount, block.timestamp + 30 days
         );
-
-        assertEq(delivered, _less(amount), "the helper reports what arrived");
-        assertEq(_bal(mockERC20, lender) - lender0, delivered, "and the lender received it");
-        assertEq(_paidThrough(LOAN), 1, "a short payout leaves the period open");
+        assertEq(_paidThrough(LOAN), 1, "the period stays open");
     }
 
     /// @notice The control for the cell above: a payout that arrives in full
@@ -661,6 +663,124 @@ contract MeasuredDeliveryTest is SetupTest {
         TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 1 ether);
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
         TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 1 ether);
+        vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether);
+    }
+
+    /// @notice #2440 (Codex r3) — a treasury share the Diamond holds (a
+    ///         liquidation's handling fee, a settlement's interest cut) is
+    ///         pushed to an EXTERNAL treasury and accrues what reached it,
+    ///         never the requested figure, and the Diamond gives up exactly
+    ///         the share. Kills: the twelve hand-written push-then-accrue
+    ///         pairs this replaced, which accrued the requested figure.
+    function test_TreasuryFeeHost_DiamondShareAccruesWhatArrived() public {
+        address treasury = makeAddr("externalTreasury");
+        AdminFacet(address(diamond)).setTreasury(treasury);
+        ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
+        _chargesFee(mockERC20, address(diamond));
+
+        vm.prank(address(diamond));
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+
+        assertEq(accrued, _less(4 ether), "the host returns what arrived");
+        assertEq(_bal(mockERC20, treasury), accrued, "the treasury holds what it was credited with");
+        assertEq(_bal(mockERC20, address(diamond)), OTHER, "the Diamond gave up exactly the share");
+    }
+
+    /// @notice #2623 — where the Diamond IS the treasury (SetupTest's
+    ///         topology), a share it already holds is already where the
+    ///         treasury keeps it: nothing moves, so a charging token takes no
+    ///         fee out of the pooled balance, and the whole share accrues.
+    ///         Kills: a self-transfer that hands the token its charge out of
+    ///         tokens held for other users.
+    function test_TreasuryFeeHost_DiamondAsTreasury_NothingMovesWholeShareAccrues() public {
+        ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
+        _chargesFee(mockERC20, address(diamond));
+        uint256 accrued0 = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+
+        vm.recordLogs();
+        vm.prank(address(diamond));
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+
+        assertEq(accrued, 4 ether, "the whole share accrues");
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20) - accrued0,
+            4 ether,
+            "the treasury balance names the whole share"
+        );
+        assertEq(_bal(mockERC20, address(diamond)), OTHER + 4 ether, "nothing left the Diamond");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].emitter != mockERC20 || logs[i].topics[0] != keccak256("Transfer(address,address,uint256)"),
+                "no token moved"
+            );
+        }
+    }
+
+    // -- The sender side ----------------------------------------------------
+
+    /// @dev `token` starts charging FEE_BPS to the SENDER on top of each
+    ///      transfer out of `onlyFrom`: the recipient receives the whole
+    ///      amount, the sender loses the amount plus the fee.
+    function _chargesFeeOnTop(address token, address onlyFrom) internal {
+        _chargesFee(token, onlyFrom);
+        FeeOnTransferERC20Mock(token).setFeeOnTop(true);
+    }
+
+    /// @notice #2440 (Codex r3) — a move out of the Diamond that cost it more
+    ///         than it sent is refused, in every flow: the excess would come
+    ///         out of tokens the Diamond holds for someone else, and a
+    ///         receiver-side reading sees nothing wrong (the recipient got the
+    ///         whole amount). Kills: measuring only the receiving end.
+    function test_OverDebit_RefusedOutOfTheDiamond() public {
+        // An external treasury, so the share really leaves the Diamond (where
+        // the Diamond is the treasury nothing moves, see the #2623 cell).
+        AdminFacet(address(diamond)).setTreasury(makeAddr("externalTreasury"));
+        ERC20Mock(mockERC20).mint(address(diamond), OTHER + 4 ether);
+        _chargesFeeOnTop(mockERC20, address(diamond));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenOverDebit.selector,
+                mockERC20,
+                4 ether,
+                4 ether + (4 ether * FEE_BPS) / 10_000
+            )
+        );
+        vm.prank(address(diamond));
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+    }
+
+    /// @notice The same out of a user's vault: the vault's other positions
+    ///         would pay the excess, and its tracked balance would stay above
+    ///         what it holds. Refused, a forced flow's withdrawal included.
+    function test_OverDebit_RefusedOutOfAVault() public {
+        ERC20Mock(mockERC20).mint(bVault, 10 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
+        _chargesFeeOnTop(mockERC20, bVault);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenOverDebit.selector,
+                mockERC20,
+                4 ether,
+                4 ether + (4 ether * FEE_BPS) / 10_000
+            )
+        );
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+    }
+
+    /// @notice The control: an ordinary token costs its sender exactly what
+    ///         it sent, so the same moves go through untouched.
+    function test_OverDebit_OrdinaryTokenUnaffected() public {
+        ERC20Mock(mockERC20).mint(bVault, 10 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower, mockERC20, 10 ether);
+        vm.prank(address(diamond));
+        uint256 delivered = VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(borrower, mockERC20, lender, 4 ether);
+        assertEq(delivered, 4 ether, "delivered in full");
+        assertEq(_bal(mockERC20, bVault), 6 ether, "the vault lost what it sent");
     }
 
     /// @notice A wallet fee accrues in full when it arrives in full, and is

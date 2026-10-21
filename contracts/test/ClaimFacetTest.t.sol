@@ -797,13 +797,56 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
-        // Zero out lenderClaims[loanId].amount via vm.store
-        // lenderClaims is at BASE+22
+        // A claim no close-out wrote: zero amount AND no asset. (#2440 — a
+        // recorded claim of zero is not "nothing"; see
+        // testZeroRecordedLenderClaimClosesThePosition.)
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(loanId, address(0));
 
         vm.prank(lender);
         vm.expectRevert(ClaimFacet.NothingToClaim.selector);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
+    }
+
+    /// @dev #2440 — a RECORDED lender claim of zero (a forced close-out whose
+    ///      token delivered nothing books what arrived, which is zero) still
+    ///      runs. A borrower who claims first does not settle the loan over it,
+    ///      and the lender's claim then completes: it pays nothing, burns the
+    ///      lender NFT and settles. Kills: the claim reverting `NothingToClaim`
+    ///      forever, or the borrower's claim settling the loan and skipping the
+    ///      lender side's close.
+    function testZeroRecordedLenderClaimClosesThePosition() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
+        _repayLoan(loanId);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
+        (address recordedAsset, , ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertTrue(recordedAsset != address(0), "fixture: the claim is recorded");
+        uint256 lenderTokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the lender's recorded claim keeps the loan open"
+        );
+
+        uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        vm.expectEmit(true, false, false, false);
+        emit ClaimFacet.LoanSettled(loanId);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+
+        assertEq(IERC20(mockERC20).balanceOf(lender), lenderBefore, "nothing is paid");
+        (, , bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertTrue(claimed, "the lender side is closed");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "and the loan settles"
+        );
+        vm.expectRevert();
+        IERC721(address(diamond)).ownerOf(lenderTokenId);
     }
 
     /// @dev Covers heldForLender > 0 path in claimAsLender.
@@ -1080,9 +1123,11 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
 
-        // Manually zero out lenderClaims[loanId].amount via vm.store
-        // lenderClaims is at BASE+22 (mapping), slot = keccak256(abi.encode(loanId, BASE+22))
+        // A lender claim no close-out wrote (zero amount, no asset). A
+        // RECORDED claim of zero keeps the loan open instead (#2440; see
+        // testZeroRecordedLenderClaimClosesThePosition).
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(loanId, address(0));
 
         vm.prank(borrower);
         vm.expectEmit(true, false, false, false);

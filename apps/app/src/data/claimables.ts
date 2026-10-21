@@ -424,9 +424,17 @@ export async function probeClaim(
         ? await readOwedAtInternalMatch(publicClient, diamond, loan.loanId)
         : MATCH_NONE;
 
-    // Mirror ClaimFacet's actionability guard.
+    // Mirror ClaimFacet's actionability guard. #2440 — on the lender side a
+    // RECORDED claim is actionable even at zero: a forced close-out books what
+    // arrived, and one that received nothing still has to run to close the
+    // position (the contract keys it on the claim's asset being set).
+    const lenderClaimRecorded =
+      isLender &&
+      typeof claimAsset === 'string' &&
+      claimAsset !== '0x0000000000000000000000000000000000000000';
     const actionable =
       amount > 0n ||
+      lenderClaimRecorded ||
       assetType !== AssetType.ERC20 ||
       heldForLender > 0n ||
       hasRentalNftReturn ||

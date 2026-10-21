@@ -814,9 +814,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Tiered KYC check for liquidator based on bonus value (README §16).
         _assertLiquidatorKyc(loan.principalAsset, bonus);
 
-        // Liquidation bonus transferred to liquidator immediately.
+        // Liquidation bonus transferred to liquidator immediately. #2440 — a
+        // bonus books nobody by what arrives (LibDelivery outcome 3); refused
+        // only if it cost the Diamond more than it sent.
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
 
         // Waterfall (L-g #1009): bonus (keeper incentive) is paid first, then
@@ -860,11 +862,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
 
         // Treasury receives the (subordinated) handling fee + interest fee.
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
 
         // Lender's proceeds deposited into lender's vault for claim. #821 —
         // vault-lock so a flagged stored lender doesn't brick the liquidation
@@ -1206,7 +1205,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         _assertLiquidatorKyc(loan.principalAsset, bonus);
 
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            // #2440 — outcome 3, as in {triggerLiquidation}.
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
 
         // 2% handling fee on the slice's proceeds. Capped so bonus +
@@ -1249,12 +1249,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (principalRepaid >= loan.principal) revert PartialFullyClosedUseFull();
 
         // Treasury receipt — single transfer, same as full.
-        address treasury = s.treasury;
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
 
         // Lender's share goes directly to their vault. We deliberately
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved
@@ -1295,7 +1291,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // principal it retires, and the accrual restart below. So, like the
         // rest of this all-or-nothing call (see the function's NatSpec), it is
         // refused unless the lender-position holder (or the frozen holder's
-        // vault) received all of `lenderProceeds`. The close-out that acts on
+        // vault) received all of `lenderProceeds`. (The host itself refuses a
+        // short arrival at the holder's wallet; the check here covers the
+        // frozen holder's vault.) The close-out that acts on
         // what arrived is the FULL liquidation, which stays open: a keeper
         // turned away here calls {triggerLiquidation}.
         if (lenderProceeds > 0) {
@@ -1642,10 +1640,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         );
         uint256 lenderProceeds = totalDebt - treasuryInterestFee;
 
-        if (treasuryInterestFee > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, treasuryInterestFee);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryInterestFee);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee);
 
         // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
         // #2440 — the claim names what the vault received.

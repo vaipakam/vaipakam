@@ -350,11 +350,8 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         }
 
         // ── Settle waterfall — diamond-held pattern ──────────────────
-        address treasury = LibFacet.getTreasury();
-        if (treasuryShare > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryShare);
 
         // Codex round-3 P1 #1 + round-4 P1 #3 — pay the lender directly
         // on the partial path, but route to the CURRENT lender-side NFT
@@ -393,10 +390,11 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             // #954 (§1.3) — same Tier-1 discretionary screen on the borrower
             // surplus payee; the must-complete escape is `swapToRepayFull`.
             LibVaipakam._assertNotSanctioned(currentBorrowerHolder);
-            IERC20(loan.principalAsset).safeTransfer(
-                currentBorrowerHolder,
-                surplus
-            );
+            // #2440 — a payment to a wallet that books the surplus as paid: a
+            // reading at a wallet is trusted only to refuse (LibDelivery,
+            // WHERE A READING CAN BE TRUSTED), so a short arrival is refused,
+            // as the full route's surplus payout is.
+            LibDelivery.pushExact(loan.principalAsset, currentBorrowerHolder, surplus);
         }
 
         // ── Loan state updates ───────────────────────────────────────

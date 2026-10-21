@@ -42,16 +42,34 @@ library LibFacet {
         }
     }
 
-    /// @dev Transfers `amount` of `asset` from the Diamond to the configured
-    ///      treasury and records the accrual. Uses
-    ///      {recordTreasuryAccrual} so `treasuryBalances` only grows when
-    ///      the funds stay at the Diamond (i.e. `s.treasury == address(this)`).
-    ///      When treasury is external, the tokens physically leave the
-    ///      Diamond and no IOU should remain. No-op on zero.
-    function transferToTreasury(address asset, uint256 amount) internal {
-        if (amount == 0) return;
-        IERC20(asset).safeTransfer(LibVaipakam.storageSlot().treasury, amount);
-        recordTreasuryAccrual(asset, amount);
+    /// @dev Moves `amount` of `asset` the Diamond holds (a treasury share of
+    ///      proceeds) to the configured treasury and records the accrual of
+    ///      what ARRIVED. Uses {recordTreasuryAccrual} so `treasuryBalances`
+    ///      only grows when the funds stay at the Diamond (i.e.
+    ///      `s.treasury == address(this)`). When treasury is external, the
+    ///      tokens physically leave the Diamond and no IOU should remain.
+    ///      No-op on zero.
+    ///
+    ///      #2440 — hosted on TreasuryFeeFacet (`collectFeeFromDiamond`),
+    ///      which measures the push and refuses one that cost the Diamond more
+    ///      than `amount`. Every Diamond-held treasury share goes through here;
+    ///      a hand-written `safeTransfer(treasury, x)` + accrual of `x` books a
+    ///      fee that may not have arrived. Where the Diamond is the treasury
+    ///      the host moves nothing and accrues all of `amount` (#2623).
+    /// @return accrued What the treasury received and was credited with.
+    function transferToTreasury(address asset, uint256 amount) internal returns (uint256 accrued) {
+        if (amount == 0) return 0;
+        return abi.decode(
+            crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    ITreasuryFeeHost.collectFeeFromDiamond.selector,
+                    asset,
+                    amount
+                ),
+                IVaipakamErrors.TreasuryTransferFailed.selector
+            ),
+            (uint256)
+        );
     }
 
     /// @dev Canonical treasury-accrual sink. Use at every fee site — whether

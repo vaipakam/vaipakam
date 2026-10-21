@@ -153,17 +153,29 @@ runs half of it on old code:
   and `RedeployFacets` both carry the host. This family is ordinary in-place
   refresh material; the fresh-deploy rule below is about the #1566 slices only.
 
-- **TreasuryFeeFacet + every facet that charges a fee into the treasury
-  (#2440).** RepayFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet,
-  DefaultedFacet, RepayPeriodicFacet and OfferAcceptFeeFacet move each fee drawn
-  from a payer's wallet or a user's vault through a self-call to
-  `collectFeeFromPayer` / `collectFeeFromVault`, which measure what the
-  treasury received and record the accrual once (a wallet fee is refused unless
-  it all arrived; a vault fee is accrued as it arrived). A caller refreshed
-  without the host reverts `FunctionDoesNotExist` on every fee it charges (a
-  hard revert, never a skipped fee). `RefreshAllFacetsInPlace`,
-  `RedeployFacets` and `ReplaceStaleFacets` all carry the host; ordinary
-  in-place refresh material.
+- **TreasuryFeeFacet + every facet that moves anything into the treasury
+  (#2440).** Each fee drawn from a payer's wallet or a user's vault goes
+  through a self-call to `collectFeeFromPayer` / `collectFeeFromVault`, and
+  each treasury share the Diamond already holds from a settlement goes through
+  `collectFeeFromDiamond` (`LibFacet.transferToTreasury`). The host measures
+  what the treasury received and records the accrual once (a wallet fee is
+  refused unless it all arrived; a vault fee or a held share is accrued as it
+  arrived). The family is every facet whose code reaches those helpers,
+  directly or through an inlined library: AutoLifecycleFacet, ClaimFacet,
+  DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
+  IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
+  PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
+  RepayPeriodicFacet, RiskFacet, RiskMatchLiquidationFacet and
+  RiskSplitLiquidationFacet (the VPFI LIF settle or forfeit), SwapToRepayFacet
+  and SwapToRepayPartialFacet. Find it again with a grep for those three
+  helpers plus `settleBorrowerLifProper` / `forfeitBorrowerLif`, not from this
+  list. A caller refreshed without the host reverts `FunctionDoesNotExist` on
+  every fee or share it moves (a hard revert, never a skipped fee).
+  `RefreshAllFacetsInPlace`, `RedeployFacets` and `ReplaceStaleFacets` all
+  carry the host; ordinary in-place refresh material. The backstop vault's
+  returns to the treasury are measured in `BackstopVaultImplementation`, its
+  own UUPS contract: they reach a chain only through `upgradeBackstopVault`,
+  not through any facet refresh.
 
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every

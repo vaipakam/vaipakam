@@ -1835,14 +1835,29 @@ contract CollateralListingExecutor is
     // leg is the seller's own remainder, and the fee legs go to third parties
     // (`LibDelivery` outcome 3), so they are not measured.
     //
-    // A booked leg whose recipient is the fill's own `fulfiller` (a lender
-    // buying the collateral of their own loan) is a payment to oneself: it
-    // books no one else as paid, and the payer's balance falls by the other
-    // legs it pays, so a rise cannot be read. It is not measured, the rule
-    // `LibDelivery.measured` applies to a move whose source is its recipient.
-    // The Diamond never pays a listing's consideration itself (when it calls
-    // Seaport it matches a bidder's order, and the bidder pays), so this
-    // exemption never applies to the Diamond's proceeds leg.
+    // A booked leg the recipient pays to itself (a lender buying the
+    // collateral of their own loan) books no one else as paid, and the payer's
+    // balance falls by the other legs it pays, so a rise cannot be read. It is
+    // not measured, the rule `LibDelivery.measured` applies to a move whose
+    // source is its recipient. The zone sees no transfer source, so it proves
+    // the self-payment from what Seaport 1.6 passes it, and only where that is
+    // a proof: the recipient is the `fulfiller`, AND `validateOrder` receives
+    // a one-entry `orderHashes`. A one-entry array is what Seaport builds for
+    // a single-order fulfilment (`fulfillOrder`, `fulfillAdvancedOrder`, every
+    // basic order) and for an available-orders fill of one order, and in each
+    // the fulfiller pays the whole consideration. A call that combines orders
+    // (`matchOrders` / `matchAdvancedOrders`, or an available-orders fill of
+    // several) passes one entry per order, and there the fulfiller need not
+    // be the payer: in a match the counter-order's offerer funds the leg, so
+    // a lender who matches their own listing against a third party's bid is
+    // the fulfiller while the bidder pays (Codex #2622 r3). Every such leg is
+    // measured. The Diamond never pays a listing's consideration itself (when
+    // it calls Seaport it matches a bidder's order, and the bidder pays), so
+    // the exemption never applies to the Diamond's proceeds leg.
+    //
+    // The base is recorded at `authorizeOrder` for every order, exempt or
+    // not, because Seaport's `orderHashes` there is still being filled and
+    // cannot say what the call is; `validateOrder` decides.
     //
     // One Seaport call may fill several of these orders, and Seaport runs
     // every `authorizeOrder` before any transfer and every `validateOrder`
@@ -1858,13 +1873,14 @@ contract CollateralListingExecutor is
     // The record lives in transient storage (EIP-1153), so it never outlives
     // the transaction and touches no persistent slot of this proxy.
     //
-    // Two residues, both reachable only with a token outside the supported
-    // set. A transfer someone else makes to the same recipient between the two
-    // hooks counts as arrival; it is real tokens reaching that recipient. And
-    // a lender whose OWN marketplace bid pays a listing that a third party
-    // matches is not the `fulfiller`, so that self-payment is measured, reads
-    // short, and the fill is refused (the lender can fill the listing
-    // directly instead).
+    // Residues. A transfer someone else makes to the same recipient between
+    // the two hooks counts as arrival; it is real tokens reaching that
+    // recipient, and is reachable only with a token outside the supported set.
+    // A lender who pays their own listing inside a COMBINED call (their own
+    // bid matched against it by anyone, or a batch of available orders that
+    // includes it) is measured, reads short, and the fill is refused, with any
+    // token: the lender buys the collateral of their own loan by filling that
+    // listing on its own instead.
 
     /// @dev Namespace of the transient arrival record.
     bytes32 private constant ARRIVAL_BASE_TAG = keccak256("vaipakam.listing.arrival-base");
@@ -1887,22 +1903,27 @@ contract CollateralListingExecutor is
         }
     }
 
-    /// @dev Whether the booked leg is measured: not when its recipient is the
-    ///      fill's payer, i.e. its `fulfiller` (see the section comment).
+    /// @dev Whether the booked leg is measured: always, except where Seaport's
+    ///      parameters prove its recipient paid it (the recipient is the
+    ///      `fulfiller` of a single-order call, see the section comment). Read
+    ///      at `validateOrder` only, where `orderHashes` is final.
     function _bookedLegMeasured(ZoneParameters calldata params) private view returns (bool) {
         address recipient = params.consideration[0].recipient;
-        return recipient != params.fulfiller || recipient == vaipakamDiamond;
+        return recipient != params.fulfiller ||
+            params.orderHashes.length != 1 ||
+            recipient == vaipakamDiamond;
     }
 
     /// @dev `authorizeOrder` (before any transfer of the Seaport call): the
-    ///      base of the booked leg's recipient is its balance now. Overwriting
+    ///      base of the booked leg's recipient is its balance now, recorded for
+    ///      every order (whether the leg is measured is decided at
+    ///      `validateOrder`, see the section comment). Overwriting
     ///      is correct: inside one Seaport call every `authorizeOrder` precedes
     ///      every transfer, so a second order paying the same recipient writes
     ///      the same figure; across two Seaport calls in one transaction, the
     ///      earlier call's legs were all claimed by its own `validateOrder`s,
     ///      and the current balance is the right base.
     function _snapshotBookedLeg(ZoneParameters calldata params) private {
-        if (!_bookedLegMeasured(params)) return;
         ReceivedItem calldata item = params.consideration[0];
         _setArrivalBase(
             _arrivalKey(item.token, item.recipient),

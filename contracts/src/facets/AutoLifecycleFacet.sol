@@ -18,8 +18,6 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -916,15 +914,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             lenderShare + treasuryShare,
             IVaipakamErrors.VaultWithdrawFailed.selector
         );
-        // 2. Forward treasury share + record accrual.
-        if (treasuryShare > 0) {
-            SafeERC20.safeTransfer(
-                IERC20(principalAsset),
-                LibFacet.getTreasury(),
-                treasuryShare
-            );
-            LibFacet.recordTreasuryAccrual(principalAsset, treasuryShare);
-        }
+        // 2. Forward treasury share + record accrual. #2440 — measured,
+        //    accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(principalAsset, treasuryShare);
         // 3. Push lender share into the lender's vault.
         address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
         if (lenderShare > 0) {

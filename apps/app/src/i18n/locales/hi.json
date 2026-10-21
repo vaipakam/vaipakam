@@ -1502,6 +1502,8 @@
         "loan": "Loan",
         "prepaidBufferBack": "आपका prepaid buffer वापस",
         "repaidFunds": "चुकाई गई funds",
+        "nothingRecovered": "इस पोज़िशन के लिए कुछ भी वसूल नहीं हुआ — claim करने पर यह बंद हो जाएगी",
+        "nothingRecordedYet": "अभी तक आपके लिए कुछ भी दर्ज नहीं है",
         "recoveryNotComparable": "यह वह राशि है जो default के निपटारे में वापस मिली। default के समय loan पर कितना बाकी था, यह app को उपलब्ध नहीं है, इसलिए कोई कमी नहीं दिखाई जाती।",
         "compareInKind": "यह नकद राशि नहीं, ख़ुद collateral है — इसकी क़ीमत इसके बाज़ार मूल्य पर निर्भर करती है।",
         "owedAtDefault": "default के समय loan पर अब भी {{total}} बाकी था: {{principal}} मूलधन और {{charges}} ब्याज व देर से भुगतान शुल्क।",

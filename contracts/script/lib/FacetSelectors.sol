@@ -416,11 +416,12 @@ library FacetSelectors {
         s[0] = SwapAttemptFacet.swapAttempt.selector;
     }
 
-    /// @notice Full external selector surface of {TreasuryFeeFacet} (2).
+    /// @notice Full external selector surface of {TreasuryFeeFacet} (3).
     ///
     /// @dev    #2440. Every facet that charges a fee from a payer's wallet or
-    ///         a user's vault moves it into the treasury by self-calling one
-    ///         of these selectors — `DefaultedFacet`, `PrecloseFacet`,
+    ///         a user's vault, or settles a treasury share the Diamond holds,
+    ///         moves it into the treasury by self-calling one of these
+    ///         selectors — `DefaultedFacet`, `PrecloseFacet`,
     ///         `RefinanceFacet`, `EarlyWithdrawalFacet` and
     ///         `RepayPeriodicFacet` among the ones `RedeployFacets` refreshes,
     ///         and `OfferAcceptFeeFacet` among `ReplaceStaleFacets`'. A curated
@@ -433,8 +434,9 @@ library FacetSelectors {
     ///         (`getTreasuryFeeFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function treasuryFee() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
         s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
+        s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
     }
 }

@@ -344,11 +344,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         // ── Settlement waterfall — diamond-held proceeds pattern
         //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
-        address treasury = LibFacet.getTreasury();
-        if (plan.treasuryShare > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
 
         // #954 (§1.1) — deposit the lender proceeds behind the receive-side
         // sanctions exemption (so a lender flagged after init doesn't brick the

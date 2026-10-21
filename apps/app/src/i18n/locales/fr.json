@@ -1502,6 +1502,8 @@
         "loan": "Prêt",
         "prepaidBufferBack": "Remboursement de votre buffer prépayé",
         "repaidFunds": "Fonds remboursés",
+        "nothingRecovered": "Rien n’a été récupéré pour cette position — la réclamer la clôture",
+        "nothingRecordedYet": "Rien n’est enregistré pour vous pour l’instant",
         "recoveryNotComparable": "Voici ce que le règlement du défaut a récupéré. L’app ne dispose pas du montant que le prêt devait encore au moment du défaut, donc aucune perte n’est affichée.",
         "compareInKind": "Il s’agit de la garantie elle-même, pas d’un montant en espèces : sa valeur dépend de son prix de marché.",
         "owedAtDefault": "Au moment du défaut, le prêt devait encore {{total}} : {{principal}} de principal plus {{charges}} d’intérêts et de pénalités de retard.",

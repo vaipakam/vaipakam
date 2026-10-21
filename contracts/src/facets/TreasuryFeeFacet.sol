@@ -12,9 +12,9 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @title TreasuryFeeFacet
  * @author Vaipakam Developer Team
  * @notice The one host of the fee legs into the treasury: a fee drawn from a
- *         payer's wallet and a fee drawn from a user's vault. Each moves the
- *         fee, measures what the treasury received, and records the accrual
- *         (#2440, #1281-011).
+ *         payer's wallet, a fee drawn from a user's vault, and a treasury share
+ *         the Diamond already holds. Each moves the fee, measures what the
+ *         treasury received, and records the accrual (#2440, #1281-011).
  * @dev Part of the Diamond Standard (EIP-2535).
  *
  *      THE RULE (see {LibDelivery}): the protocol books only what arrived.
@@ -29,6 +29,18 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *        the treasury, the protocol's own account, bears a token's transfer
  *        charge, and a close-out is never stopped over it. This is how a fee
  *        switched on mid-loan by an upgradeable token is absorbed.
+ *      - From the DIAMOND (a treasury share of proceeds a settlement swapped
+ *        or pulled in) the same holds: the treasury accrues what reached it,
+ *        and the leg never refuses a short delivery. Before #2440 round 3
+ *        twelve settlement sites pushed this share by hand and accrued the
+ *        requested figure; they all go through here now. Where the Diamond
+ *        IS the treasury (#2623) the share is already where the treasury
+ *        keeps it, so nothing moves and the whole share accrues: a
+ *        self-transfer would only hand a charging token its fee out of the
+ *        Diamond's pooled balance.
+ *      - In every case the move is refused when it cost its sender (the
+ *        payer aside) more than it sent, since the excess would come out of
+ *        tokens held for someone else ({IVaipakamErrors.TokenOverDebit}).
  *
  *      WHY A FACET OF ITS OWN: before #2440 each settlement facet inlined the
  *      transfer and the accrual (the accrual carries the oracle pricing of
@@ -38,12 +50,15 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      {SwapAttemptFacet} (#2472) and {OfferAcceptFeeFacet} (#1835).
  *
  *      WHO CALLS IT: `LibFacet.transferFromPayerToTreasury` (RepayFacet,
- *      PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet) and
+ *      PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet),
  *      `LibFacet.vaultFeeToTreasury` (RepayFacet, RepayPeriodicFacet,
- *      PrecloseFacet, DefaultedFacet, OfferAcceptFeeFacet). A Diamond that
- *      routes any of them must route this facet too, or every fee they charge
- *      reverts `FunctionDoesNotExist` at the self-call (a hard revert, never a
- *      silently skipped fee).
+ *      PrecloseFacet, DefaultedFacet, OfferAcceptFeeFacet) and
+ *      `LibFacet.transferToTreasury` (every facet that settles proceeds the
+ *      Diamond holds: the liquidation, default, claim, swap-to-repay, prepay,
+ *      early-withdrawal and auto-lifecycle facets, and the VPFI fee paths).
+ *      A Diamond that routes any of them must route this facet too, or every
+ *      fee they charge reverts `FunctionDoesNotExist` at the self-call (a hard
+ *      revert, never a silently skipped fee).
  *
  *      TRUST MODEL: the `address(this)` gate is the whole of it. A wallet pull
  *      spends an allowance the payer granted the Diamond, and a vault leg
@@ -76,6 +91,19 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
             amount,
             TreasuryTransferFailed.selector
         );
+        LibFacet.recordTreasuryAccrual(asset, accrued);
+    }
+
+    /// @inheritdoc ITreasuryFeeHost
+    function collectFeeFromDiamond(address asset, uint256 amount)
+        external
+        returns (uint256 accrued)
+    {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        if (amount == 0) return 0;
+        address treasury = LibVaipakam.storageSlot().treasury;
+        // The Diamond as its own treasury already holds the share (#2623).
+        accrued = treasury == address(this) ? amount : LibDelivery.pushMeasured(asset, treasury, amount);
         LibFacet.recordTreasuryAccrual(asset, accrued);
     }
 }

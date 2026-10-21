@@ -302,6 +302,10 @@ contract CollateralListingExecutorTest is Test {
 
         p.startTime = block.timestamp;
         p.endTime = block.timestamp + 1 days;
+        // A single-order fulfilment, as Seaport 1.6 builds it for
+        // `fulfillOrder` / `fulfillAdvancedOrder` / basic orders: one entry.
+        p.orderHashes = new bytes32[](1);
+        p.orderHashes[0] = p.orderHash;
     }
 
     /// @dev T-086 #316 — `askPrice` MUST be ≥ lenderLeg + treasuryLeg
@@ -977,6 +981,40 @@ contract CollateralListingExecutorTest is Test {
         uint256[] memory d = _amountsOf(p);
         d[0] = 0;
         _fillOne(p, d);
+        assertTrue(diamond.finalizeCalled());
+    }
+
+    function test_fill_lenderFulfillsCombinedCall_legIsMeasured() public {
+        // Codex #2622 r3 — in a call that combines orders (a match, or a batch
+        // of available orders) the fulfiller need not be the payer: a lender
+        // who matches their own listing against a third party's bid is the
+        // fulfiller while the bidder pays. Seaport passes one hash per order
+        // there, and the leg is measured, so a short arrival is refused.
+        _recordValidOrder();
+        ZoneParameters memory p = _validZoneParams();
+        p.fulfiller = lenderHolder;
+        p.orderHashes = new bytes32[](2);
+        p.orderHashes[0] = p.orderHash;
+        p.orderHashes[1] = keccak256("third-party-bid");
+        uint256[] memory d = _amountsOf(p);
+        d[0] = 109e18;
+
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory dd = new uint256[][](1);
+        dd[0] = d;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.ListingLegDeliveryShort.selector,
+                TEST_ORDER_HASH, uint256(0), uint256(110e18), uint256(109e18)
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, dd);
+        assertFalse(diamond.finalizeCalled());
+
+        // The same combined call with the leg delivered in full settles.
+        _fillOne(p, _amountsOf(p));
         assertTrue(diamond.finalizeCalled());
     }
 

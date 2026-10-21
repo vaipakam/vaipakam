@@ -960,14 +960,18 @@ contract ClaimFacet is
             }
         }
 
-        // Claimable if there's a recorded amount, or heldForLender funds, or an NFT rental to return,
-        // or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
+        // Claimable if a close-out recorded a claim, or heldForLender funds, or an NFT rental to
+        // return, or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
         // `claim` + the already-claimed guard were resolved at the top
         // of this function; re-read nothing here.
-        bool hasHeld = s.heldForLender[loanId] > 0;
-        bool hasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool hasNftCollateralClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
-        if (claim.amount == 0 && !hasHeld && !hasRentalNft && !hasNftCollateralClaim) revert NothingToClaim();
+        //
+        // #2440 — a RECORDED claim is keyed on its asset, not its amount. A
+        // forced close-out books what arrived, so a token that delivered
+        // nothing leaves a written claim of zero; the claim must still run, or
+        // the lender NFT, the intent release and the settle below could never
+        // happen. Only a claim no close-out wrote (asset unset) is nothing to
+        // claim. {_lenderSideOpen} is the same rule the borrower's claim reads.
+        if (!_lenderSideOpen(s, loanId, loan)) revert NothingToClaim();
 
         // Lender position-NFT ownership was already verified at the top
         // of this function (before the claim-time fallback resolution).
@@ -1554,20 +1558,17 @@ contract ClaimFacet is
         // Note: the borrower LIF rebate is paid out in the same tx above, so
         // it doesn't gate the Settled transition — once the borrower's
         // claimAsBorrower has run, every borrower-side payout has cleared.
-        LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loanId];
-        bool lenderHasHeld = s.heldForLender[loanId] > 0;
-        bool lenderHasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool lenderHasNftCollateralClaim = lenderClaim.assetType != LibVaipakam.AssetType.ERC20;
-        bool lenderFullyClaimed = lenderClaim.claimed;
-        bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNft && !lenderHasNftCollateralClaim;
-        bool willSettle = lenderFullyClaimed || lenderHasNothing;
+        // #2440 — "has nothing" is {_lenderSideOpen}'s rule, the one the
+        // lender's own claim reads: a written claim of zero (a forced close-out
+        // that received nothing) still has to run, so it keeps the loan open.
+        bool willSettle = s.lenderClaims[loanId].claimed || !_lenderSideOpen(s, loanId, loan);
         // #585 — for an InternalMatched loan the lender side is now closed
         // through the standard lender claim path: the match records the
         // matched proceeds as a `lenderClaims` row owed to the current
         // lender-position holder (`claimAsLender` accepts InternalMatched).
         // So the natural settle predicate above composes correctly — a
         // borrower claim settles the loan only once the lender has claimed
-        // (`lenderFullyClaimed`) or genuinely has nothing. The #577
+        // or genuinely has nothing. The #577
         // unconditional `willSettle = false` override (which deferred the
         // close until this lender-side lifecycle existed) is therefore
         // removed: keeping it would now wrongly strand a fully-claimed loan
@@ -1589,6 +1590,28 @@ contract ClaimFacet is
     }
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    /// @dev #2440 — whether the lender side of `loanId` still has a claim to
+    ///      run: a claim a close-out recorded (keyed on its asset, so a forced
+    ///      close-out that received nothing still leaves one), funds held for
+    ///      the lender, an NFT rental to return, or an NFT collateral claim.
+    ///      The lender's claim refuses with `NothingToClaim` when this is
+    ///      false, and the borrower's claim settles the loan only once it is
+    ///      false or the lender has claimed, so both sides read one rule and a
+    ///      lender whose close-out received nothing can still close the
+    ///      position (burn the NFT, release the intent's exposure, settle).
+    function _lenderSideOpen(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan
+    ) private view returns (bool) {
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
+        return claim.asset != address(0) ||
+            claim.amount > 0 ||
+            s.heldForLender[loanId] > 0 ||
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            claim.assetType != LibVaipakam.AssetType.ERC20;
+    }
 
     /// @dev Resolves a pending fallback snapshot at claim time. When
     ///      `retryCalls` is non-empty and no retry has yet been tried,
@@ -1786,10 +1809,8 @@ contract ClaimFacet is
             borrowerGets = rem - treasuryGets;
         }
 
-        if (treasuryGets > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, treasuryGets);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryGets);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryGets);
 
         if (lenderGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender
@@ -1910,6 +1931,10 @@ contract ClaimFacet is
     ///         `!claimed && (amount > 0 || assetType != ERC20 ||
     ///                      heldForLender > 0 || hasRentalNftReturn)`
     ///      — mirroring the guards in `claimAsLender` / `claimAsBorrower`.
+    ///      On the LENDER side a recorded claim is also actionable at a zero
+    ///      `amount` (`asset != address(0)`, #2440): a forced close-out books
+    ///      what arrived, so one that received nothing leaves a claim of zero
+    ///      that still closes the position.
     ///      Phase 5 adds the borrower LIF rebate; query
     ///      {getBorrowerLifRebate} for that lane.
     function getClaimable(

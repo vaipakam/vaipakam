@@ -725,7 +725,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // balance honest.
         uint256 trackedBalance =
             LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token];
-        uint256 rawForGuard = IERC20(token).balanceOf(proxy);
+        uint256 proxyBefore = IERC20(token).balanceOf(proxy);
+        uint256 rawForGuard = proxyBefore;
         if (trackedBalance < rawForGuard) {
             rawForGuard = trackedBalance;
         }
@@ -746,6 +747,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             )
         );
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
+        // #2440 — the vault must lose no more than `amount`: the tracked
+        // balance below falls by exactly that, and a token charging its sender
+        // on top would take the excess from the holder's other positions.
+        LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
         delivered = LibDelivery.measured(token, proxy, recipient, recipientBefore, amount);
         LibVaipakam.recordVaultWithdraw(user, token, amount);
         // RL-2 — VPFI outflow observability for the reward-retention
@@ -1077,6 +1082,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
 
         // 8. Transfer to user's EOA via the proxy. Recipient is
         //    hardcoded to msg.sender — no caller-supplied recipient.
+        //    #2440 — the vault may lose no more than the recovered dust: a
+        //    token charging its sender on top would take the excess from the
+        //    tracked balance that backs the holder's positions.
+        uint256 proxyBefore = IERC20(token).balanceOf(proxy);
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC20.selector,
@@ -1086,6 +1095,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             )
         );
         if (!success) revert ProxyCallFailed("Recovery withdraw failed");
+        LibDelivery.requireNoOverDebit(token, proxy, proxyBefore, amount);
 
         emit StuckERC20Recovered(msg.sender, token, declaredSource, amount, nonce);
     }

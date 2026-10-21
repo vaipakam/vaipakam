@@ -22,8 +22,6 @@ import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol"
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title PrepayListingFacet
@@ -520,16 +518,10 @@ contract PrepayListingFacet is
         // refused, which reverts the whole Seaport fill (the buyer's funds are
         // never committed) and leaves the default path open.
         LibDelivery.pushExact(principalAsset, lenderHolder, lenderLeg);
-        SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
-        // Codex round-5 P2 #3 — every treasury-fee site MUST pair the
-        // transfer with `LibFacet.recordTreasuryAccrual` so the
-        // `treasuryBalances` invariant holds (the Diamond-as-treasury
-        // deploy pattern only credits the accrual lane to the
-        // accountant, not to an external recipient). Without this,
-        // accept-then-sold loans's treasury cut would land at the
-        // configured treasury address but NOT be reflected in
-        // `treasuryBalances` for downstream analytics + payroll.
-        LibFacet.recordTreasuryAccrual(principalAsset, treasuryLeg);
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet). The
+        // accrual is what Codex round-5 P2 #3 required at every treasury-fee
+        // site; the one fee leg now pairs it with the transfer itself.
+        LibFacet.transferToTreasury(principalAsset, treasuryLeg);
 
         // Codex round-9 P1 #2 + round-10 P1 — route the remainder to
         // the CURRENT borrower-position NFT holder (mirrors the loan-

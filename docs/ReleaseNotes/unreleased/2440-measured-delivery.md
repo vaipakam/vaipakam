@@ -59,13 +59,18 @@ buffer then goes to the treasury, as on any rental default). A partial
 liquidation leaves the loan open and records its payment to the lender as
 received in full, so it is now refused when that payment lands short; the full
 liquidation stays open and acts on what arrived. The periodic
-auto-liquidation's payout to the lender reports what the lender received, and
-the loan books only that; a short payout leaves the period it settles open. A
+auto-liquidation's payout to the lender-position holder's wallet must arrive
+in full (see below); when that holder's share is frozen into the stored
+lender's vault instead, the loan books what the vault received, and a short
+payout leaves the period it settles open. A
 failed fallback retry that restores less than it pulled lowers the loan's
 recorded collateral along with the custody. The optional backstop purchase of
 fallback collateral is priced on what actually reached the backstop, and its
-cash to the lender must arrive in full. Two backstop withdrawals credit the
-treasury with what reached it.
+cash to the lender must arrive in full. Every return from the backstop to the
+treasury (unused capital, unused purchase cash, a resolved loan's proceeds and
+a swept residue) credits the treasury with what reached it. Three of those are
+forwarded by the backstop vault, which is its own upgradeable contract: until
+governance upgrades it, those three still report what the vault sent.
 
 A marketplace sale of collateral is paid by the buyer straight to each
 recipient, so the protocol could not measure it from its own side. The listing
@@ -76,17 +81,30 @@ a loan's collateral, on which the loan closes as repaid, and the platform's
 proceeds of a sale of an offer's collateral). The buyer's payment then never
 leaves the buyer. The treasury's share, the seller's own remainder and the
 seller-agreed marketplace and royalty fees record nobody as paid, so they are
-not measured, and a lender buying the collateral of their own loan pays their
-own share to themselves. When one purchase covers several listings, each is
+not measured, and a lender buying the collateral of their own loan by filling
+that listing on its own pays their own share to themselves. In a marketplace
+call that combines orders (a listing matched against a bid, or a batch) the
+account submitting it need not be the one paying, so there the share is
+measured whoever submitted it, and a lender paying their own listing inside
+such a call is refused. When one purchase covers several listings, each is
 measured against its own share of the arrivals, and what one listing's
 settlement pays onward is never counted as another's arrival. The record lives
 only for the transaction. A fill whose first check did not run in the same
 transaction is refused rather than accepted unmeasured.
 
-Every fee into the treasury drawn from a wallet or a vault now runs through
+Every fee into the treasury drawn from a wallet or a vault, and every
+treasury share the protocol already holds from a settlement, now runs through
 one small new facet, TreasuryFeeFacet, which measures what the treasury
 received and records the accrual once. A wallet fee is refused unless it all
-arrived; a vault fee is recorded as it arrived and never stops a close-out.
+arrived; a vault fee or a held share is recorded as it arrived and never stops
+a close-out. Before, twelve settlement sites (liquidation, default, claim,
+swap-to-repay, the marketplace sale of an offer's collateral, the in-place
+extension) pushed the treasury's share by hand and recorded the requested
+figure. Where the protocol is its own treasury, a share it already holds is no
+longer moved at all: the tokens are already where the treasury keeps them, so
+the whole share is recorded, and a token that charges on transfer can no longer
+take its fee out of the balances held for other users by a transfer from the
+protocol to itself.
 Moving the fee legs there is also what keeps PrecloseFacet under the contract
 size limit. Two related defects were fixed on the way: a rental preclose
 moved the lender's rental share into the lender's vault without recording it,
@@ -98,6 +116,37 @@ separately (it is its own upgradeable contract, not a facet), and until it is,
 a marketplace sale of collateral is still settled on the amounts the order
 names.
 
-Closes #2440. Closes #667. Addresses #1281 item 011. Out of scope and
+The third review round settled where a measurement can be trusted at all. A
+balance is a sound measure only inside the protocol's own custody (its
+contract, a user's vault, the treasury). A user's wallet can lower its own
+reading while a transfer runs (a receiving hook can pass the tokens straight
+on), and if the protocol booked that lower figure and left the rest owed, the
+same owner could be paid again. So a reading at a wallet is now used only to
+refuse: every payment to a wallet whose arrival decides what is still owed is
+refused unless all of it arrived, in every flow, a forced one included. That
+covers the periodic auto-liquidation's payment to the lender-position holder
+and the partial swap-to-repay's surplus to the borrower. A payout that closes
+an entitlement whatever arrives (a recorded claim, a user's own balance, a
+liquidator's or keeper's bonus, a treasury claim, a payroll withdrawal) takes
+no reading at the wallet. The round also added the sender's side: a move out
+of custody that costs the sender more than it sends (a token that charges its
+sender on top of the amount) is refused in every flow, because the excess
+would come out of tokens held for someone else. And a lender's claim that a
+close-out recorded at zero (a token that delivered nothing) now completes and
+closes the position, where before it was stuck behind "nothing to claim"; a
+borrower claiming first no longer settles the loan over it. The app offers
+that claim too.
+
+A new pre-deploy check reads the compiled contracts and fails on any ERC-20
+move written outside the delivery library that is not listed, with the reason
+it may skip the library, in an allowlist. The list is exact: a new raw move,
+a second one in a listed function, or a listed one that has gone all fail.
+Writing it is what found the backstop returns above. The thirty-two moves it
+lists are the VPFI reward, recycling and fee paths, the cross-chain receivers,
+the keeper's own contracts, the swap adapters (each attempt is measured as a
+whole), the vault's two primitives behind measured callers, and owner sweeps
+that record nothing.
+
+Closes #2440. Closes #667. Closes #2623. Addresses #1281 item 011. Out of scope and
 unchanged: the VPFI recycling and reward custody paths, which already measure
 their own deliveries.

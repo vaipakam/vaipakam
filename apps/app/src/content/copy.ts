@@ -3664,6 +3664,13 @@ const copySource = {
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',
       repaidFunds: 'Repaid funds',
+      // #2440 — a lender claim a forced close-out recorded at zero (the token
+      // delivered nothing). It pays nothing and closes the position, and is
+      // said so, never described as the collateral or as the repaid amount.
+      nothingRecovered: 'Nothing was recovered for this position — claiming closes it',
+      // #2440 — the same while the loan is still in the failed-liquidation
+      // state, where the claim itself can still change the payout.
+      nothingRecordedYet: 'Nothing recorded for you so far',
       // UX3-005 (revised #2373 r1) — what a default recovery is, and what
       // the app cannot know about it. Never a shortfall against the loan's
       // current principal (not what the current holder lent). Since #2374 a

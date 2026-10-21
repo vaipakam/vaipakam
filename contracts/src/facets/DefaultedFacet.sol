@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -15,9 +16,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -66,7 +65,6 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
  *      every swap-failure default reverts `FunctionDoesNotExist`.
  */
 contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    using SafeERC20 for IERC20;
 
     /// @notice Emitted when a time-based default's swap-path fallback fires
     ///         and the loan transitions `Active → FallbackPending`. Distinct
@@ -261,8 +259,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp <= graceEnd) revert NotDefaultedYet();
-
-        address treasury = LibFacet.getTreasury();
 
         // l2 circuit breaker: block the default trigger entirely while the
         // sequencer is down or in its 1h recovery grace window. Chainlink
@@ -483,7 +479,10 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 if (bonus > proceeds) bonus = proceeds;
                 if (LibVaipakam.isSanctionedAddress(msg.sender)) bonus = 0;
                 if (bonus > 0) {
-                    IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+                    // #2440 — a bonus books nobody by what arrives (LibDelivery
+                    // outcome 3); refused only if it cost the Diamond more
+                    // than it sent.
+                    LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
                 }
 
                 // Waterfall (L-g #1009): bonus first, full lender recovery next,
@@ -524,13 +523,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // #1195 C4 (Pass-2) — record the accrual so the treasury/revenue
                 // analytics ring buffer counts this liquid time-default's take,
                 // matching the HF paths (`RiskFacet`). Both legs (the handling
-                // fee AND the interest fee) are treasury-destined here, so the
-                // recorded amount is the full `toTreasury` actually transferred.
-                uint256 toTreasury = handlingFee + treasuryInterestFee;
-                if (toTreasury > 0) {
-                    IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
-                    LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-                }
+                // fee AND the interest fee) are treasury-destined here.
+                // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+                LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
 
                 // Deposit lender proceeds into lender's vault for claim. #821 —
                 // vault-lock so a flagged stored lender doesn't brick the default
@@ -775,8 +770,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibSanctionedLock.endMoveOut(s);
 
             // Treasury fee from rental portion
-            IERC20(loan.prepayAsset).safeTransfer(treasury, treasuryFee);
-            LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
+            // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+            LibFacet.transferToTreasury(loan.prepayAsset, treasuryFee);
 
             // Lender gets remainder. #821 — vault-lock for a flagged stored lender
             // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).

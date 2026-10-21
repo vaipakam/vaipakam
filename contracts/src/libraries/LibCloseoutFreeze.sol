@@ -235,17 +235,26 @@ library LibCloseoutFreeze {
     ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
     ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
     ///         → stored lender vault) + the shared park.
-    /// @dev    #2440 — this host acts on what arrived and returns it; the
-    ///         CALLER decides what a short return means. The periodic-interest
-    ///         auto-liquidation (a forced flow) credits the loan by the returned
-    ///         figure, never by `amount`, so a token that delivers less than it
-    ///         sends leaves the difference owed on the loan rather than
-    ///         settled. A partial HF liquidation refuses a short return, since
-    ///         it books the payout as received in full on a loan that stays
-    ///         open. The paid-through mark moves only on a delivery in full,
-    ///         because "paid through" has to mean paid.
-    /// @return delivered What the lender-position holder (clean) or the stored
-    ///         lender's vault (frozen) received, never more than `amount`.
+    /// @dev    #2440 — the two branches read a delivery in different places,
+    ///         and only one of them is a place a reading can be trusted
+    ///         (LibDelivery, WHERE A READING CAN BE TRUSTED):
+    ///         - CLEAN: the payout goes to the holder's WALLET, whose owner can
+    ///           lower the reading while the transfer runs (a receiving hook
+    ///           can forward the tokens on). Booking such a reading would leave
+    ///           the rest owed to that owner, who could then be paid again. So
+    ///           a short arrival is REFUSED here, in every flow (the periodic
+    ///           auto-liquidation included), and a full payout returns
+    ///           `amount` and moves the paid-through mark.
+    ///         - FROZEN: the payout is credited to the stored lender's VAULT,
+    ///           which is custody. That branch acts on what arrived and returns
+    ///           it; the CALLER decides what a short return means. The periodic
+    ///           auto-liquidation credits the loan by the returned figure, so
+    ///           the difference stays owed on the loan; a partial HF
+    ///           liquidation refuses it, since it books the payout as received
+    ///           in full on a loan that stays open.
+    /// @return delivered `amount` on the clean branch (anything less was
+    ///         refused); what the stored lender's vault received on the frozen
+    ///         branch, never more than `amount`.
     function freezeOrPayActiveLenderResident(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -261,25 +270,21 @@ library LibCloseoutFreeze {
         // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            delivered = LibDelivery.pushMeasured(asset, lenderRecipient, amount);
+            // #2440 — a wallet reading is trusted only to refuse (see @dev).
+            LibDelivery.pushExact(asset, lenderRecipient, amount);
             // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
             // period this payout settles, so a later sale must not forfeit that
             // stretch a second time. Advanced on THIS branch only: the freeze
             // branch below parks the tokens in `heldForLender`, which migrates to
             // the BUYER on a sale, so treating a frozen payout as delivered would
             // pay the seller for tokens they never held and do not keep.
-            // #2440 — and only when the payout arrived in full: a short arrival
-            // leaves part of the period owed, so its window stays open.
             //
             // Monotone: a caller settling an older boundary after a newer one can
             // never walk the mark backwards and re-open a window already paid.
-            if (
-                delivered == amount &&
-                deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]
-            ) {
+            if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
                 LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
             }
-            return delivered;
+            return amount;
         }
         // #2440 — park what the vault received.
         delivered = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);

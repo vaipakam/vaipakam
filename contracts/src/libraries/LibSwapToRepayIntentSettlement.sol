@@ -356,11 +356,8 @@ library LibSwapToRepayIntentSettlement {
             }
         }
 
-        if (plan.treasuryShare > 0) {
-            address treasury = LibFacet.getTreasury();
-            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
         // (the borrower side was consolidated at COMMIT; its auction lot left
