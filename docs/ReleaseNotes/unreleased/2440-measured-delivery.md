@@ -1,4 +1,4 @@
-## Thread — The protocol books only what arrived (PR #TBD)
+## Thread — The protocol books only what arrived (PR #2622)
 
 Every token move the protocol records is now measured where the tokens land,
 so no ledger can name tokens that are not there. Before this change the
