@@ -6,11 +6,15 @@
 // kind or shape.
 //
 // The role is part of the namespace (the tables' `diamond` column holds
-// `<diamond>:<role>`) because the work is the role's: a Diamond moved between
-// canonical and mirror in place owes different things on the same day
-// numbers, so its new role's work starts afresh, as a fresh Diamond's does,
-// and the old role's open alerts are closed with a notice (alerts.ts). The
-// kinds:
+// `<diamond>:<tenure>`, the tenure being `canonical` or `mirror@<base chain
+// id>`) because the work is the role's: a Diamond moved between canonical
+// and mirror in place, or a mirror rebound to another Base, owes different
+// things on the same day numbers, so its new work starts afresh, as a fresh
+// Diamond's does, and the old work's open alerts are closed with a notice
+// (alerts.ts). A Diamond that leaves its role and returns to the SAME one
+// (the same Base, for a mirror) resumes its work: every fact the work keeps
+// is about that Diamond's days toward that Base, and is read again before it
+// is relied on. The kinds:
 //
 //   - `day_close` (cursor): the first day not yet entered into the ledger;
 //     only moves forward. Losing it costs one run re-entering days from day 0.
@@ -83,22 +87,30 @@ export interface ClockRecord {
   launch: number | null;
 }
 
-/** The two roles a Diamond's day work is done in. */
-export type RewardRoleName = 'canonical' | 'mirror';
+/** The work a Diamond's days are done for: as the canonical reward chain,
+ *  or as a mirror reporting to a given Base (`mirror@<base chain id>`). A
+ *  mirror rebound to another Base owes its days to that Base, not the old
+ *  one, so its work there starts afresh. */
+export type RoleTenure = 'canonical' | `mirror@${number}`;
+
+/** A tenure in words, for notices. */
+export function tenureWords(t: string): string {
+  return t === 'canonical' ? 'the canonical reward chain' : /^mirror@\d+$/.test(t) ? `a mirror reporting to chain ${t.slice(7)} as its Base` : `"${t}"`;
+}
 
 const PER_DAY_RECORDS: readonly WorkKind[] = ['day_broadcast', 'day_zeroed', 'day_dispatch', 'day_open'];
 
 export class DayStore {
   private readonly db: Env['KEEPER_DB'];
 
-  /** The namespace of every row: `<diamond>:<role>`, lowercased. */
+  /** The namespace of every row: `<diamond>:<tenure>`, lowercased. */
   private readonly scope: string;
 
   constructor(
     env: Env,
     readonly chainId: number,
     readonly diamond: Address,
-    readonly role: RewardRoleName,
+    readonly role: RoleTenure,
   ) {
     this.db = env.KEEPER_DB;
     this.scope = `${diamond.toLowerCase()}:${role}`;

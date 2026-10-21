@@ -26,7 +26,7 @@
 // run read it.
 
 import type { Address } from 'viem';
-import { NO_STANDING, RESEND_TO_ALL } from './constants';
+import { NO_SELECTOR, NO_STANDING, RESEND_TO_ALL } from './constants';
 import type { ChainRun } from './deps';
 import { broadcastsLeft, planBroadcast, type BroadcastPlan, type SendMark } from './plan';
 import { destinationStates, messengerAt, quote } from './reads';
@@ -74,6 +74,13 @@ export async function broadcastDays(c: ChainRun, store: DayStore, sender: Sender
       if ('refused' in q && q.refused === NO_STANDING) {
         noStanding.add(k);
         changed = true;
+        continue;
+      }
+      // A Diamond that routes no single-destination broadcast reaches only its
+      // destination list, so a chain on neither list is one it cannot send the
+      // day to at all: not owed here, and said in the log.
+      if ('refused' in q && q.refused === NO_SELECTOR) {
+        console.log(`[keeper] rewardDayClose ${c.where}: day ${d}: chain ${k} is on neither list and this Diamond routes no single-destination broadcast, so it cannot be sent the day`);
         continue;
       }
       // Standing, or not known: owed until a read says otherwise.

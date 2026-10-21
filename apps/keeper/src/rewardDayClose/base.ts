@@ -29,7 +29,7 @@ import { recordZeroed } from './notices';
 import { PastRunDeadline } from '../batchRead';
 import { shortErr } from './errors';
 import { planFinalize, topologyOf, type BroadcastPlan } from './plan';
-import { broadcastDestinations, expectedSources, peerSentAt, readDays, readReported } from './reads';
+import { broadcastDestinations, expectedSources, messengerAt, peerSentAt, readDays, readReported } from './reads';
 import type { Sender } from './sender';
 import type { DayStore } from './store';
 
@@ -165,4 +165,22 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
 
   const b: BaseFindings = { expected, destinations, topology, finalizeHold, broadcastHold, judged, waiting, finalized, broadcast: plans, noticed: new Set() };
   return { b, clock, finalizedNow, broadcastNow };
+}
+
+/**
+ * Whether Base's two lists still read as the run judged its broadcasts by:
+ * the reward messenger, its destinations and the expected-source list, read
+ * again. A day leaves the ledger only on plans made against the lists as they
+ * stand: a destination or mirror added while the run worked is owed the days
+ * that have standing for it, and a day outside the lookback is not looked at
+ * again once it leaves. False when they changed or cannot be read again; the
+ * days then stay owed for the next run's reads.
+ */
+export async function listsStand(c: ChainRun, b: BaseFindings, messenger: Address): Promise<boolean> {
+  if (!b.expected.known || !b.destinations.known) return true; // nothing was judged done against them
+  const same = (a: readonly number[], z: readonly number[]) => a.length === z.length && [...a].sort((p, q) => p - q).every((v, i) => v === [...z].sort((p, q) => p - q)[i]);
+  const now = await messengerAt(c, 'latest');
+  if (!now.known || now.value.toLowerCase() !== messenger.toLowerCase()) return false;
+  const [expected, destinations] = await Promise.all([expectedSources({ diamond: c.diamond, client: c.deps.client }, c.where), broadcastDestinations(c.deps.client, messenger, c.where)]);
+  return expected.known && destinations.known && same(expected.value, b.expected.value) && same(destinations.value, b.destinations.value);
 }

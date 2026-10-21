@@ -20,11 +20,13 @@
 // outcome cannot be learned here) is a thing that happened, not a condition:
 // said once a window, it holds its day only until delivered.
 //
-// Keys: `dayclose-<kind>:<chain>:<diamond>:<role>:<subject>`, the subject
-// being `<day>` for a day, `all` for the chain, and `<step>:<day>` for a
-// refused call. An alert belongs to the Diamond and the reward role it was
-// raised about, as the day ledger does: a chain repointed to another Diamond,
-// or a Diamond moved between canonical and mirror, starts afresh, and the old
+// Keys: `dayclose-<kind>:<chain>:<diamond>:<tenure>:<subject>`, the tenure
+// being `canonical` or `mirror@<base chain id>` (store.ts) and the subject
+// `<day>` for a day, `all` for the chain, and `<step>:<day>` for a refused
+// call. An alert belongs to the Diamond and the tenure it was raised about, as
+// the day ledger does: a chain repointed to another Diamond, a Diamond moved
+// between canonical and mirror, or a mirror rebound to another Base, starts
+// afresh, and the old
 // work's open alerts are closed with a notice rather than judged against the
 // new work's same-numbered days. A per-day alert whose day is no longer
 // worked (out of the window and not owed) is cleared with it.
@@ -41,7 +43,7 @@ import { ALERT_REPEAT_SEC, BROADCAST_RESEND_AFTER_SEC, SERVES, SERVES_ON_BASE, S
 import { shortErr } from './errors';
 import type { RunFindings } from './findings';
 import { topologyFaults } from './plan';
-import type { DayStore, RewardRoleName } from './store';
+import { tenureWords, type DayStore, type RoleTenure } from './store';
 
 export type Judgement = { verdict: 'holds'; text: string; statement?: boolean } | { verdict: 'gone' } | { verdict: 'unjudged' } | { verdict: 'retired'; why: string };
 
@@ -339,12 +341,12 @@ const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 /** An open key's parts, or null when it is not one of this chain's. The
  *  Diamond, and the role, are null on a key that names none. */
 function parseKey(key: string, chainId: number): { kind: string; diamond: string | null; role: string | null; subject: string } | null {
-  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):(?:(canonical|mirror):)?)?(.+)$/.exec(key);
+  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):(?:(canonical|mirror(?:@\d+)?):)?)?(.+)$/.exec(key);
   if (m === null || Number(m[2]) !== chainId) return null;
   return { kind: m[1], diamond: m[3] ?? null, role: m[4] ?? null, subject: m[5] };
 }
 
-function keyOf(kind: string, chainId: number, diamond: string, role: RewardRoleName, subject: string): string {
+function keyOf(kind: string, chainId: number, diamond: string, role: RoleTenure, subject: string): string {
   return `dayclose-${kind}:${chainId}:${diamond}:${role}:${subject}`;
 }
 
@@ -399,7 +401,7 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
               ? `it is about Diamond ${p.diamond}, and this chain now names Diamond ${diamond}, whose days this keeper works afresh; check the old Diamond directly`
               : p.role === null
                 ? 'it names no reward role, so it cannot be judged against the role this Diamond reads now'
-                : `it is about this Diamond's work as the ${p.role === 'canonical' ? 'canonical reward chain' : 'a mirror'}, and the Diamond now reads as ${role === 'canonical' ? 'the canonical reward chain' : 'a mirror'}, whose days this keeper works afresh; what that work left owed is no longer done here, so check those days on the Diamond directly`,
+                : `it is about this Diamond's work as ${tenureWords(p.role)}, and the Diamond now works as ${tenureWords(role)}, whose days this keeper works afresh; what that work left owed is no longer done here, so check those days on the Diamond directly`,
         day: null,
       });
   }

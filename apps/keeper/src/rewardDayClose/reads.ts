@@ -131,9 +131,10 @@ export async function messengerRoute(client: PublicClient, messenger: Address, w
   return f.known ? known(Number(f.value)) : f;
 }
 
-/** The reward messenger the Diamond held at `blockNumber`. */
-export async function messengerAt(c: ChainRun, blockNumber: bigint): Promise<Fact<Address>> {
-  const f = await readOne<readonly [Address, ...unknown[]]>(c.deps.client, c.diamond, ABI, 'getRewardReporterConfig', [], `${c.where}: reward messenger at block ${blockNumber}`, blockNumber);
+/** The reward messenger the Diamond held at `blockNumber` (or now). */
+export async function messengerAt(c: ChainRun, blockNumber: bigint | 'latest'): Promise<Fact<Address>> {
+  const at = blockNumber === 'latest' ? undefined : blockNumber;
+  const f = await readOne<readonly [Address, ...unknown[]]>(c.deps.client, c.diamond, ABI, 'getRewardReporterConfig', [], `${c.where}: reward messenger at block ${blockNumber}`, at);
   return f.known ? known(f.value[0]) : f;
 }
 

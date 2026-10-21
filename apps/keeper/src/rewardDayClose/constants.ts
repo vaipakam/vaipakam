@@ -10,12 +10,15 @@ import {
   RewardAggregatorFacetABI,
   RewardBroadcastFacetABI,
   RewardReporterFacetABI,
+  VaipakamDiamondABI,
   VaipakamRewardMessengerABI,
 } from '@vaipakam/contracts/abis';
 
 export const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
 /** The Diamond's reward surface, plus the messenger's errors so a fee refusal
- *  bubbled through `closeDay` decodes by name. */
+ *  bubbled through `closeDay` decodes by name, and the Diamond proxy's own
+ *  errors, so a selector the Diamond does not route reads as such
+ *  (`FunctionDoesNotExist`). */
 export const ABI = [
   ...(AdminFacetABI as Abi),
   ...(InteractionRewardsLensFacetABI as Abi),
@@ -23,6 +26,7 @@ export const ABI = [
   ...(RewardAggregatorFacetABI as Abi),
   ...(RewardBroadcastFacetABI as Abi),
   ...MESSENGER_ABI.filter((x) => x.type === 'error'),
+  ...(VaipakamDiamondABI as Abi).filter((x) => x.type === 'error'),
 ] as Abi;
 
 /** This pass's cadence in seconds (passSchedule). */
@@ -76,10 +80,13 @@ export const RACES = new Set(['ChainDayAlreadyReported', 'DayAlreadyFinalized', 
 export const PAUSED_REFUSAL = 'EnforcedPause';
 export const FRONTIER_SHORT = 'ChainReportFrontierShort';
 /** Refusals of the single-destination send (`broadcastGlobalTo`) that mean
- *  this day or this messenger cannot take one: the send then goes to every
- *  destination (`broadcastGlobal`) instead. */
+ *  this day, this messenger or this Diamond cannot take one: the send then
+ *  goes to every destination (`broadcastGlobal`) instead. A Diamond that
+ *  routes no single-destination quote or send at all (a partial upgrade)
+ *  answers `FunctionDoesNotExist`. */
 export const NO_STANDING = 'DestinationHasNoDayStanding';
-export const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', NO_STANDING]);
+export const NO_SELECTOR = 'FunctionDoesNotExist';
+export const RESEND_TO_ALL = new Set(['MessengerPredatesV3', 'DayHasNoLapseClock', NO_STANDING, NO_SELECTOR]);
 
 /** A step that exists only to let another through: its refusal is over once
  *  the step it serves is done, by anyone. On Base the day's own close serves

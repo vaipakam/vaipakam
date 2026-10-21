@@ -39,7 +39,7 @@ import { buildKeeperContext, passIsArmed } from '../keeper';
 import type { PassTick } from '../passSchedule';
 import { deadlineClient, PastRunDeadline } from '../batchRead';
 import { retireChainAlerts, retireUnservedChainAlerts, settleAlerts, settleGate } from './alerts';
-import { runBase } from './base';
+import { listsStand, runBase } from './base';
 import { closeDays } from './close';
 import { ABI, LOOKBACK_DAYS, PASS_ALERT_WINDOW_MS, ROLE_CANONICAL, ROLE_MIRROR } from './constants';
 import type { ChainRun, DayCloseDeps, PeerReader } from './deps';
@@ -165,7 +165,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     return;
   }
   const canonical = role === ROLE_CANONICAL;
-  const store = new DayStore(env, chainId, diamond, canonical ? 'canonical' : 'mirror');
+  const store = new DayStore(env, chainId, diamond, canonical ? 'canonical' : `mirror@${baseChainId}`);
   const window = await store.openWindow(today);
   const sender = new Sender(deps);
 
@@ -251,9 +251,13 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }
   if (f.base !== null) f.base.noticed = await postZeroedNotices(env, store, window, deps.runDeadline);
   const held = await settleAlerts(env, store, f, nowSec, deps.runDeadline);
+  // On Base, a day leaves only on plans made against the lists as they still
+  // stand (base.ts, listsStand).
+  const stand = f.base === null || (await listsStand(c, f.base, messenger));
+  if (!stand) console.log(`[keeper] rewardDayClose ${c.where}: Base's lists changed or could not be read again before settling; every day stays owed for the next run`);
   const through = (d: number): boolean => {
     if (held === 'all' || held.has(d)) return false;
-    if (f.base !== null) return isDone('finalize', d) && isDone('broadcast', d) && f.base.noticed.has(d);
+    if (f.base !== null) return stand && isDone('finalize', d) && isDone('broadcast', d) && f.base.noticed.has(d);
     const outcome = dayFact(f.mirror!.outcome, d);
     return isDone('close', d) && (!f.mirror!.baseServed || (outcome.known && outcome.value));
   };
