@@ -148,6 +148,8 @@ class FakeDiamond {
   refuseTo: string | null = null;
   /** Reports that land between the pass's reads and its finalization, by day. */
   landsAtFinalize = new Map<number, number>();
+  /** The messenger's destination list cannot be read. */
+  destinationsUnreadable = false;
   /** Chains whose `isChainReported` read fails. */
   unreadable = new Set<number>();
   private logs: Log[] = [];
@@ -174,7 +176,10 @@ class FakeDiamond {
         if (!this.quoteShapes.has(args?.length ?? 0)) throw new Error('execution reverted');
         return LANE_FEE;
       }
-      if (functionName === 'getBroadcastDestinations') return this.destinations.map(BigInt);
+      if (functionName === 'getBroadcastDestinations') {
+        if (this.destinationsUnreadable) throw new Error('execution reverted');
+        return this.destinations.map(BigInt);
+      }
       throw new Error(`unexpected messenger read ${functionName}`);
     }
     switch (functionName) {
@@ -202,7 +207,7 @@ class FakeDiamond {
       case 'quoteBroadcastGlobal':
         return BROADCAST_FEE;
       case 'quoteBroadcastGlobalTo':
-        if (this.refuseTo) throw revert(this.refuseTo);
+        if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
         return BROADCAST_TO_FEE;
       default:
         throw new Error(`unexpected read ${functionName}`);
@@ -458,6 +463,56 @@ describe('a run', () => {
     await run(mirror);
     expect(mirror.sent.some((s) => s.day === 0)).toBe(true);
     expect(openKeys()).toEqual([]);
+  });
+
+  it('clears a refused fold advance once the close it served lands, whoever advanced it', async () => {
+    mirror.refuse.set('closeDay:0', 'ChainReportFrontierShort');
+    mirror.refuse.set('advanceInterestFrontiers:0', 'RewardMessengerNotSet');
+    await run(mirror);
+    expect(alerts(/advancing the interest fold \(advanceInterestFrontiers\) for reward day 0 is refused/)).toHaveLength(1);
+    openAlert(`dayclose-refused:${MIRROR}:advance:0`);
+    mirror.refuse.clear(); // another caller advanced the fold
+    await run(mirror);
+    expect(mirror.sent.some((s) => s.fn === 'closeDay' && s.day === 0)).toBe(true);
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('finalizes when the broadcast destinations cannot be read, broadcasts nothing, and says so until they can', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([MIRROR]));
+    base.firstAt.set(0, NOW - 60);
+    base.destinationsUnreadable = true;
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'closed and finalized, not broadcast').toEqual(['closeDay', 'finalizeDay']);
+    expect(alerts(/broadcast destinations could not be read/)).toHaveLength(1);
+    openAlert(`dayclose-destunread:${BASE}:all`);
+    base.destinationsUnreadable = false;
+    await run(base);
+    expect(base.sent.map((s) => s.fn).slice(2), 'broadcast once the list reads').toEqual(['broadcastGlobal']);
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('keeps checking and re-sending to a destination taken off the list after a send that never reached it', async () => {
+    finalizedDayZero();
+    await run(base);
+    base.destinations = []; // the mirror is taken off the messenger's list
+    later(BROADCAST_LATE_AFTER_SEC);
+    await run(base);
+    expect(alerts(/broadcast of reward day 0 has not reached chain\(s\) 421614/), 'still lacking it, still late').toHaveLength(1);
+    later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
+    await run(base);
+    expect(base.sent.slice(1), 'healed alone, the way the contract admits').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
+  });
+
+  it('says a destination taken off the list cannot be reached when the Diamond will not send to it alone', async () => {
+    finalizedDayZero();
+    await run(base);
+    base.destinations = [];
+    base.refuseTo = 'DestinationHasNoDayStanding';
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'no send to every destination: it would not reach this one').toEqual(['broadcastGlobal']);
+    expect(alerts(/chain 421614 is no longer a broadcast destination and the Diamond will not send the day to it alone \(DestinationHasNoDayStanding\)/)).toHaveLength(1);
   });
 
   it('a race with another caller is not a refusal', async () => {
