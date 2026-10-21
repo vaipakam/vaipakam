@@ -29,10 +29,15 @@ run's send budget. Its reads stop early enough to leave the acknowledgements
 time, and a destination whose read is still unanswered then is left unread
 for that run rather than waited on. Where a run can read only part of a long
 list, it starts each run at a different point, so the same reservations are
-not the ones left unread every time. Each destination's acknowledgements go
-out in their own lane, beside the others, so a fee quote or broadcast stuck on
-one destination holds up only that destination; a quote still unanswered at
-the run's deadline is given up for that run. So neither a backlog, nor a slow
+not the ones left unread every time. Each destination's fees are quoted
+beside the others' before anything is sent, and a quote still unanswered
+shortly before the run's deadline is given up for that run. Only an
+acknowledgement whose fee was quoted takes one of the run's sends, and the
+sends are handed out round the destinations in turn, in-flight ones first and
+released ones with what is left, so a slower destination, or one whose quotes
+fail, never takes or holds another destination's share. Each destination's
+acknowledgements then go out in their own lane, beside the others, so a
+broadcast stuck on one destination holds up only that destination. So neither a backlog, nor a slow
 destination, nor a slow send, nor a slow alert channel can hide a remittance it
 cannot make or hold up one it can on another destination. An alert is still sent when the keeper cannot read its record of
 open alerts, or its record of past acknowledgement attempts; in that second

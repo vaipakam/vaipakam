@@ -184,6 +184,8 @@ type Book = {
   slowReservation?: { id: number; ms: number };
   /** The mirror reverts the receipt read for these reservations. */
   revertReceiptIds?: number[];
+  /** These RPCs answer the fee quote (default: every quote reverts). */
+  quoteOkRpcs?: string[];
 };
 
 /** Whether a JSON-RPC batch reads `getRemitReservation(id)`, directly or
@@ -200,7 +202,7 @@ function readsReservation(reqs: { method?: string; params?: unknown[] }[], id: n
   });
 }
 
-function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; quoteRpcs: string[]; restore: () => void } {
+function install(book: Book): { routeReads: () => number; routeIds: number[]; posts: number[]; postTexts: string[]; quotes: () => number; quoteRpcs: string[]; sendRpcs: string[]; restore: () => void } {
   const real = globalThis.fetch;
   let routeReads = 0;
   const routeIds: number[] = [];
@@ -209,6 +211,8 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
   const postTexts: string[] = [];
   let quotes = 0;
   const quoteRpcs: string[] = [];
+  /** The RPC of each broadcast the keeper started (its nonce read). */
+  const sendRpcs: string[] = [];
   const answer = (rpc: string, data: string): { ok: string } | { revert: string } => {
     const s = data.slice(0, 10);
     if (s === SEL.cfg) {
@@ -243,6 +247,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
     }
     // The configured mirror holds no receipt for remittance 1 unless the book
     // says it does.
+    if (s === SEL.quote && book.quoteOkRpcs?.includes(rpc)) return { ok: enc(F.quote, 1n) };
     if (s === SEL.received) {
       const { args } = decodeFunctionData({ abi: [F.received] as Abi, data: data as `0x${string}` });
       const id = Number((args as readonly unknown[]).find((a) => typeof a === 'bigint'));
@@ -281,6 +286,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id ?? 1, result });
       if (req.method === 'eth_chainId') return ok(rpc === BASE_RPC ? '0x14a34' : rpc === BNB_RPC ? '0x61' : '0x66eee');
       if (req.method === 'eth_blockNumber') return ok('0x1312d00');
+      if (req.method === 'eth_getTransactionCount') sendRpcs.push(rpc);
       if (req.method !== 'eth_call') return { jsonrpc: '2.0', id: req.id ?? 1, error: { code: -32601, message: `unexpected ${req.method}` } };
       const data = (((req.params?.[0] ?? {}) as { data?: string }).data ?? '0x').toLowerCase();
       if (data.slice(0, 10) === SEL.agg) {
@@ -307,7 +313,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  return { routeReads: () => routeReads, routeIds, posts, postTexts, quotes: () => quotes, quoteRpcs, restore: () => { globalThis.fetch = real; } };
+  return { routeReads: () => routeReads, routeIds, posts, postTexts, quotes: () => quotes, quoteRpcs, sendRpcs, restore: () => { globalThis.fetch = real; } };
 }
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
@@ -347,7 +353,7 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
 }
 
 async function tick(book: Book) {
-  const { routeReads, routeIds, posts, postTexts, quotes, quoteRpcs, restore } = install(book);
+  const { routeReads, routeIds, posts, postTexts, quotes, quoteRpcs, sendRpcs, restore } = install(book);
   const shared = d1();
   const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList, book.failAttempts);
   const warns: string[] = [];
@@ -384,7 +390,7 @@ async function tick(book: Book) {
   const alerts = warns.filter((w) => w.includes('ops alert NOT delivered'));
   const cleared = keeper.bound.filter((b) => b.sql.startsWith('DELETE FROM keeper_ops_alert')).map((b) => b.binds[0]);
   const cursors = keeper.bound.filter((b) => b.sql.includes('INSERT INTO keeper_remit_ack_frontier')).map((b) => b.binds[3]);
-  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, elapsedMs, cursors };
+  return { alerts, warns, errors, cleared, routeReads: routeReads(), routeIds, posts, postTexts, quotes: quotes(), quoteRpcs, sendRpcs, elapsedMs, cursors };
 }
 
 const BASE_DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
@@ -450,6 +456,48 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     // The stalled quote is abandoned at the deadline: the pass does not wait
     // the stall out.
     expect(t.elapsedMs).toBeLessThan(3_000);
+  });
+
+  it('a mirror whose quote answers later still gets a send while a faster mirror has a backlog', async () => {
+    // Reservations 1–5 go to Arbitrum Sepolia and 6 to BNB Testnet; all hold
+    // a receipt and every quote answers, BNB's 300 ms later. The tick's five
+    // slots go round the mirrors once the quotes are in, so BNB is sent
+    // rather than losing every slot to the faster mirror (Codex #2607 r17).
+    const t = await tick({
+      status: 1,
+      nonce: 6,
+      receiptIds: [1, 2, 3, 4, 5, 6],
+      dstById: { 6: BNB },
+      bnb: true,
+      route: { sent: NEW, live: NEW },
+      quoteOkRpcs: [ARB_RPC, BNB_RPC],
+      slowQuoteMs: 300,
+      slowQuoteRpc: BNB_RPC,
+    });
+    expect(t.sendRpcs).toContain(BNB_RPC);
+    expect(t.sendRpcs.filter((r) => r === ARB_RPC).length).toBeLessThanOrEqual(4);
+  });
+
+  it('Pending acknowledgements whose quotes fail leave their slots to a late one on a healthy mirror', async () => {
+    // Reservations 1–5 are Pending on Arbitrum Sepolia, whose quotes all
+    // revert after 300 ms. Reservation 6 is Released, open on the late queue, on BNB
+    // Testnet, whose quote answers. A failed quote takes no slot, so the late
+    // acknowledgement is sent (Codex #2607 r17).
+    const t = await tick({
+      status: 1,
+      nonce: 5,
+      statusById: { 6: 3 },
+      lateOpenIds: [6],
+      receiptIds: [1, 2, 3, 4, 5, 6],
+      dstById: { 6: BNB },
+      bnb: true,
+      route: { sent: NEW, live: NEW },
+      quoteOkRpcs: [BNB_RPC],
+      slowQuoteMs: 300,
+      slowQuoteRpc: ARB_RPC,
+    });
+    expect(t.quoteRpcs).toContain(ARB_RPC);
+    expect(t.sendRpcs).toEqual([BNB_RPC]);
   });
 
   it('a slow ledger scan neither holds the run nor stops the late path', async () => {

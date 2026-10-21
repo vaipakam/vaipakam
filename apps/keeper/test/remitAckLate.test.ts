@@ -8,7 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ackOrder, chargeAck, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
+import { ackOrder, allotSlots, isLateDeliveryCandidate, lateAckDone, lateAckUseful } from '../src/remitAck';
 import { enqueueWork, finishWork, listOpenWork, listReleasedRemitIds, pageByBlock, touchOpenWork } from '../src/db';
 import { discoverWork } from '../src/workQueue';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -255,15 +255,28 @@ describe('ackOrder moves the never-attempted start each run (Codex #2607 r13)', 
   });
 });
 
-describe('chargeAck keeps the Pending acks\' first claim on the budget (#2497 r13, Codex #2607 r13)', () => {
-  it('a late ack spends only what the unsettled Pending acks cannot claim', () => {
-    const budget = { remaining: 2, pendingUnsettled: 2, deadline: Infinity };
-    expect(chargeAck(budget, 'late')).toBe(false);
-    expect(chargeAck(budget, 'pending')).toBe(true);
-    budget.pendingUnsettled = 0; // both Pending acks settled; one budget left
-    expect(chargeAck(budget, 'late')).toBe(true);
-    expect(budget.remaining).toBe(0);
-    expect(chargeAck(budget, 'pending')).toBe(false);
+describe('allotSlots hands the tick\'s sends round the mirrors (Codex #2607 r17)', () => {
+  it('gives every mirror with work a turn before any mirror a second one', () => {
+    const queues = new Map([[421614, [1, 2, 3, 4, 5]], [97, [6]]]);
+    for (let run = 0; run < 4; run++) {
+      const out = allotSlots(queues, 5, run);
+      expect(out.get(97)).toEqual([6]);
+      expect(out.get(421614)).toEqual([1, 2, 3, 4]);
+    }
+  });
+
+  it('never hands out more than the slots, and keeps each queue\'s order', () => {
+    const queues = new Map([[1, [10, 11, 12]], [2, [20, 21, 22]], [3, [30]]]);
+    const out = allotSlots(queues, 4, 0);
+    expect([...out.values()].flat()).toHaveLength(4);
+    for (const [m, sends] of out) expect(sends).toEqual(queues.get(m)!.slice(0, sends.length));
+    expect(allotSlots(queues, 0, 0).size).toBe(0);
+  });
+
+  it('when the slots are fewer than the mirrors, every mirror is served first on some run', () => {
+    const queues = new Map([[1, [10]], [2, [20]], [3, [30]]]);
+    const first = new Set(Array.from({ length: 50 }, (_, run) => run).map((run) => [...allotSlots(queues, 1, run).keys()][0]));
+    expect(first).toEqual(new Set([1, 2, 3]));
   });
 });
 

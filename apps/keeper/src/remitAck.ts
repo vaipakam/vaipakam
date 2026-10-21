@@ -193,7 +193,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   // ONE send budget for the whole tick (#2497 r2): the late-ack path and the
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
   // more than the cap however its work splits between them.
-  const ackBudget: AckBudget = { remaining: MAX_ACKS_PER_TICK, pendingUnsettled: 0, deadline };
+  const ackBudget: AckBudget = { remaining: MAX_ACKS_PER_TICK, deadline };
   // The late path needs nothing from the ledger scan, so it starts before it
   // (Codex #2607 r14): a slow or failed scan never holds up, or stops, the
   // late acknowledgements and their alerts. A released reservation may still
@@ -208,8 +208,8 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   // the late path running (Codex #2607 r14).
   // PENDING ACKS FIRST (#2497 r13): they are the ordinary work — a
   // reservation stays reserved on Base until acked — so the late sends get only
-  // what the Pending acks cannot claim of the tick's one budget, never the
-  // other way round (`AckBudget`).
+  // the slots the Pending acks were not handed, never the other way round
+  // (`AckBudget`).
   let pending: Promise<AckPlan | undefined> = Promise.resolve(undefined);
   let cleared: Promise<void> = Promise.resolve();
   try {
@@ -333,30 +333,46 @@ async function scanPendingWindow(
 }
 
 /**
- * The tick's ONE send budget (#2497 r2), shared by both paths. The Pending
- * acks have first claim on it (#2497 r13): `pendingUnsettled` counts the
- * Pending acknowledgements still able to spend, and a late one may spend only
- * what they cannot claim. That priority is kept in the budget rather than in
- * the order of the sends (Codex #2607 r13), so a late acknowledgement waits on
- * no Pending SEND, only on the budget.
+ * The tick's ONE send budget (#2497 r2), shared by both paths: never more
+ * than `MAX_ACKS_PER_TICK` sends however the work splits between them.
+ *
+ * The slots are HANDED OUT, never raced for (Codex #2607 r17). Each path
+ * quotes its candidates first, and only a candidate whose quote came back
+ * takes a slot, so a failed or stalled quote costs nothing and leaves no slot
+ * held. The Pending acks are handed their slots first (#2497 r13), from their
+ * own quotes alone; the late acks get what is left once that is settled,
+ * which waits on the Pending QUOTES and never on a Pending send. Within each
+ * path the slots go round the mirrors ({@link allotSlots}), so a mirror whose
+ * RPC answers more slowly is never left without a send by a faster one.
  */
-export interface AckBudget {
+interface AckBudget {
   remaining: number;
-  pendingUnsettled: number;
   deadline: number;
 }
 
-/** Whether `budget` has a send a `path` acknowledgement may claim. */
-function budgetFree(budget: AckBudget, path: RemitPath): boolean {
-  return (path === 'pending' ? budget.remaining : budget.remaining - budget.pendingUnsettled) > 0;
-}
-
-/** Take one send from `budget` for a `path` acknowledgement, or refuse.
- *  Pinned by the tests. */
-export function chargeAck(budget: AckBudget, path: RemitPath): boolean {
-  if (!budgetFree(budget, path)) return false;
-  budget.remaining--;
-  return true;
+/**
+ * Hand out up to `slots` sends across the mirrors' queues: one from each
+ * mirror in turn, from a mirror that moves each run (`runWindow.ts` rule 2),
+ * then round again, until the slots or the queues run out. Each queue keeps
+ * its own order. Pure; pinned by the tests.
+ */
+export function allotSlots<T>(queues: ReadonlyMap<number, readonly T[]>, slots: number, run: number): Map<number, T[]> {
+  const mirrors = walkFrom([...queues.keys()].sort((a, b) => a - b), run);
+  const out = new Map<number, T[]>();
+  let given = 0;
+  for (let round = 0; given < slots; round++) {
+    let any = false;
+    for (const m of mirrors) {
+      if (given >= slots) break;
+      const item = queues.get(m)?.[round];
+      if (item === undefined) continue;
+      any = true;
+      given++;
+      out.set(m, [...(out.get(m) ?? []), item]);
+    }
+    if (!any) break;
+  }
+  return out;
 }
 
 /**
@@ -365,11 +381,14 @@ export function chargeAck(budget: AckBudget, path: RemitPath): boolean {
  * whatever the other path is doing.
  *
  * The broadcasts run in ONE LANE PER MIRROR, the lanes side by side (Codex
- * #2607 r13, `runWindow.ts` rule 1): a stalled quote or broadcast on one
- * destination holds up that destination's acknowledgements only, never a
- * healthy mirror's. Within a lane the Pending acknowledgements go first and
- * the late ones follow; the sender's nonce on each chain is serialized by the
- * submission slot either way. Both plans are contained, so this never rejects.
+ * #2607 r13, `runWindow.ts` rule 1): a stalled broadcast on one destination
+ * holds up that destination's acknowledgements only, never a healthy
+ * mirror's. The quotes ahead of them are one read per mirror, settled by a
+ * cutoff that leaves the sends a reserve (rule 3), so a stalled quote is
+ * abandoned there and the healthy mirrors' sends still go. Within a lane the
+ * Pending acknowledgements go first and the late ones follow; the sender's
+ * nonce on each chain is serialized by the submission slot either way. Both
+ * plans are contained, so this never rejects.
  */
 async function alertAndSend(
   env: Env,
@@ -384,22 +403,25 @@ async function alertAndSend(
 ): Promise<void> {
   const alert = (plan: Promise<AckPlan | undefined>) =>
     plan.then((p) => deliverUndelivered(env, baseChainId, diamond, [p?.undelivered], deadline));
+  const quoteCutoff = priorStageCutoffMs(deadline);
+  const quoted = (plan: Promise<AckPlan | undefined>) =>
+    plan.then(async (p) => ({ p, queues: await quoteLanes(env, p, mirrorClients, diamond, quoteCutoff, deadline, run) }));
   const lanes = new Map<number, Promise<void>>();
-  const queue = (p: AckPlan | undefined): Promise<void>[] => {
-    const groups = sendLanes(p, run);
-    if (!p?.late) for (const g of groups.values()) ackBudget.pendingUnsettled += g.length;
-    return [...groups].map(([mirrorId, group]) => {
+  const queue = ({ p, queues }: { p: AckPlan | undefined; queues: Map<number, QuotedAck[]> }): Promise<void>[] => {
+    const allotted = allotSlots(queues, ackBudget.remaining, run);
+    for (const sends of allotted.values()) ackBudget.remaining -= sends.length;
+    return [...allotted].map(([mirrorId, sends]) => {
       const tail = (lanes.get(mirrorId) ?? Promise.resolve())
-        .then(() => sendLane(env, p!, group, mirrorClients, baseChainId, diamond, ackBudget))
+        .then(() => sendLane(env, p!, sends, baseChainId, diamond, ackBudget.deadline))
         .catch((err) => console.error(`[keeper] remitAck${p!.late ? ' late' : ''} sends to mirror=${mirrorId} failed this tick: ${(err as Error).message}`));
       lanes.set(mirrorId, tail);
       return tail;
     });
   };
-  // The late lanes are queued once the Pending plan is ready, so each one
-  // follows its mirror's Pending lane; queuing waits on no send.
-  const pendingQueued = pendingPlan.then(queue);
-  const lateQueued = Promise.all([latePlan, pendingQueued]).then(([p]) => queue(p));
+  // The Pending acks take their slots as soon as their own quotes are in; the
+  // late acks take what is left after that, so they wait on no Pending send.
+  const pendingQueued = quoted(pendingPlan).then(queue);
+  const lateQueued = Promise.all([quoted(latePlan), pendingQueued]).then(([q]) => queue(q));
   const [pendingSends, lateSends] = await Promise.all([pendingQueued, lateQueued, alert(pendingPlan), alert(latePlan)]);
   await Promise.all([...pendingSends, ...lateSends]);
 }
@@ -476,11 +498,19 @@ async function planPending(
 
 type SendCandidate = AckPlan['candidates'][number] & { mirrorCfg: ChainConfig };
 
+/** A candidate this run can pay for: its fee quoted, its signer built. */
+interface QuotedAck {
+  c: SendCandidate;
+  fee: bigint;
+  ctx: NonNullable<ReturnType<typeof buildKeeperContext>>;
+}
+
 /** A plan's acknowledgements this run may send, grouped by mirror. Only a
- *  candidate holding a receipt is sent, and one attempted within the backoff
- *  waits. Least recently attempted first, never-attempted first of all
- *  (#2497 r16/r17): ascending id order let the first ids re-take the budget
- *  every backoff window while later ones waited indefinitely. Pure. */
+ *  candidate holding a receipt is sent, a late one only once its receipt is
+ *  settled, and one attempted within the backoff waits. Least recently
+ *  attempted first, never-attempted first of all (#2497 r16/r17): ascending
+ *  id order let the first ids re-take the budget every backoff window while
+ *  later ones waited indefinitely. */
 function sendLanes(plan: AckPlan | undefined, run: number): Map<number, SendCandidate[]> {
   const lanes = new Map<number, SendCandidate[]>();
   if (!plan || !plan.attempts) return lanes;
@@ -489,7 +519,15 @@ function sendLanes(plan: AckPlan | undefined, run: number): Map<number, SendCand
   const byId = new Map(plan.candidates.map((c) => [c.remitId, c]));
   for (const remitId of ackOrder([...byId.keys()], attempts, run)) {
     const c = byId.get(remitId)!;
-    if (!plan.receipts.get(remitId) || !c.mirrorCfg || c.sendable === false) continue;
+    const receipt = plan.receipts.get(remitId);
+    if (!receipt || !c.mirrorCfg || c.sendable === false) continue;
+    // A LATE ack (a released reservation) only resolves a settled receipt:
+    // Base's released branch stamps nothing for a provisional one, so sending
+    // it would pay the CCIP fee every backoff window for nothing.
+    if (plan.late && !lateAckUseful(receipt.classification)) {
+      console.log(`[keeper] remitAck late remit=${remitId}: the receipt is still provisional — waits for its broadcast`);
+      continue;
+    }
     const prior = attempts.get(remitId);
     if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
     const lane = lanes.get(c.mirrorCfg.id) ?? [];
@@ -499,41 +537,69 @@ function sendLanes(plan: AckPlan | undefined, run: number): Map<number, SendCand
   return lanes;
 }
 
-/** Broadcast one mirror's acknowledgements, in order, within the tick's one
- *  budget and its deadline. A Pending one releases its claim on the budget
- *  when it settles, sent or not, and the lane releases the claims it never
- *  reached when it stops. */
+/**
+ * Quote each mirror's first `MAX_ACKS_PER_TICK` candidates, in one read per
+ * mirror, the mirrors side by side, settled by `cutoff` (`settledRead`). Only
+ * a candidate whose quote answered is returned, in its lane's order, so a
+ * slot is never held by an acknowledgement that cannot be paid for. A mirror
+ * this keeper has no signer for returns nothing.
+ */
+async function quoteLanes(
+  env: Env,
+  plan: AckPlan | undefined,
+  mirrorClients: Map<number, PublicClient>,
+  baseDiamond: Address,
+  cutoff: number,
+  deadline: number,
+  run: number,
+): Promise<Map<number, QuotedAck[]>> {
+  const out = new Map<number, QuotedAck[]>();
+  await Promise.all([...sendLanes(plan, run)].map(async ([mirrorId, lane]) => {
+    const head = lane.slice(0, MAX_ACKS_PER_TICK);
+    const cfg = head[0].mirrorCfg;
+    const client = mirrorClients.get(mirrorId)!;
+    const ctx = buildKeeperContext(env, cfg, client, { notAfterMs: deadline });
+    if (!ctx || !ctx.wallet.account) return;
+    const fees = await settledRead(
+      client,
+      head.map((c) => ({ address: cfg.diamond as Address, abi: REMIT_ABI, functionName: 'quoteRemitAckFee' as const, args: [BigInt(c.remitId), baseDiamond] as const })),
+      `remitAck${plan!.late ? ' late' : ''} fee quotes mirror=${mirrorId}`,
+      cutoff,
+    );
+    const ok: QuotedAck[] = [];
+    head.forEach((c, i) => {
+      const f = fees[i];
+      if (f?.status === 'success') ok.push({ c, fee: BigInt(f.result as bigint), ctx });
+      else console.log(`[keeper] remitAck${plan!.late ? ' late' : ''} remit=${c.remitId} mirror=${mirrorId}: fee quote unread this run — next run`);
+    });
+    if (ok.length > 0) out.set(mirrorId, ok);
+  }));
+  return out;
+}
+
+/** Broadcast one mirror's allotted acknowledgements, in order, until the
+ *  deadline. Each already holds its slot of the tick's budget, so the lane
+ *  charges nothing and releases nothing. */
 async function sendLane(
   env: Env,
   plan: AckPlan,
-  lane: readonly SendCandidate[],
-  mirrorClients: Map<number, PublicClient>,
+  sends: readonly QuotedAck[],
   baseChainId: number,
   diamond: Address,
-  ackBudget: AckBudget,
+  deadline: number,
 ): Promise<void> {
-  const path: RemitPath = plan.late ? 'late' : 'pending';
-  let settled = 0;
-  try {
-    for (const c of lane) {
-      // Past the deadline, or with no budget left this path may claim: the
-      // rest of the lane waits for the next run.
-      if (Date.now() >= ackBudget.deadline || !budgetFree(ackBudget, path)) break;
-      const dst = Number(c.v.dstChainId);
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const outcome = await sendAckFromMirror(env, c.mirrorCfg, mirrorClients, c.remitId, diamond, ackBudget, plan.receipts.get(c.remitId)!, path);
-        // eslint-disable-next-line no-await-in-loop
-        if (outcome === 'sent') await recordAttemptBestEffort(env, baseChainId, diamond, c.remitId, dst);
-      } catch (err) {
-        reportSendError(`[keeper] remitAck${plan.late ? ' late' : ''} remit=${c.remitId} dst=${dst}`, err, `skipped: ${(err as Error).message}`, console.log);
-      } finally {
-        settled++;
-        if (path === 'pending') ackBudget.pendingUnsettled--;
-      }
+  for (const q of sends) {
+    // Past the deadline: the rest of the lane waits for the next run.
+    if (Date.now() >= deadline) break;
+    const dst = Number(q.c.v.dstChainId);
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await broadcastAck(q, diamond);
+      // eslint-disable-next-line no-await-in-loop
+      await recordAttemptBestEffort(env, baseChainId, diamond, q.c.remitId, dst);
+    } catch (err) {
+      reportSendError(`[keeper] remitAck${plan.late ? ' late' : ''} remit=${q.c.remitId} dst=${dst}`, err, `skipped: ${(err as Error).message}`, console.log);
     }
-  } finally {
-    if (path === 'pending') ackBudget.pendingUnsettled -= lane.length - settled;
   }
 }
 
@@ -784,70 +850,31 @@ async function clearSettledPendingAlerts(
   }
 }
 
-/** Send one ack from the mirror for a remittance whose `receipt` the caller
- *  already read there. `'declined'` when no ack is sent (a provisional late
- *  receipt, no signer, no budget). */
-async function sendAckFromMirror(
-  env: Env,
-  mirrorCfg: ChainConfig,
-  clients: Map<number, PublicClient>,
-  remitId: number,
+/** Send one ack from the mirror for a remittance whose receipt the caller
+ *  already read there, at the fee quoted for it this run. The slot it spends
+ *  was taken when it was allotted (#2497 r4): a send that broadcasts and then
+ *  throws, or a record that fails after it, still counts against the cap. */
+async function broadcastAck(
+  q: QuotedAck,
   // r4 — receipts key by (remitter, remitId); the remitter is the Base
   // diamond whose reservation ledger this pass is scanning.
   baseDiamond: Address,
-  /** The tick's ONE send budget (#2497 r2), charged at the broadcast. */
-  ackBudget: AckBudget,
-  // A LATE ack (a released reservation) only resolves a settled receipt: Base's
-  // released branch stamps nothing for a provisional one, so sending it would
-  // pay the CCIP fee every backoff window for nothing.
-  receipt: MirrorReceipt,
-  path: RemitPath,
-): Promise<'sent' | 'declined'> {
-  const late = path === 'late';
-  const client = mirrorClient(clients, mirrorCfg, ackBudget.deadline);
-  const diamond = mirrorCfg.diamond as Address;
-  if (late && !lateAckUseful(receipt.classification)) {
-    console.log(`[keeper] remitAck late remit=${remitId}: the receipt is still provisional — waits for its broadcast`);
-    return 'declined';
-  }
-
-  const ctx = buildKeeperContext(env, mirrorCfg, client, { notAfterMs: ackBudget.deadline });
-  if (!ctx || !ctx.wallet.account) return 'declined';
-
-  // Settled by the deadline (Codex #2607 r13, `runWindow.ts` rule 3): a quote
-  // still in flight then is abandoned, so a stalled RPC cannot hold the lane
-  // past the run. Nothing has been sent or charged at this point.
-  const fee = (await settleBy(
-    client.readContract({
-      address: diamond,
-      abi: REMIT_ABI,
-      functionName: 'quoteRemitAckFee',
-      args: [BigInt(remitId), baseDiamond],
-    }),
-    ackBudget.deadline,
-    () => { throw new PastRunDeadline(`quoteRemitAckFee remit=${remitId}: still in flight at the run deadline — next run`); },
-  )) as bigint;
-
-  // Charged AT THE DISPATCH (#2497 r4): before `writeContract`, so a send that
-  // broadcasts and then throws, or a record that fails after it, still counts
-  // against the cap; a decline above costs nothing, so it cannot starve the
-  // queue behind it.
-  if (!chargeAck(ackBudget, path)) return 'declined';
+): Promise<void> {
+  const { c, fee, ctx } = q;
   const hash = await ctx.wallet.writeContract({
-    address: diamond,
+    address: c.mirrorCfg.diamond as Address,
     abi: REMIT_ABI,
     functionName: 'sendRemitAck',
-    args: [BigInt(remitId), baseDiamond, ctx.wallet.account.address],
+    args: [BigInt(c.remitId), baseDiamond, ctx.wallet.account!.address],
     value: fee,
     chain: undefined,
     account: ctx.wallet.account ?? null,
   } as never);
   console.log(
-    `[keeper] remitAck remit=${remitId} mirror=${mirrorCfg.id} fee=${fee} tx=${hash}`,
+    `[keeper] remitAck remit=${c.remitId} mirror=${c.mirrorCfg.id} fee=${fee} tx=${hash}`,
   );
   // No receipt wait: Base finalizes idempotently and the D1 backoff bounds
   // re-sends — a dropped tx simply retries after the backoff window.
-  return 'sent';
 }
 
 /** Reservation reads per `aggregate3` (#1946). */
