@@ -111,6 +111,8 @@
     "SanctionsList",
     "SanctionsDelistingTimelock",
     "SanctionsClearanceAttestor",
-    "TestnetSanctionsOracleStandIn"
+    "TestnetSanctionsOracleStandIn",
+    "CcipMessenger",
+    "VaipakamRewardMessenger"
   ]
 }

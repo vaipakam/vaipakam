@@ -141,6 +141,10 @@ interface BaseEnv {
   /** 'true' arms the horizon heartbeat (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_HORIZON_HEARTBEAT_ENABLED?: string;
 
+  // #2612 — the reward day-close pass (`rewardDayClose/`).
+  /** 'true' arms the reward day-close pass (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
+  REWARD_DAY_CLOSE_ENABLED?: string;
+
   // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
   // Telegram bots": split by who reads the alert). Plain `wrangler secret
   // put` strings / machine env values, the same delivery `ops/mesh-watcher`
@@ -298,6 +302,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_DELIVERY_PROOF_ENABLED',
   'REWARD_SANCTIONS_KEEPER_ENABLED',
   'REWARD_HORIZON_HEARTBEAT_ENABLED',
+  'REWARD_DAY_CLOSE_ENABLED',
   'TG_OPS_BOT_TOKEN',
   'TG_OPS_CHAT_ID',
   'REWARD_COMMIT_LOOKBACK_DAYS',
@@ -455,6 +460,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
     REWARD_HORIZON_HEARTBEAT_ENABLED: raw.REWARD_HORIZON_HEARTBEAT_ENABLED,
+    REWARD_DAY_CLOSE_ENABLED: raw.REWARD_DAY_CLOSE_ENABLED,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,

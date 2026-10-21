@@ -51,7 +51,7 @@ const warnings: string[] = [];
 
 beforeAll(async () => {
   m = await openMeshScenario();
-  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED'], { indexer: true });
+  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED'], { indexer: true });
   sink = opsBotSink();
   env = { ...k.env, ...sink.env } as Env;
   envWithoutBase = { ...env, RPC_BASE_SEPOLIA: undefined } as Env;

@@ -42,7 +42,7 @@ let d: RemittedDelivery;
 
 beforeAll(async () => {
   m = await openMeshScenario();
-  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED'], { indexer: true });
+  k = await keeperEnvFor([m.base, m.mirror], ['REWARD_DAY_CLOSE_ENABLED', 'REWARD_REMIT_ENABLED', 'REWARD_DELIVERY_PROOF_ENABLED'], { indexer: true });
   alerts = collectOpsAlerts();
 });
 
@@ -65,8 +65,26 @@ describe('deliveryProof across a Base/mirror pair on Anvil', () => {
   it('runs the real cycle: mirror reports, Base finalizes, the keeper remits, the lane delivers', async () => {
     d = await remitOneDayToMirror(m, k);
 
-    // The remit pass sent exactly one transaction, the keeper's own.
+    // #2612 — the keeper's day-close pass ran the daily cycle: on the mirror
+    // it sent exactly the two day reports (closeDay), on Base its own two
+    // closes, two finalizations and two broadcasts, every one to its Diamond;
+    // the lane carried both reports and both broadcasts, and the mirror now
+    // knows both days' global pair.
     const keeper = m.base.address('keeper').toLowerCase();
+    const keeperTxs = (txs: { from: string; to: string | null }[]) => txs.filter((t) => t.from.toLowerCase() === keeper);
+    expect(keeperTxs(d.dayClose.mirrorTxs)).toHaveLength(2);
+    expect(keeperTxs(d.dayClose.baseTxs)).toHaveLength(6);
+    for (const t of [...keeperTxs(d.dayClose.mirrorTxs), ...keeperTxs(d.dayClose.baseTxs)]) {
+      expect([m.base.diamond.toLowerCase(), m.mirror.diamond.toLowerCase()]).toContain(t.to?.toLowerCase());
+    }
+    expect(d.dayClose.mirrorReportsRelayed).toBe(2);
+    expect(d.dayClose.broadcastsRelayed).toBe(2);
+    expect(d.dayClose.mirrorKnows).toEqual([
+      { day: 0, isSet: true },
+      { day: 1, isSet: true },
+    ]);
+
+    // The remit pass sent exactly one transaction, the keeper's own.
     expect(d.remitTxs.map((t) => t.from.toLowerCase())).toEqual([keeper]);
     expect(d.remitTxs[0].hash).toBe(d.remitted.tx);
     expect(d.remitTxs[0].to?.toLowerCase()).toBe(m.base.diamond.toLowerCase());

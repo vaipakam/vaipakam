@@ -216,4 +216,32 @@ describe('adoptKeeperDeployments', () => {
     const keys = (keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
     expect(keys).toEqual(['global-thing', 'sanctions-capacity:97:all']);
   });
+
+  it("says which of the chain's open alerts the reset closes, before it closes them (#2616 r11)", async () => {
+    const { keeper, env, indexerAdopts } = setup();
+    indexerAdopts(OLD);
+    await adoptKeeperDeployments(env, [chain(OLD)]);
+    indexerAdopts(NEW);
+    const { recordOpsAlertSent } = await import('../src/db');
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `dayclose-wire:84532:${OLD}:canonical:all`, 100, 84532);
+    await recordOpsAlertSent(keeper.d1 as KeeperD1, `sanctions-capacity:97:all`, 100, 97);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await adoptKeeperDeployments(env, [chain(NEW)]);
+      expect(log.mock.calls.map((c) => String(c[0]))).toContain(`[keeper] chain 84532: Diamond changed ${OLD} → ${NEW}; open ops alert closed unjudged: dayclose-wire:84532:${OLD}:canonical:all`);
+      const notice = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('ops notice NOT delivered'));
+      expect(notice, 'one notice for the chain, naming how many it closes').toHaveLength(1);
+      expect(notice[0]).toContain(`[chain 84532] keeper: the Diamond changed from ${OLD} to ${NEW}, so 1 open ops alert(s) about the retired Diamond are closed without being judged again`);
+      log.mockClear();
+      warn.mockClear();
+      await adoptKeeperDeployments(env, [chain(NEW)]);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('ops notice')), 'nothing again once reset').toEqual([]);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+    const keys = (keeper.db.prepare('SELECT alert_key FROM keeper_ops_alert ORDER BY alert_key').all() as { alert_key: string }[]).map((r) => r.alert_key);
+    expect(keys).toEqual(['sanctions-capacity:97:all']);
+  });
 });
