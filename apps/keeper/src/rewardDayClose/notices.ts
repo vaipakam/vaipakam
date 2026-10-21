@@ -3,8 +3,9 @@
 // The pass's one NOTICE (a thing that happened, not a condition): a day Base
 // finalized with expected chains missing, naming each. One rule whoever
 // finalized the day (this keeper, another caller, an admin): the chains are
-// read from Base's own record of who reported it, at a block where the day is
-// finalized, journaled and recorded at once, and posted until delivered.
+// read from the finalization's own events where the keeper saw the day open,
+// otherwise judged from Base's record of who reported it and marked so;
+// journaled and recorded at once, and posted until delivered.
 
 import { boundedRead, PastRunDeadline } from '../batchRead';
 import type { Env } from '../env';
@@ -12,47 +13,98 @@ import { sendOpsNoticeDigest } from '../opsAlert';
 import { ABI, REASON_FINALIZED } from './constants';
 import type { ChainRun } from './deps';
 import { shortErr } from './errors';
-import type { DayStore } from './store';
+import type { DayStore, ZeroedRecord } from './store';
+import type { AbiEvent } from 'viem';
 
 const ZEROED_FOOTER =
-  "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Read from Base's record of which chains reported each day, against Base's expected-source list as it stood when this keeper first saw the day finalized.";
+  "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Each day's chains are read from the finalization's own ChainContributionZeroed events where this keeper saw the day open before it was finalized; a day marked otherwise was judged against Base's expected-source list as read when this keeper first saw the day finalized, which may not be the list it was finalized against.";
 
-function zeroedLine(day: number, missing: readonly number[]): string {
-  return `reward day ${day}: finalized without chain(s) ${missing.join(', ')}; their interest counts as zero for the day`;
+function zeroedLine(day: number, r: ZeroedRecord): string {
+  const basis = r.basis === 'list' ? " (judged against the expected-source list as read when first seen finalized: this keeper did not see the finalization's own record)" : '';
+  return `reward day ${day}: finalized without chain(s) ${r.missing.join(', ')}; their interest counts as zero for the day${basis}`;
+}
+
+/** Blocks per log query, and the most a day's search may span. */
+const LOG_CHUNK = 10_000n;
+const MAX_LOG_RANGE = 200_000n;
+
+const eventOf = (name: string) => ABI.find((x) => x.type === 'event' && x.name === name) as AbiEvent;
+const FINALIZED_EVENT = eventOf('DailyGlobalInterestFinalized');
+const ZEROED_EVENT = eventOf('ChainContributionZeroed');
+
+/**
+ * The chains day `d`'s finalization zeroed, from its own events, searched
+ * from `from` (a block at which the day was seen open, so the finalization
+ * is after it). 'absent' when the day's finalization event is not found
+ * exactly once in that span (a node behind the read that showed it
+ * finalized, a span too long to search, or logs no longer served); 'unread'
+ * when a query failed.
+ */
+async function zeroedByEvents(c: ChainRun, d: number, from: bigint): Promise<number[] | 'absent' | 'unread'> {
+  try {
+    const to = await c.deps.client.getBlockNumber();
+    if (to < from || to - from > MAX_LOG_RANGE) return 'absent';
+    let finalized = 0;
+    const zeroed: number[] = [];
+    for (let lo = from; lo <= to; lo += LOG_CHUNK) {
+      const hi = lo + LOG_CHUNK - 1n < to ? lo + LOG_CHUNK - 1n : to;
+      const q = { address: c.diamond, args: { dayId: BigInt(d) }, fromBlock: lo, toBlock: hi } as const;
+      // eslint-disable-next-line no-await-in-loop
+      const [f, z] = await Promise.all([c.deps.client.getLogs({ ...q, event: FINALIZED_EVENT } as never), c.deps.client.getLogs({ ...q, event: ZEROED_EVENT } as never)]);
+      finalized += (f as unknown[]).length;
+      for (const l of z as unknown as { args: { sourceChainId?: number | bigint } }[]) if (l.args.sourceChainId !== undefined) zeroed.push(Number(l.args.sourceChainId));
+    }
+    return finalized === 1 ? [...new Set(zeroed)].sort((a, b) => a - b) : 'absent';
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${c.where}: the finalization events of day ${d} unread: ${shortErr(err)}`);
+    return 'unread';
+  }
 }
 
 /**
  * Record, once per finalized day, the expected chains it was finalized
- * without. Base keeps no report for a chain that was not counted (a report
- * landing after finalization drops its day figures and is not recorded as the
- * day's), so the day's own record is the source, read in one aggregate (one
- * block) together with the day's finalization, so a lagging node cannot
- * record a report that landed just before finalization as missing. A day
- * whose record cannot be fully read is left for the next run; an empty list
- * still gets a record (naming no chain), since a finalized day is worked
- * through only once its record exists.
+ * without. The source is the finalization's own ChainContributionZeroed
+ * events, searched from the block at which this keeper last saw the day open
+ * (`openSeen`), so a change to the expected-source list after finalization
+ * cannot change what is said. A day this keeper never saw open, or whose
+ * events cannot be found, is judged instead from Base's record of who
+ * reported it against the list as read now, in one aggregate (one block)
+ * together with the day's finalization, and the record says so. A day whose
+ * source cannot be read is left for the next run; an empty list still gets a
+ * record (naming no chain), since a finalized day is worked through only once
+ * its record exists.
  */
-export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[]): Promise<void> {
+export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[], openSeen: ReadonlyMap<number, bigint>): Promise<void> {
   if (finalizedDays.length === 0) return;
   try {
     const have = await store.zeroed(finalizedDays);
     for (const d of finalizedDays.filter((x) => !have.has(x))) {
+      const from = openSeen.get(d);
       // eslint-disable-next-line no-await-in-loop
-      const res = await boundedRead(
-        c.deps.readClient as never,
-        [
-          { address: c.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
-          ...expected.map((x) => ({ address: c.diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), x] })),
-        ],
-        `rewardDayClose ${c.where} zeroed(${d})`,
-        c.deps.sendDeadline,
-      );
-      if (res.some((r) => r?.status !== 'success')) continue;
-      if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) continue;
-      const missing = expected.filter((_, i) => res[i + 1].result !== true);
-      if (missing.length > 0) console.log(`[keeper] rewardDayClose ${c.where} notice: ${zeroedLine(d, missing)}`);
+      const ev = from === undefined ? 'absent' : await zeroedByEvents(c, d, from);
+      if (ev === 'unread') continue;
+      let r: ZeroedRecord;
+      if (ev !== 'absent') r = { missing: ev, posted: ev.length === 0, basis: 'events' };
+      else {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await boundedRead(
+          c.deps.readClient as never,
+          [
+            { address: c.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
+            ...expected.map((x) => ({ address: c.diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), x] })),
+          ],
+          `rewardDayClose ${c.where} zeroed(${d})`,
+          c.deps.sendDeadline,
+        );
+        if (res.some((x) => x?.status !== 'success')) continue;
+        if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) continue;
+        const missing = expected.filter((_, i) => res[i + 1].result !== true);
+        r = { missing, posted: missing.length === 0, basis: 'list' };
+      }
+      if (r.missing.length > 0) console.log(`[keeper] rewardDayClose ${c.where} notice: ${zeroedLine(d, r)}`);
       // eslint-disable-next-line no-await-in-loop
-      await store.saveZeroed(d, { missing, posted: missing.length === 0 });
+      await store.saveZeroed(d, r);
     }
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
@@ -75,7 +127,7 @@ export async function postZeroedNotices(env: Env, store: DayStore, window: reado
     const outcome = await sendOpsNoticeDigest(
       env,
       `[chain ${store.chainId}] reward day close: finalized with expected reports missing`,
-      due.map(([d, r]) => zeroedLine(d, r.missing)),
+      due.map(([d, r]) => zeroedLine(d, r)),
       ZEROED_FOOTER,
       store.chainId,
     );

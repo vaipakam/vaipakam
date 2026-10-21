@@ -113,6 +113,12 @@ export async function launchOf(p: PeerReader, where: string): Promise<Fact<numbe
   return f.known ? known(Number(f.value)) : f;
 }
 
+/** A peer Diamond's reward role (canonical, mirror, or neither). */
+export async function roleOf(p: PeerReader, where: string): Promise<Fact<number>> {
+  const f = await readOne<number | bigint>(p.client, p.diamond, ABI, 'getRewardRole', [], `${where}: reward role of the peer at ${p.diamond}`);
+  return f.known ? known(Number(f.value)) : f;
+}
+
 /** A Diamond's expected-source list (meaningful on Base). */
 export async function expectedSources(p: PeerReader, where: string): Promise<Fact<number[]>> {
   const f = await readOne<readonly (number | bigint)[]>(p.client, p.diamond, ABI, 'getExpectedSourceChainIds', [], `${where}: Base's expected-source list`);

@@ -8,11 +8,12 @@
 
 import type { DayStore } from './store';
 import type { PeerReader } from './deps';
-import { launchOf } from './reads';
+import { launchOf, roleOf } from './reads';
 
 /** A peer's reward-clock launch: read now, or as last read (`lastRead`) when
- *  this run's read failed; or unknown, with why. */
-export type PeerClock = { known: true; launch: number; lastRead: boolean } | { known: false; why: string };
+ *  this run's read failed; or unknown, with why. `role` is the peer's reward
+ *  role as read with it (null = not known for its current Diamond). */
+export type PeerClock = { known: true; launch: number; lastRead: boolean; role: number | null } | { known: false; why: string };
 
 /**
  * A peer chain's reward-clock launch. Read now when it can be, and recorded
@@ -26,10 +27,14 @@ export type PeerClock = { known: true; launch: number; lastRead: boolean } | { k
  */
 export async function peerClock(store: DayStore, peerChain: number, p: PeerReader | null, where: string): Promise<PeerClock> {
   if (p !== null) {
-    const now = await launchOf(p, where);
+    const [now, role] = await Promise.all([launchOf(p, where), roleOf(p, where)]);
     if (now.known) {
-      await store.saveClock(peerChain, { diamond: p.diamond.toLowerCase(), launch: now.value });
-      return { known: true, launch: now.value, lastRead: false };
+      const diamond = p.diamond.toLowerCase();
+      // A role unread now stands as last read for the same Diamond only.
+      const last = role.known ? null : await store.clock(peerChain);
+      const r = role.known ? role.value : last?.diamond?.toLowerCase() === diamond ? (last.role ?? null) : null;
+      await store.saveClock(peerChain, { diamond, launch: now.value, role: r });
+      return { known: true, launch: now.value, lastRead: false, role: r };
     }
   }
   const rec = await store.clock(peerChain);
@@ -37,13 +42,13 @@ export async function peerClock(store: DayStore, peerChain: number, p: PeerReade
     return { known: false, why: p === null ? 'this keeper does not serve it and has never read its clock' : 'its clock has never been read (the read failed)' };
   }
   if (p !== null && rec.diamond?.toLowerCase() !== p.diamond.toLowerCase()) {
-    await store.saveClock(peerChain, { diamond: p.diamond.toLowerCase(), launch: null });
+    await store.saveClock(peerChain, { diamond: p.diamond.toLowerCase(), launch: null, role: null });
     return { known: false, why: `it now names Diamond ${p.diamond}, not the one whose clock this keeper last read, and the new clock has not been read` };
   }
   if (rec.launch === null || !Number.isSafeInteger(rec.launch)) {
     return { known: false, why: `its Diamond (${rec.diamond}) changed since its clock was last read, and the new clock has not been read` };
   }
-  return { known: true, launch: rec.launch, lastRead: true };
+  return { known: true, launch: rec.launch, lastRead: true, role: rec.role ?? null };
 }
 
 /** The run's judgement of clock alignment, for its holds and its alerts. */

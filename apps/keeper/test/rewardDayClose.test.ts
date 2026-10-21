@@ -32,6 +32,7 @@ import {
   type FinalizeInput,
   type PeerReader,
 } from '../src/rewardDayClose';
+import { retireUnservedChainAlerts } from '../src/rewardDayClose/alerts';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
@@ -212,6 +213,8 @@ class FakeDiamond {
   destinationsUnreadable = false;
   /** Destinations whose single-destination broadcast quote cannot be read. */
   quoteUnreadTo = new Set<number>();
+  /** This chain's own report-sent reads fail. */
+  sentAtUnreadable = false;
   /** The expected-source list cannot be read. */
   expectedUnreadable = false;
   /** Chains whose `isChainReported` read fails. */
@@ -267,6 +270,7 @@ class FakeDiamond {
         if (blockNumber !== undefined && this.reporterConfigUnreadAtBlock) throw new Error('fetch failed');
         return [this.messengerNow ?? this.messenger, this.chainId, BASE, this.role === ROLE_CANONICAL, BigInt(GRACE)];
       case 'getChainReportSentAt':
+        if (this.sentAtUnreadable) throw new Error('rpc down');
         return BigInt(this.sentAt.get(d) ?? 0);
       case 'isDayReadyToFinalize':
         return this.ready(d);
@@ -316,6 +320,26 @@ class FakeDiamond {
     if (why) throw revert(why);
     return { result: undefined };
   };
+
+  /** The chain's head, advanced by every landed call. */
+  blockNo = 100n;
+  /** Every finalization event, with the block it is in. */
+  history: { block: bigint; name: 'DailyGlobalInterestFinalized' | 'ChainContributionZeroed'; dayId: number; sourceChainId?: number }[] = [];
+  getBlockNumber = async () => this.blockNo;
+  getLogs = async ({ event, args, fromBlock, toBlock }: { event: { name: string }; args: { dayId: bigint }; fromBlock: bigint; toBlock: bigint }) =>
+    this.history
+      .filter((h) => h.name === event.name && h.dayId === Number(args.dayId) && h.block >= fromBlock && h.block <= toBlock)
+      .map((h) => ({ args: { dayId: BigInt(h.dayId), sourceChainId: h.sourceChainId } }));
+  /** Another caller finalizes `day`. */
+  finalizeByOther(day: number): void {
+    this.blockNo += 1n;
+    this.apply('finalizeDay', day);
+    this.logs = [];
+  }
+
+  /** Transactions of the keeper's still unmined. */
+  pendingTxs = 0;
+  getTransactionCount = async ({ blockTag }: { blockTag: string }) => (blockTag === 'pending' ? 5 + this.pendingTxs : 5);
 
   waitForTransactionReceipt = async () => {
     if (this.receiptLost) throw new Error('timed out');
@@ -371,8 +395,10 @@ class FakeDiamond {
       const late = this.landsAtFinalize.get(day);
       if (late !== undefined) this.reported.get(day)?.add(late);
       this.finalized.add(day);
+      this.history.push({ block: this.blockNo, name: 'DailyGlobalInterestFinalized', dayId: day });
       for (const c of this.expected) {
         if (this.reported.get(day)?.has(c)) continue;
+        this.history.push({ block: this.blockNo, name: 'ChainContributionZeroed', dayId: day, sourceChainId: c });
         this.logs.push({
           address: this.diamond,
           topics: encodeEventTopics({ abi: AGGREGATOR_ABI, eventName: 'ChainContributionZeroed', args: { dayId: BigInt(day), sourceChainId: c } } as never),
@@ -397,6 +423,7 @@ class FakeDiamond {
         writeContract: async ({ functionName, args, value }: { functionName: string; args: readonly unknown[]; value: bigint }) => {
           const day = Number(args[0] as bigint);
           if (this.writeError) throw this.writeError;
+          this.blockNo += 1n;
           this.sent.push(functionName === 'broadcastGlobalTo' ? { fn: functionName, day, value, to: Number(args[1] as bigint) } : { fn: functionName, day, value });
           this.apply(functionName, day, functionName === 'broadcastGlobalTo' ? Number(args[1] as bigint) : undefined);
           return `0x${'1'.repeat(64)}`;
@@ -910,6 +937,47 @@ describe('a run', () => {
     expect(alerts(/could not be confirmed on chain 421614 \(last sent \S+, or sent then with no receipt seen\), whose state this keeper could not read/)).toHaveLength(1);
   });
 
+  it('sends nothing while a transaction of the keeper is still unmined, so a pending close is never sent twice', async () => {
+    mirror.pendingTxs = 1; // an earlier run's close, its receipt not seen; the state still reads before it
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(logged.some((l) => /stopped=keeper-tx-pending \(1 unmined\)/.test(l))).toBe(true);
+    mirror.pendingTxs = 0;
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.fn)).toContain('closeDay');
+  });
+
+  it('closes no day when the chain its Diamond names as Base is not the canonical reward chain, and says so', async () => {
+    base.role = ROLE_MIRROR; // the route and the Diamond agree on a chain that would refuse the report
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/closes no reward day while chain 84532, which this Diamond names as Base, is not the canonical reward chain \(its role reads 1\)/)).toHaveLength(1);
+    base.role = ROLE_CANONICAL;
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.fn)).toContain('closeDay');
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('says which days a failed read kept from being worked, and clears it once the read succeeds', async () => {
+    mirror.sentAtUnreadable = true;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/did not try closing the day \(closeDay\) this run for day 0 \(whether this chain has reported the day could not be read\)/)).toHaveLength(1);
+    mirror.sentAtUnreadable = false;
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.fn)).toContain('closeDay');
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('closes, with a notice, the alerts of a chain this keeper no longer serves', async () => {
+    openAlert(`dayclose-route:999:0x00000000000000000000000000000000000000c1:all`);
+    openAlert(`dayclose-refused:999:0x00000000000000000000000000000000000000c1:close:3`);
+    openAlert(`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`); // a served chain's: untouched
+    await retireUnservedChainAlerts(env, new Set([BASE, MIRROR]), Date.now() + 60_000);
+    expect(logged.filter((l) => /unserved, closed: dayclose-[a-z]+:999:\S+ \(this keeper no longer serves the chain\)/.test(l))).toHaveLength(2);
+    expect(openKeys()).toEqual([`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`]);
+  });
+
   it('does not call an RPC that gives no answer a refusal', async () => {
     mirror.rpcDown = true;
     await run(mirror);
@@ -1389,6 +1457,28 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn)).toContain('finalizeDay');
     expect(alerts(/finalized with expected reports missing/), 'nothing was zeroed').toEqual([]);
+  });
+
+  it('names the chains the finalization zeroed, though the expected-source list is replaced before the keeper sees it', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60); // inside grace: the keeper waits, and sees the day open
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).not.toContain('finalizeDay');
+    base.finalizeByOther(0); // zeroes the mirror
+    base.expected = [BASE, OTHER]; // the list is replaced afterwards
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the finalization itself').toHaveLength(1);
+    expect(logged.filter((l) => /finalized without chain\(s\) 97/.test(l)), 'never the replacement').toEqual([]);
+  });
+
+  it('says a zeroed-day notice was judged against the list when the keeper never saw the day open', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60);
+    base.finalizeByOther(0); // before this keeper ever runs
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day \(judged against the expected-source list as read when first seen finalized/.test(l))).toHaveLength(1);
   });
 
   it('a mirror says Base finalized a day without it even when its report was sent', async () => {

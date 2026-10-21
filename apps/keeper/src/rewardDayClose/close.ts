@@ -64,6 +64,7 @@ export async function closeDays(
       const q = await reportFee(c.deps.client, mirror.messenger, d);
       if (q === 'unread') {
         console.error(`[keeper] rewardDayClose ${c.where}: report fee for day ${d} unread, the RPC did not answer; left for the next run`);
+        sender.unread.set(`close:${d}`, 'the report fee');
         continue;
       }
       if (q === 'refused') {
@@ -86,6 +87,7 @@ export async function closeDays(
         // not to have finalized. A failed read is retried next run.
         if (!onBase?.finalized.known || !onBase.ready.known) {
           console.error(`[keeper] rewardDayClose ${c.where}: day ${d} not closed: whether Base has finalized it is unread, and this chain's messenger cannot quote the B4 report; left for the next run`);
+          sender.unread.set(`close:${d}`, "whether Base has finalized the day (needed for this messenger's older report shape)");
           continue;
         }
       }

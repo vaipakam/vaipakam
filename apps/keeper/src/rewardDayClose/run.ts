@@ -33,7 +33,7 @@ import { getChainConfigs } from '../env';
 import { buildKeeperContext, passIsArmed } from '../keeper';
 import type { PassTick } from '../passSchedule';
 import { deadlineClient } from '../batchRead';
-import { retireChainAlerts, settleAlerts } from './alerts';
+import { retireChainAlerts, retireUnservedChainAlerts, settleAlerts } from './alerts';
 import { runBase } from './base';
 import { closeDays } from './close';
 import { ABI, LOOKBACK_DAYS, PASS_ALERT_WINDOW_MS, ROLE_CANONICAL, ROLE_MIRROR } from './constants';
@@ -70,6 +70,7 @@ export async function runRewardDayClose(env: Env, tick: PassTick): Promise<void>
       }
     }),
   );
+  await retireUnservedChainAlerts(env, new Set(chains.map((c) => c.id)), tick.deadlineMs);
 }
 
 function peerReader(chains: readonly ChainConfig[], id: number, deadline: number): PeerReader | null {
@@ -116,10 +117,11 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }));
   const unclosed = window.filter((d) => {
     const s = dayFact(reportedHere, d);
+    if (!s.known) sender.unread.set(`close:${d}`, 'whether this chain has reported the day');
     return s.known && !s.value;
   });
 
-  const f: RunFindings = { chainId, canonical, window, refused: sender.refused, done: () => false, clock: null, base: null, mirror: null };
+  const f: RunFindings = { chainId, canonical, window, refused: sender.refused, unread: sender.unread, done: () => false, clock: null, base: null, mirror: null };
   let line = '';
   let closed: number[] = [];
   if (canonical) {
@@ -177,6 +179,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       ` unclosed=${unclosed.length} closed=${closed.length}` +
       line +
       (sender.refused.size > 0 ? ` refused=${[...sender.refused.keys()].join(',')}` : '') +
+      (sender.unread.size > 0 ? ` unread=${[...sender.unread.keys()].join(',')}` : '') +
       (sender.stopped ? ` stopped=${sender.stopReason}` : ''),
   );
 

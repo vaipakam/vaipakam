@@ -19,6 +19,7 @@
 
 import type { Address } from 'viem';
 import { clockHold, mirrorClock, peerClock } from './clock';
+import { ROLE_CANONICAL } from './constants';
 import { closeDays, type BaseDays } from './close';
 import type { ChainRun } from './deps';
 import { known, unknown, type Fact, type PerDay } from './fact';
@@ -41,10 +42,21 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   const base = c.deps.peer(x.baseChainId);
   const baseDays: BaseDays = base === null ? 'unserved' : await readBaseDays(base, x.window, c.chainId, c.deps.sendDeadline);
   const listed = base === null ? null : await expectedSources(base, c.where);
-  const clock = mirrorClock(c.chainId, x.launch, x.baseChainId, await peerClock(store, x.baseChainId, base, c.where));
+  const baseClock = await peerClock(store, x.baseChainId, base, c.where);
+  const clock = mirrorClock(c.chainId, x.launch, x.baseChainId, baseClock);
   const route = await messengerRoute(c.deps.client, x.messenger, c.where);
+  // The chain this Diamond names as Base must be the canonical reward chain:
+  // a report a non-canonical Diamond receives is refused there, and is sent
+  // once and stamped sent here for good.
+  const roleHold =
+    !baseClock.known || baseClock.role === ROLE_CANONICAL
+      ? null
+      : baseClock.role === null
+        ? `the reward role of chain ${x.baseChainId}, which this Diamond names as Base, is not known`
+        : `chain ${x.baseChainId}, which this Diamond names as Base, is not the canonical reward chain (its role reads ${baseClock.role})`;
   const closeHold =
     clockHold(clock) ??
+    roleHold ??
     (!route.known ? "the messenger's report route is unread" : route.value !== x.baseChainId ? `the messenger routes reports to chain ${route.value}, not Base` : null);
 
   const run = closeHold === null ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseDays }) : { closed: [], dispatched: new Map() };

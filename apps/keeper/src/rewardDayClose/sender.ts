@@ -10,6 +10,7 @@
 
 import type { Hex, TransactionReceipt } from 'viem';
 import { PastRunDeadline } from '../batchRead';
+import { keeperTxPending } from '../keeperSend';
 import type { KeeperContext } from '../keeper';
 import { isDefinitiveRejection, reportSendError } from '../submissionQueue';
 import { ABI, FRONTIER_SHORT, MAX_SENDS_PER_RUN, PAUSED_REFUSAL, RACES, RECEIPT_TIMEOUT_MS } from './constants';
@@ -23,6 +24,7 @@ export type CallResult = 'landed' | 'skipped' | string;
 export class Sender {
   private ctx: KeeperContext | null | undefined;
   private sends = 0;
+  private pendingChecked = false;
   stopped = false;
   stopReason = '';
   /** Writes that went out and may have landed: landed, or sent with no
@@ -35,6 +37,10 @@ export class Sender {
   readonly refused = new Map<string, string>();
   /** `step:day` keys whose call landed this run. */
   readonly landed = new Set<string>();
+  /** `step:day` → what could not be read, for steps a failed read kept from
+   *  being tried this run. Every step that skips a day on an unknown says so
+   *  here, so a day held by a read is never held silently. */
+  readonly unread = new Map<string, string>();
 
   constructor(private readonly deps: DayCloseDeps) {}
 
@@ -57,6 +63,23 @@ export class Sender {
     if (this.ctx === undefined) this.ctx = this.deps.context();
     const ctx = this.ctx;
     if (!ctx) return this.stop('no-signing-key');
+    // A transaction of this keeper's still unmined (an earlier run's whose
+    // receipt was not seen, or another pass's) may be this very step: the
+    // state reads as before it, and a second send would queue behind it only
+    // to revert once it lands. Nothing persists between runs, so the chain is
+    // asked, once per run, before the first send.
+    if (!this.pendingChecked) {
+      let pending: string | null;
+      try {
+        pending = await keeperTxPending(ctx.client, ctx.wallet.account!.address);
+      } catch (err) {
+        if (err instanceof PastRunDeadline) return this.stop('deadline');
+        console.error(`[keeper] rewardDayClose chain=${ctx.chainId} the keeper's pending transactions could not be read: ${shortErr(err)}`);
+        return this.stop('rpc-unavailable');
+      }
+      if (pending !== null) return this.stop(pending);
+      this.pendingChecked = true;
+    }
     const key = `${step}:${day}`;
     try {
       await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, value, account: ctx.wallet.account! });

@@ -71,6 +71,9 @@ export interface RunFindings {
   window: readonly number[];
   /** `step:day` → why, for calls refused this run. */
   refused: ReadonlyMap<string, string>;
+  /** `step:day` → what could not be read, for steps a failed read kept from
+   *  being tried this run. */
+  unread: ReadonlyMap<string, string>;
   /** `step:day` work that is done (as read, or landed this run). */
   done: (stepDay: string) => boolean;
   /** Reward-clock alignment (null = not judged this run). */

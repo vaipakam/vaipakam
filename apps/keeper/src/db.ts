@@ -927,7 +927,7 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
  *  `day_clock` holds a peer chain's reward clock as last read (`item` = that
  *  chain); `day_close` is a cursor only, the first day not yet entered into
  *  `day_owed`. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch';
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock' | 'day_dispatch' | 'day_open';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

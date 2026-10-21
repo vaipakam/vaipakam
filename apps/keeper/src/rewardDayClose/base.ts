@@ -26,6 +26,8 @@ import { dayFact, type Fact, type PerDay } from './fact';
 import type { BaseFindings, Wait } from './findings';
 import { broadcastDays } from './broadcast';
 import { recordZeroed } from './notices';
+import { PastRunDeadline } from '../batchRead';
+import { shortErr } from './errors';
 import { planFinalize, topologyOf, type BroadcastPlan } from './plan';
 import { broadcastDestinations, expectedSources, peerSentAt, readDays, readReported } from './reads';
 import type { Sender } from './sender';
@@ -65,6 +67,15 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
       ? "Base's expected-source list could not be read"
       : null;
 
+  // A block no later than the reads below: a day they show open was open
+  // from it, so its finalization's events lie after it.
+  let seenAt: bigint | null = null;
+  try {
+    seenAt = await c.deps.client.getBlockNumber();
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${c.where}: block number unread; open days keep their last open-seen block: ${shortErr(err)}`);
+  }
   const ready = await readDays<readonly [boolean, number]>(c, x.window, 'isDayReadyToFinalize');
   const firstAt = await readDays<bigint>(c, x.window, 'getDailyFirstReportAt');
   const isFinalized = (d: number) => {
@@ -72,6 +83,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     return r.known ? Number(r.value[1]) === REASON_FINALIZED : null;
   };
   const open = x.window.filter((d) => isFinalized(d) === false);
+  for (const d of x.window) if (isFinalized(d) === null) sender.unread.set(`finalize:${d}`, 'whether the day is finalized or ready');
   const finalized = new Set(x.window.filter((d) => isFinalized(d) === true));
   const reported = expected.known ? await readReported(c, open, expected.value) : new Map<number, { reported: Set<number>; unknown: Set<number> }>();
 
@@ -84,7 +96,12 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     const r = dayFact(ready, d);
     // A day is judged only on known facts; anything unread leaves it for the
     // next run, its alerts standing as they were.
-    if (!expected.known || !own.known || !first.known || !r.known) continue;
+    if (!expected.known || !own.known || !first.known || !r.known) {
+      // An unread list is the run's finalize hold, said as such.
+      const what = [!own.known && "whether Base has closed it", !first.known && 'when its first report landed'].filter(Boolean).join(' and ');
+      if (expected.known && what) sender.unread.set(`finalize:${d}`, what);
+      continue;
+    }
     judged.add(d);
     const decision = planFinalize(
       {
@@ -115,7 +132,22 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     // eslint-disable-next-line no-await-in-loop
     if (nearEnd) waiting.set(d, { ...pending, sent: await peerSentAt(c.deps, pending.missing, d, c.where) });
   }
-  if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value);
+  // Each open day's latest open-seen block; a day finalized since keeps the
+  // block it was last seen open from, which its events lie after.
+  const openSeen = new Map<number, bigint>();
+  try {
+    for (const [d, b] of await store.openSeen(x.window)) openSeen.set(d, BigInt(b));
+    if (seenAt !== null) {
+      for (const d of open) {
+        openSeen.set(d, seenAt);
+        // eslint-disable-next-line no-await-in-loop
+        await store.saveOpenSeen(d, seenAt);
+      }
+    }
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose ${c.where}: open-seen blocks unread or unsaved: ${shortErr(err)}`);
+  }
+  if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value, openSeen);
 
   let plans = new Map<number, BroadcastPlan>();
   let broadcastNow = 0;

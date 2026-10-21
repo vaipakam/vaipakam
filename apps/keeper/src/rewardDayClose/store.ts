@@ -15,12 +15,14 @@
 //     one extra broadcast.
 //   - `day_zeroed`: per finalized day, the expected chains Base finalized it
 //     without, and whether that notice was delivered.
+//   - `day_open`: per open day on Base, the block from which it was last seen
+//     open, so the finalization's own events can be read from there.
 //   - `day_dispatch`: per mirror close whose report left through a messenger
 //     other than the one checked, so it is said until Base records the day.
 //   - `day_clock`: per PEER chain, the Diamond its reward clock was last read
 //     from and that clock (null = that Diamond's clock not yet read).
 //
-// The three per-day records live while their day is owed or in the lookback.
+// The per-day records live while their day is owed or in the lookback.
 
 import type { Address } from 'viem';
 import type { Env } from '../env';
@@ -53,6 +55,10 @@ export interface BroadcastRecord {
 export interface ZeroedRecord {
   missing: number[];
   posted: boolean;
+  /** Where `missing` came from: the finalization's own events, or (when this
+   *  keeper never saw the day open, or those events could not be found) the
+   *  expected-source list as read when the day was first seen finalized. */
+  basis?: 'events' | 'list';
 }
 
 /** A mirror close whose receipt showed its report leaving through a messenger
@@ -66,9 +72,11 @@ export interface DispatchRecord {
 export interface ClockRecord {
   diamond: string;
   launch: number | null;
+  /** The peer's reward role, as read with its clock (null = not read). */
+  role?: number | null;
 }
 
-const PER_DAY_RECORDS: readonly WorkKind[] = ['day_broadcast', 'day_zeroed', 'day_dispatch'];
+const PER_DAY_RECORDS: readonly WorkKind[] = ['day_broadcast', 'day_zeroed', 'day_dispatch', 'day_open'];
 
 export class DayStore {
   private readonly db: Env['KEEPER_DB'];
@@ -148,6 +156,15 @@ export class DayStore {
 
   saveZeroed(day: number, r: ZeroedRecord): Promise<void> {
     return this.put('day_zeroed', day, r);
+  }
+
+  /** Per day, the block from which it was last seen open (as a decimal string). */
+  openSeen(days: readonly number[]): Promise<Map<number, string>> {
+    return this.byDay('day_open', days);
+  }
+
+  saveOpenSeen(day: number, block: bigint): Promise<void> {
+    return this.put('day_open', day, block.toString());
   }
 
   dispatches(days: readonly number[]): Promise<Map<number, DispatchRecord>> {

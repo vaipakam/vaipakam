@@ -247,6 +247,13 @@ const KINDS: readonly AlertKind[] = [
       } else if (f.mirror !== null) {
         if (f.mirror.closeHold !== null) parts.push(`closes no reward day while ${f.mirror.closeHold} (a report is sent once and cannot be recalled)`);
       } else return UNJUDGED;
+      // Days a failed read kept from being worked this run, by step.
+      const byStep = new Map<string, string[]>();
+      for (const [k, what] of [...f.unread].sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))) {
+        const [step, day] = k.split(':');
+        byStep.set(step, [...(byStep.get(step) ?? []), `day ${day} (${what} could not be read)`]);
+      }
+      for (const [step, days] of byStep) parts.push(`did not try ${STEP_WORDS[step] ?? step} this run for ${days.join(', ')}`);
       if (parts.length === 0) return GONE;
       return HOLDS(
         `${tag}: this keeper ${parts.join('; and it ')}. Each step resumes on the first run that reads what it waits on as safe. Any alert naming a cause says what to fix; an unread value usually means the keeper's RPC for that chain failed, or the contract does not answer that read.`,
@@ -482,4 +489,40 @@ export async function retireChainAlerts(env: Env, chainId: number, role: number,
     Date.now() >= deadline,
     `reward role ${role}, `,
   );
+}
+
+/**
+ * A chain this keeper no longer serves (its RPC or deployment is no longer
+ * configured) is never run, so neither {@link settleAlerts} nor
+ * {@link retireChainAlerts} reaches its open alerts. Each such chain's alerts
+ * are closed here, once per run over every served chain, and the ops channel
+ * told which and why. Should the chain be served again, a run judges it afresh.
+ */
+export async function retireUnservedChainAlerts(env: Env, served: ReadonlySet<number>, deadline: number): Promise<void> {
+  let keys: string[];
+  try {
+    keys = await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-%');
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose: open alerts unread, unserved chains' alerts left for the next run: ${shortErr(err)}`);
+    return;
+  }
+  const byChain = new Map<number, string[]>();
+  for (const k of keys) {
+    const m = /^dayclose-[a-z]+:(\d+):/.exec(k);
+    if (m === null) continue;
+    const chain = Number(m[1]);
+    if (!served.has(chain)) byChain.set(chain, [...(byChain.get(chain) ?? []), k]);
+  }
+  for (const [chain, open] of [...byChain].sort(([a], [b]) => a - b)) {
+    // eslint-disable-next-line no-await-in-loop
+    await closeWithNotice(
+      env,
+      chain,
+      open.sort().map((key) => ({ key, why: 'this keeper no longer serves the chain' })),
+      `[chain ${chain}] reward day close: chain no longer served by this keeper, its alerts closed`,
+      "This keeper has no RPC or deployment configured for this chain any more, so the pass no longer works its days, and the conditions these alerts named are no longer retried or watched here. What they named may still hold; check the chain directly. If it is served again, the pass judges it afresh.",
+      Date.now() >= deadline,
+      'unserved, ',
+    );
+  }
 }
