@@ -51,7 +51,7 @@ import { postZeroedNotices } from './notices';
 import { attestedPeers } from './peers';
 import { readDays } from './reads';
 import { Sender } from './sender';
-import { DayStore } from './store';
+import { DayStore, mirrorTenure } from './store';
 
 export async function runRewardDayClose(env: Env, tick: PassTick): Promise<void> {
   if (!passIsArmed(env, 'rewardDayClose', 'REWARD_DAY_CLOSE_ENABLED')) return;
@@ -165,7 +165,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     return;
   }
   const canonical = role === ROLE_CANONICAL;
-  const store = new DayStore(env, chainId, diamond, canonical ? 'canonical' : `mirror@${baseChainId}`);
+  const store = new DayStore(env, chainId, diamond, canonical ? 'canonical' : mirrorTenure(baseChainId, deps.peer(baseChainId)?.diamond ?? null));
   const window = await store.openWindow(today);
   const sender = new Sender(deps);
 

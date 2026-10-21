@@ -21,16 +21,19 @@
 // said once a window, it holds its day only until delivered.
 //
 // Keys: `dayclose-<kind>:<chain>:<diamond>:<tenure>:<subject>`, the tenure
-// being `canonical` or `mirror@<base chain id>` (store.ts) and the subject
+// being `canonical` or a mirror's toward its Base Diamond (store.ts) and the subject
 // `<day>` for a day, `all` for the chain, and `<step>:<day>` for a refused
 // call. An alert belongs to the Diamond and the tenure it was raised about, as
 // the day ledger does: a chain repointed to another Diamond, a Diamond moved
-// between canonical and mirror, or a mirror rebound to another Base, starts
+// between canonical and mirror, or a mirror rebound to another Base or Base Diamond, starts
 // afresh, and the old work's open alerts are closed with a notice rather than
 // judged against the new work's same-numbered days. Another tenure's are
-// closed by the chain's own run; another Diamond's, and a chain's no longer
-// served, by the run-wide sweep ({@link retireUnworkedAlerts}), which reads
-// only the configuration and so is not held by the new Diamond's gate. A
+// closed by the chain's own run. A chain repointed to another Diamond has
+// every open alert closed, with one notice naming them, by the keeper's
+// deployment-epoch reset before any pass runs (keeperEpoch.ts); another
+// Diamond's that remain, and a chain's no longer served, are closed by the
+// run-wide sweep ({@link retireUnworkedAlerts}), which reads only the
+// configuration and so is not held by the new Diamond's gate. A
 // per-day alert whose day is no longer worked (out of the window and not
 // owed) is cleared with it.
 //
@@ -46,7 +49,7 @@ import { ALERT_REPEAT_SEC, BROADCAST_RESEND_AFTER_SEC, SERVES, SERVES_ON_BASE, S
 import { shortErr } from './errors';
 import type { RunFindings } from './findings';
 import { topologyFaults } from './plan';
-import { tenureWords, type DayStore, type RoleTenure } from './store';
+import { TENURE_PATTERN, tenureWords, type DayStore, type RoleTenure } from './store';
 
 export type Judgement = { verdict: 'holds'; text: string; statement?: boolean } | { verdict: 'gone' } | { verdict: 'unjudged' } | { verdict: 'retired'; why: string };
 
@@ -76,6 +79,7 @@ const STEP_WORDS: Record<string, string> = {
   finalize: 'finalizing the day (finalizeDay)',
   broadcast: 'broadcasting the day (broadcastGlobal)',
   notice: "recording and announcing the chains the day's finalization zeroed",
+  outcome: "learning Base's outcome for this chain's report, so the day stays owed here",
 };
 
 const KINDS: readonly AlertKind[] = [
@@ -193,10 +197,9 @@ const KINDS: readonly AlertKind[] = [
       const head =
         `${tag}: the close of reward day ${day} sent its report through ${via}, not the reward messenger this run checked (${rec.checked}); it was rotated between the check and the transaction. ` +
         'Whether that report is the shape Base applies after finalization, and whether it routes to Base, was not checked, and the day cannot be closed again. If Base finalizes the day before it lands, or it never reaches Base, this chain\'s interest counts as zero for the day.';
-      if (!m.baseServed) {
-        // Nothing here can learn the outcome: a statement, not a condition.
-        return HOLDS(`${head} This keeper does not serve Base, so the day's outcome cannot be learned here; this is said once and not followed. A contract-side guard is tracked in #2621.`, true);
-      }
+      // A dispatch is recorded only by a close, which only a tenure that
+      // serves Base makes (store.ts), so its outcome is always learnable here;
+      // a Base no longer served is another tenure, which retires this alert.
       return HOLDS(`${head} This alert stands until Base records the day's outcome. A contract-side guard is tracked in #2621.`);
     },
   },
@@ -347,10 +350,13 @@ const KINDS: readonly AlertKind[] = [
 
 const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 
+// `mirror` alone: keys written before a mirror's tenure named its Base.
+const KEY_PATTERN = new RegExp(`^dayclose-([a-z]+):(\\d+):(?:(0x[0-9a-f]{40}):(?:(${TENURE_PATTERN}|mirror):)?)?(.+)$`);
+
 /** An open key's parts, or null when it is not one of this chain's. The
  *  Diamond, and the role, are null on a key that names none. */
 function parseKey(key: string, chainId: number): { kind: string; diamond: string | null; role: string | null; subject: string } | null {
-  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):(?:(canonical|mirror(?:@\d+)?):)?)?(.+)$/.exec(key);
+  const m = KEY_PATTERN.exec(key);
   if (m === null || Number(m[2]) !== chainId) return null;
   return { kind: m[1], diamond: m[3] ?? null, role: m[4] ?? null, subject: m[5] };
 }

@@ -22,7 +22,8 @@
 // For every window day, sent or not, a day Base finalized without this
 // chain's report is stated as such, once. Base's outcome for a day is final
 // only once it is finalized: until then a counted report can still be left
-// out, so the day stays owed here.
+// out, so the day stays owed here; while it cannot be read, the day stays
+// owed and the run says which read failed.
 
 import type { Address } from 'viem';
 import { clockHold, mirrorClock, peerClock } from './clock';
@@ -87,6 +88,11 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     if (!finalized.known) outcome.set(d, unknown(finalized.why));
     else if (!finalized.value) outcome.set(d, known(false));
     else outcome.set(d, counted.known ? known(true) : unknown(counted.why));
+    // An outcome left unread keeps the day owed (run.ts), so it is said, like
+    // every other step a failed read holds. Unserved, there is none to learn.
+    if (base !== null && !outcome.get(d)!.known) {
+      sender.noteUnread(`outcome:${d}`, !finalized.known ? 'whether Base has finalized the day' : "whether Base holds this chain's report for the day");
+    }
     // Finalized without this chain's report: excluded, known. Finalized with
     // it: included only if the chain was on Base's list when the day was
     // finalized, which Base does not expose (#2626), so not known, and never

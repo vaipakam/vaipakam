@@ -6,15 +6,18 @@
 // kind or shape.
 //
 // The role is part of the namespace (the tables' `diamond` column holds
-// `<diamond>:<tenure>`, the tenure being `canonical` or `mirror@<base chain
-// id>`) because the work is the role's: a Diamond moved between canonical
-// and mirror in place, or a mirror rebound to another Base, owes different
-// things on the same day numbers, so its new work starts afresh, as a fresh
-// Diamond's does, and the old work's open alerts are closed with a notice
-// (alerts.ts). A Diamond that leaves its role and returns to the SAME one
-// (the same Base, for a mirror) resumes its work: every fact the work keeps
-// is about that Diamond's days toward that Base, and is read again before it
-// is relied on. The kinds:
+// `<diamond>:<tenure>`, the tenure being `canonical`, or for a mirror
+// `mirror@<base chain id>/<Base's Diamond>`, or `mirror@<base chain id>` while
+// this keeper does not serve Base) because the work is the role's: a Diamond
+// moved between canonical and mirror in place, a mirror rebound to another
+// Base, or a Base whose Diamond was replaced, owes different things on the
+// same day numbers (a report already sent went to the old Base and cannot be
+// sent again), so its new work starts afresh, as a fresh Diamond's does, and
+// the old work's open alerts are closed with a notice (alerts.ts). A Diamond
+// that leaves its role and returns to the SAME one (the same Base Diamond,
+// for a mirror) resumes its work: every fact the work keeps is about that
+// Diamond's days toward that Base, and is read again before it is relied on.
+// The kinds:
 //
 //   - `day_close` (cursor): the first day not yet entered into the ledger;
 //     only moves forward. Losing it costs one run re-entering days from day 0.
@@ -88,14 +91,28 @@ export interface ClockRecord {
 }
 
 /** The work a Diamond's days are done for: as the canonical reward chain,
- *  or as a mirror reporting to a given Base (`mirror@<base chain id>`). A
- *  mirror rebound to another Base owes its days to that Base, not the old
- *  one, so its work there starts afresh. */
-export type RoleTenure = 'canonical' | `mirror@${number}`;
+ *  or as a mirror reporting to a given Base Diamond on a given chain
+ *  (`mirror@<base chain id>/<diamond>`, or `mirror@<base chain id>` while
+ *  this keeper does not serve that chain). A mirror rebound to another Base,
+ *  or whose Base Diamond was replaced, owes its days to that Base, not the
+ *  old one, so its work there starts afresh. */
+export type RoleTenure = 'canonical' | `mirror@${number}` | `mirror@${number}/${string}`;
+
+/** A mirror's tenure toward Base on `baseChainId`, at the Diamond this keeper
+ *  is configured with there (null = it does not serve that chain). */
+export function mirrorTenure(baseChainId: number, baseDiamond: Address | null): RoleTenure {
+  return baseDiamond === null ? `mirror@${baseChainId}` : `mirror@${baseChainId}/${baseDiamond.toLowerCase()}`;
+}
+
+/** The shape of a tenure inside an alert key (alerts.ts parses it). */
+export const TENURE_PATTERN = 'canonical|mirror@\\d+(?:/0x[0-9a-f]{40})?';
 
 /** A tenure in words, for notices. */
 export function tenureWords(t: string): string {
-  return t === 'canonical' ? 'the canonical reward chain' : /^mirror@\d+$/.test(t) ? `a mirror reporting to chain ${t.slice(7)} as its Base` : `"${t}"`;
+  if (t === 'canonical') return 'the canonical reward chain';
+  const m = /^mirror@(\d+)(?:\/(0x[0-9a-f]{40}))?$/.exec(t);
+  if (m === null) return `"${t}"`;
+  return m[2] === undefined ? `a mirror reporting to chain ${m[1]} as its Base, a chain this keeper does not serve` : `a mirror reporting to Base's Diamond ${m[2]} on chain ${m[1]}`;
 }
 
 const PER_DAY_RECORDS: readonly WorkKind[] = ['day_broadcast', 'day_zeroed', 'day_dispatch', 'day_open'];

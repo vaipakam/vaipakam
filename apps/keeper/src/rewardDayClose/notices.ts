@@ -79,7 +79,9 @@ async function zeroedByEvents(c: ChainRun, d: number, from: bigint): Promise<num
  * for one never seen. A day this keeper never saw open, or whose
  * events cannot be found, is judged instead from Base's record of who
  * reported it against the list as read now, in one aggregate (one block)
- * together with the day's finalization, and the record says so. A day whose
+ * together with the day's finalization and the list itself (a list that
+ * changed since the run read it leaves the day for the next run), and the
+ * record says so. A day whose
  * source cannot be read is left for the next run, and `note`d as such; an
  * empty list still gets a record (naming no chain), since a finalized day is
  * worked through only once its record exists.
@@ -110,6 +112,7 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
           c.deps.readClient as never,
           [
             { address: c.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
+            { address: c.diamond, abi: ABI, functionName: 'getExpectedSourceChainIds', args: [] },
             ...expected.map((x) => ({ address: c.diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), x] })),
           ],
           `rewardDayClose ${c.where} zeroed(${d})`,
@@ -123,7 +126,15 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
           note(`notice:${d}`, 'the day as finalized in one read with who reported it (the node answering read it as not finalized yet)');
           continue;
         }
-        const missing = expected.filter((_, i) => res[i + 1].result !== true);
+        // The list judged against is the one in this same read: one that
+        // changed since the run first read it would judge the day against
+        // a list Base no longer holds, and the record is kept for good.
+        const listNow = (res[1].result as readonly (number | bigint)[]).map(Number);
+        if (listNow.length !== expected.length || listNow.some((x) => !expected.includes(x))) {
+          note(`notice:${d}`, "the day against Base's expected-source list in one read (the list changed during this run)");
+          continue;
+        }
+        const missing = expected.filter((_, i) => res[i + 2].result !== true);
         r = { missing, posted: missing.length === 0, basis: 'list' };
       }
       if (r.missing.length > 0) console.log(`[keeper] rewardDayClose ${c.where} notice: ${zeroedLine(d, r)}`);

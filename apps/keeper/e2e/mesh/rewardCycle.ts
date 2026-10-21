@@ -26,7 +26,7 @@
  */
 import type { Address, Hex } from 'viem';
 import { runRewardBudgetRemit } from '../../src/rewardBudgetRemit';
-import { DayStore } from '../../src/rewardDayClose/store';
+import { DayStore, mirrorTenure } from '../../src/rewardDayClose/store';
 import { runRewardDayClose } from '../../src/rewardDayClose';
 import { openLoan } from '../harness/lending';
 import { tickNow, type KeeperHarness } from '../harness/keeperEnv';
@@ -134,7 +134,7 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   }
   // Each close's receipt shows its report leaving through the messenger the
   // run checked, so no unchecked dispatch is recorded.
-  const dispatched = await new DayStore(k.env, MIRROR_ID, mirror.diamond, `mirror@${BASE_ID}`).dispatches([0, 1]);
+  const dispatched = await new DayStore(k.env, MIRROR_ID, mirror.diamond, mirrorTenure(BASE_ID, base.diamond)).dispatches([0, 1]);
   if (dispatched.size > 0) throw new Error(`the day-close pass read a mirror close as sent through an unchecked messenger (${JSON.stringify([...dispatched.values()])})`);
   const reports = await relay.deliver(MIRROR_ID, BASE_ID);
   if (reports.length !== 2) throw new Error(`the relay landed ${reports.length} mirror reports on Base, not 2`);
