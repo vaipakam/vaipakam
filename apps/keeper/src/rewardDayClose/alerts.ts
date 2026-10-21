@@ -20,13 +20,19 @@
 // outcome cannot be learned here) is a thing that happened, not a condition:
 // said once a window, it holds its day only until delivered.
 //
-// Keys: `dayclose-<kind>:<chain>:<diamond>:<subject>`, the subject being
-// `<day>` for a day, `all` for the chain, and `<step>:<day>` for a refused
-// call. An alert belongs to the Diamond it was raised about, as the day ledger
-// does: a chain repointed to another Diamond starts afresh, and the old
-// Diamond's open alerts are closed with a notice rather than judged against
-// the new Diamond's same-numbered days. A per-day alert whose day is no
-// longer worked (out of the window and not owed) is cleared with it.
+// Keys: `dayclose-<kind>:<chain>:<diamond>:<role>:<subject>`, the subject
+// being `<day>` for a day, `all` for the chain, and `<step>:<day>` for a
+// refused call. An alert belongs to the Diamond and the reward role it was
+// raised about, as the day ledger does: a chain repointed to another Diamond,
+// or a Diamond moved between canonical and mirror, starts afresh, and the old
+// work's open alerts are closed with a notice rather than judged against the
+// new work's same-numbered days. A per-day alert whose day is no longer
+// worked (out of the window and not owed) is cleared with it.
+//
+// One alert sits outside the roles: the GATE (`dayclose-gate:<chain>:
+// <diamond>:all`), raised when a read every step depends on fails, or the
+// chain's RPC answers for another chain, before any role's work is judged
+// ({@link settleGate}). While it holds nothing else is judged or sent.
 
 import type { Env } from '../env';
 import { listOpsAlertKeys } from '../db';
@@ -35,7 +41,7 @@ import { ALERT_REPEAT_SEC, BROADCAST_RESEND_AFTER_SEC, SERVES, SERVES_ON_BASE, S
 import { shortErr } from './errors';
 import type { RunFindings } from './findings';
 import { topologyFaults } from './plan';
-import type { DayStore } from './store';
+import type { DayStore, RewardRoleName } from './store';
 
 export type Judgement = { verdict: 'holds'; text: string; statement?: boolean } | { verdict: 'gone' } | { verdict: 'unjudged' } | { verdict: 'retired'; why: string };
 
@@ -254,6 +260,8 @@ const KINDS: readonly AlertKind[] = [
         byStep.set(step, [...(byStep.get(step) ?? []), `day ${day} (${what} could not be read)`]);
       }
       for (const [step, days] of byStep) parts.push(`did not try ${STEP_WORDS[step] ?? step} this run for ${days.join(', ')}`);
+      // A peer read as unreadable holds whatever waits on it; say why.
+      for (const [chain, why] of [...f.unattested].sort(([a], [b]) => a - b)) parts.push(`read chain ${chain} as unreadable this run, because ${why}`);
       if (parts.length === 0) return GONE;
       return HOLDS(
         `${tag}: this keeper ${parts.join('; and it ')}. Each step resumes on the first run that reads what it waits on as safe. Any alert naming a cause says what to fix; an unread value usually means the keeper's RPC for that chain failed, or the contract does not answer that read.`,
@@ -329,16 +337,19 @@ const KINDS: readonly AlertKind[] = [
 const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 
 /** An open key's parts, or null when it is not one of this chain's. The
- *  Diamond is null on a key that names none. */
-function parseKey(key: string, chainId: number): { kind: string; diamond: string | null; subject: string } | null {
-  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):)?(.+)$/.exec(key);
+ *  Diamond, and the role, are null on a key that names none. */
+function parseKey(key: string, chainId: number): { kind: string; diamond: string | null; role: string | null; subject: string } | null {
+  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):(?:(canonical|mirror):)?)?(.+)$/.exec(key);
   if (m === null || Number(m[2]) !== chainId) return null;
-  return { kind: m[1], diamond: m[3] ?? null, subject: m[4] };
+  return { kind: m[1], diamond: m[3] ?? null, role: m[4] ?? null, subject: m[5] };
 }
 
-function keyOf(kind: string, chainId: number, diamond: string, subject: string): string {
-  return `dayclose-${kind}:${chainId}:${diamond}:${subject}`;
+function keyOf(kind: string, chainId: number, diamond: string, role: RewardRoleName, subject: string): string {
+  return `dayclose-${kind}:${chainId}:${diamond}:${role}:${subject}`;
 }
+
+const GATE = 'gate';
+const gateKey = (chainId: number, diamond: string) => `dayclose-${GATE}:${chainId}:${diamond.toLowerCase()}:all`;
 
 /** The day a per-day subject names (`<day>` or `<step>:<day>`). */
 function dayOf(subject: string): number | null {
@@ -368,20 +379,27 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
     return 'all';
   }
   const diamond = store.diamond.toLowerCase();
+  const role = store.role;
   const open = new Map<string, { kind: string; subject: string }>();
-  // Another Diamond's alerts cannot be judged from this one's reads.
+  // Another Diamond's alerts, or another role's, cannot be judged from this
+  // work's reads.
   const foreign: { key: string; why: string; day: null }[] = [];
   for (const k of openKeys) {
     const p = parseKey(k, chainId);
     if (p === null) continue;
-    if (p.diamond === diamond) open.set(k, p);
+    if (p.diamond === diamond && p.kind === GATE) continue; // settleGate's
+    if (p.diamond === diamond && p.role === role) open.set(k, p);
     else
       foreign.push({
         key: k,
         why:
           p.diamond === null
             ? 'it names no Diamond, so it cannot be judged against the one this chain names now'
-            : `it is about Diamond ${p.diamond}, and this chain now names Diamond ${diamond}, whose days this keeper works afresh; check the old Diamond directly`,
+            : p.diamond !== diamond
+              ? `it is about Diamond ${p.diamond}, and this chain now names Diamond ${diamond}, whose days this keeper works afresh; check the old Diamond directly`
+              : p.role === null
+                ? 'it names no reward role, so it cannot be judged against the role this Diamond reads now'
+                : `it is about this Diamond's work as the ${p.role === 'canonical' ? 'canonical reward chain' : 'a mirror'}, and the Diamond now reads as ${role === 'canonical' ? 'the canonical reward chain' : 'a mirror'}, whose days this keeper works afresh; what that work left owed is no longer done here, so check those days on the Diamond directly`,
         day: null,
       });
   }
@@ -406,7 +424,7 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
     const subjects = new Set(k.perDay ? k.raised(f) : ['all']);
     for (const p of open.values()) if (p.kind === k.kind) subjects.add(p.subject);
     for (const subject of subjects) {
-      const key = keyOf(k.kind, chainId, diamond, subject);
+      const key = keyOf(k.kind, chainId, diamond, role, subject);
       const isOpen = open.has(key);
       const day = k.perDay ? dayOf(subject) : null;
       let j: Judgement;
@@ -524,5 +542,34 @@ export async function retireUnservedChainAlerts(env: Env, served: ReadonlySet<nu
       Date.now() >= deadline,
       'unserved, ',
     );
+  }
+}
+
+/**
+ * The gate: whether the reads every step depends on (the chain's reward role,
+ * its reward day, the pause, its reporter config and its reward clock) came
+ * back, and the chain's RPC answers for this chain. `failed` is why not (null
+ * = all read, and the chain is the one configured). While it holds, nothing on
+ * the chain is sent or judged, so the alert is the one record that the chain
+ * is not being worked; it clears on the first run that reads them all.
+ */
+export async function settleGate(env: Env, chainId: number, diamond: string, failed: string | null, nowSec: number, deadline: number): Promise<void> {
+  const key = gateKey(chainId, diamond);
+  try {
+    if (failed === null) {
+      if (Date.now() < deadline) await resolveOpsAlert(env, key);
+      return;
+    }
+    if (Date.now() >= deadline) return;
+    await sendOpsAlert(
+      env,
+      key,
+      `[chain ${chainId}] reward day close: this keeper is not working this chain's reward days: ${failed}. Nothing is closed, finalized or broadcast here, and no other alert about the chain is judged, until a run reads them. An unread value usually means the keeper's RPC for this chain failed, or the contract does not answer that read.`,
+      ALERT_REPEAT_SEC,
+      nowSec,
+      chainId,
+    );
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: gate alert not settled, tried next run: ${shortErr(err)}`);
   }
 }

@@ -55,10 +55,13 @@ export interface MirrorFindings {
   route: Fact<number>;
   /** Why this run closes no day (null = none). */
   closeHold: string | null;
-  /** Per window day: Base has recorded this chain's outcome for it (counted
-   *  its report, or finalized the day without it). */
+  /** Per window day: Base's outcome for this chain is final and learned (the
+   *  day is finalized, a counted report being able to be left out before
+   *  then, and whether Base holds this chain's report is read). */
   outcome: PerDay<boolean>;
-  /** Per window day: Base finalized it without this chain's report. */
+  /** Per window day: Base finalized it without this chain's report (known
+   *  false before finalization; unknown for a finalized day whose report
+   *  landed, since Base does not expose whether it was counted in). */
   excluded: PerDay<boolean>;
   /** Window days closed here whose report left through a messenger other than
    *  the one checked. */
@@ -74,6 +77,8 @@ export interface RunFindings {
   /** `step:day` → what could not be read, for steps a failed read kept from
    *  being tried this run. */
   unread: ReadonlyMap<string, string>;
+  /** Other chains read as unreadable this run (not attested), with why. */
+  unattested: ReadonlyMap<number, string>;
   /** `step:day` work that is done (as read, or landed this run). */
   done: (stepDay: string) => boolean;
   /** Reward-clock alignment (null = not judged this run). */

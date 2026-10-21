@@ -5,6 +5,7 @@
 
 import type { Address, PublicClient } from 'viem';
 import type { KeeperContext } from '../keeper';
+import type { Peers } from './peers';
 
 /** A read-only view of ANOTHER chain this keeper serves. */
 export interface PeerReader {
@@ -22,7 +23,8 @@ export interface DayCloseDeps {
   /** Every chain this keeper serves, probed for standing in a finalized day
    *  it is owed (absent = none beyond the lists). */
   served?: readonly number[];
-  /** Another chain this keeper serves, by EVM chain id (null = not served). */
+  /** Another chain this keeper serves, by EVM chain id (null = not served).
+   *  Raw: a run reads a peer only through its attested view (peers.ts). */
   peer: (chainId: number) => PeerReader | null;
   sendDeadline: number;
   runDeadline: number;
@@ -33,6 +35,8 @@ export interface ChainRun {
   chainId: number;
   diamond: Address;
   deps: DayCloseDeps;
+  /** Every other chain, read only once attested (peers.ts). */
+  peers: Peers;
   /** `chain=<id>`, for log lines. */
   where: string;
 }

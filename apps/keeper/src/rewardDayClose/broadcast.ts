@@ -84,7 +84,7 @@ export async function broadcastDays(c: ChainRun, store: DayStore, sender: Sender
     // eslint-disable-next-line no-await-in-loop
     if (changed) await save();
     // eslint-disable-next-line no-await-in-loop
-    const dest = await destinationStates(c.deps, [...sentTo.keys()].sort((a, b) => a - b), d, c.where);
+    const dest = await destinationStates(c, [...sentTo.keys()].sort((a, b) => a - b), d);
     for (const [k, state] of dest) {
       if (state === 'received' || x.current.includes(k)) continue;
       // eslint-disable-next-line no-await-in-loop

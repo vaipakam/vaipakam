@@ -6,7 +6,11 @@
 // Safe means, for EVERY close (each sends a report once, stamped sent here
 // for good):
 //   - the reward clock here and on Base are known to match (a day number must
-//     cover the same hours on both); and
+//     cover the same hours on both);
+//   - the chain this Diamond names as Base reads, THIS run, as the canonical
+//     reward chain (a non-canonical Diamond refuses the report; a role can
+//     change, so it is never taken from a record, and a keeper that does not
+//     serve Base closes no day); and
 //   - the messenger routes reports to the Diamond's Base (its own
 //     `baseChainId`), known, not assumed.
 // Either unknown holds every close, and the alerts say which and why. A day's
@@ -15,7 +19,9 @@
 // (the B4 report's chain-wide figures still apply).
 //
 // For every window day, sent or not, a day Base finalized without this
-// chain's report is stated as such, once.
+// chain's report is stated as such, once. Base's outcome for a day is final
+// only once it is finalized: until then a counted report can still be left
+// out, so the day stays owed here.
 
 import type { Address } from 'viem';
 import { clockHold, mirrorClock, peerClock } from './clock';
@@ -39,7 +45,7 @@ export interface MirrorInput {
 }
 
 export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x: MirrorInput): Promise<{ m: MirrorFindings; clock: ClockFacts; closed: number[] }> {
-  const base = c.deps.peer(x.baseChainId);
+  const base = await c.peers.peer(x.baseChainId);
   const baseDays: BaseDays = base === null ? 'unserved' : await readBaseDays(base, x.window, c.chainId, c.deps.sendDeadline);
   const listed = base === null ? null : await expectedSources(base, c.where);
   const baseClock = await peerClock(store, x.baseChainId, base, c.where);
@@ -52,7 +58,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     !baseClock.known || baseClock.role === ROLE_CANONICAL
       ? null
       : baseClock.role === null
-        ? `the reward role of chain ${x.baseChainId}, which this Diamond names as Base, is not known`
+        ? `the reward role of chain ${x.baseChainId}, which this Diamond names as Base, is not known (${base === null ? 'this keeper does not serve that chain' : 'this run could not read it'}; a role is read afresh every run, since it can change)`
         : `chain ${x.baseChainId}, which this Diamond names as Base, is not the canonical reward chain (its role reads ${baseClock.role})`;
   const closeHold =
     clockHold(clock) ??
@@ -72,14 +78,20 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   const excluded: PerDay<boolean> = new Map();
   for (const d of x.window) {
     const { finalized, counted } = day(d);
-    // Counted, or finalized without it: Base has recorded this chain's
-    // outcome. Known only once both reads that decide it are in.
-    if (counted.known && counted.value) outcome.set(d, known(true));
-    else if (counted.known && finalized.known) outcome.set(d, known(finalized.value));
-    else outcome.set(d, unknown(!counted.known ? counted.why : finalized.known ? 'not read' : finalized.why));
-    if (counted.known && counted.value) excluded.set(d, known(false));
-    else if (counted.known && finalized.known) excluded.set(d, known(finalized.value));
-    else excluded.set(d, unknown('not read'));
+    // Base's outcome for this chain is final only once the day is finalized
+    // (a report Base has counted can still be left out, if the chain leaves
+    // the expected-source list before finalization), and learned here once
+    // whether Base holds this chain's report is read too.
+    if (!finalized.known) outcome.set(d, unknown(finalized.why));
+    else if (!finalized.value) outcome.set(d, known(false));
+    else outcome.set(d, counted.known ? known(true) : unknown(counted.why));
+    // Finalized without this chain's report: excluded, known. Finalized with
+    // it: included only if the chain was on Base's list when the day was
+    // finalized, which Base does not expose (#2626), so not known, and never
+    // said either way.
+    if (!finalized.known || !finalized.value) excluded.set(d, finalized.known ? known(false) : unknown(finalized.why));
+    else if (!counted.known) excluded.set(d, unknown(counted.why));
+    else excluded.set(d, counted.value ? unknown("whether Base counted this chain's landed report into the finalized day is not readable on Base") : known(true));
   }
 
   const m: MirrorFindings = {

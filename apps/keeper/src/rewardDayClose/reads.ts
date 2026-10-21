@@ -10,7 +10,7 @@
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
 import { ABI, MESSENGER_ABI, READ_CHUNK, REASON_FINALIZED } from './constants';
-import type { ChainRun, DayCloseDeps, PeerReader } from './deps';
+import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
 import type { DestinationState } from './plan';
@@ -146,10 +146,12 @@ export async function broadcastDestinations(client: PublicClient, messenger: Add
 
 /** On Base: when each of `chains` sent its report for `day`, read on that
  *  chain (0 = not sent; unknown = not served by this keeper, or unread). */
-export async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], day: number, where: string): Promise<Map<number, Fact<number>>> {
+export async function peerSentAt(c: ChainRun, chains: readonly number[], day: number): Promise<Map<number, Fact<number>>> {
   const out = new Map<number, Fact<number>>();
+  const where = c.where;
   for (const x of chains) {
-    const p = deps.peer(x);
+    // eslint-disable-next-line no-await-in-loop
+    const p = await c.peers.peer(x);
     if (!p) {
       out.set(x, unknown('not served by this keeper'));
       continue;
@@ -162,10 +164,12 @@ export async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], 
 }
 
 /** Each destination's state for `day`: read on that chain when served. */
-export async function destinationStates(deps: DayCloseDeps, destinations: readonly number[], day: number, where: string): Promise<Map<number, DestinationState>> {
+export async function destinationStates(c: ChainRun, destinations: readonly number[], day: number): Promise<Map<number, DestinationState>> {
   const out = new Map<number, DestinationState>();
+  const where = c.where;
   for (const x of destinations) {
-    const p = deps.peer(x);
+    // eslint-disable-next-line no-await-in-loop
+    const p = await c.peers.peer(x);
     if (!p) {
       out.set(x, 'unserved');
       continue;

@@ -11,6 +11,7 @@
 //   constants   what is called, and the numbers the pass works by
 //   fact        a read's result: known with its value, or unknown with why
 //   reads       every chain read, each returning a fact
+//   peers       other chains, read only once their Diamond names itself them
 //   plan        the pure rules: window, finalization, broadcast, receipts
 //   store       everything kept between runs (ledger, records, cursor)
 //   clock       reward-clock alignment, the precondition of every close and

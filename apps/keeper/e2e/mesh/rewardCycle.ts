@@ -26,7 +26,7 @@
  */
 import type { Address, Hex } from 'viem';
 import { runRewardBudgetRemit } from '../../src/rewardBudgetRemit';
-import { getWorkItems } from '../../src/db';
+import { DayStore } from '../../src/rewardDayClose/store';
 import { runRewardDayClose } from '../../src/rewardDayClose';
 import { openLoan } from '../harness/lending';
 import { tickNow, type KeeperHarness } from '../harness/keeperEnv';
@@ -134,7 +134,7 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   }
   // Each close's receipt shows its report leaving through the messenger the
   // run checked, so no unchecked dispatch is recorded.
-  const dispatched = await getWorkItems(k.env.KEEPER_DB, MIRROR_ID, mirror.diamond, 'day_dispatch', ['0', '1']);
+  const dispatched = await new DayStore(k.env, MIRROR_ID, mirror.diamond, 'mirror').dispatches([0, 1]);
   if (dispatched.size > 0) throw new Error(`the day-close pass read a mirror close as sent through an unchecked messenger (${JSON.stringify([...dispatched.values()])})`);
   const reports = await relay.deliver(MIRROR_ID, BASE_ID);
   if (reports.length !== 2) throw new Error(`the relay landed ${reports.length} mirror reports on Base, not 2`);
@@ -148,10 +148,10 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   }
   // What each broadcast reached is recorded from its receipt, the messenger's
   // own per-destination events, not from the list the run read beforehand.
-  const marks = await getWorkItems<{ sentTo: Record<string, { at: number; proven: boolean } | null> }>(k.env.KEEPER_DB, BASE_ID, base.diamond, 'day_broadcast', ['0', '1']);
-  for (const day of ['0', '1']) {
-    if (marks.get(day)?.payload.sentTo[String(MIRROR_ID)]?.proven !== true) {
-      throw new Error(`the day-close pass did not record day ${day}'s broadcast to the mirror from its receipt (${JSON.stringify(marks.get(day)?.payload ?? null)})`);
+  const marks = await new DayStore(k.env, BASE_ID, base.diamond, 'canonical').broadcasts([0, 1]);
+  for (const day of [0, 1]) {
+    if (marks.get(day)?.sentTo[String(MIRROR_ID)]?.proven !== true) {
+      throw new Error(`the day-close pass did not record day ${day}'s broadcast to the mirror from its receipt (${JSON.stringify(marks.get(day) ?? null)})`);
     }
   }
   const broadcasts = await relay.deliver(BASE_ID, MIRROR_ID);

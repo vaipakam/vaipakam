@@ -1,9 +1,16 @@
 // apps/keeper/src/rewardDayClose/store.ts
 //
-// Everything the pass keeps between runs, per (chain, Diamond), in the
-// keeper's private open-work queue (`keeper_work_open`) and its cursor table
-// (`keeper_work_cursor`). One class, so no other module knows a row's kind or
-// shape:
+// Everything the pass keeps between runs, per (chain, Diamond, reward role),
+// in the keeper's private open-work queue (`keeper_work_open`) and its cursor
+// table (`keeper_work_cursor`). One class, so no other module knows a row's
+// kind or shape.
+//
+// The role is part of the namespace (the tables' `diamond` column holds
+// `<diamond>:<role>`) because the work is the role's: a Diamond moved between
+// canonical and mirror in place owes different things on the same day
+// numbers, so its new role's work starts afresh, as a fresh Diamond's does,
+// and the old role's open alerts are closed with a notice (alerts.ts). The
+// kinds:
 //
 //   - `day_close` (cursor): the first day not yet entered into the ledger;
 //     only moves forward. Losing it costs one run re-entering days from day 0.
@@ -74,21 +81,27 @@ export interface DispatchRecord {
 export interface ClockRecord {
   diamond: string;
   launch: number | null;
-  /** The peer's reward role, as read with its clock (null = not read). */
-  role?: number | null;
 }
+
+/** The two roles a Diamond's day work is done in. */
+export type RewardRoleName = 'canonical' | 'mirror';
 
 const PER_DAY_RECORDS: readonly WorkKind[] = ['day_broadcast', 'day_zeroed', 'day_dispatch', 'day_open'];
 
 export class DayStore {
   private readonly db: Env['KEEPER_DB'];
 
+  /** The namespace of every row: `<diamond>:<role>`, lowercased. */
+  private readonly scope: string;
+
   constructor(
     env: Env,
     readonly chainId: number,
     readonly diamond: Address,
+    readonly role: RewardRoleName,
   ) {
     this.db = env.KEEPER_DB;
+    this.scope = `${diamond.toLowerCase()}:${role}`;
   }
 
   // ── The ledger of owed days ──
@@ -100,22 +113,22 @@ export class DayStore {
    * its turn.
    */
   async openWindow(today: number): Promise<number[]> {
-    const from = await getWorkCursor(this.db, this.chainId, this.diamond, 'day_close');
+    const from = await getWorkCursor(this.db, this.chainId, this.scope, 'day_close');
     const fresh: WorkItem<Record<string, never>>[] = [];
     for (let d = from; d < today; d++) fresh.push({ item: String(d), block: d, payload: {} });
     for (let i = 0; i < fresh.length; i += 100) {
       // eslint-disable-next-line no-await-in-loop
-      await enqueueWork(this.db, this.chainId, this.diamond, 'day_owed', fresh.slice(i, i + 100));
+      await enqueueWork(this.db, this.chainId, this.scope, 'day_owed', fresh.slice(i, i + 100));
     }
-    await putWorkCursor(this.db, this.chainId, this.diamond, 'day_close', today);
-    const page = await listOpenWorkBelow(this.db, this.chainId, this.diamond, 'day_owed', Math.max(0, today - LOOKBACK_DAYS), BACKLOG_PER_RUN);
-    await touchOpenWork(this.db, this.chainId, this.diamond, 'day_owed', page.map((w) => w.item));
+    await putWorkCursor(this.db, this.chainId, this.scope, 'day_close', today);
+    const page = await listOpenWorkBelow(this.db, this.chainId, this.scope, 'day_owed', Math.max(0, today - LOOKBACK_DAYS), BACKLOG_PER_RUN);
+    await touchOpenWork(this.db, this.chainId, this.scope, 'day_owed', page.map((w) => w.item));
     return dayWindow(today, page.map((w) => w.block));
   }
 
   /** Of `days`, those the ledger still holds owed. */
   async owedAmong(days: readonly number[]): Promise<Set<number>> {
-    const s = await openWorkAmong(this.db, this.chainId, this.diamond, 'day_owed', days.map(String));
+    const s = await openWorkAmong(this.db, this.chainId, this.scope, 'day_owed', days.map(String));
     return new Set([...s].map(Number));
   }
 
@@ -123,25 +136,25 @@ export class DayStore {
    *  any other stays in it (or re-enters it). A day's records stay while it
    *  is owed or in the lookback. */
   async settle(today: number, window: readonly number[], through: (d: number) => boolean): Promise<void> {
-    await finishWork(this.db, this.chainId, this.diamond, 'day_owed', window.filter(through).map(String));
+    await finishWork(this.db, this.chainId, this.scope, 'day_owed', window.filter(through).map(String));
     const open = window.filter((d) => !through(d)).map((d) => ({ item: String(d), block: d, payload: {} }));
-    if (open.length > 0) await enqueueWork(this.db, this.chainId, this.diamond, 'day_owed', open);
+    if (open.length > 0) await enqueueWork(this.db, this.chainId, this.scope, 'day_owed', open);
     const floor = Math.max(0, today - LOOKBACK_DAYS);
     for (const kind of PER_DAY_RECORDS) {
       // eslint-disable-next-line no-await-in-loop
-      await pruneWorkBelowUnlessOpen(this.db, this.chainId, this.diamond, kind, floor, 'day_owed');
+      await pruneWorkBelowUnlessOpen(this.db, this.chainId, this.scope, kind, floor, 'day_owed');
     }
   }
 
   // ── Per-day records ──
 
   private async byDay<T>(kind: WorkKind, days: readonly number[]): Promise<Map<number, T>> {
-    const rows = await getWorkItems<T>(this.db, this.chainId, this.diamond, kind, days.map(String));
+    const rows = await getWorkItems<T>(this.db, this.chainId, this.scope, kind, days.map(String));
     return new Map([...rows].map(([item, r]) => [Number(item), r.payload]));
   }
 
   private put<T>(kind: WorkKind, day: number, payload: T): Promise<void> {
-    return putWork(this.db, this.chainId, this.diamond, kind, { item: String(day), block: day, payload });
+    return putWork(this.db, this.chainId, this.scope, kind, { item: String(day), block: day, payload });
   }
 
   broadcasts(days: readonly number[]): Promise<Map<number, BroadcastRecord>> {
@@ -183,11 +196,11 @@ export class DayStore {
   // ── Peer clocks ──
 
   async clock(peerChain: number): Promise<ClockRecord | null> {
-    const rows = await getWorkItems<ClockRecord>(this.db, this.chainId, this.diamond, 'day_clock', [String(peerChain)]);
+    const rows = await getWorkItems<ClockRecord>(this.db, this.chainId, this.scope, 'day_clock', [String(peerChain)]);
     return rows.get(String(peerChain))?.payload ?? null;
   }
 
   saveClock(peerChain: number, r: ClockRecord): Promise<void> {
-    return putWork(this.db, this.chainId, this.diamond, 'day_clock', { item: String(peerChain), block: 0, payload: r });
+    return putWork(this.db, this.chainId, this.scope, 'day_clock', { item: String(peerChain), block: 0, payload: r });
   }
 }

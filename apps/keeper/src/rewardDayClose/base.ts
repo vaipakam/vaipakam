@@ -54,7 +54,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     const mirrors = new Map<number, PeerClock>();
     for (const m of expected.value) {
       // eslint-disable-next-line no-await-in-loop
-      if (m !== c.chainId) mirrors.set(m, await peerClock(store, m, c.deps.peer(m), c.where));
+      if (m !== c.chainId) mirrors.set(m, await peerClock(store, m, await c.peers.peer(m), c.where));
     }
     clock = baseClock(x.launch, mirrors);
   }
@@ -130,7 +130,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
     if (pending === null || pending.missing.length + pending.unknown.length === 0) continue;
     const nearEnd = pending.graceEndsAt !== null && pending.graceEndsAt - x.nowSec <= graceWarningSec(x.graceSec);
     // eslint-disable-next-line no-await-in-loop
-    if (nearEnd) waiting.set(d, { ...pending, sent: await peerSentAt(c.deps, pending.missing, d, c.where) });
+    if (nearEnd) waiting.set(d, { ...pending, sent: await peerSentAt(c, pending.missing, d) });
   }
   // Each open day's latest open-seen block; a day finalized since keeps the
   // block it was last seen open from, which its events lie after.
