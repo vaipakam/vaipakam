@@ -186,6 +186,8 @@ type Book = {
   revertReceiptIds?: number[];
   /** These RPCs answer the fee quote (default: every quote reverts). */
   quoteOkRpcs?: string[];
+  /** Make the keeper database's scan-state read fail. */
+  failScanState?: boolean;
 };
 
 /** Whether a JSON-RPC batch reads `getRemitReservation(id)`, directly or
@@ -318,7 +320,7 @@ function install(book: Book): { routeReads: () => number; routeIds: number[]; po
 
 /** A D1 stub: answers `keeper_ops_alert` key listings from `openAlerts`, and
  *  records every statement with its binds. */
-function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList = false, failAttempts = false) {
+function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList = false, failAttempts = false, failScanState = false) {
   const bound: { sql: string; binds: unknown[] }[] = [];
   const handle = {
     prepare: (q: string) => {
@@ -330,6 +332,7 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
         return stmt;
       };
       const rows = () => {
+        if (failScanState && q.includes('FROM keeper_remit_ack_frontier')) throw new Error('D1 unavailable');
         if (q.includes('FROM keeper_work_open')) {
           return lateOpenIds.map((id) => ({ item: String(id), block: 1, payload: JSON.stringify({ remitId: id }) }));
         }
@@ -355,7 +358,7 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
 async function tick(book: Book) {
   const { routeReads, routeIds, posts, postTexts, quotes, quoteRpcs, sendRpcs, restore } = install(book);
   const shared = d1();
-  const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList, book.failAttempts);
+  const keeper = d1(book.openAlerts, book.lateOpenIds, book.failAlertList, book.failAttempts, book.failScanState);
   const warns: string[] = [];
   const errors: string[] = [];
   const spies = [
@@ -516,6 +519,24 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     });
     expect(t.alerts.join('\n')).toContain('remit 2');
     expect(t.elapsedMs).toBeLessThan(4_000);
+  });
+
+  it('an unreadable scan state stops only the Pending path, never the late one', async () => {
+    // The keeper database refuses the scan-state read. Reservation 2 is
+    // Released, open on the late queue, with no receipt and a retired route:
+    // the late path needs nothing from the scan state, so it is still read
+    // and alerted (Codex #2607 r18).
+    const t = await tick({
+      status: 1,
+      nonce: 2,
+      statusById: { 2: 3 },
+      lateOpenIds: [2],
+      route: { sent: OLD, live: NEW },
+      failScanState: true,
+    });
+    expect(t.alerts.join('\n')).toContain('remit 2');
+    expect(t.routeIds).toEqual([2]);
+    expect(t.errors.some((e) => e.includes('ledger scan failed this tick'))).toBe(true);
   });
 
   it('a scan cut partway works what it read and resumes at the first unread reservation', async () => {

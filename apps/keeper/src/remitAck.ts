@@ -175,14 +175,6 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   const isCanonical = cfg[3];
   if (!isCanonical) return;
 
-  const nonce = (await settled(publicClient.readContract({
-    address: diamond,
-    abi: REMIT_ABI,
-    functionName: 'getRemitReservationNonce',
-  }), 'getRemitReservationNonce')) as bigint;
-  if (nonce === 0n) return;
-
-  const { frontier, scanCursor } = await getRemitAckScanState(env.KEEPER_DB, baseChainId, diamond);
   // One client per destination chain, bound to the RUN deadline: the plans
   // read through it only until their read cutoff (`settledRead`), and the
   // sends reuse it until the deadline.
@@ -194,40 +186,69 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig, deadline: number,
   // Pending path draw on the same MAX_ACKS_PER_TICK, so a tick never sends
   // more than the cap however its work splits between them.
   const ackBudget: AckBudget = { remaining: MAX_ACKS_PER_TICK, deadline };
-  // The late path needs nothing from the ledger scan, so it starts before it
-  // (Codex #2607 r14): a slow or failed scan never holds up, or stops, the
-  // late acknowledgements and their alerts. A released reservation may still
-  // see its delivery land late, so it runs in the caught-up state too (#1461).
+  // The late path needs nothing the Pending path reads — not the ledger nonce,
+  // not the scan state, not the scan — so it starts first, straight after the
+  // canonical check both share (Codex #2607 r14, r18): whatever of the Pending
+  // path is slow, aborts or fails, the late acknowledgements and their alerts
+  // still run. A released reservation may still see its delivery land late,
+  // so it runs in the caught-up state too (#1461).
   const late = planLateDeliveriesContained(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients, readCutoff, run);
   // ONE PIPELINE PER PATH, the two side by side (Codex #2607 r3–r6). Each
   // path is read and classified, then its alerts post concurrently with its
   // acknowledgement sends, so no slow ops channel, slow send or slow mirror
   // spends the deadline another step needed. The late path is a backlog that
   // can reach unhealthy destinations, so its planning never sits in front of
-  // the Pending sends; and a ledger scan that is slow, aborts or fails leaves
-  // the late path running (Codex #2607 r14).
+  // the Pending sends.
   // PENDING ACKS FIRST (#2497 r13): they are the ordinary work — a
   // reservation stays reserved on Base until acked — so the late sends get only
   // the slots the Pending acks were not handed, never the other way round
   // (`AckBudget`).
-  let pending: Promise<AckPlan | undefined> = Promise.resolve(undefined);
-  let cleared: Promise<void> = Promise.resolve();
+  const { pending, cleared } = await pendingPath(env, publicClient, baseChainId, diamond, mirrorConfigs, mirrorClients, settled, scanCutoff, readCutoff, run);
+  await Promise.all([cleared, alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline, run)]);
+}
+
+/**
+ * The Pending path's ledger work, CONTAINED as one unit (Codex #2607 r18):
+ * the nonce read, the scan state, the scan and its cursor write. Any of them
+ * failing is reported and ends only this path for the run; the late path,
+ * started before it, never depends on it.
+ */
+async function pendingPath(
+  env: Env,
+  publicClient: PublicClient,
+  baseChainId: number,
+  diamond: Address,
+  mirrorConfigs: Map<number, ChainConfig>,
+  mirrorClients: Map<number, PublicClient>,
+  settled: <T>(read: Promise<T>, what: string) => Promise<T>,
+  scanCutoff: number,
+  readCutoff: number,
+  run: number,
+): Promise<{ pending: Promise<AckPlan | undefined>; cleared: Promise<void> }> {
+  const none = { pending: Promise.resolve(undefined), cleared: Promise.resolve() };
   try {
+    const nonce = (await settled(publicClient.readContract({
+      address: diamond,
+      abi: REMIT_ABI,
+      functionName: 'getRemitReservationNonce',
+    }), 'getRemitReservationNonce')) as bigint;
+    if (nonce === 0n) return none;
+    const { frontier, scanCursor } = await getRemitAckScanState(env.KEEPER_DB, baseChainId, diamond);
     if (BigInt(frontier) > nonce) {
       // Caught up — the steady state.
-      cleared = clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set());
-    } else {
-      const w = await scanPendingWindow(env, publicClient, baseChainId, diamond, frontier, scanCursor, nonce, scanCutoff);
-      if (w) {
-        await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, w.contiguousTerminal, w.to);
-        pending = planPendingContained(env, publicClient as never, baseChainId, diamond, w.pendingIds, w.reservations, mirrorConfigs, mirrorClients, readCutoff, run);
-        cleared = clearSettledPendingAlerts(env, baseChainId, diamond, w.contiguousTerminal, w.terminalInWindow);
-      }
+      return { pending: none.pending, cleared: clearSettledPendingAlerts(env, baseChainId, diamond, frontier, new Set()) };
     }
+    const w = await scanPendingWindow(env, publicClient, baseChainId, diamond, frontier, scanCursor, nonce, scanCutoff);
+    if (!w) return none;
+    await putRemitAckScanState(env.KEEPER_DB, baseChainId, diamond, w.contiguousTerminal, w.to);
+    return {
+      pending: planPendingContained(env, publicClient as never, baseChainId, diamond, w.pendingIds, w.reservations, mirrorConfigs, mirrorClients, readCutoff, run),
+      cleared: clearSettledPendingAlerts(env, baseChainId, diamond, w.contiguousTerminal, w.terminalInWindow),
+    };
   } catch (err) {
     console.error(`[keeper] remitAck ledger scan failed this tick (late deliveries continue): ${(err as Error).message}`);
+    return none;
   }
-  await Promise.all([cleared, alertAndSend(env, baseChainId, diamond, pending, late, mirrorClients, ackBudget, deadline, run)]);
 }
 
 /**

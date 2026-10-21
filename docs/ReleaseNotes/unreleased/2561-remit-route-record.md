@@ -51,7 +51,8 @@ the alert says which. If that route is a retired adapter, it is reported as
 the retired case, since fixing the destination would not reach a receipt
 behind the old adapter. The keeper's first reads of Base's ledger now stop
 early enough to leave the rest of the run time, and a ledger read that fails
-or does not answer in time no longer stops the released backlog from being
+or does not answer in time, or a failure to read the keeper's own record of
+where its scan stands, no longer stops the released backlog from being
 classified and acknowledged that run. A ledger scan cut short works the
 reservations it did read and resumes at the first one it did not, rather than
 starting the same window again from scratch. The runbook's recovery step that
