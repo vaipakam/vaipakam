@@ -176,6 +176,8 @@ class FakeDiamond {
   quoteShapes = new Set([8, 7, 5, 3]);
   /** Single-destination quotes refuse with this, when set. */
   refuseTo: string | null = null;
+  /** Single-destination quotes refuse with this error, by destination. */
+  refuseToChain = new Map<number, string>();
   /** Destinations the contract gives no standing in any day. */
   noStanding = new Set<number>();
   /** What the node answers a send with instead of taking it, when set. */
@@ -254,6 +256,7 @@ class FakeDiamond {
         return BROADCAST_FEE;
       case 'quoteBroadcastGlobalTo':
         if (this.noStanding.has(Number(args![1]))) throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
+        if (this.refuseToChain.has(Number(args![1]))) throw revert(this.refuseToChain.get(Number(args![1]))!);
         if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
         return BROADCAST_TO_FEE;
       default:
@@ -859,6 +862,39 @@ describe('a run', () => {
     await run(mirror);
     expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
     expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day, and this chain's messenger cannot quote the B4 report/)).toHaveLength(1);
+  });
+
+  it('a pre-B4 mirror does not close a day whose finalization on Base is unread, whatever else read', async () => {
+    base.finalized.add(0);
+    base.unreadable.add(MIRROR); // Base's record of this chain's report fails to read; its finalization reads
+    mirror.today = 1;
+    mirror.quoteShapes = new Set([7, 5, 3]);
+    await run(mirror);
+    expect(mirror.sent, 'Base finalized it, and that read stands on its own').toEqual([]);
+
+    base.unreadable.clear();
+    base.finalized.clear();
+    await dayCloseOnce(env, mirror.chainId, mirror.diamond, {
+      client: mirror.client(),
+      readClient: mirror.client(),
+      context: () => mirror.ctx(),
+      peer: () => null, // this keeper does not serve Base
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(mirror.sent, 'unknown is not "not finalized"').toEqual([]);
+    expect(alerts(/reward day 0 is refused \(this keeper does not serve Base, so whether Base has finalized this day cannot be read/)).toHaveLength(1);
+  });
+
+  it('holds a day whose broadcast landed for one destination while another it is owed was refused', async () => {
+    finalizedDayZero();
+    await run(base); // the day goes to the mirror
+    base.expected = [BASE, MIRROR, OTHER, 56];
+    base.destinations = [MIRROR, OTHER, 56]; // two more, each sent the day alone
+    base.refuseToChain.set(56, 'DayNotReadyToFinalize');
+    await run(base);
+    expect(base.sent.slice(1), 'one destination landed').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
+    expect(frontier(), 'the refused destination still holds the day').toBe(0);
   });
 
   it('clears a near-end grace warning once grace is lengthened', async () => {

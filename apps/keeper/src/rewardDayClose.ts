@@ -38,7 +38,9 @@
 //      report carries that late path: an older report shape reaching a
 //      finalized day is refused on Base after its fee is paid, so a mirror
 //      whose messenger cannot quote the B4 report does not send one for a day
-//      Base has finalized, and says so. For every window day, sent or not, a day Base finalized
+//      Base has finalized, or one whose finalization on Base it cannot read
+//      (a failed read waits for the next run; a Base this keeper does not
+//      serve is said), and says so. For every window day, sent or not, a day Base finalized
 //      without this chain's report is reported as such (when this keeper also
 //      serves Base). A close refused because the interest fold has not reached
 //      the day (`ChainReportFrontierShort`) is preceded by
@@ -429,8 +431,12 @@ export interface DayCloseDeps {
 interface RunFindings {
   /** `step:day` → reason, for calls the contract refused this run. */
   refused: Map<string, string>;
-  /** `step:day` keys whose call landed, or whose work is done. */
+  /** `step:day` keys whose work is DONE: what the frontier moves on. A call
+   *  landing is not that by itself (a day's broadcast is done only once every
+   *  destination it is owed is covered), so landings are kept apart. */
   settled: Set<string>;
+  /** `step:day` keys whose call landed this run: what clears a refusal. */
+  landed: Set<string>;
   /** Base: days waiting on expected chains, with what is known of each. */
   waiting: { day: number; missing: number[]; unknown: number[]; graceEndsAt: number | null; sent: Map<number, number | null> }[];
   /** Base: the expected-source list is empty. Null = not read this run, so
@@ -498,6 +504,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const f: RunFindings = {
     refused: new Map(),
     settled: new Set(),
+    landed: new Set(),
     waiting: [],
     noExpected: null,
     selfNotExpected: null,
@@ -516,6 +523,9 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   // ── 1. Close ──
   const sentAt = await readDays<bigint>(deps, diamond, window, 'getChainReportSentAt', where);
   let finalizedOnBase = new Set<number>();
+  /** Mirror: window days whose finalization on Base could not be read. */
+  let finalizationUnread = new Set<number>();
+  let baseServed = true;
   const unclosed = window.filter((d) => sentAt.get(d) === 0n);
   for (const d of window) if ((sentAt.get(d) ?? 0n) > 0n) f.settled.add(`close:${d}`);
   if (!canonical) {
@@ -525,6 +535,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     // still closed below: its report carries chain-wide figures Base applies
     // after finalization too.
     const base = deps.peer(baseChainId);
+    baseServed = base !== null;
     const onBase = await baseView(base, window, chainId, deps.sendDeadline);
     // Base refuses a report from a chain off its expected-source list, the
     // last one before the chain detaches included (#2618): the report still
@@ -535,6 +546,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     const baseLaunch = base ? await launchOf(base, where) : null;
     if (baseLaunch !== null) f.clock = { base: baseLaunch, differ: baseLaunch === launch ? [] : [{ chain: chainId, launch }] };
     finalizedOnBase = new Set(window.filter((d) => onBase.get(d)?.finalized === true));
+    finalizationUnread = new Set(window.filter((d) => typeof onBase.get(d)?.finalized !== 'boolean'));
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
   }
   let closed = 0;
@@ -560,6 +572,20 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       );
       continue;
     }
+    if (finalizationUnread.has(d) && !q.b4) {
+      // Fail closed: an older report shape is safe only for a day Base has
+      // not finalized, and that is not known. A read that failed is retried
+      // next run; a Base this keeper does not serve is never readable here.
+      if (baseServed) {
+        console.error(`[keeper] rewardDayClose ${where}: day ${d} not closed: whether Base has finalized it is unread, and this chain's messenger cannot quote the B4 report; left for the next run`);
+      } else {
+        f.refused.set(
+          `close:${d}`,
+          "this keeper does not serve Base, so whether Base has finalized this day cannot be read, and this chain's messenger cannot quote the B4 report, the only shape safe to send for a finalized day; an older report would be refused on Base after its fee is paid if the day is finalized, so it is not sent",
+        );
+      }
+      continue;
+    }
     const fee = q.fee;
     // eslint-disable-next-line no-await-in-loop
     let r = await sender.call('close', d, 'closeDay', [BigInt(d)], fee);
@@ -572,6 +598,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     if (r === 'landed') {
       closed += 1;
       sentAt.set(d, BigInt(nowSec));
+      f.settled.add(`close:${d}`);
     }
     if (sender.stopped) break;
   }
@@ -900,15 +927,15 @@ async function readReported(
 }
 
 /** On a mirror: for each of `days`, whether Base has finalized it and whether
- *  Base holds this chain's report for it (absent = unknown: Base not served,
- *  or a read failed). */
+ *  Base holds this chain's report for it, each read on its own (null = that
+ *  read failed; absent = Base not served). */
 async function baseView(
   base: PeerReader | null,
   days: readonly number[],
   self: number,
   deadline: number,
-): Promise<Map<number, { finalized: boolean; counted: boolean }>> {
-  const out = new Map<number, { finalized: boolean; counted: boolean }>();
+): Promise<Map<number, { finalized: boolean | null; counted: boolean | null }>> {
+  const out = new Map<number, { finalized: boolean | null; counted: boolean | null }>();
   if (!base || days.length === 0) return out;
   const res = await chunkedRead(
     base.client as never,
@@ -922,8 +949,12 @@ async function baseView(
   days.forEach((d, i) => {
     const ready = res[2 * i];
     const counted = res[2 * i + 1];
-    if (ready?.status !== 'success' || counted?.status !== 'success') return;
-    out.set(d, { finalized: Number((ready.result as readonly [boolean, number])[1]) === REASON_FINALIZED, counted: counted.result === true });
+    // Each read stands alone: whether Base has finalized the day is what a
+    // pre-B4 close turns on, and a failed report read must not hide it.
+    out.set(d, {
+      finalized: ready?.status === 'success' ? Number((ready.result as readonly [boolean, number])[1]) === REASON_FINALIZED : null,
+      counted: counted?.status === 'success' ? counted.result === true : null,
+    });
   });
   return out;
 }
@@ -1154,7 +1185,7 @@ class Sender {
       return this.stop('receipt-timeout');
     }
     this.maybeSent += 1;
-    this.f.settled.add(key);
+    this.f.landed.add(key);
     return 'landed';
   }
 }
@@ -1296,7 +1327,8 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     let gone = false;
     if (kind === 'dayclose-refused') {
       const served = SERVES[parts[2]];
-      gone = f.settled.has(`${parts[2]}:${parts[3]}`) || (served !== undefined && f.settled.has(`${served}:${parts[3]}`)) || !inWindow.has(day);
+      const done = (k: string) => f.settled.has(k) || f.landed.has(k);
+      gone = done(`${parts[2]}:${parts[3]}`) || (served !== undefined && done(`${served}:${parts[3]}`)) || !inWindow.has(day);
     }
     // A wait judged this run and not raised is no longer near its end (grace
     // was lengthened, or a report landed): its deadline no longer holds.
