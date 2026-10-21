@@ -110,6 +110,7 @@
     "SanctionsList",
     "SanctionsDelistingTimelock",
     "SanctionsClearanceAttestor",
-    "TestnetSanctionsOracleStandIn"
+    "TestnetSanctionsOracleStandIn",
+    "VaipakamRewardMessenger"
   ]
 }

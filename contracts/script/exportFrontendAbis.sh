@@ -399,6 +399,12 @@ FACETS=(
   # deployment. NOT a diamond facet; the delister bot asks the oracle it reads
   # `isTestnetStandIn()` so every report names the stand-in as such.
   "TestnetSanctionsOracleStandIn"
+  # #2612 — the reward messenger (standalone; NOT a diamond facet). The
+  # keeper's reward day-close pass prices a mirror's `closeDay` with its
+  # `quoteSendChainReport` and reads Base's broadcast destinations from it
+  # (`getBroadcastDestinations`); its errors (`InsufficientFee`, …) bubble
+  # through `closeDay` and are decoded from this ABI.
+  "VaipakamRewardMessenger"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined
