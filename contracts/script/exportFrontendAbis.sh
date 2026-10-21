@@ -326,6 +326,8 @@ FACETS=(
   # #1566 slice 2 -- the liquidation-fallback custody host; the custody census
   # reads getFallbackCustody through it.
   "FallbackCustodyFacet"
+  # #2472 -- the swap-attempt host every failover seller self-calls.
+  "SwapAttemptFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

@@ -25,9 +25,16 @@ pragma solidity ^0.8.29;
  *    downstream target are granted immediately before the external
  *    call and revoked immediately after. No persistent allowances.
  *
- *  - Any residual `inputToken` left in the adapter after a revert
- *    MUST be returnable to the caller — the failover loop retries
- *    the next adapter with the same balance.
+ *  - The adapter MUST hand back to the caller exactly the part of the
+ *    `inputAmount` it pulled in THIS call that its venue did not spend,
+ *    and MUST NOT move any other balance it holds (#2472). The caller
+ *    measures the spend as the fall in its own input balance, so an
+ *    adapter that swept a balance it already held (a donation) would make
+ *    a full sale read as a partial one. Whether a partial spend is
+ *    acceptable is the CALLER's rule, enforced by {LibSwap}; the adapter
+ *    only reports it faithfully. A revert unwinds the pull together with
+ *    the swap, so a failed attempt leaves the caller's balance as it was
+ *    and the failover loop retries the next adapter with the same input.
  */
 interface ISwapAdapter {
     /// @notice Short human-readable tag emitted by LibSwap on each
@@ -38,10 +45,11 @@ interface ISwapAdapter {
     /// @notice Execute a swap on the wrapped venue.
     /// @param inputToken      ERC-20 being sold.
     /// @param outputToken     ERC-20 being received.
-    /// @param inputAmount     Exact amount of `inputToken` to sell
+    /// @param inputAmount     Amount of `inputToken` offered for sale
     ///                        (seized collateral amount at liquidation
-    ///                        time). Adapter pulls via pre-granted
-    ///                        allowance from `msg.sender`.
+    ///                        time). Adapter pulls it via pre-granted
+    ///                        allowance from `msg.sender` and returns any
+    ///                        of it the venue did not spend.
     /// @param minOutputAmount Oracle-derived floor. Adapter MUST revert
     ///                        if realized output < this number.
     /// @param recipient       Address to receive `outputToken` proceeds.

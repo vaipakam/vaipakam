@@ -120,6 +120,10 @@ export interface DeploymentFacets {
    *  and the `getFallbackCustody` read). Optional: a chain deployed before
    *  the split has no such key. */
   fallbackCustodyFacet?: HexAddress;
+  /** #2472 - the swap-attempt host: each failover swap attempt runs in its
+   *  frame, so a partial or short-delivered attempt unwinds alone. Optional:
+   *  a chain deployed before it has no such key. */
+  swapAttemptFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

@@ -521,6 +521,39 @@ contract PartialRefreshRoutingTest is Test {
         script.runWith(diamond, DEPLOYER_KEY);
     }
 
+    /// @notice #2472 — `RedeployFacets` reinstalls facets that sell through
+    ///         the swap failover (RiskFacet, DefaultedFacet, RepayPeriodicFacet,
+    ///         FallbackCustodyFacet), and each of them now runs every attempt
+    ///         through a self-call to `swapAttempt`. A Diamond from before
+    ///         #2472 routes no host for it, so the script must ADD the host;
+    ///         without it every attempt would revert `SwapAttemptHostMissing`.
+    /// @dev    Run twice: the first pass takes the Add branch of the routing
+    ///         partition, the second the Replace branch, and each pass moves
+    ///         the selector onto that pass's freshly deployed facet.
+    function test_RedeployFacets_RoutesTheSwapAttemptHost_OnPre2472Diamond() public {
+        bytes4[] memory sels = FacetSelectors.swapAttempt();
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the host is unrouted");
+
+        RedeployFacets first = new RedeployFacets();
+        first.runWith(diamond, DEPLOYER_KEY);
+        address hostAfterAdd = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        assertTrue(hostAfterAdd != address(0), "the refresh added the host");
+
+        RedeployFacets second = new RedeployFacets();
+        second.runWith(diamond, DEPLOYER_KEY);
+        address hostAfterReplace = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        assertTrue(hostAfterReplace != address(0), "the host stays routed");
+        assertTrue(hostAfterReplace != hostAfterAdd, "the second pass replaced it with its own deploy");
+    }
+
     // ─── Shared assertions ────────────────────────────────────────────
 
     /// @dev Assert every selector is routed AND they all share one host. A

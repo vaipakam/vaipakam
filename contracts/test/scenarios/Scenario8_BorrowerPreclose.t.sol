@@ -27,6 +27,7 @@ import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -129,7 +130,7 @@ contract Scenario8_BorrowerPreclose is Test {
         helperTest = new HelperTest();
 
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -190,6 +191,16 @@ contract Scenario8_BorrowerPreclose is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

@@ -50,12 +50,16 @@ import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
  *      both success and revert). No persistent allowance, no excess
  *      allowance beyond this single swap.
  *
- *   5. **Residual input returned** — if the router didn't consume the
- *      full `inputAmount` (partial fill or revert), any remaining
- *      `inputToken` balance sitting on this contract is transferred
- *      back to `msg.sender` before the function returns. The failover
- *      loop in `LibSwap` retries the next adapter with the restored
- *      balance.
+ *   5. **Only this call's unspent input is returned** (#2472) — if
+ *      the router consumed less than `inputAmount` (a partial fill), the
+ *      part of THIS call's pull it left behind is transferred back to
+ *      `msg.sender` before the function returns, measured against a
+ *      snapshot taken before the pull. A balance the adapter held
+ *      before the call (a donation) is never swept to the caller, which
+ *      would make a full sale read as a partial one on the Diamond's
+ *      side. Whether a partial fill is acceptable is the caller's rule
+ *      ({LibSwap}); a revert unwinds the pull with the swap, so the
+ *      failover loop retries the next adapter with an unchanged balance.
  *
  * `adapterData` layout:
  *
@@ -177,7 +181,12 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
         // Pull input from caller (the facet), exact-scope approval to
         // the pinned ALLOWANCE TARGET (NOT the call target — see 0x
         // contract docs warning), invoke the swap target, enforce
-        // min-out via balance delta, return residuals.
+        // min-out via balance delta, return this call's unspent input.
+        // #2472 — snapshot the input balance BEFORE the pull, so the
+        // unspent part is measured against what THIS call pulled and a
+        // balance the adapter already held (a donation) is never handed to
+        // the caller as if it were unspent input.
+        uint256 inputBalanceBefore = input.balanceOf(address(this));
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
         input.forceApprove(ALLOWANCE_TARGET, 0);
         input.forceApprove(ALLOWANCE_TARGET, inputAmount);
@@ -188,48 +197,34 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
         // can't draw on us after the call (defence-in-depth).
         input.forceApprove(ALLOWANCE_TARGET, 0);
 
-        if (!ok) {
-            _returnResiduals(input, output, outputBalanceBefore);
-            revert RouterCallFailed(returnData);
-        }
+        // A revert unwinds the pull and the swap together, so nothing is
+        // left to hand back on either failure branch.
+        if (!ok) revert RouterCallFailed(returnData);
 
         uint256 outputBalanceAfter = output.balanceOf(address(this));
         uint256 received = outputBalanceAfter - outputBalanceBefore;
         if (received < minOutputAmount) {
-            _returnResiduals(input, output, outputBalanceBefore);
             revert InsufficientOutput(received, minOutputAmount);
         }
 
-        // Forward proceeds to the intended recipient and return any
-        // unspent input back to the caller. Post-call token amounts
-        // are read from live balances — the router may have consumed
-        // less than `inputAmount` (partial fill).
+        // Forward proceeds to the intended recipient and return the input
+        // this call pulled but the router did not spend (a partial fill).
+        // Whether a partial fill is acceptable is the CALLER's rule, checked
+        // on the Diamond's side (LibSwap, #2472) — the adapter only reports
+        // it faithfully.
         output.safeTransfer(recipient, received);
-        uint256 residualInput = input.balanceOf(address(this));
-        if (residualInput != 0) {
-            input.safeTransfer(msg.sender, residualInput);
-        }
+        _returnUnspent(input, inputBalanceBefore);
         return received;
     }
 
-    /// @dev On revert / insufficient-output, shove whatever tokens
-    ///      remain on the adapter back to the caller so the failover
-    ///      loop has the balance to retry.
-    function _returnResiduals(
-        IERC20 input,
-        IERC20 output,
-        uint256 outputBalanceBefore
-    ) private {
-        uint256 residualInput = input.balanceOf(address(this));
-        if (residualInput != 0) {
-            input.safeTransfer(msg.sender, residualInput);
-        }
-        // Return any residual output picked up pre-revert (partial
-        // fill that didn't clear the min-out threshold). The caller
-        // can resweep on the next adapter's proceeds.
-        uint256 postOutput = output.balanceOf(address(this));
-        if (postOutput > outputBalanceBefore) {
-            output.safeTransfer(msg.sender, postOutput - outputBalanceBefore);
+    /// @dev Hand back the part of this call's pull still on the adapter:
+    ///      its input balance above `balanceBefore`, the snapshot taken
+    ///      before the pull. Never more, so a balance the adapter held before
+    ///      the call stays where it is (#2472).
+    function _returnUnspent(IERC20 input, uint256 balanceBefore) private {
+        uint256 balanceNow = input.balanceOf(address(this));
+        if (balanceNow > balanceBefore) {
+            input.safeTransfer(msg.sender, balanceNow - balanceBefore);
         }
     }
 }

@@ -1343,7 +1343,9 @@ interface IVaipakamErrors {
     error PeriodicSettleSwapPathRequired(uint256 loanId, uint256 shortfall);
 
     /// @notice Auto-liquidate path attempted but every adapter in the
-    ///         supplied try-list reverted. Period is still due —
+    ///         supplied try-list reverted or was refused under the delivery
+    ///         rule (#2472: sold less than offered, or delivered less than
+    ///         reported), each attempt unwound. Period is still due —
     ///         settler must retry with a fresh quote / different venues.
     error PeriodicSettleSwapFailed(uint256 loanId);
 

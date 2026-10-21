@@ -75,6 +75,9 @@ contract UniV3Adapter is ISwapAdapter {
         if (poolFee == 0) revert InvalidPoolFee();
 
         IERC20 input = IERC20(inputToken);
+        // #2472 — snapshot before the pull: only this call's unspent input
+        // is handed back below, never a balance the adapter already held.
+        uint256 inputBalanceBefore = input.balanceOf(address(this));
         input.safeTransferFrom(msg.sender, address(this), inputAmount);
         input.forceApprove(address(ROUTER), 0);
         input.forceApprove(address(ROUTER), inputAmount);
@@ -94,12 +97,13 @@ contract UniV3Adapter is ISwapAdapter {
 
         input.forceApprove(address(ROUTER), 0);
         // Router guarantees amountOut >= amountOutMinimum; no extra
-        // check needed here. Any residual input (zero on success,
-        // full amount if revert bubbled — but revert shortcuts) is
-        // returned to the caller.
-        uint256 residualInput = input.balanceOf(address(this));
-        if (residualInput != 0) {
-            input.safeTransfer(msg.sender, residualInput);
+        // check needed here. An exact-input single-pool swap with no price
+        // limit spends the whole `amountIn`, so this call's unspent input is
+        // zero on success; whatever is above the pre-pull snapshot is handed
+        // back all the same (#2472), and nothing below it.
+        uint256 balanceNow = input.balanceOf(address(this));
+        if (balanceNow > inputBalanceBefore) {
+            input.safeTransfer(msg.sender, balanceNow - inputBalanceBefore);
         }
         return outputAmount;
     }

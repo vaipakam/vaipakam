@@ -110,9 +110,9 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-**Refresh-together families (#1566 slices 2–3).** Two facet sets each carry one
-behaviour across a self-call or a fill, so refreshing a subset runs half of it on
-old code:
+**Refresh-together families (#1566 slices 2–3, #2472).** Three facet sets each
+carry one behaviour across a self-call or a fill, so refreshing a subset runs half
+of it on old code:
 
 - **FallbackCustodyFacet + RiskFacet + DefaultedFacet + ClaimFacet +
   AddCollateralFacet + RepayFacet + RiskMatchLiquidationFacet.** From S2a, Risk,
@@ -141,7 +141,19 @@ old code:
   slice 3 also needs a new Diamond — another reason it reaches a chain only by
   fresh deploy.
 
-How these reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
+- **SwapAttemptFacet + every facet that sells through the swap failover
+  (#2472).** RiskFacet, DefaultedFacet, RepayPeriodicFacet, TreasuryFacet,
+  SwapToRepayFacet, SwapToRepayPartialFacet and FallbackCustodyFacet run each
+  adapter attempt through a self-call to `swapAttempt`, so an attempt that sells
+  less than it was offered (or delivers less than it reported) unwinds alone and
+  the next route is tried (owner decision 2026-10-20, lender first). A seller
+  refreshed without the host is not a split Diamond: `LibSwap.attempt` reverts
+  `SwapAttemptHostMissing` rather than reading every attempt as a failed route
+  and sending a liquidation into the in-kind fallback. `RefreshAllFacetsInPlace`
+  and `RedeployFacets` both carry the host. This family is ordinary in-place
+  refresh material; the fresh-deploy rule below is about the #1566 slices only.
+
+How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a
 consumer that finds such a row fail closed instead. So these notes bind test

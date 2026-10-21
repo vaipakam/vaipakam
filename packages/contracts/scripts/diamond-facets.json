@@ -23,6 +23,7 @@
     "SwapToRepayPartialFacet",
     "SwapToRepayIntentFacet",
     "FallbackCustodyFacet",
+    "SwapAttemptFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
     "EncumbranceMutateFacet",

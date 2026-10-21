@@ -36,6 +36,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -150,7 +151,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -250,6 +251,16 @@ contract RepayFacetTest is Test {
             facetAddress: address(new FallbackCustodyFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+        // #2472 - every failover seller (Risk, Defaulted, RepayPeriodic,
+        // Treasury, SwapToRepay, FallbackCustody) runs each swap attempt by a
+        // self-call into SwapAttemptFacet. A hand-built Diamond that cuts any
+        // of them must cut this host too, or every attempt is refused
+        // SwapAttemptHostMissing.
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(new SwapAttemptFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

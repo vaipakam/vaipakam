@@ -4894,6 +4894,11 @@
   },
   {
     "type": "error",
+    "name": "SwapAttemptHostMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TransportBatchAlreadyAdmitted",
     "inputs": [
       {

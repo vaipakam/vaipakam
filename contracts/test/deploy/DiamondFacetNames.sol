@@ -78,7 +78,9 @@ abstract contract DiamondFacetNames {
     ///      `OfferMatchIntentFacet`.
     ///      93 → 94 with `FallbackCustodyFacet` (#1566 slice 2 — the fallback
     ///      entry, retry swap and disposal hosted once).
-    function cutFacetNames() internal pure returns (string[94] memory) {
+    ///      94 → 95 with `SwapAttemptFacet` (#2472 — each failover swap
+    ///      attempt in a frame of its own, so a partial fill unwinds alone).
+    function cutFacetNames() internal pure returns (string[95] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -193,6 +195,8 @@ abstract contract DiamondFacetNames {
             "OfferMatchIntentFacet",
             // #1566 slice 2 - the fallback-custody host (entry, retry swap, disposal).
             "FallbackCustodyFacet",
+            // #2472 - the swap-attempt host every failover seller self-calls.
+            "SwapAttemptFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
