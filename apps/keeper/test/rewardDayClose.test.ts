@@ -11,7 +11,7 @@
  *     the alerts, raised AND cleared.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, type Abi, type Address, type Log, type PublicClient } from 'viem';
+import { ContractFunctionRevertedError, encodeAbiParameters, encodeErrorResult, encodeEventTopics, pad, toEventSelector, toHex, type Abi, type Address, type Log, type PublicClient } from 'viem';
 import { RewardAggregatorFacetABI, RewardReporterFacetABI } from '@vaipakam/contracts/abis';
 import {
   BROADCAST_LATE_AFTER_SEC,
@@ -48,12 +48,12 @@ const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 const NOW = Math.floor(T0 / 1000);
 
 describe('the pure rules', () => {
-  it('works the last LOOKBACK_DAYS and a page of older owed days, oldest first', () => {
+  it('works the last LOOKBACK_DAYS, then a page of older owed days, each oldest first', () => {
     expect(dayWindow(0)).toEqual([]);
     expect(dayWindow(1)).toEqual([0]);
     expect(dayWindow(3)).toEqual([0, 1, 2]);
     expect(dayWindow(LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
-    expect(dayWindow(LOOKBACK_DAYS + 5, [3, 1, 7]), 'owed days join it, once').toEqual([1, 3, ...Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5)]);
+    expect(dayWindow(LOOKBACK_DAYS + 5, [3, 1, 7, 3]), 'owed days follow the recent ones, once').toEqual([...Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5), 1, 3]);
     expect(dayWindow(3, [5, -1]), 'never a day not yet elapsed').toEqual([0, 1, 2]);
   });
 
@@ -102,7 +102,8 @@ describe('the pure rules', () => {
 
   describe('planBroadcast', () => {
     const d = (...s: [number, DestinationState][]) => new Map(s);
-    const at = (...s: [number, number | null][]) => new Map(s);
+    /** Last sends, each shown by its receipt to have left (`proven`). */
+    const at = (...s: [number, number | null][]) => new Map(s.map(([c, t]) => [c, t === null ? null : { at: t, proven: true }] as const));
     const LATE = NOW - BROADCAST_LATE_AFTER_SEC;
     const RESEND = NOW - BROADCAST_RESEND_AFTER_SEC;
     it('sends to every destination never sent the day, whatever its read', () => {
@@ -124,6 +125,12 @@ describe('the pure rules', () => {
         resend: [MIRROR],
         late: [{ chain: MIRROR, state: 'missing', sentAt: RESEND }],
       });
+    });
+    it('re-sends to an unserved destination whose last send no receipt showed leaving, once the re-send interval has passed', () => {
+      const unproven = (t: number) => new Map([[OTHER, { at: t, proven: false }]]);
+      expect(planBroadcast(d([OTHER, 'unserved']), unproven(NOW - 60), NOW)).toMatchObject({ send: [], unproven: [OTHER], unconfirmed: [], done: false });
+      expect(planBroadcast(d([OTHER, 'unserved']), unproven(RESEND), NOW)).toMatchObject({ send: [OTHER], resend: [OTHER], unproven: [], done: false });
+      expect(planBroadcast(d([OTHER, 'unserved']), at([OTHER, RESEND]), NOW), 'one shown leaving is done').toMatchObject({ send: [], unconfirmed: [OTHER], done: true });
     });
     it('never re-sends blind to a destination it cannot read, and reports it as unknown past the late mark', () => {
       expect(planBroadcast(d([MIRROR, 'unread']), at([MIRROR, NOW - 60]), NOW)).toMatchObject({ send: [], late: [], done: false });
@@ -164,6 +171,9 @@ class FakeDiamond {
   expected: number[] = [];
   known = new Set<number>();
   destinations: number[] = [];
+  /** The messenger's list when a broadcast runs, if it changed after the run
+   *  read it (null = as read). */
+  listAtSend: number[] | null = null;
   /** `fn:day` → error name a simulation reverts with. */
   refuse = new Map<string, string>();
   /** `quoteSendChainReport` arities the messenger has (the rest are unknown selectors). */
@@ -291,7 +301,18 @@ class FakeDiamond {
   };
 
   /** The state change a landed call makes. */
-  apply(fn: string, day: number): void {
+  apply(fn: string, day: number, to?: number): void {
+    if (fn === 'broadcastGlobal' || fn === 'broadcastGlobalTo') {
+      // The messenger's own record of each message that left, as a receipt
+      // carries it: to its list as it stands when the transaction runs.
+      for (const c of fn === 'broadcastGlobalTo' ? [to!] : (this.listAtSend ?? this.destinations)) {
+        this.logs.push({
+          address: this.messenger,
+          topics: [toEventSelector('BroadcastV3Sent(bytes32,uint256,uint256)'), pad('0x01'), pad(toHex(c)), pad(toHex(day))],
+          data: '0x',
+        } as unknown as Log);
+      }
+    }
     if (fn === 'closeDay') {
       this.sentAt.set(day, NOW);
       if (this.role === ROLE_CANONICAL) {
@@ -332,7 +353,7 @@ class FakeDiamond {
           const day = Number(args[0] as bigint);
           if (this.writeError) throw this.writeError;
           this.sent.push(functionName === 'broadcastGlobalTo' ? { fn: functionName, day, value, to: Number(args[1] as bigint) } : { fn: functionName, day, value });
-          this.apply(functionName, day);
+          this.apply(functionName, day, functionName === 'broadcastGlobalTo' ? Number(args[1] as bigint) : undefined);
           return `0x${'1'.repeat(64)}`;
         },
       },
@@ -644,7 +665,7 @@ describe('a run', () => {
     mirror.today = 3 * READ_CHUNK;
     await run(mirror);
     expect(mirror.largestRead).toBeLessThanOrEqual(READ_CHUNK);
-    expect(mirror.sent.map((s) => s.day), 'the oldest days are closed, the read did not starve them').toEqual(Array.from({ length: MAX_SENDS_PER_RUN }, (_, i) => i));
+    expect(mirror.sent.map((s) => s.day), 'the recent days are closed first, and the read starved none of them').toEqual(Array.from({ length: MAX_SENDS_PER_RUN }, (_, i) => mirror.today - LOOKBACK_DAYS + i));
   });
 
   it('names the chains a day was finalized without when another caller finalized it', async () => {
@@ -840,7 +861,10 @@ describe('a run', () => {
       later(60);
     }
     const page = (k: number) => Array.from({ length: BACKLOG_PER_RUN }, (_, i) => k * BACKLOG_PER_RUN + i);
-    expect(pages, 'one page of the backlog per run, the least recently worked first').toEqual([page(0), page(1), page(2), page(0)]);
+    // The first run's sends go to the newest days, which are still inside
+    // Base's grace, and run out before the backlog: page 0's turn passes
+    // with nothing tried, and the page comes round again after the others.
+    expect(pages, 'one page of the backlog per run, the least recently worked first, after the newest days').toEqual([[], page(1), page(2), page(0)]);
     expect(mirror.sent.slice(0, MAX_SENDS_PER_RUN).map((s) => s.day), 'the newest days are closed from the first run').toEqual(Array.from({ length: MAX_SENDS_PER_RUN }, (_, i) => stuck + i));
     expect(mirror.sent.map((s) => s.day), 'and every one of them by the second').toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => stuck + i));
     expect(owed().filter((d) => d < stuck), 'every stuck day is still owed').toHaveLength(stuck);
@@ -963,6 +987,49 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn), 'sent once, never again').toEqual(['broadcastGlobal']);
     expect(logged.some((l) => /broadcast-unconfirmed\(unserved destinations\)=0/.test(l))).toBe(true);
+  });
+
+  it('records a broadcast from its receipt, not from the list as read: a destination taken off before the send runs is still owed', async () => {
+    finalizedDayZero();
+    base.destinations = [MIRROR, OTHER]; // OTHER is not served by this keeper
+    base.expected = [BASE, MIRROR, OTHER];
+    base.listAtSend = [MIRROR]; // OTHER leaves the list after the run reads it
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal']);
+    base.destinations = [MIRROR];
+    base.listAtSend = null;
+    await run(base);
+    expect(base.sent.slice(1), 'OTHER never got the day, so it is sent it alone').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
+  });
+
+  it('re-sends to an unserved destination once the re-send interval has passed when no receipt showed the send leaving', async () => {
+    finalizedDayZero();
+    base.destinations = [OTHER]; // not served by this keeper
+    base.expected = [BASE, OTHER];
+    base.receiptLost = true;
+    await run(base);
+    base.receiptLost = false;
+    later(15 * 60);
+    await run(base);
+    expect(base.sent.map((s) => s.fn), 'not repeated before the interval').toEqual(['broadcastGlobal']);
+    expect(logged.some((l) => /broadcast-unproven\(unserved, no receipt seen\)=0:97/.test(l)), 'and said').toBe(true);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent.slice(1), 're-sent (to the whole list, which is only OTHER), and this time its receipt shows it left').toEqual([{ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE }]);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent, 'never again').toHaveLength(2);
+  });
+
+  it('closes its alerts for a chain that has left the reward set, and says so', async () => {
+    openAlert(`dayclose-notexpected:${MIRROR}:all`);
+    openAlert(`dayclose-refused:${MIRROR}:close:3`);
+    openAlert(`dayclose-clock:${BASE}:all`); // another chain's: untouched
+    mirror.role = 2;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(openKeys()).toEqual([`dayclose-clock:${BASE}:all`]);
+    expect(logged.filter((l) => /reward role 2, closed: dayclose-/.test(l))).toHaveLength(2);
   });
 
   it('drops send markers whose day has left the window, so a backlog cannot hide a current one', async () => {

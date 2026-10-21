@@ -26,6 +26,7 @@
  */
 import type { Address, Hex } from 'viem';
 import { runRewardBudgetRemit } from '../../src/rewardBudgetRemit';
+import { getWorkItems } from '../../src/db';
 import { runRewardDayClose } from '../../src/rewardDayClose';
 import { openLoan } from '../harness/lending';
 import { tickNow, type KeeperHarness } from '../harness/keeperEnv';
@@ -140,6 +141,14 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   for (const day of [0, 1]) {
     const [, reason] = await base.read<readonly [boolean, number]>('isDayReadyToFinalize', [BigInt(day)]); // eslint-disable-line no-await-in-loop
     if (Number(reason) !== 1) throw new Error(`the day-close pass did not finalize day ${day} on Base (reason ${reason})`);
+  }
+  // What each broadcast reached is recorded from its receipt, the messenger's
+  // own per-destination events, not from the list the run read beforehand.
+  const marks = await getWorkItems<{ sentTo: Record<string, { at: number; proven: boolean } | null> }>(k.env.KEEPER_DB, BASE_ID, base.diamond, 'day_broadcast', ['0', '1']);
+  for (const day of ['0', '1']) {
+    if (marks.get(day)?.payload.sentTo[String(MIRROR_ID)]?.proven !== true) {
+      throw new Error(`the day-close pass did not record day ${day}'s broadcast to the mirror from its receipt (${JSON.stringify(marks.get(day)?.payload ?? null)})`);
+    }
   }
   const broadcasts = await relay.deliver(BASE_ID, MIRROR_ID);
   if (broadcasts.length !== 2) throw new Error(`the relay landed ${broadcasts.length} broadcasts on the mirror, not 2`);
