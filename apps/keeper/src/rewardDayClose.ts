@@ -86,7 +86,10 @@
 //      messenger's own per-destination events: the send to all reaches the
 //      list as it stands when the transaction runs, not as this run read it,
 //      so a destination taken off in between is still owed the day and one
-//      added is covered. A destination this keeper does not serve cannot be
+//      added is covered (the events are taken from the messenger the run read
+//      or the one the Diamond holds at the receipt's block, should governance
+//      rotate it in between; a send through any other counts as made,
+//      unproven). A destination this keeper does not serve cannot be
 //      read: once a receipt shows a message leaving for it, it is never
 //      confirmed and the run's line says so; a send to it whose receipt was
 //      not seen is re-sent after the re-send interval, the receipt being the
@@ -124,7 +127,10 @@
 // budget is spent waits for its next turn).
 // Its reads go in bounded aggregates ({@link READ_CHUNK}). A day's alerts go
 // with it only once it is neither in the lookback nor owed; an owed day a run
-// did not reach keeps them until its turn.
+// did not reach keeps them until its turn. A day an alert was due on and not
+// delivered (the run's time ran out, or the post failed) stays owed, so the
+// alert is never lost with a day leaving the ledger; while paused, no day
+// leaves it.
 //
 // OPS alerts (conditions that hold, de-duplicated and cleared):
 //   - a call the contract refuses, by step and day, with the reason (a race —
@@ -776,6 +782,17 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     // read it: the all-destination send goes to the messenger's list as it
     // stands when the transaction runs, so a destination taken off the list
     // in between is not covered by it, and one added is.
+    /** The reward messenger the Diamond held at `blockNumber`, or null when
+     *  that cannot be read. */
+    const messengerAt = async (blockNumber: bigint): Promise<Address | null> => {
+      try {
+        const [m] = (await deps.client.readContract({ address: diamond, abi: ABI, functionName: 'getRewardReporterConfig', blockNumber })) as readonly [Address, ...unknown[]];
+        return m;
+      } catch (err) {
+        console.error(`[keeper] rewardDayClose ${where}: reward messenger at block ${blockNumber} unread: ${shortErr(err)}`);
+        return null;
+      }
+    };
     /** Send day `d` to every destination on the messenger's list
      *  (`broadcastGlobal`). */
     const broadcastAll = async (d: number): Promise<CallResult> => {
@@ -813,10 +830,18 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
         for (const [c, t] of prior) sentTo.set(c, t);
         await save();
       } else if (r === 'landed') {
-        const left = broadcastsLeft(sender.receipt, messenger, d);
-        for (const [c, t] of prior) if (!left.has(c)) sentTo.set(c, t);
-        for (const c of left) sentTo.set(c, { at, proven: true });
-        await save();
+        const receipt = sender.receipt;
+        const atBlock = receipt === null ? null : await messengerAt(receipt.blockNumber);
+        const left = broadcastsLeft(receipt, atBlock === null ? [messenger] : [messenger, atBlock], d);
+        if (left === null) {
+          // Sent through a messenger this run cannot name: the send counts
+          // as made, unproven, as one whose receipt was not seen.
+          console.error(`[keeper] rewardDayClose ${where} broadcast of day ${d} landed through a messenger this run cannot name; its destinations are recorded as sent, unproven`);
+        } else {
+          for (const [c, t] of prior) if (!left.has(c)) sentTo.set(c, t);
+          for (const c of left) sentTo.set(c, { at, proven: true });
+          await save();
+        }
       }
       return r;
     };
@@ -936,22 +961,24 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       (sender.stopped ? ` stopped=${sender.stopReason}` : ''),
   );
 
-  // While paused, alerts are left as they stand and nothing is posted.
+  // While paused, alerts are left as they stand and nothing is posted, so no
+  // day leaves the ledger: what a day is owed includes its alerts.
   const paused = sender.stopReason === PAUSED_REFUSAL;
-  if (!paused) await raiseDayCloseAlerts(env, chainId, diamond, canonical, f, nowSec, deps.runDeadline);
+  const held: AlertsHeld = paused ? 'all' : await raiseDayCloseAlerts(env, chainId, diamond, canonical, f, nowSec, deps.runDeadline);
   const noticed = canonical && !paused ? await postZeroedNotices(env, chainId, diamond, window, deps.runDeadline) : new Set<number>();
 
-  // A day is worked through once nothing more is owed on it here: closed on a
-  // mirror; on Base, finalized, broadcast (nothing left to send) and its
-  // zeroed-chain notice delivered. Base's own close is owed only until the
+  // A day is worked through once nothing more is owed on it here, its alerts
+  // included (one due and not delivered holds the day): closed on a mirror;
+  // on Base, finalized, broadcast (nothing left to send) and its zeroed-chain
+  // notice delivered. Base's own close is owed only until the
   // day is finalized: once it is, a close is refused for good (an admin's
   // force-finalize can come first), and the day needs nothing more from it.
   // Every other window day stays in the ledger, and is worked, and alerted
   // on, in its turn until it goes through.
   const through = (d: number): boolean =>
-    canonical
-      ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) && noticed.has(d)
-      : f.settled.has(`close:${d}`);
+    held !== 'all' &&
+    !held.has(d) &&
+    (canonical ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) && noticed.has(d) : f.settled.has(`close:${d}`));
   await settleLedger(env, chainId, diamond, today, window, through);
 }
 
@@ -1349,20 +1376,30 @@ function dayOfAlert(key: string): number | null {
   return Number.isSafeInteger(d) && d >= 0 ? d : null;
 }
 
-/** Raise or clear the pass's ops alerts for one chain. */
-async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, canonical: boolean, f: RunFindings, nowSec: number, deadline: number): Promise<void> {
+/** What became of the run's alerts: the days an alert was due on and not
+ *  delivered, or 'all' when none could be judged (the open alerts unread). */
+type AlertsHeld = Set<number> | 'all';
+
+/** Raise or clear the pass's ops alerts for one chain. Returns the days
+ *  whose due alert this run did not deliver (the deadline came first, or the
+ *  post failed or was refused): such a day stays owed, so the alert is raised
+ *  again in its next turn and never lost with a day that leaves the ledger. */
+async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, canonical: boolean, f: RunFindings, nowSec: number, deadline: number): Promise<AlertsHeld> {
   let open: Set<string>;
   try {
     open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`));
   } catch (err) {
     console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
-    return;
+    return 'all';
   }
   const raised = new Set<string>();
+  const held = new Set<number>();
   const raise = async (key: string, text: string, repeat = ALERT_REPEAT_SEC): Promise<void> => {
     raised.add(key);
-    if (Date.now() >= deadline) return;
-    await sendOpsAlert(env, key, text, repeat, nowSec, chainId);
+    const outcome = Date.now() >= deadline ? 'deadline' : await sendOpsAlert(env, key, text, repeat, nowSec, chainId);
+    const day = dayOfAlert(key);
+    // 'suppressed' was delivered before; 'unconfigured' is journaled.
+    if (day !== null && outcome !== 'sent' && outcome !== 'suppressed' && outcome !== 'unconfigured') held.add(day);
   };
   const tag = `[chain ${chainId}] reward day close`;
   const inWindow = new Set(f.window);
@@ -1508,7 +1545,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, 
       await resolveOpsAlert(env, key);
     }
   }
-
+  return held;
 }
 
 /**
@@ -1655,15 +1692,20 @@ const BROADCAST_SENT_TOPICS = new Set<string>(
 
 /** The destinations a landed broadcast of day `day` sent a message to, read
  *  from the messenger's own events in its receipt: what the transaction did,
- *  not what the run expected it to do. Empty without a receipt. */
-export function broadcastsLeft(receipt: TransactionReceipt | null, messenger: Address, day: number): Set<number> {
+ *  not what the run expected it to do. `messengers` are the addresses the
+ *  Diamond may have sent through (the one the run read, and the one it holds
+ *  at the receipt's block, in case governance rotated it in between). Null
+ *  when the receipt carries such an event from any other address, so what
+ *  the send covered cannot be told; empty without a receipt. */
+export function broadcastsLeft(receipt: TransactionReceipt | null, messengers: readonly Address[], day: number): Set<number> | null {
   const out = new Set<number>();
   if (receipt === null) return out;
+  const known = new Set(messengers.map((m) => m.toLowerCase()));
   for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== messenger.toLowerCase()) continue;
     const [sig, , dst, dayTopic] = log.topics;
     if (sig === undefined || dst === undefined || dayTopic === undefined || !BROADCAST_SENT_TOPICS.has(sig.toLowerCase())) continue;
     if (BigInt(dayTopic) !== BigInt(day)) continue;
+    if (!known.has(log.address.toLowerCase())) return null;
     out.add(Number(BigInt(dst)));
   }
   return out;
