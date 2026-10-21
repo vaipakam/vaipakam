@@ -100,18 +100,21 @@
 // receipt before the next (every pass signs from one key). Every call here is
 // permissionless; the only value it moves is the CCIP fee the keeper pays.
 //
-// The window runs from the chain's close frontier (`day_close`, the oldest day
-// not yet worked through) or the last {@link LOOKBACK_DAYS} elapsed days,
-// whichever starts earlier, to yesterday. A day is worked through once nothing
-// more is owed on it here: closed on a mirror; finalized and broadcast on Base
-// (Base's own close is owed only until the day is finalized, which an admin's
-// force-finalize can do first; after that a close is refused for good). The
-// window's reads go in bounded aggregates ({@link READ_CHUNK}), so a window
-// held open by a stuck day costs more reads, never one too large to answer. The frontier only moves forward, so no elapsed day is skipped,
-// whenever the pass was first armed or however long the keeper was down, and a
-// day stuck for any reason is worked, and alerted on, every run until it goes
-// through. A day leaves the window, and its alerts with it, only once it is
-// worked through and older than the lookback.
+// Every elapsed day enters a ledger of owed days (`day_owed`) before the
+// discovery cursor (`day_close`) moves past it, and leaves it only once a run
+// sees it worked through, so no elapsed day is skipped, whenever the pass was
+// first armed or however long the keeper was down. A day is worked through
+// once nothing more is owed on it here: closed on a mirror; on Base,
+// finalized, broadcast to every destination it is owed, and its zeroed-chain
+// notice delivered (Base's own close is owed only until the day is finalized,
+// which an admin's force-finalize can do first; after that a close is refused
+// for good). A run works the last {@link LOOKBACK_DAYS} elapsed days and one
+// page ({@link BACKLOG_PER_RUN}) of the older owed days, the least recently
+// worked first, so however many days are stuck a run's reads stay bounded,
+// every owed day comes round in turn, and the newest days are never starved.
+// Its reads go in bounded aggregates ({@link READ_CHUNK}). A day's alerts go
+// with it only once it is neither in the lookback nor owed; an owed day a run
+// did not reach keeps them until its turn.
 //
 // OPS alerts (conditions that hold, de-duplicated and cleared):
 //   - a call the contract refuses, by step and day, with the reason (a race —
@@ -141,15 +144,18 @@
 // And one NOTICE (a thing that happened): a day Base finalized with expected
 // chains missing, naming each.
 //
-// The pass keeps two kinds of row in the keeper's private open-work queue
-// (`keeper_work_open`), one per (chain, Diamond, day), each dropped when its
-// day leaves the window: every destination a broadcast's day has had, each
+// The pass keeps four kinds of row in the keeper's private open-work queue
+// (`keeper_work_open`), per (chain, Diamond): the ledger of owed days (kind
+// `day_owed`, one per day); every destination a broadcast's day has had, each
 // with the last send that covered it (kind `day_broadcast`; losing it costs
-// at most one extra broadcast, and forgets a destination removed since), and a finalized day's
-// zeroed chains with whether that notice was delivered (kind `day_zeroed`).
-// Beside them it keeps one cursor per (chain, Diamond), the close frontier
-// (`keeper_work_cursor`, kind `day_close`), which only moves forward; losing it
-// costs one run reading back from day 0.
+// at most one extra broadcast, and forgets a destination removed since); a
+// finalized day's zeroed chains with whether that notice was delivered (kind
+// `day_zeroed`); those two kept while their day is owed or in the lookback;
+// and each peer chain's reward clock as last read (kind `day_clock`, by peer
+// chain), so a mismatch once seen holds while the peer cannot be read. Beside
+// them it keeps one cursor per (chain, Diamond), the first day not yet entered
+// into the ledger (`keeper_work_cursor`, kind `day_close`), which only moves
+// forward; losing it costs one run re-entering days from day 0 (idempotent).
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
 
@@ -169,7 +175,20 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { isDefinitiveRejection, reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
-import { getWorkCursor, getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, putWorkCursor, type WorkItem } from './db';
+import {
+  enqueueWork,
+  finishWork,
+  getWorkCursor,
+  getWorkItems,
+  listOpenWorkBelow,
+  listOpsAlertKeys,
+  openWorkAmong,
+  pruneWorkBelowUnlessOpen,
+  putWork,
+  putWorkCursor,
+  touchOpenWork,
+  type WorkItem,
+} from './db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from './opsAlert';
 
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
@@ -188,7 +207,7 @@ const ABI = [
 export const PASS_CADENCE_SEC = 15 * 60;
 /** Recent days each run works even once worked through: two weeks, so a day
  *  finalized without a chain, or a broadcast still unconfirmed, stays in view
- *  that long. Older days are worked only while short of the close frontier. */
+ *  that long. Older days are worked only while the ledger holds them owed. */
 export const LOOKBACK_DAYS = 14;
 /** Transactions one run may send per chain. Each waits for its receipt. */
 export const MAX_SENDS_PER_RUN = 8;
@@ -199,6 +218,11 @@ export const MAX_SENDS_PER_RUN = 8;
  *  window costs more reads and never one aggregate too large for the node to
  *  answer, which would leave every day in it, the newest included, unread. */
 export const READ_CHUNK = 64;
+
+/** Days older than the lookback that one run works from the ledger of owed
+ *  days, the least recently worked first, so each owed day comes round in
+ *  turn however many there are. */
+export const BACKLOG_PER_RUN = 14;
 /** Warn when grace ends within this long and an expected chain is missing… */
 export const GRACE_WARNING_SEC = 60 * 60;
 
@@ -245,23 +269,16 @@ const FRONTIER_SHORT = 'ChainReportFrontierShort';
 
 // ─── Pure planning ──────────────────────────────────────────────────────
 
-/** The elapsed days a run works, oldest first: from the older of the chain's
- *  close frontier (`frontier`, the oldest day not yet worked through) and
- *  `today - LOOKBACK`, to `today - 1`; floored at day 0. Empty on day 0. A
- *  day leaves the window only once it is worked through AND older than the
- *  lookback, so no elapsed day is ever skipped, whenever the pass was armed
- *  or however long it was down. Pure. */
-export function dayWindow(today: number, frontier = 0, lookback = LOOKBACK_DAYS): number[] {
-  const out: number[] = [];
-  for (let d = Math.max(0, Math.min(frontier, today - lookback)); d < today; d++) out.push(d);
-  return out;
-}
-
-/** The new close frontier: the oldest window day not worked through
- *  (`through(d)` false), or `today` when every one is. Pure. */
-export function nextFrontier(window: readonly number[], today: number, through: (d: number) => boolean): number {
-  for (const d of window) if (!through(d)) return d;
-  return today;
+/** The elapsed days a run works, oldest first: the last `lookback` elapsed
+ *  days, and `owed`, a page of older days the ledger holds as not yet worked
+ *  through. Floored at day 0; empty on day 0. However many days are owed, a
+ *  run works at most `lookback` plus one page of them, so a day stuck for
+ *  good costs its own slot and never the newer days' reads. Pure. */
+export function dayWindow(today: number, owed: readonly number[] = [], lookback = LOOKBACK_DAYS): number[] {
+  const out = new Set<number>();
+  for (let d = Math.max(0, today - lookback); d < today; d++) out.add(d);
+  for (const d of owed) if (Number.isSafeInteger(d) && d >= 0 && d < today) out.add(d);
+  return [...out].sort((a, b) => a - b);
 }
 
 /** What Base's state says about one day, for finalization. */
@@ -431,7 +448,7 @@ export interface DayCloseDeps {
 interface RunFindings {
   /** `step:day` → reason, for calls the contract refused this run. */
   refused: Map<string, string>;
-  /** `step:day` keys whose work is DONE: what the frontier moves on. A call
+  /** `step:day` keys whose work is DONE: what takes a day out of the ledger. A call
    *  landing is not that by itself (a day's broadcast is done only once every
    *  destination it is owed is covered), so landings are kept apart. */
   settled: Set<string>;
@@ -466,7 +483,9 @@ interface RunFindings {
   notExpectedOnBase: boolean | null;
   /** The reward clocks compared against Base's (null = not read): Base's
    *  launch timestamp, and each served chain whose launch differs. */
-  clock: { base: number; differ: { chain: number; launch: number }[] } | null;
+  /** `stale`: some clock was judged from its last read, this run's failing,
+   *  so a match then is not a read showing the fix. */
+  clock: { base: number; differ: { chain: number; launch: number; lastRead: boolean }[]; stale: boolean } | null;
   /** Base: open days this run judged for finalization. */
   judged: Set<number>;
   /** The days this run's window covered. */
@@ -498,7 +517,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const [messenger, , baseChainId, , graceSecRaw] = await read<readonly [Address, number, number, boolean, bigint]>('getRewardReporterConfig');
   const graceSec = Number(graceSecRaw);
   const launch = Number(await read<bigint>('getInteractionLaunchTimestamp'));
-  const window = dayWindow(today, await getWorkCursor(env.KEEPER_DB, chainId, diamond, 'day_close'));
+  const window = await openDays(env, chainId, diamond, today);
   const canonical = role === ROLE_CANONICAL;
 
   const f: RunFindings = {
@@ -543,9 +562,13 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     f.notExpectedOnBase = await absentFromBaseList(base, chainId, where);
     // The same day number must cover the same hours here and on Base, or the
     // report is summed into Base's day with interest from other hours.
-    const baseLaunch = base ? await launchOf(base, where) : null;
-    if (baseLaunch !== null) f.clock = { base: baseLaunch, differ: baseLaunch === launch ? [] : [{ chain: chainId, launch }] };
-    finalizedOnBase = new Set(window.filter((d) => onBase.get(d)?.finalized === true));
+    const baseClock = await peerClock(env, chainId, diamond, baseChainId, base, where);
+    if (baseClock !== null) {
+      f.clock = { base: baseClock.launch, differ: baseClock.launch === launch ? [] : [{ chain: chainId, launch, lastRead: false }], stale: baseClock.lastRead };
+    }
+    // A day Base can finalize now is as unsafe for an older report as one it
+    // has finalized: anyone may finalize it before the report lands.
+    finalizedOnBase = new Set(window.filter((d) => onBase.get(d)?.finalized === true || onBase.get(d)?.ready === true));
     finalizationUnread = new Set(window.filter((d) => typeof onBase.get(d)?.finalized !== 'boolean'));
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
   }
@@ -568,7 +591,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       // fee is paid and this chain has recorded the day as sent.
       f.refused.set(
         `close:${d}`,
-        "Base has finalized this day, and this chain's messenger cannot quote the B4 report, the only shape whose chain-wide figures Base applies after finalization; an older report would be refused on Base after its fee is paid, so it is not sent",
+        "Base has finalized this day or can finalize it now, and this chain's messenger cannot quote the B4 report, the only shape whose chain-wide figures Base applies after finalization; an older report landing after finalization is refused on Base after its fee is paid, so it is not sent",
       );
       continue;
     }
@@ -632,17 +655,18 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     // hours sums unrelated interest into one global total, irreversibly. A
     // mirror this keeper does not serve cannot be compared, and the run's line
     // names it.
-    const differ: { chain: number; launch: number }[] = [];
+    const differ: { chain: number; launch: number; lastRead: boolean }[] = [];
     const clockUnchecked: number[] = [];
+    let stale = false;
     for (const c of expected) {
       if (c === chainId) continue;
-      const p = deps.peer(c);
       // eslint-disable-next-line no-await-in-loop
-      const l = p ? await launchOf(p, where) : null;
-      if (l === null) clockUnchecked.push(c);
-      else if (l !== launch) differ.push({ chain: c, launch: l });
+      const l = await peerClock(env, chainId, diamond, c, deps.peer(c), where);
+      if (l === null || l.lastRead) clockUnchecked.push(c);
+      if (l?.lastRead) stale = true;
+      if (l !== null && l.launch !== launch) differ.push({ chain: c, launch: l.launch, lastRead: l.lastRead });
     }
-    f.clock = { base: launch, differ };
+    f.clock = { base: launch, differ, stale };
     if (clockUnchecked.length > 0) clockNote = ` clock-unchecked=${clockUnchecked.join(',')}`;
     const ready = await readDays<readonly [boolean, number]>(deps, diamond, window, 'isDayReadyToFinalize', where);
     const firstAt = await readDays<bigint>(deps, diamond, window, 'getDailyFirstReportAt', where);
@@ -792,7 +816,6 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     const current = destinations ?? [];
     const mirrors = expected.filter((c) => c !== chainId);
     const days = destinations === null ? [] : [...finalizedDays].sort((a, b) => a - b);
-    await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_broadcast', window[0]);
     const marks = await getWorkItems<BroadcastRecord>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', days.map(String));
 
     for (const d of days) {
@@ -842,16 +865,6 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     }
   }
 
-  // A day is worked through once nothing more is owed on it here: closed on a
-  // mirror; finalized and broadcast (nothing left to send) on Base. Base's
-  // own close is owed only until the day is finalized: once it is, a close is
-  // refused for good (an admin's force-finalize can come first), and the day
-  // needs nothing more from it. The frontier only moves forward, and a day
-  // short of it keeps the window open from there, so a day stuck for any
-  // reason is worked, and alerted on, every run until it goes through.
-  const through = (d: number): boolean =>
-    canonical ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) : f.settled.has(`close:${d}`);
-  await putWorkCursor(env.KEEPER_DB, chainId, diamond, 'day_close', nextFrontier(window, today, through));
 
   console.log(
     `[keeper] rewardDayClose ${where} role=${canonical ? 'canonical' : 'mirror'} today=${today} window=${window[0]}..${window[window.length - 1]} ` +
@@ -864,9 +877,74 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       (sender.stopped ? ` stopped=${sender.stopReason}` : ''),
   );
 
-  if (sender.stopReason === PAUSED_REFUSAL) return;
-  await raiseDayCloseAlerts(env, chainId, canonical, f, nowSec, deps.runDeadline);
-  if (canonical) await postZeroedNotices(env, chainId, diamond, window, deps.runDeadline);
+  // While paused, alerts are left as they stand and nothing is posted.
+  const paused = sender.stopReason === PAUSED_REFUSAL;
+  if (!paused) await raiseDayCloseAlerts(env, chainId, diamond, canonical, f, nowSec, deps.runDeadline);
+  const noticed = canonical && !paused ? await postZeroedNotices(env, chainId, diamond, window, deps.runDeadline) : new Set<number>();
+
+  // A day is worked through once nothing more is owed on it here: closed on a
+  // mirror; on Base, finalized, broadcast (nothing left to send) and its
+  // zeroed-chain notice delivered. Base's own close is owed only until the
+  // day is finalized: once it is, a close is refused for good (an admin's
+  // force-finalize can come first), and the day needs nothing more from it.
+  // Every other window day stays in the ledger, and is worked, and alerted
+  // on, in its turn until it goes through.
+  const through = (d: number): boolean =>
+    canonical
+      ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) && noticed.has(d)
+      : f.settled.has(`close:${d}`);
+  await settleLedger(env, chainId, diamond, today, window, through);
+}
+
+/**
+ * The ledger of owed days (`day_owed`): every elapsed day enters it before
+ * the discovery cursor (`day_close`) moves past it, and leaves it only once a
+ * run sees it worked through, so no elapsed day is skipped, however late the
+ * pass was armed or however long it was down. A run works the last
+ * {@link LOOKBACK_DAYS} days and a page of the older owed ones, each page
+ * touched before any work so a day that fails every run still yields its
+ * turn. Returns the run's window.
+ */
+async function openDays(env: Env, chainId: number, diamond: Address, today: number): Promise<number[]> {
+  const db = env.KEEPER_DB;
+  const from = await getWorkCursor(db, chainId, diamond, 'day_close');
+  const fresh: WorkItem<Record<string, never>>[] = [];
+  for (let d = from; d < today; d++) fresh.push({ item: String(d), block: d, payload: {} });
+  for (let i = 0; i < fresh.length; i += 100) {
+    // eslint-disable-next-line no-await-in-loop
+    await enqueueWork(db, chainId, diamond, 'day_owed', fresh.slice(i, i + 100));
+  }
+  await putWorkCursor(db, chainId, diamond, 'day_close', today);
+  const page = await listOpenWorkBelow(db, chainId, diamond, 'day_owed', Math.max(0, today - LOOKBACK_DAYS), BACKLOG_PER_RUN);
+  await touchOpenWork(db, chainId, diamond, 'day_owed', page.map((w) => w.item));
+  return dayWindow(today, page.map((w) => w.block));
+}
+
+/** Record what the run saw: a window day worked through leaves the ledger,
+ *  any other stays in it (or re-enters it: a day the lookback holds can owe
+ *  again, a destination added after it went through). A day's send and
+ *  notice records stay while it is owed or in the lookback. */
+async function settleLedger(env: Env, chainId: number, diamond: Address, today: number, window: readonly number[], through: (d: number) => boolean): Promise<void> {
+  const db = env.KEEPER_DB;
+  await finishWork(db, chainId, diamond, 'day_owed', window.filter(through).map(String));
+  const open = window.filter((d) => !through(d)).map((d) => ({ item: String(d), block: d, payload: {} }));
+  if (open.length > 0) await enqueueWork(db, chainId, diamond, 'day_owed', open);
+  const floor = Math.max(0, today - LOOKBACK_DAYS);
+  await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_broadcast', floor, 'day_owed');
+  await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_zeroed', floor, 'day_owed');
+}
+
+/** A peer chain's reward-clock launch: read now when it can be (and recorded,
+ *  `day_clock`), else as last read (`lastRead`), so a mismatch once seen is
+ *  never forgotten because the peer stops answering; null = never read. */
+async function peerClock(env: Env, chainId: number, diamond: Address, peerChain: number, p: PeerReader | null, where: string): Promise<{ launch: number; lastRead: boolean } | null> {
+  const now = p ? await launchOf(p, where) : null;
+  if (now !== null) {
+    await putWork(env.KEEPER_DB, chainId, diamond, 'day_clock', { item: String(peerChain), block: 0, payload: { launch: now } });
+    return { launch: now, lastRead: false };
+  }
+  const rec = (await getWorkItems<{ launch: number }>(env.KEEPER_DB, chainId, diamond, 'day_clock', [String(peerChain)])).get(String(peerChain));
+  return rec && Number.isSafeInteger(rec.payload.launch) ? { launch: rec.payload.launch, lastRead: true } : null;
 }
 
 // ─── Reads ──────────────────────────────────────────────────────────────
@@ -934,8 +1012,8 @@ async function baseView(
   days: readonly number[],
   self: number,
   deadline: number,
-): Promise<Map<number, { finalized: boolean | null; counted: boolean | null }>> {
-  const out = new Map<number, { finalized: boolean | null; counted: boolean | null }>();
+): Promise<Map<number, { finalized: boolean | null; ready: boolean | null; counted: boolean | null }>> {
+  const out = new Map<number, { finalized: boolean | null; ready: boolean | null; counted: boolean | null }>();
   if (!base || days.length === 0) return out;
   const res = await chunkedRead(
     base.client as never,
@@ -953,6 +1031,7 @@ async function baseView(
     // pre-B4 close turns on, and a failed report read must not hide it.
     out.set(d, {
       finalized: ready?.status === 'success' ? Number((ready.result as readonly [boolean, number])[1]) === REASON_FINALIZED : null,
+      ready: ready?.status === 'success' ? (ready.result as readonly [boolean, number])[0] === true : null,
       counted: counted?.status === 'success' ? counted.result === true : null,
     });
   });
@@ -1199,8 +1278,16 @@ const STEP_WORDS: Record<string, string> = {
   broadcast: 'broadcasting the day (broadcastGlobal)',
 };
 
+/** The reward day an alert key names (`dayclose-<kind>:<chain>:<day>`, or
+ *  `dayclose-refused:<chain>:<step>:<day>`), or null for a chain-wide one. */
+function dayOfAlert(key: string): number | null {
+  const parts = key.split(':');
+  const d = Number(parts[0] === 'dayclose-refused' ? parts[3] : parts[2]);
+  return Number.isSafeInteger(d) && d >= 0 ? d : null;
+}
+
 /** Raise or clear the pass's ops alerts for one chain. */
-async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean, f: RunFindings, nowSec: number, deadline: number): Promise<void> {
+async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, canonical: boolean, f: RunFindings, nowSec: number, deadline: number): Promise<void> {
   let open: Set<string>;
   try {
     open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`));
@@ -1216,6 +1303,17 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
   };
   const tag = `[chain ${chainId}] reward day close`;
   const inWindow = new Set(f.window);
+  // A day's alerts go with the day: once it is neither in this run's window
+  // nor owed. An owed day this run did not work keeps them until its turn.
+  const outside = [...new Set([...open].map(dayOfAlert).filter((d): d is number => d !== null && !inWindow.has(d)))];
+  let owed: Set<string>;
+  try {
+    owed = await openWorkAmong(env.KEEPER_DB, chainId, diamond, 'day_owed', outside.map(String));
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${chainId}: owed days unread, their alerts left for the next run: ${shortErr(err)}`);
+    owed = new Set(outside.map(String));
+  }
+  const dropped = (d: number): boolean => !inWindow.has(d) && !owed.has(String(d));
 
   for (const [k, why] of f.refused) {
     const [step, day] = k.split(':');
@@ -1298,12 +1396,12 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
   }
   if (f.clock && f.clock.differ.length > 0) {
     const at = (t: number) => new Date(t * 1000).toISOString();
-    const each = f.clock.differ.map((x) => `chain ${x.chain} (day 0 starts ${at(x.launch)})`).join(', ');
+    const each = f.clock.differ.map((x) => `chain ${x.chain} (day 0 starts ${at(x.launch)}${x.lastRead ? ', as last read; this run could not read it' : ''})`).join(', ');
     await raise(
       `dayclose-clock:${chainId}:all`,
       canonical
         ? `${tag}: ${each} run(s) a reward clock different from Base's (day 0 starts ${at(f.clock.base)}), so the same day number covers different hours there and here. A day finalized with such a report sums unrelated interest into one global total, irreversibly, so the pass finalizes no day until every listed chain it serves runs Base's clock. Days already finalized are still broadcast.`
-        : `${tag}: this chain's reward clock (day 0 starts ${at(f.clock.differ[0].launch)}) differs from Base's (day 0 starts ${at(f.clock.base)}), so the same day number covers different hours here and on Base. A report sent now would be summed into Base's day with interest from other hours, irreversibly, so the pass closes no day here until the two match.`,
+        : `${tag}: this chain's reward clock (day 0 starts ${at(f.clock.differ[0].launch)}) differs from Base's (day 0 starts ${at(f.clock.base)}${f.clock.stale ? ', as last read; this run could not read it' : ''}), so the same day number covers different hours here and on Base. A report sent now would be summed into Base's day with interest from other hours, irreversibly, so the pass closes no day here until the two match.`,
     );
   }
   for (const d of f.excluded) {
@@ -1322,27 +1420,26 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     if (raised.has(key)) continue;
     const parts = key.split(':');
     const kind = parts[0];
-    const dayStr = kind === 'dayclose-refused' ? parts[3] : parts[2];
-    const day = Number(dayStr);
+    const day = dayOfAlert(key) ?? Number.NaN;
     let gone = false;
     if (kind === 'dayclose-refused') {
       const served = SERVES[parts[2]];
       const done = (k: string) => f.settled.has(k) || f.landed.has(k);
-      gone = done(`${parts[2]}:${parts[3]}`) || (served !== undefined && done(`${served}:${parts[3]}`)) || !inWindow.has(day);
+      gone = done(`${parts[2]}:${parts[3]}`) || (served !== undefined && done(`${served}:${parts[3]}`)) || dropped(day);
     }
     // A wait judged this run and not raised is no longer near its end (grace
     // was lengthened, or a report landed): its deadline no longer holds.
-    else if (kind === 'dayclose-waiting') gone = f.settled.has(`finalize:${day}`) || f.judged.has(day) || !inWindow.has(day);
+    else if (kind === 'dayclose-waiting') gone = f.settled.has(`finalize:${day}`) || f.judged.has(day) || dropped(day);
     // A topology alert clears only on a read that shows the fix.
     else if (kind === 'dayclose-noexpected') gone = canonical && f.noExpected === false;
     else if (kind === 'dayclose-selfmissing') gone = canonical && f.selfNotExpected === false;
     else if (kind === 'dayclose-destunread') gone = canonical && f.destinationsUnread === false;
     else if (kind === 'dayclose-topology') gone = canonical && f.topology !== null && topologyFaults(f.topology, chainId).length === 0;
     // Cleared on a read showing delivery, never on a re-send merely landing.
-    else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || !inWindow.has(day);
-    else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
+    else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || dropped(day);
+    else if (kind === 'dayclose-excluded') gone = dropped(day);
     else if (kind === 'dayclose-notexpected') gone = !canonical && f.notExpectedOnBase === false;
-    else if (kind === 'dayclose-clock') gone = f.clock !== null && f.clock.differ.length === 0;
+    else if (kind === 'dayclose-clock') gone = f.clock !== null && f.clock.differ.length === 0 && !f.clock.stale;
     if (gone && Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       await resolveOpsAlert(env, key);
@@ -1383,7 +1480,9 @@ export async function recordZeroed(
   expected: readonly number[],
   where: string,
 ): Promise<void> {
-  if (finalizedDays.length === 0 || expected.length === 0) return;
+  // An empty list still gets a record (naming no chain): a finalized day is
+  // worked through only once its record exists.
+  if (finalizedDays.length === 0) return;
   try {
     const have = await getWorkItems<ZeroedRecord>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', finalizedDays.map(String));
     const fresh = finalizedDays.filter((d) => !have.has(String(d)));
@@ -1415,17 +1514,20 @@ export async function recordZeroed(
   }
 }
 
-/** Post the zeroed-day notices not yet delivered (Base). A record is marked
- *  posted once delivered (or once the ops channel is not configured: the
- *  journal line written with the record is then the record) and kept, so
- *  the day is never noticed twice, until its day leaves the window. */
-async function postZeroedNotices(env: Env, chainId: number, diamond: Address, window: readonly number[], deadline: number): Promise<void> {
+/** Post the zeroed-day notices not yet delivered (Base), for the window's
+ *  days. A record is marked posted once delivered (or once the ops channel is
+ *  not configured: the journal line written with the record is then the
+ *  record) and kept, so the day is never noticed twice; a day with a notice
+ *  still to deliver stays owed, so its record is never pruned before it is
+ *  delivered. Returns the window days whose record exists and is delivered
+ *  (one naming no chain counts as delivered). */
+async function postZeroedNotices(env: Env, chainId: number, diamond: Address, window: readonly number[], deadline: number): Promise<Set<number>> {
+  const noticed = new Set<number>();
   try {
-    await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window[0]);
-    const rows = [...(await getWorkItems<ZeroedRecord>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window.map(String))).values()].filter(
-      (r) => !r.payload.posted && r.payload.missing.length > 0,
-    );
-    if (rows.length === 0 || Date.now() >= deadline) return;
+    const all = [...(await getWorkItems<ZeroedRecord>(env.KEEPER_DB, chainId, diamond, 'day_zeroed', window.map(String))).values()];
+    for (const r of all) if (r.payload.posted || r.payload.missing.length === 0) noticed.add(r.block);
+    const rows = all.filter((r) => !r.payload.posted && r.payload.missing.length > 0);
+    if (rows.length === 0 || Date.now() >= deadline) return noticed;
     rows.sort((a, b) => a.block - b.block);
     const lines = rows.map((r) => zeroedLine(r.block, r.payload.missing));
     const outcome = await sendOpsNoticeDigest(env, `[chain ${chainId}] reward day close: finalized with expected reports missing`, lines, ZEROED_FOOTER, chainId);
@@ -1433,11 +1535,13 @@ async function postZeroedNotices(env: Env, chainId: number, diamond: Address, wi
       for (const r of rows) {
         // eslint-disable-next-line no-await-in-loop
         await putWork(env.KEEPER_DB, chainId, diamond, 'day_zeroed', { ...r, payload: { ...r.payload, posted: true } });
+        noticed.add(r.block);
       }
     }
   } catch (err) {
     console.error(`[keeper] rewardDayClose chain=${chainId}: zeroed-day notices left queued: ${shortErr(err)}`);
   }
+  return noticed;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

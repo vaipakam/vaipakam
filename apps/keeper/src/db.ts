@@ -920,12 +920,14 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
 // ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
 
 /** The passes that keep an open-work queue, by the `kind` each records under.
- *  The reward day-close pass (#2612) keeps three, each keyed by reward day
- *  rather than ledger block: `day_broadcast` (a finalized day's sends, by
- *  destination) and `day_zeroed` (its zeroed-chain notice) are open-work rows
- *  whose `item` and `block` are the day; `day_close` is a cursor only, the
- *  oldest day the pass has not yet worked through. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close';
+ *  The reward day-close pass (#2612) keys its rows by reward day rather than
+ *  ledger block: `day_owed` (a day not yet worked through), `day_broadcast` (a
+ *  finalized day's sends, by destination) and `day_zeroed` (its zeroed-chain
+ *  notice) are open-work rows whose `item` and `block` are the day;
+ *  `day_clock` holds a peer chain's reward clock as last read (`item` = that
+ *  chain); `day_close` is a cursor only, the first day not yet entered into
+ *  `day_owed`. */
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close' | 'day_owed' | 'day_clock';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or
@@ -1043,6 +1045,41 @@ export async function pruneWorkBelow(db: KeeperD1, chainId: number, diamond: str
     .prepare(`DELETE FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND block < ?`)
     .bind(chainId, diamond.toLowerCase(), kind, block)
     .run();
+}
+
+/** Delete every `kind` row on `(chainId, diamond)` whose block is below
+ *  `block` and whose item is not also open under `owner` (#2612: a day's send
+ *  and notice records stay while the day is owed, whatever its age). */
+export async function pruneWorkBelowUnlessOpen(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, block: number, owner: WorkKind): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM keeper_work_open WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block < ?4
+         AND item NOT IN (SELECT item FROM keeper_work_open WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?5)`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, block, owner)
+    .run();
+}
+
+/** Up to `limit` open `kind` items whose block is below `block`, the least
+ *  recently checked first (then the oldest), so each is reached in turn. */
+export async function listOpenWorkBelow<T>(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, block: number, limit: number): Promise<WorkItem<T>[]> {
+  const rows = await db
+    .prepare(
+      `SELECT item, block, payload FROM keeper_work_open
+        WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3 AND block < ?4
+        ORDER BY checked_at ASC, block ASC, item ASC LIMIT ?5`,
+    )
+    .bind(chainId, diamond.toLowerCase(), kind, block, limit)
+    .all<{ item: string; block: number; payload: string }>();
+  const items: WorkItem<T>[] = [];
+  for (const r of rows.results ?? []) {
+    try {
+      items.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+    } catch {
+      console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
+    }
+  }
+  return items;
 }
 
 /** A bounded slice of the open items, the least recently checked first (then

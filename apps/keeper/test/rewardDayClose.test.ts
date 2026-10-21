@@ -24,7 +24,7 @@ import {
   ROLE_MIRROR,
   dayCloseOnce,
   dayWindow,
-  nextFrontier,
+  BACKLOG_PER_RUN,
   graceWarningSec,
   planBroadcast,
   planFinalize,
@@ -48,19 +48,13 @@ const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 const NOW = Math.floor(T0 / 1000);
 
 describe('the pure rules', () => {
-  it('works every elapsed day from the close frontier, and at least the last LOOKBACK_DAYS, oldest first', () => {
+  it('works the last LOOKBACK_DAYS and a page of older owed days, oldest first', () => {
     expect(dayWindow(0)).toEqual([]);
     expect(dayWindow(1)).toEqual([0]);
     expect(dayWindow(3)).toEqual([0, 1, 2]);
-    expect(dayWindow(LOOKBACK_DAYS + 5), 'nothing worked through yet: from day 0').toEqual(Array.from({ length: LOOKBACK_DAYS + 5 }, (_, i) => i));
-    expect(dayWindow(LOOKBACK_DAYS + 5, LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
-    expect(dayWindow(LOOKBACK_DAYS + 5, 2), 'a stuck day keeps the window open from it').toEqual(Array.from({ length: LOOKBACK_DAYS + 3 }, (_, i) => i + 2));
-  });
-
-  it('moves the frontier to the oldest day not worked through', () => {
-    expect(nextFrontier([3, 4, 5], 6, (d) => d !== 4)).toBe(4);
-    expect(nextFrontier([3, 4, 5], 6, () => true)).toBe(6);
-    expect(nextFrontier([], 0, () => true)).toBe(0);
+    expect(dayWindow(LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
+    expect(dayWindow(LOOKBACK_DAYS + 5, [3, 1, 7]), 'owed days join it, once').toEqual([1, 3, ...Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5)]);
+    expect(dayWindow(3, [5, -1]), 'never a day not yet elapsed').toEqual([0, 1, 2]);
   });
 
   it('warns in the last hour of grace, or the last quarter of a shorter one', () => {
@@ -184,6 +178,8 @@ class FakeDiamond {
   writeError: Error | null = null;
   /** The largest aggregate read asked of this chain. */
   largestRead = 0;
+  /** The days simulations were asked for, in order. */
+  simulated: number[] = [];
   /** Reports that land between the pass's reads and its finalization, by day. */
   landsAtFinalize = new Map<number, number>();
   /** Receipts are never seen (the send may still have landed). */
@@ -280,6 +276,7 @@ class FakeDiamond {
   simulateContract = async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
     if (this.rpcDown) throw new Error('fetch failed');
     const day = Number(args[0] as bigint);
+    this.simulated.push(day);
     const why = this.refuse.get(`${functionName}:${day}`);
     if (why === 'ChainReportFrontierShort') throw revert(why, [BigInt(day), 0n, 0n]);
     if (why) throw revert(why);
@@ -573,7 +570,7 @@ describe('a run', () => {
     expect(alerts(/chain 421614 is not a broadcast destination and the Diamond will not send the day to it alone \(MessengerPredatesV3\)/)).toHaveLength(1);
   });
 
-  const frontier = () => (keeper.db.prepare(`SELECT next_block FROM keeper_work_cursor WHERE kind = 'day_close'`).get() as { next_block: number } | undefined)?.next_block;
+  const owed = () => (keeper.db.prepare(`SELECT block FROM keeper_work_open WHERE kind = 'day_owed' ORDER BY block`).all() as { block: number }[]).map((r) => r.block);
 
   it('owes a day nothing to a destination off the list that has no standing in it', async () => {
     finalizedDayZero();
@@ -585,7 +582,7 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn), 'nothing sent to a chain that had no part in the day').toEqual(['broadcastGlobal']);
     expect(alerts(/not a broadcast destination|has not reached/)).toEqual([]);
-    expect(frontier(), 'the day is worked through').toBe(1);
+    expect(owed(), 'the day is worked through').toEqual([]);
   });
 
   it('keeps a day in view while an expected mirror is off the broadcast list, and sends it once the mirror is listed', async () => {
@@ -595,7 +592,7 @@ describe('a run', () => {
     await run(base);
     expect(base.sent, 'no send could reach it').toEqual([]);
     expect(alerts(/chain 421614 is not a broadcast destination/)).toHaveLength(1);
-    expect(frontier(), 'the day is not worked through').toBe(0);
+    expect(owed(), 'the day is not worked through').toEqual([0]);
 
     later(LOOKBACK_DAYS * 86_400); // long enough for the day to have left a lookback-only window
     base.today = LOOKBACK_DAYS + 2;
@@ -611,7 +608,7 @@ describe('a run', () => {
     expect(base.sent, 'day 0 reaches the mirror once it is listed').toEqual([{ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE }]);
     mirror.known.add(0);
     await run(base);
-    expect(frontier()).toBe(LOOKBACK_DAYS + 2);
+    expect(owed()).toEqual([]);
   });
 
   it('treats a Base day finalized before its own close as worked through once broadcast', async () => {
@@ -621,7 +618,7 @@ describe('a run', () => {
     mirror.known.add(0);
     await run(base);
     expect(base.sent, 'no close, and nothing owed to the mirror').toEqual([]);
-    expect(frontier(), 'the close it can never make does not hold the day').toBe(1);
+    expect(owed(), 'the close it can never make does not hold the day').toEqual([]);
   });
 
   it('counts a send the node refused outright as not made, and one it did not answer as made', async () => {
@@ -816,19 +813,37 @@ describe('a run', () => {
     expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
   });
 
-  it('works a day older than the lookback that was never worked through, and moves its frontier only past days done', async () => {
+  it('works a day older than the lookback that was never worked through, and keeps a day owed until it is', async () => {
     mirror.today = LOOKBACK_DAYS + 5; // armed late: days 0..4 are older than the lookback
     for (let d = 1; d < mirror.today; d++) mirror.sentAt.set(d, NOW - 86_400);
     await run(mirror);
     expect(mirror.sent.map((s) => [s.fn, s.day]), 'day 0 is closed, though older than the lookback').toEqual([['closeDay', 0]]);
-    const cursor = () => keeper.db.prepare(`SELECT next_block FROM keeper_work_cursor WHERE kind = 'day_close'`).get();
-    expect(cursor(), 'every day worked through').toEqual({ next_block: LOOKBACK_DAYS + 5 });
+    expect(owed(), 'every day worked through').toEqual([]);
 
     mirror.today += 1; // day LOOKBACK+5 is refused from now on
     mirror.refuse.set(`closeDay:${LOOKBACK_DAYS + 5}`, 'ChainReportFrontierShort');
     mirror.refuse.set(`advanceInterestFrontiers:${LOOKBACK_DAYS + 5}`, 'EnforcedPause');
     await run(mirror);
-    expect(cursor(), 'a day not closed holds the frontier').toEqual({ next_block: LOOKBACK_DAYS + 5 });
+    expect(owed(), 'a day not closed stays owed').toEqual([LOOKBACK_DAYS + 5]);
+  });
+
+  it('works a long backlog of stuck days a page at a time, each in turn, without starving the newest', async () => {
+    const stuck = 3 * BACKLOG_PER_RUN;
+    mirror.today = stuck + LOOKBACK_DAYS;
+    for (let d = 0; d < stuck; d++) mirror.refuse.set(`closeDay:${d}`, 'DayNotReadyToFinalize');
+    const pages: number[][] = [];
+    for (let i = 0; i < 4; i++) {
+      mirror.simulated = [];
+      // eslint-disable-next-line no-await-in-loop
+      await run(mirror);
+      pages.push(mirror.simulated.filter((d) => d < stuck));
+      later(60);
+    }
+    const page = (k: number) => Array.from({ length: BACKLOG_PER_RUN }, (_, i) => k * BACKLOG_PER_RUN + i);
+    expect(pages, 'one page of the backlog per run, the least recently worked first').toEqual([page(0), page(1), page(2), page(0)]);
+    expect(mirror.sent.slice(0, MAX_SENDS_PER_RUN).map((s) => s.day), 'the newest days are closed from the first run').toEqual(Array.from({ length: MAX_SENDS_PER_RUN }, (_, i) => stuck + i));
+    expect(mirror.sent.map((s) => s.day), 'and every one of them by the second').toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => stuck + i));
+    expect(owed().filter((d) => d < stuck), 'every stuck day is still owed').toHaveLength(stuck);
   });
 
   it('a mirror whose reward clock differs from Base\'s closes no day, and says so until they match', async () => {
@@ -861,7 +876,38 @@ describe('a run', () => {
     mirror.quoteShapes = new Set([7, 5, 3]);
     await run(mirror);
     expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
-    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day, and this chain's messenger cannot quote the B4 report/)).toHaveLength(1);
+    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain's messenger cannot quote the B4 report/)).toHaveLength(1);
+  });
+
+  it('a mirror sends no pre-B4 report for a day Base can finalize now, though it has not', async () => {
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - GRACE); // grace has elapsed: anyone may finalize it before a report lands
+    mirror.today = 1;
+    mirror.quoteShapes = new Set([7, 5, 3]);
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/reward day 0 is refused \(Base has finalized this day or can finalize it now/)).toHaveLength(1);
+  });
+
+  it('keeps a reward clock mismatch it has seen while the mirror cannot be read', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE, MIRROR]));
+    base.sentAt.set(0, NOW - 60);
+    base.firstAt.set(0, NOW - 60);
+    mirror.launch = base.launch - 86_400;
+    await run(base);
+    openAlert(`dayclose-clock:${BASE}:all`);
+    await dayCloseOnce(env, base.chainId, base.diamond, {
+      client: base.client(),
+      readClient: base.client(),
+      context: () => base.ctx(),
+      peer: (id) => (id === BASE ? base.peer() : null), // the mirror is no longer served
+      sendDeadline: Number.POSITIVE_INFINITY,
+      runDeadline: Number.POSITIVE_INFINITY,
+    });
+    expect(base.sent.map((s) => s.fn), 'still no finalization').not.toContain('finalizeDay');
+    expect(openKeys(), 'the mismatch alert stands').toContain(`dayclose-clock:${BASE}:all`);
+    expect(alerts(/as last read; this run could not read it/)).toHaveLength(1);
   });
 
   it('a pre-B4 mirror does not close a day whose finalization on Base is unread, whatever else read', async () => {
@@ -894,7 +940,7 @@ describe('a run', () => {
     base.refuseToChain.set(56, 'DayNotReadyToFinalize');
     await run(base);
     expect(base.sent.slice(1), 'one destination landed').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
-    expect(frontier(), 'the refused destination still holds the day').toBe(0);
+    expect(owed(), 'the refused destination still holds the day').toEqual([0]);
   });
 
   it('clears a near-end grace warning once grace is lengthened', async () => {
@@ -1043,5 +1089,38 @@ describe('a run', () => {
     expect(queued()).toEqual({ n: 0 });
     await run(base);
     expect(alerts(/finalized with expected reports missing/), 'and never again').toHaveLength(1);
+  });
+
+  it('keeps an undelivered zeroed-day notice however old its day grows', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.sentAt.set(0, NOW - GRACE);
+    base.firstAt.set(0, NOW - GRACE);
+    const spent = () =>
+      dayCloseOnce(env, base.chainId, base.diamond, {
+        client: base.client(),
+        readClient: base.client(),
+        context: () => base.ctx(),
+        peer: peers,
+        sendDeadline: Number.POSITIVE_INFINITY,
+        runDeadline: 0, // nothing can be posted
+      });
+    await spent();
+    mirror.known.add(0); // everything else about the day is done
+    base.today = LOOKBACK_DAYS + 5; // the day is now older than the lookback
+    for (let d = 1; d < base.today; d++) {
+      // and every later day is done too, so nothing else holds anything back
+      base.sentAt.set(d, NOW);
+      base.reported.set(d, new Set([BASE, MIRROR]));
+      base.finalized.add(d);
+      mirror.known.add(d);
+    }
+    later(LOOKBACK_DAYS * 86_400);
+    await spent();
+    const queued = () => keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_zeroed' AND block = 0 AND payload LIKE '%"posted":false%'`).get();
+    expect(queued(), 'its record outlives the lookback').toEqual({ n: 1 });
+    await run(base);
+    expect(alerts(/finalized with expected reports missing/), 'and is posted once the channel answers').toHaveLength(1);
+    expect(queued()).toEqual({ n: 0 });
   });
 });
