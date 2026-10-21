@@ -250,7 +250,10 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     return;
   }
   f.stall = sender.stall;
-  if (f.base !== null) f.base.noticed = await postZeroedNotices(env, store, window, deps.runDeadline);
+  if (f.base !== null) {
+    const finalized = f.base.finalized;
+    f.base.noticed = await postZeroedNotices(env, store, window.filter((d) => finalized.has(d)), deps.runDeadline, (k, what) => sender.noteUnread(k, what));
+  }
   const held = await settleAlerts(env, store, f, nowSec, deps.runDeadline);
   // On Base, a day leaves only on plans made against the lists as they still
   // stand (base.ts, listsStand).

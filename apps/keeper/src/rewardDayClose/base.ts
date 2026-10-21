@@ -147,7 +147,7 @@ export async function runBase(c: ChainRun, store: DayStore, sender: Sender, x: B
   } catch (err) {
     console.error(`[keeper] rewardDayClose ${c.where}: open-seen blocks unread or unsaved: ${shortErr(err)}`);
   }
-  if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value, openSeen);
+  if (expected.known) await recordZeroed(c, store, x.window.filter((d) => finalized.has(d)), expected.value, openSeen, (k, what) => sender.noteUnread(k, what));
 
   let plans = new Map<number, BroadcastPlan>();
   let broadcastNow = 0;

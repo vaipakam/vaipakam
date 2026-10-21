@@ -5,7 +5,9 @@
 // finalized the day (this keeper, another caller, an admin): the chains are
 // read from the finalization's own events where the keeper saw the day open,
 // otherwise judged from Base's record of who reported it and marked so;
-// journaled and recorded at once, and posted until delivered.
+// journaled and recorded at once, and posted until delivered. A day kept
+// from its record or its notice by a read that failed is said (`note`), like
+// every other step a failed read holds, never left owed in silence.
 
 import { boundedRead, PastRunDeadline } from '../batchRead';
 import type { Env } from '../env';
@@ -15,6 +17,10 @@ import type { ChainRun } from './deps';
 import { shortErr } from './errors';
 import type { DayStore, ZeroedRecord } from './store';
 import type { AbiEvent } from 'viem';
+
+/** Record that `what` could not be read, keeping `step:day` from being worked
+ *  this run (the sender's `noteUnread`). */
+export type Note = (key: string, what: string) => void;
 
 const ZEROED_FOOTER =
   "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Each day's chains are read from the finalization's own ChainContributionZeroed events where this keeper saw the day open before it was finalized; a day marked otherwise was judged against Base's expected-source list as read when this keeper first saw the day finalized, which may not be the list it was finalized against.";
@@ -71,19 +77,24 @@ async function zeroedByEvents(c: ChainRun, d: number, from: bigint): Promise<num
  * events cannot be found, is judged instead from Base's record of who
  * reported it against the list as read now, in one aggregate (one block)
  * together with the day's finalization, and the record says so. A day whose
- * source cannot be read is left for the next run; an empty list still gets a
- * record (naming no chain), since a finalized day is worked through only once
- * its record exists.
+ * source cannot be read is left for the next run, and `note`d as such; an
+ * empty list still gets a record (naming no chain), since a finalized day is
+ * worked through only once its record exists.
  */
-export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[], openSeen: ReadonlyMap<number, bigint>): Promise<void> {
+export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: readonly number[], expected: readonly number[], openSeen: ReadonlyMap<number, bigint>, note: Note): Promise<void> {
   if (finalizedDays.length === 0) return;
+  let pending: readonly number[] = finalizedDays;
   try {
     const have = await store.zeroed(finalizedDays);
-    for (const d of finalizedDays.filter((x) => !have.has(x))) {
+    pending = finalizedDays.filter((x) => !have.has(x));
+    for (const d of pending) {
       const from = openSeen.get(d);
       // eslint-disable-next-line no-await-in-loop
       const ev = from === undefined ? 'absent' : await zeroedByEvents(c, d, from);
-      if (ev === 'unread') continue;
+      if (ev === 'unread') {
+        note(`notice:${d}`, "the finalization's own events (the log query failed)");
+        continue;
+      }
       let r: ZeroedRecord;
       if (ev !== 'absent') r = { missing: ev, posted: ev.length === 0, basis: 'events' };
       else {
@@ -97,8 +108,14 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
           `rewardDayClose ${c.where} zeroed(${d})`,
           c.deps.sendDeadline,
         );
-        if (res.some((x) => x?.status !== 'success')) continue;
-        if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) continue;
+        if (res.some((x) => x?.status !== 'success')) {
+          note(`notice:${d}`, "Base's record of who reported the day, to judge it against the expected-source list");
+          continue;
+        }
+        if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) {
+          note(`notice:${d}`, 'the day as finalized in one read with who reported it (the node answering read it as not finalized yet)');
+          continue;
+        }
         const missing = expected.filter((_, i) => res[i + 1].result !== true);
         r = { missing, posted: missing.length === 0, basis: 'list' };
       }
@@ -109,6 +126,7 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     console.error(`[keeper] rewardDayClose ${c.where}: zeroed-day records left for the next run: ${shortErr(err)}`);
+    for (const d of pending) note(`notice:${d}`, "this keeper's own record of the day's notice (its database)");
   }
 }
 
@@ -117,10 +135,17 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
  *  counts as delivered). A record is marked posted once delivered (or once
  *  the ops channel is not configured: the journal line written with the
  *  record is then the record) and kept, so the day is never noticed twice. */
-export async function postZeroedNotices(env: Env, store: DayStore, window: readonly number[], deadline: number): Promise<Set<number>> {
+export async function postZeroedNotices(env: Env, store: DayStore, window: readonly number[], deadline: number, note: Note): Promise<Set<number>> {
   const noticed = new Set<number>();
+  let all: Map<number, ZeroedRecord>;
   try {
-    const all = await store.zeroed(window);
+    all = await store.zeroed(window);
+  } catch (err) {
+    console.error(`[keeper] rewardDayClose chain=${store.chainId}: zeroed-day notices unread, left queued: ${shortErr(err)}`);
+    for (const d of window) note(`notice:${d}`, "this keeper's own record of the day's notice (its database)");
+    return noticed;
+  }
+  try {
     for (const [d, r] of all) if (r.posted || r.missing.length === 0) noticed.add(d);
     const due = [...all].filter(([, r]) => !r.posted && r.missing.length > 0).sort(([a], [b]) => a - b);
     if (due.length === 0 || Date.now() >= deadline) return noticed;

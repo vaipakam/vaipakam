@@ -75,6 +75,7 @@ const STEP_WORDS: Record<string, string> = {
   advance: 'advancing the interest fold (advanceInterestFrontiers)',
   finalize: 'finalizing the day (finalizeDay)',
   broadcast: 'broadcasting the day (broadcastGlobal)',
+  notice: "recording and announcing the chains the day's finalization zeroed",
 };
 
 const KINDS: readonly AlertKind[] = [

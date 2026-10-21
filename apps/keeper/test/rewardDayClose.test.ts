@@ -397,10 +397,14 @@ class FakeDiamond {
   /** Every finalization event, with the block it is in. */
   history: { block: bigint; name: 'DailyGlobalInterestFinalized' | 'ChainContributionZeroed'; dayId: number; sourceChainId?: number }[] = [];
   getBlockNumber = async () => this.blockNo;
-  getLogs = async ({ event, args, fromBlock, toBlock }: { event: { name: string }; args: { dayId: bigint }; fromBlock: bigint; toBlock: bigint }) =>
-    this.history
+  /** Log queries fail. */
+  logsUnread = false;
+  getLogs = async ({ event, args, fromBlock, toBlock }: { event: { name: string }; args: { dayId: bigint }; fromBlock: bigint; toBlock: bigint }) => {
+    if (this.logsUnread) throw new Error('fetch failed');
+    return this.history
       .filter((h) => h.name === event.name && h.dayId === Number(args.dayId) && h.block >= fromBlock && h.block <= toBlock)
       .map((h) => ({ args: { dayId: BigInt(h.dayId), sourceChainId: h.sourceChainId } }));
+  };
   /** Another caller finalizes `day`. */
   finalizeByOther(day: number): void {
     this.blockNo += 1n;
@@ -1715,6 +1719,25 @@ describe('a run', () => {
     await run(base);
     expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the finalization itself').toHaveLength(1);
     expect(logged.filter((l) => /finalized without chain\(s\) 97/.test(l)), 'never the replacement').toEqual([]);
+  });
+
+  it("says a finalized day whose zeroed chains cannot be read is held, and clears once they are", async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60); // inside grace: the keeper waits, and sees the day open
+    await run(base);
+    base.finalizeByOther(0); // zeroes the mirror
+    base.logsUnread = true;
+    const held = `dayclose-held:${BASE}:0x00000000000000000000000000000000000000b1:canonical:all`;
+    await run(base);
+    expect(alerts(/did not try recording and announcing the chains the day's finalization zeroed this run for day 0 \(the finalization's own events \(the log query failed\) could not be read\)/)).toHaveLength(1);
+    expect(owed()).toContain(0);
+    openAlert(held);
+    base.logsUnread = false;
+    later(60);
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l))).toHaveLength(1);
+    expect(openKeys()).not.toContain(held);
   });
 
   it('says a zeroed-day notice was judged against the list when the keeper never saw the day open', async () => {
