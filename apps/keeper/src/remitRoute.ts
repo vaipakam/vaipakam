@@ -30,8 +30,7 @@
 import type { Abi, Address, PublicClient } from 'viem';
 import { RewardRemittanceLensFacetABI } from '@vaipakam/contracts/abis';
 import { extractRevertName, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
-import { settledRead, type BatchResult } from './batchRead';
-import { walkFrom } from './rotate';
+import { settledChunkedRead, type BatchResult } from './batchRead';
 
 const LENS_ABI = RewardRemittanceLensFacetABI as Abi;
 /** Route reads per `aggregate3` (#1946). */
@@ -81,23 +80,16 @@ export async function readRemitRoutes(
   run = 0,
 ): Promise<Map<number, RemitRouteVerdict>> {
   const out = new Map<number, RemitRouteVerdict>();
-  const ids = walkFrom(held, run);
-  for (let i = 0; i < ids.length; i += ROUTE_READ_CHUNK) {
-    const chunk = ids.slice(i, i + ROUTE_READ_CHUNK);
-    // eslint-disable-next-line no-await-in-loop
-    const res = await settledRead(
-      client as never,
-      chunk.map((id) => ({
-        address: diamond,
-        abi: LENS_ABI,
-        functionName: 'getRemitRoute' as const,
-        args: [BigInt(id)] as const,
-      })),
-      `remitAck getRemitRoute ${i}/${ids.length}`,
-      deadline,
-    );
-    chunk.forEach((id, j) => out.set(id, remitRouteVerdict(res[j])));
-  }
+  const res = await settledChunkedRead(
+    client as never,
+    held,
+    ROUTE_READ_CHUNK,
+    (id) => ({ address: diamond, abi: LENS_ABI, functionName: 'getRemitRoute' as const, args: [BigInt(id)] as const }),
+    'remitAck getRemitRoute',
+    deadline,
+    run,
+  );
+  for (const [id, r] of res) out.set(id, remitRouteVerdict(r));
   return out;
 }
 

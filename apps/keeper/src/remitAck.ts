@@ -48,7 +48,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
-import { batchedRead, deadlineClient, failedOnOwnCall, PastRunDeadline, settleBy, settledRead } from './batchRead';
+import { deadlineClient, failedOnOwnCall, PastRunDeadline, settleBy, settledChunkedRead, settledRead } from './batchRead';
 import { priorStageCutoffMs, readCutoffMs, runIndex } from './runWindow';
 import { walkFrom } from './rotate';
 import type { PassTick } from './passSchedule';
@@ -589,32 +589,23 @@ async function readReceipts(
   // unread this run, and never holds the others past the cutoff (Codex #2607
   // r6/r7). The client is the run-deadline one built for this pass.
   // Each mirror's ids start at a point that moves each run (Codex #2607 r13,
-  // `runWindow.ts` rule 2): the cutoff can end a mirror's reads partway, and a
-  // fixed order would leave the same tail unread every run.
-  await Promise.all([...byMirror.values()].map(async ({ cfg, ids: held }) => {
-    const ids = walkFrom(held, run);
+  // `settledChunkedRead`): the cutoff can end a mirror's reads partway.
+  await Promise.all([...byMirror.values()].map(async ({ cfg, ids }) => {
     const client = mirrorClient(clients, cfg, deadline);
-    for (let i = 0; i < ids.length; i += RECEIPT_READ_CHUNK) {
-      const chunk = ids.slice(i, i + RECEIPT_READ_CHUNK);
-      // eslint-disable-next-line no-await-in-loop
-      const res = await settledRead(
-        client as never,
-        chunk.map((id) => ({
-          address: cfg.diamond as Address,
-          abi: REMIT_ABI,
-          functionName: 'getReceivedRemit' as const,
-          args: [baseDiamond, BigInt(id)] as const,
-        })),
-        `remitAck getReceivedRemit dst=${cfg.id} ${i}/${ids.length}`,
-        deadline,
-      );
-      chunk.forEach((id, j) => {
-        const r = res[j];
-        if (failedOnOwnCall(r, 'getReceivedRemit')) unreadable.set(id, shortError(r!.error));
-        if (r?.status !== 'success') return;
-        const receipt = r.result as MirrorReceipt;
-        out.set(id, receipt.receivedAt === 0n ? null : receipt);
-      });
+    const res = await settledChunkedRead(
+      client as never,
+      ids,
+      RECEIPT_READ_CHUNK,
+      (id) => ({ address: cfg.diamond as Address, abi: REMIT_ABI, functionName: 'getReceivedRemit' as const, args: [baseDiamond, BigInt(id)] as const }),
+      `remitAck getReceivedRemit dst=${cfg.id}`,
+      deadline,
+      run,
+    );
+    for (const [id, r] of res) {
+      if (failedOnOwnCall(r, 'getReceivedRemit')) unreadable.set(id, shortError(r.error));
+      if (r?.status !== 'success') continue;
+      const receipt = r.result as MirrorReceipt;
+      out.set(id, receipt.receivedAt === 0n ? null : receipt);
     }
   }));
   return { receipts: out, unreadable };
@@ -965,25 +956,21 @@ async function planLateDeliveries(
   const receiptCutoff = priorStageCutoffMs(deadline);
   const gateCutoff = priorStageCutoffMs(receiptCutoff);
   const ledgerCutoff = priorStageCutoffMs(gateCutoff);
-  const res: Awaited<ReturnType<typeof batchedRead>> = [];
-  for (let i = 0; i < ids.length; i += LATE_READ_CHUNK) {
-    // eslint-disable-next-line no-await-in-loop
-    const part = await settledRead(
-      publicClient as never,
-      ids.slice(i, i + LATE_READ_CHUNK).map((id) => ({
-        address: diamond,
-        abi: REMIT_ABI,
-        functionName: 'getRemitReservation' as const,
-        args: [BigInt(id)] as const,
-      })),
-      `remitAck late deliveries ${i}/${ids.length}`,
-      ledgerCutoff,
-    );
-    res.push(...part);
-  }
+  // From a start that moves each run (Codex #2607 r16): the open slice comes
+  // back in a stable order, so a cutoff that always lands in its first chunk
+  // would otherwise leave the rest of it unread every run.
+  const byId = await settledChunkedRead(
+    publicClient as never,
+    ids,
+    LATE_READ_CHUNK,
+    (id) => ({ address: diamond, abi: REMIT_ABI, functionName: 'getRemitReservation' as const, args: [BigInt(id)] as const }),
+    'remitAck late deliveries',
+    ledgerCutoff,
+    run,
+  );
+  const res = ids.map((id) => byId.get(id));
   // Retired before any send, so a failed send cannot lose them. Only a release
-  // actually READ rotates to the back; an unread one keeps its place and is
-  // read first next run.
+  // actually READ rotates to the back; an unread one keeps its place.
   // Which reservation holds each destination's COMPENSATION gate (#2571 r2):
   // a released compensation remit carries no stranded recycled share, yet its
   // late ack is what clears that gate on Base. One read per destination, not

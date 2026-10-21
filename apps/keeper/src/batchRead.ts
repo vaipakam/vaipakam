@@ -1,5 +1,6 @@
 import { createPublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall3';
+import { walkFrom } from './rotate';
 
 /** Result shape viem's `multicall` returns under `allowFailure: true`. */
 export type BatchResult = { status: 'success' | 'failure'; result?: unknown; error?: unknown };
@@ -188,6 +189,34 @@ export async function settledRead(
     const error = new Error(`${label}: still in flight at the read deadline — read next run`);
     return contracts.map(() => ({ status: 'failure' as const, error }));
   });
+}
+
+/**
+ * The keeper's ONE chunked read under a cutoff (Codex #2607 r16): `keys` read
+ * `chunk` at a time through {@link settledRead}, starting at a point that moves
+ * each run (`runWindow.ts` rule 2). A cutoff ends a run's reads partway, so a
+ * fixed order would leave the same tail unread every run; owning the rotation
+ * here means no caller can forget it. Each key maps to its result; a key whose
+ * chunk was not read maps to a failure like any other unread value.
+ */
+export async function settledChunkedRead<K>(
+  client: ReturnType<typeof createPublicClient>,
+  keys: readonly K[],
+  chunk: number,
+  call: (key: K) => unknown,
+  label: string,
+  cutoff: number,
+  run: number,
+): Promise<Map<K, BatchResult>> {
+  const out = new Map<K, BatchResult>();
+  const order = walkFrom(keys, run);
+  for (let i = 0; i < order.length; i += chunk) {
+    const part = order.slice(i, i + chunk);
+    // eslint-disable-next-line no-await-in-loop
+    const res = await settledRead(client, part.map(call), `${label} ${i}/${order.length}`, cutoff);
+    part.forEach((k, j) => out.set(k, res[j]));
+  }
+  return out;
 }
 
 /**
