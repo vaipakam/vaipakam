@@ -7,6 +7,7 @@ import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
+import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -153,6 +154,41 @@ contract RewardRemittanceLensFacet {
         bytes32 messageId
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().remitIdByCcipMessageId[messageId];
+    }
+
+    /**
+     * @notice The remote adapter remit `remitId` was bound to, beside the one
+     *         a remit to the same destination would be bound to now.
+     * @dev    #2561. `sentMessenger` is recorded at dispatch: the adapter on
+     *         the destination chain the message was addressed to, which is
+     *         where it executes, whatever the lane points at later (the
+     *         handler behind it is resolved there at execution).
+     *         `liveMessenger` is what the messenger names for that chain right
+     *         now. When they differ, the destination was redeployed after the
+     *         send: the message executes, if at all, behind the old adapter,
+     *         whose acknowledgement Base no longer authenticates, and the
+     *         reservation needs an operator decision on evidence
+     *         (`finalizeRemitReservation` only when the destination receipt
+     *         shows the remittance consumed, since it attests consumption
+     *         with a zero received figure and clears any compensation gate;
+     *         `releaseRemitReservation` when it will never execute).
+     *
+     *         Both are zero for a `remitId` never issued. `sentMessenger` is
+     *         also zero for a remit dispatched before the route was recorded:
+     *         the route is then UNKNOWN, which is not the same as "unchanged".
+     *         `liveMessenger` is zero when no messenger is configured, or it
+     *         names no adapter for the destination.
+     */
+    function getRemitRoute(
+        uint256 remitId
+    ) external view returns (address sentMessenger, address liveMessenger) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        sentMessenger = s.remitRemoteMessenger[remitId];
+        uint32 dstChainId = s.remitReservations[remitId].dstChainId;
+        address messenger = s.crossChainMessenger;
+        if (dstChainId != 0 && messenger != address(0)) {
+            liveMessenger = ICrossChainMessenger(messenger).remoteMessengerOf(dstChainId);
+        }
     }
 
     /// @notice The highest `remitId` issued so far (reservations are dense:

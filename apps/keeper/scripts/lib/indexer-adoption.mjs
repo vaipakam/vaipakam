@@ -3,8 +3,9 @@
  *
  * Two readers must agree on what "the indexer has adopted this Diamond"
  * means, and both read it from here:
- *   - the one-time copy (`scripts/keeper-cutover.mjs`), which seeds the
- *     keeper's own epoch record with the Diamond the copied rows belong to;
+ *   - the keeper's epoch fence (`src/epochFence.ts`), which refuses a send
+ *     or a guarded write unless every chain's settled adoption is still the
+ *     configured Diamond;
  *   - the keeper's epoch check on every tick (`src/keeperEpoch.ts`), which
  *     resets a chain's private rows only once the indexer has moved to the
  *     same Diamond.
@@ -21,7 +22,7 @@
  * scripts can both import it.
  */
 
-/** Every chain's record, for the copy. */
+/** Every chain's record, for the epoch fence. */
 export const INDEXER_DEPLOYMENTS_SQL = 'SELECT chain_id, diamond, reset_pending FROM indexer_deployment';
 /** One chain's record, for the tick (one bind: the chain id). */
 export const INDEXER_DEPLOYMENT_SQL = 'SELECT diamond, reset_pending FROM indexer_deployment WHERE chain_id = ?';

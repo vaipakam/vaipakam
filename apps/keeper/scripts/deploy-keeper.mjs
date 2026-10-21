@@ -17,23 +17,7 @@
  *   2. VERIFY, in the database, that every file in `migrations/` is recorded
  *      in its `d1_migrations` — the outcome, never an exit status (#2409 r3:
  *      a declined prompt exited 0 having applied nothing).
- *   3. REFUSE unless the one-time CUTOVER COPY is complete. Five of the
- *      keeper's private tables began life in the shared database, and a keeper
- *      that starts on empty or partial private copies re-sends CCIP
- *      acknowledgements it has already paid for. The copy is
- *      `scripts/keeper-cutover.mjs` (DeploymentRunbook, "Keeper private D1 —
- *      one-time cutover"), which records a marker only after EVERY table has
- *      the same fingerprint (row count, latest write time, a digest over every
- *      row and one per row) on both sides. The deploy requires that marker
- *      whenever the shared copies hold a row, and requires every row a shared
- *      table still holds to be one the copy took — a keeper that wrote the old
- *      copies after the copy left the private side behind. Rows that have only
- *      gone pass: the indexer's redeploy reset deletes a chain's rows. With no shared
- *      rows (a fresh environment, or the old copies retired) there is nothing
- *      to move and it passes. Anything unread refuses; it is never read as
- *      "no rows". (The earlier check looked at two of the five tables and
- *      passed once the private side held one row — Codex #2489 r1.)
- *   4. Hand over to the shared script's `verify` mode, which checks the shared
+ *   3. Hand over to the shared script's `verify` mode, which checks the shared
  *      schema and publishes. Its exit code is this script's.
  *
  * Takes NO arguments, for the shared script's reason (#2409 r3): an argument
@@ -48,7 +32,7 @@ import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unapplied } from '../../indexer/scripts/deploy-shared-d1.mjs';
-import { PRIVATE_DB, SHARED_DB, cutoverVerdict, readFingerprints, readMarker } from './lib/keeper-cutover.mjs';
+import { PRIVATE_DB } from './lib/keeper-databases.mjs';
 
 export { PRIVATE_DB };
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -93,12 +77,6 @@ function readMissing(required) {
   return unapplied(q.stdout ?? '', required);
 }
 
-/** Why the publish must wait for the cutover, or null when it need not. */
-function cutoverPending() {
-  const v = cutoverVerdict(readFingerprints(SHARED_DB), readMarker(PRIVATE_DB));
-  return v.ok ? null : v.why;
-}
-
 function main() {
   const gate = admit(process.argv.slice(2));
   if (!gate.ok) {
@@ -124,12 +102,6 @@ function main() {
   }
   if (missing.length > 0) {
     console.error(`[deploy] private migrations not applied: ${missing.join(', ')} — not publishing.`);
-    process.exit(1);
-  }
-
-  const pending = cutoverPending();
-  if (pending !== null) {
-    console.error(`[deploy] ${pending} — not publishing.`);
     process.exit(1);
   }
 

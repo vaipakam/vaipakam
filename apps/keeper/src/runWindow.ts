@@ -17,6 +17,14 @@
  *   3. A pass that reads before it sends stops reading early enough to leave
  *      its sends time ({@link readCutoffMs}). Otherwise a slow read phase uses
  *      the whole window, every send is refused, and the next run repeats it.
+ *      Refusing new reads at the cutoff is not enough on its own: a read
+ *      already in flight can outlast it, so a read phase whose callers must
+ *      not wait past the cutoff reads through `settledRead` (`batchRead.ts`),
+ *      which abandons such a read at the cutoff (`settleBy` for a single
+ *      read, such as a fee quote ahead of a send). A read stage that feeds a
+ *      LATER read stage leaves that stage a reserve the same way
+ *      ({@link priorStageCutoffMs}), so a stage that runs to its cutoff never
+ *      leaves the one after it no time at all.
  *
  * Leaf module: no keeper imports, so any pass (and the schedule) can use it.
  */
@@ -32,6 +40,15 @@ export const SEND_RESERVE_MS = 10_000;
  *  send reserve. Pure. */
 export function readCutoffMs(deadlineMs: number): number {
   return deadlineMs - SEND_RESERVE_MS;
+}
+
+/** How much time a read stage leaves for the read stage it feeds. */
+export const STAGE_RESERVE_MS = 5_000;
+
+/** When a read stage that feeds a later read stage, which must finish by
+ *  `nextStageCutoffMs`, must stop. Pure. */
+export function priorStageCutoffMs(nextStageCutoffMs: number): number {
+  return nextStageCutoffMs - STAGE_RESERVE_MS;
 }
 
 /** Which run of a pass this is, counting `stepMs` steps from the tick's

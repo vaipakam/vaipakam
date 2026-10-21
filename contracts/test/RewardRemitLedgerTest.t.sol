@@ -25,6 +25,7 @@ import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
+import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
@@ -287,6 +288,87 @@ contract RewardRemitLedgerTest is SetupTest {
     }
 
     // ─── reservation lifecycle (pre-cutover days: no gate, no clamp) ──────
+
+    // ─── #2561 — every remittance records the adapter it was bound to ──────
+
+    address internal constant MIRROR_MESSENGER = address(0xA11CE);
+
+    event RemitRouteRecorded(uint256 indexed remitId, uint32 indexed dstChainId, address remoteMessenger);
+
+    /// Each of the three blocks that create a reservation records the remote
+    /// adapter the messenger named for the destination, and the lens reads it
+    /// back beside the live one (the same while nothing was re-pointed).
+    function test_EveryDispatchPathRecordsItsRoute() public {
+        ccip.setRemoteMessenger(CHAIN_ARB, MIRROR_MESSENGER);
+
+        _finalizeDay(1);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RemitRouteRecorded(1, CHAIN_ARB, MIRROR_MESSENGER);
+        _remitDay1ToArb();
+
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 2e18);
+
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 2, 4e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 0);
+
+        assertEq(rlens.getRemitReservationNonce(), 3, "fixture: every creating block drove once");
+        for (uint256 id = 1; id <= 3; ++id) {
+            (address sentM, address liveM) = rlens.getRemitRoute(id);
+            assertEq(sentM, MIRROR_MESSENGER, "sent adapter");
+            assertEq(liveM, MIRROR_MESSENGER, "live adapter");
+        }
+    }
+
+    /// The lane re-pointed at a redeployed mirror after the send: the record
+    /// keeps the adapter the message was bound to, the live read names the
+    /// new one, and the two differ. That difference is what the keeper reads
+    /// to alert instead of waiting.
+    function test_RemitRoute_SurvivesALaneRepointedAfterTheSend() public {
+        ccip.setRemoteMessenger(CHAIN_ARB, MIRROR_MESSENGER);
+        _finalizeDay(1);
+        _remitDay1ToArb();
+
+        address newMessenger = address(0xA11CE2);
+        ccip.setRemoteMessenger(CHAIN_ARB, newMessenger);
+
+        (address sentM, address liveM) = rlens.getRemitRoute(1);
+        assertEq(sentM, MIRROR_MESSENGER, "sent adapter kept");
+        assertEq(liveM, newMessenger, "live adapter moved");
+    }
+
+    /// A destination with no remote adapter is refused before any value
+    /// moves, and the strict fee dry run refuses it by the same rule.
+    function test_Remit_UndeclaredRoute_RefusedBeforeValueMoves() public {
+        _finalizeDay(1);
+        uint256 diamondVpfi = vpfiTok.balanceOf(address(diamond));
+
+        ccip.setRemoteMessenger(CHAIN_ARB, address(0));
+        bytes memory refusal =
+            abi.encodeWithSelector(LibRewardRemitDispatch.RemitRouteUndeclared.selector, CHAIN_ARB);
+        vm.expectRevert(refusal);
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        vm.expectRevert(refusal);
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 69_000_000 ether);
+
+        assertEq(rlens.getRemitReservationNonce(), 0, "no reservation");
+        assertEq(ccip.sentCount(), 0, "nothing sent");
+        assertEq(vpfiTok.balanceOf(address(diamond)), diamondVpfi, "no VPFI moved");
+
+        // Declared again, the same remittance goes out.
+        ccip.setRemoteMessenger(CHAIN_ARB, MIRROR_MESSENGER);
+        _remitDay1ToArb();
+        assertEq(rlens.getRemitReservationNonce(), 1, "sent once declared");
+    }
+
+    /// A remitId never issued reads both adapters as zero.
+    function test_RemitRoute_NeverIssued_IsZero() public view {
+        (address sentM, address liveM) = rlens.getRemitRoute(99);
+        assertEq(sentM, address(0));
+        assertEq(liveM, address(0));
+    }
 
     function test_Remit_CreatesPendingReservation() public {
         _finalizeDay(1);

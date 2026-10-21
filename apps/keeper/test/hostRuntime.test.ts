@@ -305,11 +305,11 @@ describe('host tick schema check', () => {
     return { tick, lines, ran };
   }
 
-  it('declines with the private gate\'s own line when the cutover check fails, and runs nothing (#2497 re-cut)', async () => {
-    const h = setup(['0001_a.sql', '0002_b.sql'], { ok: false, line: '[keeper-host] tick declined: hf_band_state no longer matches the cutover copy' });
+  it('declines with the private gate\'s own line when it fails, and runs nothing (#2497 re-cut)', async () => {
+    const h = setup(['0001_a.sql', '0002_b.sql'], { ok: false, line: '[keeper-host] tick declined: keeper-private migration(s) 0002_x.sql not applied' });
     await h.tick(60_000, () => {});
     expect(h.ran, 'the shared schema is current, but the private gate holds the tick').toEqual([]);
-    expect(h.lines.at(-1)).toMatch(/no longer matches the cutover copy/);
+    expect(h.lines.at(-1)).toMatch(/keeper-private migration\(s\) 0002_x\.sql not applied/);
   });
 
   it('runs the tick once every migration this build carries is recorded', async () => {

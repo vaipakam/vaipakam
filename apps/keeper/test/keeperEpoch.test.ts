@@ -1,9 +1,9 @@
 /**
  * #2497 r10 — the keeper's own deployment epochs. A chain's Diamond changing
  * clears that chain's rows from every PRIVATE table keyed by chain and not by
- * Diamond, as the indexer does for its own tables. The one-time copy seeds the
- * record with the Diamond the copied rows belong to, so a later change resets
- * them. Real SQL on the real migrations.
+ * Diamond, as the indexer does for its own tables. The one-time copy (retired
+ * in #2560) seeded the record with the Diamond the copied rows belong to, so a
+ * later change resets them. Real SQL on the real migrations.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { adoptKeeperDeployments, listResetOnDiamondChange } from '../src/keeperEpoch';
@@ -55,7 +55,7 @@ describe('adoptKeeperDeployments', () => {
   it('a copy seeded with OLD resets once the configured NEW is the indexer\'s too, never before (#2497 r12, re-cut)', async () => {
     const { keeper, env, band, bands, indexerAdopts } = setup();
     indexerAdopts(OLD);
-    // What the cutover records: the copied rows belong to OLD.
+    // What the cutover recorded: the copied rows belong to OLD.
     keeper.db.prepare('INSERT INTO keeper_deployment (chain_id, diamond, adopted_at) VALUES (84532, ?, 1)').run(OLD);
     band(84532, 7);
     band(97, 7); // another chain: never touched

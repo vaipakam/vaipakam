@@ -369,9 +369,8 @@ manual follow-up required when the prerequisites are in place:
    **The keeper also binds a PRIVATE database, `vaipakam-keeper-db`
    (`KEEPER_DB`, #2450), and its package deploy applies that schema
    itself** (`apps/keeper/scripts/deploy-keeper.mjs`: apply, verify in the
-   database, then the shared `verify` and publish). Run the one-time cutover
-   below before the FIRST deploy of a keeper that reads `KEEPER_DB`; the
-   deploy refuses to publish while that copy is pending — see "Keeper
+   database, then the shared `verify` and publish). The one-time cutover
+   that preceded the first such deploy is done and retired — see "Keeper
    private D1 — one-time cutover".
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
    `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
@@ -717,7 +716,99 @@ So drain first, following the rule the #1566 design sets for every transition
 
 This applies to the canonical chain and, as #2561 explains, to a mirror
 redeployed on its own. A chain whose reservation nonce is 0 has nothing to
-drain. That was the case for Base Sepolia on 2026-10-17: both the retired
+drain.
+
+**What happens if a mirror is redeployed without the drain** (#2561, on a
+canonical Diamond that carries it). Base records, for every remittance, the
+remote messenger the message was bound to; `getRemitRoute(remitId)` returns it
+beside the remote messenger the lane names now. That adapter is the whole
+route: it hands the message to whatever receiver it has registered when the
+message executes. So a mirror redeployed behind the SAME messenger, with the
+receiver re-registered, still receives messages that had not yet executed. A
+mirror redeployed with a NEW messenger, and Base's lane re-pointed at it, never
+receives a message bound to the old one, so the new mirror never holds its
+receipt. The keeper's ack pass then posts one ops alert per run, "N
+remittance(s) still Pending on Base were sent through a remote adapter the lane
+no longer names". It lists each remittance with its age, the adapter it was
+sent to, the adapter the lane names now (or "no adapter"), the CCIP message id
+and the amount, and re-posts each daily while it stays Pending.
+
+The record cannot see one case: a message that executed at the OLD receiver
+before it was replaced behind the same messenger, and was not yet
+acknowledged. Its receipt is on the old Diamond, and its route reads as
+current. That case, and a message waiting on CCIP for manual execution, is
+caught by a second alert. A Pending remittance with no receipt on the mirror
+the keeper reads more than 8 hours after its send (CCIP's usual
+smart-execution window) is reported as "N remittance(s) still Pending on Base
+have no receipt on the mirror the keeper reads … The keeper does not know
+why", with the same evidence. Check the message on the CCIP explorer first.
+A remittance whose receipt the keeper cannot read gets a third alert, "… went
+to a chain where this keeper cannot read their receipts", with its route as
+Base records it and the cause in its line. Either the keeper has no RPC secret
+or deployment entry for that chain (give it both), or that chain's Diamond
+answered the receipt read with an error (point the keeper's deployment entry
+at the Diamond that holds the receipts). Once it can read them it acknowledges
+any it finds. One whose route is a
+retired adapter gets the retired-route alert instead, with the missing
+configuration named in its line, because configuring the chain cannot reach a
+receipt behind the old adapter.
+
+A released remittance that waits for a late acknowledgement gets the
+retired-route alert from the late path. That alert names what is still
+outstanding: its stranded share, that the share is not yet stamped, or the
+compensation gate it holds. The keeper settles none of these. The operator's
+options, on the evidence:
+
+1. Pending, and the message waits for manual execution on CCIP: execute it
+   there. The receipt then appears and the keeper acknowledges it by itself.
+2. Pending, and the message executed behind the old adapter, or at a receiver
+   since replaced: acknowledge it by hand from the mirror Diamond that holds
+   its receipt. That is the receiver the adapter had registered when the
+   message executed, which the destination transaction shows (find it on the
+   CCIP explorer by message id). Do not assume it is the pre-redeploy mirror,
+   and if the message has not executed, no Diamond can acknowledge it yet. Base only accepts acknowledgements from the lane's current peers, so
+   this needs the old remote messenger and channel peer restored on Base's
+   `CcipMessenger` for the duration, then the redeploy's values put back (the
+   recovery shape in AdminConfigurableKnobsAndSwitches, "Rotating a channel
+   peer"). For a receiver replaced behind the same messenger, that means
+   registering the old receiver's channel again. While the old adapter is
+   restored the retired-route alert clears; the overdue alert stays while the
+   receipt is missing.
+
+   **Restoring the old remote messenger also points Base's OUTBOUND traffic
+   to that chain at the retired adapter**, because `CcipMessenger` sends every
+   message through the same per-chain record it accepts acknowledgements from.
+   Any remittance, reward broadcast or other message Base sends to that chain
+   while the old values are in place goes to the retired deployment. So, in
+   this order: set the keeper's `REWARD_REMIT_ENABLED` to `false` and restart
+   it (this stops both remittance passes, including the new remittances), and
+   hold every other send from Base to that chain, manual remittances
+   included; then restore the old values, send the acknowledgement, and put
+   the redeploy's values back as soon as it executes on Base; then check
+   Base's messenger for any message sent to that chain inside the window, and
+   treat each one as sent to the retired adapter (it gets the retired-route
+   alert); and only then re-arm `REWARD_REMIT_ENABLED` and restart. Arming
+   flags need the owner's OK as usual. Or, only when the destination receipt shows the
+   remittance CONSUMED, finalize it on Base with
+   `finalizeRemitReservation(remitId)`. That is the operator's consumption
+   attestation: it records a zero received figure, books the reservation's
+   recycled share and clears any compensation gate it holds. A quarantined or
+   provisional receipt is not that evidence; acknowledge it from its Diamond
+   as above, so Base sees its real classification.
+3. Pending, and it will never execute: `releaseRemitReservation(remitId)`, no
+   sooner than seven days after the send.
+4. Released, with its stranded share or compensation gate unresolved: a late
+   acknowledgement from the Diamond that holds its receipt (identified as in
+   2), or `recordRecoveryCeremony`
+   for value a governance ceremony brought back to the Diamond and
+   `recordRecoveryTerminalLoss` for governance-evidenced loss of the rest. A
+   compensation gate clears once the two cover the remittance's total.
+
+Record whichever was done, by remit id, in the redeploy's release fragment.
+Each alert clears on its own once the reservation is settled, its receipt
+appears, or its reason no longer holds. A canonical
+Diamond deployed before #2561 records no route, so for it the drain above is
+the only safeguard. That was the case for Base Sepolia on 2026-10-17: both the retired
 Diamond `0xd89fd7…b995` and the new one read nonce 0.
 
 ### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains, any order)
@@ -1031,141 +1122,45 @@ per-chain through the DO; Phase B adds a WebSocket push fan-out from the same DO
 
 ---
 
-## Keeper private D1 — one-time cutover (#2450)
+## Keeper private D1 — one-time cutover (#2450) — DONE, retired in #2560
 
-**When:** once, at the end-of-programme deploy — the first deploy of a
-keeper build whose `wrangler.jsonc` binds `KEEPER_DB`. Not before: the
-keeper deployed today still reads the shared copies of these tables.
+There is nothing to run here any more. This section stays so a reader who
+remembers the procedure can find where it went.
 
-**What moves.** `apps/keeper` owns a private D1, `vaipakam-keeper-db`
-(id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
-operational state nothing outside the keeper reads: `hf_band_state`,
+`apps/keeper` owns a private D1, `vaipakam-keeper-db` (id
+`f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
+operational state nothing outside the keeper reads. Its schema is
+`apps/keeper/migrations/`, and the keeper's `pnpm run deploy` is its one
+applier.
+
+Five of those tables began in the shared `vaipakam-warm`: `hf_band_state`,
 `keeper_commitment_scan`, `keeper_commitment_day`,
-`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_ops_alert`,
-`keeper_sanctions_screen` + `keeper_sanctions_watch` (where the sanctions
-screen resumes, and the owners it is watching), `keeper_work_open` +
-`keeper_work_cursor` (the passes' open-work queue and where its discovery
-resumes), `keeper_deployment` (the Diamond each chain's private state belongs
-to) and `keeper_cutover` (this
-cutover's completion record).
-Its schema is `apps/keeper/migrations/`. Everything another Worker, the app
-or the backup reads stays in `vaipakam-warm` under the indexer's
-migrations. The database already exists; nothing here creates it.
+`keeper_remit_ack_frontier` and `keeper_remit_ack`. A one-time copy
+(`pnpm --filter @vaipakam/keeper run cutover`) moved their rows across on
+2026-10-18, with the keeper stopped. It wrote its completion record
+(`keeper_cutover`, plus one digest per copied row in `keeper_cutover_row`)
+only once every table matched on both sides. Until #2560 the keeper's
+deploy and the machine's per-tick gate both refused to run while the shared
+copies held a row that record did not account for.
 
-**What the deploy does, and what it will not do.** The `cf-keeper` phase of
-`deploy-chain.sh` / `deploy-testnet.sh` / `deploy-mainnet.sh` runs the
-keeper's `pnpm run deploy` (`apps/keeper/scripts/deploy-keeper.mjs`): it
-applies `vaipakam-keeper-db`'s migrations (step 1 below happens there too,
-idempotently), verifies them, and hands the shared schema to
-`deploy-shared-d1.mjs verify`. The copy in step 2 has to sit between the
-schema and the publish, so the deploy checks for it rather than running past
-it. While any of the five moved tables holds rows in the shared copy, it
-REFUSES to publish unless `keeper_cutover` records a completed copy AND every
-row a shared table still holds is one that copy took (it keeps one digest per
-row, in `keeper_cutover_row`). A missing record means the copy has not run; a
-row the copy did not take means a keeper wrote the old copy afterwards, so the
-private side is behind. Rows that have only gone pass, because the indexer's
-redeploy reset deletes a chain's rows. The machine runs the same check before
-every tick. Either way the refusal names the table. With no shared rows at
-all (a fresh environment, or the old copies retired) there is nothing to move
-and it passes. Step 2 itself is one command, run by hand because it needs the
-keeper stopped. The refusal is what makes skipping it loud instead of a
-re-send of paid acknowledgements.
+What #2560 changed:
 
-**The order is load-bearing.** Five of the keeper's tables are LIVE in the shared
-database today. A keeper that starts on an empty private copy forgets which
-remit acknowledgements it already sent — and re-sends paid CCIP messages for
-every reservation still Pending — and forgets the HF band each at-risk loan
-was last seen in, so it re-alerts those borrowers. So the rows are copied
-immediately before the keeper that reads `KEEPER_DB` goes live, with no
-keeper tick in between.
+- Indexer migration `0064_retire_shared_keeper_tables.sql` drops the five
+  shared copies. It is drop-only, so it is additive in effect: the keeper
+  build serving when it lands already read a missing table as retired and
+  passed.
+- The copy script and its checks are removed. The keeper's deploy now
+  applies and verifies the private migrations, then hands over to the
+  shared `verify`. The machine's gate checks only that the private
+  migrations are applied.
+- The cutover record stays in `vaipakam-keeper-db` as history. Nothing reads
+  it, and leaving it in place costs nothing.
 
-1. **Apply the keeper's schema.** From the repo root:
-
-   ```bash
-   ( cd apps/keeper && wrangler d1 migrations apply vaipakam-keeper-db --remote )
-   ( cd apps/keeper && wrangler d1 migrations list vaipakam-keeper-db --remote )
-   ```
-
-   (`pnpm --filter @vaipakam/keeper run migrate` is the same apply.) The
-   apply asks for confirmation; the `list` is the verdict — it must show
-   every file in `apps/keeper/migrations/` applied and nothing pending.
-
-2. **Copy the live rows, with the keeper stopped.** Rows the running keeper
-   writes after the export are lost, so stop EVERY runner first. Since #2497
-   the keeper runs on the always-on machine, and the Worker's `scheduled`
-   handler declines every invocation. So stopping the keeper means stopping
-   the machine, in the order `docs/ops/KeeperMachine.md` §4a gives: pause its
-   deploys (`sudo systemctl disable --now vaipakam-keeper-update.timer`, then
-   `sudo systemctl stop vaipakam-keeper-update.service`), stop the keeper
-   (`sudo systemctl stop vaipakam-keeper`), and wait until `systemctl
-   is-active vaipakam-keeper` prints `inactive`. Also confirm the Worker's
-   *Settings → Trigger Events* is still empty (`"crons": []`). After the
-   cutover, resume the machine as §4a step 5 says. There is no Worker deploy
-   step for the keeper's runtime.
-
-   Then run the cutover, from the repo root:
-
-   ```bash
-   pnpm --filter @vaipakam/keeper run cutover
-   ```
-
-   (`apps/keeper/scripts/keeper-cutover.mjs`; it takes no arguments.) It
-   refuses if a cutover is already recorded. It exports the five tables from
-   `vaipakam-warm` in ONE `wrangler d1 export` (data only) — the export holds
-   the database while it runs, and the shared database keeps serving the
-   indexer, the agent and the app, so one window, not five, and one snapshot
-   of all five tables — empties the five private tables, and imports that
-   export — emptying first makes a re-run after a partial import exact. It then compares every table's fingerprint (row count, latest write time,
-   a digest over every row and one per row) on both sides, and checks that the
-   shared side has not changed since it started. Only when all five match does it write the
-   `keeper_cutover` record, which it reads back. Any mismatch, or anything it
-   could not read, ends the run with no record and names the table: fix the
-   cause (usually a keeper still running) and run it again. The export files
-   hold keeper operational state; it writes them to a private temporary
-   directory and removes them however the run ends.
-
-   **A deliberate re-run** (for example after rolling back to the shared
-   copies and forward again) first copies any private rows worth keeping
-   back to the shared side, then deletes the record —
-   `( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM keeper_cutover; DELETE FROM keeper_cutover_row" )`
-   — and runs the cutover again.
-
-3. **Resume the machine — immediately.** `docs/ops/KeeperMachine.md` §4a
-   step 5: re-enable its update timer, run one update to install the build
-   that reads `KEEPER_DB`, then START the keeper explicitly. An update only
-   restarts a keeper that is running, and step 2 stopped it. Nothing may
-   tick between step 2 and this. (The Worker needs no deploy for this: it runs no
-   ticks. Its own `run deploy`, which applies the private schema, may run
-   whenever it is due.)
-
-4. **Verify.**
-   - The machine's journal (`journalctl -u vaipakam-keeper -f`) shows ticks
-     running with no `tick declined` line, no `no such table` and no
-     `D1 is not available`.
-   - A keeper-private write lands in `vaipakam-keeper-db`: for an armed
-     remit pass, `SELECT MAX(updated_at) FROM keeper_remit_ack_frontier`
-     there moves past the resume time. Prefer an observable write; where
-     none can be provoked, the clean tick lines are the evidence.
-   - The OLD copies stopped changing: the same `MAX(updated_at)` read
-     against `vaipakam-warm` stays at its pre-cutover value. A later value
-     there means a keeper version that still reads the shared tables is
-     serving.
-
-5. **Later — not in this change — drop the old copies.** The five shared
-   tables stay in `vaipakam-warm` through the rollback window: rolling back
-   means redeploying the previous keeper, which reads them (first copy the
-   private rows back to the shared tables — `wrangler d1 export
-   vaipakam-keeper-db --remote --no-schema --table=<t>`, then empty that
-   table in `vaipakam-warm` and import the file there — if the new keeper
-   has run long enough to matter; rolling forward again is the re-run in
-   step 2). Once no serving keeper reads them, retire them with a
-   NEW indexer migration that only `DROP TABLE`s them — never by editing
-   `0041` / `0043` / `0044`, which are applied and keyed by filename. That
-   drop is destructive, so it is the second step of an expand/contract pair
-   and ships on its own. When it lands, also remove the "Before the
-   keeper's private database is live" fallback from
-   `docs/ops/OffChainRestore.md` §6.
+Rolling back to a keeper that reads the shared copies is no longer possible:
+those tables are gone. The one-runner lease (`keeper_runner_lease`, #2503)
+is what keeps a second keeper out. The cutover gate only watched for a
+legacy keeper writing the old copies, and it could not see one that only
+deleted rows.
 
 ## How addresses get persisted
 

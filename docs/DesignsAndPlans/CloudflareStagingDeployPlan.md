@@ -174,13 +174,14 @@ as a privilege boundary:
   with a cadence tweak.
 
   **#2450 takes the per-Worker-database answer for the keeper's OWN
-  records** (effective once its one-time cutover is deployed —
+  records** (in effect since its one-time cutover ran on 2026-10-18; the
+  old shared copies are dropped by indexer migration `0064`, #2560 —
   `docs/ops/DeploymentRunbook.md`). `keeper_commitment_day`, the scan
   frontiers, the remit-ack log, `hf_band_state` and `keeper_ops_alert`
   (with the sanctions screen's `keeper_sanctions_screen` and
   `keeper_sanctions_watch`, the passes'
   open-work queue `keeper_work_open` + `keeper_work_cursor`, the keeper's
-  redeploy epoch `keeper_deployment` and the cutover's `keeper_cutover`) move to a keeper-private D1 (`vaipakam-keeper-db`) that the indexer
+  redeploy epoch `keeper_deployment` and the retired cutover's record `keeper_cutover`) move to a keeper-private D1 (`vaipakam-keeper-db`) that the indexer
   does not bind, so (c) no longer reaches the completion marker above.
   It does NOT settle #1722: every input the keeper reads from the shared
   database — `loans`, `activity_events`, `keeper_commitment_reconciled`
