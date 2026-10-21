@@ -764,7 +764,7 @@ exact write/read split).
 binding `KEEPER_DB`, alongside its shared `DB`), with its own
 `apps/keeper/migrations/`, for keeper-only operational state: its scan
 cursors, completion markers, remit-ack log, HF-band edge state, its own
-redeploy epoch and the cutover's record. Separate by trust boundary, like
+redeploy epoch and the retired cutover's record. Separate by trust boundary, like
 `ops/mesh-watcher` below: the indexer and agent have no binding through
 which to write the keeper's completion records. Apply with
 `wrangler d1 migrations apply vaipakam-keeper-db --remote` from inside
@@ -774,13 +774,13 @@ keeper's `deploy` applies these itself** (`apps/keeper/scripts/deploy-keeper.mjs
 verifies them in the database, and then hands the shared schema to
 `deploy-shared-d1.mjs verify` exactly as before; keep a keeper migration
 additive like any other (the old keeper is still serving when it lands).
-The one-time move of the live rows is `pnpm --filter @vaipakam/keeper run
-cutover` (`docs/ops/DeploymentRunbook.md`, "Keeper private D1 — one-time
-cutover"). It records completion only when all five moved tables match on
-both sides (count, latest write, a digest of every row), and the deploy and
-the machine both REFUSE while the shared copies hold rows and that record is
-missing, or a shared copy holds a row the copy did not take (deletions, which
-the indexer's redeploy reset makes, are allowed). The keeper runs only on the
+The one-time move of the live rows (#2450) ran on 2026-10-18 and is
+RETIRED (#2560): shared migration `0064` drops the five old shared copies,
+the copy script and its checks are gone, and the deploy and the machine now
+check only that the private migrations are applied. The cutover's record
+(`keeper_cutover`, `keeper_cutover_row`) stays in the private database as
+history; nothing reads it. The one-runner lease is what keeps a second
+keeper out. The keeper runs only on the
 always-on machine (`docs/ops/KeeperMachine.md`); the Worker's `scheduled`
 handler declines every invocation.
 
@@ -794,9 +794,10 @@ keeper reads goes in `apps/keeper/migrations/`. Apply the shared schema with
 directly on a deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap. Five of the
 keeper-private tables were first created by shared migrations `0041`,
-`0043` and `0044`, which are applied — never edit or renumber them; the old
-shared copies are retired later by a NEW indexer migration that only drops
-them (`apps/keeper/test/keeperPrivateD1.test.ts` refuses anything else).
+`0043` and `0044`, which are applied — never edit or renumber them; `0064`
+drops those shared copies again (#2560), and that drop-only form is the one
+thing `apps/keeper/test/keeperPrivateD1.test.ts` lets a later shared
+migration do to a keeper-private table.
 
 **Migrations apply BEFORE code ships, ONE applier, and every migration is
 additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES

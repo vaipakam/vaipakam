@@ -1620,14 +1620,6 @@ direction. The reverse order, interrupted, leaves exactly the worst
 combination above. Re-run whichever command did not complete before
 moving on.
 
-**Before the keeper's private database is live** — the deployed keeper's
-config has no `KEEPER_DB` binding yet, because the one-time cutover in
-`docs/ops/DeploymentRunbook.md` ("Keeper private D1 — one-time cutover")
-has not run — the keeper still reads the SHARED `hf_band_state`. In that
-state skip the private command and add `DELETE FROM hf_band_state;` to the
-shared one instead; clearing the private copy would empty a table the
-deployed keeper never reads.
-
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
 the lists `backup.ts` carries, and the full born-off-chain vs

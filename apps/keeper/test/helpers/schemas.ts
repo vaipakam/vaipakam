@@ -3,16 +3,16 @@
  * migrations that really define it:
  *
  *   - SHARED (`env.DB`, `vaipakam-warm`) — every `apps/indexer/migrations`
- *     file, THEN the keeper-private tables dropped.
+ *     file, replayed as it is.
  *   - KEEPER (`env.KEEPER_DB`, `vaipakam-keeper-db`) — `apps/keeper/migrations`.
  *
- * Why the drop. Five of the keeper-private tables were first created by
- * indexer migrations that are already applied and must never be edited, so a
- * plain replay of the indexer directory still contains them. A test built on
- * that replay would let a query sent to the WRONG handle succeed against a
- * stale copy — the exact mis-routing this split has to rule out. With the
- * tables dropped, the shared harness is the shared database as it stands once
- * the old copies are retired, and a mis-routed statement fails `no such table`.
+ * Five of the keeper-private tables were first created by indexer migrations
+ * that are applied and must never be edited (0041, 0043, 0044). A later
+ * indexer migration drops them again (0064, #2560), so a plain replay of the
+ * indexer directory is the shared database as it stands, holding none of
+ * them, and a statement sent to the WRONG handle fails `no such table`. This
+ * harness used to drop them itself, which modelled a retirement that had not
+ * happened yet; `keeperPrivateD1.test.ts` now checks the replay holds none.
  *
  * The keeper-private table set is DERIVED from the keeper's migrations rather
  * than listed here, so this file cannot disagree with the schema it models;
@@ -58,11 +58,9 @@ export const KEEPER_MIGRATIONS = readAll(KEEPER_MIGRATIONS_DIR);
 /** The tables the keeper's own migrations create — its private database. */
 export const KEEPER_PRIVATE_TABLES: readonly string[] = KEEPER_MIGRATIONS.flatMap(createdTables);
 
-/** The shared database without the keeper-private tables (see the header). */
+/** The shared database, from the indexer's migrations (see the header). */
 export function createSharedD1(): SqliteD1 {
-  const h = createSqliteD1(SHARED_MIGRATIONS);
-  for (const t of KEEPER_PRIVATE_TABLES) h.db.prepare(`DROP TABLE IF EXISTS ${t}`).run();
-  return h;
+  return createSqliteD1(SHARED_MIGRATIONS);
 }
 
 /** The keeper's private database, from its own migrations only. */

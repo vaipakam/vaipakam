@@ -200,24 +200,25 @@ An empty value is unset, as an unbound setting is on the Worker. A chain or
 pass that needs it skips without an error, so check the `chains resolved`
 line (§5).
 
-## 4a. The keeper's private database (#2450): migrations and the one-time cutover
+## 4a. The keeper's private database (#2450): migrations
 
 From #2496 the keeper keeps its own operational state (scan cursors,
 completion markers, the remit-ack log, HF-band edge state, its redeploy epoch) in a
-private database, `vaipakam-keeper-db`, instead of the shared one. Five of those
-tables already hold rows in the shared database, written by the keeper running
-today, and they move ONCE, with the keeper stopped.
+private database, `vaipakam-keeper-db`, instead of the shared one.
 
-The machine never moves them and never applies the private migrations itself:
-the keeper's deploy is the one applier of that database. Instead, every tick
-checks, and declines naming the reason, until all of this holds: the private
-database, at its pinned id, records every keeper migration, and the cutover
-verdict passes. It runs that full check, content digest included, on every
-tick, so a keeper that writes the old copies later stops the machine on its
-next tick, even one that rewrites a row within the same second. Rows that
-have only gone are accepted: the indexer's reset after a Diamond redeploy
-deletes a chain's rows, and that is not a keeper write. The keeper applies the
-same reset to its own private records when a chain's Diamond changes, logging
+The machine never applies the private migrations itself: the keeper's deploy
+is the one applier of that database (`pnpm --filter @vaipakam/keeper run
+migrate`). Instead, every tick checks that the private database, at its pinned
+id, records every keeper migration this build carries, and declines naming the
+missing ones until it does. It resumes by itself once they are applied.
+
+The one-time copy of the five tables that began in the shared database ran on
+2026-10-18 and is retired (#2560). Indexer migration `0064` drops the old shared
+copies, so the tick no longer reads them (DeploymentRunbook, "Keeper private D1
+— one-time cutover").
+
+After a Diamond redeploy the indexer resets that chain's rows, and the keeper
+applies the same reset to its own private records, logging
 `Diamond changed … reset private …` once. It does that only once the indexer has adopted
 the same Diamond, and a chain runs at all only while the indexer's adopted
 Diamond equals the one the keeper is configured with — checked on every tick,
@@ -237,40 +238,7 @@ indexer resets carries that condition INSIDE its own statement, so the check
 and the write are one statement (one HTTP request here) that no adoption can
 land between — a refused write changes nothing and is reported as `refused by
 its statement's guard`. So the minute between the indexer's move and the next
-declined tick is not a window in which an old pass can act. Once the
-cutover is recorded the old copies no longer grow, so the check costs the
-same every tick. That verdict is the same rule the
-Worker deploy uses: no shared rows, or a recorded copy whose fingerprints still
-match. So a machine that picks up the new build early stops; it does not start
-from empty state.
-
-**Order, once, when the release carrying #2497 is merged:**
-
-1. **Pause deploys BEFORE the merge** (§6, "Pause deploys"). Otherwise the
-   update timer installs the new build and the keeper starts declining every
-   tick. That is safe, but it is an outage of the armed passes.
-2. **Stop the keeper:** `sudo systemctl stop vaipakam-keeper`, and wait for it
-   to exit. The copy is only valid while nothing writes the shared tables.
-3. **Apply the private migrations,** from a checkout with the Cloudflare
-   credentials: `pnpm --filter @vaipakam/keeper run migrate`.
-4. **Run the cutover,** same place: `pnpm --filter @vaipakam/keeper run
-   cutover` (DeploymentRunbook, "Keeper private D1 — one-time cutover"). It
-   records completion only when all five tables match on both sides.
-5. **Resume deploys, then START the keeper** (§6):
-
-   ```bash
-   sudo systemctl enable --now vaipakam-keeper-update.timer
-   sudo systemctl start vaipakam-keeper-update.service   # install the new build now
-   sudo systemctl start vaipakam-keeper
-   ```
-
-   The explicit start is required. An update RESTARTS the keeper only if it
-   is running (`try-restart`), and step 2 stopped it, so resuming deploys
-   alone installs the build and leaves the keeper off. Then confirm, as in
-   §5, that ticks run, with no `tick declined` line.
-
-If step 4 refuses because a table changed, a keeper wrote the old copy after
-step 2. Find it and stop it, then run step 4 again.
+declined tick is not a window in which an old pass can act.
 
 ## 5. Start disarmed, validate, then arm
 

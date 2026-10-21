@@ -25,8 +25,8 @@
  *     database (#2450) with the same account and token — the Worker binds
  *     both, so the machine supplies both. Its id is the PINNED one from the
  *     D1 registry (`PRIVATE_DB_ID`), never host config (#2497 r4): a wrong
- *     id could point the keeper at an empty or unrelated ledger whose
- *     cutover check passes vacuously.
+ *     id could point the keeper at an empty or unrelated ledger that
+ *     passes the schema check and holds none of its state.
  *
  * A private id equal to the shared one is refused: that would be a second
  * handle onto the shared data under the private name, which the registry
@@ -40,7 +40,7 @@
 
 import { hostname as osHostname } from 'node:os';
 import { SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
-import { PRIVATE_DB_ID } from '../scripts/lib/keeper-cutover.mjs';
+import { PRIVATE_DB_ID } from '../scripts/lib/keeper-databases.mjs';
 import { createD1HttpDatabase } from './d1Http';
 
 /** The settings the machine host reads that a Worker never sees. */
