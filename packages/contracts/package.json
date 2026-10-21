@@ -31,6 +31,10 @@
       "types": "./src/recycleBacking.ts",
       "default": "./src/recycleBacking.ts"
     },
+    "./ccip-selectors": {
+      "types": "./src/ccipSelectors.ts",
+      "default": "./src/ccipSelectors.ts"
+    },
     "./abis/*.json": "./src/abis/*.json",
     "./deployments": {
       "types": "./src/deployments.ts",

@@ -186,7 +186,7 @@ export function reportSentVia(receipt: TransactionReceipt | null, checked: Addre
 
 /** Base's expected-source list against the messenger's broadcast list. */
 export interface Topology {
-  /** Expected mirrors no day is broadcast to. */
+  /** Expected mirrors the send to every destination does not reach. */
   undeliverable: number[];
   /** Destinations whose reports Base refuses as unexpected. */
   unexpected: number[];
@@ -209,7 +209,12 @@ export function topologyOf(expected: readonly number[], destinations: readonly n
 export function topologyFaults(t: Topology, self: number): string[] {
   const out: string[] = [];
   if (t.undeliverable.length > 0) {
-    out.push(`chain(s) ${t.undeliverable.join(', ')} are on Base's expected-source list but are not broadcast destinations, so no finalized day reaches them and their users cannot claim`);
+    // Not an outage in itself: the pass sends each finalized day to these
+    // alone. What stands is that only that separate send reaches them, and a
+    // day it cannot make is said for that day (broadcast.ts).
+    out.push(
+      `chain(s) ${t.undeliverable.join(', ')} are on Base's expected-source list but are not broadcast destinations, so the send to every destination does not reach them: each finalized day reaches them only by a separate send to each alone, which this keeper makes and pays for, and a day it cannot send them that way is said for that day`,
+    );
   }
   const unexpected = t.unexpected.filter((c) => c !== self);
   if (unexpected.length > 0) {

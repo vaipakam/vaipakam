@@ -32,6 +32,7 @@ import {
   type FinalizeInput,
   type PeerReader,
 } from '../src/rewardDayClose';
+import { ccipSelectorOf } from '@vaipakam/contracts/ccip-selectors';
 import { retireUnworkedAlerts } from '../src/rewardDayClose/alerts';
 import { DayStore } from '../src/rewardDayClose/store';
 import type { Env } from '../src/env';
@@ -295,6 +296,10 @@ class FakeDiamond {
           return args![0] === REWARD_CHANNEL ? reward : ZERO;
         case 'channelPeerOf':
           return args![0] === REWARD_CHANNEL ? (MESSENGER_OF[Number(args![1] as bigint)] ?? ZERO) : ZERO;
+        case 'chainSelectorOf':
+          return ccipSelectorOf(Number(args![0] as bigint)) ?? 0n;
+        case 'chainIdOf':
+          return BigInt(Object.keys(TRANSPORT_OF).map(Number).find((id) => ccipSelectorOf(id) === args![0]) ?? 0);
         default:
           throw new Error(`unexpected transport read ${functionName}`);
       }
@@ -703,6 +708,10 @@ describe('a run', () => {
       ["Base's reward messenger forwards to another Diamond", () => base.wire.set('diamond', '0x00000000000000000000000000000000000000b9'), /forwards reports to 0x0+b9, not to Base's Diamond 0x0+b1/],
       ["this chain's transport has no channel for the reward messenger", () => mirror.wire.set('channelOf', `0x${'00'.repeat(32)}`), /has no channel registered for the reward messenger 0x0+c2 \(registerChannel\)/],
       ["this chain's reward messenger has no transport", () => mirror.wire.set('messenger', ZERO), /reward messenger 0x0+c2 has no transport set/],
+      ["this chain's transport sends to Base on another chain's CCIP lane", () => mirror.wire.set('chainSelectorOf', ccipSelectorOf(OTHER)), /this chain's transport 0x0+c3 sends to Base \(chain 84532\) on CCIP selector 13264668187771770619, not Base's 10344971235874465080, so a report goes to another lane \(setChainSelector\)/],
+      ["this chain's transport has no CCIP selector for Base", () => mirror.wire.set('chainSelectorOf', 0n), /this chain's transport 0x0+c3 has no CCIP selector for Base \(chain 84532; setChainSelector; the send reverts UnconfiguredChain\)/],
+      ["Base's transport takes this chain's CCIP selector to be another chain's", () => base.wire.set('chainIdOf', BigInt(OTHER)), /Base's transport 0x0+b3 takes a message on this chain's CCIP selector 3478487238524512106 to come from chain 97, not this chain \(421614\), so it checks this chain's reports against that chain's wiring \(setChainSelector on Base\)/],
+      ["Base's transport maps this chain's CCIP selector to no chain", () => base.wire.set('chainIdOf', 0n), /Base's transport 0x0+b3 maps this chain's CCIP selector 3478487238524512106 to no chain \(setChainSelector on Base; delivery reverts UnconfiguredSelector\)/],
     ];
     for (const [what, wireIt, said] of cases) {
       it(what, async () => {
@@ -733,6 +742,13 @@ describe('a run', () => {
       await run(mirror);
       expect(mirror.sent).toEqual([]);
       expect(alerts(/is unknown: the sender Base's transport accepts on the reward channel from this chain could not be read/)).toHaveLength(1);
+    });
+
+    it("holds when Base's map of this chain's CCIP selector cannot be read, and says which", async () => {
+      base.wire.set('chainIdOf', 'unread');
+      await run(mirror);
+      expect(mirror.sent).toEqual([]);
+      expect(alerts(/is unknown: the chain Base's transport takes a message on this chain's CCIP selector to come from \(its chainIdOf\) could not be read/)).toHaveLength(1);
     });
 
     it('states a known fault even while another link is unread', async () => {

@@ -11,24 +11,34 @@
 // The path, as the contracts check it:
 //   here    the Diamond's reward messenger sends to Base (`baseChainId`)
 //           through its transport (`messenger`), which carries the reward
-//           messenger's channel (`channelOf`) and names Base's transport
+//           messenger's channel (`channelOf`), sends to Base on the CCIP lane
+//           its selector map names (`chainSelectorOf(Base)`, which must be
+//           Base's CCIP selector), and names Base's transport
 //           (`remoteMessengerOf(Base)`): the CCIP message is addressed there;
-//   on Base that transport accepts this chain's messages only from this
-//           chain's transport (`remoteMessengerOf(this chain)`), delivers the
-//           channel to Base's reward messenger (`handlerOf`), and accepts it
-//           only from this chain's reward messenger (`channelPeerOf`); and
-//           Base's reward messenger takes it only from that transport
-//           (`messenger`), only as the canonical instance (`isCanonical`), and
-//           forwards it to the Base Diamond (`diamond`), the one Base's
-//           Diamond names (its reporter config's messenger).
+//   on Base that transport takes the message's source chain from its own map
+//           (`chainIdOf(this chain's CCIP selector)`, which must be this
+//           chain), accepts this chain's messages only from this chain's
+//           transport (`remoteMessengerOf(this chain)`), delivers the channel
+//           to Base's reward messenger (`handlerOf`), and accepts it only from
+//           this chain's reward messenger (`channelPeerOf`); and Base's reward
+//           messenger takes it only from that transport (`messenger`), only as
+//           the canonical instance (`isCanonical`), and forwards it to the
+//           Base Diamond (`diamond`), the one Base's Diamond names (its
+//           reporter config's messenger).
 //
-// Not read: the CCIP lane and the chain selectors, which are CCIP's, and a
-// pause on either end, which fails a delivery only until it is lifted (CCIP
-// records the message as failed and re-executable, and the pass's alerts say
-// a day is missing before grace ends).
+// A chain's CCIP selector is the one the deploy scripts configure its lanes
+// with (`@vaipakam/contracts/ccip-selectors`, pinned to them); a chain that
+// table does not carry leaves its selector link unread, which holds the close.
+//
+// Not read: whether CCIP itself serves the lane (the router's, checked at
+// send, so a lane it does not serve reverts the close and nothing is stamped
+// sent), and a pause on either end, which fails a delivery only until it is
+// lifted (CCIP records the message as failed and re-executable, and the
+// pass's alerts say a day is missing before grace ends).
 
 import { zeroAddress, type Abi, type Address } from 'viem';
 import { CcipMessengerABI } from '@vaipakam/contracts/abis';
+import { ccipSelectorOf } from '@vaipakam/contracts/ccip-selectors';
 import { ABI, MESSENGER_ABI } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { known, unknown, type Fact } from './fact';
@@ -67,6 +77,19 @@ export async function reportWire(c: ChainRun, base: PeerReader | null, messenger
   if (channel !== null && BigInt(channel) === 0n) faults.push(`this chain's transport ${transport} has no channel registered for the reward messenger ${messenger} (registerChannel)`);
   const remote = await read<Address>(here, transport, CCIP_ABI, 'remoteMessengerOf', [BigInt(baseChainId)], `the transport this chain's transport names on Base`);
   if (remote !== null && same(remote, zeroAddress)) faults.push(`this chain's transport ${transport} names no transport on Base (chain ${baseChainId}; setRemoteMessenger)`);
+  const baseSelector = ccipSelectorOf(baseChainId);
+  if (baseSelector === undefined) {
+    unread.push(`the CCIP selector of chain ${baseChainId} is not known to this keeper, so the lane this chain's transport sends to Base on cannot be checked`);
+  } else {
+    const lane = await read<bigint>(here, transport, CCIP_ABI, 'chainSelectorOf', [BigInt(baseChainId)], "the CCIP lane this chain's transport sends to Base on (its chainSelectorOf)");
+    if (lane !== null && lane !== baseSelector) {
+      faults.push(
+        lane === 0n
+          ? `this chain's transport ${transport} has no CCIP selector for Base (chain ${baseChainId}; setChainSelector; the send reverts UnconfiguredChain)`
+          : `this chain's transport ${transport} sends to Base (chain ${baseChainId}) on CCIP selector ${lane}, not Base's ${baseSelector}, so a report goes to another lane (setChainSelector)`,
+      );
+    }
+  }
 
   // Base's end.
   if (base === null) {
@@ -76,6 +99,19 @@ export async function reportWire(c: ChainRun, base: PeerReader | null, messenger
   if (remote === null || same(remote, zeroAddress) || channel === null || BigInt(channel) === 0n) return result();
   const there = base.client;
   const cfg = await read<readonly [Address, ...unknown[]]>(there, base.diamond, ABI, 'getRewardReporterConfig', [], "Base's reward messenger (its Diamond's reporter config)");
+  const sourceSelector = ccipSelectorOf(c.chainId);
+  if (sourceSelector === undefined) {
+    unread.push(`the CCIP selector of this chain (${c.chainId}) is not known to this keeper, so which chain Base's transport takes its messages to come from cannot be checked`);
+  } else {
+    const source = await read<bigint>(there, remote, CCIP_ABI, 'chainIdOf', [sourceSelector], `the chain Base's transport takes a message on this chain's CCIP selector to come from (its chainIdOf)`);
+    if (source !== null && Number(source) !== c.chainId) {
+      faults.push(
+        source === 0n
+          ? `Base's transport ${remote} maps this chain's CCIP selector ${sourceSelector} to no chain (setChainSelector on Base; delivery reverts UnconfiguredSelector)`
+          : `Base's transport ${remote} takes a message on this chain's CCIP selector ${sourceSelector} to come from chain ${source}, not this chain (${c.chainId}), so it checks this chain's reports against that chain's wiring (setChainSelector on Base)`,
+      );
+    }
+  }
   const peerOfSource = await read<Address>(there, remote, CCIP_ABI, 'remoteMessengerOf', [BigInt(c.chainId)], "the transport Base's transport accepts this chain's messages from");
   if (peerOfSource !== null && !same(peerOfSource, transport)) {
     faults.push(`Base's transport ${remote} accepts this chain's messages only from ${peerOfSource}, not from this chain's transport ${transport} (setRemoteMessenger on Base; delivery reverts UnauthorizedSourceMessenger)`);
