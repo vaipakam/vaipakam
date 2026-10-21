@@ -132,6 +132,10 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
     const [, reason] = await base.read<readonly [boolean, number]>('isDayReadyToFinalize', [BigInt(day)]); // eslint-disable-line no-await-in-loop
     if (Number(reason) === 1) throw new Error(`Base finalized day ${day} before the mirror's report landed`);
   }
+  // Each close's receipt shows its report leaving through the messenger the
+  // run checked, so no unchecked dispatch is recorded.
+  const dispatched = await getWorkItems(k.env.KEEPER_DB, MIRROR_ID, mirror.diamond, 'day_dispatch', ['0', '1']);
+  if (dispatched.size > 0) throw new Error(`the day-close pass read a mirror close as sent through an unchecked messenger (${JSON.stringify([...dispatched.values()])})`);
   const reports = await relay.deliver(MIRROR_ID, BASE_ID);
   if (reports.length !== 2) throw new Error(`the relay landed ${reports.length} mirror reports on Base, not 2`);
 

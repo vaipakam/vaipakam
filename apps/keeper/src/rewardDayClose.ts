@@ -40,7 +40,15 @@
 //      whose messenger cannot quote the B4 report does not send one for a day
 //      Base has finalized, or one whose finalization on Base it cannot read
 //      (a failed read waits for the next run; a Base this keeper does not
-//      serve is said), and says so. For every window day, sent or not, a day Base finalized
+//      serve is said), and says so. A report goes where the messenger routes
+//      it (its own `baseChainId`), so a mirror closes no day while that route
+//      differs from the Diamond's Base or cannot be read. Both checks are reads
+//      before the transaction, which sends through whatever messenger the
+//      Diamond then holds: a rotation in between cannot be prevented here, so
+//      each landed close's receipt is read for the messenger its report left
+//      through, and one other than the one checked is alerted for that day
+//      until Base records its outcome (#2621 tracks the contract-side guard).
+//      For every window day, sent or not, a day Base finalized
 //      without this chain's report is reported as such (when this keeper also
 //      serves Base). A close refused because the interest fold has not reached
 //      the day (`ChainReportFrontierShort`) is preceded by
@@ -114,7 +122,9 @@
 // discovery cursor (`day_close`) moves past it, and leaves it only once a run
 // sees it worked through, so no elapsed day is skipped, whenever the pass was
 // first armed or however long the keeper was down. A day is worked through
-// once nothing more is owed on it here: closed on a mirror; on Base,
+// once nothing more is owed on it here: closed on a mirror, and (when this
+// keeper serves Base) its outcome recorded on Base, counted or finalized
+// without it, so a report lost in flight still has its exclusion said; on Base,
 // finalized, broadcast to every destination it is owed, and its zeroed-chain
 // notice delivered (Base's own close is owed only until the day is finalized,
 // which an admin's force-finalize can do first; after that a close is refused
@@ -168,7 +178,10 @@
 // with the last send that covered it (kind `day_broadcast`; losing it costs
 // at most one extra broadcast, and forgets a destination removed since); a
 // finalized day's zeroed chains with whether that notice was delivered (kind
-// `day_zeroed`); those two kept while their day is owed or in the lookback;
+// `day_zeroed`); a mirror close whose report left through a messenger other
+// than the one checked (kind `day_dispatch`), so its alert is said until Base
+// records the day's outcome; those three kept while their day is owed or in
+// the lookback;
 // and each peer chain's reward clock as last read (kind `day_clock`, by peer
 // chain), so a mismatch once seen holds while the peer cannot be read. Beside
 // them it keeps one cursor per (chain, Diamond), the first day not yet entered
@@ -533,6 +546,17 @@ interface RunFindings {
   /** `stale`: some clock was judged from its last read, this run's failing,
    *  so a match then is not a read showing the fix. */
   clock: { base: number; differ: { chain: number; launch: number; lastRead: boolean }[]; stale: boolean } | null;
+  /** Mirror: where the messenger sends this chain's reports (its own
+   *  `baseChainId`), against the Diamond's Base (null = not judged; `routed`
+   *  null = the messenger's route could not be read). */
+  route: { base: number; routed: number | null } | null;
+  /** Mirror: closes this run whose receipt shows the report leaving through
+   *  a messenger other than the one the run checked (governance rotated it
+   *  in between), so its shape and route were not checked (#2621). */
+  dispatched: ({ day: number } & DispatchRecord)[];
+  /** Mirror: window days whose outcome for this chain Base has recorded (it
+   *  counted this chain's report, or finalized the day), as this run read. */
+  outcomeOnBase: Set<number>;
   /** Base: open days this run judged for finalization. */
   judged: Set<number>;
   /** The days this run's window covered. */
@@ -582,6 +606,9 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     excluded: [],
     notExpectedOnBase: null,
     clock: null,
+    route: null,
+    dispatched: [],
+    outcomeOnBase: new Set(),
     judged: new Set(),
     window,
   };
@@ -592,6 +619,9 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   let finalizedOnBase = new Set<number>();
   /** Mirror: window days whose finalization on Base could not be read. */
   let finalizationUnread = new Set<number>();
+  /** Mirror: window days whose outcome for this chain Base has recorded
+   *  (it counted this chain's report, or finalized the day). */
+  let outcomeOnBase = new Set<number>();
   let baseServed = true;
   const unclosed = window.filter((d) => sentAt.get(d) === 0n);
   for (const d of window) if ((sentAt.get(d) ?? 0n) > 0n) f.settled.add(`close:${d}`);
@@ -619,10 +649,17 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     finalizedOnBase = new Set(window.filter((d) => onBase.get(d)?.finalized === true || onBase.get(d)?.ready === true));
     finalizationUnread = new Set(window.filter((d) => typeof onBase.get(d)?.finalized !== 'boolean'));
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
+    outcomeOnBase = new Set(window.filter((d) => onBase.get(d)?.counted === true || onBase.get(d)?.finalized === true));
+    f.outcomeOnBase = outcomeOnBase;
+    // A report goes where the messenger routes it (its own baseChainId), not
+    // where the Diamond says Base is: on a mismatch every report would be
+    // stamped sent here and never reach Base, irreversibly.
+    f.route = { base: baseChainId, routed: await messengerRoute(deps.client, messenger, where) };
   }
   let closed = 0;
   const clockOff = (f.clock?.differ.length ?? 0) > 0;
-  for (const d of clockOff ? [] : unclosed) {
+  const routeOff = f.route !== null && f.route.routed !== f.route.base;
+  for (const d of clockOff || routeOff ? [] : unclosed) {
     // eslint-disable-next-line no-await-in-loop
     const q = canonical ? { fee: 0n, b4: true } : await reportFee(deps.client, messenger, d);
     if (q === 'unread') {
@@ -670,8 +707,34 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       closed += 1;
       sentAt.set(d, BigInt(nowSec));
       f.settled.add(`close:${d}`);
+      // The checks above read the messenger before the transaction; the
+      // close sends through whatever the Diamond holds when it runs. The
+      // receipt says which one it was. That detects a rotation in between,
+      // it cannot prevent one (#2621).
+      const via = canonical ? null : reportSentVia(sender.receipt, messenger);
+      if (via !== null) {
+        // Kept, so the alert is said again until Base records the day's
+        // outcome, however its first delivery went.
+        const rec: DispatchRecord = { checked: messenger, via };
+        f.dispatched.push({ day: d, ...rec });
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await putWork(env.KEEPER_DB, chainId, diamond, 'day_dispatch', { item: String(d), block: d, payload: rec });
+        } catch (err) {
+          console.error(`[keeper] rewardDayClose ${where}: the unchecked dispatch of day ${d} not recorded, said this run only: ${shortErr(err)}`);
+        }
+      }
     }
     if (sender.stopped) break;
+  }
+  if (!canonical) {
+    // Earlier closes that left through an unchecked messenger, still said
+    // until Base records the day's outcome.
+    const recs = await getWorkItems<DispatchRecord>(env.KEEPER_DB, chainId, diamond, 'day_dispatch', window.map(String));
+    for (const [item, r] of recs) {
+      const d = Number(item);
+      if (!outcomeOnBase.has(d) && !f.dispatched.some((x) => x.day === d)) f.dispatched.push({ day: d, ...r.payload });
+    }
   }
 
   // ── 2. Finalize, 3. broadcast (Base) ──
@@ -968,7 +1031,10 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const noticed = canonical && !paused ? await postZeroedNotices(env, chainId, diamond, window, deps.runDeadline) : new Set<number>();
 
   // A day is worked through once nothing more is owed on it here, its alerts
-  // included (one due and not delivered holds the day): closed on a mirror;
+  // included (one due and not delivered holds the day): on a mirror, closed,
+  // and its outcome recorded on Base (this chain's report counted, or the day
+  // finalized, which a day finalized without it alerts on) when this keeper
+  // serves Base, so a report still in flight keeps its day in view;
   // on Base, finalized, broadcast (nothing left to send) and its zeroed-chain
   // notice delivered. Base's own close is owed only until the
   // day is finalized: once it is, a close is refused for good (an admin's
@@ -978,7 +1044,9 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   const through = (d: number): boolean =>
     held !== 'all' &&
     !held.has(d) &&
-    (canonical ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) && noticed.has(d) : f.settled.has(`close:${d}`));
+    (canonical
+      ? f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`) && noticed.has(d)
+      : f.settled.has(`close:${d}`) && (!baseServed || outcomeOnBase.has(d)));
   await settleLedger(env, chainId, diamond, today, window, through);
 }
 
@@ -1018,6 +1086,7 @@ async function settleLedger(env: Env, chainId: number, diamond: Address, today: 
   const floor = Math.max(0, today - LOOKBACK_DAYS);
   await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_broadcast', floor, 'day_owed');
   await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_zeroed', floor, 'day_owed');
+  await pruneWorkBelowUnlessOpen(db, chainId, diamond, 'day_dispatch', floor, 'day_owed');
 }
 
 /** A peer chain's reward-clock launch: read now when it can be (and recorded,
@@ -1145,6 +1214,18 @@ async function absentFromBaseList(base: PeerReader | null, self: number, where: 
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     console.error(`[keeper] rewardDayClose ${where}: Base's expected-source list unread: ${shortErr(err)}`);
+    return null;
+  }
+}
+
+/** On a mirror: the chain the messenger sends reports to (its own
+ *  `baseChainId`), or null when that cannot be read. */
+async function messengerRoute(client: PublicClient, messenger: Address, where: string): Promise<number | null> {
+  try {
+    return Number(await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'baseChainId' }));
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${where}: the messenger's report route (baseChainId) unread: ${shortErr(err)}`);
     return null;
   }
 }
@@ -1504,6 +1585,22 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, 
         : `${tag}: this chain's reward clock (day 0 starts ${at(f.clock.differ[0].launch)}) differs from Base's (day 0 starts ${at(f.clock.base)}${f.clock.stale ? ', as last read; this run could not read it' : ''}), so the same day number covers different hours here and on Base. A report sent now would be summed into Base's day with interest from other hours, irreversibly, so the pass closes no day here until the two match.`,
     );
   }
+  if (f.route !== null && f.route.routed !== f.route.base) {
+    await raise(
+      `dayclose-route:${chainId}:all`,
+      f.route.routed === null
+        ? `${tag}: where this chain's reward messenger sends its reports (its baseChainId) could not be read, so whether a report would reach Base (chain ${f.route.base}, as this Diamond names it) is unknown. A report is sent once and stamped sent here for good, so the pass closes no day until the route reads as Base.`
+        : `${tag}: this chain's reward messenger sends its reports to chain ${f.route.routed}, but this Diamond names chain ${f.route.base} as Base. A report sent now would be stamped sent here for good and never reach Base, which would then finalize the day without this chain, so the pass closes no day until the two agree (the messenger's setBaseChainId or the Diamond's reporter config).`,
+    );
+  }
+  for (const x of f.dispatched) {
+    const via = x.via.length > 0 ? `messenger ${x.via.join(', ')}` : 'no messenger this keeper could see (the receipt carries no report event)';
+    // eslint-disable-next-line no-await-in-loop
+    await raise(
+      `dayclose-dispatch:${chainId}:${x.day}`,
+      `${tag}: the close of reward day ${x.day} sent its report through ${via}, not the reward messenger this run checked (${x.checked}); it was rotated between the check and the transaction. Whether that report is the shape Base applies after finalization, and whether it routes to Base, was not checked, and the day cannot be closed again. If Base finalizes the day before it lands, or it never reaches Base, this chain's interest counts as zero for the day. This alert stands until Base records the day's outcome (where this keeper cannot read Base, until the day leaves its view). A contract-side guard is tracked in #2621.`,
+    );
+  }
   for (const d of f.excluded) {
     // eslint-disable-next-line no-await-in-loop
     await raise(
@@ -1540,6 +1637,8 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, diamond: Address, 
     else if (kind === 'dayclose-excluded') gone = dropped(day);
     else if (kind === 'dayclose-notexpected') gone = !canonical && f.notExpectedOnBase === false;
     else if (kind === 'dayclose-clock') gone = f.clock !== null && f.clock.differ.length === 0 && !f.clock.stale;
+    else if (kind === 'dayclose-dispatch') gone = f.outcomeOnBase.has(day) || dropped(day);
+    else if (kind === 'dayclose-route') gone = f.route !== null && f.route.routed === f.route.base;
     if (gone && Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       await resolveOpsAlert(env, key);
@@ -1709,6 +1808,25 @@ export function broadcastsLeft(receipt: TransactionReceipt | null, messengers: r
     out.add(Number(BigInt(dst)));
   }
   return out;
+}
+
+/** A mirror close whose receipt showed its report leaving through a messenger
+ *  other than the one checked (`day_dispatch`, by day). */
+interface DispatchRecord {
+  checked: Address;
+  via: Address[];
+}
+
+const REPORT_SENT_TOPIC = toEventSelector('ReportSent(bytes32,uint256,uint256,uint256)').toLowerCase();
+
+/** Null when a landed close's receipt shows its report leaving through
+ *  `checked`; otherwise the addresses its report events came from (empty when
+ *  it carries none), so the caller can say the report left unchecked. Without
+ *  a receipt nothing can be told, and null is returned. */
+export function reportSentVia(receipt: TransactionReceipt | null, checked: Address): Address[] | null {
+  if (receipt === null) return null;
+  const from = [...new Set(receipt.logs.filter((l) => l.topics[0]?.toLowerCase() === REPORT_SENT_TOPIC).map((l) => l.address.toLowerCase() as Address))];
+  return from.includes(checked.toLowerCase() as Address) ? null : from;
 }
 
 /** What is wrong with Base's lists, one sentence each (empty = nothing). The

@@ -178,8 +178,12 @@ class FakeDiamond {
    *  broadcast runs (null = no rotation); `messengerNow` is the result. */
   rotateTo: Address | null = null;
   messengerNow: Address | null = null;
+  /** Where the messenger sends reports, when not Base ('unread' = the read fails). */
+  routeTo: number | 'unread' | null = null;
   /** A read of the reporter config at a past block fails. */
   reporterConfigUnreadAtBlock = false;
+  /** A mirror's close is delivered to this Base at once (null = left in flight). */
+  deliverTo: FakeDiamond | null = null;
   /** `fn:day` → error name a simulation reverts with. */
   refuse = new Map<string, string>();
   /** `quoteSendChainReport` arities the messenger has (the rest are unknown selectors). */
@@ -232,6 +236,10 @@ class FakeDiamond {
         // A shape the messenger lacks: the contract answers with an unnamed revert.
         if (!this.quoteShapes.has(args?.length ?? 0)) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
         return LANE_FEE;
+      }
+      if (functionName === 'baseChainId') {
+        if (this.routeTo === 'unread') throw new Error('fetch failed');
+        return BigInt(this.role === ROLE_CANONICAL ? 0 : (this.routeTo ?? BASE));
       }
       if (functionName === 'getBroadcastDestinations') {
         if (this.destinationsUnreadable) throw new Error('execution reverted');
@@ -326,10 +334,27 @@ class FakeDiamond {
     }
     if (fn === 'closeDay') {
       this.sentAt.set(day, NOW);
+      if (this.role !== ROLE_CANONICAL) {
+        if (this.rotateTo !== null) {
+          this.messengerNow = this.rotateTo;
+          this.rotateTo = null;
+        }
+        // The report leaves through the messenger the Diamond holds now.
+        this.logs.push({
+          address: this.messengerNow ?? this.messenger,
+          topics: [toEventSelector('ReportSent(bytes32,uint256,uint256,uint256)'), pad('0x01'), pad(toHex(day))],
+          data: '0x',
+        } as unknown as Log);
+      }
       if (this.role === ROLE_CANONICAL) {
         if (!this.reported.has(day)) this.reported.set(day, new Set());
         this.reported.get(day)!.add(this.chainId);
         if (!this.firstAt.has(day)) this.firstAt.set(day, NOW);
+      } else if (this.deliverTo && !this.deliverTo.finalized.has(day)) {
+        // A report reaching a day Base already finalized counts for nothing.
+        const on = this.deliverTo;
+        if (!on.reported.has(day)) on.reported.set(day, new Set());
+        on.reported.get(day)!.add(this.chainId);
       }
     }
     if (fn === 'advanceInterestFrontiers') this.refuse.delete(`closeDay:${day}`);
@@ -430,6 +455,66 @@ describe('a run', () => {
     ]);
     await run(mirror);
     expect(mirror.sent, 'nothing left to close').toHaveLength(2);
+  });
+
+  it('closes no day while its messenger sends reports somewhere other than Base, says so, and clears once they agree', async () => {
+    mirror.routeTo = 999;
+    await run(mirror);
+    expect(mirror.sent, 'a report sent now would never reach Base').toEqual([]);
+    expect(alerts(/sends its reports to chain 999, but this Diamond names chain/)).toHaveLength(1);
+    expect(owed(), 'and every day stays owed').toEqual([0, 1, 2]);
+    openAlert(`dayclose-route:${MIRROR}:all`); // as a delivered alert leaves it
+    await run(mirror);
+    expect(openKeys(), 'stands while the route still differs').toContain(`dayclose-route:${MIRROR}:all`);
+    mirror.routeTo = null;
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day), 'closed once the route reads as Base').toEqual([0, 1, 2]);
+    expect(openKeys()).not.toContain(`dayclose-route:${MIRROR}:all`);
+  });
+
+  it('says when a close sent its report through a messenger rotated in after the checks, until Base records the day', async () => {
+    mirror.today = 1;
+    mirror.rotateTo = '0x0000000000000000000000000000000000000099';
+    const said = () => alerts(/close of reward day 0 sent its report through messenger 0x0000000000000000000000000000000000000099, not the reward messenger this run checked/);
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day), 'the close lands: the rotation is seen only in its receipt').toEqual([0]);
+    expect(said()).toHaveLength(1);
+    openAlert(`dayclose-dispatch:${MIRROR}:0`); // as a delivered alert leaves it
+    later(60);
+    await run(mirror);
+    expect(openKeys(), 'stands while Base has no outcome for the day').toContain(`dayclose-dispatch:${MIRROR}:0`);
+    expect(said(), 'and is said again from its record, however its first delivery went').toHaveLength(2);
+    base.reported.set(0, new Set([MIRROR]));
+    later(60);
+    await run(mirror);
+    expect(openKeys(), 'and clears once Base counts it').not.toContain(`dayclose-dispatch:${MIRROR}:0`);
+    expect(said(), 'and is not said again').toHaveLength(2);
+    expect(mirror.sent, 'nothing is sent again').toHaveLength(1);
+  });
+
+  it('does not say so when the report left through the messenger it checked', async () => {
+    await run(mirror);
+    expect(alerts(/not the reward messenger this run checked/)).toEqual([]);
+  });
+
+  it('closes no day while its messenger route cannot be read', async () => {
+    mirror.routeTo = 'unread';
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/its baseChainId\) could not be read/)).toHaveLength(1);
+  });
+
+  it('keeps a closed day owed while its report is in flight, until Base counts it or finalizes it without it', async () => {
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.day)).toEqual([0, 1, 2]);
+    expect(owed(), 'sent, not yet seen on Base').toEqual([0, 1, 2]);
+    base.reported.set(0, new Set([MIRROR]));
+    base.finalized.add(1); // without it: the exclusion alert is what the day waits for
+    later(60);
+    await run(mirror);
+    expect(alerts(/Base finalized reward day 1 without this chain's report/)).toHaveLength(1);
+    expect(owed(), 'counted and finalized days go; the one still in flight stays').toEqual([2]);
+    expect(mirror.sent, 'and nothing is sent twice').toHaveLength(3);
   });
 
   it('does nothing on day 0, with the clock stopped, or while paused', async () => {
@@ -847,15 +932,19 @@ describe('a run', () => {
 
   it('works a day older than the lookback that was never worked through, and keeps a day owed until it is', async () => {
     mirror.today = LOOKBACK_DAYS + 5; // armed late: days 0..4 are older than the lookback
-    for (let d = 1; d < mirror.today; d++) mirror.sentAt.set(d, NOW - 86_400);
+    mirror.deliverTo = base;
+    for (let d = 1; d < mirror.today; d++) {
+      mirror.sentAt.set(d, NOW - 86_400);
+      base.reported.set(d, new Set([MIRROR]));
+    }
     await run(mirror);
     expect(mirror.sent.map((s) => [s.fn, s.day]), 'day 0 is closed, though older than the lookback').toEqual([['closeDay', 0]]);
-    expect(owed(), 'every day worked through').toEqual([]);
+    expect(owed(), 'day 0 is in flight: owed until Base has counted it').toEqual([0]);
 
     mirror.today += 1; // day LOOKBACK+5 is refused from now on
     mirror.refuse.set(`closeDay:${LOOKBACK_DAYS + 5}`, 'DayNotReadyToFinalize');
     await run(mirror);
-    expect(owed(), 'a day not closed stays owed').toEqual([LOOKBACK_DAYS + 5]);
+    expect(owed(), 'day 0 goes once Base counts it; a day not closed stays owed').toEqual([LOOKBACK_DAYS + 5]);
 
     // Paused mid-run: no alert is raised, so no day leaves the ledger.
     mirror.today += 1;
@@ -1066,7 +1155,11 @@ describe('a run', () => {
 
   it('keeps a day owed until its due alert is delivered, so a backlog day never takes an undelivered alert with it', async () => {
     mirror.today = LOOKBACK_DAYS + 3; // days 0..2 are older than the lookback
-    for (let d = 3; d < mirror.today; d++) mirror.sentAt.set(d, NOW - 86_400);
+    mirror.deliverTo = base;
+    for (let d = 3; d < mirror.today; d++) {
+      mirror.sentAt.set(d, NOW - 86_400);
+      base.reported.set(d, new Set([MIRROR]));
+    }
     base.today = mirror.today;
     base.finalized.add(1); // without the mirror
     const late = () =>
@@ -1081,7 +1174,7 @@ describe('a run', () => {
     await late();
     expect(mirror.sent.map((s) => s.day), 'the backlog days are closed').toEqual([0, 1, 2]);
     expect(alerts(/Base finalized reward day 1 without this chain's report/), 'its alert not yet sent').toHaveLength(0);
-    expect(owed(), 'so day 1 stays owed; the others go').toEqual([1]);
+    expect(owed(), 'day 1 stays owed for its alert; days 0 and 2 until Base counts them').toEqual([0, 1, 2]);
     later(60);
     await run(mirror);
     expect(alerts(/Base finalized reward day 1 without this chain's report/), 'raised in its next turn').toHaveLength(1);
