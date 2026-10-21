@@ -90,6 +90,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 contract DefaultedFacetTest is Test {
     VaipakamDiamond diamond;
@@ -1703,7 +1704,7 @@ contract DefaultedFacetTest is Test {
         // Mock vaultSetNFTUser (reset renter) to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         // Mock vaultWithdrawERC20 to succeed (buffer + prepay withdrawal)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         // Deal tokens to diamond so safeTransfer to treasury succeeds
         // prepayAmount = 10 * 30 = 300 ether, treasuryFee = 300 * 100/10000 = 3 ether
         deal(mockERC20, address(diamond), 300 ether);
@@ -1739,7 +1740,7 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, treasuryAddr, uint256(15 ether)),
-            abi.encode(true)
+            abi.encode(uint256(15 ether)) // #2440 — the withdraw returns what arrived
         );
         // Second vaultWithdrawERC20 (full prepayAmount=300 ether to diamond) fails — match by full args
         vm.mockCallRevert(
@@ -1864,7 +1865,7 @@ contract DefaultedFacetTest is Test {
         // late ≈ some amount. Total ~1005 ether. 2200 > 1005 → surplus exists.
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1902,7 +1903,7 @@ contract DefaultedFacetTest is Test {
         );
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1946,7 +1947,7 @@ contract DefaultedFacetTest is Test {
         ZeroExProxyMock(mockZeroExProxy).setRate(1, 10);
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1968,7 +1969,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1996,11 +1997,7 @@ contract DefaultedFacetTest is Test {
             1000 ether, 2000 ether, 30, 0, 0 // #998 S15: coll 1500->2000 (create floor)
         );
         vm.warp(block.timestamp + 33 days + 3);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
@@ -2023,11 +2020,7 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2062,11 +2055,7 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2173,7 +2162,7 @@ contract DefaultedFacetTest is Test {
         ZeroExProxyMock(mockZeroExProxy).setRate(1, 2); // 0.5x rate → 250 ether proceeds
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2201,7 +2190,7 @@ contract DefaultedFacetTest is Test {
         // Rate 11/10 → proceeds = 2200 (2000 coll) > total debt (~1005) → surplus exists
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         // Mock getOrCreateUserVault: first call (lender) succeeds, second call (borrower) fails.
@@ -2240,7 +2229,7 @@ contract DefaultedFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 5000 ether);
 
         // Mock vaultWithdrawERC20 and vaultSetNFTUser
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
@@ -2311,7 +2300,7 @@ contract DefaultedFacetTest is Test {
         // Should NOT revert with KYCRequired because illiquid prepay asset is valued at $0
         deal(mockERC20, address(diamond), 5000 ether);
         deal(mockCollateralERC20, address(diamond), 5000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
@@ -2373,7 +2362,7 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2400,7 +2389,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Swap succeeds but getOrCreateUserVault for lender fails
         vm.mockCallRevert(
@@ -2434,7 +2423,7 @@ contract DefaultedFacetTest is Test {
         // >= 2000 collateral for the swap's transferFrom (was 1500).
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         // Mock HF to be low so triggerLiquidation succeeds
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(uint256(0)));
@@ -2465,7 +2454,7 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2501,7 +2490,7 @@ contract DefaultedFacetTest is Test {
 
         // Mock cross-facet calls for NFT rental default path
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2572,7 +2561,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2632,7 +2621,7 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 2000 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 2000 ether + lowProceeds);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2669,7 +2658,7 @@ contract DefaultedFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 50000 ether);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2688,7 +2677,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Swap fails → fallback
         vm.mockCallRevert(
@@ -2735,7 +2724,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 2000 ether);
         deal(mockCollateralERC20, address(diamond), 2000 ether);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());

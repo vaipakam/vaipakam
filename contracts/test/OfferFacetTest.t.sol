@@ -63,6 +63,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -1679,11 +1680,7 @@ contract OfferFacetTest is Test {
 
         // user1 (US) accepts as lender; user2 (FR) is borrower — US<->FR allowed
         // mock vault withdraw (principal from lender vault to borrower) and initiateLoan
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
@@ -2084,11 +2081,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
@@ -2865,7 +2858,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         // Mock the downstream calls so acceptOffer completes
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(10)));
 
         deal(mockERC20, user2, 200);
@@ -2931,7 +2924,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user1, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(11)));
 
         vm.prank(user2);
@@ -3107,7 +3100,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(5)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3167,7 +3160,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(6)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3703,7 +3696,7 @@ contract OfferFacetTest is Test {
         );
 
         // Mock vaultWithdrawERC20 to succeed but initiateLoan to revert
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), "loan fail");
 
         deal(mockERC20, user2, 2000);
@@ -3913,7 +3906,7 @@ contract OfferFacetTest is Test {
         collateralNft.approve(address(diamond), 99);
 
         // Mock vaultWithdrawERC20 for principal transfer and initiateLoan
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3969,7 +3962,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         collateral1155.setApprovalForAll(address(diamond), true);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -4081,7 +4074,7 @@ contract OfferFacetTest is Test {
         );
 
         // Cancel: should unlock ERC20 prepay (amount*days + 5% buffer)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);

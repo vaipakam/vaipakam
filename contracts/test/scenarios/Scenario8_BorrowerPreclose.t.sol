@@ -35,6 +35,7 @@ import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.so
 import {ConsolidationFacet} from "../../src/facets/ConsolidationFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 
 /**
  * @title Scenario8_BorrowerPreclose
@@ -352,7 +353,7 @@ contract Scenario8_BorrowerPreclose is Test {
         uint256 borrowerBalBefore = ERC20(mockERC20).balanceOf(borrower);
 
         // Mock cross-facet calls for vault withdraw (collateral release) and NFT operations
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");

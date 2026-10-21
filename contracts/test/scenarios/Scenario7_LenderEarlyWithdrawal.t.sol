@@ -37,6 +37,7 @@ import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -353,7 +354,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         );
 
         // Mock cross-facet NFT calls (vault withdraw works natively)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -453,7 +454,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // Mock all cross-facet calls that completeLoanSale makes
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Expect LoanSaleCompleted event
         vm.expectEmit(true, true, true, false);

@@ -97,6 +97,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 contract RiskFacetTest is Test {
     VaipakamDiamond diamond;
@@ -991,13 +992,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal (doesn't transfer tokens — we deal them directly below).
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Deal collateral tokens to diamond so the real ERC20 approve + swap flow works.
         // collateralAmount = 1800 ether; ZeroExProxyMock rate is 11/10 → proceeds = 1980 ether.
@@ -1126,11 +1121,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -1721,13 +1712,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCall(
@@ -1876,13 +1861,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Fallback path needs to look up the lender's vault.
         vm.mockCall(
@@ -1947,13 +1926,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2026,13 +1999,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2069,13 +2036,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2112,13 +2073,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2175,13 +2130,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Mock lender vault lookup — fallback transfers collateral here.
         vm.mockCall(
@@ -2326,13 +2275,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -2399,11 +2342,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
@@ -2426,11 +2365,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
@@ -2537,11 +2472,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2562,11 +2493,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2624,11 +2551,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2724,13 +2647,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2880,13 +2797,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -2955,13 +2866,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal to succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -3006,13 +2911,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -3064,13 +2963,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -3151,13 +3044,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -3298,13 +3185,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -3347,13 +3228,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -3404,13 +3279,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -3653,13 +3522,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -3759,13 +3622,7 @@ contract RiskFacetTest is Test {
         );
 
         // Mock collateral withdrawal
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         // Deal collateral tokens to diamond for the swap
         deal(mockERC20, address(diamond), 1800 ether);
@@ -3826,11 +3683,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         vm.mockCall(
@@ -3976,11 +3829,7 @@ contract RiskFacetTest is Test {
         );
         // Mock the vault withdraw + NFT updates (cross-facet calls
         // through the diamond proxy).
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         // Deal collateral so the swap actually runs.
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
@@ -4052,11 +3901,7 @@ contract RiskFacetTest is Test {
         // Mock vault withdraw (cross-facet call we don't need to fully
         // exercise here) — same pattern as the existing
         // testTriggerLiquidationSuccess setup.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         // Pre-fund the diamond with collateral (the swap source) — the
         // ZeroExProxyMock at the registered 11/10 rate will return
         // 990 principal-units for 900 collateral-units.
@@ -4145,11 +3990,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4221,11 +4062,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
         AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
@@ -4274,11 +4111,7 @@ contract RiskFacetTest is Test {
             loan0.durationDays *
             1 days;
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4354,11 +4187,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
         AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
@@ -4412,11 +4241,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4475,11 +4300,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.45e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4512,11 +4333,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4549,11 +4366,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
         // Empty adapter list → swapWithFailover attempts zero routes and now
@@ -4592,11 +4405,7 @@ contract RiskFacetTest is Test {
             ),
             abi.encode(0.65e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 
@@ -4808,13 +4617,7 @@ contract RiskFacetTest is Test {
             abi.encode(true, uint256(1e8), uint8(8))
         );
         // Cross-facet vault withdraw + NFT update — mock-success.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -5172,11 +4975,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(collPriceE8, uint8(8))
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
         // 0.8 principal-per-collateral token ratio — above the $0.65/$0.60

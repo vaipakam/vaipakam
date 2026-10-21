@@ -231,7 +231,9 @@ contract InternalMatchOwedRecordTest is SetupTest {
     function test_fallbackStep_reportsIncomplete() public {
         _seed(LOAN_A, lender, borrower, mockERC20, 1_000e18, mockCollateralERC20, 1_000e18);
         _seed(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1_000e18, mockERC20, 1_000e18);
-        _toFallback(LOAN_A, borrower, mockCollateralERC20, 1_000e18);
+        // Through the real producer: since #1566 S2b the custody is vault-held,
+        // and a hand-written Diamond-held snapshot is refused as legacy.
+        _enterFallbackViaProducer(LOAN_A);
         _match(LOAN_A, LOAN_B, 0);
         assertEq(uint8(_loanRaw(LOAN_A).status), uint8(LibVaipakam.LoanStatus.InternalMatched));
         _assertIncomplete(LOAN_A, "matched out of the fallback");
@@ -271,28 +273,5 @@ contract InternalMatchOwedRecordTest is SetupTest {
 
     function _loanRaw(uint256 loanId) internal view returns (LibVaipakam.Loan memory) {
         return LoanFacet(address(diamond)).getLoanDetails(loanId);
-    }
-
-    /// @dev Move an Active seeded loan into FallbackPending the way
-    ///      `InternalMatchExecutionTest._moveToFallbackPending` does: the
-    ///      collateral sits in the Diamond under an active snapshot.
-    function _toFallback(uint256 loanId, address borrower_, address collateral, uint256 amt) internal {
-        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
-        vm.prank(bVault);
-        ERC20Mock(collateral).transfer(address(diamond), amt);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrower_, collateral, 0);
-        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: (amt * 85) / 100,
-            treasuryCollateral: (amt * 2) / 100,
-            borrowerCollateral: amt - (amt * 85) / 100 - (amt * 2) / 100,
-            lenderPrincipalDue: (amt * 85) / 100,
-            treasuryPrincipalDue: (amt * 2) / 100,
-            active: true,
-            retryAttempted: false
-        });
-        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(loanId, snap);
-        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
-            loanId, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.FallbackPending
-        );
     }
 }

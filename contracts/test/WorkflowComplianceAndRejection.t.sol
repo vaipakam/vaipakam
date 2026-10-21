@@ -41,6 +41,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 contract MockRentableNFT721Test is ERC721 {
     mapping(uint256 => address) private _users;
@@ -808,11 +809,7 @@ contract WorkflowComplianceAndRejection is Test {
         vm.warp(block.timestamp + 30 days);
 
         // Mock cross-facet calls for repayLoan
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),

@@ -276,6 +276,19 @@ not the hosts #2308 moved their walks onto, so a claim reverted
 one, grep the tests for `_buildCuts` / their own `FacetCut[]` lists, not only
 `HelperTest` and `SetupTest`.
 
+**Stub the vault withdrawal with `MockVaultWithdraw.deliversAll(diamond)`,
+never with a selector-wide `abi.encode(true)` mock** (#2440).
+`vaultWithdrawERC20` returns what the recipient received, and the protocol
+books that figure, so `abi.encode(true)` now reads as ONE WEI delivered: a
+voluntary flow refuses `TokenDeliveryShort` and a forced one books one wei,
+often with the test still green. The helper (`test/helpers/MockVaultWithdraw.sol`)
+answers "everything asked for arrived, nothing moved", and it is switched by a
+`vm.mockCall`, so `vm.clearMockedCalls()` turns it off and a later
+`vm.mockCall` / `vm.mockCallRevert` on `vaultWithdrawERC20` still wins. Do not
+swap it for `vm.mockFunction`: that outranks both, survives
+`clearMockedCalls`, and hides the call from `vm.expectCall`. An exact-argument
+mock of the route must return the amount it stands for, not `true`.
+
 ## Deploy-sanity suite + `predeploy-check.sh`
 
 `contracts/test/deploy/` holds the **deploy-sanity suite** — static

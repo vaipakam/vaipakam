@@ -18,6 +18,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 /**
  * @title SanctionsOracleTest
@@ -459,11 +460,7 @@ contract SanctionsOracleTest is RiskFacetTest {
             ),
             abi.encode(0.60e8, 8)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
 

@@ -1051,8 +1051,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // prepay from the payer's own vault; arm the move-out exemption so a
             // borrower flagged after init can still service the partial rental.
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
-            // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op
-            // (0-value ERC-20 transfer), so this stays unconditional as before.
+            // VPFI-payment path; the fee leg skips a zero amount.
             LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             // #2440 — the treasury accrues what reached it.
             LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);

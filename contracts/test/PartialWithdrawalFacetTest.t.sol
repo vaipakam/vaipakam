@@ -35,6 +35,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 /**
  * @title PartialWithdrawalFacetTest
@@ -322,7 +323,7 @@ contract PartialWithdrawalFacetTest is Test {
     function testPartialWithdrawRevertsHealthFactorTooLow() public {
         // Withdraw nearly all collateral → HF too low
         // 1800 - 1700 = 100 ether remaining collateral; HF = 100 * 0.85 / 1000 = 0.085 < 1.5
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
@@ -341,7 +342,7 @@ contract PartialWithdrawalFacetTest is Test {
         // HF = (collateral * 0.85) / principal
         // For HF >= 1.5: collateral * 0.85 >= 1500 → collateral >= 1765
         // Max withdrawal: 1800 - 1765 = 35 ether
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         vm.expectEmit(true, true, false, false);
         // (loanId, borrower, amount, newCollateralAmount, newHf, newLtv) —
@@ -402,7 +403,7 @@ contract PartialWithdrawalFacetTest is Test {
         loan.initLtvCapBpsAtInit = 1000;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LTVExceeded.selector);
@@ -457,11 +458,7 @@ contract PartialWithdrawalFacetTest is Test {
         // Governance raises the GLOBAL admission floor (applies to NEW loans).
         RiskFacet(address(diamond)).setMinHealthFactor(180 * 1e16); // 1.8e18
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.prank(borrower);
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
 
