@@ -920,10 +920,12 @@ function firstReleases(rows: readonly ReleaseEventRow[]): { remitId: number; blo
 // ─── #2497 r8 — the OPEN-WORK queue (keeper-private, migration 0003) ─
 
 /** The passes that keep an open-work queue, by the `kind` each records under.
- *  `day_broadcast` (#2612, the reward day-close pass) records a finalized day
- *  it has broadcast, with when: its `item` is the day, its `block` the day too
- *  (no ledger block applies), and it carries no discovery cursor. */
-export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed';
+ *  The reward day-close pass (#2612) keeps three, each keyed by reward day
+ *  rather than ledger block: `day_broadcast` (a finalized day's sends, by
+ *  destination) and `day_zeroed` (its zeroed-chain notice) are open-work rows
+ *  whose `item` and `block` are the day; `day_close` is a cursor only, the
+ *  oldest day the pass has not yet worked through. */
+export type WorkKind = 'delivery_proof' | 'late_ack' | 'day_broadcast' | 'day_zeroed' | 'day_close';
 
 /** The last block the shared indexer has completely recorded on `chainId`
  *  (its `diamond` cursor, advanced only after a whole window is written), or

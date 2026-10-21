@@ -22,6 +22,7 @@ import {
   ROLE_MIRROR,
   dayCloseOnce,
   dayWindow,
+  nextFrontier,
   graceWarningSec,
   planBroadcast,
   planFinalize,
@@ -45,11 +46,19 @@ const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 const NOW = Math.floor(T0 / 1000);
 
 describe('the pure rules', () => {
-  it('works the elapsed days of the last LOOKBACK_DAYS, oldest first, and nothing on day 0', () => {
+  it('works every elapsed day from the close frontier, and at least the last LOOKBACK_DAYS, oldest first', () => {
     expect(dayWindow(0)).toEqual([]);
     expect(dayWindow(1)).toEqual([0]);
     expect(dayWindow(3)).toEqual([0, 1, 2]);
-    expect(dayWindow(LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
+    expect(dayWindow(LOOKBACK_DAYS + 5), 'nothing worked through yet: from day 0').toEqual(Array.from({ length: LOOKBACK_DAYS + 5 }, (_, i) => i));
+    expect(dayWindow(LOOKBACK_DAYS + 5, LOOKBACK_DAYS + 5)).toEqual(Array.from({ length: LOOKBACK_DAYS }, (_, i) => i + 5));
+    expect(dayWindow(LOOKBACK_DAYS + 5, 2), 'a stuck day keeps the window open from it').toEqual(Array.from({ length: LOOKBACK_DAYS + 3 }, (_, i) => i + 2));
+  });
+
+  it('moves the frontier to the oldest day not worked through', () => {
+    expect(nextFrontier([3, 4, 5], 6, (d) => d !== 4)).toBe(4);
+    expect(nextFrontier([3, 4, 5], 6, () => true)).toBe(6);
+    expect(nextFrontier([], 0, () => true)).toBe(0);
   });
 
   it('warns in the last hour of grace, or the last quarter of a shorter one', () => {
@@ -150,6 +159,7 @@ class FakeDiamond {
   role = ROLE_MIRROR;
   today = 3;
   active = true;
+  launch = 1_792_540_800;
   paused = false;
   sentAt = new Map<number, number>();
   finalized = new Set<number>();
@@ -212,6 +222,8 @@ class FakeDiamond {
         return this.role;
       case 'getInteractionCurrentDay':
         return [BigInt(this.today), this.active];
+      case 'getInteractionLaunchTimestamp':
+        return BigInt(this.launch);
       case 'paused':
         return this.paused;
       case 'getRewardReporterConfig':
@@ -712,6 +724,64 @@ describe('a run', () => {
     expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
   });
 
+  it('works a day older than the lookback that was never worked through, and moves its frontier only past days done', async () => {
+    mirror.today = LOOKBACK_DAYS + 5; // armed late: days 0..4 are older than the lookback
+    for (let d = 1; d < mirror.today; d++) mirror.sentAt.set(d, NOW - 86_400);
+    await run(mirror);
+    expect(mirror.sent.map((s) => [s.fn, s.day]), 'day 0 is closed, though older than the lookback').toEqual([['closeDay', 0]]);
+    const cursor = () => keeper.db.prepare(`SELECT next_block FROM keeper_work_cursor WHERE kind = 'day_close'`).get();
+    expect(cursor(), 'every day worked through').toEqual({ next_block: LOOKBACK_DAYS + 5 });
+
+    mirror.today += 1; // day LOOKBACK+5 is refused from now on
+    mirror.refuse.set(`closeDay:${LOOKBACK_DAYS + 5}`, 'ChainReportFrontierShort');
+    mirror.refuse.set(`advanceInterestFrontiers:${LOOKBACK_DAYS + 5}`, 'EnforcedPause');
+    await run(mirror);
+    expect(cursor(), 'a day not closed holds the frontier').toEqual({ next_block: LOOKBACK_DAYS + 5 });
+  });
+
+  it('a mirror whose reward clock differs from Base\'s closes no day, and says so until they match', async () => {
+    mirror.launch = base.launch + 3600;
+    await run(mirror);
+    expect(mirror.sent, 'nothing closed').toEqual([]);
+    expect(alerts(/this chain's reward clock \(day 0 starts .*\) differs from Base's/)).toHaveLength(1);
+    openAlert(`dayclose-clock:${MIRROR}:all`);
+    mirror.launch = base.launch;
+    await run(mirror);
+    expect(mirror.sent.length).toBeGreaterThan(0);
+    expect(openKeys()).not.toContain(`dayclose-clock:${MIRROR}:all`);
+  });
+
+  it('Base finalizes no day while a served expected mirror runs another reward clock', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE, MIRROR]));
+    base.sentAt.set(0, NOW - 60);
+    base.firstAt.set(0, NOW - 60);
+    mirror.launch = base.launch - 86_400;
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).not.toContain('finalizeDay');
+    expect(alerts(/chain 421614 \(day 0 starts .*\) run\(s\) a reward clock different from Base's/)).toHaveLength(1);
+  });
+
+  it('a mirror sends no pre-B4 report for a day Base has finalized, since Base would refuse it', async () => {
+    base.finalized.add(1);
+    mirror.sentAt.set(0, NOW - 86_400);
+    mirror.sentAt.set(2, NOW - 86_400);
+    mirror.quoteShapes = new Set([7, 5, 3]);
+    await run(mirror);
+    expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
+    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day, and this chain's messenger cannot quote the B4 report/)).toHaveLength(1);
+  });
+
+  it('clears a near-end grace warning once grace is lengthened', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.sentAt.set(0, NOW - 60);
+    base.firstAt.set(0, NOW - 60);
+    openAlert(`dayclose-waiting:${BASE}:0`);
+    await run(base); // grace is far from its end: the old warning no longer holds
+    expect(openKeys()).toEqual([]);
+  });
+
   it('sends a day once when no destination can be confirmed, keeping its marker for the window', async () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper
@@ -741,6 +811,10 @@ describe('a run', () => {
       .prepare(`INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, 'day_broadcast', '60', 60, ?, 9, 0)`)
       .run(BASE, base.diamond, JSON.stringify({ sentTo: { [MIRROR]: NOW } }));
     for (let d = 47; d < 60; d++) base.sentAt.set(d, NOW);
+    // Every day before the lookback has been worked through.
+    keeper.db
+      .prepare(`INSERT INTO keeper_work_cursor (chain_id, diamond, kind, next_block, updated_at) VALUES (?, ?, 'day_close', 47, 0)`)
+      .run(BASE, base.diamond.toLowerCase());
     await run(base);
     expect(base.sent.filter((s) => s.day === 60), 'day 60 was already sent').toEqual([]);
     const left = keeper.db.prepare(`SELECT COUNT(*) AS n FROM keeper_work_open WHERE kind = 'day_broadcast' AND block < 47`).get();

@@ -15,7 +15,13 @@
 //      (`getInteractionCurrentDay`) and the pause state. A chain whose clock
 //      is not running, or is still on day 0, has no elapsed day: nothing to do.
 //      A paused protocol refuses every one of these calls, so the run sends
-//      nothing and raises or clears no alert.
+//      nothing and raises or clears no alert. It also compares reward clocks
+//      (`getInteractionLaunchTimestamp`) with Base, on every chain it can read:
+//      a day number must cover the same hours everywhere, or a report is
+//      summed into Base's day with interest from other hours, irreversibly. A
+//      mirror whose clock differs from Base's closes no day; Base finalizes no
+//      day while a listed mirror it serves runs another clock. A chain this
+//      keeper does not serve cannot be compared, and the run's line names it.
 //   1. CLOSES every elapsed day in its window not yet reported here
 //      (`getChainReportSentAt(d) == 0`), oldest first: `closeDay(d)`. On a
 //      mirror that sends the day's report to Base over CCIP, and the fee is
@@ -28,7 +34,11 @@
 //      commitment ratchets), which a mirror's last report before detaching
 //      must not lose. Base refuses a report from a chain off its
 //      expected-source list outright, that last report included (#2618), so a
-//      mirror reads Base's list and says when it is not on it. For every window day, sent or not, a day Base finalized
+//      mirror reads Base's list and says when it is not on it. Only the B4
+//      report carries that late path: an older report shape reaching a
+//      finalized day is refused on Base after its fee is paid, so a mirror
+//      whose messenger cannot quote the B4 report does not send one for a day
+//      Base has finalized, and says so. For every window day, sent or not, a day Base finalized
 //      without this chain's report is reported as such (when this keeper also
 //      serves Base). A close refused because the interest fold has not reached
 //      the day (`ChainReportFrontierShort`) is preceded by
@@ -83,9 +93,15 @@
 // receipt before the next (every pass signs from one key). Every call here is
 // permissionless; the only value it moves is the CCIP fee the keeper pays.
 //
-// The window is the last {@link LOOKBACK_DAYS} elapsed days. A day older than
-// that is no longer worked by this pass, and the alerts below say so before a
-// day stuck in the window can leave it.
+// The window runs from the chain's close frontier (`day_close`, the oldest day
+// not yet worked through) or the last {@link LOOKBACK_DAYS} elapsed days,
+// whichever starts earlier, to yesterday. A day is worked through once nothing
+// more is owed on it here: closed on a mirror; closed, finalized and broadcast
+// on Base. The frontier only moves forward, so no elapsed day is skipped,
+// whenever the pass was first armed or however long the keeper was down, and a
+// day stuck for any reason is worked, and alerted on, every run until it goes
+// through. A day leaves the window, and its alerts with it, only once it is
+// worked through and older than the lookback.
 //
 // OPS alerts (conditions that hold, de-duplicated and cleared):
 //   - a call the contract refuses, by step and day, with the reason (a race —
@@ -107,7 +123,11 @@
 //     standing until the destination is read holding the day;
 //   - on a mirror, a day Base finalized without this chain's report;
 //   - on a mirror, this chain missing from Base's expected-source list, so
-//     Base refuses its reports and the chain-wide figures they carry (#2618).
+//     Base refuses its reports and the chain-wide figures they carry (#2618);
+//   - a reward clock that differs from Base's (on a mirror, its own; on
+//     Base, each listed mirror it serves), cleared on a read showing a match.
+// A near-end grace warning clears once a run judges the day no longer near
+// its end (grace lengthened, or the report landed).
 // And one NOTICE (a thing that happened): a day Base finalized with expected
 // chains missing, naming each.
 //
@@ -117,6 +137,9 @@
 // with the last send that covered it (kind `day_broadcast`; losing it costs
 // at most one extra broadcast, and forgets a destination removed since), and a finalized day's
 // zeroed chains with whether that notice was delivered (kind `day_zeroed`).
+// Beside them it keeps one cursor per (chain, Diamond), the close frontier
+// (`keeper_work_cursor`, kind `day_close`), which only moves forward; losing it
+// costs one run reading back from day 0.
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
 
@@ -136,7 +159,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
-import { getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, type WorkItem } from './db';
+import { getWorkCursor, getWorkItems, listOpsAlertKeys, pruneWorkBelow, putWork, putWorkCursor, type WorkItem } from './db';
 import { resolveOpsAlert, sendOpsAlert, sendOpsNoticeDigest } from './opsAlert';
 
 const MESSENGER_ABI = VaipakamRewardMessengerABI as Abi;
@@ -153,8 +176,9 @@ const ABI = [
 
 /** This pass's cadence in seconds (passSchedule). */
 export const PASS_CADENCE_SEC = 15 * 60;
-/** Elapsed days each run works. Two weeks: a keeper down for days catches up
- *  on its own, and the alerts fire long before a stuck day leaves it. */
+/** Recent days each run works even once worked through: two weeks, so a day
+ *  finalized without a chain, or a broadcast still unconfirmed, stays in view
+ *  that long. Older days are worked only while short of the close frontier. */
 export const LOOKBACK_DAYS = 14;
 /** Transactions one run may send per chain. Each waits for its receipt. */
 export const MAX_SENDS_PER_RUN = 8;
@@ -203,12 +227,23 @@ const FRONTIER_SHORT = 'ChainReportFrontierShort';
 
 // ─── Pure planning ──────────────────────────────────────────────────────
 
-/** The elapsed days a run works, oldest first: `[today - LOOKBACK, today - 1]`
- *  floored at day 0. Empty on day 0. Pure. */
-export function dayWindow(today: number, lookback = LOOKBACK_DAYS): number[] {
+/** The elapsed days a run works, oldest first: from the older of the chain's
+ *  close frontier (`frontier`, the oldest day not yet worked through) and
+ *  `today - LOOKBACK`, to `today - 1`; floored at day 0. Empty on day 0. A
+ *  day leaves the window only once it is worked through AND older than the
+ *  lookback, so no elapsed day is ever skipped, whenever the pass was armed
+ *  or however long it was down. Pure. */
+export function dayWindow(today: number, frontier = 0, lookback = LOOKBACK_DAYS): number[] {
   const out: number[] = [];
-  for (let d = Math.max(0, today - lookback); d < today; d++) out.push(d);
+  for (let d = Math.max(0, Math.min(frontier, today - lookback)); d < today; d++) out.push(d);
   return out;
+}
+
+/** The new close frontier: the oldest window day not worked through
+ *  (`through(d)` false), or `today` when every one is. Pure. */
+export function nextFrontier(window: readonly number[], today: number, through: (d: number) => boolean): number {
+  for (const d of window) if (!through(d)) return d;
+  return today;
 }
 
 /** What Base's state says about one day, for finalization. */
@@ -407,6 +442,11 @@ interface RunFindings {
   /** Mirror: this chain is absent from Base's expected-source list, so Base
    *  refuses its reports (null = not read: Base not served, or unread). */
   notExpectedOnBase: boolean | null;
+  /** The reward clocks compared against Base's (null = not read): Base's
+   *  launch timestamp, and each served chain whose launch differs. */
+  clock: { base: number; differ: { chain: number; launch: number }[] } | null;
+  /** Base: open days this run judged for finalization. */
+  judged: Set<number>;
   /** The days this run's window covered. */
   window: number[];
 }
@@ -435,7 +475,8 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }
   const [messenger, , baseChainId, , graceSecRaw] = await read<readonly [Address, number, number, boolean, bigint]>('getRewardReporterConfig');
   const graceSec = Number(graceSecRaw);
-  const window = dayWindow(today);
+  const launch = Number(await read<bigint>('getInteractionLaunchTimestamp'));
+  const window = dayWindow(today, await getWorkCursor(env.KEEPER_DB, chainId, diamond, 'day_close'));
   const canonical = role === ROLE_CANONICAL;
 
   const f: RunFindings = {
@@ -450,12 +491,15 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     lateBroadcast: [],
     excluded: [],
     notExpectedOnBase: null,
+    clock: null,
+    judged: new Set(),
     window,
   };
   const sender = new Sender(deps, f);
 
   // ── 1. Close ──
   const sentAt = await readDays<bigint>(deps, diamond, window, 'getChainReportSentAt', where);
+  let finalizedOnBase = new Set<number>();
   const unclosed = window.filter((d) => sentAt.get(d) === 0n);
   for (const d of window) if ((sentAt.get(d) ?? 0n) > 0n) f.settled.add(`close:${d}`);
   if (!canonical) {
@@ -470,20 +514,37 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     // last one before the chain detaches included (#2618): the report still
     // goes out, and the run says so.
     f.notExpectedOnBase = await absentFromBaseList(base, chainId, where);
+    // The same day number must cover the same hours here and on Base, or the
+    // report is summed into Base's day with interest from other hours.
+    const baseLaunch = base ? await launchOf(base, where) : null;
+    if (baseLaunch !== null) f.clock = { base: baseLaunch, differ: baseLaunch === launch ? [] : [{ chain: chainId, launch }] };
+    finalizedOnBase = new Set(window.filter((d) => onBase.get(d)?.finalized === true));
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
   }
   let closed = 0;
-  for (const d of unclosed) {
+  const clockOff = (f.clock?.differ.length ?? 0) > 0;
+  for (const d of clockOff ? [] : unclosed) {
     // eslint-disable-next-line no-await-in-loop
-    const fee = canonical ? 0n : await reportFee(deps.client, messenger, d);
-    if (fee === 'unread') {
+    const q = canonical ? { fee: 0n, b4: true } : await reportFee(deps.client, messenger, d);
+    if (q === 'unread') {
       console.error(`[keeper] rewardDayClose ${where}: report fee for day ${d} unread, the RPC did not answer; left for the next run`);
       continue;
     }
-    if (fee === 'refused') {
+    if (q === 'refused') {
       f.refused.set(`close:${d}`, 'the messenger would not quote the report fee');
       continue;
     }
+    if (finalizedOnBase.has(d) && !q.b4) {
+      // Only the B4 report has Base's late path: an older shape reaching a
+      // finalized day is refused there (ReportAfterFinalization), after its
+      // fee is paid and this chain has recorded the day as sent.
+      f.refused.set(
+        `close:${d}`,
+        "Base has finalized this day, and this chain's messenger cannot quote the B4 report, the only shape whose chain-wide figures Base applies after finalization; an older report would be refused on Base after its fee is paid, so it is not sent",
+      );
+      continue;
+    }
+    const fee = q.fee;
     // eslint-disable-next-line no-await-in-loop
     let r = await sender.call('close', d, 'closeDay', [BigInt(d)], fee);
     if (r === FRONTIER_SHORT) {
@@ -500,6 +561,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
   }
 
   // ── 2. Finalize, 3. broadcast (Base) ──
+  let clockNote = '';
   let finalized = 0;
   let broadcast = 0;
   const unconfirmed: number[] = [];
@@ -522,14 +584,32 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
         repeated: [...new Set(destinations.filter((c, i) => destinations.indexOf(c) !== i))],
       };
     }
+    // Every expected mirror this keeper serves must run Base's reward clock:
+    // a day finalized with a report from a chain whose day N covers other
+    // hours sums unrelated interest into one global total, irreversibly. A
+    // mirror this keeper does not serve cannot be compared, and the run's line
+    // names it.
+    const differ: { chain: number; launch: number }[] = [];
+    const clockUnchecked: number[] = [];
+    for (const c of expected) {
+      if (c === chainId) continue;
+      const p = deps.peer(c);
+      // eslint-disable-next-line no-await-in-loop
+      const l = p ? await launchOf(p, where) : null;
+      if (l === null) clockUnchecked.push(c);
+      else if (l !== launch) differ.push({ chain: c, launch: l });
+    }
+    f.clock = { base: launch, differ };
+    if (clockUnchecked.length > 0) clockNote = ` clock-unchecked=${clockUnchecked.join(',')}`;
     const ready = await readDays<readonly [boolean, number]>(deps, diamond, window, 'isDayReadyToFinalize', where);
     const firstAt = await readDays<bigint>(deps, diamond, window, 'getDailyFirstReportAt', where);
     const open = window.filter((d) => ready.has(d) && Number(ready.get(d)![1]) !== REASON_FINALIZED);
     const reported = await readReported(deps, diamond, open, expected, where);
     const finalizedDays = new Set(window.filter((d) => ready.has(d) && Number(ready.get(d)![1]) === REASON_FINALIZED));
 
-    for (const d of open) {
+    for (const d of differ.length > 0 ? [] : open) {
       if (sender.stopped) break;
+      f.judged.add(d);
       const decision = planFinalize(
         {
           day: d,
@@ -702,6 +782,15 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     }
   }
 
+  // A day is worked through once nothing more is owed on it here: closed on a
+  // mirror; closed, finalized and broadcast (nothing left to send) on Base.
+  // The frontier only moves forward, and a day short of it keeps the window
+  // open from there, so a day stuck for any reason is worked, and alerted on,
+  // every run until it goes through.
+  const through = (d: number): boolean =>
+    f.settled.has(`close:${d}`) && (!canonical || (f.settled.has(`finalize:${d}`) && f.settled.has(`broadcast:${d}`)));
+  await putWorkCursor(env.KEEPER_DB, chainId, diamond, 'day_close', nextFrontier(window, today, through));
+
   console.log(
     `[keeper] rewardDayClose ${where} role=${canonical ? 'canonical' : 'mirror'} today=${today} window=${window[0]}..${window[window.length - 1]} ` +
       `unclosed=${unclosed.length} closed=${closed}` +
@@ -709,6 +798,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
       (f.excluded.length > 0 ? ` finalized-without-this-chain=${f.excluded.join(',')}` : '') +
       (unconfirmed.length > 0 ? ` broadcast-unconfirmed(unserved destinations)=${unconfirmed.join(',')}` : '') +
       (f.refused.size > 0 ? ` refused=${[...f.refused.keys()].join(',')}` : '') +
+      clockNote +
       (sender.stopped ? ` stopped=${sender.stopReason}` : ''),
   );
 
@@ -792,6 +882,17 @@ async function baseView(
   return out;
 }
 
+/** A chain's reward-clock launch timestamp (null = unread). */
+async function launchOf(p: PeerReader, where: string): Promise<number | null> {
+  try {
+    return Number(await p.client.readContract({ address: p.diamond, abi: ABI, functionName: 'getInteractionLaunchTimestamp' }));
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${where}: reward clock of the peer at ${p.diamond} unread: ${shortErr(err)}`);
+    return null;
+  }
+}
+
 /** On a mirror: whether Base's expected-source list leaves this chain out
  *  (null = Base not served, or the read failed). */
 async function absentFromBaseList(base: PeerReader | null, self: number, where: string): Promise<boolean | null> {
@@ -830,10 +931,11 @@ async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], day: nu
  *  newest report shape the messenger has (B4, then B3, B1 and the legacy one,
  *  each downgrade on a selector the messenger lacks), and the quote walks the
  *  same ladder, stopping at a refusal the messenger names. The payload is
- *  fixed-width, so zero figures price it exactly. Null when no shape quotes.
+ *  fixed-width, so zero figures price it exactly. `b4` says whether the
+ *  shape that quoted is the B4 report.
  *  A quote that does not match the shape sent cannot overpay silently: the
  *  `closeDay` simulation is the judge, and refuses an underpaid send. */
-async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<bigint | 'refused' | 'unread'> {
+async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<{ fee: bigint; b4: boolean } | 'refused' | 'unread'> {
   const z = 0n;
   const d = BigInt(day);
   const ladder: readonly (readonly unknown[])[] = [
@@ -842,10 +944,11 @@ async function reportFee(client: PublicClient, messenger: Address, day: number):
     [d, z, z, z, z], // B1
     [d, z, z], // legacy
   ];
-  for (const args of ladder) {
+  for (const [i, args] of ladder.entries()) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      return (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args })) as bigint;
+      const fee = (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args })) as bigint;
+      return { fee, b4: i === 0 };
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       const c = classify(err);
@@ -1038,7 +1141,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     // eslint-disable-next-line no-await-in-loop
     await raise(
       `dayclose-refused:${chainId}:${k}`,
-      `${tag}: ${STEP_WORDS[step] ?? step} for reward day ${day} is refused (${why}). The day stays open on this chain until the call goes through; the pass retries every run while the day is in its ${LOOKBACK_DAYS}-day window.`,
+      `${tag}: ${STEP_WORDS[step] ?? step} for reward day ${day} is refused (${why}). The day stays open on this chain until the call goes through; the pass retries every run until it does.`,
     );
   }
   for (const w of f.waiting) {
@@ -1112,6 +1215,16 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
       `${tag}: this chain is not on Base's expected-source list, so Base refuses every report it sends (SourceChainIdNotExpected): its interest counts toward no day, and the chain-wide figures each report carries (its custody era, and its recycled-availability and commitment ratchets) do not reach Base, so commitments this chain has retired stay outstanding there. The pass still closes each day here. CCIP records each refused report as a failed message, which can be executed again by hand once the chain is back on the list. If this chain is being detached, keep it on the list until its last report has landed (#2618).`,
     );
   }
+  if (f.clock && f.clock.differ.length > 0) {
+    const at = (t: number) => new Date(t * 1000).toISOString();
+    const each = f.clock.differ.map((x) => `chain ${x.chain} (day 0 starts ${at(x.launch)})`).join(', ');
+    await raise(
+      `dayclose-clock:${chainId}:all`,
+      canonical
+        ? `${tag}: ${each} run(s) a reward clock different from Base's (day 0 starts ${at(f.clock.base)}), so the same day number covers different hours there and here. A day finalized with such a report sums unrelated interest into one global total, irreversibly, so the pass finalizes no day until every listed chain it serves runs Base's clock. Days already finalized are still broadcast.`
+        : `${tag}: this chain's reward clock (day 0 starts ${at(f.clock.differ[0].launch)}) differs from Base's (day 0 starts ${at(f.clock.base)}), so the same day number covers different hours here and on Base. A report sent now would be summed into Base's day with interest from other hours, irreversibly, so the pass closes no day here until the two match.`,
+    );
+  }
   for (const d of f.excluded) {
     // eslint-disable-next-line no-await-in-loop
     await raise(
@@ -1135,7 +1248,9 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
       const served = SERVES[parts[2]];
       gone = f.settled.has(`${parts[2]}:${parts[3]}`) || (served !== undefined && f.settled.has(`${served}:${parts[3]}`)) || !inWindow.has(day);
     }
-    else if (kind === 'dayclose-waiting') gone = f.settled.has(`finalize:${day}`) || !inWindow.has(day);
+    // A wait judged this run and not raised is no longer near its end (grace
+    // was lengthened, or a report landed): its deadline no longer holds.
+    else if (kind === 'dayclose-waiting') gone = f.settled.has(`finalize:${day}`) || f.judged.has(day) || !inWindow.has(day);
     // A topology alert clears only on a read that shows the fix.
     else if (kind === 'dayclose-noexpected') gone = canonical && f.noExpected === false;
     else if (kind === 'dayclose-selfmissing') gone = canonical && f.selfNotExpected === false;
@@ -1145,6 +1260,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || !inWindow.has(day);
     else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
     else if (kind === 'dayclose-notexpected') gone = !canonical && f.notExpectedOnBase === false;
+    else if (kind === 'dayclose-clock') gone = f.clock !== null && f.clock.differ.length === 0;
     if (gone && Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       await resolveOpsAlert(env, key);
