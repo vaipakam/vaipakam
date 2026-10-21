@@ -153,8 +153,11 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
 
   // What is done, as read or landed: what clears a refusal, and (with the
   // alerts) what takes a day out of the ledger.
+  // A landed call completes a step only where one call is the whole step. A
+  // broadcast may take several sends, so only its plan, read before them,
+  // says it is done; what this run sent is confirmed by the next run's reads.
   const isDone = (step: string, d: number): boolean => {
-    if (sender.landed.has(`${step}:${d}`)) return true;
+    if (step !== 'broadcast' && sender.landed.has(`${step}:${d}`)) return true;
     if (step === 'close') {
       const r = dayFact(reportedHere, d);
       return r.known && r.value;

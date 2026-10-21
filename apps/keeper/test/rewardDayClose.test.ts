@@ -210,6 +210,8 @@ class FakeDiamond {
   knownUnreadable = false;
   /** The messenger's destination list cannot be read. */
   destinationsUnreadable = false;
+  /** Destinations whose single-destination broadcast quote cannot be read. */
+  quoteUnreadTo = new Set<number>();
   /** The expected-source list cannot be read. */
   expectedUnreadable = false;
   /** Chains whose `isChainReported` read fails. */
@@ -282,6 +284,7 @@ class FakeDiamond {
       case 'quoteBroadcastGlobal':
         return BROADCAST_FEE;
       case 'quoteBroadcastGlobalTo':
+        if (this.quoteUnreadTo.has(Number(args![1]))) throw new Error('rpc down');
         if (this.noStanding.has(Number(args![1]))) throw revert('DestinationHasNoDayStanding', [BigInt(d), args![1]]);
         if (this.refuseToChain.has(Number(args![1]))) throw revert(this.refuseToChain.get(Number(args![1]))!);
         if (this.refuseTo) throw revert(this.refuseTo, this.refuseTo === 'DestinationHasNoDayStanding' ? [BigInt(d), args![1]] : []);
@@ -469,13 +472,13 @@ describe('a run', () => {
     expect(mirror.sent, 'a report sent now would never reach Base').toEqual([]);
     expect(alerts(/sends its reports to chain 999, but this Diamond names chain/)).toHaveLength(1);
     expect(owed(), 'and every day stays owed').toEqual([0, 1, 2]);
-    openAlert(`dayclose-route:${MIRROR}:all`); // as a delivered alert leaves it
+    openAlert(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:all`); // as a delivered alert leaves it
     await run(mirror);
-    expect(openKeys(), 'stands while the route still differs').toContain(`dayclose-route:${MIRROR}:all`);
+    expect(openKeys(), 'stands while the route still differs').toContain(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     mirror.routeTo = null;
     await run(mirror);
     expect(mirror.sent.map((s) => s.day), 'closed once the route reads as Base').toEqual([0, 1, 2]);
-    expect(openKeys()).not.toContain(`dayclose-route:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-route:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('says when a close sent its report through a messenger rotated in after the checks, until Base records the day', async () => {
@@ -485,15 +488,15 @@ describe('a run', () => {
     await run(mirror);
     expect(mirror.sent.map((s) => s.day), 'the close lands: the rotation is seen only in its receipt').toEqual([0]);
     expect(said()).toHaveLength(1);
-    openAlert(`dayclose-dispatch:${MIRROR}:0`); // as a delivered alert leaves it
+    openAlert(`dayclose-dispatch:${MIRROR}:0x00000000000000000000000000000000000000c1:0`); // as a delivered alert leaves it
     later(60);
     await run(mirror);
-    expect(openKeys(), 'stands while Base has no outcome for the day').toContain(`dayclose-dispatch:${MIRROR}:0`);
+    expect(openKeys(), 'stands while Base has no outcome for the day').toContain(`dayclose-dispatch:${MIRROR}:0x00000000000000000000000000000000000000c1:0`);
     expect(said(), 'and is said again from its record, however its first delivery went').toHaveLength(2);
     base.reported.set(0, new Set([MIRROR]));
     later(60);
     await run(mirror);
-    expect(openKeys(), 'and clears once Base counts it').not.toContain(`dayclose-dispatch:${MIRROR}:0`);
+    expect(openKeys(), 'and clears once Base counts it').not.toContain(`dayclose-dispatch:${MIRROR}:0x00000000000000000000000000000000000000c1:0`);
     expect(said(), 'and is not said again').toHaveLength(2);
     expect(mirror.sent, 'nothing is sent again').toHaveLength(1);
   });
@@ -535,12 +538,12 @@ describe('a run', () => {
     await runMoved();
     expect(mirror.sent.map((s) => s.day), 'the old record says nothing about the new Diamond').toEqual([0, 1, 2]);
     expect(alerts(/the reward clock of chain 84532 \(it now names Diamond 0x0+b9, not the one whose clock this keeper last read, and the new clock has not been read\) is not known/)).toHaveLength(1);
-    openAlert(`dayclose-clockunknown:${MIRROR}:all`); // as a delivered alert leaves it
+    openAlert(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`); // as a delivered alert leaves it
     base.launchUnread = false;
     later(60);
     await runMoved();
     expect(mirror.sent.map((s) => s.day), 'closed once the new clock reads as the same').toEqual([0, 1, 2, 3]);
-    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('keeps holding on a moved peer Diamond after the keeper stops serving that peer', async () => {
@@ -558,11 +561,11 @@ describe('a run', () => {
         runDeadline: Number.POSITIVE_INFINITY,
       });
     await runWith((id) => (id === BASE ? { diamond: NEW_BASE, client: base.client() } : peers(id)));
-    openAlert(`dayclose-clockunknown:${MIRROR}:all`);
+    openAlert(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     later(60);
     await runWith((id) => (id === BASE ? null : peers(id))); // Base no longer served
     expect(mirror.sent.map((s) => s.day), 'the old Diamond\'s clock is not trusted again').toEqual([0, 1, 2]);
-    expect(openKeys()).toContain(`dayclose-clockunknown:${MIRROR}:all`);
+    expect(openKeys()).toContain(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('closes no day while its messenger route cannot be read', async () => {
@@ -659,9 +662,9 @@ describe('a run', () => {
     expect(alerts(/broadcast of reward day 0 has not reached chain 421614 \(last sent \S+, or sent then with no receipt seen\)/)).toHaveLength(1);
 
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
-    openAlert(`dayclose-broadcast:${BASE}:0`);
+    openAlert(`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`);
     await run(base);
-    expect(openKeys(), 'a re-send landing is not a delivery').toEqual([`dayclose-broadcast:${BASE}:0`]);
+    expect(openKeys(), 'a re-send landing is not a delivery').toEqual([`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`]);
     expect(base.sent[1], 'every listed destination lacks it: re-sent to all').toEqual({ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE });
 
     mirror.known.add(0);
@@ -688,7 +691,7 @@ describe('a run', () => {
     await run(base);
     expect(alerts(/not on its own expected-source list/)).toHaveLength(1);
     expect(base.sent.some((s) => s.fn === 'finalizeDay'), 'no day finalized against a list without Base').toBe(false);
-    openAlert(`dayclose-selfmissing:${BASE}:all`);
+    openAlert(`dayclose-selfmissing:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     base.expected = [BASE, MIRROR];
     await run(base);
     expect(openKeys()).toEqual([]);
@@ -698,7 +701,7 @@ describe('a run', () => {
     mirror.refuse.set('closeDay:0', 'RewardMessengerNotSet');
     await run(mirror);
     expect(alerts(/closing the day \(closeDay\) for reward day 0 is refused \(RewardMessengerNotSet\)/)).toHaveLength(1);
-    openAlert(`dayclose-refused:${MIRROR}:close:0`);
+    openAlert(`dayclose-refused:${MIRROR}:0x00000000000000000000000000000000000000c1:close:0`);
     mirror.refuse.clear();
     await run(mirror);
     expect(mirror.sent.some((s) => s.day === 0)).toBe(true);
@@ -710,7 +713,7 @@ describe('a run', () => {
     mirror.refuse.set('advanceInterestFrontiers:0', 'RewardMessengerNotSet');
     await run(mirror);
     expect(alerts(/advancing the interest fold \(advanceInterestFrontiers\) for reward day 0 is refused/)).toHaveLength(1);
-    openAlert(`dayclose-refused:${MIRROR}:advance:0`);
+    openAlert(`dayclose-refused:${MIRROR}:0x00000000000000000000000000000000000000c1:advance:0`);
     mirror.refuse.clear(); // another caller advanced the fold
     await run(mirror);
     expect(mirror.sent.some((s) => s.fn === 'closeDay' && s.day === 0)).toBe(true);
@@ -725,7 +728,7 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn), 'closed and finalized, not broadcast').toEqual(['closeDay', 'finalizeDay']);
     expect(alerts(/broadcasts no finalized day while the reward messenger's broadcast destinations could not be read/)).toHaveLength(1);
-    openAlert(`dayclose-held:${BASE}:all`);
+    openAlert(`dayclose-held:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     base.destinationsUnreadable = false;
     await run(base);
     expect(base.sent.map((s) => s.fn).slice(2), 'broadcast once the list reads').toEqual(['broadcastGlobal']);
@@ -743,7 +746,7 @@ describe('a run', () => {
       alerts(/finalizes no reward day while Base's expected-source list could not be read .*; and it broadcasts no finalized day while Base's expected-source list could not be read/),
       'the hold is said though no other alert names its cause',
     ).toHaveLength(1);
-    openAlert(`dayclose-held:${BASE}:all`);
+    openAlert(`dayclose-held:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     base.expectedUnreadable = false;
     await run(base);
     expect(base.sent.map((s) => s.fn).slice(1), 'finalized and broadcast once the list reads').toEqual(['finalizeDay', 'broadcastGlobal']);
@@ -829,13 +832,13 @@ describe('a run', () => {
     base.refuse.set('closeDay:0', 'DayNotReadyToFinalize');
     await run(base);
     expect(alerts(/closing the day \(closeDay\) for reward day 0 is refused/)).toHaveLength(1);
-    openAlert(`dayclose-refused:${BASE}:close:0`); // as a delivered alert leaves it
+    openAlert(`dayclose-refused:${BASE}:0x00000000000000000000000000000000000000b1:close:0`); // as a delivered alert leaves it
     base.finalized.add(0); // then an admin force-finalizes it
     base.refuse.set('closeDay:0', 'ReportAfterFinalization');
     mirror.known.add(0);
     later(60);
     await run(base);
-    expect(openKeys(), 'a close no longer owed is no longer refused').not.toContain(`dayclose-refused:${BASE}:close:0`);
+    expect(openKeys(), 'a close no longer owed is no longer refused').not.toContain(`dayclose-refused:${BASE}:0x00000000000000000000000000000000000000b1:close:0`);
     expect(owed(), 'and the day goes').toEqual([]);
   });
 
@@ -990,10 +993,10 @@ describe('a run', () => {
     await run(base);
     expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal', 'broadcastGlobal']);
     expect(alerts(/broadcast of reward day 0 has not reached chain 421614/), 'raised though a re-send followed').toHaveLength(1);
-    openAlert(`dayclose-broadcast:${BASE}:0`);
+    openAlert(`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`);
     later(60);
     await run(base);
-    expect(openKeys(), 'still lacking it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0`]);
+    expect(openKeys(), 'still lacking it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`]);
     mirror.known.add(0);
     await run(base);
     expect(openKeys()).toEqual([]);
@@ -1004,12 +1007,12 @@ describe('a run', () => {
     await run(mirror);
     expect(mirror.sent.map((s) => s.fn)).toContain('closeDay');
     expect(alerts(/this chain is not on Base's expected-source list, so Base refuses every report it sends \(SourceChainIdNotExpected\)/)).toHaveLength(1);
-    openAlert(`dayclose-notexpected:${MIRROR}:all`);
+    openAlert(`dayclose-notexpected:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     await run(mirror);
-    expect(openKeys(), 'still unlisted: the alert stands').toContain(`dayclose-notexpected:${MIRROR}:all`);
+    expect(openKeys(), 'still unlisted: the alert stands').toContain(`dayclose-notexpected:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     base.expected = [BASE, MIRROR];
     await run(mirror);
-    expect(openKeys()).not.toContain(`dayclose-notexpected:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-notexpected:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('keeps a late alert open while the destination cannot be read, and closes it, saying why, once the keeper stops serving it', async () => {
@@ -1017,11 +1020,11 @@ describe('a run', () => {
     await run(base);
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
-    openAlert(`dayclose-broadcast:${BASE}:0`);
+    openAlert(`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`);
     mirror.knownUnreadable = true; // the mirror's read fails: unknown, not gone
     later(60);
     await run(base);
-    expect(openKeys(), 'not read holding it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0`]);
+    expect(openKeys(), 'not read holding it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0x00000000000000000000000000000000000000b1:0`]);
     expect(owed(), 'and its day stays owed while the alert stands').toContain(0);
     // The keeper stops serving the mirror: whether the day arrived there can
     // never be read here again.
@@ -1034,7 +1037,7 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       runDeadline: Number.POSITIVE_INFINITY,
     });
-    expect(logged.some((l) => /closed: dayclose-broadcast:84532:0 \(the day was sent to chain\(s\) 421614, which this keeper no longer serves/.test(l)), 'closed, and why').toBe(true);
+    expect(logged.some((l) => /closed: dayclose-broadcast:84532:0x00000000000000000000000000000000000000b1:0 \(the day was sent to chain\(s\) 421614, which this keeper no longer serves/.test(l)), 'closed, and why').toBe(true);
     expect(openKeys(), 'not left standing for good').toEqual([]);
     expect(base.sent, 'and nothing is sent blind').toHaveLength(1);
     expect(owed(), 'so the day can go').not.toContain(0);
@@ -1090,11 +1093,11 @@ describe('a run', () => {
     await run(mirror);
     expect(mirror.sent, 'nothing closed').toEqual([]);
     expect(alerts(/this chain's reward clock \(day 0 starts .*\) differs from Base's/)).toHaveLength(1);
-    openAlert(`dayclose-clock:${MIRROR}:all`);
+    openAlert(`dayclose-clock:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     mirror.launch = base.launch;
     await run(mirror);
     expect(mirror.sent.length).toBeGreaterThan(0);
-    expect(openKeys()).not.toContain(`dayclose-clock:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-clock:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('Base finalizes no day while a served expected mirror runs another reward clock', async () => {
@@ -1135,7 +1138,7 @@ describe('a run', () => {
     base.firstAt.set(0, NOW - 60);
     mirror.launch = base.launch - 86_400;
     await run(base);
-    openAlert(`dayclose-clock:${BASE}:all`);
+    openAlert(`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     await dayCloseOnce(env, base.chainId, base.diamond, {
       client: base.client(),
       readClient: base.client(),
@@ -1145,7 +1148,7 @@ describe('a run', () => {
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(base.sent.map((s) => s.fn), 'still no finalization').not.toContain('finalizeDay');
-    expect(openKeys(), 'the mismatch alert stands').toContain(`dayclose-clock:${BASE}:all`);
+    expect(openKeys(), 'the mismatch alert stands').toContain(`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     expect(alerts(/as last read; this run could not read it/)).toHaveLength(1);
   });
 
@@ -1182,12 +1185,34 @@ describe('a run', () => {
     expect(owed(), 'the refused destination still holds the day').toEqual([0]);
   });
 
+  it('holds a day whose broadcast landed for one destination while another it is owed could not be quoted', async () => {
+    finalizedDayZero();
+    await run(base);
+    base.expected = [BASE, MIRROR, OTHER, 56];
+    base.destinations = [MIRROR, OTHER, 56];
+    base.quoteUnreadTo.add(56); // unread, not refused: no refusal alert holds the day
+    await run(base);
+    expect(base.sent.slice(1), 'one destination landed').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
+    expect(owed(), 'one send landing is not the broadcast done').toEqual([0]);
+  });
+
+  it("closes, with a notice, an alert about a Diamond the chain no longer names, and does not judge it against the new one", async () => {
+    const OLD = '0x00000000000000000000000000000000000000ee';
+    openAlert(`dayclose-route:${MIRROR}:${OLD}:all`);
+    openAlert(`dayclose-dispatch:${MIRROR}:${OLD}:0`);
+    openAlert(`dayclose-route:${MIRROR}:all`); // names no Diamond
+    await run(mirror);
+    expect(logged.some((l) => new RegExp(`closed: dayclose-dispatch:421614:${OLD}:0 \\(it is about Diamond ${OLD}, and this chain now names Diamond 0x0+c1`).test(l))).toBe(true);
+    expect(logged.some((l) => /closed: dayclose-route:421614:all \(it names no Diamond/.test(l))).toBe(true);
+    expect(openKeys()).toEqual([]);
+  });
+
   it('clears a near-end grace warning once grace is lengthened', async () => {
     base.today = 1;
     base.reported.set(0, new Set([BASE]));
     base.sentAt.set(0, NOW - 60);
     base.firstAt.set(0, NOW - 60);
-    openAlert(`dayclose-waiting:${BASE}:0`);
+    openAlert(`dayclose-waiting:${BASE}:0x00000000000000000000000000000000000000b1:0`);
     await run(base); // grace is far from its end: the old warning no longer holds
     expect(openKeys()).toEqual([]);
   });
@@ -1292,13 +1317,13 @@ describe('a run', () => {
   });
 
   it('closes its alerts for a chain that has left the reward set, and says so', async () => {
-    openAlert(`dayclose-notexpected:${MIRROR}:all`);
-    openAlert(`dayclose-refused:${MIRROR}:close:3`);
-    openAlert(`dayclose-clock:${BASE}:all`); // another chain's: untouched
+    openAlert(`dayclose-notexpected:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
+    openAlert(`dayclose-refused:${MIRROR}:0x00000000000000000000000000000000000000c1:close:3`);
+    openAlert(`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`); // another chain's: untouched
     mirror.role = 2;
     await run(mirror);
     expect(mirror.sent).toEqual([]);
-    expect(openKeys()).toEqual([`dayclose-clock:${BASE}:all`]);
+    expect(openKeys()).toEqual([`dayclose-clock:${BASE}:0x00000000000000000000000000000000000000b1:all`]);
     expect(logged.filter((l) => /reward role 2, closed: dayclose-/.test(l))).toHaveLength(2);
   });
 
@@ -1334,7 +1359,7 @@ describe('a run', () => {
     base.destinations = [];
     await run(base);
     expect(alerts(/chain\(s\) 421614 are on Base's expected-source list but are not broadcast destinations/)).toHaveLength(1);
-    openAlert(`dayclose-topology:${BASE}:all`);
+    openAlert(`dayclose-topology:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     base.destinations = [MIRROR];
     await run(base);
     expect(openKeys()).toEqual([]);
@@ -1343,7 +1368,7 @@ describe('a run', () => {
   it('reads the topology even when it cannot send, and keeps its alerts open', async () => {
     base.today = 1;
     base.expected = [MIRROR];
-    openAlert(`dayclose-selfmissing:${BASE}:all`);
+    openAlert(`dayclose-selfmissing:${BASE}:0x00000000000000000000000000000000000000b1:all`);
     await dayCloseOnce(env, base.chainId, base.diamond, {
       client: base.client(),
       readClient: base.client(),
@@ -1352,7 +1377,7 @@ describe('a run', () => {
       sendDeadline: Number.POSITIVE_INFINITY,
       runDeadline: Number.POSITIVE_INFINITY,
     });
-    expect(openKeys(), 'not cleared on a run that sent nothing').toEqual([`dayclose-selfmissing:${BASE}:all`]);
+    expect(openKeys(), 'not cleared on a run that sent nothing').toEqual([`dayclose-selfmissing:${BASE}:0x00000000000000000000000000000000000000b1:all`]);
   });
 
   it('names what the finalization zeroed from its own events, not from the read before it', async () => {
@@ -1467,12 +1492,12 @@ describe('a run', () => {
     expect(mirror.sent, 'alignment is never assumed').toEqual([]);
     expect(alerts(/the reward clock of chain 84532 \(its clock has never been read \(the read failed\)\) is not known to this keeper/)).toHaveLength(1);
     expect(owed()).toEqual([0, 1, 2]);
-    openAlert(`dayclose-clockunknown:${MIRROR}:all`); // as a delivered alert leaves it
+    openAlert(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`); // as a delivered alert leaves it
     base.launchUnread = false;
     later(60);
     await run(mirror);
     expect(mirror.sent.map((s) => s.day), 'closed once the clock reads as the same').toEqual([0, 1, 2]);
-    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:all`);
+    expect(openKeys()).not.toContain(`dayclose-clockunknown:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 
   it('closes no day on a mirror whose keeper does not serve Base and has never read its clock', async () => {
@@ -1540,9 +1565,9 @@ describe('a run', () => {
   });
 
   it('closes, saying why, an open alert of a kind this pass no longer raises', async () => {
-    openAlert(`dayclose-clockmoved:${MIRROR}:all`);
+    openAlert(`dayclose-clockmoved:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
     await run(mirror);
-    expect(logged.some((l) => /closed: dayclose-clockmoved:421614:all \(this pass no longer raises this alert\)/.test(l))).toBe(true);
-    expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:all`);
+    expect(logged.some((l) => /closed: dayclose-clockmoved:421614:0x00000000000000000000000000000000000000c1:all \(this pass no longer raises this alert\)/.test(l))).toBe(true);
+    expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:0x00000000000000000000000000000000000000c1:all`);
   });
 });

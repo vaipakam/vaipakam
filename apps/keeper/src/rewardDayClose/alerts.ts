@@ -20,10 +20,13 @@
 // outcome cannot be learned here) is a thing that happened, not a condition:
 // said once a window, it holds its day only until delivered.
 //
-// Keys: `dayclose-<kind>:<chain>:<day>` for a day, `dayclose-<kind>:<chain>:all`
-// for the chain, and `dayclose-refused:<chain>:<step>:<day>` for a refused
-// call. A per-day alert whose day is no longer worked (out of the window and
-// not owed) is cleared with it.
+// Keys: `dayclose-<kind>:<chain>:<diamond>:<subject>`, the subject being
+// `<day>` for a day, `all` for the chain, and `<step>:<day>` for a refused
+// call. An alert belongs to the Diamond it was raised about, as the day ledger
+// does: a chain repointed to another Diamond starts afresh, and the old
+// Diamond's open alerts are closed with a notice rather than judged against
+// the new Diamond's same-numbered days. A per-day alert whose day is no
+// longer worked (out of the window and not owed) is cleared with it.
 
 import type { Env } from '../env';
 import { listOpsAlertKeys } from '../db';
@@ -318,15 +321,16 @@ const KINDS: readonly AlertKind[] = [
 
 const BY_KIND = new Map(KINDS.map((k) => [k.kind, k]));
 
-/** An open key's parts, or null when it is not one of this chain's. */
-function parseKey(key: string, chainId: number): { kind: string; subject: string } | null {
-  const m = /^dayclose-([a-z]+):(\d+):(.+)$/.exec(key);
+/** An open key's parts, or null when it is not one of this chain's. The
+ *  Diamond is null on a key that names none. */
+function parseKey(key: string, chainId: number): { kind: string; diamond: string | null; subject: string } | null {
+  const m = /^dayclose-([a-z]+):(\d+):(?:(0x[0-9a-f]{40}):)?(.+)$/.exec(key);
   if (m === null || Number(m[2]) !== chainId) return null;
-  return { kind: m[1], subject: m[3] };
+  return { kind: m[1], diamond: m[3] ?? null, subject: m[4] };
 }
 
-function keyOf(kind: string, chainId: number, subject: string): string {
-  return `dayclose-${kind}:${chainId}:${subject}`;
+function keyOf(kind: string, chainId: number, diamond: string, subject: string): string {
+  return `dayclose-${kind}:${chainId}:${diamond}:${subject}`;
 }
 
 /** The day a per-day subject names (`<day>` or `<step>:<day>`). */
@@ -356,10 +360,23 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
     console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
     return 'all';
   }
+  const diamond = store.diamond.toLowerCase();
   const open = new Map<string, { kind: string; subject: string }>();
+  // Another Diamond's alerts cannot be judged from this one's reads.
+  const foreign: { key: string; why: string; day: null }[] = [];
   for (const k of openKeys) {
     const p = parseKey(k, chainId);
-    if (p !== null) open.set(k, p);
+    if (p === null) continue;
+    if (p.diamond === diamond) open.set(k, p);
+    else
+      foreign.push({
+        key: k,
+        why:
+          p.diamond === null
+            ? 'it names no Diamond, so it cannot be judged against the one this chain names now'
+            : `it is about Diamond ${p.diamond}, and this chain now names Diamond ${diamond}, whose days this keeper works afresh; check the old Diamond directly`,
+        day: null,
+      });
   }
   const inWindow = new Set(f.window);
   const outside = [...new Set([...open.values()].filter((p) => BY_KIND.get(p.kind)?.perDay).map((p) => dayOf(p.subject)).filter((d): d is number => d !== null && !inWindow.has(d)))];
@@ -373,7 +390,7 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
 
   const tag = `[chain ${chainId}] reward day close`;
   const held = new Set<number>();
-  const retire: { key: string; why: string; day: number | null }[] = [];
+  const retire: { key: string; why: string; day: number | null }[] = [...foreign];
   const hold = (d: number | null) => {
     if (d !== null) held.add(d);
   };
@@ -382,7 +399,7 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
     const subjects = new Set(k.perDay ? k.raised(f) : ['all']);
     for (const p of open.values()) if (p.kind === k.kind) subjects.add(p.subject);
     for (const subject of subjects) {
-      const key = keyOf(k.kind, chainId, subject);
+      const key = keyOf(k.kind, chainId, diamond, subject);
       const isOpen = open.has(key);
       const day = k.perDay ? dayOf(subject) : null;
       let j: Judgement;
