@@ -26,8 +26,8 @@ export interface HostTickDeps {
   log: (line: string) => void;
   /** Injected for tests; defaults to a gate over the indexer's list. */
   gate?: { check(db: D1Database): Promise<SchemaCheck> };
-  /** Injected for tests; defaults to the keeper-private schema + cutover gate. */
-  privateGate?: { check(shared: D1Database, priv: D1Database): Promise<PrivateDbCheck> };
+  /** Injected for tests; defaults to the keeper-private schema gate. */
+  privateGate?: { check(priv: D1Database): Promise<PrivateDbCheck> };
   /** Injected for tests; defaults to the shared tick. */
   runTick?: (env: WorkerEnv, scheduledTimeMs: number, launch: Launch) => Promise<void>;
   /** Injected for tests; defaults to the global `fetch`. */
@@ -55,11 +55,11 @@ export function createHostTick(deps: HostTickDeps) {
         deps.log(schemaDeclineLine(schema));
         return;
       }
-      // #2450 — the keeper's private database: its migrations and the one-time
-      // cutover (host/privateDbGate.ts). Without `KEEPER_DB` the shared tick
-      // declines by itself, naming the unbound database.
+      // #2450 — the keeper's private database: its migrations
+      // (host/privateDbGate.ts). Without `KEEPER_DB` the shared tick declines
+      // by itself, naming the unbound database.
       if (env.KEEPER_DB !== undefined) {
-        const priv = await privateGate.check(env.DB, env.KEEPER_DB);
+        const priv = await privateGate.check(env.KEEPER_DB);
         if (!priv.ok) {
           deps.log(priv.line);
           return;

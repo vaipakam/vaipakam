@@ -31,8 +31,8 @@
  * (derived from apps/keeper/migrations via `lib/d1-workers.mjs`). Restore
  * treatment does not change with the move, but WHERE it is carried out does:
  * a replay-derived private table must be cleared by the runbook's command
- * against ITS database — a `DELETE` aimed at the shared one would empty a
- * pre-cutover copy nothing reads and leave the live rows standing — and a
+ * against ITS database — a `DELETE` aimed at the shared one would leave the
+ * live rows standing (the shared copies were dropped by 0064, #2560) — and a
  * private table cannot be born-off-chain, because the nightly archive binds
  * only the shared database and could never have carried it.
  *

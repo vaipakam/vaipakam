@@ -369,9 +369,8 @@ manual follow-up required when the prerequisites are in place:
    **The keeper also binds a PRIVATE database, `vaipakam-keeper-db`
    (`KEEPER_DB`, #2450), and its package deploy applies that schema
    itself** (`apps/keeper/scripts/deploy-keeper.mjs`: apply, verify in the
-   database, then the shared `verify` and publish). Run the one-time cutover
-   below before the FIRST deploy of a keeper that reads `KEEPER_DB`; the
-   deploy refuses to publish while that copy is pending — see "Keeper
+   database, then the shared `verify` and publish). The one-time cutover
+   that preceded the first such deploy is done and retired — see "Keeper
    private D1 — one-time cutover".
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
    `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
@@ -1031,141 +1030,45 @@ per-chain through the DO; Phase B adds a WebSocket push fan-out from the same DO
 
 ---
 
-## Keeper private D1 — one-time cutover (#2450)
+## Keeper private D1 — one-time cutover (#2450) — DONE, retired in #2560
 
-**When:** once, at the end-of-programme deploy — the first deploy of a
-keeper build whose `wrangler.jsonc` binds `KEEPER_DB`. Not before: the
-keeper deployed today still reads the shared copies of these tables.
+There is nothing to run here any more. This section stays so a reader who
+remembers the procedure can find where it went.
 
-**What moves.** `apps/keeper` owns a private D1, `vaipakam-keeper-db`
-(id `f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
-operational state nothing outside the keeper reads: `hf_band_state`,
+`apps/keeper` owns a private D1, `vaipakam-keeper-db` (id
+`f809ca7a-bc4a-4b17-b5bd-f36c3a3e9095`, binding `KEEPER_DB`), for the
+operational state nothing outside the keeper reads. Its schema is
+`apps/keeper/migrations/`, and the keeper's `pnpm run deploy` is its one
+applier.
+
+Five of those tables began in the shared `vaipakam-warm`: `hf_band_state`,
 `keeper_commitment_scan`, `keeper_commitment_day`,
-`keeper_remit_ack_frontier`, `keeper_remit_ack`, `keeper_ops_alert`,
-`keeper_sanctions_screen` + `keeper_sanctions_watch` (where the sanctions
-screen resumes, and the owners it is watching), `keeper_work_open` +
-`keeper_work_cursor` (the passes' open-work queue and where its discovery
-resumes), `keeper_deployment` (the Diamond each chain's private state belongs
-to) and `keeper_cutover` (this
-cutover's completion record).
-Its schema is `apps/keeper/migrations/`. Everything another Worker, the app
-or the backup reads stays in `vaipakam-warm` under the indexer's
-migrations. The database already exists; nothing here creates it.
+`keeper_remit_ack_frontier` and `keeper_remit_ack`. A one-time copy
+(`pnpm --filter @vaipakam/keeper run cutover`) moved their rows across on
+2026-10-18, with the keeper stopped. It wrote its completion record
+(`keeper_cutover`, plus one digest per copied row in `keeper_cutover_row`)
+only once every table matched on both sides. Until #2560 the keeper's
+deploy and the machine's per-tick gate both refused to run while the shared
+copies held a row that record did not account for.
 
-**What the deploy does, and what it will not do.** The `cf-keeper` phase of
-`deploy-chain.sh` / `deploy-testnet.sh` / `deploy-mainnet.sh` runs the
-keeper's `pnpm run deploy` (`apps/keeper/scripts/deploy-keeper.mjs`): it
-applies `vaipakam-keeper-db`'s migrations (step 1 below happens there too,
-idempotently), verifies them, and hands the shared schema to
-`deploy-shared-d1.mjs verify`. The copy in step 2 has to sit between the
-schema and the publish, so the deploy checks for it rather than running past
-it. While any of the five moved tables holds rows in the shared copy, it
-REFUSES to publish unless `keeper_cutover` records a completed copy AND every
-row a shared table still holds is one that copy took (it keeps one digest per
-row, in `keeper_cutover_row`). A missing record means the copy has not run; a
-row the copy did not take means a keeper wrote the old copy afterwards, so the
-private side is behind. Rows that have only gone pass, because the indexer's
-redeploy reset deletes a chain's rows. The machine runs the same check before
-every tick. Either way the refusal names the table. With no shared rows at
-all (a fresh environment, or the old copies retired) there is nothing to move
-and it passes. Step 2 itself is one command, run by hand because it needs the
-keeper stopped. The refusal is what makes skipping it loud instead of a
-re-send of paid acknowledgements.
+What #2560 changed:
 
-**The order is load-bearing.** Five of the keeper's tables are LIVE in the shared
-database today. A keeper that starts on an empty private copy forgets which
-remit acknowledgements it already sent — and re-sends paid CCIP messages for
-every reservation still Pending — and forgets the HF band each at-risk loan
-was last seen in, so it re-alerts those borrowers. So the rows are copied
-immediately before the keeper that reads `KEEPER_DB` goes live, with no
-keeper tick in between.
+- Indexer migration `0064_retire_shared_keeper_tables.sql` drops the five
+  shared copies. It is drop-only, so it is additive in effect: the keeper
+  build serving when it lands already read a missing table as retired and
+  passed.
+- The copy script and its checks are removed. The keeper's deploy now
+  applies and verifies the private migrations, then hands over to the
+  shared `verify`. The machine's gate checks only that the private
+  migrations are applied.
+- The cutover record stays in `vaipakam-keeper-db` as history. Nothing reads
+  it, and leaving it in place costs nothing.
 
-1. **Apply the keeper's schema.** From the repo root:
-
-   ```bash
-   ( cd apps/keeper && wrangler d1 migrations apply vaipakam-keeper-db --remote )
-   ( cd apps/keeper && wrangler d1 migrations list vaipakam-keeper-db --remote )
-   ```
-
-   (`pnpm --filter @vaipakam/keeper run migrate` is the same apply.) The
-   apply asks for confirmation; the `list` is the verdict — it must show
-   every file in `apps/keeper/migrations/` applied and nothing pending.
-
-2. **Copy the live rows, with the keeper stopped.** Rows the running keeper
-   writes after the export are lost, so stop EVERY runner first. Since #2497
-   the keeper runs on the always-on machine, and the Worker's `scheduled`
-   handler declines every invocation. So stopping the keeper means stopping
-   the machine, in the order `docs/ops/KeeperMachine.md` §4a gives: pause its
-   deploys (`sudo systemctl disable --now vaipakam-keeper-update.timer`, then
-   `sudo systemctl stop vaipakam-keeper-update.service`), stop the keeper
-   (`sudo systemctl stop vaipakam-keeper`), and wait until `systemctl
-   is-active vaipakam-keeper` prints `inactive`. Also confirm the Worker's
-   *Settings → Trigger Events* is still empty (`"crons": []`). After the
-   cutover, resume the machine as §4a step 5 says. There is no Worker deploy
-   step for the keeper's runtime.
-
-   Then run the cutover, from the repo root:
-
-   ```bash
-   pnpm --filter @vaipakam/keeper run cutover
-   ```
-
-   (`apps/keeper/scripts/keeper-cutover.mjs`; it takes no arguments.) It
-   refuses if a cutover is already recorded. It exports the five tables from
-   `vaipakam-warm` in ONE `wrangler d1 export` (data only) — the export holds
-   the database while it runs, and the shared database keeps serving the
-   indexer, the agent and the app, so one window, not five, and one snapshot
-   of all five tables — empties the five private tables, and imports that
-   export — emptying first makes a re-run after a partial import exact. It then compares every table's fingerprint (row count, latest write time,
-   a digest over every row and one per row) on both sides, and checks that the
-   shared side has not changed since it started. Only when all five match does it write the
-   `keeper_cutover` record, which it reads back. Any mismatch, or anything it
-   could not read, ends the run with no record and names the table: fix the
-   cause (usually a keeper still running) and run it again. The export files
-   hold keeper operational state; it writes them to a private temporary
-   directory and removes them however the run ends.
-
-   **A deliberate re-run** (for example after rolling back to the shared
-   copies and forward again) first copies any private rows worth keeping
-   back to the shared side, then deletes the record —
-   `( cd apps/keeper && wrangler d1 execute vaipakam-keeper-db --remote --command="DELETE FROM keeper_cutover; DELETE FROM keeper_cutover_row" )`
-   — and runs the cutover again.
-
-3. **Resume the machine — immediately.** `docs/ops/KeeperMachine.md` §4a
-   step 5: re-enable its update timer, run one update to install the build
-   that reads `KEEPER_DB`, then START the keeper explicitly. An update only
-   restarts a keeper that is running, and step 2 stopped it. Nothing may
-   tick between step 2 and this. (The Worker needs no deploy for this: it runs no
-   ticks. Its own `run deploy`, which applies the private schema, may run
-   whenever it is due.)
-
-4. **Verify.**
-   - The machine's journal (`journalctl -u vaipakam-keeper -f`) shows ticks
-     running with no `tick declined` line, no `no such table` and no
-     `D1 is not available`.
-   - A keeper-private write lands in `vaipakam-keeper-db`: for an armed
-     remit pass, `SELECT MAX(updated_at) FROM keeper_remit_ack_frontier`
-     there moves past the resume time. Prefer an observable write; where
-     none can be provoked, the clean tick lines are the evidence.
-   - The OLD copies stopped changing: the same `MAX(updated_at)` read
-     against `vaipakam-warm` stays at its pre-cutover value. A later value
-     there means a keeper version that still reads the shared tables is
-     serving.
-
-5. **Later — not in this change — drop the old copies.** The five shared
-   tables stay in `vaipakam-warm` through the rollback window: rolling back
-   means redeploying the previous keeper, which reads them (first copy the
-   private rows back to the shared tables — `wrangler d1 export
-   vaipakam-keeper-db --remote --no-schema --table=<t>`, then empty that
-   table in `vaipakam-warm` and import the file there — if the new keeper
-   has run long enough to matter; rolling forward again is the re-run in
-   step 2). Once no serving keeper reads them, retire them with a
-   NEW indexer migration that only `DROP TABLE`s them — never by editing
-   `0041` / `0043` / `0044`, which are applied and keyed by filename. That
-   drop is destructive, so it is the second step of an expand/contract pair
-   and ships on its own. When it lands, also remove the "Before the
-   keeper's private database is live" fallback from
-   `docs/ops/OffChainRestore.md` §6.
+Rolling back to a keeper that reads the shared copies is no longer possible:
+those tables are gone. The one-runner lease (`keeper_runner_lease`, #2503)
+is what keeps a second keeper out. The cutover gate only watched for a
+legacy keeper writing the old copies, and it could not see one that only
+deleted rows.
 
 ## How addresses get persisted
 

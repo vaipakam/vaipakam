@@ -25,17 +25,17 @@
  * another deployment's ids while the indexer is mid-reset, or has moved to a
  * Diamond the keeper's bundle does not yet name. Either way the tick declines
  * (#2497 r12). What counts as adopted is defined ONCE, in
- * `scripts/lib/indexer-adoption.mjs`, shared with the one-time copy: a record
+ * `scripts/lib/indexer-adoption.mjs`, shared with the epoch fence: a record
  * whose `reset_pending` is still set is NOT an adoption (#2569 r1) — the
  * indexer writes the new Diamond first and clears the old rows after, and in
  * between the shared rows still belong to the old one.
  *
- * WHICH DIAMOND, the first time. The one-time copy (`scripts/keeper-cutover.mjs`)
- * SEEDS this record with the Diamond the indexer had adopted for each chain
- * when it copied, since the copied rows belong to that one, and refuses to
- * record a copy whose rows are keyed by a chain the indexer has not adopted.
- * So a later Diamond change resets them, however long the keeper waited
- * before its first tick. A chain with no record at all and NO private rows
+ * WHICH DIAMOND, the first time. The one-time copy of #2450 (retired in #2560,
+ * its job done) SEEDED this record with the Diamond the indexer had adopted
+ * for each chain when it copied, since the copied rows belong to that one, and
+ * refused to record a copy whose rows were keyed by a chain the indexer had
+ * not adopted. So a later Diamond change resets them, however long the keeper
+ * waited before its first tick. A chain with no record at all and NO private rows
  * (a fresh environment) adopts the configured Diamond, resetting nothing. A
  * chain with no record but WITH private rows is not assumed either way: the
  * Diamond those rows belong to is unknown, so the tick declines, naming the
@@ -117,8 +117,9 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
       .first<{ diamond: string }>();
     const have = rec?.diamond?.toLowerCase() ?? null;
     if (have === null) {
-      // No record. The copy seeds one for every chain its rows are keyed by,
-      // so no record should mean no private rows — CHECKED, not assumed: rows
+      // No record. The copy seeded one for every chain its rows were keyed
+      // by, and every later record is written here, so no record should mean
+      // no private rows — CHECKED, not assumed: rows
       // with no record belong to a Diamond nobody wrote down, and adopting
       // the configured one over them could keep a loan id the new Diamond
       // reuses "already notified" (#2569 r1).
@@ -129,7 +130,8 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
       if (held.length > 0) {
         throw new Error(
           `chain ${chain.id}: ${held.join(', ')} hold private rows but keeper_deployment records no Diamond they belong to; ` +
-            'the one-time copy seeds that record (DeploymentRunbook, "Keeper private D1 — one-time cutover") — run it, or delete those rows if they are known stale',
+            'nothing writes that record for rows already there (the one-time copy that seeded it is retired, #2560): ' +
+            'insert the Diamond they belong to into keeper_deployment, or delete those rows if they are known stale',
         );
       }
       // eslint-disable-next-line no-await-in-loop
