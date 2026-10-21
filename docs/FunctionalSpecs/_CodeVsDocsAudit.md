@@ -1081,3 +1081,29 @@ Base out. That covers only the keeper's own calls, because `finalizeDay` is
 permissionless. **Do not resolve this by rewriting the spec to "a count of
 reports":** the per-chain rule is what stops a report still in flight from
 being zeroed.
+
+## A chain taken off Base's expected-source list has its last report refused (#2618)
+
+**Spec** (`TokenomicsTechSpec.md`, "Finalization on Base"): a report reaching
+Base after its day is finalized still applies what it says about the chain (its
+custody era and its recycled-availability and commitment ratchets), "so a chain
+whose last report arrives late (or that then detaches) never leaves
+already-retired commitments outstanding".
+
+**Code:** the chain-report ingress checks the source against Base's CURRENT
+expected-source list first, ahead of the late path, and refuses
+(`SourceChainIdNotExpected`) a chain not on it. A mirror removed from the list
+before its last report lands therefore loses that report's chain-wide figures,
+and Base keeps the commitments it retired outstanding. The commitment-report
+ingress already admits a removed chain by the day's own evidence (it was
+included in, or zeroed from, that day); the chain-report ingress has no such
+standing.
+
+**Status:** candidate bug, open as #2618 (found by Codex on PR #2616). The
+keeper's day-close pass (#2612) reads Base's list on each mirror it serves and
+alerts while the mirror is not on it, when the refused report can still be
+executed again by hand once the chain is listed again. That warns an operator;
+it does not make the ordering safe. **Do not resolve this by rewriting the spec
+to "a detached chain's last report is dropped"** without a recorded owner
+decision: the ratchets are what keep retired commitments from staying
+reserved on Base.

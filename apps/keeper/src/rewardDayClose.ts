@@ -26,7 +26,9 @@
 //      that report's DAY figures, but still applies what it says about the
 //      CHAIN (its custody era and its cumulative recycled-availability and
 //      commitment ratchets), which a mirror's last report before detaching
-//      must not lose. For every window day, sent or not, a day Base finalized
+//      must not lose. Base refuses a report from a chain off its
+//      expected-source list outright, that last report included (#2618), so a
+//      mirror reads Base's list and says when it is not on it. For every window day, sent or not, a day Base finalized
 //      without this chain's report is reported as such (when this keeper also
 //      serves Base). A close refused because the interest fold has not reached
 //      the day (`ChainReportFrontierShort`) is preceded by
@@ -50,23 +52,27 @@
 //   3. BROADCASTS (Base only) each finalized day to the messenger's
 //      destinations (`broadcastGlobal`, the quoted fee, paid exactly), and
 //      confirms delivery by reading each destination this keeper also serves
-//      (`getKnownGlobalInterestNumeraire18(d).isSet` on that mirror). A day
-//      is sent once and re-sent only when a served destination still lacks
-//      the pair {@link BROADCAST_RESEND_AFTER_SEC} after the last send, and
-//      then only to the destinations still lacking it (`broadcastGlobalTo`),
-//      falling back to every destination when the day or the messenger cannot
-//      take a single-destination send (the mirror ingress is idempotent, so a
-//      re-send cannot double-apply). The destinations a day must reach are
-//      every one it has had while worked: a mirror taken off the list after a
-//      send that never reached it is still checked and healed alone (the
-//      contract admits a destination with standing in the day), and is named
-//      as unreachable if the contract refuses that. A destination list that
-//      cannot be read stops only this step. A destination this keeper does not serve
-//      cannot be read, so it is sent to once and never confirmed: the run's
-//      line says so. A send's time is recorded before it goes out and kept
-//      unless nothing went out, so a send whose receipt was not seen (it may
-//      have landed, paying every lane) is not repeated before the re-send
-//      interval.
+//      (`getKnownGlobalInterestNumeraire18(d).isSet` on that mirror). Every
+//      judgement is per destination, against the last send that covered it:
+//      a destination never sent the day is sent it (one added to the list
+//      after the day went out included), and one sent it and still lacking
+//      the pair is re-sent {@link BROADCAST_RESEND_AFTER_SEC} after that send.
+//      When every listed destination needs the day it goes out in one send
+//      to all; otherwise each is sent it alone (`broadcastGlobalTo`), so a
+//      lane that delivered is not paid again, falling back to the send to all
+//      when the day or the messenger cannot take a single-destination send
+//      (the mirror ingress is idempotent, so a re-send cannot double-apply).
+//      The destinations a day must reach are every one it has had while
+//      worked: a mirror taken off the list after a send that never reached it
+//      is still checked and healed alone (the contract admits a destination
+//      with standing in the day), and is named as unreachable if the contract
+//      refuses that. A destination list that cannot be read stops only this
+//      step. A destination this keeper does not serve cannot be read, so it
+//      is sent to once and never confirmed: the run's line says so. A send's
+//      time is recorded, for the destinations it covers, before it goes out
+//      and kept unless nothing went out, so a send whose receipt was not seen
+//      (it may have landed, paying every lane it covered) is not repeated
+//      before the re-send interval.
 //
 // A call the RPC gives no answer about (a transport error, a timeout) is not
 // the contract's refusal: nothing is said about the day, and the run stops
@@ -97,16 +103,19 @@
 //   - on Base, a broadcast destination list that cannot be read;
 //   - on Base, a broadcast a served destination has not received, or whose
 //     arrival there cannot be read, {@link BROADCAST_LATE_AFTER_SEC} after it
-//     was sent;
-//   - on a mirror, a day Base finalized without this chain's report.
+//     was last sent there, raised in the run that re-sends it too, and
+//     standing until the destination is read holding the day;
+//   - on a mirror, a day Base finalized without this chain's report;
+//   - on a mirror, this chain missing from Base's expected-source list, so
+//     Base refuses its reports and the chain-wide figures they carry (#2618).
 // And one NOTICE (a thing that happened): a day Base finalized with expected
 // chains missing, naming each.
 //
 // The pass keeps two kinds of row in the keeper's private open-work queue
 // (`keeper_work_open`), one per (chain, Diamond, day), each dropped when its
-// day leaves the window: a broadcast's last send time and every destination
-// the day has had (kind `day_broadcast`; losing it costs at most one extra
-// broadcast, and forgets a destination removed since), and a finalized day's
+// day leaves the window: every destination a broadcast's day has had, each
+// with the last send that covered it (kind `day_broadcast`; losing it costs
+// at most one extra broadcast, and forgets a destination removed since), and a finalized day's
 // zeroed chains with whether that notice was delivered (kind `day_zeroed`).
 //
 // Gated by KEEPER_ENABLED + REWARD_DAY_CLOSE_ENABLED.
@@ -256,38 +265,59 @@ export function planFinalize(x: FinalizeInput, graceSec: number, nowSec: number)
 /** One broadcast destination, as this run read it. */
 export type DestinationState = 'received' | 'missing' | 'unread' | 'unserved';
 
-export type BroadcastDecision =
-  | { kind: 'done' }
-  | { kind: 'send'; resend: boolean }
-  | { kind: 'wait'; late: boolean };
+/** What to do for a finalized day's broadcast this run, per destination. */
+export interface BroadcastPlan {
+  /** Destinations to send to now. */
+  send: number[];
+  /** Of `send`, those this keeper sent the day to before (a re-send). */
+  resend: number[];
+  /** Destinations sent to, not read as holding the day, past the late mark
+   *  since their last send: `missing` read as lacking it, `unread` unknown. */
+  late: { chain: number; state: 'missing' | 'unread'; sentAt: number }[];
+  /** Destinations sent to that this keeper does not serve: never confirmed. */
+  unconfirmed: number[];
+  /** Every destination holds the day, or was sent it and cannot be read. */
+  done: boolean;
+}
 
 /**
- * Whether to broadcast a finalized day now. Pure.
+ * The broadcast plan for a finalized day. Pure, and judged destination by
+ * destination: `sentTo` is this keeper's last send covering each destination
+ * (absent or null = never), so a destination added after the day was sent is
+ * sent to like any other never-sent one.
  *
- * `sentAt` is the last send this keeper recorded (null = none). A day never
- * sent is sent. Once sent, it is done when no served destination still lacks
- * the pair (an unserved one cannot be confirmed). A served destination still
- * missing it is reported late after {@link BROADCAST_LATE_AFTER_SEC} and
- * re-sent after {@link BROADCAST_RESEND_AFTER_SEC}, whatever another
- * destination's read did; one whose read failed is judged next run, holds back
- * "done", and is reported late as unknown once past the late mark.
+ * A destination holding the day needs nothing. One never sent to is sent to,
+ * whatever its read (an unread or unserved one included: the ingress applies
+ * a day once). One sent to and not served cannot be confirmed. One sent to
+ * and read as lacking it is late after {@link BROADCAST_LATE_AFTER_SEC} and
+ * re-sent after {@link BROADCAST_RESEND_AFTER_SEC}; one sent to whose read
+ * failed is never re-sent blind, and is late (as unknown) past the late mark.
+ * Lateness is measured from the last send and never depends on what this run
+ * then sends, so a late destination is reported in the run that re-sends.
  */
-export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentAt: number | null, nowSec: number): BroadcastDecision {
-  const states = [...dest.values()];
-  if (states.length === 0) return { kind: 'done' };
-  if (sentAt === null) {
-    // Nothing recorded: every served destination already holding it (a send
-    // from elsewhere, or a lost record) needs none.
-    const served = states.filter((s) => s !== 'unserved');
-    if (served.length > 0 && served.length === states.length && served.every((s) => s === 'received')) return { kind: 'done' };
-    return { kind: 'send', resend: false };
+export function planBroadcast(dest: ReadonlyMap<number, DestinationState>, sentTo: ReadonlyMap<number, number | null>, nowSec: number): BroadcastPlan {
+  const plan: BroadcastPlan = { send: [], resend: [], late: [], unconfirmed: [], done: true };
+  for (const [c, state] of dest) {
+    if (state === 'received') continue;
+    const at = sentTo.get(c) ?? null;
+    if (at === null) {
+      plan.send.push(c);
+      plan.done = false;
+      continue;
+    }
+    if (state === 'unserved') {
+      plan.unconfirmed.push(c);
+      continue;
+    }
+    plan.done = false;
+    const since = nowSec - at;
+    if (since >= BROADCAST_LATE_AFTER_SEC) plan.late.push({ chain: c, state, sentAt: at });
+    if (state === 'missing' && since >= BROADCAST_RESEND_AFTER_SEC) {
+      plan.send.push(c);
+      plan.resend.push(c);
+    }
   }
-  const since = nowSec - sentAt;
-  // An unread destination is never "done": its delivery is unknown, and is
-  // reported as unknown past the late mark.
-  if (!states.some((s) => s === 'missing')) return states.some((s) => s === 'unread') ? { kind: 'wait', late: since >= BROADCAST_LATE_AFTER_SEC } : { kind: 'done' };
-  if (since >= BROADCAST_RESEND_AFTER_SEC) return { kind: 'send', resend: true };
-  return { kind: 'wait', late: since >= BROADCAST_LATE_AFTER_SEC };
+  return plan;
 }
 
 // ─── The run ────────────────────────────────────────────────────────────
@@ -366,10 +396,14 @@ interface RunFindings {
   destinationsUnread: boolean | null;
   /** Base: finalized days no served destination still lacks, as read. */
   broadcastConfirmed: Set<number>;
-  /** Base: days a served destination has not received, past the late mark. */
-  lateBroadcast: { day: number; missing: number[]; unread: number[]; sentAt: number }[];
+  /** Base: days a destination sent to has not been read as holding, past the
+   *  late mark since its last send. */
+  lateBroadcast: { day: number; late: BroadcastPlan['late'] }[];
   /** Mirror: days Base finalized without this chain's report. */
   excluded: number[];
+  /** Mirror: this chain is absent from Base's expected-source list, so Base
+   *  refuses its reports (null = not read: Base not served, or unread). */
+  notExpectedOnBase: boolean | null;
   /** The days this run's window covered. */
   window: number[];
 }
@@ -412,6 +446,7 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     broadcastConfirmed: new Set(),
     lateBroadcast: [],
     excluded: [],
+    notExpectedOnBase: null,
     window,
   };
   const sender = new Sender(deps, f);
@@ -426,7 +461,12 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     // finalized without this chain's interest, and it stays so. The day is
     // still closed below: its report carries chain-wide figures Base applies
     // after finalization too.
-    const onBase = await baseView(deps.peer(baseChainId), window, chainId, deps.sendDeadline);
+    const base = deps.peer(baseChainId);
+    const onBase = await baseView(base, window, chainId, deps.sendDeadline);
+    // Base refuses a report from a chain off its expected-source list, the
+    // last one before the chain detaches included (#2618): the report still
+    // goes out, and the run says so.
+    f.notExpectedOnBase = await absentFromBaseList(base, chainId, where);
     f.excluded = window.filter((d) => onBase.get(d)?.finalized === true && onBase.get(d)?.counted === false);
   }
   let closed = 0;
@@ -527,107 +567,135 @@ export async function dayCloseOnce(env: Env, chainId: number, diamond: Address, 
     await recordZeroed(env, deps, chainId, diamond, [...finalizedDays], expected, where);
 
     // ── 3. Broadcast ──
+    // A day's broadcast record lives exactly as long as the day is in the
+    // window: kept while it is worked, dropped when the day leaves it, and
+    // read by day, never as a slice of the queue. It holds, for every
+    // destination the day has had while worked, the last send that covered
+    // it (null = known, never sent by this keeper). It only grows: a mirror
+    // taken off the messenger's list after a send that never reached it still
+    // lacks the day, and is still checked and sent to; a mirror added to the
+    // list after the day was sent has never been sent it, and is sent to. A
+    // send's time is written, for the destinations that send covers, BEFORE
+    // it goes out, and put back unless no transaction went out, so a send
+    // whose receipt was not seen (it may have landed, paying every lane it
+    // covered) is never repeated before the re-send interval.
     /** Send day `d` to every destination on the messenger's list
-     *  (`broadcastGlobal`). False when nothing was sent. */
-    const broadcastAll = async (d: number): Promise<boolean> => {
+     *  (`broadcastGlobal`). */
+    const broadcastAll = async (d: number): Promise<CallResult> => {
       const q = await quote(deps.client, diamond, 'quoteBroadcastGlobal', [BigInt(d)]);
-      if ('unread' in q) return false;
+      if ('unread' in q) return 'skipped';
       if ('refused' in q) {
         f.refused.set(`broadcast:${d}`, `the Diamond would not quote the broadcast fee (${q.refused})`);
-        return false;
+        return q.refused;
       }
-      return (await sender.call('broadcast', d, 'broadcastGlobal', [BigInt(d)], q.fee)) === 'landed';
+      return sender.call('broadcast', d, 'broadcastGlobal', [BigInt(d)], q.fee);
     };
     /**
-     * Deliver day `d` to `targets`, the destinations that still lack it. One
-     * rule for the first send and every re-send, by where each target is:
-     *   - one on the messenger's list is reached by the all-destination send
-     *     on the first send, and alone (`broadcastGlobalTo`) on a re-send, so
-     *     a lane that delivered is not paid again; when the day or the
-     *     messenger cannot take a single-destination send, by the
-     *     all-destination send after all;
-     *   - one taken off the list since is reachable only alone, the contract
-     *     admitting it by its standing in the day; when the contract will not,
-     *     no send can reach it, and the run says so.
+     * One send of day `d`, covering the destinations `covered`: their send
+     * time is recorded before it goes out, and put back unless a transaction
+     * went out (it may have landed, so it counts as made).
      */
-    const deliver = async (d: number, targets: readonly number[], current: readonly number[], first: boolean): Promise<void> => {
-      const onList = targets.filter((c) => current.includes(c));
-      let toAll = first && onList.length > 0;
-      const unreachable: string[] = [];
-      for (const c of first ? targets.filter((t) => !current.includes(t)) : targets) {
+    const sendCovering = async (
+      d: number,
+      covered: readonly number[],
+      sentTo: Map<number, number | null>,
+      save: () => Promise<unknown>,
+      send: () => Promise<CallResult>,
+    ): Promise<CallResult> => {
+      const prior = covered.map((c) => [c, sentTo.get(c) ?? null] as const);
+      const before = sender.maybeSent;
+      const at = Math.floor(Date.now() / 1000);
+      for (const c of covered) sentTo.set(c, at);
+      await save();
+      const r = await send();
+      if (sender.maybeSent === before) {
+        for (const [c, t] of prior) sentTo.set(c, t);
+        await save();
+      }
+      return r;
+    };
+    /**
+     * Deliver day `d` to `targets`, the destinations the plan sends to now.
+     * One rule for a first send and a re-send, by which destinations need it:
+     *   - when every destination on the messenger's list needs it, one
+     *     all-destination send (`broadcastGlobal`) reaches them all;
+     *   - otherwise each target is sent the day alone (`broadcastGlobalTo`),
+     *     so a lane that delivered is not paid again, and a destination added
+     *     to the list after the day was sent is reached alone; where the day
+     *     or the messenger cannot take a single-destination send, a target on
+     *     the list is reached by the all-destination send after all;
+     *   - a target taken off the list since is reachable only alone, the
+     *     contract admitting it by its standing in the day; when the contract
+     *     will not, no send can reach it, and the run says so.
+     */
+    const deliver = async (
+      d: number,
+      targets: readonly number[],
+      current: readonly number[],
+      sentTo: Map<number, number | null>,
+      save: () => Promise<unknown>,
+    ): Promise<void> => {
+      const key = `broadcast:${d}`;
+      let toAll = current.length > 0 && current.every((c) => targets.includes(c));
+      const said: string[] = [];
+      for (const c of toAll ? targets.filter((t) => !current.includes(t)) : targets) {
         if (sender.stopped) break;
         // eslint-disable-next-line no-await-in-loop
         const q = await quote(deps.client, diamond, 'quoteBroadcastGlobalTo', [BigInt(d), BigInt(c)]);
         if ('unread' in q) continue;
-        // eslint-disable-next-line no-await-in-loop
-        const r = 'refused' in q ? q.refused : await sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(c)], q.fee);
+        const r =
+          'refused' in q
+            ? q.refused
+            : // eslint-disable-next-line no-await-in-loop
+              await sendCovering(d, [c], sentTo, save, () => sender.call('broadcast', d, 'broadcastGlobalTo', [BigInt(d), BigInt(c)], q.fee));
         if (r === 'landed' || r === 'skipped') continue;
         if (RESEND_TO_ALL.has(r) && current.includes(c)) toAll = true;
-        else if (RESEND_TO_ALL.has(r)) unreachable.push(`chain ${c} is no longer a broadcast destination and the Diamond will not send the day to it alone (${r})`);
-        else if ('refused' in q) unreachable.push(`the Diamond would not quote the re-send to chain ${c} (${q.refused})`);
+        else if (RESEND_TO_ALL.has(r)) said.push(`chain ${c} is no longer a broadcast destination and the Diamond will not send the day to it alone (${r})`);
+        else if ('refused' in q) said.push(`the Diamond would not quote the send to chain ${c} (${q.refused})`);
+        else said.push(`the send to chain ${c} was refused (${r})`);
       }
-      if (toAll && !sender.stopped) {
-        if (!first) f.refused.delete(`broadcast:${d}`);
-        await broadcastAll(d);
-      }
-      if (unreachable.length > 0) {
-        const prior = f.refused.get(`broadcast:${d}`);
-        f.refused.set(`broadcast:${d}`, [prior, ...unreachable].filter(Boolean).join('; '));
-      }
+      // A single-destination refusal the all-destination send answers is not
+      // a refusal of the day: what stands is what that send says, plus what no
+      // send here could answer.
+      f.refused.delete(key);
+      if (toAll && !sender.stopped) await sendCovering(d, current, sentTo, save, () => broadcastAll(d));
+      const all = f.refused.get(key);
+      if (all !== undefined || said.length > 0) f.refused.set(key, [all, ...said].filter(Boolean).join('; '));
     };
 
-    // A day's broadcast record lives exactly as long as the day is in the
-    // window: kept while it is worked, dropped when the day leaves it, and
-    // read by day, never as a slice of the queue. It holds the last send and
-    // every destination the day has had while worked, which only grows: a
-    // mirror taken off the messenger's list after a send that never reached
-    // it still lacks the day, and is still checked and sent to. The send time
-    // is written BEFORE the send and kept unless no transaction went out, so
-    // a send whose receipt was not seen (it may have landed, paying every
-    // lane) is never repeated before the re-send interval.
+    const current = destinations ?? [];
     const days = destinations === null ? [] : [...finalizedDays].sort((a, b) => a - b);
     await pruneWorkBelow(env.KEEPER_DB, chainId, diamond, 'day_broadcast', window[0]);
     const marks = await getWorkItems<BroadcastRecord>(env.KEEPER_DB, chainId, diamond, 'day_broadcast', days.map(String));
-    const record = (d: number, payload: BroadcastRecord) =>
-      putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', { item: String(d), block: d, payload } as WorkItem<BroadcastRecord>);
+
     for (const d of days) {
       if (sender.stopped) break;
-      const current = destinations ?? [];
-      const mark = marks.get(String(d))?.payload;
-      const lastSent = mark?.sentAt ?? null;
-      const known = [...new Set([...(mark?.dests ?? []), ...current])].sort((a, b) => a - b);
+      const sentTo = new Map<number, number | null>(Object.entries(marks.get(String(d))?.payload.sentTo ?? {}).map(([c, t]) => [Number(c), t]));
+      const save = () =>
+        putWork(env.KEEPER_DB, chainId, diamond, 'day_broadcast', {
+          item: String(d),
+          block: d,
+          payload: { sentTo: Object.fromEntries([...sentTo].sort(([a], [b]) => a - b).map(([c, t]) => [String(c), t])) },
+        } as WorkItem<BroadcastRecord>);
+      const fresh = current.filter((c) => !sentTo.has(c));
+      for (const c of fresh) sentTo.set(c, null);
       // eslint-disable-next-line no-await-in-loop
-      if (known.length > (mark?.dests ?? []).length) await record(d, { sentAt: lastSent, dests: known });
+      if (fresh.length > 0) await save();
       // eslint-disable-next-line no-await-in-loop
-      const dest = await destinationStates(deps, known, d);
-      const decision = planBroadcast(dest, lastSent, nowSec);
-      const missing = [...dest].filter(([, s]) => s === 'missing').map(([c]) => c);
-      const unread = [...dest].filter(([, s]) => s === 'unread').map(([c]) => c);
-      if (decision.kind === 'done') {
+      const dest = await destinationStates(deps, [...sentTo.keys()].sort((a, b) => a - b), d);
+      const plan = planBroadcast(dest, sentTo, nowSec);
+      if (plan.late.length > 0) f.lateBroadcast.push({ day: d, late: plan.late });
+      if (plan.done) {
         f.settled.add(`broadcast:${d}`);
         f.broadcastConfirmed.add(d);
-        if ([...dest.values()].some((s) => s === 'unserved')) unconfirmed.push(d);
+        if (plan.unconfirmed.length > 0) unconfirmed.push(d);
         continue;
       }
-      if (decision.kind === 'wait') {
-        if (decision.late && lastSent !== null) f.lateBroadcast.push({ day: d, missing, unread, sentAt: lastSent });
-        continue;
-      }
-      const targets = decision.resend ? missing : [...dest].filter(([, s]) => s !== 'received').map(([c]) => c);
-      const attemptAt = Math.floor(Date.now() / 1000);
+      if (plan.send.length === 0) continue;
       const before = sender.maybeSent;
       // eslint-disable-next-line no-await-in-loop
-      await record(d, { sentAt: attemptAt, dests: known });
-      // eslint-disable-next-line no-await-in-loop
-      await deliver(d, targets, current, !decision.resend);
-      if (sender.maybeSent > before) {
-        broadcast += 1;
-        continue;
-      }
-      // Nothing went out: the record goes back to the last real send.
-      // eslint-disable-next-line no-await-in-loop
-      await record(d, { sentAt: lastSent, dests: known });
-      if (decision.resend && lastSent !== null && (missing.length > 0 || unread.length > 0)) f.lateBroadcast.push({ day: d, missing, unread, sentAt: lastSent });
+      await deliver(d, plan.send, current, sentTo, save);
+      if (sender.maybeSent > before) broadcast += 1;
     }
   }
 
@@ -721,6 +789,20 @@ async function baseView(
   return out;
 }
 
+/** On a mirror: whether Base's expected-source list leaves this chain out
+ *  (null = Base not served, or the read failed). */
+async function absentFromBaseList(base: PeerReader | null, self: number, where: string): Promise<boolean | null> {
+  if (!base) return null;
+  try {
+    const ids = (await base.client.readContract({ address: base.diamond, abi: ABI, functionName: 'getExpectedSourceChainIds' })) as readonly (number | bigint)[];
+    return !ids.map(Number).includes(self);
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    console.error(`[keeper] rewardDayClose ${where}: Base's expected-source list unread: ${shortErr(err)}`);
+    return null;
+  }
+}
+
 /** On Base: when each missing chain sent its report for `day`, read on that
  *  chain (null = not served, or unread; 0 = not sent). */
 async function peerSentAt(deps: DayCloseDeps, chains: readonly number[], day: number): Promise<Map<number, number | null>> {
@@ -788,11 +870,11 @@ async function quote(client: PublicClient, diamond: Address, functionName: strin
   }
 }
 
-/** A finalized day's broadcast record (`day_broadcast`): the last send this
- *  keeper made (null = none yet) and every destination the day has had. */
+/** A finalized day's broadcast record (`day_broadcast`): every destination
+ *  the day has had while worked, each with the last send this keeper made
+ *  that covered it (null = none yet). */
 interface BroadcastRecord {
-  sentAt: number | null;
-  dests?: number[];
+  sentTo: Record<string, number | null>;
 }
 
 /** The messenger's broadcast destinations, or null when they cannot be read
@@ -1001,17 +1083,30 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     );
   }
   for (const l of f.lateBroadcast) {
+    const each = (state: 'missing' | 'unread') =>
+      l.late
+        .filter((x) => x.state === state)
+        .map((x) => `chain ${x.chain} (last sent ${new Date(x.sentAt * 1000).toISOString()}, or sent then with no receipt seen)`)
+        .join(', ');
+    const missing = each('missing');
+    const unread = each('unread');
     // eslint-disable-next-line no-await-in-loop
     await raise(
       `dayclose-broadcast:${chainId}:${l.day}`,
-      `${tag}: the broadcast of reward day ${l.day}, last sent at ${new Date(l.sentAt * 1000).toISOString()} (or sent then with no receipt seen), ` +
+      `${tag}: the broadcast of reward day ${l.day} ` +
         [
-          l.missing.length > 0 ? `has not reached chain(s) ${l.missing.join(', ')}` : '',
-          l.unread.length > 0 ? `could not be confirmed on chain(s) ${l.unread.join(', ')}, whose state this keeper could not read, so whether it arrived there is unknown` : '',
+          missing ? `has not reached ${missing}` : '',
+          unread ? `could not be confirmed on ${unread}, whose state this keeper could not read, so whether it arrived there is unknown` : '',
         ]
           .filter(Boolean)
           .join('; and it ') +
-        `. Until it lands, users there cannot claim that day. The pass re-sends to a chain it reads as missing ${BROADCAST_RESEND_AFTER_SEC / 3600}h after each send; check the lane's CCIP delivery and the keeper's RPC for that chain.`,
+        `. Until it lands, users there cannot claim that day. The pass re-sends to a chain it reads as missing ${BROADCAST_RESEND_AFTER_SEC / 3600}h after each send to it, and this alert stands until every such chain is read holding the day; check the lane's CCIP delivery and the keeper's RPC for that chain.`,
+    );
+  }
+  if (!canonical && f.notExpectedOnBase) {
+    await raise(
+      `dayclose-notexpected:${chainId}:all`,
+      `${tag}: this chain is not on Base's expected-source list, so Base refuses every report it sends (SourceChainIdNotExpected): its interest counts toward no day, and the chain-wide figures each report carries (its custody era, and its recycled-availability and commitment ratchets) do not reach Base, so commitments this chain has retired stay outstanding there. The pass still closes each day here. CCIP records each refused report as a failed message, which can be executed again by hand once the chain is back on the list. If this chain is being detached, keep it on the list until its last report has landed (#2618).`,
     );
   }
   for (const d of f.excluded) {
@@ -1046,6 +1141,7 @@ async function raiseDayCloseAlerts(env: Env, chainId: number, canonical: boolean
     // Cleared on a read showing delivery, never on a re-send merely landing.
     else if (kind === 'dayclose-broadcast') gone = f.broadcastConfirmed.has(day) || !inWindow.has(day);
     else if (kind === 'dayclose-excluded') gone = !inWindow.has(day);
+    else if (kind === 'dayclose-notexpected') gone = !canonical && f.notExpectedOnBase === false;
     if (gone && Date.now() < deadline) {
       // eslint-disable-next-line no-await-in-loop
       await resolveOpsAlert(env, key);

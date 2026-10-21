@@ -97,22 +97,37 @@ describe('the pure rules', () => {
 
   describe('planBroadcast', () => {
     const d = (...s: [number, DestinationState][]) => new Map(s);
-    it('sends a day never sent, unless every served destination already has it', () => {
-      expect(planBroadcast(d([MIRROR, 'missing']), null, NOW)).toEqual({ kind: 'send', resend: false });
-      expect(planBroadcast(d([MIRROR, 'unserved']), null, NOW)).toEqual({ kind: 'send', resend: false });
-      expect(planBroadcast(d([MIRROR, 'received']), null, NOW)).toEqual({ kind: 'done' });
-      expect(planBroadcast(d([MIRROR, 'received'], [OTHER, 'unserved']), null, NOW), 'an unserved one still needs the send').toEqual({ kind: 'send', resend: false });
+    const at = (...s: [number, number | null][]) => new Map(s);
+    const LATE = NOW - BROADCAST_LATE_AFTER_SEC;
+    const RESEND = NOW - BROADCAST_RESEND_AFTER_SEC;
+    it('sends to every destination never sent the day, whatever its read', () => {
+      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unserved']), at(), NOW)).toMatchObject({ send: [MIRROR, OTHER], resend: [], done: false });
+      expect(planBroadcast(d([MIRROR, 'unread']), at([MIRROR, null]), NOW)).toMatchObject({ send: [MIRROR], done: false });
+      expect(planBroadcast(d([MIRROR, 'received']), at(), NOW), 'a destination already holding it needs none').toMatchObject({ send: [], done: true });
+      expect(planBroadcast(d(), at(), NOW), 'no destinations').toMatchObject({ send: [], done: true });
     });
-    it('once sent: done when no served destination lacks it; late, then re-sent, while one does', () => {
-      expect(planBroadcast(d([MIRROR, 'received'], [OTHER, 'unserved']), NOW, NOW)).toEqual({ kind: 'done' });
-      expect(planBroadcast(d([MIRROR, 'missing']), NOW, NOW)).toEqual({ kind: 'wait', late: false });
-      expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
-      expect(planBroadcast(d([MIRROR, 'missing']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW)).toEqual({ kind: 'send', resend: true });
-      expect(planBroadcast(d([MIRROR, 'unread']), NOW - 60, NOW), 'an unread destination is judged next run').toEqual({ kind: 'wait', late: false });
-      expect(planBroadcast(d([MIRROR, 'unread']), NOW - BROADCAST_LATE_AFTER_SEC, NOW), 'and reported as unknown past the late mark, never re-sent blind').toEqual({ kind: 'wait', late: true });
-      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_RESEND_AFTER_SEC, NOW), 'an unread peer does not hold back a known-missing lane').toEqual({ kind: 'send', resend: true });
-      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), NOW - BROADCAST_LATE_AFTER_SEC, NOW)).toEqual({ kind: 'wait', late: true });
-      expect(planBroadcast(d(), null, NOW), 'no destinations').toEqual({ kind: 'done' });
+    it('sends to a destination added after the day was sent, though every other one is served', () => {
+      const plan = planBroadcast(d([MIRROR, 'received'], [OTHER, 'unserved']), at([MIRROR, NOW - 60]), NOW);
+      expect(plan).toMatchObject({ send: [OTHER], resend: [], done: false });
+    });
+    it('once sent to: late, then re-sent, while read as lacking it; an unserved one is unconfirmed', () => {
+      expect(planBroadcast(d([MIRROR, 'received'], [OTHER, 'unserved']), at([MIRROR, NOW], [OTHER, NOW]), NOW)).toMatchObject({ send: [], unconfirmed: [OTHER], done: true });
+      expect(planBroadcast(d([MIRROR, 'missing']), at([MIRROR, NOW]), NOW)).toMatchObject({ send: [], late: [], done: false });
+      expect(planBroadcast(d([MIRROR, 'missing']), at([MIRROR, LATE]), NOW)).toMatchObject({ send: [], late: [{ chain: MIRROR, state: 'missing', sentAt: LATE }] });
+      expect(planBroadcast(d([MIRROR, 'missing']), at([MIRROR, RESEND]), NOW), 'late in the run that re-sends, too').toMatchObject({
+        send: [MIRROR],
+        resend: [MIRROR],
+        late: [{ chain: MIRROR, state: 'missing', sentAt: RESEND }],
+      });
+    });
+    it('never re-sends blind to a destination it cannot read, and reports it as unknown past the late mark', () => {
+      expect(planBroadcast(d([MIRROR, 'unread']), at([MIRROR, NOW - 60]), NOW)).toMatchObject({ send: [], late: [], done: false });
+      expect(planBroadcast(d([MIRROR, 'unread']), at([MIRROR, RESEND]), NOW)).toMatchObject({ send: [], late: [{ chain: MIRROR, state: 'unread' }], done: false });
+      expect(planBroadcast(d([MIRROR, 'missing'], [OTHER, 'unread']), at([MIRROR, RESEND], [OTHER, RESEND]), NOW), 'nor holds back a known-missing lane').toMatchObject({ send: [MIRROR], resend: [MIRROR] });
+    });
+    it('judges each destination against its own last send', () => {
+      const plan = planBroadcast(d([MIRROR, 'missing'], [OTHER, 'missing']), at([MIRROR, RESEND], [OTHER, NOW - 60]), NOW);
+      expect(plan).toMatchObject({ send: [MIRROR], resend: [MIRROR], late: [{ chain: MIRROR }] });
     });
   });
 });
@@ -432,13 +447,13 @@ describe('a run', () => {
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
     expect(base.sent, 'late, not yet re-sent').toHaveLength(1);
-    expect(alerts(/broadcast of reward day 0, last sent at .* has not reached chain\(s\) 421614/)).toHaveLength(1);
+    expect(alerts(/broadcast of reward day 0 has not reached chain 421614 \(last sent \S+, or sent then with no receipt seen\)/)).toHaveLength(1);
 
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
     openAlert(`dayclose-broadcast:${BASE}:0`);
     await run(base);
     expect(openKeys(), 'a re-send landing is not a delivery').toEqual([`dayclose-broadcast:${BASE}:0`]);
-    expect(base.sent[1], 're-sent to the missing destination only').toEqual({ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR });
+    expect(base.sent[1], 'every listed destination lacks it: re-sent to all').toEqual({ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE });
 
     mirror.known.add(0);
     await run(base);
@@ -514,7 +529,7 @@ describe('a run', () => {
     base.destinations = []; // the mirror is taken off the messenger's list
     later(BROADCAST_LATE_AFTER_SEC);
     await run(base);
-    expect(alerts(/broadcast of reward day 0, last sent at .* has not reached chain\(s\) 421614/), 'still lacking it, still late').toHaveLength(1);
+    expect(alerts(/broadcast of reward day 0 has not reached chain 421614 \(last sent \S+, or sent then with no receipt seen\)/), 'still lacking it, still late').toHaveLength(1);
     later(BROADCAST_RESEND_AFTER_SEC - BROADCAST_LATE_AFTER_SEC);
     await run(base);
     expect(base.sent.slice(1), 'healed alone, the way the contract admits').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
@@ -570,7 +585,7 @@ describe('a run', () => {
     later(BROADCAST_RESEND_AFTER_SEC);
     await run(base);
     expect(base.sent, 'no re-send').toHaveLength(1);
-    expect(alerts(/could not be confirmed on chain\(s\) 421614, whose state this keeper could not read/)).toHaveLength(1);
+    expect(alerts(/could not be confirmed on chain 421614 \(last sent \S+, or sent then with no receipt seen\), whose state this keeper could not read/)).toHaveLength(1);
   });
 
   it('does not call an RPC that gives no answer a refusal', async () => {
@@ -635,6 +650,49 @@ describe('a run', () => {
     expect(base.sent.slice(1)).toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: MIRROR }]);
   });
 
+  it('sends the day alone to a destination added to the list after the day was sent', async () => {
+    finalizedDayZero();
+    await run(base);
+    mirror.known.add(0);
+    base.destinations = [MIRROR, OTHER]; // OTHER is added, and is not served by this keeper
+    base.expected = [BASE, MIRROR, OTHER];
+    later(60);
+    await run(base);
+    expect(base.sent.slice(1), 'never sent to OTHER, so it is sent the day').toEqual([{ fn: 'broadcastGlobalTo', day: 0, value: BROADCAST_TO_FEE, to: OTHER }]);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent, 'sent once there, and unconfirmable: nothing more').toHaveLength(2);
+  });
+
+  it('reports a late broadcast in the run that re-sends it, and keeps the alert until it is read delivered', async () => {
+    finalizedDayZero();
+    await run(base);
+    later(BROADCAST_RESEND_AFTER_SEC);
+    await run(base);
+    expect(base.sent.map((s) => s.fn)).toEqual(['broadcastGlobal', 'broadcastGlobal']);
+    expect(alerts(/broadcast of reward day 0 has not reached chain 421614/), 'raised though a re-send followed').toHaveLength(1);
+    openAlert(`dayclose-broadcast:${BASE}:0`);
+    later(60);
+    await run(base);
+    expect(openKeys(), 'still lacking it: the alert stands').toEqual([`dayclose-broadcast:${BASE}:0`]);
+    mirror.known.add(0);
+    await run(base);
+    expect(openKeys()).toEqual([]);
+  });
+
+  it('on a mirror, says when Base does not list this chain, still closing the day, and clears once it does', async () => {
+    base.expected = [BASE];
+    await run(mirror);
+    expect(mirror.sent.map((s) => s.fn)).toContain('closeDay');
+    expect(alerts(/this chain is not on Base's expected-source list, so Base refuses every report it sends \(SourceChainIdNotExpected\)/)).toHaveLength(1);
+    openAlert(`dayclose-notexpected:${MIRROR}:all`);
+    await run(mirror);
+    expect(openKeys(), 'still unlisted: the alert stands').toContain(`dayclose-notexpected:${MIRROR}:all`);
+    base.expected = [BASE, MIRROR];
+    await run(mirror);
+    expect(openKeys()).not.toContain(`dayclose-notexpected:${MIRROR}:all`);
+  });
+
   it('sends a day once when no destination can be confirmed, keeping its marker for the window', async () => {
     finalizedDayZero();
     base.destinations = [OTHER]; // not served by this keeper
@@ -653,7 +711,7 @@ describe('a run', () => {
     for (let d = 0; d < 60; d++) {
       keeper.db
         .prepare(`INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, 'day_broadcast', ?, ?, ?, 0, 0)`)
-        .run(BASE, base.diamond, String(d), d, JSON.stringify({ sentAt: NOW }));
+        .run(BASE, base.diamond, String(d), d, JSON.stringify({ sentTo: { [MIRROR]: NOW } }));
     }
     // A current day already sent: its marker must still be seen.
     base.finalized.add(60);
@@ -662,7 +720,7 @@ describe('a run', () => {
     base.firstAt.set(60, NOW - 60);
     keeper.db
       .prepare(`INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, 'day_broadcast', '60', 60, ?, 9, 0)`)
-      .run(BASE, base.diamond, JSON.stringify({ sentAt: NOW }));
+      .run(BASE, base.diamond, JSON.stringify({ sentTo: { [MIRROR]: NOW } }));
     for (let d = 47; d < 60; d++) base.sentAt.set(d, NOW);
     await run(base);
     expect(base.sent.filter((s) => s.day === 60), 'day 60 was already sent').toEqual([]);
