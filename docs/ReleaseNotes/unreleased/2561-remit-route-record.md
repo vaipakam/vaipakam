@@ -34,7 +34,9 @@ open alerts, or its record of past acknowledgement attempts; in that second
 case the run sends no acknowledgements, since that record is what paces them.
 A remittance sent to a chain the keeper has no RPC or deployment for is
 reported as one it can neither read nor acknowledge, rather than dropped with
-a log line. A reservation with no
+a log line, and its route is still read from Base and stated. If that route is
+a retired adapter, it is reported as the retired case, since configuring the
+chain would not reach a receipt behind the old adapter. A reservation with no
 receipt is reported to ops, never left waiting in silence, in two cases. The
 first is a remittance sent through an adapter the lane no longer names. The
 second is a Pending remittance still without a receipt more than 8 hours after

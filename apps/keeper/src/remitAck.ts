@@ -515,21 +515,34 @@ async function classifyUndelivered(
   try {
     const noReceipt = candidates.filter((c) => receipts.get(c.remitId) === null);
     const unobservable = candidates.filter((c) => !c.mirrorCfg);
-    const routes = await readRemitRoutes(publicClient, diamond, noReceipt.map((c) => c.remitId), deadline);
+    // An unobservable reservation's route is read too (Codex #2607 r11): it
+    // needs no destination RPC, and a retired route is evidence that adding
+    // one would not help.
+    const routed = [...noReceipt, ...unobservable];
+    const routes = await readRemitRoutes(publicClient, diamond, routed.map((c) => c.remitId), deadline);
     const nowSec = Math.floor(Date.now() / 1000);
     const holding = new Map<number, UndeliveredReason | undefined>();
     for (const c of candidates) if (receipts.get(c.remitId)) holding.set(c.remitId, undefined);
     const entries = new Map<UndeliveredReason, OpsAlertEntry[]>();
-    for (const { remitId, v, outstanding, mirrorCfg } of [...noReceipt, ...unobservable]) {
-      const route = mirrorCfg ? routes.get(remitId) : undefined;
-      if (mirrorCfg && (!route || route.kind === 'unread')) continue;
-      const reason = mirrorCfg && route && route.kind !== 'unread' ? undeliveredReason(path, route, v.sentAt, nowSec) : 'unobservable';
+    for (const { remitId, v, outstanding, mirrorCfg } of routed) {
+      const read = routes.get(remitId);
+      const route = read && read.kind !== 'unread' ? read : undefined;
+      if (mirrorCfg && !route) continue;
+      // With no destination configured, a retired route is still the retired
+      // case (configuration would not reach a receipt behind the old adapter);
+      // otherwise the configuration gap is the reason.
+      const reason: UndeliveredReason | undefined = mirrorCfg
+        ? undeliveredReason(path, route!, v.sentAt, nowSec)
+        : route?.kind === 'retired'
+          ? 'retired'
+          : 'unobservable';
       holding.set(remitId, reason);
       if (!reason) continue;
       const detail = undeliveredAlertDetail({
         remitId,
         dstChainId: Number(v.dstChainId),
-        route: route && route.kind !== 'unread' ? route : undefined,
+        route,
+        unconfigured: !mirrorCfg,
         ageSec: Math.max(0, nowSec - Number(v.sentAt)),
         ccipMessageId: v.ccipMessageId,
         totalWei: BigInt(v.total),

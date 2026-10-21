@@ -488,15 +488,32 @@ describe('remitAck and a remittance with no receipt on the configured mirror (#2
     expect(t.quotes).toBe(0);
   });
 
-  it('alerts a remittance to a chain the keeper has no RPC for, and reads no route for it', async () => {
+  it('alerts a remittance to a chain the keeper has no RPC for, with its route', async () => {
     // Reservation 1 went to BNB Testnet, which this keeper is not configured
-    // for. It is reported as unobservable rather than dropped (Codex #2607 r6).
-    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, dstById: { 1: 97 } });
-    expect(t.routeIds).toEqual([]);
+    // for, on the adapter the lane still names. It is reported as
+    // unobservable rather than dropped (Codex #2607 r6), and its route, which
+    // Base holds, is read and stated (r11).
+    const t = await tick({ status: 1, route: { sent: NEW, live: NEW }, dstById: { 1: 97 } });
+    expect(t.routeIds).toEqual([1]);
     expect(t.alerts).toHaveLength(1);
     expect(t.alerts[0]).toContain('no RPC or deployment for');
     expect(t.alerts[0]).toContain('remit 1');
+    expect(t.alerts[0]).toContain('sent to the adapter the lane still names');
     expect(t.alerts[0]).toContain('Give the keeper an RPC and a deployment entry');
+  });
+
+  it('a remittance to an unconfigured chain behind a retired adapter is the retired case, not a configuration gap', async () => {
+    // Configuring the chain would not help: the receipt, if any, is behind
+    // the old adapter. So it is alerted as retired, with the configuration gap
+    // stated beside the route, and no promise that configuration resolves it
+    // (Codex #2607 r11).
+    const t = await tick({ status: 1, route: { sent: OLD, live: NEW }, dstById: { 1: 97 } });
+    expect(t.routeIds).toEqual([1]);
+    expect(t.alerts).toHaveLength(1);
+    expect(t.alerts[0]).toMatch(/were sent through a remote adapter the lane no longer names/);
+    expect(t.alerts[0].toLowerCase()).toContain(`sent to adapter ${OLD}`.toLowerCase());
+    expect(t.alerts[0]).toContain('the keeper has no RPC or deployment for chain 97');
+    expect(t.alerts[0]).not.toContain('Give the keeper an RPC and a deployment entry');
   });
 
   it('still alerts when the attempt log is unreadable, and sends nothing that run', async () => {

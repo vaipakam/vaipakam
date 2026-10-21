@@ -745,8 +745,11 @@ have no receipt on the mirror the keeper reads … The keeper does not know
 why", with the same evidence. Check the message on the CCIP explorer first.
 A remittance sent to a chain the keeper has no RPC secret or deployment entry
 for gets a third alert, "… went to a chain this keeper has no RPC or
-deployment for": give the keeper both and it checks and acknowledges those
-by itself.
+deployment for", with its route as Base records it: give the keeper both and
+it reads their receipts and acknowledges any it finds. One whose route is a
+retired adapter gets the retired-route alert instead, with the missing
+configuration named in its line, because configuring the chain cannot reach a
+receipt behind the old adapter.
 
 A released remittance that waits for a late acknowledgement gets the
 retired-route alert from the late path. That alert names what is still
