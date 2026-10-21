@@ -1,4 +1,4 @@
-## Keeper — retire the old shared copies of its five tables (PR #<n>)
+## Keeper — retire the old shared copies of its five tables (PR #2611)
 
 The keeper moved its operational state to its own database in October
 (#2450). Five of those tables (health-factor band state, the commitment
