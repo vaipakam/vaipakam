@@ -5,11 +5,16 @@
  *
  *   1. a real loan on the MIRROR, so the mirror has interest to report;
  *   2. two reward days elapse on both chains (one shared clock);
- *   3. the mirror closes each day — `closeDay`, permissionless and payable,
- *      which sends the day's report to Base over the lane — and the relay
- *      lands each report on Base;
- *   4. Base closes and finalizes the same days (`finalizeThrough`): both
- *      expected reporters are in, so each finalizes on coverage;
+ *   3. the KEEPER's real day-close pass (`runRewardDayClose`, #2612) closes
+ *      each day on both chains — on the mirror `closeDay` sends the day's
+ *      report to Base over the lane, paying the messenger's quoted fee; on
+ *      Base it records Base's own report — and the relay lands each mirror
+ *      report on Base;
+ *   4. the next run of that pass finalizes the same days on Base (both
+ *      expected reporters are in, so each finalizes on coverage) and
+ *      broadcasts each, and the relay lands both broadcasts on the mirror,
+ *      which then knows each day's global pair; a third run confirms them
+ *      there and sends nothing;
  *   5. the KEEPER's real remit pass (`runRewardBudgetRemit`) funds the mirror
  *      from Base — `remitRewardBudget`, the keeper's own transaction;
  *   6. the relay lands the remittance on the mirror, VPFI and message
@@ -21,27 +26,41 @@
  */
 import type { Address, Hex } from 'viem';
 import { runRewardBudgetRemit } from '../../src/rewardBudgetRemit';
+import { DayStore, mirrorTenure } from '../../src/rewardDayClose/store';
+import { runRewardDayClose } from '../../src/rewardDayClose';
 import { openLoan } from '../harness/lending';
-import { finalizeThrough } from '../harness/rewardDays';
 import { tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import { TOKEN_ABI, type DecodedEvent } from '../harness/chain';
 import type { RelayedMessage } from '@vaipakam/anvil-harness/ccipLane';
-import { BASE_ID, LANE_NATIVE_FEE, MIRROR_ID } from './fixture';
+import { BASE_ID, MIRROR_ID } from './fixture';
 import type { MeshChain, MeshScenario } from './mesh';
 
 const DAY = 86_400;
 /** The remit pass's cadence (passSchedule): it runs every five minutes. */
 export const FIVE_MIN_MS = 5 * 60_000;
-
-/** The mirror's `closeDay` fee: the lane's fixed native fee, with headroom.
- *  The messenger refunds whatever the send did not use. */
-const CLOSE_DAY_VALUE = LANE_NATIVE_FEE * 10n;
+/** The day-close pass's cadence (passSchedule): every quarter hour. */
+export const FIFTEEN_MIN_MS = 15 * 60_000;
 
 const SUPPLY_ABI = [
   { type: 'function', name: 'totalSupply', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ] as const;
 
+/** What the day-close pass did over steps 3–4. */
+export interface DayCloseRuns {
+  /** Every transaction each chain mined during those runs (sender, hash, to). */
+  baseTxs: { from: Address; hash: Hex; to: Address | null }[];
+  mirrorTxs: { from: Address; hash: Hex; to: Address | null }[];
+  /** The mirror's `closeDay` sends, as Base's ingress and the mirror recorded them. */
+  mirrorReportsRelayed: number;
+  /** The broadcasts the relay landed on the mirror. */
+  broadcastsRelayed: number;
+  /** The mirror's known global pair for each closed day, after the broadcasts. */
+  mirrorKnows: { day: number; isSet: boolean }[];
+}
+
 export interface RemittedDelivery {
+  /** Steps 3–4: the keeper's day-close pass. */
+  dayClose: DayCloseRuns;
   /** Base's `RewardBudgetRemitted` for the keeper's remit. */
   remitted: { amount: bigint; remitId: bigint; messageId: Hex; tx: Hex };
   /** The relayed remittance, as both ends recorded it. */
@@ -95,15 +114,63 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
     if (today !== 2) throw new Error(`chain ${sc.chain.id} is on reward day ${today}, not 2`);
   }
 
-  // 3. The mirror reports days 0 and 1 to Base, over the lane.
-  for (const day of [0n, 1n]) {
-    await mirror.diamondWrite('other', 'closeDay', [day], CLOSE_DAY_VALUE); // eslint-disable-line no-await-in-loop
+  // 3. The keeper's day-close pass closes days 0 and 1 on both chains: the
+  // mirror's reports go to Base over the lane; Base records its own and, with
+  // the mirror's not yet in, finalizes nothing.
+  const baseStart = await base.blockNumber();
+  const mirrorStart = await mirror.blockNumber();
+  const dayClose = async (): Promise<void> => {
+    await m.syncClock();
+    await runRewardDayClose(k.env, tickNow(FIFTEEN_MIN_MS));
+  };
+  await dayClose();
+  for (const day of [0, 1]) {
+    for (const sc of [base, mirror]) {
+      const sent = await sc.read<bigint>('getChainReportSentAt', [BigInt(day)]); // eslint-disable-line no-await-in-loop
+      if (sent === 0n) throw new Error(`the day-close pass did not close day ${day} on chain ${sc.chain.id}`);
+    }
+    const [, reason] = await base.read<readonly [boolean, number]>('isDayReadyToFinalize', [BigInt(day)]); // eslint-disable-line no-await-in-loop
+    if (Number(reason) === 1) throw new Error(`Base finalized day ${day} before the mirror's report landed`);
   }
+  // Each close's receipt shows its report leaving through the messenger the
+  // run checked, so no unchecked dispatch is recorded.
+  const dispatched = await new DayStore(k.env, MIRROR_ID, mirror.diamond, mirrorTenure(BASE_ID, base.diamond)).dispatches([0, 1]);
+  if (dispatched.size > 0) throw new Error(`the day-close pass read a mirror close as sent through an unchecked messenger (${JSON.stringify([...dispatched.values()])})`);
   const reports = await relay.deliver(MIRROR_ID, BASE_ID);
   if (reports.length !== 2) throw new Error(`the relay landed ${reports.length} mirror reports on Base, not 2`);
 
-  // 4. Base closes its own days and finalizes both, now on full coverage.
-  await finalizeThrough(base, 1);
+  // 4. The next run finalizes both on full coverage and broadcasts each; the
+  // relay lands the broadcasts on the mirror; a third run confirms them there.
+  await dayClose();
+  for (const day of [0, 1]) {
+    const [, reason] = await base.read<readonly [boolean, number]>('isDayReadyToFinalize', [BigInt(day)]); // eslint-disable-line no-await-in-loop
+    if (Number(reason) !== 1) throw new Error(`the day-close pass did not finalize day ${day} on Base (reason ${reason})`);
+  }
+  // What each broadcast reached is recorded from its receipt, the messenger's
+  // own per-destination events, not from the list the run read beforehand.
+  const marks = await new DayStore(k.env, BASE_ID, base.diamond, 'canonical').broadcasts([0, 1]);
+  for (const day of [0, 1]) {
+    if (marks.get(day)?.sentTo[String(MIRROR_ID)]?.proven !== true) {
+      throw new Error(`the day-close pass did not record day ${day}'s broadcast to the mirror from its receipt (${JSON.stringify(marks.get(day) ?? null)})`);
+    }
+  }
+  const broadcasts = await relay.deliver(BASE_ID, MIRROR_ID);
+  if (broadcasts.length !== 2) throw new Error(`the relay landed ${broadcasts.length} broadcasts on the mirror, not 2`);
+  const mirrorKnows: { day: number; isSet: boolean }[] = [];
+  for (const day of [0, 1]) {
+    const [, , isSet] = await mirror.read<readonly [bigint, bigint, boolean]>('getKnownGlobalInterestNumeraire18', [BigInt(day)]); // eslint-disable-line no-await-in-loop
+    mirrorKnows.push({ day, isSet });
+  }
+  const baseBeforeConfirm = await base.blockNumber();
+  await dayClose();
+  if ((await base.blockNumber()) !== baseBeforeConfirm) throw new Error('the day-close pass sent again after both broadcasts had landed');
+  const dayCloseRuns: DayCloseRuns = {
+    baseTxs: await transactionsSince(base, baseStart),
+    mirrorTxs: await transactionsSince(mirror, mirrorStart),
+    mirrorReportsRelayed: reports.length,
+    broadcastsRelayed: broadcasts.length,
+    mirrorKnows,
+  };
 
   // 5. The keeper's remit pass, as the scheduler runs it.
   await m.syncClock();
@@ -158,6 +225,7 @@ export async function remitOneDayToMirror(m: MeshScenario, k: KeeperHarness): Pr
   const admitted = ingress.filter((e) => e.eventName === 'TransportBatchAdmitted');
   const batchId = (admitted[0]?.args.batchId as Hex | undefined) ?? (`0x${'0'.repeat(64)}` as Hex);
   return {
+    dayClose: dayCloseRuns,
     remitted,
     relayed,
     packetHash,

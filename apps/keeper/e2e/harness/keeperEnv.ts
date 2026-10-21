@@ -31,6 +31,7 @@ import { ANVIL_DEV_KEYS, type AnyScenarioChain } from './chain';
 import { bindingFor, scenarioIndexer, type ScenarioIndexer } from './indexer';
 
 export type PassFlag =
+  | 'REWARD_DAY_CLOSE_ENABLED'
   | 'REWARD_HORIZON_HEARTBEAT_ENABLED'
   | 'REWARD_SANCTIONS_KEEPER_ENABLED'
   | 'REWARD_DELIVERY_PROOF_ENABLED'

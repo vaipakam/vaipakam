@@ -82,6 +82,11 @@ accrued interest. On canonical Base, the operator must follow with
 `RewardAggregatorFacet.finalizeDay(day)` then `broadcastGlobal(day)`
 to compute global proportions and fan them back out.
 
+> **Superseded (#2612).** This is now automated in the monorepo's own
+> keeper, not the public reference bot: the `rewardDayClose` pass in
+> `apps/keeper/src/rewardDayClose/` (entry point `index.ts`), armed by `REWARD_DAY_CLOSE_ENABLED`.
+> The paragraphs below are the original plan, kept as history.
+
 Today this is operator-driven — there's no automation. If a day is
 missed, users can't claim rewards for that day until someone
 manually runs it.

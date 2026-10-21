@@ -44,6 +44,7 @@
  */
 import { INDEXER_DEPLOYMENT_SQL, indexerAdopted } from '../scripts/lib/indexer-adoption.mjs';
 import type { ChainConfig, Env } from './env';
+import { sendOpsNoticeDigest } from './opsAlert';
 
 /** Private tables keyed by chain and not namespaced by Diamond. */
 export async function listResetOnDiamondChange(db: Env['KEEPER_DB']): Promise<string[]> {
@@ -81,6 +82,28 @@ async function tablesHolding(db: Env['KEEPER_DB'], tables: readonly string[], ch
     if (Number(left?.n) !== 0) held.push(`${t} (${String(left?.n)} row(s))`);
   }
   return held;
+}
+
+/**
+ * Say which open ops alerts a reset is about to close (#2616 r11). The alert
+ * table is one of the reset tables (its `chain_id` column), so a Diamond
+ * change forgets every open alert of the chain, whichever pass raised it, and
+ * the pass that would have closed each with a notice never sees it again. An
+ * operator told of a condition is told here that it is no longer followed,
+ * rather than never hearing of it. Best-effort like every ops notice (the
+ * journal names each key), so a chat that is down does not hold the reset.
+ */
+async function announceAlertsClosed(env: Env, chainId: number, from: string, to: string): Promise<void> {
+  const r = await env.KEEPER_DB.prepare('SELECT alert_key FROM keeper_ops_alert WHERE chain_id = ? ORDER BY alert_key').bind(chainId).all<{ alert_key: string }>();
+  const keys = (r.results ?? []).map((x) => x.alert_key);
+  if (keys.length === 0) return;
+  for (const k of keys) console.log(`[keeper] chain ${chainId}: Diamond changed ${from} → ${to}; open ops alert closed unjudged: ${k}`);
+  await sendOpsNoticeDigest(
+    env,
+    `[chain ${chainId}] keeper: the Diamond changed from ${from} to ${to}, so ${keys.length} open ops alert(s) about the retired Diamond are closed without being judged again`,
+    keys,
+    'Each was raised about the retired Diamond and is not followed against the new one. What it reported may still stand on the retired Diamond: check there directly where it matters. Conditions on the new Diamond are alerted afresh.',
+  );
 }
 
 /**
@@ -148,6 +171,8 @@ export async function adoptKeeperDeployments(env: Env, chains: readonly ChainCon
     // (KeeperMachine.md). Each step is idempotent, and the record moves only
     // once every table reads empty for the chain, so a reset cut off anywhere
     // is redone whole by the next tick.
+    // eslint-disable-next-line no-await-in-loop
+    if (tables.includes('keeper_ops_alert')) await announceAlertsClosed(env, chain.id, have, want);
     for (const t of tables) {
       // eslint-disable-next-line no-await-in-loop
       await env.KEEPER_DB.prepare(`DELETE FROM "${t}" WHERE chain_id = ?`).bind(chain.id).run();

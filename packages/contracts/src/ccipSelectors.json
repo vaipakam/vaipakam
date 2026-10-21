@@ -1,0 +1,53 @@
+{
+  "_comment": "CCIP chain selector per EVM chain id, one entry per chain the deploy scripts configure. Mirrors Deployments.ccipSelectorForChainId in contracts/script/lib/Deployments.sol; scripts/ccip-selectors.test.mjs pins the two together.",
+  "selectors": {
+    "1": {
+      "selector": "5009297550715157269",
+      "name": "Ethereum"
+    },
+    "8453": {
+      "selector": "15971525489660198786",
+      "name": "Base"
+    },
+    "42161": {
+      "selector": "4949039107694359620",
+      "name": "Arbitrum One"
+    },
+    "10": {
+      "selector": "3734403246176062136",
+      "name": "Optimism"
+    },
+    "56": {
+      "selector": "11344663589394136015",
+      "name": "BNB Chain"
+    },
+    "137": {
+      "selector": "4051577828743386545",
+      "name": "Polygon PoS"
+    },
+    "11155111": {
+      "selector": "16015286601757825753",
+      "name": "Sepolia"
+    },
+    "84532": {
+      "selector": "10344971235874465080",
+      "name": "Base Sepolia"
+    },
+    "421614": {
+      "selector": "3478487238524512106",
+      "name": "Arbitrum Sepolia"
+    },
+    "11155420": {
+      "selector": "5224473277236331295",
+      "name": "OP Sepolia"
+    },
+    "97": {
+      "selector": "13264668187771770619",
+      "name": "BNB Chain testnet"
+    },
+    "80002": {
+      "selector": "16281711391670634445",
+      "name": "Polygon Amoy"
+    }
+  }
+}
