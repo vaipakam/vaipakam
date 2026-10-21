@@ -1039,15 +1039,6 @@ export async function getWorkItems<T>(
 }
 
 /** Delete every `kind` row on `(chainId, diamond)` whose block is below
- *  `block` (#2612: a day's send marker leaves with the day's window). */
-export async function pruneWorkBelow(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, block: number): Promise<void> {
-  await db
-    .prepare(`DELETE FROM keeper_work_open WHERE chain_id = ? AND diamond = ? AND kind = ? AND block < ?`)
-    .bind(chainId, diamond.toLowerCase(), kind, block)
-    .run();
-}
-
-/** Delete every `kind` row on `(chainId, diamond)` whose block is below
  *  `block` and whose item is not also open under `owner` (#2612: a day's send
  *  and notice records stay while the day is owed, whatever its age). */
 export async function pruneWorkBelowUnlessOpen(db: KeeperD1, chainId: number, diamond: string, kind: WorkKind, block: number, owner: WorkKind): Promise<void> {
