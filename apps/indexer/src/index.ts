@@ -73,6 +73,7 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
+  configuredScanChains,
   WORKER_NAME,
   type WorkerEnv,
   type Env,
@@ -526,7 +527,9 @@ export default {
     // ingest — is degraded.
     if (url.pathname === '/health/ingest') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
-      if (req.method === 'GET') return handleIngestHealth(earlyRouteEnv(env).DB);
+      if (req.method === 'GET') {
+        return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env));
+      }
       return new Response('Not found', { status: 404 });
     }
 

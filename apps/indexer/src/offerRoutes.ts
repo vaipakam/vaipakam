@@ -27,7 +27,8 @@
  * gracefully handle the case where rows are inserted between requests.
  */
 
-import { type Env, getChainConfigs } from './env';
+import { type Env } from './env';
+import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 
 const DEFAULT_PAGE_LIMIT = 50;
@@ -53,14 +54,6 @@ export function jsonResponse(body: unknown, status = 200): Response {
       ...corsHeaders(),
     },
   });
-}
-
-function chainConfigured(env: Env, chainId: number): boolean {
-  try {
-    return getChainConfigs(env).some((c) => c.id === chainId);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -192,69 +185,78 @@ const KNOWN_OFFER_STATUSES = new Set([
 
 export async function handleOffersStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
-    const counts = await env.DB.prepare(
-      // BOOKKEEPING ROWS ARE NOT OFFERS (#2069 review round 8).
-      // Lender-sale and preclose-offset vehicles mint a temporary offer
-      // row to carry the mechanics; migrations 0029 and 0031 flag them
-      // precisely so they are excluded from anything a person reads, and
-      // every other query in this file that faces a user already filters
-      // them. This one did not — tolerable while it was an internal
-      // aggregate, and not once the public transparency dashboard
-      // renders it as the deployment's offer count, where a vehicle
-      // inflates `total` and an open one inflates `active` too.
-      // EXPIRY IS LAZY ON-CHAIN, so a lapsed GTT offer's row still reads
-      // `status='active'` until some later event touches it — this file
-      // documents that at the `/offers/active` handler, and that handler
-      // offers `excludeExpired` precisely because of it. Grouping on the
-      // raw status published a public "Active" count full of offers
-      // nobody can fill, next to an "Expired" count that read ~0.
-      //
-      // Reclassified rather than dropped: the row is still a real offer
-      // that really existed, so the lifetime `total` must not move. Only
-      // which bucket it lands in changes. `expires_at = 0` is GTC — never
-      // expires — and must not be swept in by a `<=` against now.
-      //
-      // A STUB'S ZERO IS NOT GTC (review round 20 P2). When the inline
-      // `getOfferDetails` read fails, the ingest inserts the row without
-      // an `expires_at` at all, so it takes the column DEFAULT — which
-      // is 0, the same value that means "never expires". If healing keeps
-      // failing past the offer's real deadline, an unfillable offer is
-      // published as active for as long as that lasts, and the ingest
-      // cursor advances regardless, so the wrong count sits beside
-      // apparently fresh provenance. `is_stub = 1` is exactly "expiry
-      // unknown" — healing flips it to 0 as it writes the real value —
-      // so those rows get their own bucket instead of borrowing the GTC
-      // meaning of a placeholder.
-      `SELECT
-         CASE
-           WHEN status = 'active' AND is_stub = 1
-             THEN 'active_unknown_expiry'
-           WHEN status = 'active' AND expires_at != 0 AND expires_at <= ?
-             THEN 'expired'
-           ELSE status
-         END AS status,
-         COUNT(*) as n
-       FROM offers
-        WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-        GROUP BY 1`,
-    )
-      // Bind order follows the SQL text, not the clause order you'd say
-      // aloud: the `?` inside the CASE appears before the one in WHERE.
-      .bind(Math.floor(Date.now() / 1000), chainId)
-      .all<{ status: string; n: number }>();
-    // Note: chainIndexer.ts writes the cursor with `kind = 'diamond'`
-    // (it scans the diamond's full event surface — offers + loans).
-    // The earlier 'offers' literal was a stale split that never
-    // matched, so this lookup returned null and the frontend showed
-    // a permanent amber "indexer disconnected" badge.
-    const cursor = await env.DB.prepare(
-      `SELECT last_block, updated_at FROM indexer_cursor
-       WHERE chain_id = ? AND kind = 'diamond'`,
-    )
-      .bind(chainId)
-      .first<{ last_block: number; updated_at: number }>();
+    // ONE SNAPSHOT (#2080): the counts and the ingest cursor they cite
+    // come from one D1 batch, which D1 runs as a single transaction, so an
+    // ingest committing between two separate reads can no longer pair
+    // pre-ingest counts with a post-ingest cursor. See `/loans/stats`.
+    const [counts, cursorRows] = await env.DB.batch([
+      env.DB.prepare(
+        // BOOKKEEPING ROWS ARE NOT OFFERS (#2069 review round 8).
+        // Lender-sale and preclose-offset vehicles mint a temporary offer
+        // row to carry the mechanics; migrations 0029 and 0031 flag them
+        // precisely so they are excluded from anything a person reads, and
+        // every other query in this file that faces a user already filters
+        // them. This one did not — tolerable while it was an internal
+        // aggregate, and not once the public transparency dashboard
+        // renders it as the deployment's offer count, where a vehicle
+        // inflates `total` and an open one inflates `active` too.
+        // EXPIRY IS LAZY ON-CHAIN, so a lapsed GTT offer's row still reads
+        // `status='active'` until some later event touches it — this file
+        // documents that at the `/offers/active` handler, and that handler
+        // offers `excludeExpired` precisely because of it. Grouping on the
+        // raw status published a public "Active" count full of offers
+        // nobody can fill, next to an "Expired" count that read ~0.
+        //
+        // Reclassified rather than dropped: the row is still a real offer
+        // that really existed, so the lifetime `total` must not move. Only
+        // which bucket it lands in changes. `expires_at = 0` is GTC — never
+        // expires — and must not be swept in by a `<=` against now.
+        //
+        // A STUB'S ZERO IS NOT GTC (review round 20 P2). When the inline
+        // `getOfferDetails` read fails, the ingest inserts the row without
+        // an `expires_at` at all, so it takes the column DEFAULT — which
+        // is 0, the same value that means "never expires". If healing keeps
+        // failing past the offer's real deadline, an unfillable offer is
+        // published as active for as long as that lasts, and the ingest
+        // cursor advances regardless, so the wrong count sits beside
+        // apparently fresh provenance. `is_stub = 1` is exactly "expiry
+        // unknown" — healing flips it to 0 as it writes the real value —
+        // so those rows get their own bucket instead of borrowing the GTC
+        // meaning of a placeholder.
+        `SELECT
+           CASE
+             WHEN status = 'active' AND is_stub = 1
+               THEN 'active_unknown_expiry'
+             WHEN status = 'active' AND expires_at != 0 AND expires_at <= ?
+               THEN 'expired'
+             ELSE status
+           END AS status,
+           COUNT(*) as n
+         FROM offers
+          WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+          GROUP BY 1`,
+      )
+        // Bind order follows the SQL text, not the clause order you'd say
+        // aloud: the `?` inside the CASE appears before the one in WHERE.
+        .bind(Math.floor(Date.now() / 1000), chainId),
+      // Note: chainIndexer.ts writes the cursor with `kind = 'diamond'`
+      // (it scans the diamond's full event surface — offers + loans).
+      // The earlier 'offers' literal was a stale split that never
+      // matched, so this lookup returned null and the frontend showed
+      // a permanent amber "indexer disconnected" badge.
+      env.DB.prepare(
+        `SELECT last_block, updated_at FROM indexer_cursor
+         WHERE chain_id = ? AND kind = 'diamond'`,
+      ).bind(chainId),
+    ]);
+    const cursor = (cursorRows.results?.[0] ?? null) as {
+      last_block: number;
+      updated_at: number;
+    } | null;
     const tally: Record<string, number> = {
       active: 0,
       accepted: 0,
@@ -275,7 +277,7 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // has established (review round 20 P2).
       active_unknown_expiry: 0,
     };
-    for (const row of counts.results ?? []) {
+    for (const row of (counts.results ?? []) as { status: string; n: number }[]) {
       tally[row.status] = row.n;
     }
     return jsonResponse({
@@ -403,7 +405,9 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
  */
 export async function handleOffersMarkets(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     // #1270 — a pure indexed read over the ingest-maintained
     // market_summary table (migration 0037): the union aggregate that
@@ -482,7 +486,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
  */
 export async function handleOffersActive(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   const market = parseMarketFilter(url);
@@ -493,6 +497,8 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   const excludeOffsetVehicles =
     url.searchParams.get('excludeOffsetVehicles') === '1';
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const conds: string[] = [`chain_id = ?`, `status = 'active'`];
     const binds: (number | string)[] = [chainId];
@@ -551,11 +557,13 @@ export async function handleOfferById(
   offerIdRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const offerId = Number.parseInt(offerIdRaw, 10);
   if (!Number.isFinite(offerId) || offerId < 0) {
     return jsonResponse({ error: 'bad-offer-id' }, 400);
   }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const row = await env.DB.prepare(
       `SELECT * FROM offers WHERE chain_id = ? AND offer_id = ?`,
@@ -581,13 +589,15 @@ export async function handleOffersByCreator(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const stmt = before
       ? env.DB.prepare(
@@ -633,16 +643,15 @@ export async function handleOffersByCurrentHolder(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const stmt = before
       ? env.DB.prepare(
@@ -683,9 +692,11 @@ export async function handleOffersByCurrentHolder(
  */
 export async function handleOffersRecent(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const stmt = before
       ? env.DB.prepare(
@@ -759,12 +770,6 @@ function parseMarketFilter(url: URL): MarketFilter | 'bad' {
     out.durationDays = n;
   }
   return out;
-}
-
-function parseChainId(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function parseLimit(raw: string | null): number {

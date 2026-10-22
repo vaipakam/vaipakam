@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
 import {
+  abiOutputNames,
   handleConfigSnapshot,
   isConfigEventName,
   maybeRefreshProtocolConfig,
@@ -26,11 +27,15 @@ const MIGRATION_0035 = readFileSync(
   new URL('../migrations/0035_protocol_config.sql', import.meta.url),
   'utf8',
 );
+const MIGRATION_0067 = readFileSync(
+  new URL('../migrations/0067_protocol_config_label_binding.sql', import.meta.url),
+  'utf8',
+);
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
 function refreshHarness(opts?: { graceRead?: () => Promise<unknown> }) {
-  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
@@ -209,6 +214,12 @@ describe('configSnapshot', () => {
     ]);
     expect(h.row()).toMatchObject({ sb: 100 });
     expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+    // #2073 — the names this build decoded with are written beside the tuples.
+    const names = h.db
+      .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
+      .get() as { b: string | null; f: string | null };
+    expect(JSON.parse(names.b!)).toEqual(abiOutputNames('getProtocolConfigBundle'));
+    expect(JSON.parse(names.f!)).toEqual(abiOutputNames('getMasterFlags'));
   });
 
   it("treats the Diamond's FunctionDoesNotExist revert as a definitive empty bucket set (Codex #1298 r4)", async () => {
@@ -373,13 +384,32 @@ describe('configSnapshot', () => {
    */
   describe('GET /config/:chainId labelled view', () => {
     /** Store one row with a bundle of the ABI's own arity. */
-    async function seed(bundle: readonly unknown[]) {
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+    /** The names a capture by THIS build records beside the tuples. */
+    const BUNDLE_NAMES = abiOutputNames('getProtocolConfigBundle');
+    const FLAG_NAMES = abiOutputNames('getMasterFlags');
+
+    async function seed(
+      bundle: readonly unknown[],
+      names: { bundle: readonly string[] | null; flags: readonly string[] | null } = {
+        bundle: BUNDLE_NAMES,
+        flags: FLAG_NAMES,
+      },
+    ) {
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
       db.prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(84532, serializeTuple(bundle), JSON.stringify([true, true, false]), 1, 2);
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at,
+            bundle_names_json, master_flags_names_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        84532,
+        serializeTuple(bundle),
+        JSON.stringify([true, true, false]),
+        1,
+        2,
+        names.bundle === null ? null : JSON.stringify(names.bundle),
+        names.flags === null ? null : JSON.stringify(names.flags),
+      );
       return { env: { DB: d1 } as unknown as Env };
     }
 
@@ -427,12 +457,12 @@ describe('configSnapshot', () => {
       // governance event the row predates. The site rejects that via its
       // own freshness window; an external reader following llms.txt had
       // only a magic timestamp to infer it from (Codex #1821 r1 P2).
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
       db.prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0);
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at, bundle_names_json)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0, JSON.stringify(BUNDLE_NAMES));
       const body = (await (
         await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env)
       ).json()) as { stale?: boolean; values?: Record<string, unknown> };
@@ -461,6 +491,42 @@ describe('configSnapshot', () => {
         values?: Record<string, unknown>;
       };
       expect(body.bundle).toHaveLength(5);
+      expect(body).not.toHaveProperty('values');
+    });
+
+    // #2073 — the labels are bound at capture time.
+    it('labels with the names captured beside the row, not with the serving build\'s ABI', async () => {
+      // A capture under an ABI whose first two outputs were the other way
+      // round, at the same arity: this build's names would put each value
+      // under the other's name, and equal length would not notice.
+      const swapped = [...(BUNDLE_NAMES as string[])];
+      [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+      const { env } = await seed(FULL_BUNDLE, { bundle: swapped, flags: FLAG_NAMES });
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as {
+        values?: Record<string, unknown>;
+      };
+      expect(body.values?.[swapped[0]]).toBe(FULL_BUNDLE[0]);
+      expect(body.values?.[swapped[1]]).toBe(FULL_BUNDLE[1]);
+    });
+
+    it('withholds the labelled view for a row captured before names were recorded', async () => {
+      const { env } = await seed(FULL_BUNDLE, { bundle: null, flags: null });
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as Record<string, unknown>;
+      expect(body.bundle).toEqual(FULL_BUNDLE);
+      expect(body).not.toHaveProperty('values');
+      expect(body).not.toHaveProperty('flags');
+    });
+
+    it('still answers on a database migration 0067 has not reached, with no labels', async () => {
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+      db.prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 2);
+      const res = await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.available).toBe(true);
       expect(body).not.toHaveProperty('values');
     });
   });

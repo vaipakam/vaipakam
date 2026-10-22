@@ -187,7 +187,7 @@ export function serializeTuple(values: readonly unknown[]): string {
  * Returns null if the getter or any output name is missing, which
  * suppresses the labelled view rather than guessing at it.
  */
-function abiOutputNames(functionName: string): readonly string[] | null {
+export function abiOutputNames(functionName: string): readonly string[] | null {
   const entry = (DIAMOND_ABI_VIEM as readonly unknown[]).find(
     (e): e is { type: string; name: string; outputs?: readonly { name?: string }[] } =>
       typeof e === 'object' &&
@@ -201,13 +201,30 @@ function abiOutputNames(functionName: string): readonly string[] | null {
   return names.every((n) => n.length > 0) ? names : null;
 }
 
+/** The output names captured beside a tuple (#2073), or null when none were
+ *  recorded or the column does not hold a list of non-empty names. */
+function storedNames(json: string | null | undefined): readonly string[] | null {
+  if (!json) return null;
+  try {
+    const names = JSON.parse(json) as unknown;
+    return Array.isArray(names) && names.length > 0 && names.every((n) => typeof n === 'string' && n.length > 0)
+      ? (names as string[])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Zip a stored positional tuple with its ABI field names.
+ * Zip a stored positional tuple with the field names captured beside it.
  *
- * Length mismatch means the stored row predates an ABI change (or
- * follows one), and that is exactly the case where labelling by
- * position would attach the wrong name to a real number — so it yields
- * null and the caller omits the labelled view entirely. A consumer that
+ * The names were written in the same statement as the tuple, so they
+ * match it by construction; a length mismatch can only mean a damaged
+ * row, where labelling by position would attach the wrong name to a real
+ * number — so it yields null and the caller omits the labelled view
+ * entirely. (Equal length alone was once the whole guard, against the
+ * SERVING build's names, and it could not catch a same-arity reorder —
+ * #2073.) A consumer that
  * sees no labels can still read `bundle`; a consumer shown
  * `treasuryFeeBps` pointing at the wrong slot has no way to notice.
  */
@@ -359,13 +376,22 @@ export async function maybeRefreshProtocolConfig(opts: {
     // unpopulated-column force-refresh retries next tick, so one RPC
     // hiccup can never let reminders mint off the pre-change buckets.
     const invalidateGrace = graceBuckets === null && sawGraceEvent;
+    // #2073 — the output names THIS build decoded the tuples with, written
+    // in the same statement as the tuples, so the route labels each value
+    // with the name it was decoded under rather than with whatever the
+    // serving build compiled. NULL when this build's ABI names none.
+    const bundleNames = abiOutputNames('getProtocolConfigBundle');
+    const flagNames = abiOutputNames('getMasterFlags');
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
+          bundle_names_json, master_flags_names_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
+         bundle_names_json = excluded.bundle_names_json,
+         master_flags_names_json = excluded.master_flags_names_json,
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
@@ -380,6 +406,8 @@ export async function maybeRefreshProtocolConfig(opts: {
         Number(opts.blockNumber),
         now,
         invalidateGrace ? 1 : 0,
+        bundleNames === null ? null : JSON.stringify(bundleNames),
+        flagNames === null ? null : JSON.stringify(flagNames),
       )
       .run();
   } catch (err) {
@@ -422,22 +450,46 @@ export async function handleConfigSnapshot(
   env: Env,
 ): Promise<Response> {
   try {
-    const row = await env.DB.prepare(
-      `SELECT bundle_json, master_flags_json, source_block, updated_at
-       FROM protocol_config WHERE chain_id = ?`,
-    )
-      .bind(chainId)
-      .first<{
-        bundle_json: string;
-        master_flags_json: string;
-        source_block: number;
-        updated_at: number;
-      }>();
+    type Row = {
+      bundle_json: string;
+      master_flags_json: string;
+      source_block: number;
+      updated_at: number;
+      bundle_names_json?: string | null;
+      master_flags_names_json?: string | null;
+    };
+    let row: Row | null;
+    try {
+      row = await env.DB.prepare(
+        `SELECT bundle_json, master_flags_json, source_block, updated_at,
+                bundle_names_json, master_flags_names_json
+         FROM protocol_config WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .first<Row>();
+    } catch (err) {
+      // A database migration 0067 has not reached yet (the route must
+      // tolerate the previous schema): serve the row with no captured
+      // names, which withholds the labelled view below.
+      if (!/no such column/i.test(String(err))) throw err;
+      row = await env.DB.prepare(
+        `SELECT bundle_json, master_flags_json, source_block, updated_at
+         FROM protocol_config WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .first<Row>();
+    }
     if (!row) return jsonResponse({ chainId, available: false });
     const bundle = JSON.parse(row.bundle_json) as unknown[];
     const masterFlags = JSON.parse(row.master_flags_json) as boolean[];
-    const values = labelTuple(bundle, abiOutputNames('getProtocolConfigBundle'));
-    const flags = labelTuple(masterFlags, abiOutputNames('getMasterFlags'));
+    // #2073 — labelled ONLY with the names captured beside the tuple (the
+    // names the capturing build decoded it with), never with this build's
+    // ABI: across an upgrade that reorders the outputs at the same arity,
+    // this build's names would attach real values to the wrong fields. A
+    // row captured before the names were recorded serves no labelled view
+    // until the next capture writes them.
+    const values = labelTuple(bundle, storedNames(row.bundle_names_json));
+    const flags = labelTuple(masterFlags, storedNames(row.master_flags_names_json));
     return jsonResponse({
       chainId,
       available: true,

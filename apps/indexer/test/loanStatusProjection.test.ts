@@ -967,7 +967,7 @@ describe('settleLoanRow — one writer for the handler and the heal (#2476 r3)',
     seedLoan(h, 55, 'settled');
     h.db.prepare('UPDATE loans SET terminal_block = 400, terminal_at = 1_999_999_999 WHERE chain_id = ? AND loan_id = 55').run(CHAIN);
     const served = async () => {
-      const res = await handleLoanById(new Request(`https://idx/loans/55?chainId=${CHAIN}`), { DB: h.d1 } as unknown as Env, '55');
+      const res = await handleLoanById(new Request(`https://idx/loans/55?chainId=${CHAIN}`), { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env, '55');
       return ((await res.json()) as { loan?: { terminalAt: number | null }; terminalAt?: number | null });
     };
     const first = await served();

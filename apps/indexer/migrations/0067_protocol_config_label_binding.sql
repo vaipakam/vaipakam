@@ -1,0 +1,26 @@
+-- #2073 — bind the protocol-config snapshot's field names to the snapshot.
+--
+-- `protocol_config` stores the Diamond's `getProtocolConfigBundle` and
+-- `getMasterFlags` returns as POSITIONAL tuples. `GET /config/:chainId` used
+-- to label them at response time from the ABI compiled into whichever Worker
+-- build served the request, guarded only by equal length. A Diamond upgrade
+-- that reorders the outputs at the same arity, read by a build on the other
+-- side of it, then served real values under the wrong names, and nothing a
+-- reader could see said so.
+--
+-- These columns hold the output names the CAPTURING build decoded the tuple
+-- with, written in the same statement as the tuple. The route labels with
+-- them and nothing else, so a label is always the one the value was decoded
+-- under.
+--
+--   bundle_names_json       — JSON array of `getProtocolConfigBundle` output
+--                             names, NULL when that build's ABI named none.
+--   master_flags_names_json — the same for `getMasterFlags`.
+--
+-- Additive: two NULLable columns; the deployed code neither reads nor writes
+-- them. Rows captured before this migration carry NULL, and the route then
+-- withholds the labelled view (the positional arrays are still served) until
+-- the next capture writes the names. The names are not backfilled here:
+-- which ABI decoded those rows is not recorded, and is not guessed.
+ALTER TABLE protocol_config ADD COLUMN bundle_names_json TEXT;
+ALTER TABLE protocol_config ADD COLUMN master_flags_names_json TEXT;

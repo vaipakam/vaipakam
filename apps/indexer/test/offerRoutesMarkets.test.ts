@@ -180,7 +180,7 @@ async function getMarketsBody(
     0,
     Math.floor(Date.now() / 1000),
   );
-  const env = { DB: h.d1 } as unknown as Env;
+  const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   const res = await handleOffersMarkets(
     new Request(`http://indexer.test/offers/markets?chainId=${CHAIN_ID}`),
     env,

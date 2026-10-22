@@ -455,28 +455,54 @@ export function getDeployedChainCount(): number {
   return CHAIN_META_IDS.filter((id) => !!getDeployment(id)).length;
 }
 
-const CHAIN_META_IDS = [
-  8453, 1, 42161, 10, 1101, 56, 84532, 11155111, 421614, 11155420, 80002, 97,
-];
+/**
+ * ONE table of the chains this build knows and the RPC binding each is
+ * scanned through. Everything that asks "which chains" derives from it —
+ * `getChainConfigs` (what can be scanned now, secrets resolved),
+ * `getDeployedChainCount`, and `configuredScanChains` (what is configured to
+ * be scanned, read without resolving a secret) — so the three cannot list
+ * different chains.
+ */
+const CHAIN_RPC_BINDINGS = [
+  // Mainnets — included once both the deployment artifact and the
+  // matching RPC secret land.
+  { id: 8453, name: 'Base', binding: 'RPC_BASE' },
+  { id: 1, name: 'Ethereum', binding: 'RPC_ETH' },
+  { id: 42161, name: 'Arbitrum', binding: 'RPC_ARB' },
+  { id: 10, name: 'Optimism', binding: 'RPC_OP' },
+  { id: 1101, name: 'Polygon zkEVM', binding: 'RPC_ZKEVM' },
+  { id: 56, name: 'BNB Chain', binding: 'RPC_BNB' },
+  // Testnets — pre-mainnet phase indexes these too.
+  { id: 84532, name: 'Base Sepolia', binding: 'RPC_BASE_SEPOLIA' },
+  { id: 11155111, name: 'Sepolia', binding: 'RPC_SEPOLIA' },
+  { id: 421614, name: 'Arbitrum Sepolia', binding: 'RPC_ARB_SEPOLIA' },
+  { id: 11155420, name: 'Optimism Sepolia', binding: 'RPC_OP_SEPOLIA' },
+  { id: 80002, name: 'Polygon Amoy', binding: 'RPC_POLYGON_AMOY' },
+  { id: 97, name: 'BNB Testnet', binding: 'RPC_BNB_TESTNET' },
+] as const satisfies readonly { id: number; name: string; binding: keyof Env }[];
+
+const CHAIN_META_IDS = CHAIN_RPC_BINDINGS.map((c) => c.id);
+
+/**
+ * #2498 — the chains this deployment is CONFIGURED to scan: a deployment
+ * artifact exists and the chain's RPC binding is present. Read from the raw
+ * env WITHOUT resolving any secret, so a route dispatched before
+ * `resolveEnv` (`/health/ingest`) can report it without touching the
+ * Secrets Store. It says what is configured, not that every secret resolves:
+ * a configured chain whose secret fails is exactly the stall a prober should
+ * see, so it stays in this set.
+ */
+export function configuredScanChains(raw: object): number[] {
+  const bound = raw as Record<string, unknown>;
+  return CHAIN_RPC_BINDINGS.filter(
+    (c) => bound[c.binding] !== undefined && bound[c.binding] !== null && bound[c.binding] !== '' && !!getDeployment(c.id),
+  )
+    .map((c) => c.id)
+    .sort((a, b) => a - b);
+}
 
 export function getChainConfigs(env: Env): ChainConfig[] {
-  const meta: { id: number; name: string; rpc: string | undefined }[] = [
-    // Mainnets — included once both the deployment artifact and the
-    // matching RPC secret land.
-    { id: 8453, name: 'Base', rpc: env.RPC_BASE },
-    { id: 1, name: 'Ethereum', rpc: env.RPC_ETH },
-    { id: 42161, name: 'Arbitrum', rpc: env.RPC_ARB },
-    { id: 10, name: 'Optimism', rpc: env.RPC_OP },
-    { id: 1101, name: 'Polygon zkEVM', rpc: env.RPC_ZKEVM },
-    { id: 56, name: 'BNB Chain', rpc: env.RPC_BNB },
-    // Testnets — pre-mainnet phase indexes these too.
-    { id: 84532, name: 'Base Sepolia', rpc: env.RPC_BASE_SEPOLIA },
-    { id: 11155111, name: 'Sepolia', rpc: env.RPC_SEPOLIA },
-    { id: 421614, name: 'Arbitrum Sepolia', rpc: env.RPC_ARB_SEPOLIA },
-    { id: 11155420, name: 'Optimism Sepolia', rpc: env.RPC_OP_SEPOLIA },
-    { id: 80002, name: 'Polygon Amoy', rpc: env.RPC_POLYGON_AMOY },
-    { id: 97, name: 'BNB Testnet', rpc: env.RPC_BNB_TESTNET },
-  ];
+  const meta = CHAIN_RPC_BINDINGS.map((c) => ({ id: c.id, name: c.name, rpc: env[c.binding] }));
   const out: ChainConfig[] = [];
   for (const m of meta) {
     if (!m.rpc) continue;
