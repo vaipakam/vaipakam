@@ -1414,6 +1414,15 @@ export async function clearOpsAlert(db: KeeperD1, key: string): Promise<void> {
   await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
 }
 
+/** Forget several cleared alerts in one batch (#2565): one statement per
+ *  bound-parameter chunk, so a run that clears hundreds costs one round trip. */
+export async function clearOpsAlerts(db: KeeperD1, keys: readonly string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await db.batch(
+    chunkD1InList(keys).map((c) => db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key IN (${c.placeholders})`).bind(...c.binds)),
+  );
+}
+
 // ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0004) ──────
 
 /** Where the sanctions-hold screen resumes on `(chainId, diamond)`: the last

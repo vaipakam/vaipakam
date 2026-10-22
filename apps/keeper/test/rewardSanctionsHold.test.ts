@@ -48,6 +48,7 @@ import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 // keeper's own schema, beside a shared database that has no keeper tables.
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { KeeperD1 } from '../src/env';
+import { maxD1InListWidth } from '@vaipakam/lib/d1Binds';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -408,7 +409,7 @@ describe('raiseAlerts — final-verdict work that does not get done is said (Cod
         stuck: new Map(), clear: new Set(), settleFailed: new Map([[A, 'InteractionRewardBackingShort']]),
       });
       expect(warned.some((w) => /4 owner\(s\) with a final verdict were not reached this run/.test(w))).toBe(true);
-      expect(warned.some((w) => new RegExp(`settlement of confirmed owner ${A} reverted this run \\(InteractionRewardBackingShort\\)`).test(w))).toBe(true);
+      expect(warned.some((w) => new RegExp(`${A} — confirmed owner; its settlement reverted this run \\(InteractionRewardBackingShort\\)`).test(w))).toBe(true);
       // The alerts are open (the ops channel is unset here, so seed them as a delivered run would).
       seed(`sanctions-backlog:${CHAIN}:all`);
       seed(`sanctions-settle-failed:${CHAIN}:${A}`);
@@ -697,6 +698,93 @@ describe('sendOpsAlert', () => {
     } finally {
       warn.mockRestore();
       disarmEpochFence();
+    }
+  });
+});
+
+describe('raiseAlerts — one digest per chain, however many owners (#2565)', () => {
+  const owners = Array.from({ length: 500 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
+  const statuses = owners.map((owner) => held({ owner }));
+  const plan = {
+    observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+    writes: 0, overCapacity: false, heldCount: owners.length,
+    deadlineAtRisk: statuses, overdue: statuses, heldWithoutChain: statuses,
+  };
+  const quiet = { ...plan, deadlineAtRisk: [], overdue: [], heldWithoutChain: [] };
+  const opsEnv = (h: SqliteD1) => ({ DB: createSharedD1().d1, KEEPER_DB: h.d1, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '-1' }) as unknown as Env;
+  const count = (h: SqliteD1) => (h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get() as { n: number }).n;
+
+  it('500 owners × 3 conditions on a failing ops channel: one post for the chain, and no key recorded', async () => {
+    const h = createKeeperD1();
+    const fetchSpy = vi.fn(async () => new Response('down', { status: 503 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const quietLogs = [vi.spyOn(console, 'warn').mockImplementation(() => {}), vi.spyOn(console, 'error').mockImplementation(() => {})];
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(count(h), 'a post that failed records nothing, so the next run re-sends').toBe(0);
+    } finally {
+      for (const s of quietLogs) s.mockRestore();
+      vi.unstubAllGlobals();
+      disarmEpochFence();
+    }
+  });
+
+  it('a delivered digest fits one message, counts the rest per condition, records every key, and repeats nothing inside the interval', async () => {
+    const h = createKeeperD1();
+    const bodies: string[] = [];
+    const fetchSpy = vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push((JSON.parse(init.body) as { text: string }).text);
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const journal: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void journal.push(a.map(String).join(' ')));
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW, null, { due: 2, unreached: 2, skippedOracleDown: 0, clean: 0, unread: 0 });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const text = bodies[0];
+      expect(text.length).toBeLessThanOrEqual(4096);
+      expect(text).toMatch(new RegExp(`^\\[chain ${CHAIN}\\] reward sanctions hold: 1501 conditions hold this run:`));
+      // The chain-wide line leads; the per-owner lines follow, grouped.
+      expect(text.split('\n')[1]).toMatch(/^observations — 2 due observation\(s\) did NOT land/);
+      expect(text).toMatch(/…and \d+ more \(\d+ observe deadline at risk, 500 held overdue, 500 held with no chain\), each named in the keeper journal\./);
+      // Every due line is in the journal, including the ones the post could not carry.
+      const logged = journal.join('\n');
+      expect(owners.every((o) => logged.includes(`${o} — held with no observation chain`))).toBe(true);
+      expect(count(h)).toBe(1501);
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW + 60, null, { due: 2, unreached: 2, skippedOracleDown: 0, clean: 0, unread: 0 });
+      expect(fetchSpy, 'nothing due again inside the repeat interval').toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllGlobals();
+      disarmEpochFence();
+    }
+  });
+
+  it('clears every condition that went off in one statement, and posts nothing when none is on', async () => {
+    const h = createKeeperD1();
+    for (const o of owners) {
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-hold-overdue:${CHAIN}:${o}`, NOW, NOW);
+    }
+    const d1 = h.d1 as unknown as { batch: (stmts: unknown[]) => Promise<unknown> };
+    const realBatch = d1.batch.bind(d1);
+    const batches: number[] = [];
+    d1.batch = (stmts: unknown[]) => {
+      batches.push(stmts.length);
+      return realBatch(stmts);
+    };
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, quiet, NOW);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(batches, 'one batched clear, one statement per bound-parameter chunk').toEqual([Math.ceil(owners.length / maxD1InListWidth(0))]);
+      expect(count(h)).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

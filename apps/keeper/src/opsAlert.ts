@@ -21,13 +21,14 @@
 // a deploy that forgot the ops channel is visible in the Worker logs.
 
 import type { Env } from './env';
-import { clearOpsAlert, getOpsAlert, getOpsAlertsSentAt, recordOpsAlertSent, recordOpsAlertsSent } from './db';
+import { clearOpsAlert, clearOpsAlerts, getOpsAlert, getOpsAlertsSentAt, recordOpsAlertSent, recordOpsAlertsSent } from './db';
 import { assertEpochsHold, EpochFenceRefusal } from './epochFence';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const TELEGRAM_MAX_CHARS = 4096;
-/** Per-post deadline: one stalled endpoint costs one alert, not the tick. */
-const SEND_TIMEOUT_MS = 10_000;
+/** Per-post deadline: one stalled endpoint costs one alert, not the tick.
+ *  Exported so a pass can size the tail its posts need (#2565). */
+export const OPS_POST_TIMEOUT_MS = 10_000;
 
 export type OpsAlertOutcome = 'sent' | 'suppressed' | 'unconfigured' | 'failed' | 'refused';
 
@@ -81,15 +82,21 @@ export interface OpsAlertEntry {
   key: string;
   id: string;
   detail: string;
+  /** The kind of condition, when a digest carries several kinds: the lines a
+   *  post cannot fit are then counted per kind, not only in total (#2565). */
+  group?: string;
 }
 
 /**
  * Deliver several conditions in ONE post (#2599 r4): each keeps its own key —
  * so each re-sends after `minIntervalSec` and clears on its own — but however
  * many are due, the run spends one bounded post on them, not one per
- * condition. The post names as many as fit and counts the rest; the caller
- * logs every one, so the journal names each. The entries that went out are
- * recorded together; nothing is recorded when the post fails. Never throws.
+ * condition. The post names as many as fit and counts the rest, per
+ * {@link OpsAlertEntry.group} where the entries carry one. Every due entry is
+ * written to the keeper journal here, whether or not the post carried it, so
+ * the post's "each named in the keeper journal" holds by construction for
+ * every caller (#2565). The entries that went out are recorded together;
+ * nothing is recorded when the post fails. Never throws.
  */
 export async function sendOpsAlertDigest(
   env: Env,
@@ -130,7 +137,9 @@ export async function sendOpsAlertDigest(
     });
     if (due.length === 0) return 'suppressed';
     if (chainId !== null) await assertEpochsHold();
-    const ok = await postToTelegram(token, chatId, digestText(header(due.length), due.map(entryLine), footer));
+    const heading = header(due.length);
+    console.warn(`[keeper] ${heading} ${due.map(entryLine).join('; ')}`);
+    const ok = await postToTelegram(token, chatId, digestText(heading, due.map(entryLine), footer, due.map((e) => e.group)));
     if (!ok) return 'failed';
     try {
       await recordOpsAlertsSent(env.KEEPER_DB, due.map((e) => e.key), nowSec, chainId);
@@ -165,8 +174,9 @@ function capLine(line: string): string {
 /** A digest's text: the header, then as many lines as fit in one Telegram
  *  message — each cut at its end to {@link MAX_LINE_CHARS}, so every line
  *  shown names what it is about — a count of the rest, then the footer.
- *  Pure; exported for tests. */
-export function digestText(header: string, lines: readonly string[], footer: string): string {
+ *  `groups`, aligned with `lines`, names each line's kind: the rest are then
+ *  counted per kind (#2565). Pure; exported for tests. */
+export function digestText(header: string, lines: readonly string[], footer: string, groups?: readonly (string | undefined)[]): string {
   const budget = TELEGRAM_MAX_CHARS - header.length - footer.length - 80;
   const shown: string[] = [];
   let used = 0;
@@ -177,7 +187,7 @@ export function digestText(header: string, lines: readonly string[], footer: str
     used += line.length + 1;
   }
   const rest = lines.length - shown.length;
-  const more = rest > 0 ? `\n…and ${rest} more, each named in the keeper journal.` : '';
+  const more = rest > 0 ? `\n…and ${rest} more${restByGroup(groups, shown.length)}, each named in the keeper journal.` : '';
   return `${header}\n${shown.join('\n')}${more}\n${footer}`;
 }
 
@@ -219,6 +229,27 @@ export async function sendOpsNoticeDigest(
   }
 }
 
+/** How the lines a digest could not show split by kind: ` (12 observe deadline at
+ *  risk, 3 held overdue)`, or nothing when the lines carry no kind. */
+function restByGroup(groups: readonly (string | undefined)[] | undefined, shown: number): string {
+  if (!groups) return '';
+  const counts = new Map<string, number>();
+  for (const g of groups.slice(shown)) {
+    if (g === undefined) return '';
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  return counts.size === 0 ? '' : ` (${[...counts].map(([g, n]) => `${n} ${g}`).join(', ')})`;
+}
+
+/** The conditions behind `keys` have cleared, in one batch (#2565). Never throws. */
+export async function resolveOpsAlerts(env: Env, keys: readonly string[]): Promise<void> {
+  try {
+    await clearOpsAlerts(env.KEEPER_DB, keys);
+  } catch (err) {
+    console.error(`[keeper] ops alert clear of ${keys.length} key(s) failed: ${String(err)}`);
+  }
+}
+
 /** The condition behind `key` has cleared: the next occurrence alerts at once. */
 export async function resolveOpsAlert(env: Env, key: string): Promise<void> {
   try {
@@ -234,7 +265,7 @@ async function postToTelegram(token: string, chatId: string, text: string): Prom
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text: body, disable_web_page_preview: true }),
-    signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    signal: AbortSignal.timeout(OPS_POST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
