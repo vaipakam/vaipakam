@@ -408,7 +408,7 @@ describe('raiseAlerts — final-verdict work that does not get done is said (Cod
         stuck: new Map(), clear: new Set(), settleFailed: new Map([[A, 'InteractionRewardBackingShort']]),
       });
       expect(warned.some((w) => /4 owner\(s\) with a final verdict were not reached this run/.test(w))).toBe(true);
-      expect(warned.some((w) => new RegExp(`settlement of confirmed owner ${A} reverted this run \\(InteractionRewardBackingShort\\)`).test(w))).toBe(true);
+      expect(warned.some((w) => new RegExp(`${A} — confirmed owner; its settlement reverted this run \\(InteractionRewardBackingShort\\)`).test(w))).toBe(true);
       // The alerts are open (the ops channel is unset here, so seed them as a delivered run would).
       seed(`sanctions-backlog:${CHAIN}:all`);
       seed(`sanctions-settle-failed:${CHAIN}:${A}`);
@@ -696,6 +696,140 @@ describe('sendOpsAlert', () => {
       expect(await sendOpsAlert(env(h), 'c', 'x', 600, NOW, 84532), 'held').toBe('sent');
     } finally {
       warn.mockRestore();
+      disarmEpochFence();
+    }
+  });
+});
+
+describe('raiseAlerts — one digest per chain, however many owners (#2565)', () => {
+  const owners = Array.from({ length: 500 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`);
+  const statuses = owners.map((owner) => held({ owner }));
+  const plan = {
+    observe: [], dueObservations: [], settleObserveDue: [], settle: [], resolveOnly: [], commitClean: [],
+    writes: 0, overCapacity: false, heldCount: owners.length,
+    deadlineAtRisk: statuses, overdue: statuses, heldWithoutChain: statuses,
+  };
+  const quiet = { ...plan, deadlineAtRisk: [], overdue: [], heldWithoutChain: [] };
+  const opsEnv = (h: SqliteD1) => ({ DB: createSharedD1().d1, KEEPER_DB: h.d1, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '-1' }) as unknown as Env;
+  const count = (h: SqliteD1) => (h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get() as { n: number }).n;
+  /** Every statement and batch the pass sends to the keeper's database. */
+  const meter = (h: SqliteD1) => {
+    const d1 = h.d1 as unknown as { prepare: (sql: string) => unknown; batch: (stmts: unknown[]) => Promise<unknown> };
+    const prepare = d1.prepare.bind(d1);
+    const batch = d1.batch.bind(d1);
+    const seen = { statements: [] as string[], batches: [] as number[] };
+    d1.prepare = (sql: string) => {
+      seen.statements.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+      return prepare(sql);
+    };
+    d1.batch = (stmts: unknown[]) => {
+      seen.batches.push(stmts.length);
+      return batch(stmts);
+    };
+    return seen;
+  };
+
+  it('500 owners × 3 conditions on a failing ops channel: one post for the chain, and no key recorded', async () => {
+    const h = createKeeperD1();
+    const fetchSpy = vi.fn(async () => new Response('down', { status: 503 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const quietLogs = [vi.spyOn(console, 'warn').mockImplementation(() => {}), vi.spyOn(console, 'error').mockImplementation(() => {})];
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(count(h), 'a post that failed records nothing, so the next run re-sends').toBe(0);
+    } finally {
+      for (const s of quietLogs) s.mockRestore();
+      vi.unstubAllGlobals();
+      disarmEpochFence();
+    }
+  });
+
+  it('a delivered digest fits one message, counts the rest per condition, records every key, and repeats nothing inside the interval', async () => {
+    const h = createKeeperD1();
+    const bodies: string[] = [];
+    const fetchSpy = vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push((JSON.parse(init.body) as { text: string }).text);
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const journal: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void journal.push(a.map(String).join(' ')));
+    const seen = meter(h);
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW, null, { due: 2, unreached: 2, skippedOracleDown: 0, clean: 0, unread: 0 });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      // #2565 r1 — however many keys: the open keys, the sent-state and the
+      // delivery record are one statement each, never one per key.
+      expect(seen.statements).toEqual(['SELECT alert_key FROM', 'SELECT alert_key, last_sent_at', 'INSERT INTO keeper_ops_alert']);
+      expect(seen.batches).toEqual([]);
+      // And the journal is written in parts well under the log platforms'
+      // per-line limits, every owner whole in one of them.
+      expect(journal.every((l) => l.length <= 16_500)).toBe(true);
+      expect(journal.filter((l) => l.includes('reward sanctions hold: 1501 conditions')).length).toBeGreaterThan(1);
+      const text = bodies[0];
+      expect(text.length).toBeLessThanOrEqual(4096);
+      expect(text).toMatch(new RegExp(`^\\[chain ${CHAIN}\\] reward sanctions hold: 1501 conditions to report this run:`));
+      // The chain-wide line leads; the per-owner lines follow, grouped.
+      expect(text.split('\n')[1]).toMatch(/^observations — 2 due observation\(s\) did NOT land/);
+      expect(text).toMatch(/…and \d+ more \(\d+ observe deadline at risk, 500 held overdue, 500 held with no chain\), each named in the keeper journal\./);
+      // Every due line is in the journal, including the ones the post could not carry.
+      const logged = journal.join('\n');
+      expect(owners.every((o) => logged.includes(`${o} — held with no observation chain`))).toBe(true);
+      expect(count(h)).toBe(1501);
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW + 60, null, { due: 2, unreached: 2, skippedOracleDown: 0, clean: 0, unread: 0 });
+      expect(fetchSpy, 'nothing due again inside the repeat interval').toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllGlobals();
+      disarmEpochFence();
+    }
+  });
+
+  it('clears every condition that went off in one statement, and posts nothing when none is on', async () => {
+    const h = createKeeperD1();
+    for (const o of owners) {
+      h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-hold-overdue:${CHAIN}:${o}`, NOW, NOW);
+    }
+    const seen = meter(h);
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, quiet, NOW);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(seen.statements, 'the open keys, then one clear for all 500').toEqual(['SELECT alert_key FROM', 'DELETE FROM keeper_ops_alert']);
+      expect(seen.batches).toEqual([]);
+      expect(count(h)).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('abandons D1 work still in flight at the alert deadline, posting nothing (#2565 r1)', async () => {
+    const h = createKeeperD1();
+    const d1 = h.d1 as unknown as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const prepare = d1.prepare.bind(d1);
+    // The digest's sent-state read hangs; every other statement answers.
+    d1.prepare = (sql: string) => {
+      const stmt = prepare(sql) as { bind: (...a: unknown[]) => { all: () => Promise<unknown> } };
+      if (!sql.includes('last_sent_at FROM')) return stmt;
+      return { bind: () => ({ all: () => new Promise(() => {}) }) };
+    };
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const quietLogs = [vi.spyOn(console, 'warn').mockImplementation(() => {}), vi.spyOn(console, 'error').mockImplementation(() => {})];
+    try {
+      const started = Date.now();
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW, null, null, started + 200);
+      expect(Date.now() - started, 'back at the deadline, not after the hung read').toBeLessThan(2_000);
+      expect(fetchSpy, 'a post that would start past the window waits for the next run').not.toHaveBeenCalled();
+      expect(count(h)).toBe(0);
+    } finally {
+      for (const s of quietLogs) s.mockRestore();
+      vi.unstubAllGlobals();
       disarmEpochFence();
     }
   });

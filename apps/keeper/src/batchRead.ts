@@ -224,10 +224,16 @@ export async function settledChunkedRead<K>(
  * `deadline` — the one primitive behind every "abandon it at the cutoff" in
  * the keeper (`runWindow.ts` rule 3). An abandoned `work` keeps running; its
  * late outcome, a rejection included, is discarded rather than left
- * unhandled. Use it for READS: abandoning a broadcast would lose the record
- * that it was sent.
+ * unhandled. Use it for READS, and for a write whose late landing is harmless
+ * either way (an ops alert's de-duplication record or clear, #2565 r1):
+ * abandoning a broadcast would lose the record that it was sent.
+ *
+ * A deadline that is not finite never cuts: `setTimeout` treats a delay past
+ * its 32-bit range as 1 ms, so an `Infinity` ("no deadline") would otherwise
+ * abandon the work at once.
  */
 export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () => T): Promise<T> {
+  if (!Number.isFinite(deadline)) return work;
   let timer: ReturnType<typeof setTimeout> | undefined;
   work.catch(() => undefined);
   const cut = new Promise<T>((resolve, reject) => {

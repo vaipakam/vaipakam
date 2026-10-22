@@ -1373,30 +1373,42 @@ export async function recordOpsAlertSent(db: KeeperD1, key: string, nowSec: numb
     .run();
 }
 
+// The bulk ops-alert statements below each take the WHOLE key set as ONE
+// bound JSON array, read with `json_each` (#2565 r1, the shape the indexer
+// already uses): one statement and one round trip however many keys a digest
+// carries. Chunking under D1's 100-parameter cap made the statement count
+// grow with the keys (one INSERT per key, one sequential SELECT per hundred),
+// so a large digest could exceed the per-invocation query limit or outrun its
+// run's alert window. A bound value is limited by size (D1 allows 2 MB), not
+// by count, and a key is well under a hundred bytes.
+
 /** When each of `keys` was last delivered, for the keys that have been (#2599
  *  r4: one read for a digest, not one per key). */
 export async function getOpsAlertsSentAt(db: KeeperD1, keys: readonly string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  for (const c of chunkD1InList(keys)) {
-    const rows = await db
-      .prepare(`SELECT alert_key, last_sent_at FROM keeper_ops_alert WHERE alert_key IN (${c.placeholders})`)
-      .bind(...c.binds)
-      .all<{ alert_key: string; last_sent_at: number }>();
-    for (const r of rows.results ?? []) out.set(r.alert_key, r.last_sent_at);
-  }
+  if (keys.length === 0) return out;
+  const rows = await db
+    .prepare(`SELECT alert_key, last_sent_at FROM keeper_ops_alert WHERE alert_key IN (SELECT value FROM json_each(?1))`)
+    .bind(JSON.stringify(keys))
+    .all<{ alert_key: string; last_sent_at: number }>();
+  for (const r of rows.results ?? []) out.set(r.alert_key, r.last_sent_at);
   return out;
 }
 
-/** Record several DELIVERED ops alerts in one batch — the keys a single digest
- *  post carried (first delivery keeps `first_seen_at`). */
+/** Record several DELIVERED ops alerts in one statement — the keys a single
+ *  digest post carried (first delivery keeps `first_seen_at`). */
 export async function recordOpsAlertsSent(db: KeeperD1, keys: readonly string[], nowSec: number, chainId: number | null = null): Promise<void> {
   if (keys.length === 0) return;
-  const stmt = db.prepare(
-    `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
-     VALUES (?1, ?2, ?2, ?3)
-     ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
-  );
-  await db.batch(keys.map((k) => stmt.bind(k, nowSec, chainId)));
+  // `WHERE true` is SQLite's required disambiguation for an upsert whose
+  // source is a SELECT (the ON CONFLICT would otherwise parse as a join).
+  await db
+    .prepare(
+      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at, chain_id)
+       SELECT value, ?2, ?2, ?3 FROM json_each(?1) WHERE true
+       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at, chain_id = excluded.chain_id`,
+    )
+    .bind(JSON.stringify(keys), nowSec, chainId)
+    .run();
 }
 
 /** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
@@ -1412,6 +1424,12 @@ export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promi
 /** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
 export async function clearOpsAlert(db: KeeperD1, key: string): Promise<void> {
   await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
+}
+
+/** Forget several cleared alerts in one statement (#2565), however many. */
+export async function clearOpsAlerts(db: KeeperD1, keys: readonly string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify(keys)).run();
 }
 
 // ─── #2489 r2 — the sanctions-hold screen cursor (keeper-private, 0004) ──────
