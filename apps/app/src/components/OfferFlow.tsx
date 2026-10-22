@@ -77,11 +77,9 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
-  knownRefinanceTarget,
   lenderCollateralLine,
   readRefinanceRequestLive,
   sameRefinanceReview,
-  type RefinanceRequestInfo,
 } from '../data/refinanceRequestReview';
 import {
   exactUnitsOrNull,
@@ -541,18 +539,13 @@ export function OfferFlow({ side }: { side: Side }) {
     // signed. An ordinary offer's answer cannot become a refinance (the tag
     // is fixed at posting), so it is not polled.
     staleTime: 30_000,
-    refetchInterval: (query) => (query.state.data ? idleAware(60_000)() : false),
+    refetchInterval: (query) =>
+      query.state.data?.kind === 'refinance' ? idleAware(60_000)() : false,
     queryFn: () =>
       readRefinanceRequestLive(
         readClient!,
         readChain.diamondAddress,
         BigInt(selected!.offerId),
-        // Codex #2668 r3 — the target already known for this offer, so a
-        // cancelled (deleted) request reads as blocked, never as ordinary.
-        knownRefinanceTarget(
-          queryClient.getQueryData<RefinanceRequestInfo | null>(refinanceKey),
-          selected!.refinanceTargetLoanId,
-        ),
       ),
   });
   // Codex #2668 r3 — a failed refresh keeps the previous answer in `data`
@@ -562,15 +555,20 @@ export function OfferFlow({ side }: { side: Side }) {
   const refinanceSettled =
     refinanceRequest.data !== undefined && !refinanceRequest.isError;
   const refinanceKnown = mode !== 'accept' || side !== 'lender' || refinanceSettled;
-  const refinanceInfo =
+  const refinanceRead =
     mode === 'accept' && side === 'lender' && refinanceSettled
-      ? (refinanceRequest.data ?? null)
-      : null;
+      ? refinanceRequest.data
+      : undefined;
+  const refinanceInfo = refinanceRead?.kind === 'refinance' ? refinanceRead.info : null;
+  // Codex #2668 r5 — the offer itself no longer exists (a cancel deletes
+  // it). Said as such, never read as an ordinary request.
+  const offerGoneLive = refinanceRead?.kind === 'gone';
   // Codex #2668 r1 — the target loan moves after the request is posted: a
   // repayment or enforcement closes it, added collateral breaks a carry-over
-  // match. When the contract's own acceptance check says no, the review
-  // says the request cannot be taken and offers nothing to sign.
-  const refinanceBlocked = refinanceInfo?.standing.kind === 'blocked';
+  // match. When the contract's own acceptance check says no, or the offer
+  // is gone, the review says so and offers nothing to sign.
+  const refinanceBlocked =
+    offerGoneLive || refinanceInfo?.standing.kind === 'blocked';
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -1373,7 +1371,9 @@ export function OfferFlow({ side }: { side: Side }) {
     `refi:${
       refinanceInfo
         ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}:${refinanceInfo.standing.kind}`
-        : refinanceKnown
+        : offerGoneLive
+          ? 'gone'
+          : refinanceKnown
           ? '0'
           : '?'
     }`,
@@ -1883,19 +1883,17 @@ export function OfferFlow({ side }: { side: Side }) {
     // have closed or changed in between. Re-read it on the wallet chain and
     // refuse to sign against a review that no longer matches, putting the
     // fresh answer in place so the review shows why.
-    if (refinanceInfo) {
+    if (refinanceRead) {
       const liveRefinance = await readRefinanceRequestLive(
         publicClient,
         walletChain.diamondAddress,
         BigInt(selected.offerId),
-        refinanceInfo.targetLoanId,
       );
-      if (!sameRefinanceReview(refinanceInfo, liveRefinance)) {
-        queryClient.setQueryData(
-          ['offerRefinanceRequest', readChain.chainId, selected.offerId],
-          liveRefinance,
+      if (!sameRefinanceReview(refinanceRead, liveRefinance)) {
+        queryClient.setQueryData(refinanceKey, liveRefinance);
+        throw new Error(
+          liveRefinance.kind === 'gone' ? copy.match.offerGone : copy.match.termsChanged,
         );
-        throw new Error(copy.match.termsChanged);
       }
     }
     // Sign canonical terms; approval amounts come from the SIGNED
@@ -2718,7 +2716,11 @@ export function OfferFlow({ side }: { side: Side }) {
               </div>
             )
           ) : null}
-          {refinanceInfo?.standing.kind === 'blocked' ? (
+          {offerGoneLive ? (
+            <div className="banner banner-warn" role="alert" data-testid="offer-gone">
+              <span className="banner-body">{copy.match.offerGone}</span>
+            </div>
+          ) : refinanceInfo?.standing.kind === 'blocked' ? (
             <div
               className="banner banner-warn"
               role="alert"

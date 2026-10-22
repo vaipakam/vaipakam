@@ -61,22 +61,6 @@ export interface RefinanceRequestInfo {
   standing: RefinanceRequestStanding;
 }
 
-/** The refinance facts of an offer, or null for an untagged offer. */
-export function refinanceRequestOf(
-  offer: {
-    refinanceTargetLoanId: bigint;
-    refinanceCarryOver: boolean;
-  },
-  standing: RefinanceRequestStanding = { kind: 'takeable' },
-): RefinanceRequestInfo | null {
-  if (offer.refinanceTargetLoanId === 0n) return null;
-  return {
-    targetLoanId: offer.refinanceTargetLoanId,
-    carryOver: offer.refinanceCarryOver,
-    standing,
-  };
-}
-
 /** Classify a failed `checkRefinanceRequest` read. A missing view is
  *  `unchecked`; any other contract revert is the acceptance check saying
  *  no; anything else (transport, RPC) is not an answer and is rethrown, so
@@ -90,77 +74,82 @@ export function standingFromCheckError(err: unknown): RefinanceRequestStanding {
   return { kind: 'blocked', reason: submitErrorText(err) };
 }
 
-/** Whether a fresh read still says what the lender reviewed: the same
- *  target, the same collateral decision and the same standing (Codex #2668
- *  r2). A blocked review never reaches submit, so a blocked reason that
- *  merely reworded is not a difference worth refusing on. */
-export function sameRefinanceReview(
-  reviewed: RefinanceRequestInfo | null,
-  live: RefinanceRequestInfo | null,
-): boolean {
-  if (reviewed === null || live === null) return reviewed === live;
-  return (
-    reviewed.targetLoanId === live.targetLoanId &&
-    reviewed.carryOver === live.carryOver &&
-    reviewed.standing.kind === live.standing.kind
-  );
-}
+/**
+ * What the chain says about an offer the lender is reviewing (Codex #2668
+ * r3/r5). Three answers, never conflated:
+ *  - `ordinary` — the offer exists and carries no refinance tag;
+ *  - `refinance` — the offer exists and asks to refinance a running loan;
+ *  - `gone` — the offer no longer exists. Cancelling deletes an offer, and a
+ *    deleted offer reads back zeroed, which on its face looks like an
+ *    untagged request. It is its own answer so the review can never
+ *    describe a deleted offer as a live ordinary one, whether or not anyone
+ *    knew it as a refinance.
+ */
+export type RefinanceReviewRead =
+  | { kind: 'ordinary' }
+  | { kind: 'gone' }
+  | { kind: 'refinance'; info: RefinanceRequestInfo };
 
-/** The target already known for an offer: the last answer this review had,
- *  else the indexed row's tag (Codex #2668 r3). 0n when neither knows of one. */
-export function knownRefinanceTarget(
-  previous: RefinanceRequestInfo | null | undefined,
-  indexedTag: number | null | undefined,
-): bigint {
-  if (previous) return previous.targetLoanId;
-  return indexedTag && indexedTag > 0 ? BigInt(indexedTag) : 0n;
+/** Whether a fresh read still says what the lender reviewed: the same
+ *  answer and, for a refinance, the same target, collateral decision and
+ *  standing (Codex #2668 r2). A blocked review never reaches submit, so a
+ *  blocked reason that merely reworded is not a difference worth refusing
+ *  on. */
+export function sameRefinanceReview(
+  reviewed: RefinanceReviewRead,
+  live: RefinanceReviewRead,
+): boolean {
+  if (reviewed.kind !== 'refinance' || live.kind !== 'refinance') {
+    return reviewed.kind === live.kind;
+  }
+  return (
+    reviewed.info.targetLoanId === live.info.targetLoanId &&
+    reviewed.info.carryOver === live.info.carryOver &&
+    reviewed.info.standing.kind === live.info.standing.kind
+  );
 }
 
 /**
  * Read an offer's refinance facts and whether the request can be taken now.
  *
- * `knownTargetLoanId` is the target the caller already has for this offer
- * (the indexed row's tag, or the reviewed answer) — 0n or undefined when it
- * has none. It matters only when the offer no longer exists on-chain:
- * cancelling deletes the offer, and a deleted offer reads back zeroed,
- * which on its own is indistinguishable from an untagged borrow request
- * (Codex #2668 r3). A request the caller knew as a refinance therefore
- * comes back BLOCKED rather than as an ordinary offer.
+ * Every read is pinned to ONE block (Codex #2668 r5): the answer is
+ * assembled from several views, and unpinned they could straddle a cancel
+ * or a repayment and combine a state from before it with one from after.
  */
 export async function readRefinanceRequestLive(
   client: PublicClient,
   diamond: Address,
   offerId: bigint,
-  knownTargetLoanId?: bigint,
-): Promise<RefinanceRequestInfo | null> {
+): Promise<RefinanceReviewRead> {
+  const blockNumber = await client.getBlockNumber();
   const offer = (await client.readContract({
     address: diamond,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getOfferDetails',
     args: [offerId],
+    blockNumber,
   })) as {
     creator: Address;
     refinanceTargetLoanId: bigint;
     refinanceCarryOver: boolean;
   };
-  if (offer.creator === zeroAddress) {
-    if (!knownTargetLoanId) return null;
-    return {
-      targetLoanId: knownTargetLoanId,
-      // The deleted record no longer says; a blocked review renders no
-      // collateral line, so nothing is stated from this placeholder.
-      carryOver: false,
-      standing: { kind: 'blocked', reason: copy.match.refinanceRequestGone },
-    };
-  }
-  if (offer.refinanceTargetLoanId === 0n) return null;
+  if (offer.creator === zeroAddress) return { kind: 'gone' };
+  if (offer.refinanceTargetLoanId === 0n) return { kind: 'ordinary' };
   const standing = await readStanding(
     client,
     diamond,
     offer.refinanceTargetLoanId,
     offerId,
+    blockNumber,
   );
-  return refinanceRequestOf(offer, standing);
+  return {
+    kind: 'refinance',
+    info: {
+      targetLoanId: offer.refinanceTargetLoanId,
+      carryOver: offer.refinanceCarryOver,
+      standing,
+    },
+  };
 }
 
 /** Mirror the two checks acceptance makes. `checkRefinanceRequest` covers
@@ -168,12 +157,14 @@ export async function readRefinanceRequestLive(
  *  check that the offer is the loan's RECORDED request, which acceptance
  *  also requires (Codex #2668 r4) — a request posted before the record
  *  existed, or one displaced by a later request, passes the first check and
- *  is still refused. So the record is compared too. */
+ *  is still refused. So the record is compared too, and its own `live`
+ *  verdict honoured (r5). */
 async function readStanding(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,
   offerId: bigint,
+  blockNumber: bigint,
 ): Promise<RefinanceRequestStanding> {
   try {
     await client.readContract({
@@ -181,31 +172,38 @@ async function readStanding(
       abi: DIAMOND_ABI_VIEM,
       functionName: 'checkRefinanceRequest',
       args: [loanId, offerId],
+      blockNumber,
     });
   } catch (err) {
     return standingFromCheckError(err);
   }
-  let recordedOfferId: bigint;
+  let recorded: readonly [bigint, boolean];
   try {
-    [recordedOfferId] = (await client.readContract({
+    recorded = (await client.readContract({
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getRefinanceRequest',
       args: [loanId],
+      blockNumber,
     })) as readonly [bigint, boolean];
   } catch (err) {
     if (isMissingSelectorError(err)) return { kind: 'unchecked' };
     throw err;
   }
+  const [recordedOfferId, live] = recorded;
   if (recordedOfferId !== offerId) {
-    return {
-      kind: 'blocked',
-      reason:
-        friendlyContractError({ name: 'RefinanceRequestNotRecorded' }, translateContractError) ??
-        copy.errors.txFailed,
-    };
+    return { kind: 'blocked', reason: contractReason('RefinanceRequestNotRecorded') };
+  }
+  if (!live) {
+    return { kind: 'blocked', reason: contractReason('RefinanceRequestNotLive') };
   }
   return { kind: 'takeable' };
+}
+
+/** The curated, translated text for a refusal the views report as a flag
+ *  rather than a revert. */
+function contractReason(name: string): string {
+  return friendlyContractError({ name }, translateContractError) ?? copy.errors.txFailed;
 }
 
 /** What the lender's review says about the collateral backing the loan

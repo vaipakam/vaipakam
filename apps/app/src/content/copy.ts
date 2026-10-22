@@ -1181,10 +1181,6 @@ const copySource = {
       `This request asks to refinance loan #{{loanId}}, but it can’t be taken right now. {{reason}} Accepting it would fail, so there is nothing to sign.`,
       ['loanId', 'reason'],
     ),
-    // Codex #2668 r3 — the reason given when the offer record is gone:
-    // cancelling a request deletes it.
-    refinanceRequestGone:
-      'The request no longer exists on-chain; cancelling a request removes it.',
     // A Diamond without the acceptance-check view: the app cannot vouch
     // that the request is still takeable, and says so.
     refinanceRequestUnchecked:

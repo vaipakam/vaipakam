@@ -1421,9 +1421,11 @@ progress.
   request (only that one can be taken), re-reads it while the review stays open, and reads it
   once more at signing, refusing to sign against a review it no longer
   matches. A refresh that fails leaves the review unknown again (check
-  failed, with a retry) rather than showing the last answer as current, and a
-  request that was cancelled while the review was open is shown as one that
-  cannot be taken, never as an ordinary borrow request. When that check refuses, the review says the request
+  failed, with a retry) rather than showing the last answer as current, and an
+  offer that no longer exists (cancelling deletes it) is shown as no longer
+  open, with nothing to sign, never as an ordinary borrow request. Each check
+  reads every fact it combines from the same block, so it never mixes a state
+  from before a change with one from after it. When that check refuses, the review says the request
   cannot be taken right now and why, shows no lender receipt, and offers
   nothing to sign. When the deployment has no such check, the review says it
   cannot confirm the request is still takeable and that a stale request fails

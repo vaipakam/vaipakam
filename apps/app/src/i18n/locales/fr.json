@@ -563,7 +563,6 @@
       "refinanceRequestChecking": "Vérification que cette demande refinance un prêt en cours — l’examen doit l’indiquer avant que vous puissiez signer.",
       "refinanceRequestCheckFailed": "Nous n’avons pas pu vérifier si cette demande refinance un prêt en cours, ce qui change l’effet de son acceptation — la signature reste en pause jusqu’à ce que la vérification réussisse.",
       "refinanceRequestUnavailable": "Cette demande vise à refinancer le prêt #{{loanId}}, mais elle ne peut pas être acceptée pour le moment. {{reason}} L’accepter échouerait, il n’y a donc rien à signer.",
-      "refinanceRequestGone": "La demande n’existe plus on-chain ; annuler une demande la supprime.",
       "refinanceRequestUnchecked": "Cette application ne peut pas vérifier ici si la demande peut encore être acceptée : le prêt a pu être remboursé, clôturé ou modifié depuis sa publication. Si ce n’est pas le cas, l’acceptation échoue on-chain et rien n’est transféré, mais les frais de réseau de la tentative restent dus.",
       "graceChecking": "Confirmation de la fenêtre de grâce de remboursement utilisée pour juger cette opération…",
       "graceCheckFailed": "Impossible de confirmer la fenêtre de grâce de remboursement, et l'examen doit afficher la vraie — la signature reste en pause jusqu'à réussite.",

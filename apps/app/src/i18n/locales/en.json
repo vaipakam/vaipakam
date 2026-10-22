@@ -581,7 +581,6 @@
       "refinanceRequestChecking": "Checking whether this request refinances a running loan — the review must say so before you can sign.",
       "refinanceRequestCheckFailed": "We couldn’t check whether this request refinances a running loan, and that changes what accepting it does — signing stays paused until it succeeds.",
       "refinanceRequestUnavailable": "This request asks to refinance loan #{{loanId}}, but it can’t be taken right now. {{reason}} Accepting it would fail, so there is nothing to sign.",
-      "refinanceRequestGone": "The request no longer exists on-chain; cancelling a request removes it.",
       "refinanceRequestUnchecked": "This app can’t check here whether the request can still be taken: the loan may have been repaid, closed or changed since it was posted. If it can’t, the accept fails on-chain and nothing is transferred, though the network fee for the attempt is still spent.",
       "graceChecking": "Confirming the repayment grace window this deal is judged against…",
       "graceCheckFailed": "We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.",
