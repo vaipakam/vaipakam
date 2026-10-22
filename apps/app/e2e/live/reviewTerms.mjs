@@ -239,7 +239,7 @@ function comparer(rows, en) {
  * AcceptTerms.
  *
  * ctx: { en, req: { amount, interestRateBpsMax, durationDays,
- *   collateralAmount }, principal: { decimals, symbol }, collateral:
+ *   collateralAmount, refinanceTargetLoanId?, refinanceCarryOver? }, principal: { decimals, symbol }, collateral:
  *   { decimals, symbol }, treasuryFeeBps, graceSeconds }
  */
 export function compareLenderReceipt(rows, ctx) {
@@ -256,8 +256,23 @@ export function compareLenderReceipt(rows, ctx) {
   const g2 = c.fit('youLock', R.lenderYouLockAccept);
   if (g2) c.amount('principal lent', g2.principal, req.amount, P.decimals, P.symbol);
   c.exact('youMayOwe', en.offerFlow.receiptOweNothing);
-  const g3 = c.fit('youCanLose', `${en.lend.defaultOutcome} ${R.lenderCollateralLock}`, { prefix: true });
-  if (g3) c.amount('collateral', g3.collateral, req.collateralAmount, ctx.collateral.decimals, ctx.collateral.symbol);
+  // #2421 — a refinance request's collateral is described from its recorded
+  // carry-over decision and names the loan it refinances; only an untagged
+  // request reads as a fresh "They lock".
+  const refinanced = (req.refinanceTargetLoanId ?? 0n) > 0n;
+  const lockLine = !refinanced
+    ? R.lenderCollateralLock
+    : req.refinanceCarryOver
+      ? R.lenderCollateralCarriedOver
+      : R.lenderCollateralFreshPledge;
+  const g3 = c.fit('youCanLose', `${en.lend.defaultOutcome} ${lockLine}`, { prefix: true });
+  if (g3) {
+    c.amount('collateral', g3.collateral, req.collateralAmount, ctx.collateral.decimals, ctx.collateral.symbol);
+    if (refinanced) {
+      c.compared.push('refinanced loan');
+      c.L.want('refinanced loan', g3.loanId === String(req.refinanceTargetLoanId), g3.loanId, `#${req.refinanceTargetLoanId}`);
+    }
+  }
   const g4 = c.fit('fees', en.fees.lenderYieldFee);
   if (g4) c.percent('yield fee (treasuryFeeBps)', g4.pct, ctx.treasuryFeeBps);
   const g5 = c.fit('whenThisEnds', R.lenderWhenEndsAccept);

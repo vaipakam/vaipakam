@@ -77,6 +77,11 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
+  lenderCollateralLine,
+  readRefinanceRequestLive,
+  sameRefinanceReview,
+} from '../data/refinanceRequestReview';
+import {
   exactUnitsOrNull,
   formatBpsAsPercent,
   formatDate,
@@ -281,6 +286,12 @@ function MatchOfferRow({
             ? copy.offerFlow.receipts.youLockCollateral(collateralStr)
             : copy.offerFlow.receipts.theyLockCollateral(collateralStr)}{' '}
           · {copy.offerFlow.offerNumber(offer.offerId)}
+          {/* #2421 — a refinance request is named in the list too, only on a
+              positive tag (an unread tag is unknown, never "not one"); the
+              review reads it live before anything can be signed. */}
+          {(offer.refinanceTargetLoanId ?? 0) > 0
+            ? ` · ${copy.offers.refinanceRequestTag(String(offer.refinanceTargetLoanId))}`
+            : null}
         </span>
       </span>
       <button
@@ -510,6 +521,54 @@ export function OfferFlow({ side }: { side: Side }) {
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
   const acceptIsLoanSale =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
+
+  // #2421 — a borrow request tagged with a running loan is a REFINANCE:
+  // the accept also pays off and closes that loan, and its collateral is
+  // either carried over from it or a fresh pledge (the offer's recorded
+  // decision). The indexer row has the tag but not that decision, so the
+  // lender's review reads both live, and signing waits for the answer —
+  // the fresh-borrow wording would misdescribe the deal.
+  const refinanceKey = ['offerRefinanceRequest', readChain.chainId, selected?.offerId];
+  const refinanceRequest = useQuery({
+    queryKey: refinanceKey,
+    enabled:
+      mode === 'accept' && side === 'lender' && Boolean(readClient) && Boolean(selected),
+    // Codex #2668 r2 — the target loan can close or change while the review
+    // stays open, so a refinance request's standing is re-read on the sale
+    // review's cadence; submit re-reads it once more before anything is
+    // signed. An ordinary offer's answer cannot become a refinance (the tag
+    // is fixed at posting), so it is not polled.
+    staleTime: 30_000,
+    refetchInterval: (query) =>
+      query.state.data?.kind === 'refinance' ? idleAware(60_000)() : false,
+    queryFn: () =>
+      readRefinanceRequestLive(
+        readClient!,
+        readChain.diamondAddress,
+        BigInt(selected!.offerId),
+      ),
+  });
+  // Codex #2668 r3 — a failed refresh keeps the previous answer in `data`
+  // while the query is in error; that answer is no longer substantiated, so
+  // the review treats it as unknown (check-failed banner, retry, no
+  // receipt, not signable) until a refresh succeeds.
+  const refinanceSettled =
+    refinanceRequest.data !== undefined && !refinanceRequest.isError;
+  const refinanceKnown = mode !== 'accept' || side !== 'lender' || refinanceSettled;
+  const refinanceRead =
+    mode === 'accept' && side === 'lender' && refinanceSettled
+      ? refinanceRequest.data
+      : undefined;
+  const refinanceInfo = refinanceRead?.kind === 'refinance' ? refinanceRead.info : null;
+  // Codex #2668 r5 — the offer itself no longer exists (a cancel deletes
+  // it). Said as such, never read as an ordinary request.
+  const offerGoneLive = refinanceRead?.kind === 'gone';
+  // Codex #2668 r1 — the target loan moves after the request is posted: a
+  // repayment or enforcement closes it, added collateral breaks a carry-over
+  // match. When the contract's own acceptance check says no, or the offer
+  // is gone, the review says so and offers nothing to sign.
+  const refinanceBlocked =
+    offerGoneLive || refinanceInfo?.standing.kind === 'blocked';
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -1096,11 +1155,16 @@ export function OfferFlow({ side }: { side: Side }) {
             whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr),
           };
         }
+        // #2421 — no lender receipt until it is known whether this is a
+        // refinance request: the collateral line differs. Nor for a request
+        // the acceptance check refuses (Codex #2668 r1): there is no deal to
+        // describe, and the banner says why.
+        if (!refinanceKnown || refinanceBlocked) return null;
         return {
           youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${acceptModeNote}`,
           youLock: copy.offerFlow.receipts.lenderYouLockAccept(principalStr),
           youMayOwe: copy.offerFlow.receiptOweNothing,
-          youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.lenderCollateralLock(collateralStr)}${illiquidSuffix}`,
+          youCanLose: `${copy.lend.defaultOutcome} ${lenderCollateralLine(refinanceInfo, collateralStr)}${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: copy.offerFlow.receipts.lenderWhenEndsAccept(durationStr, graceStr),
         };
@@ -1166,6 +1230,9 @@ export function OfferFlow({ side }: { side: Side }) {
     acceptIsLoanSale,
     saleData,
     saleReviewReady,
+    refinanceKnown,
+    refinanceBlocked,
+    refinanceInfo,
   ]);
 
   const isOwnSelectedOffer =
@@ -1300,6 +1367,16 @@ export function OfferFlow({ side }: { side: Side }) {
     `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
     `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
     `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    // #2421 — the refinance disclosure and its collateral wording.
+    `refi:${
+      refinanceInfo
+        ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}:${refinanceInfo.standing.kind}`
+        : offerGoneLive
+          ? 'gone'
+          : refinanceKnown
+          ? '0'
+          : '?'
+    }`,
     `sale:${saleFingerprint ?? ''}`,
     // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
     // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
@@ -1412,6 +1489,11 @@ export function OfferFlow({ side }: { side: Side }) {
     // links never sign here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    // #2421 — a refinance request changes what accepting does; the review
+    // must know before it can be signed, and one the acceptance check
+    // refuses is never signable (Codex #2668 r1).
+    refinanceKnown &&
+    !refinanceBlocked &&
     securityGateOk &&
     // ANY disclosure on screen requires consent granted AGAINST the current
     // set of disclosures — not merely consent that is still true from before
@@ -1795,6 +1877,24 @@ export function OfferFlow({ side }: { side: Side }) {
     ) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
       throw new Error(copy.match.termsChanged);
+    }
+    // Codex #2668 r2 — the refinance disclosure and its signability were
+    // read when the review opened (and polled since); the target loan can
+    // have closed or changed in between. Re-read it on the wallet chain and
+    // refuse to sign against a review that no longer matches, putting the
+    // fresh answer in place so the review shows why.
+    if (refinanceRead) {
+      const liveRefinance = await readRefinanceRequestLive(
+        publicClient,
+        walletChain.diamondAddress,
+        BigInt(selected.offerId),
+      );
+      if (!sameRefinanceReview(refinanceRead, liveRefinance)) {
+        queryClient.setQueryData(refinanceKey, liveRefinance);
+        throw new Error(
+          liveRefinance.kind === 'gone' ? copy.match.offerGone : copy.match.termsChanged,
+        );
+      }
     }
     // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row. The REVIEWED terms are
@@ -2613,6 +2713,50 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : (
               <div className="banner banner-warn" role="alert">
                 <span className="banner-body">{copy.match.saleSellerNotCovered}</span>
+              </div>
+            )
+          ) : null}
+          {offerGoneLive ? (
+            <div className="banner banner-warn" role="alert" data-testid="offer-gone">
+              <span className="banner-body">{copy.match.offerGone}</span>
+            </div>
+          ) : refinanceInfo?.standing.kind === 'blocked' ? (
+            <div
+              className="banner banner-warn"
+              role="alert"
+              data-testid="refinance-request-blocked"
+            >
+              <span className="banner-body">
+                {copy.match.refinanceRequestUnavailable(
+                  refinanceInfo.targetLoanId.toString(),
+                  refinanceInfo.standing.reason,
+                )}
+              </span>
+            </div>
+          ) : refinanceInfo ? (
+            <div className="banner banner-info" data-testid="refinance-request-banner">
+              <span className="banner-body">
+                {copy.match.refinanceRequestBanner(refinanceInfo.targetLoanId.toString())}
+                {refinanceInfo.standing.kind === 'unchecked'
+                  ? ` ${copy.match.refinanceRequestUnchecked}`
+                  : null}
+              </span>
+            </div>
+          ) : !refinanceKnown ? (
+            refinanceRequest.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.refinanceRequestCheckFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void refinanceRequest.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
+              </div>
+            ) : (
+              <div className="banner banner-info">
+                <span className="banner-body">{copy.match.refinanceRequestChecking}</span>
               </div>
             )
           ) : null}

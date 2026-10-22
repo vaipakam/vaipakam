@@ -617,6 +617,11 @@ export function RefinanceFlow({
     <section className="card">
       <h3>{copy.refinance.title}</h3>
       <p className="muted">{copy.refinance.blurb}</p>
+      {/* #544 — a request is not a match: the loan's due date and default
+          rules stand until a lender accepts. Always visible on the form. */}
+      <div className="banner banner-info" style={{ marginBottom: 12 }}>
+        <span className="banner-body">{copy.refinance.noGuarantee}</span>
+      </div>
 
       <div>
         {pastDue ? (
@@ -721,7 +726,7 @@ export function RefinanceFlow({
                     ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
-                youCanLose: copy.refinance.shortIsSafe,
+                youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
                 fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
                 whenThisEnds: `${copy.refinance.whenEndsComposed(
                   expiryGraceClamped

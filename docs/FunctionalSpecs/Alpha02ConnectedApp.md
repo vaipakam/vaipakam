@@ -1400,6 +1400,40 @@ progress.
   row shows the tag only when the request is known to be a refinance request,
   and never presents an unread request as an ordinary one by stating that it
   is not a refinance.
+- A lender's review of a refinance request says what accepting it does
+  (#2421): it names the running loan, and says that accepting opens the
+  lender's loan and, in the same transaction, pays off and closes that loan.
+  It states how that payoff is funded: the amount the accepting lender lends
+  goes to the borrower's wallet as with any loan, less the borrower's
+  loan-initiation fee, and the payoff to the running
+  loan's current lender is then drawn from that wallet, so the new loan can
+  fund part or all of it, with the borrower covering any difference. The
+  collateral is described from the request's
+  own recorded decision: either the stake already locked under the running loan
+  carries over to the new loan (not a new pledge), or the borrower pledged a
+  new batch and the old loan's collateral goes back to them when it closes. The
+  review reads this from the chain, and until it knows whether the request is a
+  refinance it says it is checking (or that the check failed, with a retry),
+  shows no lender receipt and cannot be signed. The loan a request targets
+  can change after the request is posted (it can be repaid, closed or have
+  collateral added), so the review also runs the protocol's own acceptance
+  check for the request, and confirms it is the loan's currently recorded
+  request (only that one can be taken), re-reads it while the review stays open, and reads it
+  once more at signing, refusing to sign against a review it no longer
+  matches. A refresh that fails leaves the review unknown again (check
+  failed, with a retry) rather than showing the last answer as current, and an
+  offer that no longer exists (cancelling deletes it) is shown as no longer
+  open, with nothing to sign, never as an ordinary borrow request. Each check
+  reads every fact it combines from the same block, so it never mixes a state
+  from before a change with one from after it. When that check refuses, the review says the request
+  cannot be taken right now and why, shows no lender receipt, and offers
+  nothing to sign. When the deployment has no such check, the review says it
+  cannot confirm the request is still takeable and that a stale request fails
+  on-chain, moving nothing but the attempt's network fee. A check that passes
+  does not promise success: the borrower's payoff funding and the market at
+  the moment of acceptance are checked only by the accept itself. The offer
+  list in the guided flow tags a refinance request the same way the Offer
+  Book does.
 - Each offer states its collateral as an amount, not only a token name, so a
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than
@@ -3529,7 +3563,12 @@ Its intended behaviour, as the test oracle for this surface:
   the acceptance fail, taking nothing; that posting takes multiple
   wallet confirmations; and, for a loan on a periodic interest
   schedule, that the replacement loan will not carry a payment
-  schedule. A loan already past due but inside grace shows a plain
+  schedule. The form, the review and the standing request all say that a
+  request is not a guarantee (#544): until a lender accepts it, the loan
+  keeps its due date and grace window, and if none accepts in time it can
+  still default like any other loan, so the borrower must be ready to repay
+  it themselves; the standing request card says this while it is still
+  checking the request's state, too. A loan already past due but inside grace shows a plain
   past-due notice on the form, and the quoted figures include the fee
   as of now. If the posting sequence is abandoned
   after the payoff approval was granted but before the request was
