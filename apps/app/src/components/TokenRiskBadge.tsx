@@ -83,6 +83,21 @@ export function offerRiskLevel(
   return worst;
 }
 
+/** True while any screenable leg of the offer has no verdict yet (#2535).
+ *  `offerRiskLevel` reads that state as "nothing to show", which is the
+ *  right browse-tier answer and the wrong RECOMMENDATION-tier one: a
+ *  guided match must not be offered as a pick before its screen has
+ *  answered. A leg the screen does not apply to (curated, or an NFT)
+ *  is never pending. */
+export function offerScreenPending(
+  offer: IndexedOffer,
+  verdicts: Record<string, TokenSecurityVerdict | undefined>,
+): boolean {
+  return offerScreenableLegs(offer).some(
+    (leg) => verdicts[legVerdictKey(leg.chainId, leg.address)] === undefined,
+  );
+}
+
 export function OfferRiskBadge({ level }: { level: OfferRiskLevel | null }) {
   if (level === null) return null;
   const text = copy.tokenSecurity.badge[level];
