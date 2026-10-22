@@ -38,7 +38,11 @@ function dbRecording(names: readonly string[]): D1Database {
   } as unknown as D1Database;
 }
 
-const CONTROLLER = { scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController;
+// A minute the five-minute tick acts on (#2236 / #2647). `Date.now()` here
+// made every case pass or fail on the wall clock: four minutes in five the tick
+// returned before the schema gate, so nothing was declined or launched.
+const DUE_MINUTE = Date.UTC(2026, 9, 22, 8, 0, 0);
+const CONTROLLER = { scheduledTime: DUE_MINUTE, cron: '* * * * *' } as ScheduledController;
 
 // The first import transforms the whole Worker; pay that once, outside the
 // per-case timeout. Later imports reuse the transform.
