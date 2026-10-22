@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { D1HttpDatabase, D1HttpError } from '../host/d1Http';
 import { buildHostEnv, HOST_SETTINGS } from '../host/hostEnv';
 import { createHostTick } from '../host/hostTick';
-import { createSchemaGate } from '../../indexer/src/schemaGate';
+import { createSchemaGate } from '@vaipakam/lib/d1SchemaGate';
 import {
   createTickRunner,
   minuteFloor,

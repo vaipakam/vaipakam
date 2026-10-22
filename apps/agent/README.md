@@ -101,6 +101,8 @@ Agent reads-only: (none — every table the agent reads, it also writes.)
 
 **There is no `apps/agent/migrations/` directory by design.** The canonical schema for every table this Worker touches lives in [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns the schema, the other two Workers share the database. Schema changes for tables only agent writes still land as a new `apps/indexer/migrations/NNNN_*.sql` file; applying it via `wrangler d1 migrations apply vaipakam-warm --remote` from inside `apps/indexer/` updates the live staging db for all three consumers.
 
+**Scheduled work waits for the schema (#2410).** This Worker auto-deploys on merge, so a build can be live before the indexer's deploy has applied the migrations it was written against. Each cron tick therefore first checks that every migration in [`packages/lib/src/sharedD1Migrations.json`](../../packages/lib/src/sharedD1Migrations.json) is recorded in `d1_migrations`. Until then the tick runs no pass and logs `[vaipakam-agent] this tick declined: D1 migration(s) … not applied`, and it resumes by itself on the first tick after they land. HTTP routes are not gated: a route that reads or writes a new column must tolerate the previous schema itself.
+
 ## Related
 
 - `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.

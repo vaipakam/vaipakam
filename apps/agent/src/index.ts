@@ -89,6 +89,7 @@ import {
   maintenanceRefusal,
   maintenanceSkipNotice,
 } from '@vaipakam/lib/d1Maintenance';
+import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
@@ -129,6 +130,18 @@ import {
 } from './linkAuth';
 import { chainVerifyGate } from './walletSigVerify';
 
+/**
+ * The shared-D1 schema gate (#2410). The agent auto-deploys on merge through
+ * Workers Builds, so a build can reach this isolate before the indexer's
+ * deploy has applied the migrations it was written against. Every scheduled
+ * pass reads or writes the shared database, so the whole tick declines, by
+ * name, until every migration in the build is recorded, and resumes by
+ * itself on the first tick after they land. One gate per isolate: it caches
+ * only `current`. HTTP handlers are NOT gated and must tolerate the previous
+ * schema themselves (the shared module states why).
+ */
+const schemaGate = createSchemaGate();
+
 export default {
   async scheduled(
     _controller: ScheduledController,
@@ -147,6 +160,13 @@ export default {
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; all three passes get the plain resolved env.
     const resolved = await resolveEnv(env);
+    // #2410 — then confirm the shared schema before launching any pass.
+    const schema = await schemaGate.check(resolved.DB);
+    if (schema.state !== 'current') {
+      // eslint-disable-next-line no-console
+      console.warn(schemaDeclineNotice(WORKER_NAME, 'this tick', schema));
+      return;
+    }
     // Each pass wrapped so a transient D1 / RPC blip on one can't
     // wedge the others. Same isolation policy the ops/hf-watcher
     // monolith used internally.
