@@ -160,6 +160,7 @@ const WATERMARK_MAX_AGE_SEC = 900;
 export async function recordHfBandNotifications(
   dbs: Pick<Env, 'DB' | 'KEEPER_DB'>,
   chainId: number,
+  diamond: string,
   readings: HfReading[],
   nowSec: number,
 ): Promise<HfBandResult> {
@@ -198,7 +199,7 @@ export async function recordHfBandNotifications(
     // is safe against a lagging index: a terminal D1 status is
     // definitive, it can only arrive late — never wrongly. Bounded:
     // hf_band_state holds only at-risk loans.
-    await pruneTerminalBandState(db, keeper, chainId);
+    await pruneTerminalBandState(db, keeper, chainId, diamond);
 
     if (readings.length === 0) return empty;
 
@@ -414,50 +415,90 @@ export async function recordHfBandNotifications(
 }
 
 /**
- * Drop band state for this chain's loans that the indexer reports as no
- * longer active.
+ * Drop band state the indexer's records show is no longer about a live loan.
+ * Two cases:
  *
- * TWO READS AND A DELETE where there used to be one statement (#2450). The
- * old prune was a single `DELETE … WHERE EXISTS (SELECT … FROM loans …)`;
- * band state is now keeper-private and `loans` is the indexer's, and D1
- * cannot join across databases. The semantics are kept exactly: a state row
- * goes only when a `loans` row for it EXISTS with a non-active status, so a
- * loan the index has not caught up with yet keeps its state.
+ *   1. TERMINAL. A `loans` row for the id EXISTS with a non-active status. A
+ *      loan the index has not caught up with yet keeps its state: a terminal
+ *      status can only arrive late, never wrongly.
+ *   2. WITHDRAWN (#2638). The indexer proved, at a settled block, that this
+ *      Diamond has no loan at the id, and moved its row to `loan_orphans`
+ *      (#2197). The withdrawn loan has no `loans` row, so case 1 never sees it,
+ *      and without this its marker would outlive it: a real loan the chain
+ *      later issues the same id, to the same holder in the same band, would
+ *      read as an unchanged observation and its first alert would be
+ *      swallowed. The indexer clears its own alert memory for the id in the
+ *      move; it has no binding to this database, so this is the keeper's half.
  *
- * Bounded the way the join was — the state table holds only at-risk loans —
- * and cheap in the subrequests this Worker counts: one read when nothing is
- * banded (as before), and each multi-chunk step below goes out as ONE
- * `batch()`, however many chunks it carries.
+ *      A marker goes only when it was last written AT OR BEFORE the
+ *      withdrawal. The state is written on an edge only, never on an unchanged
+ *      observation, so a marker older than the withdrawal can only be about
+ *      the withdrawn loan. One written after it is about a loan that exists —
+ *      the id reissued — and is kept, so the reissued loan's own edges are
+ *      tracked as normal and never re-alerted every pass. The entry must name
+ *      THIS Diamond: entries outlive a fresh Diamond on the chain, and an old
+ *      Diamond's withdrawal says nothing about the new one's ids.
+ *
+ * TWO DATABASES (#2450): the state is keeper-private and `loans` /
+ * `loan_orphans` are the indexer's, and D1 cannot join across databases, so
+ * this reads the markers, reads both shared tables for those ids, and deletes.
+ *
+ * Bounded the way the old join was — the state table holds only at-risk
+ * loans — and cheap in the subrequests this Worker counts: one read when
+ * nothing is banded, and each multi-chunk step below goes out as ONE
+ * `batch()`, however many chunks it carries (both shared reads in the same
+ * one).
  */
 async function pruneTerminalBandState(
   db: D1Database,
   keeper: Env['KEEPER_DB'],
   chainId: number,
+  diamond: string,
 ): Promise<void> {
   const state = await keeper
-    .prepare(`SELECT loan_id FROM hf_band_state WHERE chain_id = ?1`)
+    .prepare(`SELECT loan_id, updated_at FROM hf_band_state WHERE chain_id = ?1`)
     .bind(chainId)
-    .all<{ loan_id: number }>();
-  const banded = (state.results ?? []).map((r) => r.loan_id);
-  if (banded.length === 0) return;
+    .all<{ loan_id: number; updated_at: number }>();
+  const markers = state.results ?? [];
+  if (markers.length === 0) return;
+  const banded = markers.map((r) => r.loan_id);
+  const chunks = chunkD1InList(banded, { before: [chainId] });
+  const orphanChunks = chunkD1InList(banded, { before: [chainId, diamond.toLowerCase()] });
 
-  const reads = chunkD1InList(banded, { before: [chainId] }).map((c) =>
-    db
-      .prepare(
-        `SELECT loan_id FROM loans
-          WHERE chain_id = ? AND loan_id IN (${c.placeholders})
-            AND status <> 'active'`,
-      )
-      .bind(...c.binds),
-  );
-  const terminal: number[] = [];
-  for (const part of await db.batch<{ loan_id: number }>(reads)) {
-    for (const r of part.results ?? []) terminal.push(r.loan_id);
+  const reads = [
+    ...chunks.map((c) =>
+      db
+        .prepare(
+          `SELECT loan_id, NULL AS withdrawn_at FROM loans
+            WHERE chain_id = ? AND loan_id IN (${c.placeholders})
+              AND status <> 'active'`,
+        )
+        .bind(...c.binds),
+    ),
+    // The LATEST withdrawal of each id under this Diamond: an id withdrawn,
+    // reissued and withdrawn again is judged against the last move.
+    ...orphanChunks.map((c) =>
+      db
+        .prepare(
+          `SELECT loan_id, MAX(withdrawn_at) AS withdrawn_at FROM loan_orphans
+            WHERE chain_id = ? AND diamond = ? AND loan_id IN (${c.placeholders})
+            GROUP BY loan_id`,
+        )
+        .bind(...c.binds),
+    ),
+  ];
+  const writtenAt = new Map(markers.map((r) => [r.loan_id, r.updated_at]));
+  const stale = new Set<number>();
+  for (const part of await db.batch<{ loan_id: number; withdrawn_at: number | null }>(reads)) {
+    for (const r of part.results ?? []) {
+      if (r.withdrawn_at === null) stale.add(r.loan_id); // terminal
+      else if ((writtenAt.get(r.loan_id) ?? Infinity) <= r.withdrawn_at) stale.add(r.loan_id); // withdrawn
+    }
   }
-  if (terminal.length === 0) return;
+  if (stale.size === 0) return;
 
   await keeper.batch(
-    chunkD1InList(terminal, { before: [chainId] }).map((c) =>
+    chunkD1InList([...stale], { before: [chainId] }).map((c) =>
       keeper
         .prepare(
           `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
