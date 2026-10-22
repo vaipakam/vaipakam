@@ -1174,6 +1174,17 @@ const copySource = {
       'Checking whether this request refinances a running loan — the review must say so before you can sign.',
     refinanceRequestCheckFailed:
       'We couldn’t check whether this request refinances a running loan, and that changes what accepting it does — signing stays paused until it succeeds.',
+    // Codex #2668 r1 — the acceptance check the contract re-runs refused
+    // the request: the target loan closed or changed since it was posted.
+    // `reason` is the decoded refusal, a full sentence.
+    refinanceRequestUnavailable: tmpl(
+      `This request asks to refinance loan #{{loanId}}, but it can’t be taken right now. {{reason}} Accepting it would fail, so there is nothing to sign.`,
+      ['loanId', 'reason'],
+    ),
+    // A Diamond without the acceptance-check view: the app cannot vouch
+    // that the request is still takeable, and says so.
+    refinanceRequestUnchecked:
+      'This app can’t check here whether the request can still be taken: the loan may have been repaid, closed or changed since it was posted. If it can’t, the accept fails on-chain and nothing is transferred, though the network fee for the attempt is still spent.',
     graceChecking:
       'Confirming the repayment grace window this deal is judged against…',
     graceCheckFailed:

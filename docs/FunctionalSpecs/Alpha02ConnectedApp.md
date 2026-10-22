@@ -1410,8 +1410,18 @@ progress.
   new batch and the old loan's collateral goes back to them when it closes. The
   review reads this from the chain, and until it knows whether the request is a
   refinance it says it is checking (or that the check failed, with a retry),
-  shows no lender receipt and cannot be signed. The offer list in the guided
-  flow tags a refinance request the same way the Offer Book does.
+  shows no lender receipt and cannot be signed. The loan a request targets
+  can change after the request is posted (it can be repaid, closed or have
+  collateral added), so the review also runs the protocol's own acceptance
+  check for the request. When that check refuses, the review says the request
+  cannot be taken right now and why, shows no lender receipt, and offers
+  nothing to sign. When the deployment has no such check, the review says it
+  cannot confirm the request is still takeable and that a stale request fails
+  on-chain, moving nothing but the attempt's network fee. A check that passes
+  does not promise success: the borrower's payoff funding and the market at
+  the moment of acceptance are checked only by the accept itself. The offer
+  list in the guided flow tags a refinance request the same way the Offer
+  Book does.
 - Each offer states its collateral as an amount, not only a token name, so a
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than
@@ -3545,7 +3555,8 @@ Its intended behaviour, as the test oracle for this surface:
   request is not a guarantee (#544): until a lender accepts it, the loan
   keeps its due date and grace window, and if none accepts in time it can
   still default like any other loan, so the borrower must be ready to repay
-  it themselves. A loan already past due but inside grace shows a plain
+  it themselves; the standing request card says this while it is still
+  checking the request's state, too. A loan already past due but inside grace shows a plain
   past-due notice on the form, and the quoted figures include the fee
   as of now. If the posting sequence is abandoned
   after the payoff approval was granted but before the request was

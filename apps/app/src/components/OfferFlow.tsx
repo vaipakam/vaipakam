@@ -543,6 +543,11 @@ export function OfferFlow({ side }: { side: Side }) {
     mode !== 'accept' || side !== 'lender' || refinanceRequest.data !== undefined;
   const refinanceInfo =
     mode === 'accept' && side === 'lender' ? (refinanceRequest.data ?? null) : null;
+  // Codex #2668 r1 — the target loan moves after the request is posted: a
+  // repayment or enforcement closes it, added collateral breaks a carry-over
+  // match. When the contract's own acceptance check says no, the review
+  // says the request cannot be taken and offers nothing to sign.
+  const refinanceBlocked = refinanceInfo?.standing.kind === 'blocked';
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -1130,8 +1135,10 @@ export function OfferFlow({ side }: { side: Side }) {
           };
         }
         // #2421 — no lender receipt until it is known whether this is a
-        // refinance request: the collateral line differs.
-        if (!refinanceKnown) return null;
+        // refinance request: the collateral line differs. Nor for a request
+        // the acceptance check refuses (Codex #2668 r1): there is no deal to
+        // describe, and the banner says why.
+        if (!refinanceKnown || refinanceBlocked) return null;
         return {
           youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${acceptModeNote}`,
           youLock: copy.offerFlow.receipts.lenderYouLockAccept(principalStr),
@@ -1203,6 +1210,7 @@ export function OfferFlow({ side }: { side: Side }) {
     saleData,
     saleReviewReady,
     refinanceKnown,
+    refinanceBlocked,
     refinanceInfo,
   ]);
 
@@ -1341,7 +1349,7 @@ export function OfferFlow({ side }: { side: Side }) {
     // #2421 — the refinance disclosure and its collateral wording.
     `refi:${
       refinanceInfo
-        ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}`
+        ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}:${refinanceInfo.standing.kind}`
         : refinanceKnown
           ? '0'
           : '?'
@@ -1459,8 +1467,10 @@ export function OfferFlow({ side }: { side: Side }) {
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     // #2421 — a refinance request changes what accepting does; the review
-    // must know before it can be signed.
+    // must know before it can be signed, and one the acceptance check
+    // refuses is never signable (Codex #2668 r1).
     refinanceKnown &&
+    !refinanceBlocked &&
     securityGateOk &&
     // ANY disclosure on screen requires consent granted AGAINST the current
     // set of disclosures — not merely consent that is still true from before
@@ -2665,10 +2675,26 @@ export function OfferFlow({ side }: { side: Side }) {
               </div>
             )
           ) : null}
-          {refinanceInfo ? (
+          {refinanceInfo?.standing.kind === 'blocked' ? (
+            <div
+              className="banner banner-warn"
+              role="alert"
+              data-testid="refinance-request-blocked"
+            >
+              <span className="banner-body">
+                {copy.match.refinanceRequestUnavailable(
+                  refinanceInfo.targetLoanId.toString(),
+                  refinanceInfo.standing.reason,
+                )}
+              </span>
+            </div>
+          ) : refinanceInfo ? (
             <div className="banner banner-info" data-testid="refinance-request-banner">
               <span className="banner-body">
                 {copy.match.refinanceRequestBanner(refinanceInfo.targetLoanId.toString())}
+                {refinanceInfo.standing.kind === 'unchecked'
+                  ? ` ${copy.match.refinanceRequestUnchecked}`
+                  : null}
               </span>
             </div>
           ) : !refinanceKnown ? (

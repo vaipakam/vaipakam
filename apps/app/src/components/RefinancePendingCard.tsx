@@ -229,7 +229,15 @@ export function RefinancePendingCard({
       >
         <span className="banner-body">
           {state === undefined
-            ? copy.refinance.pendingChecking(offerId)
+            ? // Codex #2668 r1 — the no-guarantee warning does not wait for
+              // the check: an RPC outage could otherwise leave this card up
+              // indefinitely without the one lifecycle fact the borrower
+              // must not miss. Suppressed only once a state is KNOWN to be
+              // terminal, below.
+              <>
+                {copy.refinance.pendingChecking(offerId)}{' '}
+                {copy.refinance.noGuarantee}
+              </>
             : state.accepted
               ? copy.refinance.pendingAccepted
               : state.untakeable

@@ -16,9 +16,38 @@
  * carries the tag but not the carry-over decision, and the review is a
  * consent surface. Until the answer is in, the review is not signable.
  */
-import type { Address, PublicClient } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  type Address,
+  type PublicClient,
+} from 'viem';
 import { copy } from '../content/copy';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { isMissingSelectorError } from '../contracts/preflights';
+import { submitErrorText } from '../lib/errors';
+
+/**
+ * Whether the request can be taken NOW (Codex #2668 r1).
+ *
+ * The offer's tag and carry-over decision are fixed when it is posted, but
+ * the loan it targets keeps moving: a full repayment or an enforcement can
+ * close it, and adding collateral breaks a carry-over request's exact match
+ * — the on-chain guard deliberately allows all three, which leaves the
+ * request unfillable. So the review asks `checkRefinanceRequest`, the
+ * acceptance check the contract itself re-runs, before it describes the
+ * refinance as something accepting will do:
+ *  - `takeable` — the check passed; the lifecycle claims stand.
+ *  - `blocked` — the check reverted; `reason` is the decoded revert, and the
+ *    review says the request cannot be taken and offers nothing to sign.
+ *  - `unchecked` — this Diamond has no such view, so the app cannot vouch
+ *    either way; the review says so, and the accept's own on-chain check is
+ *    what stops a stale request.
+ */
+export type RefinanceRequestStanding =
+  | { kind: 'takeable' }
+  | { kind: 'blocked'; reason: string }
+  | { kind: 'unchecked' };
 
 export interface RefinanceRequestInfo {
   /** The running loan the accept pays off and closes. */
@@ -27,15 +56,36 @@ export interface RefinanceRequestInfo {
    *  already locked under the target loan moves to the new loan in place;
    *  false when the borrower pledged a fresh batch with the offer. */
   carryOver: boolean;
+  standing: RefinanceRequestStanding;
 }
 
 /** The refinance facts of an offer, or null for an untagged offer. */
-export function refinanceRequestOf(offer: {
-  refinanceTargetLoanId: bigint;
-  refinanceCarryOver: boolean;
-}): RefinanceRequestInfo | null {
+export function refinanceRequestOf(
+  offer: {
+    refinanceTargetLoanId: bigint;
+    refinanceCarryOver: boolean;
+  },
+  standing: RefinanceRequestStanding = { kind: 'takeable' },
+): RefinanceRequestInfo | null {
   if (offer.refinanceTargetLoanId === 0n) return null;
-  return { targetLoanId: offer.refinanceTargetLoanId, carryOver: offer.refinanceCarryOver };
+  return {
+    targetLoanId: offer.refinanceTargetLoanId,
+    carryOver: offer.refinanceCarryOver,
+    standing,
+  };
+}
+
+/** Classify a failed `checkRefinanceRequest` read. A missing view is
+ *  `unchecked`; any other contract revert is the acceptance check saying
+ *  no; anything else (transport, RPC) is not an answer and is rethrown, so
+ *  the review shows its check-failed state with a retry. */
+export function standingFromCheckError(err: unknown): RefinanceRequestStanding {
+  if (isMissingSelectorError(err)) return { kind: 'unchecked' };
+  const reverted =
+    err instanceof BaseError &&
+    err.walk((e) => e instanceof ContractFunctionRevertedError) !== null;
+  if (!reverted) throw err;
+  return { kind: 'blocked', reason: submitErrorText(err) };
 }
 
 export async function readRefinanceRequestLive(
@@ -49,7 +99,20 @@ export async function readRefinanceRequestLive(
     functionName: 'getOfferDetails',
     args: [offerId],
   })) as { refinanceTargetLoanId: bigint; refinanceCarryOver: boolean };
-  return refinanceRequestOf(offer);
+  if (offer.refinanceTargetLoanId === 0n) return null;
+  let standing: RefinanceRequestStanding;
+  try {
+    await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'checkRefinanceRequest',
+      args: [offer.refinanceTargetLoanId, offerId],
+    });
+    standing = { kind: 'takeable' };
+  } catch (err) {
+    standing = standingFromCheckError(err);
+  }
+  return refinanceRequestOf(offer, standing);
 }
 
 /** What the lender's review says about the collateral backing the loan
