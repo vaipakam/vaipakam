@@ -1404,7 +1404,8 @@ progress.
   (#2421): it names the running loan, and says that accepting opens the
   lender's loan and, in the same transaction, pays off and closes that loan.
   It states how that payoff is funded: the amount the accepting lender lends
-  goes to the borrower's wallet as with any loan, and the payoff to the running
+  goes to the borrower's wallet as with any loan, less the borrower's
+  loan-initiation fee, and the payoff to the running
   loan's current lender is then drawn from that wallet, so the new loan can
   fund part or all of it, with the borrower covering any difference. The
   collateral is described from the request's
@@ -1416,7 +1417,8 @@ progress.
   shows no lender receipt and cannot be signed. The loan a request targets
   can change after the request is posted (it can be repaid, closed or have
   collateral added), so the review also runs the protocol's own acceptance
-  check for the request, re-reads it while the review stays open, and reads it
+  check for the request, and confirms it is the loan's currently recorded
+  request (only that one can be taken), re-reads it while the review stays open, and reads it
   once more at signing, refusing to sign against a review it no longer
   matches. A refresh that fails leaves the review unknown again (check
   failed, with a retry) rather than showing the last answer as current, and a

@@ -161,3 +161,48 @@ describe('a cancelled (deleted) request (Codex #2668 r3)', () => {
     expect(knownRefinanceTarget(undefined, 0)).toBe(0n);
   });
 });
+
+describe('the recorded-request check (Codex #2668 r4)', () => {
+  const diamond = '0x00000000000000000000000000000000000000d1';
+  const offer = {
+    creator: '0x00000000000000000000000000000000000000b0',
+    refinanceTargetLoanId: 22n,
+    refinanceCarryOver: true,
+  };
+  const missingAbi = [{ type: 'error', name: 'FunctionDoesNotExist', inputs: [] }] as const;
+  /** A client whose views answer per function name. */
+  function client(recorded: bigint | 'missing'): PublicClient {
+    return {
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === 'getOfferDetails') return offer;
+        if (functionName === 'checkRefinanceRequest') return undefined;
+        if (functionName === 'getRefinanceRequest') {
+          if (recorded === 'missing') {
+            throw revertWith(missingAbi, 'FunctionDoesNotExist', []);
+          }
+          return [recorded, true] as const;
+        }
+        throw new Error(`unexpected ${functionName}`);
+      },
+    } as unknown as PublicClient;
+  }
+
+  it('is takeable only when the offer is the loan’s recorded request', async () => {
+    const info = await readRefinanceRequestLive(client(7n), diamond, 7n);
+    expect(info?.standing).toEqual(takeable);
+  });
+
+  it('is blocked when another request (or none) is recorded', async () => {
+    for (const recorded of [9n, 0n]) {
+      const info = await readRefinanceRequestLive(client(recorded), diamond, 7n);
+      expect(info?.standing.kind).toBe('blocked');
+      if (info?.standing.kind !== 'blocked') return;
+      expect(info.standing.reason).toMatch(/not the loan's current request/);
+    }
+  });
+
+  it('is unchecked on a Diamond without the record view', async () => {
+    const info = await readRefinanceRequestLive(client('missing'), diamond, 7n);
+    expect(info?.standing).toEqual({ kind: 'unchecked' });
+  });
+});

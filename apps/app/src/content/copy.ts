@@ -1167,7 +1167,7 @@ const copySource = {
     // #2421 — a borrow request tagged with a running loan: accepting it is
     // also the payoff and close of that loan, in the same transaction.
     refinanceRequestBanner: tmpl(
-      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend, less the borrower’s loan-initiation fee, goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
       ['loanId'],
     ),
     refinanceRequestChecking:

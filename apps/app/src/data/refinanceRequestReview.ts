@@ -23,10 +23,11 @@ import {
   type Address,
   type PublicClient,
 } from 'viem';
+import { friendlyContractError } from '@vaipakam/lib';
 import { copy } from '../content/copy';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { isMissingSelectorError } from '../contracts/preflights';
-import { submitErrorText } from '../lib/errors';
+import { submitErrorText, translateContractError } from '../lib/errors';
 
 /**
  * Whether the request can be taken NOW (Codex #2668 r1).
@@ -153,19 +154,58 @@ export async function readRefinanceRequestLive(
     };
   }
   if (offer.refinanceTargetLoanId === 0n) return null;
-  let standing: RefinanceRequestStanding;
+  const standing = await readStanding(
+    client,
+    diamond,
+    offer.refinanceTargetLoanId,
+    offerId,
+  );
+  return refinanceRequestOf(offer, standing);
+}
+
+/** Mirror the two checks acceptance makes. `checkRefinanceRequest` covers
+ *  the request's own state and the target loan; it deliberately does not
+ *  check that the offer is the loan's RECORDED request, which acceptance
+ *  also requires (Codex #2668 r4) — a request posted before the record
+ *  existed, or one displaced by a later request, passes the first check and
+ *  is still refused. So the record is compared too. */
+async function readStanding(
+  client: PublicClient,
+  diamond: Address,
+  loanId: bigint,
+  offerId: bigint,
+): Promise<RefinanceRequestStanding> {
   try {
     await client.readContract({
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'checkRefinanceRequest',
-      args: [offer.refinanceTargetLoanId, offerId],
+      args: [loanId, offerId],
     });
-    standing = { kind: 'takeable' };
   } catch (err) {
-    standing = standingFromCheckError(err);
+    return standingFromCheckError(err);
   }
-  return refinanceRequestOf(offer, standing);
+  let recordedOfferId: bigint;
+  try {
+    [recordedOfferId] = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRefinanceRequest',
+      args: [loanId],
+    })) as readonly [bigint, boolean];
+  } catch (err) {
+    if (isMissingSelectorError(err)) return { kind: 'unchecked' };
+    throw err;
+  }
+  if (recordedOfferId !== offerId) {
+    return {
+      kind: 'blocked',
+      reason:
+        friendlyContractError({ name: 'RefinanceRequestNotRecorded' }, translateContractError) ??
+        copy.errors.txFailed,
+    };
+  }
+  return { kind: 'takeable' };
 }
 
 /** What the lender's review says about the collateral backing the loan
