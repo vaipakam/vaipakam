@@ -294,6 +294,7 @@
 {"type":"error","name":"RemitReservationNotPending","inputs":[{"name":"remitId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RemitReservationUnknown","inputs":[{"name":"remitId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RemitSplitAlreadyOnWire","inputs":[{"name":"remitId","type":"uint256","internalType":"uint256"}]},
+{"type":"error","name":"RentalAmountRangeNotAllowed","inputs":[]},
 {"type":"error","name":"ReportAfterFinalization","inputs":[]},
 {"type":"error","name":"RewardBaseChainRebindRequiresDetach","inputs":[{"name":"current","type":"uint32","internalType":"uint32"},{"name":"requested","type":"uint32","internalType":"uint32"}]},
 {"type":"error","name":"RewardBaseDeploymentRebindRequiresDetach","inputs":[{"name":"current","type":"address","internalType":"address"},{"name":"requested","type":"address","internalType":"address"}]},

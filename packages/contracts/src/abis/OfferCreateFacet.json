@@ -4382,6 +4382,11 @@
   },
   {
     "type": "error",
+    "name": "RentalAmountRangeNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
