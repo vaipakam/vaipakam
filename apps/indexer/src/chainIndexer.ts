@@ -7415,6 +7415,12 @@ export function _verifiedHolderStatements(
  *    of the wallet's history by a time that is not its acquisition. Where
  *    there is no row, the head block's chain time is the one honest time
  *    available: the holder was confirmed holding then.
+ *  - ONLY WHILE THE LOAN ROW STANDS (#2636 r7). The insert is gated on the
+ *    loan row carrying, for that side, the holder the same transaction's
+ *    `_verifiedHolderStatements` UPDATE just wrote. A row withdrawn as an
+ *    orphan between the read and this batch has no row to update, so no
+ *    participation is written for it either — the archive move's own
+ *    related-set check cannot see a write that lands after it.
  */
 export function _verifiedParticipantStatements(
   env: Env,
@@ -7430,16 +7436,30 @@ export function _verifiedParticipantStatements(
   ] as const) {
     const w = participantWallet(raw);
     if (w === null) continue;
-    out.push(
-      env.DB.prepare(
-        `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
+    // Both forms static, for `sqlSchemaGuard` (see `notificationInsertStatement`).
+    const sql =
+      role === 'lender'
+        ? `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
          SELECT ?1, ?2, ?3, ?4, ?5
           WHERE NOT EXISTS (
             SELECT 1 FROM loan_participants
              WHERE chain_id = ?1 AND loan_id = ?2 AND wallet = ?3 AND role = ?4
-          )`,
-      ).bind(chainId, loanId, w, role, observedAt),
-    );
+          )
+            AND EXISTS (
+            SELECT 1 FROM loans
+             WHERE chain_id = ?1 AND loan_id = ?2 AND LOWER(lender_current_owner) = ?3
+          )`
+        : `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
+         SELECT ?1, ?2, ?3, ?4, ?5
+          WHERE NOT EXISTS (
+            SELECT 1 FROM loan_participants
+             WHERE chain_id = ?1 AND loan_id = ?2 AND wallet = ?3 AND role = ?4
+          )
+            AND EXISTS (
+            SELECT 1 FROM loans
+             WHERE chain_id = ?1 AND loan_id = ?2 AND LOWER(borrower_current_owner) = ?3
+          )`;
+    out.push(env.DB.prepare(sql).bind(chainId, loanId, w, role, observedAt));
   }
   return out;
 }

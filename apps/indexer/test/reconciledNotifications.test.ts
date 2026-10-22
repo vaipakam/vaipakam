@@ -23,6 +23,8 @@ import {
   type RepairFingerprint,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+import { _verifiedHolderStatements, _verifiedParticipantStatements } from '../src/chainIndexer';
+import type { Env } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -355,5 +357,35 @@ describe('a failed party lookup is not "no recipients"', () => {
         broken as never, CHAIN, [{ loanId: 1, to: 'defaulted' }], 500, 1_700_000_000,
       ),
     ).rejects.toThrow(/party lookup failed/);
+  });
+});
+
+describe('participation the repair writes for a verified holder (#2195, #2636 r7)', () => {
+  const NEW_LENDER = '0x00000000000000000000000000000000000000CC';
+  const repairBatch = (h: SqliteD1, loanId: number) => {
+    const env = { DB: h.d1 } as unknown as Env;
+    const holders = { lender: NEW_LENDER, borrower: null };
+    return h.d1.batch([
+      ..._verifiedHolderStatements(env, CHAIN, loanId, holders, 99),
+      ..._verifiedParticipantStatements(env, CHAIN, loanId, holders, 1_700_000_000),
+    ]);
+  };
+  const participants = (h: SqliteD1, loanId: number) =>
+    h.db.prepare('SELECT wallet, role FROM loan_participants WHERE chain_id = ? AND loan_id = ?').all(CHAIN, loanId);
+
+  it('records the verified holder while the loan row stands', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 40, 'defaulted');
+    await repairBatch(h, 40);
+    expect(participants(h, 40)).toEqual([{ wallet: NEW_LENDER.toLowerCase(), role: 'lender' }]);
+  });
+
+  it('writes nothing for a loan withdrawn before the batch ran', async () => {
+    // The archive move deleted the row after the holders were read; its
+    // related-set check cannot see a write landing after it, so the insert
+    // must refuse on its own.
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await repairBatch(h, 41);
+    expect(participants(h, 41)).toEqual([]);
   });
 });
