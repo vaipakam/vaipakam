@@ -2276,12 +2276,14 @@ the deploy-script pre-flight will refuse to proceed otherwise.
   `eth_gasPrice` (1 gwei on BNB Testnet at this writing) and Foundry
   resumes its post-broadcast bookkeeping immediately. The deploy then
   takes ~30s instead of timing out.
-- **Wrapped-native is WBNB, not WETH.** `DeployTestnetLiquidityMocks`
-  wires `OracleAdminFacet.setWethContract(...)` to the canonical
-  V3-fork DEX WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`.
-  The Diamond's price-asset machinery doesn't care about the symbol —
-  only that a Chainlink-backed feed exists and the v3-style depth
-  check resolves to a non-zero pool.
+- **The Diamond's WETH is a mock stand-in, never WBNB.** BNB Testnet
+  has no canonical WETH, and the `weth` the Diamond prices against is
+  priced by an ETH/USD feed, so WBNB there would be mispriced. The mock
+  rig (`deploy-testnet.sh bnb-testnet --phase testnet-mocks`, i.e.
+  `DeployTestnetMocks.s.sol`) requires `BNB_TESTNET_WETH` and the live
+  Diamond uses the stand-in `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`.
+  This bullet used to say the retired `DeployTestnetLiquidityMocks`
+  wired WBNB; that is history (see `BNBTestnetDeploy.md` §2).
 - **Buy adapter pays in tBNB**, not tETH. *(Historical — the buy
   adapter was removed with the on-chain issuer sale, #687-A; no
   payment-token mode exists to configure any more.)* At the time, the
