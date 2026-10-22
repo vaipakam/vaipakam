@@ -983,6 +983,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "user",
         "type": "address",
         "indexed": false,
