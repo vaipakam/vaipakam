@@ -128,6 +128,10 @@ function mapOfferStructToRow(
     createdAt: Number(o.createdAt) || undefined,
     expiresAt: Number(o.expiresAt) || undefined,
     fillMode: Number(o.fillMode),
+    // #2528 — read straight off the live struct; absent on a read shape that
+    // does not carry it, which stays unknown rather than "not a refinance".
+    refinanceTargetLoanId:
+      o.refinanceTargetLoanId === undefined ? null : Number(o.refinanceTargetLoanId),
   };
 }
 

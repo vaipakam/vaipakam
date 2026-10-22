@@ -1568,6 +1568,7 @@
       "collateralLabel": "ضمان",
       "collateralNone": "لا يوجد",
       "illiquidCollateralTag": "غير سائل عند النشر (يُعاد فحصه عند القبول) — إن كان كذلك، يُسلَّم كما هو إذا لم يُسدَّد",
+      "refinanceRequestTag": "طلب إعادة تمويل: يريد المقترض نقل القرض #{{loanId}} إلى مُقرض جديد",
       "collateralAtLeast": "{{amount}} على الأقل",
       "collateralRange": "{{committed}} ملتزَم به (الحد الأدنى للطلب {{floor}})؛ ومقدار ما يحجزه التنفيذ يعتمد على طريقة تنفيذه",
       "collateralRangeRemaining": "{{remaining}} لا يزال ملتزَمًا به ({{used}} استهلكتها عمليات تنفيذ سابقة؛ الحد الأدنى للطلب {{floor}})؛ ومقدار ما يحجزه التنفيذ يعتمد على طريقة تنفيذه",

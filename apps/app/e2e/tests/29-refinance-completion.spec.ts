@@ -203,6 +203,26 @@ test('refinance request completes: old loan closes, new loan carries the collate
   ).toBeVisible({ timeout: 30_000 });
   await adv.ctx.close();
 
+  // #2528 — a lender browsing the Offer Book sees the request FOR what it
+  // is: a refinance of this running loan, not an ordinary borrow request.
+  // The row is keyed on its accept link (rendered only for another user's
+  // offer), so the tag asserted is this request's own.
+  const browsing = await launchWallet('newLender');
+  await browsing.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+  const requestRow = browsing.page
+    .locator('.item-row')
+    .filter({ has: browsing.page.locator(`a[href*="offer=${requestId}&"]`) });
+  await expect(requestRow).toBeVisible({ timeout: 60_000 });
+  await expect(
+    requestRow.getByText(
+      new RegExp(
+        `refinance request: the borrower wants to move loan #${oldLoanId} to a new lender`,
+        'i',
+      ),
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await browsing.ctx.close();
+
   // A different lender accepts it — one transaction that opens the new
   // loan, pays off the old lender and closes the old loan.
   const newLoanId = await acceptOfferDirect('newLender', requestId);

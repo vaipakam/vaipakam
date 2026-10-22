@@ -1568,6 +1568,7 @@
       "collateralLabel": "Sicherheit",
       "collateralNone": "keine",
       "illiquidCollateralTag": "bei Veröffentlichung illiquide (bei Annahme erneut geprüft) – dann wird sie bei Nichtrückzahlung unverändert übergeben",
+      "refinanceRequestTag": "Umschuldungsanfrage: Der Kreditnehmer möchte Kredit #{{loanId}} zu einem neuen Kreditgeber umschulden",
       "collateralAtLeast": "mindestens {{amount}}",
       "collateralRange": "{{committed}} zugesagt (Untergrenze der Anfrage {{floor}}); wie viel eine Ausführung sperrt, hängt davon ab, wie sie ausgeführt wird",
       "collateralRangeRemaining": "{{remaining}} weiterhin zugesagt ({{used}} durch frühere Ausführungen verbraucht; Untergrenze der Anfrage {{floor}}); wie viel eine Ausführung sperrt, hängt davon ab, wie sie ausgeführt wird",

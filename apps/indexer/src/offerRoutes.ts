@@ -116,6 +116,11 @@ interface OfferRow {
   // bookkeeping-not-liquidity rationale as is_sale_vehicle, on the
   // other side of the book (Codex #1134 round-5 P2).
   is_offset_vehicle: number;
+  // 0068 (#2528) — the loan a refinance request is for; 0 = not a refinance
+  // request. NULL = not read from chain (a stub, or a row the migration's
+  // backfill could not reach); `undefined` = this build reading a database
+  // before 0068 (`SELECT *` keeps that working). Both serve as null: unknown.
+  refinance_target_loan_id?: number | null;
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
@@ -158,6 +163,8 @@ function toJson(row: OfferRow): Record<string, unknown> {
     fillMode: row.fill_mode,
     isSaleVehicle: row.is_sale_vehicle === 1,
     isOffsetVehicle: row.is_offset_vehicle === 1,
+    // #2528 — null means UNKNOWN (not read yet), never "not a refinance".
+    refinanceTargetLoanId: row.refinance_target_loan_id ?? null,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,

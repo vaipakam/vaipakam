@@ -1675,6 +1675,7 @@
       "collateralLabel": "collateral",
       "collateralNone": "none",
       "illiquidCollateralTag": "illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid",
+      "refinanceRequestTag": "refinance request: the borrower wants to move loan #{{loanId}} to a new lender",
       "collateralAtLeast": "at least {{amount}}",
       "collateralRange": "{{committed}} committed (request floor {{floor}}); how much a fill locks depends on how it is filled",
       "collateralSingle": "{{amount}} committed; how much a fill locks depends on how it is filled",

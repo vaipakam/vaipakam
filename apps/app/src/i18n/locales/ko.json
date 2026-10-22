@@ -1568,6 +1568,7 @@
       "collateralLabel": "담보",
       "collateralNone": "없음",
       "illiquidCollateralTag": "등록 시 비유동(수락 시 다시 확인) — 그렇다면 상환되지 않을 때 그대로 넘겨집니다",
+      "refinanceRequestTag": "리파이낸스 요청: 차입자가 대출 #{{loanId}}을(를) 새 대출자에게 옮기려고 합니다",
       "collateralAtLeast": "최소 {{amount}}",
       "collateralRange": "{{committed}} 약정 (요청 하한 {{floor}}). 체결이 잠그는 금액은 체결 방식에 따라 다릅니다",
       "collateralRangeRemaining": "{{remaining}} 계속 약정됨 (이전 체결에서 {{used}} 소진, 요청 하한 {{floor}}). 체결이 잠그는 금액은 체결 방식에 따라 다릅니다",

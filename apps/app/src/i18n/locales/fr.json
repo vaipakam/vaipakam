@@ -1568,6 +1568,7 @@
       "collateralLabel": "garantie",
       "collateralNone": "aucune",
       "illiquidCollateralTag": "illiquide lors de la publication (revérifiée à l’acceptation) — si c’est le cas, remise telle quelle en cas de non-remboursement",
+      "refinanceRequestTag": "demande de refinancement : l’emprunteur souhaite transférer le prêt #{{loanId}} à un nouveau prêteur",
       "collateralAtLeast": "au moins {{amount}}",
       "collateralRange": "{{committed}} engagés (plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
       "collateralRangeRemaining": "{{remaining}} toujours engagés ({{used}} consommés par des exécutions précédentes ; plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
