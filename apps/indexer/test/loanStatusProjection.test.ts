@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { processLoanLogs, settleFromLedger, settleLoanRow } from '../src/chainIndexer';
+import { processLoanLogs, runHealLanes, settleFromLedger, settleLoanRow, sweepSettledExistence } from '../src/chainIndexer';
 import { handleLoanById } from '../src/loanRoutes';
 import { createBudget } from '../src/subrequestBudget';
 import { pad, toHex, toEventSelector } from 'viem';
@@ -449,10 +449,11 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     };
   const budget = () => createBudget(1_000, 'test', 1_000);
   /** A chain whose block reads answer from `times` (throwing otherwise) and
-   *  whose loan status is `status(id)` — Settled (3) unless told otherwise. */
+   *  whose loan status is `status(id)` — Settled (3) unless told otherwise;
+   *  `'missing'` answers the zero struct (the chain has no such loan). */
   const chain = (
     times: Record<number, number>,
-    status: (id: number) => number | Error = () => 3,
+    status: (id: number) => number | Error | 'missing' = () => 3,
     seen: { reads: Array<{ id: number; block: bigint }> } = { reads: [] },
     /** Blocks whose transactions the node no longer returns (reorganised away). */
     discarded: Set<number> = new Set(),
@@ -489,7 +490,8 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
         seen.reads.push({ id, block: blockNumber });
         const st = status(id);
         if (st instanceof Error) throw st;
-        return { status: st };
+        if (st === 'missing') return { id: 0n, status: 0 };
+        return { id: BigInt(id), status: st };
       },
     }) as never;
   const env = (h: SqliteD1) => ({ DB: h.d1 }) as unknown as Env;
@@ -503,12 +505,117 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     seedLoan(h, 28, 'internal_matched'); // still unclaimed — no LoanSettled
     ledger(h, 28, 'OwedAtInternalMatchRecorded', 48059980, 1791888248);
     const seen = { reads: [] as Array<{ id: number; block: bigint }> };
-    expect(await heal(h, chain({ 48004228: 1791775970 }, () => 3, seen))).toEqual([24]);
+    // Loan 28 is still InternalMatched (5) on chain; the chain decides, not the ledger.
+    const status = (id: number) => (id === 28 ? 5 : 3);
+    expect(await heal(h, chain({ 48004228: 1791775970 }, status, seen))).toEqual([24]);
     expect(row(h, 24)).toEqual({ status: 'settled', terminal_block: 48004228, terminal_at: 1791775970 });
     expect(row(h, 28).status).toBe('internal_matched');
-    // The canonical read is pinned to the pass's settled block.
-    expect(seen.reads).toEqual([{ id: 24, block: 777n }]);
-    expect(await heal(h, chain({ 48004228: 1791775970 }))).toEqual([]);
+    // The canonical read is pinned to the pass's settled block, for every candidate.
+    expect(seen.reads).toEqual([
+      { id: 24, block: 777n },
+      { id: 28, block: 777n },
+    ]);
+    expect(await heal(h, chain({ 48004228: 1791775970 }, status))).toEqual([]);
+  });
+
+  it('#2192 — settles a row whose LoanSettled the scan missed entirely, with the block and time unknown', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const cases = [
+      [31, 'repaid'],
+      [32, 'defaulted'],
+      [33, 'liquidated'],
+      [34, 'internal_matched'],
+    ] as const;
+    for (const [id, st] of cases) seedLoan(h, id, st); // nothing in the ledger
+    seedLoan(h, 35, 'repaid'); // still Repaid (1) on chain: left alone
+    seedLoan(h, 36, 'active'); // live rows belong to the reconciliation repair
+    seedLoan(h, 37, 'orphaned'); // not a lifecycle status: never a candidate
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    expect(await heal(h, chain({}, (id) => (id === 35 ? 1 : 3), seen))).toEqual([31, 32, 33, 34]);
+    for (const [id] of cases) {
+      // A settlement the chain states but no confirmed event dates: unknown, not invented.
+      expect(row(h, id)).toEqual({ status: 'settled', terminal_block: null, terminal_at: null });
+    }
+    expect(row(h, 35).status).toBe('repaid');
+    expect(row(h, 36).status).toBe('active');
+    expect(row(h, 37).status).toBe('orphaned');
+    expect(seen.reads.map((r) => r.id)).toEqual([31, 32, 33, 34, 35]);
+  });
+
+  it('#2636 r1 — withdraws an ENDED row the chain has no loan for, the way the rotation withdraws a live one', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 51, 'repaid'); // the chain answers the zero struct for this one
+    seedLoan(h, 52, 'defaulted'); // settled on chain: the ordinary edge
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    expect(await heal(h, chain({}, (id) => (id === 51 ? 'missing' : 3), seen))).toEqual([52, 51]);
+    // Out of `loans` entirely, so no reader publishes it; kept whole, with the
+    // settled block the existence read was pinned to as its evidence.
+    expect(row(h, 51)).toBeUndefined();
+    const kept = h.db
+      .prepare('SELECT from_status, observed_block, row_json FROM loan_orphans WHERE chain_id = ? AND loan_id = ?')
+      .get(CHAIN, 51) as { from_status: string; observed_block: number; row_json: string };
+    expect(kept.from_status).toBe('repaid');
+    expect(kept.observed_block).toBe(777);
+    expect(JSON.parse(kept.row_json)).toMatchObject({ chain_id: CHAIN, loan_id: 51, status: 'repaid' });
+    expect(row(h, 52).status).toBe('settled');
+    // A FAILED read proves nothing and withdraws nothing.
+    seedLoan(h, 53, 'liquidated');
+    expect(await heal(h, chain({}, () => new Error('fetch failed')))).toEqual([]);
+    expect(row(h, 53).status).toBe('liquidated');
+  });
+
+  it('#2636 r4 — the settled-row existence sweep withdraws a settled phantom and never touches a real settlement', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 61, 'settled'); // the chain has no loan 61
+    seedLoan(h, 62, 'settled'); // a real settlement
+    h.db
+      .prepare(`UPDATE loans SET terminal_block = 900, terminal_at = 9 WHERE chain_id = ? AND loan_id = 62`)
+      .run(CHAIN);
+    const before62 = h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = 62').get(CHAIN);
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    const sweep = (c: unknown) => sweepSettledExistence(c as never, DIAMOND, env(h), CHAIN, budget(), 777n);
+    expect(await sweep(chain({}, (id) => (id === 61 ? 'missing' : 3), seen))).toEqual([61]);
+    expect(seen.reads.map((r) => [r.id, r.block])).toEqual([[61, 777n], [62, 777n]]);
+    expect(row(h, 61)).toBeUndefined();
+    expect(h.db.prepare('SELECT from_status FROM loan_orphans WHERE loan_id = 61').get()).toEqual({ from_status: 'settled' });
+    expect(h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = 62').get(CHAIN)).toEqual(before62);
+    // A failed read proves nothing: it stops the page, and the pointer stays before it.
+    seedLoan(h, 63, 'settled');
+    const failing = { reads: [] as Array<{ id: number; block: bigint }> };
+    expect(await sweep(chain({}, () => new Error('fetch failed'), failing))).toEqual([]);
+    expect(row(h, 63).status).toBe('settled');
+    const again = { reads: [] as Array<{ id: number; block: bigint }> };
+    await sweep(chain({}, () => 3, again));
+    expect(again.reads[0].id).toBe(62); // resumed where it stopped
+  });
+
+  it('#2636 r7 — the settled-row sweep still runs on a tick whose ledger heal repaired a row', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 71, 'repaid'); // settled on chain: the ledger heal repairs it
+    seedLoan(h, 72, 'settled'); // the chain has no loan 72
+    const c = chain({}, (id) => (id === 72 ? 'missing' : 3));
+    const out = await runHealLanes(c, DIAMOND, CHAIN, env(h), budget(), 777n, true, c);
+    // Both irreversible lanes ran and both reported, on the same return.
+    expect(out.ledgerSettledLoanIds).toEqual([71, 72]);
+    expect(row(h, 71).status).toBe('settled');
+    expect(row(h, 72)).toBeUndefined();
+  });
+
+  it('#2636 r1 — the page is one bounded index walk per status, never a sort of every ended loan', () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('export async function settleFromLedger('));
+    const sql = body.slice(body.indexOf('`SELECT loan_id, status FROM ('), body.indexOf('.bind(chainId, pointer, SETTLE_HEAL_BATCH, lapEnd)'));
+    const text = sql.slice(1, sql.lastIndexOf('`'));
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${text}`).all(CHAIN, 0, 20, 1000) as Array<{ detail: string }>).map((r) => r.detail);
+    // Each branch searches its own status range of the index in loan_id order…
+    expect(plan.filter((d) => /USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?( AND loan_id<\?)?\)/.test(d))).toHaveLength(4);
+    // …so no sort ever reads `loans` directly: every sort SQLite plans is over
+    // one branch's page (a subquery scan of at most the page size), never
+    // over the matching rows themselves.
+    plan.forEach((d, i) => {
+      if (d.includes('TEMP B-TREE')) expect(plan[i - 1]).toMatch(/^SCAN \(subquery-\d+\)$/);
+    });
   });
 
   it('every terminal status takes the edge; an ACTIVE row is the reconciliation repair’s, not this lane’s', async () => {
@@ -561,6 +668,29 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(seen.reads[0].id).toBe(100); // wrapped to the start
   });
 
+  it('#2636 r3 — a lap ends where it started: rows added mid-lap wait for the next one', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (let id = 100; id < 125; id++) {
+      seedLoan(h, id, 'internal_matched');
+      ledger(h, id, 'LoanSettled', id, 1);
+    }
+    const unconfirmed = () => 5;
+    await heal(h, chain({}, unconfirmed)); // first page: 100–119, lap fixed at 124
+    // A newer ended loan lands while the lap is running.
+    seedLoan(h, 300, 'internal_matched');
+    ledger(h, 300, 'LoanSettled', 300, 1);
+    const second = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, second));
+    // The lap finishes at its own end, so it completes instead of chasing.
+    expect(second.reads.map((r) => r.id)).toEqual([120, 121, 122, 123, 124]);
+    const third = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, third));
+    expect(third.reads[0].id).toBe(100); // the next lap starts over…
+    const fourth = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, fourth));
+    expect(fourth.reads.map((r) => r.id)).toContain(300); // …and reaches the new row
+  });
+
   it('takes the provenance only from an event the chain confirms, never from a discarded one (#2476 r7)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 70, 'internal_matched');
@@ -587,20 +717,21 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(row(h, 77).status).toBe('internal_matched');
   });
 
-  it('selects candidates through their indexes, never a walk over every loan (#2476 r13)', async () => {
+  it('selects candidates through the status index, never a walk over every loan (#2476 r13)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     const seen: string[] = [];
     const d1 = h.d1 as { prepare(sql: string): unknown };
-    const spy = { DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)) } } as unknown as Env;
+    const spy = {
+      DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)), batch: (s: never[]) => h.d1.batch(s) },
+    } as unknown as Env;
     await settleFromLedger(chain({}) as never, DIAMOND, spy, CHAIN, budget(), 777n);
     const select = seen.find((q) => q.includes('idx_loans_chain_status_loan'));
     expect(select).toBeDefined();
-    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20) as { detail: string }[])
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20, 1000) as { detail: string }[])
       .map((r) => r.detail)
       .join('\n');
     // It SEEKS on the rotation bound, not just on the chain.
-    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?\)/);
-    expect(plan).toMatch(/USING (COVERING )?INDEX idx_activity_chain_loan/);
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?( AND loan_id<\?)?\)/);
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
@@ -652,6 +783,11 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
             b.subrequests.remaining--;
             return d1.prepare(sql);
           },
+          // A batch is ONE request, however many statements it carries.
+          batch: (s: never[]) => {
+            b.subrequests.remaining += s.length - 1;
+            return h.d1.batch(s);
+          },
         },
       } as unknown as Env;
     };
@@ -684,6 +820,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
           if (sql.includes('INSERT INTO indexer_cursor')) throw new Error('D1 write failed');
           return d1.prepare(sql);
         },
+        batch: (s: never[]) => h.d1.batch(s),
       },
     } as unknown as Env;
     // Fill a whole page so the pointer advances and must be written.

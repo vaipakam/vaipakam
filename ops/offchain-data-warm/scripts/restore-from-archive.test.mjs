@@ -410,6 +410,45 @@ test('hold reason replays from the latest placement audit (r9)', () => {
   assert.match(reconcileLegalHolds(nullDetail)[0].problem, /impossible/);
 });
 
+test('loan_orphans: a duplicate move_id or a move_id of any other shape is refused (#2636 r5)', () => {
+  const cols = ['id', 'move_id', 'chain_id', 'loan_id', 'from_status', 'row_json', 'related_json'];
+  const a = '0a1b2c3d-0000-4000-8000-000000000001';
+  const b = '0a1b2c3d-0000-4000-8000-000000000002';
+  const entry = (id, move_id, over = {}) => ({
+    id,
+    move_id,
+    chain_id: 84532,
+    loan_id: 7,
+    from_status: 'active',
+    row_json: JSON.stringify({ chain_id: 84532, loan_id: 7, status: 'active' }),
+    related_json: JSON.stringify({
+      activity_events: [{ orphan_rowid: 3, chain_id: 84532, loan_id: 7 }],
+      loan_participants: [],
+      notifications: [],
+    }),
+    ...over,
+  });
+  assert.match(tableToSql(tableFixture('loan_orphans', cols, [entry(1, a), entry(2, b)])), /VALUES/);
+  // Distinct primary keys, one move_id: the UNIQUE constraint would fail mid-batch.
+  assert.throws(() => tableToSql(tableFixture('loan_orphans', cols, [entry(1, a), entry(2, a)])), /duplicate unique key \(move_id\)/);
+  // The operator's review command quotes move_id, so only the writer's shape is restored.
+  assert.throws(() => tableToSql(tableFixture('loan_orphans', cols, [entry(1, "x' OR 1=1 --")])), /move_id is not the shape/);
+  // #2636 r6 — the payloads must be able to put the withdrawal back.
+  const bad = (over, re) => assert.throws(() => tableToSql(tableFixture('loan_orphans', cols, [entry(1, a, over)])), re);
+  bad({ row_json: 'not json' }, /not JSON/);
+  bad({ row_json: JSON.stringify({ chain_id: 84532, loan_id: 8, status: 'active' }) }, /different chain or loan/);
+  bad({ row_json: JSON.stringify({ chain_id: 84532, loan_id: 7, status: 'repaid' }) }, /status differs/);
+  bad({ related_json: JSON.stringify({ activity_events: [] }) }, /must hold exactly/);
+  bad(
+    { related_json: JSON.stringify({ activity_events: [{ chain_id: 84532, loan_id: 7 }], loan_participants: [], notifications: [] }) },
+    /orphan_rowid/,
+  );
+  bad(
+    { related_json: JSON.stringify({ activity_events: [], loan_participants: [{ orphan_rowid: 1, chain_id: 84532, loan_id: 9 }], notifications: [] }) },
+    /different chain or loan/,
+  );
+});
+
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {
   // Single-column key.
   const dup = tableFixture(

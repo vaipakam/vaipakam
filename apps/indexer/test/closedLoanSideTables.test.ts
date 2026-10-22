@@ -30,6 +30,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
 import {
   _closedLoanSideTableStatements,
+  _loanSideTableStatements,
   _verifiedHolderStatements,
   processLoanLogs,
   QUARANTINE_MAINTENANCE_SUBREQUESTS,
@@ -37,6 +38,7 @@ import {
   RECONCILE_BUDGET_SHARED_TICK,
 } from '../src/chainIndexer';
 import { reconcileAfterScan } from '../src/loanReconcile';
+import { withdrawOrphanLoan } from '../src/loanOrphans';
 import {
   notificationInsertStatement,
   planReconciledNotifications,
@@ -375,6 +377,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        canStartOrphanMove: () => true,
         readContract: readTerminal as never,
         metricsAbi: [],
         loanAbi: [],
@@ -487,6 +490,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        canStartOrphanMove: () => true,
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
             ? 1n
@@ -512,5 +516,244 @@ describe('reconcileAfterScan against a real database', () => {
     );
     expect(hasListing(h, 22)).toBe(true);
     expect(hasIntent(h, 22)).toBe(true);
+  });
+
+  it('#2197 — withdraws a row the chain has no loan for: moved whole into loan_orphans, side tables cleared', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 23);
+    seedListing(h, 23);
+    seedIntent(h, 23);
+    const before = h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, 23);
+    const report = await reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        canStartOrphanMove: () => true,
+        // The zero struct: the chain has never heard of loan 23.
+        readContract: (async (args: Record<string, unknown>) =>
+          args.functionName === 'getActiveLoansCount'
+            ? 0n
+            : { id: 0n, status: 0, principal: 0n, collateralAmount: 0n, lenderTokenId: 0n, borrowerTokenId: 0n }) as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        discloseSideTableBatch: () => {},
+        mutableColumns: () => ({ assignments: [], values: [] }),
+        terminalHolderStatements: async () => [],
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+    expect(report.unresolvable).toEqual([23]);
+    expect(report.withdrawn).toEqual([23]);
+    // Gone from every surface that reads `loans`…
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 23').get()).toEqual({ n: 0 });
+    expect(hasListing(h, 23)).toBe(false);
+    expect(hasIntent(h, 23)).toBe(false);
+    // …and kept whole, with the evidence, for an operator's restore.
+    const kept = h.db
+      .prepare('SELECT chain_id, loan_id, from_status, observed_block, row_json FROM loan_orphans')
+      .all() as { chain_id: number; loan_id: number; from_status: string; observed_block: number; row_json: string }[];
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ chain_id: CHAIN, loan_id: 23, from_status: 'active', observed_block: 100 });
+    expect(JSON.parse(kept[0].row_json)).toEqual(before);
+  });
+
+  it('#2636 r4 — starts no move the invocation cannot finish: the row stays published and named', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 24);
+    const report = await reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        canStartOrphanMove: () => false,
+        readContract: (async (args: Record<string, unknown>) =>
+          args.functionName === 'getActiveLoansCount'
+            ? 0n
+            : { id: 0n, status: 0, principal: 0n, collateralAmount: 0n, lenderTokenId: 0n, borrowerTokenId: 0n }) as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        discloseSideTableBatch: () => {},
+        mutableColumns: () => ({ assignments: [], values: [] }),
+        terminalHolderStatements: async () => [],
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+    expect(report.unresolvable).toEqual([24]);
+    expect(report.withdrawn).toEqual([]);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 24').get()).toEqual({ n: 1 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
+  });
+});
+
+describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
+  it('a writer that changes the row before the batch leaves EVERYTHING in place, even within the same second', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 61);
+    seedListing(h, 61);
+    seedIntent(h, 61);
+    // The scan touches the row between the move's read batch and its write
+    // batch, in the same second: `updated_at` unchanged, a value changed.
+    let batches = 0;
+    const raced = new Proxy(h.d1, {
+      get(target, prop, recv) {
+        if (prop === 'batch') {
+          return async (stmts: unknown[]) => {
+            if (batches++ === 1) {
+              h.db.prepare(`UPDATE loans SET principal = '999' WHERE chain_id = ? AND loan_id = ?`).run(CHAIN, 61);
+            }
+            return (target as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(stmts);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    expect(await withdrawOrphanLoan(raced as never, CHAIN, DIAMOND, 61, 'active', 100n, 1)).toBe(false);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 61').get()).toEqual({ n: 1 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
+    expect(hasListing(h, 61)).toBe(true);
+    expect(hasIntent(h, 61)).toBe(true);
+  });
+
+  it('clears every side table a close-out clears', () => {
+    const tables = (src: string) =>
+      [...src.matchAll(/DELETE FROM (\w+)/g)].map((m) => m[1]).filter((t) => t !== 'loans').sort();
+    const orphan = readFileSync(new URL('../src/loanOrphans.ts', import.meta.url), 'utf8');
+    const indexer = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    const start = indexer.indexOf('export function _loanSideTableStatements(');
+    const closeOut = indexer.slice(start, indexer.indexOf('\n}\n', start));
+    expect(tables(closeOut).length).toBeGreaterThan(0);
+    for (const t of tables(closeOut)) expect(tables(orphan)).toContain(t);
+  });
+
+  const seedRelated = (h: ReturnType<typeof createSqliteD1>, id: number) => {
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+         VALUES (?, ?, 0, '0xaa', 'LoanInitiated', ?, '{}', 1)`,
+      )
+      .run(CHAIN, id, id);
+    h.db
+      .prepare(`INSERT INTO loan_participants (chain_id, loan_id, wallet, role, from_at) VALUES (?, ?, '0xlend', 'lender', 1)`)
+      .run(CHAIN, id);
+    h.db
+      .prepare(
+        `INSERT INTO notifications (chain_id, recipient, kind, loan_id, created_at, dedup_key)
+         VALUES (?, '0xborrow', 'loan_started', ?, 1, ?)`,
+      )
+      .run(CHAIN, id, `k${id}`);
+  };
+  const count = (h: ReturnType<typeof createSqliteD1>, t: string, id: number) =>
+    (h.db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE chain_id = ? AND loan_id = ?`).get(CHAIN, id) as { n: number }).n;
+  /** Runs `between` once, between the move's read batch and its write batch. */
+  const racing = (h: ReturnType<typeof createSqliteD1>, between: () => void) => {
+    let batches = 0;
+    return new Proxy(h.d1, {
+      get(target, prop, recv) {
+        if (prop === 'batch') {
+          return async (stmts: unknown[]) => {
+            if (batches++ === 1) between();
+            return (target as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(stmts);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+  };
+
+  it('moves every published row about the loan with it, kept whole, clears its alert memory and releases its marker', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 62);
+    seedRelated(h, 62);
+    h.db
+      .prepare(
+        `INSERT INTO user_thresholds (wallet, chain_id, warn_hf, alert_hf, critical_hf, created_at, updated_at)
+         VALUES ('0xborrow', ?, 1.5, 1.2, 1.05, 1, 1)`,
+      )
+      .run(CHAIN);
+    h.db.prepare(`INSERT INTO notify_state (wallet, chain_id, loan_id, last_band) VALUES ('0xborrow', ?, 62, 'alert')`).run(CHAIN);
+    h.db.prepare(`INSERT INTO pre_grace_notify_state (wallet, chain_id, loan_id, last_sent_ts) VALUES ('0xborrow', ?, 62, 5)`).run(CHAIN);
+    // Both ids carry a quarantine marker from an earlier pass.
+    for (const id of [62, 63]) {
+      h.db
+        .prepare(
+          `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at) VALUES (?, ?, 'orphan', 1, 1)`,
+        )
+        .run(CHAIN, id);
+    }
+    // An unrelated loan's rows stay.
+    seedActiveLoan(h, 63);
+    seedRelated(h, 63);
+    h.db.prepare(`INSERT INTO notify_state (wallet, chain_id, loan_id, last_band) VALUES ('0xborrow', ?, 63, 'alert')`).run(CHAIN);
+    expect(await withdrawOrphanLoan(h.d1 as never, CHAIN, DIAMOND, 62, 'active', 100n, 1)).toBe(true);
+    for (const t of ['loans', 'activity_events', 'loan_participants', 'notifications', 'notify_state', 'pre_grace_notify_state']) {
+      expect(count(h, t, 62)).toBe(0);
+    }
+    for (const t of ['loans', 'activity_events', 'loan_participants', 'notifications', 'notify_state']) {
+      expect(count(h, t, 63)).toBe(1);
+    }
+    const kept = h.db.prepare('SELECT diamond, move_id, related_json FROM loan_orphans WHERE loan_id = 62').get() as {
+      diamond: string;
+      move_id: string;
+      related_json: string;
+    };
+    expect(kept.diamond).toBe(String(DIAMOND).toLowerCase());
+    const related = JSON.parse(kept.related_json);
+    expect(related.activity_events).toHaveLength(1);
+    expect(related.activity_events[0]).toMatchObject({ kind: 'LoanInitiated', tx_hash: '0xaa' });
+    expect(related.loan_participants[0]).toMatchObject({ wallet: '0xlend', role: 'lender' });
+    expect(related.notifications[0]).toMatchObject({ dedup_key: 'k62', recipient: '0xborrow' });
+    // The operator's record is the archive entry, unreviewed (#2636 r4)…
+    expect(h.db.prepare('SELECT reviewed_at FROM loan_orphans WHERE move_id = ?').get(kept.move_id)).toEqual({ reviewed_at: null });
+    // …and the id's quarantine marker is RELEASED, so it cannot withhold
+    // reminders from a real loan later issued the same id.
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = 62').get(CHAIN)).toEqual({ n: 0 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = 63').get(CHAIN)).toEqual({ n: 1 });
+  });
+
+  it('a related row that lands between the read and the move aborts it whole (#2636 r3)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 64);
+    seedRelated(h, 64);
+    const late = racing(h, () =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+           VALUES (?, 11, 0, '0xbb', 'LoanRepaid', 64, '{}', 2)`,
+        )
+        .run(CHAIN),
+    );
+    expect(await withdrawOrphanLoan(late as never, CHAIN, DIAMOND, 64, 'active', 100n, 1)).toBe(false);
+    expect(count(h, 'loans', 64)).toBe(1);
+    expect(count(h, 'activity_events', 64)).toBe(2);
+    expect(count(h, 'loan_participants', 64)).toBe(1);
+    expect(count(h, 'notifications', 64)).toBe(1);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine').get()).toEqual({ n: 0 });
+    // The next attempt reads the new row and takes it along.
+    expect(await withdrawOrphanLoan(h.d1 as never, CHAIN, DIAMOND, 64, 'active', 100n, 2)).toBe(true);
+    expect(count(h, 'activity_events', 64)).toBe(0);
+    const kept = h.db.prepare('SELECT related_json FROM loan_orphans WHERE loan_id = 64').get() as { related_json: string };
+    expect(JSON.parse(kept.related_json).activity_events).toHaveLength(2);
+  });
+
+  it('a related row that disappears in between aborts it too', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 65);
+    seedRelated(h, 65);
+    const gone = racing(h, () =>
+      h.db.prepare(`DELETE FROM notifications WHERE chain_id = ? AND loan_id = 65`).run(CHAIN),
+    );
+    expect(await withdrawOrphanLoan(gone as never, CHAIN, DIAMOND, 65, 'active', 100n, 1)).toBe(false);
+    expect(count(h, 'loans', 65)).toBe(1);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
   });
 });

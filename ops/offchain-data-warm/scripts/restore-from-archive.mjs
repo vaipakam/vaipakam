@@ -105,6 +105,10 @@ const BORN_OFF_CHAIN_TABLES = new Set([
   // hostile, so omitting it here would make every post-rollout archive
   // unrestorable (Codex #1513 r1 P1).
   'recycle_day_backfill',
+  // #2197 (migration 0065) — loan rows proven absent on chain and withdrawn
+  // from publication. A replay cannot recreate them, so the archive is the
+  // only copy of the withdrawn row.
+  'loan_orphans',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -148,6 +152,7 @@ const BASELINE_TABLES = [
 const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
   recycle_day_backfill: 'migration 0047 (#1349 M5)',
+  loan_orphans: 'migration 0065 (#2197)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -196,6 +201,12 @@ const REQUIRED_TABLE_COLUMNS = {
     'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
     'armed_from_day', 'recorded_at', 'generator_rev',
   ],
+  // `row_json` and `related_json` are the withdrawn rows themselves; without
+  // them the record says only that something was withdrawn, not what.
+  loan_orphans: [
+    'id', 'move_id', 'chain_id', 'diamond', 'loan_id', 'from_status', 'observed_block',
+    'withdrawn_at', 'row_json', 'related_json', 'reviewed_at',
+  ],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -215,6 +226,67 @@ const TRUSTED_PRIMARY_KEYS = {
   diag_legal_holds: ['wallet_hash'],
   diag_legal_hold_audit: ['id'],
   recycle_day_backfill: ['chain_id', 'day_id'],
+  loan_orphans: ['id'],
+};
+
+// Every OTHER uniqueness the schema declares on a born-off-chain table,
+// from the same migrations (#2636 r5). A duplicate fails its constraint
+// mid-batch exactly as a duplicate primary key does, so each set below is
+// checked the same way. Today only migration 0065 declares one.
+const TRUSTED_UNIQUE_KEYS = {
+  loan_orphans: [['move_id']],
+};
+
+// Per-column shapes the writer guarantees, checked before any SQL is
+// emitted (#2636 r5). `loan_orphans.move_id` is `crypto.randomUUID()`
+// (src/loanOrphans.ts), and the operator's review command quotes it, so a
+// value of any other shape is refused rather than restored.
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TRUSTED_COLUMN_SHAPES = {
+  loan_orphans: { move_id: UUID_SHAPE },
+};
+
+// Whole-row checks the writer's own invariants allow, run before any SQL is
+// emitted (#2636 r6). A `loan_orphans` entry is only worth restoring if its
+// payloads can put the withdrawal back: `row_json` is the `loans` row as it
+// stood, so it must be that loan's row with the status the entry says it was
+// withdrawn from, and `related_json` holds exactly the three related tables
+// (src/loanOrphans.ts), each row about the same loan and carrying the rowid
+// the move deleted. Returns a problem string, or null.
+const LOAN_ORPHAN_RELATED_TABLES = ['activity_events', 'loan_participants', 'notifications'];
+function loanOrphanRowProblem(row) {
+  let loan;
+  let related;
+  try {
+    loan = JSON.parse(row.row_json);
+    related = JSON.parse(row.related_json);
+  } catch {
+    return 'row_json or related_json is not JSON';
+  }
+  const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObject(loan)) return 'row_json is not an object';
+  if (loan.chain_id !== row.chain_id || loan.loan_id !== row.loan_id) {
+    return 'row_json describes a different chain or loan than the entry';
+  }
+  if (loan.status !== row.from_status) return 'row_json status differs from from_status';
+  if (!isObject(related)) return 'related_json is not an object';
+  const keys = Object.keys(related).sort();
+  if (JSON.stringify(keys) !== JSON.stringify([...LOAN_ORPHAN_RELATED_TABLES].sort())) {
+    return `related_json must hold exactly ${LOAN_ORPHAN_RELATED_TABLES.join(', ')}`;
+  }
+  for (const t of LOAN_ORPHAN_RELATED_TABLES) {
+    if (!Array.isArray(related[t])) return `related_json.${t} is not an array`;
+    for (const r of related[t]) {
+      if (!isObject(r) || !Number.isInteger(r.orphan_rowid)) return `related_json.${t} has a row without its orphan_rowid`;
+      if (r.chain_id !== row.chain_id || r.loan_id !== row.loan_id) {
+        return `related_json.${t} has a row about a different chain or loan`;
+      }
+    }
+  }
+  return null;
+}
+const TRUSTED_ROW_CHECKS = {
+  loan_orphans: loanOrphanRowProblem,
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
@@ -345,7 +417,14 @@ export function tableToSql(table) {
     .filter((c) => typeof c.pk === 'number' && c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
     .map((c) => c.name);
-  const seenPks = new Set();
+  const uniqueSets = [...(pkCols.length > 0 ? [pkCols] : []), ...(TRUSTED_UNIQUE_KEYS[name] ?? [])];
+  for (const cols of uniqueSets) {
+    if (cols.some((c) => !columns.includes(c))) {
+      fail(`table ${name}: archived schema lacks unique column(s) ${cols.filter((c) => !columns.includes(c)).join(', ')} — cannot verify uniqueness`);
+    }
+  }
+  const seenKeys = uniqueSets.map(() => new Set());
+  const shapes = TRUSTED_COLUMN_SHAPES[name] ?? {};
   for (const [i, row] of rows.entries()) {
     const keys = Object.keys(row);
     // Strict shape check: a row keyed differently from the schema is
@@ -353,17 +432,24 @@ export function tableToSql(table) {
     if (keys.length !== columns.length || keys.some((k) => !columns.includes(k))) {
       fail(`table ${name} row ${i}: row keys [${keys}] do not match schema columns [${columns}]`);
     }
-    if (pkCols.length > 0) {
-      const pkKey = JSON.stringify(pkCols.map((c) => row[c]));
-      if (seenPks.has(pkKey)) {
+    for (const [k, cols] of uniqueSets.entries()) {
+      const key = JSON.stringify(cols.map((c) => row[c]));
+      if (seenKeys[k].has(key)) {
         fail(
-          `table ${name} row ${i}: duplicate primary key (${pkCols.join(', ')}) = ${pkKey} — ` +
+          `table ${name} row ${i}: duplicate ${cols === pkCols ? 'primary key' : 'unique key'} (${cols.join(', ')}) = ${key} — ` +
             `a SELECT cannot produce duplicate keys, so the archive was tampered with; ` +
             `importing would fail the UNIQUE constraint mid-batch and leave a partial restore`,
         );
       }
-      seenPks.add(pkKey);
+      seenKeys[k].add(key);
     }
+    for (const [col, shape] of Object.entries(shapes)) {
+      if (typeof row[col] !== 'string' || !shape.test(row[col])) {
+        fail(`table ${name} row ${i}: column ${col} is not the shape the writer produces — refusing to restore it`);
+      }
+    }
+    const problem = TRUSTED_ROW_CHECKS[name]?.(row);
+    if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
     const values = columns.map((c) => sqlLiteral(row[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
   }

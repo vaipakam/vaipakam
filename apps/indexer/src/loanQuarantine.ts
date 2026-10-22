@@ -20,6 +20,7 @@
  */
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import type { ReconcileReport } from './loanReconcile';
+import { reportUnreviewedOrphans, unreviewedOrphanStatements } from './loanOrphanReport';
 
 /**
  * How long a row may sit quarantined before it stops being a blip.
@@ -106,7 +107,12 @@ export function unsettledRows(report: ReconcileReport): { loanId: number; reason
   return [
     ...report.unread.map((loanId) => ({ loanId, reason: 'unread' as const })),
     ...report.writeFailed.map((loanId) => ({ loanId, reason: 'write-failed' as const })),
-    ...report.unresolvable.map((loanId) => ({ loanId, reason: 'orphan' as const })),
+    // An orphan still PUBLISHED is held, so nothing reminds on it. One the pass
+    // withdrew is not: its row is gone, and a marker would only withhold
+    // reminders from a real loan later issued the same id (#2636 r4).
+    ...report.unresolvable
+      .filter((loanId) => !report.withdrawn.includes(loanId))
+      .map((loanId) => ({ loanId, reason: 'orphan' as const })),
     ...report.unknownStatus.map((u) => ({ loanId: u.loanId, reason: 'unknown-status' as const })),
   ];
 }
@@ -947,10 +953,15 @@ export async function reportStaleQuarantine(
   // `batch()` is D1's transaction, so both statements see one state. It is
   // also ONE subrequest rather than two, so the report's cost returns to what
   // it was before r7 split it — the snapshot is free, and then some.
-  const [countResult, pageResult] = await db.batch<Record<string, unknown>>([
+  // #2636 r4 — the unreviewed orphan withdrawals ride the same batch: one
+  // snapshot, and no subrequest of their own. Named whether or not anything
+  // is held here, since a withdrawn row leaves no marker behind.
+  const [countResult, pageResult, orphanCount, orphanPage] = await db.batch<Record<string, unknown>>([
     countStatement,
     pageStatement,
+    ...unreviewedOrphanStatements(db, chainId),
   ]);
+  reportUnreviewedOrphans(chainId, orphanCount, orphanPage, nowSec);
   const n = Number((countResult?.results?.[0] as { n?: number } | undefined)?.n ?? 0);
   if (n === 0) return;
   const held = (pageResult?.results ?? []) as unknown as Array<{
