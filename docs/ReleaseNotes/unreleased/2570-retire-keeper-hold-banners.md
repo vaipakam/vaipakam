@@ -17,9 +17,9 @@ a service restart, and the keeper machine runbook is the one place that says
 how to start, stop and arm the keeper.
 
 The cron-slot inventory no longer holds a trigger in reserve for the keeper
-Worker, because that Worker will not be scheduled again; the summary there now
-reads four live and one spare, with the account stamp unchanged because no
-live read was taken. The Telegram and Push key rotations now also update the
+Worker, because that Worker will not be scheduled again. The inventory itself
+(docs/ops/CloudflareCronSlots.md) is the one place that states the account's
+occupancy, and its account stamp is unchanged because no live read was taken. The Telegram and Push key rotations now also update the
 keeper's machine, which never read those credentials from the shared store.
 
 One gap in the code is now stated in the runbooks rather than hidden: the
