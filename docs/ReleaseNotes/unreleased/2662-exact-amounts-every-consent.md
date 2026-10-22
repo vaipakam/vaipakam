@@ -1,0 +1,7 @@
+## App — every review receipt and consent line shows the exact amount (PR #TBD)
+
+**The exact-amount rule now holds on every surface where the user agrees to a figure (#2662).** #2537 made the accept and post review receipt show amounts exactly as the transaction carries them. The other consent surfaces still rounded to a few decimal places, sometimes upward, so a reviewed figure could differ from the one signed. They now show the exact figure too: the refinance payoff, wallet top-up and payoff headroom; the loan sale's principal, approval bound and current cost; the offset's principal and completion bound; the obligation transfer receipt's cost lines and the replacement collateral; the early exit's proceeds to the seller; the trading desk's escrow, collateral lock, initiation fee, gasless-funds warning, signed-fill amounts and amend top-up; the rental receipts; the VPFI deposit and withdrawal receipt; the Full tariff quote and balance shortfall; the position page's figures and its receipts; and the pending-step cards for refinance, offset and loan sale.
+
+A shortfall or minimum shown beside an input ("you need X more", "collateral must be at least X") is exact for the same reason: a rounded figure could be just below the real one, and a user who typed it would be refused. Browsing surfaces (offer lists, candidate rows, balances, the vault list) keep the shorter rounded form, since nothing is being agreed to there. The rewards claim card is unchanged in this release; it belongs to the rewards work.
+
+Closes #2662.

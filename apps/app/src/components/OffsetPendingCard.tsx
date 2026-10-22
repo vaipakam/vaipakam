@@ -27,7 +27,7 @@ import {
 import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
 import { ensureAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
-import { formatTokenAmount } from '../lib/format';
+import { formatTokenAmountExact } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
 
 export function OffsetPendingCard({
@@ -69,7 +69,7 @@ export function OffsetPendingCard({
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
   const boundStr =
     state && principalMeta
-      ? `${formatTokenAmount(state.completionBound, principalMeta.decimals)} ${principalMeta.symbol}`
+      ? `${formatTokenAmountExact(state.completionBound, principalMeta.decimals)} ${principalMeta.symbol}`
       : null;
 
   async function cancel() {

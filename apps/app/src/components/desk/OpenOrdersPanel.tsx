@@ -71,6 +71,7 @@ import {
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountExact,
   parseExactUnits,
   shortAddress,
 } from '../../lib/format';
@@ -592,7 +593,7 @@ function AmendForm({
       {growInfo && growInfo.decimals !== undefined ? (
         <p className="muted" style={{ fontSize: '0.85rem', marginTop: 8 }}>
           {text.amendGrowNote(
-            formatTokenAmount(growInfo.delta, growInfo.decimals),
+            formatTokenAmountExact(growInfo.delta, growInfo.decimals),
             growInfo.symbol ?? shortAddress(growInfo.token),
           )}
         </p>
@@ -928,7 +929,7 @@ function FullTariffArmForm({
               : !quote.data.numeraireOk || liquidity.isError || liquidity.data === true
                 ? copy.tariff.fullUnavailableNow
                 : copy.tariff.quoteLine(
-                    formatTokenAmount(quote.data.cStar, VPFI_DECIMALS),
+                    formatTokenAmountExact(quote.data.cStar, VPFI_DECIMALS),
                   )
         }
       </p>
@@ -939,8 +940,8 @@ function FullTariffArmForm({
           style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
         >
           {copy.tariff.balanceShort(
-            formatTokenAmount(chargeable.data, VPFI_DECIMALS),
-            formatTokenAmount(quoted, VPFI_DECIMALS),
+            formatTokenAmountExact(chargeable.data, VPFI_DECIMALS),
+            formatTokenAmountExact(quoted, VPFI_DECIMALS),
           )}
         </p>
       ) : null}

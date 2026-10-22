@@ -49,6 +49,7 @@ import {
   formatBpsAsPercent,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountExact,
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
@@ -206,7 +207,10 @@ export function ObligationTransferFlow({
 
   const dec = principalMeta.decimals;
   const sym = principalMeta.symbol;
+  // Rounded for the candidate rows (browsing); exact on the review
+  // receipt, where the figures are the ones consented to (#2662).
   const fmt = (v: bigint) => `${formatTokenAmount(v, dec)} ${sym}`;
+  const fmtExact = (v: bigint) => `${formatTokenAmountExact(v, dec)} ${sym}`;
 
   // The handover COPIES the offer's collateral identity into the loan,
   // so for NFT collateral two rows from the same collection can carry
@@ -219,7 +223,7 @@ export function ObligationTransferFlow({
   // metadata is still loading or failed must not be described as an
   // NFT — it degrades to an honest unknown-amount line instead, and
   // the selection gate below holds the flow until the metadata lands.
-  function collateralStrOf(o: IndexedOffer): string {
+  function collateralStrOf(o: IndexedOffer, exact = false): string {
     if (o.collateralAssetType !== AssetType.ERC20) {
       const qty = BigInt(o.collateralQuantity || '0');
       return `NFT ${shortAddress(o.collateralAsset)} #${o.collateralTokenId}${
@@ -229,7 +233,11 @@ export function ObligationTransferFlow({
     if (!collateralMeta) {
       return copy.transferOb.collateralUnknown(shortAddress(o.collateralAsset));
     }
-    return `${formatTokenAmount(o.collateralAmount, collateralMeta.decimals)} ${collateralMeta.symbol}`;
+    const amount = (exact ? formatTokenAmountExact : formatTokenAmount)(
+      o.collateralAmount,
+      collateralMeta.decimals,
+    );
+    return `${amount} ${collateralMeta.symbol}`;
   }
 
   // An ERC-20 collateral leg whose metadata hasn't resolved cannot be
@@ -656,7 +664,7 @@ export function ObligationTransferFlow({
               String(picked.offerId),
               formatBpsAsPercent(picked.interestRateBps),
               formatDurationDays(picked.durationDays),
-              collateralStrOf(picked),
+              collateralStrOf(picked, true),
             )}
             {' — '}
             {copy.transferOb.selected(String(picked.offerId))}{' '}
@@ -685,9 +693,9 @@ export function ObligationTransferFlow({
               youReceive: copy.transferOb.receiptReceive,
               youLock: copy.transferOb.receiptLock,
               youMayOwe: copy.transferOb.receiptOwe(
-                fmt(economics.total),
-                fmt(economics.accrued),
-                fmt(economics.shortfall),
+                fmtExact(economics.total),
+                fmtExact(economics.accrued),
+                fmtExact(economics.shortfall),
               ),
               youCanLose: copy.transferOb.receiptLose,
               fees: copy.transferOb.receiptFees,

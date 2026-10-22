@@ -63,7 +63,7 @@ import { saleSettlementBound, saleSettlementNow } from '../data/loanSalePending'
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { formatDateTime, formatTokenAmount } from '../lib/format';
+import { formatDateTime, formatTokenAmountExact } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -163,8 +163,8 @@ export function LoanSaleFlow({
       ? saleSettlementNow(live, BigInt(rateBps))
       : null;
   const boundStr =
-    bound !== null ? `${formatTokenAmount(bound, dec)} ${sym}` : null;
-  const principalStr = `${formatTokenAmount(live.principal, dec)} ${sym}`;
+    bound !== null ? `${formatTokenAmountExact(bound, dec)} ${sym}` : null;
+  const principalStr = `${formatTokenAmountExact(live.principal, dec)} ${sym}`;
 
   // No review-void on the bound figure: it is quoted as an upper
   // bound ("up to X") and only SHRINKS between reviews (the padded
@@ -472,7 +472,7 @@ export function LoanSaleFlow({
             data={{
               youReceive: copy.loanSale.receiptYouReceive(principalStr),
               youLock: copy.loanSale.receiptLock,
-              youMayOwe: `${copy.loanSale.receiptYouMayOwe(formatTokenAmount(nowCost, dec), sym)} ${copy.loanSale.approvalNote(boundStr)}`,
+              youMayOwe: `${copy.loanSale.receiptYouMayOwe(formatTokenAmountExact(nowCost, dec), sym)} ${copy.loanSale.approvalNote(boundStr)}`,
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
               whenThisEnds: copy.loanSale.receiptEnds,

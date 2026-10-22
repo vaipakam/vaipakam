@@ -76,7 +76,7 @@ import {
 import {
   formatBpsAsPercent,
   formatDate,
-  formatTokenAmount,
+  formatTokenAmountExact,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
@@ -206,9 +206,9 @@ export function RefinanceFlow({
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
-  const payoffStr = `${formatTokenAmount(payoff, dec)} ${sym}`;
-  const topUpStr = `${formatTokenAmount(walletTopUp, dec)} ${sym}`;
-  const headroomStr = `${formatTokenAmount(payoffHeadroom, dec)} ${sym}`;
+  const payoffStr = `${formatTokenAmountExact(payoff, dec)} ${sym}`;
+  const topUpStr = `${formatTokenAmountExact(walletTopUp, dec)} ${sym}`;
+  const headroomStr = `${formatTokenAmountExact(payoffHeadroom, dec)} ${sym}`;
 
   // The consent rule covers the FIGURES too: the live-loan prop, the
   // fee config, and the grace bucket refresh in the background, so a

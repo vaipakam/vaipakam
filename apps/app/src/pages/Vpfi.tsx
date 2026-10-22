@@ -47,6 +47,7 @@ import {
   exactUnitsOrNull,
   formatBpsAsPercent,
   formatTokenAmount,
+  formatTokenAmountExact,
 } from '../lib/format';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -130,7 +131,7 @@ export function Vpfi() {
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!amountWei || overMax) return null;
-    const amtStr = `${formatTokenAmount(amountWei, VPFI_DECIMALS)} VPFI`;
+    const amtStr = `${formatTokenAmountExact(amountWei, VPFI_DECIMALS)} VPFI`;
     if (action === 'deposit') {
       return {
         youReceive: copy.vpfi.receiptDeposit.youReceive,
