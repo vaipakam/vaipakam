@@ -1,4 +1,4 @@
-## Thread — one schema gate for every scheduled user of the shared database (PR #<n>)
+## Thread — one schema gate for every scheduled user of the shared database (PR #2635)
 
 The indexer has held its scheduled work while the shared database was missing
 a migration its build carries, so new code never met an older schema. The
