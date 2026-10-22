@@ -1164,6 +1164,16 @@ const copySource = {
       'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
     linkedLoanCheckFailed:
       'We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.',
+    // #2421 — a borrow request tagged with a running loan: accepting it is
+    // also the payoff and close of that loan, in the same transaction.
+    refinanceRequestBanner: tmpl(
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. That loan’s current lender is paid from the borrower’s own wallet, not from your funds; the amount you lend goes to the borrower as with any loan.`,
+      ['loanId'],
+    ),
+    refinanceRequestChecking:
+      'Checking whether this request refinances a running loan — the review must say so before you can sign.',
+    refinanceRequestCheckFailed:
+      'We couldn’t check whether this request refinances a running loan, and that changes what accepting it does — signing stays paused until it succeeds.',
     graceChecking:
       'Confirming the repayment grace window this deal is judged against…',
     graceCheckFailed:
@@ -1619,6 +1629,10 @@ const copySource = {
     ),
     shortIsSafe:
       'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    // #544 — posting a request changes nothing about the loan until a
+    // lender takes it; no match is guaranteed.
+    noGuarantee:
+      'A refinance request is not a guarantee that a lender will take it. Until one accepts, this loan keeps its due date and grace window; if none accepts in time, the loan can still default like any other. Be ready to repay it yourself if the request isn’t taken.',
     /** #2349 / #2355 r5-r6 — the order matcher cannot fill the request:
      *  the auto-refinance switch or the matcher's own master switch is off.
      *  Says only that the SETTING does not stop a direct accept — never
@@ -5402,6 +5416,16 @@ const copySource = {
         ['principal'],
       ),
       lenderCollateralLock: tmpl('They lock {{collateral}}.', ['collateral']),
+      // #2421 — a refinance request's collateral, from the offer's recorded
+      // carry-over decision.
+      lenderCollateralCarriedOver: tmpl(
+        'Their {{collateral}}, already locked under loan #{{loanId}}, carries over to your loan — it is not a new pledge.',
+        ['collateral', 'loanId'],
+      ),
+      lenderCollateralFreshPledge: tmpl(
+        'They lock a new {{collateral}} for your loan; the collateral under loan #{{loanId}} goes back to them when that loan closes.',
+        ['collateral', 'loanId'],
+      ),
       lenderCollateralMustLock: tmpl('They must lock {{collateral}}.', ['collateral']),
       lenderWhenEndsAccept: tmpl(
         'Repayment is due within {{duration}} (grace period: {{grace}}). You then claim your funds.',

@@ -256,6 +256,8 @@ export function RefinancePendingCard({
                   {state.loanActive && topUpStr ? (
                     <> {copy.refinance.walletNote(topUpStr)}</>
                   ) : null}
+                  {/* #544 — still no match guarantee while the request is open. */}
+                  {state.loanActive ? <> {copy.refinance.noGuarantee}</> : null}
                   {!state.loanActive ? (
                     <> {copy.refinance.pendingLoanClosed}</>
                   ) : null}

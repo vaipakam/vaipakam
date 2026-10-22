@@ -178,6 +178,37 @@ describe('reviewTerms — the real loan-22 receipts', () => {
     ]);
   });
 
+  // #2421 — that 2026-10-05 review funded a REFINANCE (request #45 for
+  // loan 22, carry-over) and still said "They lock 100 tCOL". Against the
+  // request as created, that wording is now a mismatch; the carry-over line
+  // naming loan 22 is what passes.
+  it('a refinance request is refused unless its review says the collateral carries over from the loan', () => {
+    const refiCtx = {
+      ...LENDER_CTX,
+      req: { ...LENDER_CTX.req, refinanceTargetLoanId: 22n, refinanceCarryOver: true },
+    };
+    expect(compareLenderReceipt(LENDER_ROWS, refiCtx).mismatches.join()).toMatch(/"You can lose" row/);
+    const lead = 'If the borrower defaults, your recovery depends on their collateral.';
+    const fixed = LENDER_ROWS.map((r) =>
+      r.label === 'You can lose'
+        ? {
+            ...r,
+            value: r.value.replace(
+              `${lead} They lock 100 tCOL.`,
+              `${lead} Their 100 tCOL, already locked under loan #22, carries over to your loan — it is not a new pledge.`,
+            ),
+          }
+        : r,
+    );
+    const ok = compareLenderReceipt(fixed, refiCtx);
+    expect(ok.mismatches).toEqual([]);
+    expect(ok.compared).toContain('refinanced loan');
+    const wrongLoan = { ...refiCtx, req: { ...refiCtx.req, refinanceTargetLoanId: 23n } };
+    expect(compareLenderReceipt(fixed, wrongLoan).mismatches.join()).toMatch(/refinanced loan/);
+    const freshPledge = { ...refiCtx, req: { ...refiCtx.req, refinanceCarryOver: false } };
+    expect(compareLenderReceipt(fixed, freshPledge).mismatches.join()).toMatch(/"You can lose" row/);
+  });
+
   it('the lender review is refused when a term differs from the chain', () => {
     // A request at 15% would carry a different interest figure.
     expect(compareLenderReceipt(LENDER_ROWS, { ...LENDER_CTX, req: { ...LENDER_CTX.req, interestRateBpsMax: 1500n } }).mismatches).toHaveLength(1);

@@ -77,6 +77,10 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
+  lenderCollateralLine,
+  readRefinanceRequestLive,
+} from '../data/refinanceRequestReview';
+import {
   exactUnitsOrNull,
   formatBpsAsPercent,
   formatDate,
@@ -281,6 +285,12 @@ function MatchOfferRow({
             ? copy.offerFlow.receipts.youLockCollateral(collateralStr)
             : copy.offerFlow.receipts.theyLockCollateral(collateralStr)}{' '}
           · {copy.offerFlow.offerNumber(offer.offerId)}
+          {/* #2421 — a refinance request is named in the list too, only on a
+              positive tag (an unread tag is unknown, never "not one"); the
+              review reads it live before anything can be signed. */}
+          {(offer.refinanceTargetLoanId ?? 0) > 0
+            ? ` · ${copy.offers.refinanceRequestTag(String(offer.refinanceTargetLoanId))}`
+            : null}
         </span>
       </span>
       <button
@@ -510,6 +520,29 @@ export function OfferFlow({ side }: { side: Side }) {
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
   const acceptIsLoanSale =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
+
+  // #2421 — a borrow request tagged with a running loan is a REFINANCE:
+  // the accept also pays off and closes that loan, and its collateral is
+  // either carried over from it or a fresh pledge (the offer's recorded
+  // decision). The indexer row has the tag but not that decision, so the
+  // lender's review reads both live, and signing waits for the answer —
+  // the fresh-borrow wording would misdescribe the deal.
+  const refinanceRequest = useQuery({
+    queryKey: ['offerRefinanceRequest', readChain.chainId, selected?.offerId],
+    enabled:
+      mode === 'accept' && side === 'lender' && Boolean(readClient) && Boolean(selected),
+    staleTime: 60_000,
+    queryFn: () =>
+      readRefinanceRequestLive(
+        readClient!,
+        readChain.diamondAddress,
+        BigInt(selected!.offerId),
+      ),
+  });
+  const refinanceKnown =
+    mode !== 'accept' || side !== 'lender' || refinanceRequest.data !== undefined;
+  const refinanceInfo =
+    mode === 'accept' && side === 'lender' ? (refinanceRequest.data ?? null) : null;
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -1096,11 +1129,14 @@ export function OfferFlow({ side }: { side: Side }) {
             whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr),
           };
         }
+        // #2421 — no lender receipt until it is known whether this is a
+        // refinance request: the collateral line differs.
+        if (!refinanceKnown) return null;
         return {
           youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${acceptModeNote}`,
           youLock: copy.offerFlow.receipts.lenderYouLockAccept(principalStr),
           youMayOwe: copy.offerFlow.receiptOweNothing,
-          youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.lenderCollateralLock(collateralStr)}${illiquidSuffix}`,
+          youCanLose: `${copy.lend.defaultOutcome} ${lenderCollateralLine(refinanceInfo, collateralStr)}${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: copy.offerFlow.receipts.lenderWhenEndsAccept(durationStr, graceStr),
         };
@@ -1166,6 +1202,8 @@ export function OfferFlow({ side }: { side: Side }) {
     acceptIsLoanSale,
     saleData,
     saleReviewReady,
+    refinanceKnown,
+    refinanceInfo,
   ]);
 
   const isOwnSelectedOffer =
@@ -1300,6 +1338,14 @@ export function OfferFlow({ side }: { side: Side }) {
     `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
     `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
     `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    // #2421 — the refinance disclosure and its collateral wording.
+    `refi:${
+      refinanceInfo
+        ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}`
+        : refinanceKnown
+          ? '0'
+          : '?'
+    }`,
     `sale:${saleFingerprint ?? ''}`,
     // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
     // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
@@ -1412,6 +1458,9 @@ export function OfferFlow({ side }: { side: Side }) {
     // links never sign here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    // #2421 — a refinance request changes what accepting does; the review
+    // must know before it can be signed.
+    refinanceKnown &&
     securityGateOk &&
     // ANY disclosure on screen requires consent granted AGAINST the current
     // set of disclosures — not merely consent that is still true from before
@@ -2613,6 +2662,30 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : (
               <div className="banner banner-warn" role="alert">
                 <span className="banner-body">{copy.match.saleSellerNotCovered}</span>
+              </div>
+            )
+          ) : null}
+          {refinanceInfo ? (
+            <div className="banner banner-info" data-testid="refinance-request-banner">
+              <span className="banner-body">
+                {copy.match.refinanceRequestBanner(refinanceInfo.targetLoanId.toString())}
+              </span>
+            </div>
+          ) : !refinanceKnown ? (
+            refinanceRequest.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.refinanceRequestCheckFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void refinanceRequest.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
+              </div>
+            ) : (
+              <div className="banner banner-info">
+                <span className="banner-body">{copy.match.refinanceRequestChecking}</span>
               </div>
             )
           ) : null}
