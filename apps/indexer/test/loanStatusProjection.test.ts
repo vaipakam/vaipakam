@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { processLoanLogs, settleFromLedger, settleLoanRow, sweepSettledExistence } from '../src/chainIndexer';
+import { processLoanLogs, runHealLanes, settleFromLedger, settleLoanRow, sweepSettledExistence } from '../src/chainIndexer';
 import { handleLoanById } from '../src/loanRoutes';
 import { createBudget } from '../src/subrequestBudget';
 import { pad, toHex, toEventSelector } from 'viem';
@@ -587,6 +587,18 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const again = { reads: [] as Array<{ id: number; block: bigint }> };
     await sweep(chain({}, () => 3, again));
     expect(again.reads[0].id).toBe(62); // resumed where it stopped
+  });
+
+  it('#2636 r7 — the settled-row sweep still runs on a tick whose ledger heal repaired a row', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 71, 'repaid'); // settled on chain: the ledger heal repairs it
+    seedLoan(h, 72, 'settled'); // the chain has no loan 72
+    const c = chain({}, (id) => (id === 72 ? 'missing' : 3));
+    const out = await runHealLanes(c, DIAMOND, CHAIN, env(h), budget(), 777n, true, c);
+    // Both irreversible lanes ran and both reported, on the same return.
+    expect(out.ledgerSettledLoanIds).toEqual([71, 72]);
+    expect(row(h, 71).status).toBe('settled');
+    expect(row(h, 72)).toBeUndefined();
   });
 
   it('#2636 r1 — the page is one bounded index walk per status, never a sort of every ended loan', () => {

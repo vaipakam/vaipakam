@@ -848,7 +848,10 @@ export async function verifyRpcChainIdentity(
  *  cursor, bounded retry) rather than success — shared with the DO so
  *  a new failure kind can't silently read as "caught up" there. */
 export function isRetryableScanSkip(skipped: string | undefined): boolean {
-  return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
+  // #2636 r7 — a held tick (no settled head) is a provider not answering,
+  // like an RPC error: retried in the alarm loop, and no heartbeat claims a
+  // live rail. Without it a cron alarm (target 0) read the hold as success.
+  return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch' || skipped === 'settled-head-unavailable';
 }
 
 /** The schema gate (schemaGate.ts) declined the pass. Not retryable within
@@ -2277,9 +2280,9 @@ async function runChainPass(
       chainId,
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
-      // No settled head was learned, so none is reported: the ingest DO
-      // re-arms at once for a backlog measured against `headBlock`, and a
-      // guessed head would spin it on a provider that is not answering.
+      // No settled head was learned, so none is reported: a guessed head
+      // would read as a backlog. The hold is retried within the alarm's
+      // bounded attempts like an RPC error (`isRetryableScanSkip`).
       headBlock: undefined,
     };
   }
@@ -3776,7 +3779,7 @@ async function processSignedOfferLogs(
  * `atBlock` is the block every read is pinned to: everything up to it has
  * been processed.
  */
-async function runHealLanes(
+export async function runHealLanes(
   client: PublicClient,
   diamond: Address,
   chainId: number,
@@ -3813,6 +3816,21 @@ async function runHealLanes(
   } catch (err) {
     console.warn(`[chainIndexer] ledger settlement heal stopped on chain ${chainId}; retried next tick`, err);
   }
+  // #2636 r4/r7 — SECOND, beside the ledger heal and before the early return
+  // below: settled rows the chain has no loan for. It is placed with the
+  // ledger heal rather than after the retrying lanes because both are
+  // bounded, non-retrying, irreversible lanes whose ids ride the same return;
+  // placed after that return, a ledger heal that repairs a row every tick
+  // would starve it for good (#2636 r7). Its rotation is a fixed small page,
+  // so it cannot starve the lanes below in turn.
+  if (headSettled) {
+    try {
+      const withdrawn = await sweepSettledExistence(settleClient, diamond, env, chainId, budget, atBlock);
+      ledgerSettledLoanIds = [...ledgerSettledLoanIds, ...withdrawn];
+    } catch (err) {
+      console.warn(`[chainIndexer] settled-row existence sweep stopped on chain ${chainId}; retried next tick`, err);
+    }
+  }
   // #2476 r18 — a row settled above is never selected again, so this return
   // is its only report. The lanes below use the RETRYING client, whose cost
   // no reservation bounds, so after an irreversible heal they wait for the
@@ -3848,17 +3866,6 @@ async function runHealLanes(
     }
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
-  }
-  // #2636 r4 — LAST, on what the tick has left: settled rows the chain has no
-  // loan for. Its own try, and on the non-retrying client, since its reads
-  // are budgeted per row. Withdrawn ids ride the same return as settled
-  // ones, so they are reported and hinted the same way.
-  if (headSettled) {
-    try {
-      ledgerSettledLoanIds = await sweepSettledExistence(settleClient, diamond, env, chainId, budget, atBlock);
-    } catch (err) {
-      console.warn(`[chainIndexer] settled-row existence sweep stopped on chain ${chainId}; retried next tick`, err);
-    }
   }
   return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }

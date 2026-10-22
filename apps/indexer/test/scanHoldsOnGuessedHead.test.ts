@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { REQUIRED_D1_MIGRATIONS } from '../src/requiredMigrations';
-import { runChainIndexerForChain } from '../src/chainIndexer';
+import { isRetryableScanSkip, runChainIndexerForChain } from '../src/chainIndexer';
+import { alarmNextStep } from '../src/chainIngestDO';
 import type { ChainConfig, Env } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -128,6 +129,18 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
     expect(r.skipped).toBe('settled-head-unavailable');
     expect(r.headBlock).toBeUndefined();
     expect(r.scannedTo).toBe(BigInt(cursor));
+    // #2636 r7 — the ingest loop retries a hold rather than reading it as
+    // success: on a cron alarm the target is 0, which `scannedTo` meets.
+    expect(isRetryableScanSkip(r.skipped)).toBe(true);
+    expect(
+      alarmNextStep({
+        schemaDeclined: false,
+        retryableFailure: isRetryableScanSkip(r.skipped),
+        scannedTo: r.scannedTo,
+        target: 0n,
+        headBlock: r.headBlock,
+      }),
+    ).toBe('rearm');
     expect(methods).not.toContain('eth_getLogs');
     // #2636 r6 — and nothing at all is read from the chain past the head
     // lookup: no heal (what it wrote would never be re-read), and no
