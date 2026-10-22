@@ -3070,7 +3070,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](37);
+        s = new bytes4[](39);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3156,6 +3156,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
         s[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        s[37] = RewardAggregatorFacet.isChainIncluded.selector;
+        s[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
     }
 
     function _getRewardRemittanceSelectors()

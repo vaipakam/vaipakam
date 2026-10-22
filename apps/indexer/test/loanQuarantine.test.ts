@@ -26,6 +26,8 @@ import {
   quarantineReleaseStatement,
   settledRows,
   unsettledRows,
+  _resetQuarantineAvailability,
+  quarantineAvailability,
 } from '../src/loanQuarantine';
 import type { ReconcileReport } from '../src/loanReconcile';
 import {
@@ -1266,6 +1268,26 @@ describe('how often the table is probed for', () => {
       },
     };
   }
+
+  it('is ONE probe for every lane in the pass — the write side and the calendar sweep (#2221)', async () => {
+    // Two lanes used to hold one probe each, so a cold pass read the same
+    // fact twice. Now there is one, and only the chain pass opens its
+    // boundary: a lane that reopened it would throw away the answer the
+    // other lane had already paid for.
+    _resetQuarantineAvailability();
+    const { db, probes } = countingDb(true);
+    quarantineAvailability().beginPass();
+    expect(await quarantineAvailability()(db)).toBe('present'); // the write side
+    expect(await quarantineAvailability()(db)).toBe('present'); // the calendar sweep
+    expect(probes()).toBe(1);
+    const calendar = readFileSync(new URL('../src/calendarNotifications.ts', import.meta.url), 'utf8');
+    expect(calendar).not.toMatch(/\.beginPass\(\)/);
+    expect(calendar).not.toContain('createQuarantineAvailability(');
+    const indexer = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    expect(indexer.match(/\.beginPass\(\)/g)).toHaveLength(1);
+    expect(indexer).not.toContain('createQuarantineAvailability(');
+    _resetQuarantineAvailability();
+  });
 
   it('asks ONCE for a whole pass while the table is missing', async () => {
     // #2213 r28 `4016565774`. A negative answer was never cached, so during

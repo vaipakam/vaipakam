@@ -218,7 +218,7 @@ export function topologyFaults(t: Topology, self: number): string[] {
   }
   const unexpected = t.unexpected.filter((c) => c !== self);
   if (unexpected.length > 0) {
-    out.push(`chain(s) ${unexpected.join(', ')} are broadcast destinations but not on Base's expected-source list, so Base refuses their reports (SourceChainIdNotExpected) and every day finalizes without their interest`);
+    out.push(`chain(s) ${unexpected.join(', ')} are broadcast destinations but not on Base's expected-source list, so every day finalizes without their interest (a Base built before #2618 also refuses their reports outright, SourceChainIdNotExpected)`);
   }
   if (t.self) out.push(`Base itself (${self}) is a broadcast destination, so every broadcast pays for a message to itself that serves no one`);
   if (t.repeated.length > 0) out.push(`chain(s) ${t.repeated.join(', ')} appear more than once among the broadcast destinations, so every broadcast pays for and sends each of them more than once`);

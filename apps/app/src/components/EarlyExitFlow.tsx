@@ -17,8 +17,9 @@
  * unfilled, asset-quadruple continuity, duration within the loan's
  * remaining term, collateral demand within the pledged collateral,
  * amount covering the principal, cost ≤ principal). CRITICAL: a
- * consumed buy offer lingers as "active" in the indexer (the sale
- * path emits no OfferAccepted), so submit ALWAYS re-verifies the
+ * consumed buy offer can still read as "active" in the indexer (it
+ * trails the chain, and a Diamond from before #2527 emits no
+ * OfferAccepted on a direct sale), so submit ALWAYS re-verifies the
  * offer live (`getOfferDetails.accepted === false`) plus term
  * equality with what was reviewed.
  */
@@ -248,8 +249,8 @@ export function EarlyExitFlow({
       );
       // One live batch: seller still holds the lender NFT, the loan
       // itself, chain time, the buy offer's LIVE record (a consumed
-      // offer stays "active" in the indexer — the sale path emits no
-      // OfferAccepted), and both legs' pause state.
+      // offer can still read "active" in the indexer — see the header),
+      // and both legs' pause state.
       const [, liveLoan, latestBlock, liveOffer] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,

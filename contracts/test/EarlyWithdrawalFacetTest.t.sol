@@ -1395,6 +1395,32 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      here, because subtracting a lifetime figure from a segment-scoped one
     ///      could leave a residual with nowhere to go (Codex #1801 r3 P1); there
     ///      is no residual to strand once the quantity is a clamped window.
+    /// @dev #2527 — the direct sale names the buy offer it consumed, with the
+    ///      same `OfferAccepted` event the accept path emits, so every consumer
+    ///      that retires an accepted offer retires this one too.
+    event OfferAccepted(
+        uint256 indexed offerId,
+        address indexed acceptor,
+        uint256 loanId,
+        uint256 matchAmount,
+        uint256 newAmountFilled,
+        bool newAccepted
+    );
+
+    function test_sellLoanViaBuyOffer_emitsOfferAcceptedForTheConsumedOffer() public {
+        uint256 principal = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        _mockSaleSideEffects();
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit OfferAccepted(buyOfferId, lender, activeLoanId, principal, principal, true);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+        assertTrue(
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId).accepted,
+            "the event reports the state the sale wrote"
+        );
+    }
+
     function test_sellLoanViaBuyOffer_paidThroughNowForfeitsNothing() public {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);

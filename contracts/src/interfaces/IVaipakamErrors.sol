@@ -919,8 +919,18 @@ interface IVaipakamErrors {
     ///         reported AND before the `rewardGraceSeconds` fallback
     ///         window elapsed.
     error DayNotReadyToFinalize();
-    /// @notice `sourceChainId` on an inbound chain report is not in the
-    ///         Base aggregator's `expectedSourceChainIds` list.
+    /// @notice #2613 / #2621 — Base's expected-source list is empty or leaves
+    ///         Base itself out, and a finalization against either would zero
+    ///         real interest for good. `setExpectedSourceChainIds` refuses to
+    ///         store such a list, and a permissionless `finalizeDay` refuses
+    ///         one stored before that check. The admin `forceFinalizeDay`
+    ///         override is not refused by it.
+    error ExpectedSourceListUnusable();
+    /// @notice `sourceChainId` on an inbound COMMITMENT report is neither in
+    ///         the Base aggregator's `expectedSourceChainIds` list nor shown by
+    ///         the day's own records to have taken part. (Day reports are not
+    ///         refused for this since #2618: an off-list chain's day figures
+    ///         are stored and simply not counted.)
     error SourceChainIdNotExpected();
     /// @notice Mirror-side rebroadcast attempted to overwrite a global
     ///         denominator that was already set for the same day with a

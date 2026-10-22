@@ -72,7 +72,7 @@
  */
 
 import { type Address } from 'viem';
-import { createChainClient } from './subrequestBudget';
+import { createChainClient, type Cost } from './subrequestBudget';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   InteractionRewardsLensFacetABI,
@@ -469,6 +469,17 @@ export function isMissingSelectorRevert(err: unknown): boolean {
  * its own budget, runs once a minute, and is already where chain reads
  * are accounted for.
  */
+/**
+ * What one capture costs the invocation, as a bound (its client does not
+ * retry): the chain-id read, up to three head reads (the settled block, and
+ * on a provider without that tag the latest number and the pinned block), the
+ * three pinned reads, and the row's D1 write — two at worst, when a database
+ * without the newer columns refuses the first shape and the write is retried
+ * in the older one. The cron entry point asks for it before starting a
+ * capture (#2194).
+ */
+export const BACKING_SNAPSHOT_COST: Cost = { external: 7, d1Queries: 2 };
+
 export async function captureBackingSnapshot(
   env: Env,
   chainId: number,

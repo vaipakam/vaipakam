@@ -186,7 +186,7 @@ Let `D = currentDay - 1` (every chain should have finalized D by now).
 | Check | Call | Expected |
 |---|---|---|
 | Day finalized | `isDayReadyToFinalize(D)` | `reason == 1` (already finalized) |
-| Chain report count matches expected eids | `getChainDailyReportCount(D)` | `== len(expectedSourceEids)` — if less, the gap finalized via zeroing (see `IncidentRunbook.md`) |
+| Every expected chain was counted | `getDayZeroedChains(D)`, and `isChainIncluded(D, c)` for each `c` in `getExpectedSourceChainIds()` | `recorded == true` and `zeroed` empty; any chain listed in `zeroed` finalized at zero (see `IncidentRunbook.md`). Do NOT compare `getChainDailyReportCount(D)` with the list length: since #2618 it also counts reports from chains off the list, so it can match while a listed chain is missing |
 | Global interest > 0 | `getDailyGlobalInterest(D)` | ideally > 0; 0 is valid only on an all-zero day (quiet launch week) |
 
 ### On every reporter

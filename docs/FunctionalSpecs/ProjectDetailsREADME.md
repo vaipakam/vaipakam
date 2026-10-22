@@ -111,6 +111,11 @@ for the following platform areas:
     above it is refused, not partially filled and refunded. This mirrors the
     listed route, whose sale vehicle is built at exactly the principal, so the
     two routes cannot deliver different sizes.
+  - **The consumed offer leaves the book.** A buy offer a direct sale consumes
+    is reported as accepted exactly as an offer taken through the ordinary
+    accept is, naming the offer, the selling lender and the loan, so the offer
+    book and every consumer that retires accepted offers stop showing it as
+    fillable.
   - **The remaining term must fit within the buyer's authored duration, and this
     one is one-directional.** Because the loan's maturity is fixed at origination
     and a sale never moves it, the buyer's authored duration is a ceiling on how
@@ -1640,6 +1645,7 @@ Watcher and notification support:
 - the operations Worker should extend its scheduled loan-monitoring lane to pre-notify both borrower and lender before the next periodic-interest checkpoint
 - `preNotifyDays` is a shared bounded knob for maturity reminders and periodic-interest checkpoint reminders; default 3 days, allowed range 1 to 14 days
 - checkpoint notification de-duplication should be keyed to the exact checkpoint timestamp so retries do not spam users
+- the reminder lane need not run every minute: its lead time is days wide, so it runs on a cadence of a few minutes, sized so the lane stays inside the hosting plan's processing allowance rather than being stopped by it. A slower cadence lengthens a full pass over the loans, and that is acceptable only while a full pass still completes well inside the lead time
 
 ### Claiming Funds/Assets
 

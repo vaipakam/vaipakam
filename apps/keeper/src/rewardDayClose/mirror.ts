@@ -72,34 +72,51 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   // This run's unchecked dispatches, and the earlier ones still recorded.
   const dispatched = new Map([...(await store.dispatches(x.window)), ...run.dispatched]);
 
-  const day = (d: number): { finalized: Fact<boolean>; counted: Fact<boolean> } => {
-    if (baseDays === 'unserved') return { finalized: unknown('Base not served'), counted: unknown('Base not served') };
+  const day = (d: number): { finalized: Fact<boolean>; counted: Fact<boolean>; included: Fact<boolean> | null } => {
+    if (baseDays === 'unserved') return { finalized: unknown('Base not served'), counted: unknown('Base not served'), included: unknown('Base not served') };
     const v = baseDays.get(d);
-    return { finalized: v?.finalized ?? unknown('not read'), counted: v?.counted ?? unknown('not read') };
+    return { finalized: v?.finalized ?? unknown('not read'), counted: v?.counted ?? unknown('not read'), included: v === undefined ? unknown('not read') : v.included };
   };
   const outcome: PerDay<boolean> = new Map();
   const excluded: PerDay<boolean> = new Map();
+  const landedNotCounted = new Set<number>();
   for (const d of x.window) {
-    const { finalized, counted } = day(d);
+    const { finalized, counted, included } = day(d);
     // Base's outcome for this chain is final only once the day is finalized
     // (a report Base has counted can still be left out, if the chain leaves
     // the expected-source list before finalization), and learned here once
     // whether Base holds this chain's report is read too.
+    // On a Base that keeps the inclusion record (#2626), a landed report's
+    // outcome is learned only once that record is read too: settling the day
+    // without it would drop the one statement that says the report was left
+    // out. A Base that answered it keeps no such record settles as before.
     if (!finalized.known) outcome.set(d, unknown(finalized.why));
     else if (!finalized.value) outcome.set(d, known(false));
-    else outcome.set(d, counted.known ? known(true) : unknown(counted.why));
+    else if (!counted.known) outcome.set(d, unknown(counted.why));
+    else if (counted.value && included !== null && !included.known) outcome.set(d, unknown(included.why));
+    else outcome.set(d, known(true));
     // An outcome left unread keeps the day owed (run.ts), so it is said, like
     // every other step a failed read holds. Unserved, there is none to learn.
     if (base !== null && !outcome.get(d)!.known) {
-      sender.noteUnread(`outcome:${d}`, !finalized.known ? 'whether Base has finalized the day' : "whether Base holds this chain's report for the day");
+      sender.noteUnread(
+        `outcome:${d}`,
+        !finalized.known ? 'whether Base has finalized the day' : !counted.known ? "whether Base holds this chain's report for the day" : "whether Base included this chain's report in the finalized day",
+      );
     }
     // Finalized without this chain's report: excluded, known. Finalized with
     // it: included only if the chain was on Base's list when the day was
-    // finalized, which Base does not expose (#2626), so not known, and never
-    // said either way.
+    // finalized. A Base built with #2626 records that; one built before it
+    // answers that it keeps no such record, so there it is not known, and
+    // never said either way.
     if (!finalized.known || !finalized.value) excluded.set(d, finalized.known ? known(false) : unknown(finalized.why));
     else if (!counted.known) excluded.set(d, unknown(counted.why));
-    else excluded.set(d, counted.value ? unknown("whether Base counted this chain's landed report into the finalized day is not readable on Base") : known(true));
+    else if (!counted.value) excluded.set(d, known(true));
+    else if (included === null) excluded.set(d, unknown("whether Base counted this chain's landed report into the finalized day is not readable on a Base built before #2626"));
+    else if (!included.known) excluded.set(d, unknown(included.why));
+    else {
+      excluded.set(d, known(!included.value));
+      if (!included.value) landedNotCounted.add(d);
+    }
   }
 
   const m: MirrorFindings = {
@@ -111,6 +128,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     closeHold,
     outcome,
     excluded,
+    landedNotCounted,
     dispatched,
   };
   return { m, clock, closed: run.closed };

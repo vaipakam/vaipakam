@@ -1,6 +1,6 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
-import { spend, type TickBudget } from './subrequestBudget';
+import { spendInternal, type TickBudget } from './subrequestBudget';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -331,9 +331,9 @@ export async function readSecret(
   if (!b) return undefined;
   try {
     // COUNTED WHERE IT HAPPENS (#2221). A Secrets Store read is a binding
-    // call, the same class of outbound request as a D1 call, and this Worker
-    // makes up to a dozen of them at the top of every cron tick — a material
-    // slice of a 50-request allowance, and the slice a pass-scoped counter
+    // call to one of Cloudflare's own services — the same class as a D1 call,
+    // charged to the internal-services meter — and this Worker makes up to a
+    // dozen of them at the top of every cron tick, which a pass-scoped counter
     // would never see. Counted here because this is the only line that knows
     // whether a binding was actually present to read.
     //
@@ -341,7 +341,7 @@ export async function readSecret(
     // a subrequest, this counter is high by at most the number of secrets,
     // and a ceiling guard that errs high refuses work it could have done,
     // where one that errs low freezes a chain.
-    if (budget) spend(budget);
+    if (budget) spendInternal(budget);
     return await b.get();
   } catch (err) {
     // eslint-disable-next-line no-console
