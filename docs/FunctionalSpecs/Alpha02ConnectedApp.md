@@ -2904,6 +2904,29 @@ is the borrower's own money.
   straight back — so closing the connection first is what ends it; and a
   teardown writes on its way out, so a sweep placed first would leave those
   writes behind. The intent is the ordering, not merely the three steps.
+- **A connection that reloads the page as it closes is closed LAST.** Some
+  wallet connections end by reloading the page, and nothing in the app can
+  stop that. Closed with the others, the reload could land in the middle of
+  the erasure and leave the rest undone with no word on it; closed after
+  everything the erasure counts, the reload can interrupt nothing. That
+  connection's own library clears its session on the way out, which is why
+  it can safely wait. **The report must survive that reload.** A page that
+  reloads straight after an erasure returns the user to a blank screen, and
+  on this page the report is the point — so the report as it stands just
+  before that last step is kept for this tab alone, holding only counts and
+  outcomes, and is shown again after the reload and then discarded. It must
+  claim nothing about the step that was interrupted: the page says the step
+  ran last and the page reloaded during it, and tells the user how to check
+  their wallet.
+- **A wallet that is still reconnecting is waited for, not reported as
+  refusing.** While the app restores a wallet connection from a previous
+  visit, there is no connection yet that can be closed, and the restore
+  cannot be cancelled — it may finish after the erasure and put a session
+  back. So the erasure waits, for a bounded time, for the restore to finish
+  and then closes whatever is live; if the wait runs out it says the wallet
+  could not be disconnected YET, that it may sign the user back in, and that
+  erasing again once it has will finish the job. That is a different remedy
+  from a wallet that declined, and the page keeps the two apart.
 - **A refusal must be reported as a refusal, and the kinds are
   distinguishable.** The session records can fail to clear, the browser can
   refuse to expose that storage at all, and a wallet can decline to
@@ -2972,12 +2995,27 @@ is the borrower's own money.
   originating tab's sweep, so any write lands in storage that was just
   cleared and stays there — a peer tab restoring the keys the erasure
   removed. Where the natural way to reset something persists, the peer tab
-  removes what it wrote.
+  removes exactly what it wrote and nothing more; and where the user has set
+  that preference again since the erasure, the peer tab adopts it rather
+  than overwriting it.
+- **A peer tab does not clear the stores it shares with the erasing tab.**
+  The shared stores are cleared by the tab where the user asked, which is
+  also the only one that reports on them. A peer tab clearing them as well
+  is a second, uncoordinated clearer: arriving late — a background tab can
+  receive the request long after it was sent — it deletes what the user has
+  stored since, sessions included, and arriving early it empties the stores
+  before the erasing tab has counted them, so the report understates what
+  was removed. The stores record nothing about who wrote what, so "clear
+  only what this tab's teardown wrote" cannot be expressed. The accepted
+  cost is that a wallet closing in another tab may write a small connection
+  record back after the erasing tab has finished, and **the page says so**,
+  with the remedy: erasing again from any tab removes it.
 - **A request abandoned for taking too long must not be left free to act
   later.** Giving up on a wallet teardown bounds the wait, not the work: the
   wallet may still complete afterwards and write its state back into storage
   the erasure had already cleared, leaving the device holding what the user
-  was told was removed. What arrives late must be cleared up after. The
+  was told was removed. What arrives late must be cleared up after, by the
+  tab that made the request (a peer tab clears no shared store; see above). The
   REPORT is not revised — it is fixed at the moment it was made, and it
   already says the wallet held out — so this is about the device, not the
   claim.
@@ -3092,6 +3130,13 @@ is the borrower's own money.
   running — and anything the app remembers only for as long as that surface
   exists stops being remembered exactly when it is needed. A protection with a
   shorter life than the thing it protects is not a protection.
+- **The erasure itself, and its report, outlive that screen too.** For the
+  same reason, the request has to be one operation for the tab rather than
+  something the page holds: the rebuilt page must show that an erasure is
+  running, must not let a second one start over it, and must show the
+  report when the first finishes. A report written to a screen that no
+  longer exists is a report nobody sees, on the one page whose purpose is
+  the report.
 - **A report of how much was erased must not attribute it to a source it
   cannot vouch for.** Where the browser refuses a check, the page may still
   know how many items it removed; that figure spans ordinary storage,

@@ -26,28 +26,28 @@
  * refused, and partly erased — with anything REMAINING or UNREADABLE
  * outranking anything removed. See `eraseMyData`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
-  connectionGeneration,
-  disconnectEvery,
-  eraseConnectorStorageQuietly,
-  eraseIndexedDbData,
   erasedItemCount,
-  eraseMyDataFully,
   inspectErasableData,
   inspectIndexedDbData,
   inspectMyData,
   isAppStorageKey,
-  type FullEraseResult,
   type IndexedDbInventory,
 } from '../lib/dataRights';
+import {
+  dismissErasureReport,
+  getErasureRun,
+  runErasure,
+  subscribeErasureRun,
+} from '../lib/erasureRun';
+import { wagmiWalletPort } from '../chain/walletTeardownPort';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
-import { useAccount, useConfig, useDisconnect } from 'wagmi';
-import { bumpEraseEpoch } from '../lib/eraseEpoch';
+import { useConfig } from 'wagmi';
 import { DiagErasureCard } from '../components/DiagErasureCard';
 
 /** Serialise and hand the file to the browser. Kept here rather than
@@ -70,91 +70,38 @@ function downloadJson(filename: string, payload: unknown): void {
 }
 
 export function DataRights() {
-  // `disconnectAsync` rather than `disconnect`: the erasure must not delete
-  // the session databases until the teardown has actually finished, and the
-  // fire-and-forget variant gives nothing to await.
-  //
-  // `connectors` is EVERY live connection, and the teardown below names each
-  // one (round 3 P1). A bare `disconnectAsync()` reads as "disconnect", but
-  // `@wagmi/core`'s action resolves the connector from `state.current` alone
-  // and then, when other connections remain, selects the next one as current
-  // rather than clearing the map. So a tab holding two wallets would drop one,
-  // resolve, and be reported as signed out while the second stayed connected —
-  // with a live client free to write its session back into stores this erasure
-  // had already emptied. `useConnections` is exactly the set that has to go.
-  const { disconnectAsync, connectors: liveConnectors } = useDisconnect();
-  // #1862 Part 2 round 2 P2 — `disconnectAsync()` RESOLVES when there is no
-  // connection, so treating fulfilment as proof of a sign-out told an
-  // unconnected visitor they had been signed out. The teardown is supplied
-  // only when there is something to tear down, which also keeps
-  // `connector.attempted` meaning what it says.
-  //
-  // `status`, NOT `isConnected` (round 8 P1). wagmi's `getAccount` reports
-  // `isConnected: false` throughout `reconnecting` — the state a persisted
-  // WalletConnect session sits in while it is being restored — even though
-  // there IS a persisted connection and `reconnect()` is actively authorizing
-  // connectors. Gating on `isConnected` therefore supplied no teardown at
-  // exactly the moment one was most needed, marked the connector unattempted,
-  // reported a clean erasure, and let the in-flight reconnect repopulate
-  // connection state and storage after the sweep. Anything other than
-  // `disconnected` means something may still be holding on.
-  const { status } = useAccount();
+  // The wallet is reached through the config, read at call time, rather than
+  // through hooks: the erasure outlives this component (#2038) — see
+  // `lib/erasureRun.ts` and `chain/walletTeardownPort.ts`.
   const config = useConfig();
-  // THE FENCE CANNOT ASK WAGMI'S STATUS (round 15 P2). Both late-cleanup
-  // fences below used to read `config.state.status`, and that is the single
-  // value a stale teardown is guaranteed to have overwritten by the time they
-  // run: `@wagmi/core@2.22.1`'s `disconnect` captures the connections Map
-  // before awaiting the connector and `connect` REPLACES that Map, so a slow
-  // teardown settling after the user reconnects deletes from an orphaned map,
-  // finds it empty, and publishes `status: 'disconnected'` over the newer
-  // connection. Reading status there meant the fence protecting a session was
-  // consulting the write that had just discarded it.
-  //
-  // A generation counts connections as EVENTS instead — see
-  // `connectionGeneration`, which is a module singleton subscribed where the
-  // wagmi config is built. NOT OWNED BY THIS PAGE (round 16 P2): the first
-  // version created one per mount, and this page unmounts DURING the very
-  // operation the fence exists for — `onErase` resets the language first and
-  // `LanguageRemount` remounts the tree on that event — so React's cleanup
-  // unsubscribed the counter mid-erasure and it froze at the request's value.
-  // A late connector then found no increment, agreed with wagmi's stale
-  // `disconnected`, and cleared a session made in the replacement tree. Only
-  // the MARK belongs to this page; the counting has to outlive it.
-  const genAtRequest = useRef(0);
-  // "Is there a session the request must not destroy?" — status OR generation,
-  // because each catches what the other cannot. The generation misses a
-  // connection made and dropped again between the request and the cleanup
-  // (nothing to protect, so that is correct); the status misses one the stale
-  // write erased, which is round 15's finding.
-  const hasLiveSession = useCallback(
-    () =>
-      config.state.status !== 'disconnected' ||
-      connectionGeneration.current() !== genAtRequest.current,
-    [config],
-  );
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  // The erase outcome, FROZEN at the moment it happened (review round 3
-  // P2). It used to be recomputed against the live `stored` count on
-  // every render, so writing any new key afterwards — toggling
-  // Basic/Advanced in the still-mounted sidebar is enough — turned a
-  // finished "Erased 7 items" into "Erased 7 items, but 1 could not be
-  // removed", describing something created AFTER the erasure as a
-  // failed removal. A report about a past event must not be rewritten
-  // by later events.
-  const [result, setResult] = useState<
-    (FullEraseResult & { remaining: number; refusedAfter: boolean }) | null
-  >(null);
-  // #1862 Part 2 — the erasure is asynchronous now: it disconnects the
-  // wallet and deletes two databases, and a database another tab is
-  // holding open takes up to the delete timeout to give an answer. Without
-  // a busy state the button looks dead for those seconds, and a second
-  // click would start a second teardown.
-  const [erasing, setErasing] = useState(false);
-  // Resolves when an erasure has finished its counted clear. Held in a ref
-  // rather than state: nothing renders from it, and a straggler cleanup
-  // registered during one erasure must see that erasure's gate.
-  const erasedFully = useRef<Promise<void>>(Promise.resolve());
+  // The erasure and its report live OUTSIDE this component (#2038). Erasing
+  // in any language but English resets the language first, and
+  // `LanguageRemount` replaces this whole page on that event while the
+  // erasure is still running — so a busy flag or a result held in this
+  // component's state was lost mid-operation: the replacement page allowed a
+  // second erasure, and the first one's report went to an instance that no
+  // longer existed. The page now starts the operation and renders what the
+  // module store reports; the store also brings a report back after a
+  // wallet reloads the page (#2035).
+  //
+  // The report is FROZEN at the moment it happened (review round 3 P2). It
+  // used to be recomputed against the live count on every render, so writing
+  // any new key afterwards turned a finished "Erased 7 items" into "Erased 7
+  // items, but 1 could not be removed", describing something created AFTER
+  // the erasure as a failed removal.
+  const run = useSyncExternalStore(subscribeErasureRun, getErasureRun);
+  // #1862 Part 2 — the erasure is asynchronous: it disconnects the wallet and
+  // clears two databases, and either can take seconds. The busy state keeps
+  // the button from looking dead and a second click from starting a second
+  // teardown; the guard itself is in `runErasure`.
+  const erasing = run.phase === 'running';
+  const result = run.phase === 'done' ? run.report : null;
+  // The confirmation shows while the user is confirming, and stays up while
+  // the erasure runs — including in a replacement page that never saw the
+  // click. A finished report closes it.
+  const showConfirm = erasing || (confirming && run.phase === 'idle');
   // Review round 1 P2: the providers sit ABOVE this route and read
   // storage only on their own mount, so clearing the keys left the live
   // theme and mode showing the erased values until a reload — the page
@@ -273,7 +220,7 @@ export function DataRights() {
   // repo's `set-state-in-effect` rule rejects it, correctly — it is a
   // cascading render for a value the render can work out for itself. A
   // generation that has not been answered yet IS the pending state.
-  const inventoryGen = `${storageTick}|${confirming}|${result ? 1 : 0}`;
+  const inventoryGen = `${storageTick}|${showConfirm}|${result ? 1 : 0}`;
   const [dbInventory, setDbInventory] = useState<{
     gen: string;
     value: IndexedDbInventory;
@@ -355,154 +302,21 @@ export function DataRights() {
     setTimeout(() => setDownloaded(false), 2500);
   }
 
-  async function onErase() {
-    // Language goes back to the default BEFORE the erase, deliberately.
-    // `changeLanguage` persists — to the key and the shared-domain
-    // cookie — so running it afterwards would rewrite what the erase
-    // had just removed. Doing it first means the erase clears its
-    // write, and the order is the whole mechanism rather than an
-    // accident of statement order.
-    void i18n.changeLanguage('en');
-    setErasing(true);
-    // The mark every late cleanup compares against. Taken here, at the
-    // request, so that "newer than the request" is measured from the moment
-    // the user asked rather than from whenever a straggler happens to settle.
-    genAtRequest.current = connectionGeneration.current();
-    // Opened when the erasure — including its counted database clear — has
-    // finished. See `onStragglerSettled` below for why a late cleanup must
-    // not run before it.
-    let openGate: () => void = () => {};
-    erasedFully.current = new Promise<void>((resolve) => {
-      openGate = resolve;
+  function onErase() {
+    void runErasure({
+      wallet: wagmiWalletPort(config),
+      // Language goes back to the default BEFORE the erase, deliberately:
+      // `changeLanguage` persists — to the key and the shared-domain cookie —
+      // so the erase must run after it to clear its write.
+      resetLanguage: () => void i18n.changeLanguage('en'),
+      // Theme and mode reset AFTER, through setters that do not persist:
+      // their ordinary setters would write the key back. Both providers sit
+      // above `LanguageRemount`, so these stay valid when this page does not.
+      resetPreferences: () => {
+        resetTheme();
+        resetMode();
+      },
     });
-    let erased: FullEraseResult;
-    try {
-      // The teardown is injected rather than imported by the library: see
-      // `eraseMyDataFully`. It runs FIRST, so a connector holding a
-      // database open gets the chance to close it before the deletion.
-      erased = await eraseMyDataFully({
-        // Same reconnect fence as the straggler callback below, for the
-        // AGGREGATE-timeout path that bypasses it (round 14 P2): several
-        // connectors can each stay inside their own bound while their
-        // sequential total crosses the outer one, so no straggler callback is
-        // registered and the library's own late cleanup is the only one that
-        // runs — unguarded until now.
-        hasLiveSession,
-        // Every live connection, not just the current one — see
-        // `disconnectEvery`, which holds the loop so it is testable outside
-        // this page. The page has no rendering harness, and round 2's lesson
-        // here was that the fixes were in the library and the page was not
-        // using them.
-        // `connected` or `reconnecting` (round 8 P1, NARROWED by self-review).
-        // The first version of this gate was `status !== 'disconnected'`, which
-        // also admits `connecting` — the state after a user clicks Connect with
-        // a wallet modal open, where `connections` is empty by definition. That
-        // supplied a teardown with nothing to tear down, so `disconnectEvery`
-        // raised its empty-list refusal and the page told a user who had NEVER
-        // CONNECTED that the wallet would not disconnect and the site was still
-        // connected to it. Round 2 fixed a false sign-out over nothing; that was
-        // a false HOLDOUT over nothing, which is the same untruth inverted.
-        // `connecting` has no persisted connection to protect, which was the
-        // entire reason `reconnecting` had to be admitted.
-        //
-        // See the hook above. The
-        // teardown reads the connector list from the LIVE config at call time
-        // rather than from the render-time value, because during a reconnect
-        // that list is still filling: by the time the user's click reaches
-        // here, connections wagmi did not have at render may exist, and those
-        // are exactly the ones that would otherwise survive the erasure.
-        disconnect:
-          status === 'connected' || status === 'reconnecting'
-          ? disconnectEvery(liveConnectors, disconnectAsync, {
-              // Self-review after round 7: the straggler callback was wired
-              // into the peer listener and NOT here, so the page had the
-              // defect round 7 raised — the aggregate rejects at the
-              // PER-CONNECTOR bound, so `eraseMyDataFully`'s own late sweep
-              // fires there, and a connector completing after it wrote with
-              // nothing left to notice. Two different triggers are needed and
-              // both are now present: this one for a straggler, the library's
-              // `settledLate` for the whole-teardown timeout.
-              // BOTH stores (round 9 P2). Round 8 taught the PEER cleanup to
-              // re-clear the databases and left the originating page's
-              // straggler cleanup on Web Storage alone — but a WalletConnect
-              // disconnect that outruns the per-connector bound persists its
-              // session and keychain back into IndexedDB after
-              // `eraseIndexedDbData()` has already run, and a Web-Storage-only
-              // cleanup cannot see that. The same fix, in the place it was
-              // not applied.
-              // QUEUED BEHIND THE ERASE, never ahead of it (round 12 P2). A
-              // connector that timed out at four seconds can settle at five
-              // while a later one keeps the loop running to seven — so this
-              // fired before `eraseMyDataFully` reached its COUNTED clear,
-              // emptied the same stores, and left that call reporting zero
-              // database records over records the erasure had removed. The
-              // page owns the ordering because it owns both calls.
-              onStragglerSettled: () => {
-                void erasedFully.current.then(() => {
-                  // NOT IF THE USER HAS RECONNECTED SINCE (round 13 P2). The
-                  // gate stops this outrunning the counted clear; it does not
-                  // stop it arriving after the person went back to using the
-                  // app. A teardown given up on can settle arbitrarily late,
-                  // and clearing whole wallet stores then destroys a session
-                  // created AFTER the erase request — something nobody asked
-                  // for and nothing reports.
-                  //
-                  // There is no per-record attribution in these stores, so
-                  // "remove only what the old teardown wrote" is not
-                  // expressible; what IS knowable is whether a session exists
-                  // that postdates the request. If one does, whatever the
-                  // stores hold is newer than the request and not ours to
-                  // remove. The cleanup exists to undo a write nobody wanted,
-                  // and skipping it leaves at worst a stale connector key —
-                  // strictly better than deleting a live session.
-                  //
-                  // Asked through `hasLiveSession`, NOT of wagmi's status
-                  // (round 15 P2): the straggler settling here is the very
-                  // call whose stale connections map can have published
-                  // `disconnected` over the session this line is protecting.
-                  if (hasLiveSession()) return;
-                  eraseConnectorStorageQuietly();
-                  void eraseIndexedDbData();
-                });
-              },
-              // Re-read at call time, for the reconnect case above.
-              connectorsAtRunTime: () =>
-                [...config.state.connections.values()].map(
-                  (connection) => connection.connector,
-                ),
-            })
-          : undefined,
-      });
-    } finally {
-      setErasing(false);
-      openGate();
-    }
-    // Measured immediately, once, and kept with the result — see the
-    // state declaration for why this is not recomputed later.
-    // The ERASURE inventory, not the export one (#1862 round 1 P1): a
-    // connector key that refused removal, or that a live connector wrote
-    // straight back, is invisible to the export scan — so the page would
-    // report a clean success over storage that is still there.
-    const after = inspectErasableData();
-    setResult({ ...erased, remaining: after.count, refusedAfter: after.refused });
-    setConfirming(false);
-    // The other two reset AFTER, through setters that do not persist:
-    // their ordinary setters would write the key back, undoing the very
-    // erasure they were called to complete. Two different orderings for
-    // two different persistence behaviours, which is why each is
-    // spelled out.
-    resetTheme();
-    resetMode();
-    // Everything else that read storage once and kept the value — the
-    // notification cursor today — re-reads off this.
-    bumpEraseEpoch();
-    // Deliberately NO page reload. The retired implementation reloaded
-    // so every hook rehydrated from empty storage — but a reload also
-    // throws away the result message, so the user is returned to a
-    // fresh page with no confirmation that anything happened, which on
-    // this page is the whole point. Resetting the live state explicitly
-    // — theme, mode, language, and everything on the erase epoch — is
-    // what keeps the screen honest without one.
   }
 
   return (
@@ -567,6 +381,9 @@ export function DataRights() {
               result.remaining === 0 &&
               !result.refusedAfter &&
               result.complete &&
+              // A report brought back after a reload does not know how its
+              // last step ended (#2035), so it is never shown as a success.
+              !result.reloadedDuringLast &&
               (result.total > 0 || result.indexedDb.records > 0)
                 ? 'banner banner-success'
                 : 'banner'
@@ -631,7 +448,12 @@ export function DataRights() {
                         // returns false where BroadcastChannel is missing or
                         // blocked, and the page was promising peers had been
                         // asked in exactly the browser where none had.
-                        result.connector.disconnected
+                        // Not after a reload (#2035): the kept report
+                        // predates the last teardown, so it cannot vouch
+                        // for a sign-out — the reload line below says what
+                        // is known instead.
+                        result.connector.disconnected &&
+                        !result.reloadedDuringLast
                         ? result.peersNotified
                           ? copy.dataRights.eraseDoneDisconnected(
                               erasedItemCount(result),
@@ -676,20 +498,34 @@ export function DataRights() {
             {result.connector.attempted && !result.connector.disconnected ? (
               <span className="block-line">
                 {' '}
-                {copy.dataRights.eraseWalletHeld}
+                {/* #2039 — still restoring is not a refusal: nothing said
+                    no, the connection did not exist yet in a form that can
+                    be closed, and the remedy is to wait and erase again. */}
+                {result.connector.reconnectPending
+                  ? copy.dataRights.eraseWalletReconnecting
+                  : copy.dataRights.eraseWalletHeld}
+              </span>
+            ) : null}
+            {/* #2035 — what is known after a wallet reloaded the page, and
+                no more: the step ran last, after everything else, and its
+                own outcome is not in this report. */}
+            {result.reloadedDuringLast ? (
+              <span className="block-line">
+                {' '}
+                {copy.dataRights.eraseWalletReloaded}
               </span>
             ) : null}
           </div>
         ) : null}
 
-        {confirming ? (
+        {showConfirm ? (
           <>
             <p className="muted">{copy.dataRights.eraseConfirmPrompt}</p>
             <div className="cluster">
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={() => void onErase()}
+                onClick={onErase}
                 disabled={erasing}
               >
                 {/* The label carries the busy state, not just the disabled
@@ -716,7 +552,7 @@ export function DataRights() {
             type="button"
             className="btn btn-secondary"
             onClick={() => {
-              setResult(null);
+              dismissErasureReport();
               setConfirming(true);
             }}
           >
@@ -749,6 +585,7 @@ export function DataRights() {
           <li>{copy.dataRights.scopeAlerts}</li>
           <li>{copy.dataRights.scopeDiagnostics}</li>
           <li>{copy.dataRights.scopeTabs}</li>
+          <li>{copy.dataRights.scopeOtherTabs}</li>
           <li>{copy.dataRights.scopeSite}</li>
           <li>{copy.dataRights.scopeCookies}</li>
         </ul>

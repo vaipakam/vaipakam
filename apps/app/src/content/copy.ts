@@ -485,6 +485,20 @@ const copySource = {
        the outcome the sentence above it just reported. */
     eraseWalletHeld:
       'The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
+    /* #2039 — the wallet was still restoring its connection when the
+       erasure needed to close it. Not a refusal, and the remedy differs:
+       the restore cannot be cancelled and may finish after the erasure,
+       putting a session back, so the honest instruction is to erase again
+       once it has. Additive and outcome-neutral, like the line above. */
+    eraseWalletReconnecting:
+      'Your wallet was still reconnecting to this site, so it could not be disconnected yet, and it may sign you back in when it finishes. Once it has, erase again — or disconnect from your wallet directly.',
+    /* #2035 — a wallet connection that reloads the page as it closes is
+       closed last, after everything else has been erased, and this report
+       is the copy kept just before that step. It knows the step ran and the
+       page reloaded during it; it does not know the step's outcome, so it
+       claims neither. Additive and outcome-neutral. */
+    eraseWalletReloaded:
+      'One wallet connection reloads the page as it closes, so it was closed last, after everything else had been erased — and the page reloaded during that step. If your wallet still lists this site as connected, disconnect it there.',
     /* Round 14 P2: ordinary storage could not be VERIFIED, but the wallet
        store was reachable and gave up records. `eraseBlocked` says nothing
        was removed, which contradicts a non-zero count; this reports what was
@@ -613,6 +627,13 @@ const copySource = {
        limit is stated rather than glossed. */
     scopeTabs:
       'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
+    /* #2037 — the cost of the design choice, stated. Another open tab
+       signs ITSELF out when asked, and it no longer clears the stores this
+       tab shares with it: doing so arbitrarily late destroyed sessions made
+       after the erasure, and raced this tab's own count. So a wallet
+       closing in that tab can leave a small connection record behind. */
+    scopeOtherTabs:
+      'Wallets open in other tabs. Each tab is asked to sign itself out, and a wallet closing there can write a small connection record back after this tab has finished. Erasing again from any tab removes it.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
     /* Three rounds of review each removed one false claim from this

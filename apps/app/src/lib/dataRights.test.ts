@@ -31,7 +31,8 @@ import {
   erasedItemCount,
   isDisconnectSentinelKey,
   inspectIndexedDbData,
-  eraseWebStorageQuietly,
+  undoLanguageWrite,
+  readStoredLanguage,
   eraseConnectorStorageQuietly,
   disconnectEvery,
   createConnectionGeneration,
@@ -61,6 +62,9 @@ const KNOWN_KEYS: readonly string[] = [
   // sessionStorage
   'vaipakam.app.lastError',
   'app.chunkReloaded',
+  // #2035 — a finished erasure's report, kept only while a wallet that
+  // reloads the page is closing, and removed as it is read back.
+  'app.dataRights.erasureReport',
 ];
 
 /**
@@ -299,6 +303,9 @@ describe('storage-prefix coverage', () => {
       'app.recoverPending.',
     ],
     'src/main.tsx': ['app.chunkReloaded'],
+    // #2035 — through a guarded accessor the scan's pattern does not see,
+    // registered anyway so the record is complete.
+    'src/lib/erasureRun.ts': ['app.dataRights.erasureReport'],
     // The data-rights page itself reads and clears; it writes nothing.
     'src/lib/dataRights.ts': [],
     // Signal only — no storage of its own.
@@ -832,7 +839,11 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     });
     expect(order).toEqual(['disconnect']);
     expect(store.has('wagmi.recentConnectorId')).toBe(false);
-    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: true,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 
@@ -847,7 +858,11 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
         throw new Error('user rejected');
       },
     });
-    expect(result.connector).toEqual({ attempted: true, disconnected: false });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.localStorage).toBeGreaterThan(0);
     expect(result.indexedDb.cleared).toBe(2);
     expect(result.complete).toBe(false);
@@ -857,7 +872,11 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     fakeWindow(new Map());
     stubIdb('success');
     const result = await eraseMyDataFully();
-    expect(result.connector).toEqual({ attempted: false, disconnected: false });
+    expect(result.connector).toEqual({
+      attempted: false,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 
@@ -890,6 +909,7 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       // The point of the bound: the rest of the erasure still ran.
       expect(result.localStorage).toBeGreaterThan(0);
@@ -1344,6 +1364,7 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       expect(result.complete).toBe(false);
       // Now the teardown finally lands, after the result was frozen.
@@ -1374,7 +1395,11 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
         store.set('wagmi.store', '{}');
       },
     });
-    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: true,
+      reconnectPending: false,
+    });
     expect(store.has('wagmi.store')).toBe(false);
     expect(result.complete).toBe(true);
   });
@@ -1498,6 +1523,7 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       // Written BEFORE the straggler lands, i.e. by a user still using the
       // page while the teardown drags on. Ordering matters: setting it after
@@ -1516,14 +1542,17 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
     }
   });
 
-  it('the quiet re-sweep covers cookies, not only Web Storage', async () => {
-    // Round 6 P2. A peer tab's language reset writes the `vaipakam_lang`
-    // COOKIE as well as the storage key, so a cleanup that swept only Web
-    // Storage restored an erased preference by half.
-    const store = new Map<string, string>();
+  it('a peer undoes only its own language write, in both stores (#2037)', () => {
+    // Round 6 P2 found the cookie half of the write; #2037 narrowed the undo
+    // from a blanket sweep of every store to the write itself, so a record
+    // the user stored after the erasure survives a late broadcast.
+    const store = new Map<string, string>([
+      ['vaipakam:language', 'en'],
+      ['app.mode', 'lend'],
+    ]);
     fakeWindow(store);
     const cleared: string[] = [];
-    let jar = 'vaipakam_lang=ta';
+    let jar = 'vaipakam_lang=en; vaipakam_theme=dark';
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: {
@@ -1532,13 +1561,42 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
         },
         set cookie(v: string) {
           cleared.push(v);
-          if (v.startsWith('vaipakam_lang=;')) jar = '';
+          if (v.startsWith('vaipakam_lang=;')) jar = 'vaipakam_theme=dark';
         },
       },
     });
     try {
-      eraseWebStorageQuietly();
+      undoLanguageWrite('en');
+      expect(store.has('vaipakam:language')).toBe(false);
       expect(cleared.some((c) => c.startsWith('vaipakam_lang=;'))).toBe(true);
+      // Nothing else is touched.
+      expect(store.get('app.mode')).toBe('lend');
+      expect(cleared.some((c) => c.startsWith('vaipakam_theme='))).toBe(false);
+    } finally {
+      delete (globalThis as Record<string, unknown>).document;
+    }
+  });
+
+  it('a peer leaves a language the user chose since in place (#2037)', () => {
+    const store = new Map<string, string>([['vaipakam:language', 'ta']]);
+    fakeWindow(store);
+    const cleared: string[] = [];
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        get cookie() {
+          return 'vaipakam_lang=ta';
+        },
+        set cookie(v: string) {
+          cleared.push(v);
+        },
+      },
+    });
+    try {
+      expect(readStoredLanguage()).toBe('ta');
+      undoLanguageWrite('en');
+      expect(store.get('vaipakam:language')).toBe('ta');
+      expect(cleared).toEqual([]);
     } finally {
       delete (globalThis as Record<string, unknown>).document;
     }

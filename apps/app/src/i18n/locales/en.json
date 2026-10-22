@@ -250,6 +250,8 @@
       "eraseStoresUnreadable": "This browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.",
       "eraseSessionHeld": "The wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.",
       "eraseWalletHeld": "The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.",
+      "eraseWalletReconnecting": "Your wallet was still reconnecting to this site, so it could not be disconnected yet, and it may sign you back in when it finishes. Once it has, erase again — or disconnect from your wallet directly.",
+      "eraseWalletReloaded": "One wallet connection reloads the page as it closes, so it was closed last, after everything else had been erased — and the page reloaded during that step. If your wallet still lists this site as connected, disconnect it there.",
       "erasePartlyUnverifiable": "Erased {{count}} stored items, but this browser would not let the app check its ordinary storage afterwards, so something may still be there. Clearing site data through your browser’s own settings will remove it.",
       "eraseBlocked": "This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.",
       "holdingTitle": "What is stored right now",
@@ -279,6 +281,7 @@
       "diagUnavailable": "The support service cannot process erasure requests right now. Try again later, or email support@vaipakam.com and we will process an erasure request for your wallet.",
       "diagError": "The request could not be completed, and nothing may have been erased. Try again in a moment.",
       "scopeTabs": "Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.",
+      "scopeOtherTabs": "Wallets open in other tabs. Each tab is asked to sign itself out, and a wallet closing there can write a small connection record back after this tab has finished. Erasing again from any tab removes it.",
       "scopeSite": "The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.",
       "scopeCookies": "Two preference cookies on the shared domain are in this browser, so the download includes them and erasing removes them. One is your language, which both sites read — that is how a language chosen on one site follows you to the other. The other is the main site’s own theme; this app never uses it, and your theme here is stored separately, not shared. Erasing fully resets this app but not vaipakam.com: the main site keeps its own copies of its preferences and will restore them, cookies included, on your next visit — removing those is what its own data controls are for."
     },

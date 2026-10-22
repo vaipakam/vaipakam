@@ -42,6 +42,7 @@ import { announceErase } from './eraseBroadcast';
 // bound (round 52). Same implementation, same TimeoutError identity — the
 // `instanceof` checks below still work because there is only one class.
 import { TimeoutError, withTimeout } from './withTimeout';
+import { LANGUAGE_STORAGE_KEY } from '@vaipakam/i18n/createI18n';
 
 /**
  * Every prefix this app writes browser storage under.
@@ -79,8 +80,11 @@ export const STORAGE_PREFIXES: readonly string[] = [
  *  the export can tell "already included" from "held only in memory". */
 const LAST_ERROR_KEY = 'vaipakam.app.lastError';
 
+/** The parent-scope cookie the i18n package mirrors the language to. */
+const LANGUAGE_COOKIE = 'vaipakam_lang';
+
 export const PREFERENCE_COOKIES: readonly string[] = [
-  'vaipakam_lang',
+  LANGUAGE_COOKIE,
   'vaipakam_theme',
 ];
 
@@ -570,6 +574,13 @@ function clearStorage(storage: Storage | null): number {
   return removed;
 }
 
+function expireCookie(name: string): void {
+  const expiry = 'expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+  document.cookie = `${name}=; ${expiry}`;
+  document.cookie = `${name}=; ${expiry}; domain=.vaipakam.com`;
+  document.cookie = `${name}=; ${expiry}; domain=${window.location.hostname}`;
+}
+
 function clearCookies(): number {
   let removed = 0;
   try {
@@ -580,10 +591,7 @@ function clearCookies(): number {
       // build sets it hostless, and a delete that names only one of the
       // two leaves the other standing — a preference that "would not
       // delete" for reasons invisible to the user.
-      const expiry = 'expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-      document.cookie = `${name}=; ${expiry}`;
-      document.cookie = `${name}=; ${expiry}; domain=.vaipakam.com`;
-      document.cookie = `${name}=; ${expiry}; domain=${window.location.hostname}`;
+      expireCookie(name);
       removed += 1;
     }
     // Counted only if they are actually GONE (review round 1 P1).
@@ -1192,16 +1200,46 @@ function isConnectorStorageKey(key: string): boolean {
   );
 }
 
-export function eraseWebStorageQuietly(): void {
-  clearStorage(safeStorage('localStorage'));
-  clearStorage(safeStorage('sessionStorage'));
-  // Cookies too (round 6 P2). A peer tab's language reset writes the
-  // `vaipakam_lang` cookie as well as the storage key — `createI18n`'s
-  // `languageChanged` listener emits both — so a cleanup that swept only Web
-  // Storage restored an erased preference by half and left the cookie
-  // standing. Anything called "quietly erase what a late write put back" has
-  // to cover every store the erasure itself covers.
-  clearCookies();
+/** The language preference stored for this site now, if any. */
+export function readStoredLanguage(): string | null {
+  try {
+    const stored = safeStorage('localStorage')?.getItem(LANGUAGE_STORAGE_KEY);
+    if (stored) return stored;
+  } catch {
+    // Unreadable reads as absent.
+  }
+  return readCookies().data[LANGUAGE_COOKIE] || null;
+}
+
+/**
+ * Remove the language preference a peer tab's reset just wrote, and nothing
+ * else (#2037).
+ *
+ * A tab told that ANOTHER tab erased has to show the default language, and
+ * `changeLanguage` persists — the storage key and the parent-scope cookie —
+ * into stores the erasing tab has already cleared. This undoes exactly that
+ * write: each of the two is removed only while it still holds `value`, the
+ * language the reset wrote. The blanket sweep it replaces cleared ALL of Web
+ * Storage and every cookie, and a broadcast can be delivered arbitrarily late
+ * (a frozen background tab receives it on waking), so it deleted whatever the
+ * user had stored since the erasure.
+ */
+export function undoLanguageWrite(value: string): void {
+  try {
+    const store = safeStorage('localStorage');
+    if (store?.getItem(LANGUAGE_STORAGE_KEY) === value) {
+      store.removeItem(LANGUAGE_STORAGE_KEY);
+    }
+  } catch {
+    // Storage refused — nothing it would let us undo.
+  }
+  try {
+    if (readCookies().data[LANGUAGE_COOKIE] === value) {
+      expireCookie(LANGUAGE_COOKIE);
+    }
+  } catch {
+    // Cookies unavailable.
+  }
 }
 
 export function eraseMyData(): EraseResult {
@@ -1269,6 +1307,35 @@ export interface ConnectorEraseResult {
   readonly attempted: boolean;
   /** Whether it completed without throwing. */
   readonly disconnected: boolean;
+  /**
+   * Whether the wallet was still RECONNECTING when the erasure gave up
+   * waiting for it (#2039). A distinct holdout from a refusal: nothing
+   * refused anything, the connection simply did not exist yet in a form
+   * that can be closed, and the remedy is to wait and erase again.
+   */
+  readonly reconnectPending: boolean;
+}
+
+/**
+ * The wallet was still reconnecting when the erasure needed to close it
+ * (#2039).
+ *
+ * While `@wagmi/core@2.22.1` restores a persisted session, its connection
+ * map holds the SERIALIZED connector record — id, name, uid, no methods —
+ * and only `reconnect()` replaces it with a live connector once that
+ * connector's own `connect()` succeeds. There is no cancel for that
+ * reconnect. Calling `disconnect` on the placeholder rejects on the missing
+ * method, and the reconnect then completes regardless and writes back what
+ * the sweep removed. So the teardown waits, bounded, for the reconnect to
+ * settle, and raises this when the bound passes with it still running: the
+ * page says the wallet could not be closed YET, which is a different
+ * remedy from a wallet that refused.
+ */
+export class ReconnectPendingError extends Error {
+  constructor() {
+    super('the wallet was still reconnecting, so it could not be closed yet');
+    this.name = 'ReconnectPendingError';
+  }
 }
 
 export interface FullEraseResult extends EraseResult {
@@ -1604,6 +1671,169 @@ export interface FullEraseOptions {
    * library, and a page that has no wallet (or a test) supplies nothing.
    */
   readonly disconnect?: () => Promise<unknown>;
+  /**
+   * Tear down the connections that RELOAD THE PAGE as they close, after
+   * everything else — the sweep and the counted database clear included —
+   * has finished (#2035).
+   *
+   * `@coinbase/wallet-sdk@4.3.6`'s WalletLink signer schedules an
+   * unconditional `document.location.reload()` on a promise nobody is handed
+   * (`WalletLinkRelay.resetAndReload`). Torn down FIRST, with the others, it
+   * could land in the middle of the erasure and leave the rest undone with
+   * no report. Torn down LAST, the reload can only arrive once there is
+   * nothing left to interrupt. Moving it is safe because that SDK clears its
+   * own storage on the way out, which is the write-back the disconnect-first
+   * rule exists to prevent.
+   *
+   * Handed the result as it stands at that point, so the caller can keep a
+   * copy that outlives a reload. Its outcome is folded into `connector`.
+   */
+  readonly disconnectLast?: (interim: FullEraseResult) => Promise<unknown>;
+}
+
+/** How a single teardown came out, before the two are folded together. */
+interface TeardownOutcome {
+  readonly disconnected: boolean;
+  readonly reconnectPending: boolean;
+  /** Given up on by the bound, so it may still write when it settles. */
+  readonly settledLate: boolean;
+}
+
+/**
+ * Run one bounded teardown, with the late cleanup a given-up-on teardown is
+ * owed. `afterCountedClear` gates that cleanup: a cleanup that empties the
+ * stores must never run ahead of the call that COUNTS them (round 12 P2).
+ */
+async function runTeardown(
+  teardown: Promise<unknown>,
+  afterCountedClear: Promise<void>,
+  hasLiveSession: (() => boolean) | undefined,
+): Promise<TeardownOutcome> {
+  // Set only when the teardown was given up on, so a teardown that finishes
+  // in time never triggers the late re-sweep below — its writes are already
+  // caught by the ordinary sweep, which is the whole point of the ordering.
+  //
+  // EFFICIENCY, NOT CORRECTNESS, and recorded as such because a mutation run
+  // says so: removing this guard survives every test, and should. On the
+  // in-time path the continuation runs when the teardown resolves, which is
+  // before `eraseMyData` — so an unconditional sweep there would be a
+  // redundant pass immediately followed by the real one, invisible from
+  // outside. The guard is worth keeping (a full Web Storage pass on every
+  // successful erasure is waste) and is not worth claiming a test for.
+  let settledLate = false;
+  // A TIMEOUT ABANDONS THE WAIT, NOT THE WORK (round 4 P2). `withTimeout`
+  // rejects the wrapper; the wagmi action underneath keeps running, and
+  // when it finally completes it calls `config.setState`, which rewrites
+  // `wagmi.store` through zustand's `persist` — into storage this erasure
+  // swept several seconds earlier. The device would then be left holding a
+  // connector key the page had reported removed.
+  //
+  // So a late teardown re-sweeps. The ON-SCREEN result is deliberately NOT
+  // revised — it is frozen at the moment it happened by an older decision,
+  // and a report that rewrites itself minutes later is its own untruth. The
+  // report already says the wallet held out and the erasure is incomplete,
+  // which remains true; this is about what is left on the device, not
+  // about what the page claims.
+  //
+  // ON BOTH OUTCOMES (round 6 P2). An earlier revision swept only on
+  // fulfilment, reasoning that a failed teardown wrote nothing — true when
+  // one refusal ended the whole attempt, and false since the aggregation
+  // fix: `disconnectEvery` now keeps going, so one connector can let go
+  // (persisting `wagmi.store`) before a later one refuses and makes the
+  // aggregate reject. A rejection no longer means no connector completed.
+  teardown
+    .catch(() => {
+      // Swallowed rather than left unhandled: this promise is no longer
+      // awaited, and an unhandled rejection from a data-rights control
+      // must not surface as a page error.
+    })
+    .finally(() => {
+      // AFTER THE COUNTED CLEAR, never before it (round 12 P2). A late
+      // teardown can settle at any moment, including one BEFORE the counted
+      // `eraseIndexedDbData()` has run — and this cleanup empties the same
+      // stores, so it would leave that counted call looking at an empty
+      // store and the erasure reporting zero database records over records
+      // it removed. Queuing behind the gate makes the ordering a property of
+      // the code rather than of the timing.
+      void afterCountedClear.then(() => {
+        // CONNECTOR KEYS ONLY, for the reason round 7 gave about the peer
+        // listener's equivalent: this fires seconds after the result was
+        // reported, the page stays usable in between, and a blanket sweep
+        // would delete records the user created AFTER the erasure. What a
+        // late teardown can recreate is connector state, so that is all a
+        // late cleanup has any business removing.
+        //
+        // NOT IF THE USER HAS RECONNECTED SINCE (round 14 P2) — the same
+        // fence the page's straggler callback got in round 13, on the path
+        // that bypasses it. A stale connector key is a far better outcome
+        // than deleting a live session.
+        if (settledLate && !hasLiveSession?.()) {
+          // BOTH stores (round 10 P2). The per-connector straggler callback
+          // clears the databases, and this whole-teardown path did not — but
+          // they catch different timeouts. Several connectors can each finish
+          // INSIDE the per-target bound while their sequential total exceeds
+          // the outer one (three at 3.5s does it), so no
+          // `onStragglerSettled` is registered and this continuation is the
+          // only cleanup that runs.
+          eraseConnectorStorageQuietly();
+          void eraseIndexedDbData();
+        }
+      });
+    });
+  try {
+    // BOUNDED (round 1 P2). Only a REJECTED promise reaches the catch; one
+    // that never settles — an unresponsive WalletConnect transport, a
+    // wallet that never answers — would hang here forever, leaving the
+    // page stuck on its working label with nothing erased at all. A
+    // timeout is treated as "did not disconnect" so the rest of the
+    // erasure still runs, which is the outcome that matters: failing to
+    // close a connection must not cost the user the deletion of
+    // everything else.
+    await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
+    return { disconnected: true, reconnectPending: false, settledLate: false };
+  } catch (error) {
+    // Same distinction as inside `disconnectEvery`, and the same reason
+    // (round 11 P2, second site — the finding named the per-connector one).
+    // A teardown that REJECTED has finished; only one we stopped waiting for
+    // can still write, so only that one earns a late cleanup. Setting this
+    // on an ordinary rejection ran the cleanup before the counted clear
+    // and could zero the reported record count.
+    settledLate = error instanceof TimeoutError;
+    return {
+      disconnected: false,
+      reconnectPending: error instanceof ReconnectPendingError,
+      settledLate,
+    };
+  }
+}
+
+/** Fold the teardowns that were supplied into the one outcome reported. */
+function foldConnector(
+  outcomes: readonly TeardownOutcome[],
+): ConnectorEraseResult {
+  return {
+    attempted: outcomes.length > 0,
+    disconnected: outcomes.length > 0 && outcomes.every((o) => o.disconnected),
+    reconnectPending: outcomes.some((o) => o.reconnectPending),
+  };
+}
+
+function isComplete(
+  indexedDb: IndexedDbEraseResult,
+  connector: ConnectorEraseResult,
+): boolean {
+  // A teardown that was asked for and failed leaves the app connected, so
+  // it is as incomplete as a refused database — the page must not report
+  // a clean erasure over a wallet that is still attached.
+  // #1862 Part 2 round 1 P2 — `unavailable` is NOT clean. A browser that
+  // hides IndexedDB after a wallet wrote to it leaves that material in
+  // place and unverifiable; neither store was emptied nor observed absent,
+  // so the honest answer is incomplete rather than success.
+  return (
+    indexedDb.refused.length === 0 &&
+    !indexedDb.unavailable &&
+    (!connector.attempted || connector.disconnected)
+  );
 }
 
 /**
@@ -1635,6 +1865,10 @@ export interface FullEraseOptions {
  *    ordinary single-wallet case.
  * 3. Then the database deletions, awaited, because no outcome may be
  *    reported until they have settled or timed out.
+ * 4. Last, the connections that reload the page as they close
+ *    (`disconnectLast`, #2035), so a reload can only arrive once there is
+ *    nothing left to interrupt. Followed by a connector-key sweep for what
+ *    that teardown writes on its way out, since it runs after step 2.
  *
  * A teardown that throws is caught and reported, never rethrown: a wallet
  * refusing to disconnect must not abort the erasure of everything else.
@@ -1642,23 +1876,7 @@ export interface FullEraseOptions {
 export async function eraseMyDataFully(
   options: FullEraseOptions = {},
 ): Promise<FullEraseResult> {
-  const { disconnect } = options;
-  let connector: ConnectorEraseResult = {
-    attempted: false,
-    disconnected: false,
-  };
-  // Set only when the teardown was given up on, so a teardown that finishes
-  // in time never triggers the late re-sweep below — its writes are already
-  // caught by the ordinary sweep, which is the whole point of the ordering.
-  //
-  // EFFICIENCY, NOT CORRECTNESS, and recorded as such because a mutation run
-  // says so: removing this guard survives every test, and should. On the
-  // in-time path the continuation runs when the teardown resolves, which is
-  // before `eraseMyData` — so an unconditional sweep there would be a
-  // redundant pass immediately followed by the real one, invisible from
-  // outside. The guard is worth keeping (a full Web Storage pass on every
-  // successful erasure is waste) and is not worth claiming a test for.
-  let settledLate = false;
+  const { disconnect, disconnectLast, hasLiveSession } = options;
   // Opened once the COUNTED clear below has finished. Every late cleanup —
   // this function's own, and the caller's per-straggler one, which is handed
   // the same gate — waits on it, so a teardown settling early cannot empty
@@ -1667,108 +1885,47 @@ export async function eraseMyDataFully(
   const countedClearDone = new Promise<void>((resolve) => {
     openGate = resolve;
   });
+  const outcomes: TeardownOutcome[] = [];
   if (disconnect) {
-    try {
-      // BOUNDED (round 1 P2). Only a REJECTED promise reaches the catch; one
-      // that never settles — an unresponsive WalletConnect transport, a
-      // wallet that never answers — would hang here forever, leaving the
-      // page stuck on its working label with nothing erased at all. A
-      // timeout is treated as "did not disconnect" so the rest of the
-      // erasure still runs, which is the outcome that matters: failing to
-      // close a connection must not cost the user the deletion of
-      // everything else.
-      const teardown = disconnect();
-      // A TIMEOUT ABANDONS THE WAIT, NOT THE WORK (round 4 P2). `withTimeout`
-      // rejects the wrapper; the wagmi action underneath keeps running, and
-      // when it finally completes it calls `config.setState`, which rewrites
-      // `wagmi.store` through zustand's `persist` — into storage this erasure
-      // swept several seconds earlier. The device would then be left holding a
-      // connector key the page had reported removed.
-      //
-      // So a late teardown re-sweeps. Web Storage only: that is where the late
-      // write lands, and it is synchronous, so the re-sweep cannot itself
-      // straddle anything. The ON-SCREEN result is deliberately NOT revised —
-      // it is frozen at the moment it happened by an older decision, and a
-      // report that rewrites itself minutes later is its own untruth. The
-      // report already says the wallet held out and the erasure is incomplete,
-      // which remains true; this is about what is left on the device, not
-      // about what the page claims.
-      //
-      // ON BOTH OUTCOMES (round 6 P2). An earlier revision swept only on
-      // fulfilment, reasoning that a failed teardown wrote nothing — true when
-      // one refusal ended the whole attempt, and false since the aggregation
-      // fix: `disconnectEvery` now keeps going, so one connector can let go
-      // (persisting `wagmi.store`) before a later one refuses and makes the
-      // aggregate reject. A rejection no longer means no connector completed.
-      teardown
-        .catch(() => {
-          // Swallowed rather than left unhandled: this promise is no longer
-          // awaited, and an unhandled rejection from a data-rights control
-          // must not surface as a page error.
-        })
-        .finally(() => {
-          // AFTER THE COUNTED CLEAR, never before it (round 12 P2). A late
-          // teardown can settle at any moment, including one BEFORE this
-          // function's own `eraseIndexedDbData()` has run — and this cleanup
-          // empties the same stores, so it would leave that counted call
-          // looking at an empty store and the erasure reporting zero database
-          // records over records it removed. Queuing behind the gate makes the
-          // ordering a property of the code rather than of the timing.
-          void countedClearDone.then(() => {
-          // CONNECTOR KEYS ONLY, for the reason round 7 gave about the peer
-          // listener's equivalent: this fires seconds after the result was
-          // reported, the page stays usable in between, and a blanket sweep
-          // would delete records the user created AFTER the erasure. What a
-          // late teardown can recreate is connector state, so that is all a
-          // late cleanup has any business removing.
-            // NOT IF THE USER HAS RECONNECTED SINCE (round 14 P2) — the same
-            // fence the page's straggler callback got in round 13, on the
-            // path that bypasses it. A stale connector key is a far better
-            // outcome than deleting a live session.
-            if (settledLate && !options.hasLiveSession?.()) {
-              // BOTH stores (round 10 P2). The per-connector straggler
-              // callback clears the databases, and this whole-teardown path
-              // did not — but they catch different timeouts. Several
-              // connectors can each finish INSIDE the per-target bound while
-              // their sequential total exceeds the outer one (three at 3.5s
-              // does it), so no `onStragglerSettled` is registered and this
-              // continuation is the only cleanup that runs.
-              eraseConnectorStorageQuietly();
-              void eraseIndexedDbData();
-            }
-          });
-        });
-      await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
-      connector = { attempted: true, disconnected: true };
-    } catch (error) {
-      connector = { attempted: true, disconnected: false };
-      // Same distinction as inside `disconnectEvery`, and the same reason
-      // (round 11 P2, second site — the finding named the per-connector one).
-      // A teardown that REJECTED has finished; only one we stopped waiting for
-      // can still write, so only that one earns a late cleanup. Setting this
-      // on an ordinary rejection ran the cleanup before the counted clear
-      // below and could zero the reported record count.
-      settledLate = error instanceof TimeoutError;
-    }
+    // A teardown that throws synchronously is a refusal like any other, and
+    // must not abort the erasure of everything else.
+    const teardown = Promise.resolve().then(() => disconnect());
+    outcomes.push(
+      await runTeardown(teardown, countedClearDone, hasLiveSession),
+    );
   }
   const base = eraseMyData();
   const indexedDb = await eraseIndexedDbData();
   // The counted clear is done; anything queued behind the gate may run now.
   openGate();
-  return {
+  const interimConnector = foldConnector(outcomes);
+  const interim: FullEraseResult = {
     ...base,
     indexedDb,
+    connector: interimConnector,
+    complete: isComplete(indexedDb, interimConnector),
+  };
+  if (!disconnectLast) return interim;
+
+  // STEP 4 — the connections that reload the page as they close (#2035).
+  // Everything the erasure counts has already happened, so a reload from
+  // here on can interrupt nothing; it can only discard the report, which is
+  // why the caller is handed `interim` to keep.
+  const lastTeardown = Promise.resolve().then(() => disconnectLast(interim));
+  const last = await runTeardown(lastTeardown, countedClearDone, hasLiveSession);
+  // What the teardown wrote on its way out lands AFTER the sweep: wagmi
+  // rewrites `wagmi.store` through `config.setState` once the connector has
+  // closed, on both outcomes for the reason `runTeardown` gives. Connector
+  // keys only, and never over a session that postdates the request — the
+  // same two limits every late cleanup in this module keeps. A teardown
+  // given up on is covered by `runTeardown`'s own late cleanup instead.
+  if (!last.settledLate && !hasLiveSession?.()) {
+    eraseConnectorStorageQuietly();
+  }
+  const connector = foldConnector([...outcomes, last]);
+  return {
+    ...interim,
     connector,
-    // A teardown that was asked for and failed leaves the app connected, so
-    // it is as incomplete as a refused database — the page must not report
-    // a clean erasure over a wallet that is still attached.
-    // #1862 Part 2 round 1 P2 — `unavailable` is NOT clean. A browser that
-    // hides IndexedDB after a wallet wrote to it leaves that material in
-    // place and unverifiable; neither store was emptied nor observed absent,
-    // so the honest answer is incomplete rather than success.
-    complete:
-      indexedDb.refused.length === 0 &&
-      !indexedDb.unavailable &&
-      (!connector.attempted || connector.disconnected),
+    complete: isComplete(indexedDb, connector),
   };
 }
