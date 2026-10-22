@@ -664,6 +664,92 @@ contract OfferModificationTest is SetupTest {
         _mutate().setOfferCollateral(id, 0, 100 ether);
     }
 
+    // ─── NFT rentals are single-value on amount (#1281 item 021) ────
+
+    /// @dev A borrower ERC-721 rental offer: `amount` is the daily fee, and
+    ///      the create pre-vaults `amount × durationDays` plus the buffer.
+    function _rentalBorrowerParams(uint256 amount, uint256 amountMax)
+        internal
+        view
+        returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: mockNft721,
+            amount: amount,
+            interestRateBps: 0,
+            collateralAsset: mockCollateralERC20,
+            collateralAmount: 1 ether,
+            durationDays: 5,
+            assetType: LibVaipakam.AssetType.ERC721,
+            tokenId: 1,
+            quantity: 1,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: amountMax,
+            interestRateBpsMax: 0,
+            collateralAmountMax: 1 ether,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+    }
+
+    /// @notice A rental offer carrying a daily-fee range is refused at
+    ///         create: the prepayment is priced from `amount`, so a loan run
+    ///         at any higher fee in the range would be under-prepaid. The
+    ///         same offer at a single value is accepted.
+    function testCreateRentalOfferWithAmountRangeReverts() public {
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.RentalAmountRangeNotAllowed.selector);
+        OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 11 ether));
+
+        vm.prank(borrower);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
+        assertEq(o.amount, 10 ether, "fixture-live: the single-value rental offer exists");
+        assertEq(o.amountMax, 10 ether, "at one daily fee");
+    }
+
+    /// @notice Neither edit route can turn a single-value rental offer into
+    ///         a range; a single-value edit still goes through.
+    function testEditRentalOfferIntoAmountRangeReverts() public {
+        vm.prank(borrower);
+        uint256 id = OfferCreateFacet(address(diamond)).createOffer(_rentalBorrowerParams(10 ether, 10 ether));
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.RentalAmountRangeNotAllowed.selector);
+        _mutate().setOfferAmount(id, 10 ether, 12 ether);
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.RentalAmountRangeNotAllowed.selector);
+        _mutate().modifyOffer(
+            id,
+            LibVaipakam.OfferModifyParams({
+                amount: 10 ether,
+                amountMax: 12 ether,
+                interestRateBps: 0,
+                interestRateBpsMax: 0,
+                collateralAmount: 1 ether,
+                collateralAmountMax: 1 ether
+            })
+        );
+
+        vm.prank(borrower);
+        _mutate().setOfferAmount(id, 12 ether, 12 ether);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
+        assertEq(o.amount, 12 ether, "a single-value edit still applies");
+        assertEq(o.amountMax, 12 ether, "and stays single-value");
+    }
+
     // ─── Sanctions screening ─────────────────────────────────────────
 
     function testModifyOfferRevertsOnSanctionedCreator() public {
