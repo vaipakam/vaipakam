@@ -5934,10 +5934,12 @@ library LibVaipakam {
         mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
         // Per-day Σ of accepted MIRROR day credits (Base's own excluded —
         //   its credit lives in the local `recycledCreditedByDay`),
-        //   accumulated at ACCEPTANCE time so the Ā fold is O(1) per day
-        //   and immune to later `expectedSourceChainIds` edits (Codex
-        //   #1414 r1: folding history through the mutable list would let
-        //   an ops change rewrite already-accepted credits).
+        //   ASSIGNED once by the day's finalization over exactly the chains
+        //   it counted (#2645 r2 — `_finalizeAndWrite` is the one writer),
+        //   so the Ā fold is O(1) per day and immune to later
+        //   `expectedSourceChainIds` edits (Codex #1414 r1: folding history
+        //   through the mutable list would let an ops change rewrite
+        //   already-finalized credits).
         mapping(uint256 => uint256) dayMirrorRecycledCredit;
         // ─── #1222 M3 B2-a — two-pass per-chain funding resolution ─────────
         // APPEND-ONLY TAIL. Records-only in B2-a: written at ARMED-day
@@ -8158,6 +8160,28 @@ library LibVaipakam {
         ///      keeper reading a Diamond deployed before this field decodes the
         ///      same reservation it always did. Appended — append-only.
         mapping(uint256 => address) remitRemoteMessenger;
+        /// @dev #2619 — per finalized `dayId`, the chains that were on the
+        ///      expected-source list when the day finalized and had not
+        ///      reported, in list order: the chains whose interest counts as
+        ///      zero for that day. Written only by
+        ///      `RewardAggregatorFacet._finalizeAndWrite`, once per day (a
+        ///      finalized day never finalizes again). Before this record a
+        ///      reader could only work the set out against the list as it
+        ///      stood at read time, which a later list edit changes. Together
+        ///      with `chainDailyIncluded` it is the finalization's own account
+        ///      of what it summed. `recorded` marks a day whose finalization
+        ///      wrote the record at all, so an empty `zeroed` is never
+        ///      confused with a day finalized before the record existed.
+        ///      Appended — append-only.
+        mapping(uint256 => DayFinalizationRecord) dayFinalizationRecord;
+        /// @dev #2645 — per `[dayId][chainId]`, the recycled day credit the
+        ///      chain's report CLAIMED (its `recycledForDay18`), held from
+        ///      the report's arrival until the day finalizes. Attribution
+        ///      (`LibVpfiRecycle.attributeChainDayRecycled`) reads it then, and
+        ///      only for a chain the finalization counts, so a report the day
+        ///      did not count never sizes the day's recycled budget. Written by
+        ///      `LibVpfiRecycle.recordChainRecycled`. Appended — append-only.
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledReported;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -9065,6 +9089,18 @@ library LibVaipakam {
         uint64 dispatchCutoffGap;
     }
 
+    /// @notice #2619 — the finalization's own record of the chains it
+    ///         zeroed for one day.
+    /// @dev    `recorded` is set by every finalization that writes the record,
+    ///         including one that zeroed nothing, so a reader can tell "this
+    ///         finalization zeroed no chain" from "this day was finalized by
+    ///         code that kept no record" (a Diamond upgraded across #2619,
+    ///         #2645 r2). `zeroed` is in expected-source-list order.
+    struct DayFinalizationRecord {
+        bool recorded;
+        uint32[] zeroed;
+    }
+
     /// @notice #1434 P2-w1 (R5) — one lapse-schedule version's parameter
     ///         pair. Stored under its version number, append-only.
     struct LapseScheduleParams {
@@ -9579,6 +9615,21 @@ library LibVaipakam {
 
     /// @dev Default secondary-oracle staleness: 1h.
     uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_DEFAULT = 3600;
+
+    /// @dev #665 — the Tellor dispute buffer: the Tellor read takes only a
+    ///      value reported at least this long before `block.timestamp`.
+    ///      Anyone can stake as a Tellor reporter and submit a value, and a
+    ///      submission can be disputed afterwards (a disputed value leaves
+    ///      the record). Without the buffer a reporter's own fresh value
+    ///      could be consumed in the block it lands, before anyone could
+    ///      dispute it, and count as the one agreeing secondary. Staleness
+    ///      is still measured from `block.timestamp`, so a Tellor value
+    ///      counts only while it is between this old and the staleness
+    ///      bound old: with the 1h default that is 40 minutes of reports,
+    ///      and a staleness bound set at or below this buffer leaves Tellor
+    ///      unavailable. A constant, not a knob: shortening it would reopen
+    ///      the same-block path it closes.
+    uint256 internal constant TELLOR_DISPUTE_BUFFER = 20 minutes;
 
     // ─── T-033 — Pyth numeraire-redundancy bounds ──────────────────────────
     //
@@ -10710,6 +10761,30 @@ library LibVaipakam {
         uint256 consumed = consumedRentalDays(loan);
         // Clamp so a view can never revert even if consumed overruns the term.
         return consumed >= uint256(loan.durationDays) ? 0 : uint256(loan.durationDays) - consumed;
+    }
+
+    /// @notice #901 — the rental days that have ACCRUED and are not yet paid,
+    ///         as of now: days elapsed since `startTime`, capped at the agreed
+    ///         term, minus the days already consumed (`consumedRentalDays`).
+    /// @dev    The single rule for in-term rent owed at a close. Rent is never
+    ///         billed past the agreed term: a rental closed after maturity owes
+    ///         at most its remaining prepaid days, and the overdue time is
+    ///         charged as the rental late fee (drawn from the buffer), not as
+    ///         extra rent days — so a fully-overdue rental consumes exactly its
+    ///         whole remaining prepayment. Without the cap, a rental repaid
+    ///         inside grace with days left undeducted billed more days than the
+    ///         prepayment funds and reverted `InsufficientPrepay`, leaving
+    ///         default as the only way out. Days prepaid ahead of time by a
+    ///         rental partial (`lastDeductTime` in the future) count as
+    ///         consumed, so they read as zero owed rather than underflowing.
+    ///         Never exceeds `remainingRentalDays`.
+    function accruedUnpaidRentalDays(Loan storage loan) internal view returns (uint256) {
+        uint256 st = uint256(loan.startTime);
+        uint256 elapsed = block.timestamp > st ? (block.timestamp - st) / 1 days : 0;
+        uint256 term = uint256(loan.durationDays);
+        if (elapsed > term) elapsed = term;
+        uint256 consumed = consumedRentalDays(loan);
+        return elapsed > consumed ? elapsed - consumed : 0;
     }
 
     /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated

@@ -127,11 +127,16 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///        the upgrade. Indexers use this to correlate later per-user
     ///        `upgradeUserVault` events with the implementation that
     ///        became current at this moment.
+    /// @param newCodehash `extcodehash` of the new implementation (#897), so
+    ///        a reviewer can match the queued Timelock operation against
+    ///        audited bytecode — the address alone says nothing about what
+    ///        it runs.
     /// @custom:event-category state-change/vault-mutation
     event VaultImplementationUpgraded(
         address indexed oldImplementation,
         address indexed newImplementation,
-        uint256 indexed newVersion
+        uint256 indexed newVersion,
+        bytes32 newCodehash
     );
 
     /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6) — emitted whenever
@@ -340,7 +345,17 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /**
      * @notice Upgrades the shared vault implementation used by all per-user
      *         proxies going forward.
-     * @dev VAULT_ADMIN_ROLE-only. Rejects non-contract addresses
+     * @dev VAULT_ADMIN_ROLE-only — the Timelock after handover, and since
+     *      #934 / D1 that role can no longer be re-granted to a hot key
+     *      without the Timelock delay either (DEFAULT_ADMIN_ROLE is
+     *      Timelock-held). This IS a lever over every user vault: a new
+     *      implementation, plus {setMandatoryVaultUpgrade} and the
+     *      permissionless {upgradeUserVault}, can change what every vault's
+     *      code does, including how it releases funds (#897). The
+     *      protection is that the change is public and delayed — queued in
+     *      the Timelock for its full delay, with the implementation's
+     *      codehash in the event — not that it is impossible.
+     *      Rejects non-contract addresses
      *      (`code.length == 0`) but does not verify storage-layout
      *      compatibility — that is the caller's responsibility. Bumps
      *      `currentVaultVersion`; existing user proxies keep pointing at
@@ -362,7 +377,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         emit VaultImplementationUpgraded(
             oldImpl,
             newImplementation,
-            s.currentVaultVersion
+            s.currentVaultVersion,
+            newImplementation.codehash
         );
     }
 

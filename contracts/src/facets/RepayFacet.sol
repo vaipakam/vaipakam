@@ -466,12 +466,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Deduct accrued from prepay, excluding days already
             // deducted by autoDeductDaily. lastDeductTime advances by ONE_DAY
             // per auto-deduction, so (lastDeductTime - startTime) / ONE_DAY
-            // gives the count of already-paid days.
+            // gives the count of already-paid days (`consumedRentalDays`,
+            // the Pass-2 D1 #1188 guarded derivation both branches read).
             if (loan.prepayAmount == 0) revert InsufficientPrepay();
 
-            // Pass-2 D1 (#1188) — guarded consumed-days derivation (safe even
-            // if a legacy/imported rental still has lastDeductTime == 0).
-            uint256 alreadyDeductedDays = LibVaipakam.consumedRentalDays(loan);
             if (loan.useFullTermInterest) {
                 // Pass-2 D1 (#1188) — `durationDays` is now the IMMUTABLE
                 // origination term; the REMAINING (unpaid) full-term days is
@@ -480,12 +478,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 // the already-deducted days.
                 interest = loan.principal * LibVaipakam.remainingRentalDays(loan);
             } else {
-                uint256 elapsedDays = (block.timestamp - loan.startTime) /
-                    LibVaipakam.ONE_DAY;
-                uint256 undeductedDays = elapsedDays > alreadyDeductedDays
-                    ? elapsedDays - alreadyDeductedDays
-                    : 0;
-                interest = loan.principal * undeductedDays;
+                // #901 — accrued, unpaid days capped at the agreed term. Rent
+                // past maturity is the late fee's concern below, never extra
+                // rent days, so a rental repaid inside grace stays within its
+                // prepayment instead of reverting `InsufficientPrepay`.
+                interest = loan.principal * LibVaipakam.accruedUnpaidRentalDays(loan);
             }
 
             // #998 S8 (#1004) — the rental late fee is based on the REMAINING
@@ -1126,10 +1123,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     /**
      * @notice View function to calculate the repayment amount for a loan.
      * @dev Includes principal, configured interest (per-loan flag), and late fees (if applicable).
-     *      Enhanced for NFTs: Returns prepay due (accrued rental + late) + refunds unused.
-     *      But for repay call, borrower approves total principal (unused refunded internally).
+     *      For an NFT rental the rent owed is drawn from the borrower's vaulted
+     *      prepayment at `repayLoan` and is not part of this figure; only the
+     *      rental late fee is quoted (#901).
      * @param loanId The loan ID.
-     * @return totalDue The total repayment amount (principal + interest + lateFee for ERC20; 0 for NFT as from prepay).
+     * @return totalDue The total repayment amount (principal + interest + lateFee for ERC20;
+     *         for an NFT rental, the rental late fee alone, zero before maturity).
      */
     function calculateRepaymentAmount(
         uint256 loanId
@@ -1150,10 +1149,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.durationDays *
             LibVaipakam.ONE_DAY;
 
-        // Interest/Rental based on per-loan flag
-        uint256 interest;
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 elapsedDays = elapsed / LibVaipakam.ONE_DAY;
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // #408 / #410 / #413 (2026-06-12) — route through the
             // unified `settlementInterestNet` so this view matches
@@ -1163,29 +1158,17 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // accrual) AND ignored `interestSettled` (over-charged
             // after partial-repay / periodic). Both bugs collapse
             // here too — the view must agree with the settler.
-            interest = LibEntitlement.settlementInterestNet(
+            totalDue = loan.principal + LibEntitlement.settlementInterestNet(
                 loan,
                 block.timestamp
             );
-            totalDue = loan.principal + interest;
-        } else {
-            // NFT: Accrued rental (excluding already-deducted days)
-            // Pass-2 D1 (#1188) — guarded consumed-days derivation (safe even
-            // if a legacy/imported rental still has lastDeductTime == 0).
-            uint256 alreadyDeductedDays = LibVaipakam.consumedRentalDays(loan);
-            if (loan.useFullTermInterest) {
-                // Pass-2 D1 (#1188) — remaining owed days, not the immutable
-                // `durationDays` term (mirrors the settler at repayLoan so the
-                // preview matches settlement).
-                interest = loan.principal * LibVaipakam.remainingRentalDays(loan);
-            } else {
-                uint256 undeductedDays = elapsedDays > alreadyDeductedDays
-                    ? elapsedDays - alreadyDeductedDays
-                    : 0;
-                interest = loan.principal * undeductedDays;
-            }
-            totalDue = 0; // From prepay; borrower approves principal for safety, but internal deduct
         }
+        // NFT rental (#901): the rent owed is drawn from the vaulted
+        // prepayment inside `repayLoan` and never from the wallet, so it is
+        // not part of this figure. This branch used to compute it into a local
+        // nothing read: a second copy of the settler's rule, carrying the same
+        // uncapped-days defect. It is gone, so the settler is the one place
+        // the rule lives.
 
         // Late fee if past endTime. #998 S8 (#1004) — the rental branch quotes
         // the remaining-rental-based fee so this preview matches what

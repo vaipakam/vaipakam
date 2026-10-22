@@ -1511,6 +1511,11 @@
   },
   {
     "type": "error",
+    "name": "ExpectedSourceListUnusable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FallbackCustodyMoveMisdirected",
     "inputs": [
       {
@@ -2373,6 +2378,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "OraclePriceDivergence",
+    "inputs": []
   },
   {
     "type": "error",

@@ -43,11 +43,13 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
  *         armed, the arming step is skipped and the live price is the one bought
  *         at, so the cells keep proving the effect on whatever is deployed.
  *
- *         BNB testnet has no cell, deliberately. Its deployment carries no
- *         oracle-priced test assets, so no lender intent can be filled there —
- *         the fill refuses an unresolvable collateral floor before the perk is
- *         reached. The effect cannot be shown on that chain's live state, so
- *         under the design's precondition 4 it is not priced there.
+ *         BNB testnet has no cell yet. Until 2026-10-22 its deployment carried
+ *         no oracle-priced test assets, so no lender intent could be filled
+ *         there — the fill refuses an unresolvable collateral floor before the
+ *         perk is reached — and under the design's precondition 4 it was left
+ *         unpriced. Its testnet mocks were deployed on 2026-10-22, so a priced
+ *         pair now exists; the BNB cell, and pricing the perk there only once
+ *         that cell passes, are tracked in #2641. Until then BNB stays unpriced.
  *
  *         Gated per chain by `FORK_URL_BASE_SEPOLIA` / `FORK_URL_ARB_SEPOLIA`;
  *         each cell skips when its URL is unset, like the other suites here.

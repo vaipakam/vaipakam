@@ -46,8 +46,8 @@ All commands run from `contracts/`.
 
 | Quirk | Action |
 |---|---|
-| Alchemy BNB endpoint stalls under `forge --slow` | **Use `--legacy` instead** of `--slow` for every `forge script` invocation on BNB Testnet. `--slow` polls `eth_getTransactionReceipt` aggressively; on this RPC it hangs past 1h with 0 receipts confirmed even when the txs landed. `--legacy` sends pre-EIP-1559 txs at the gas-price returned by `eth_gasPrice` (1 gwei at this writing) and `forge` resumes its post-broadcast bookkeeping immediately. |
-| Wrapped-native is **WBNB**, not WETH | `DeployTestnetLiquidityMocks` wires `OracleAdminFacet.setWethContract(...)` to canonical V3-fork DEX WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`. The protocol's price-asset machinery doesn't care about the symbol — only that a Chainlink-backed feed exists and the v3-style depth check resolves. |
+| Broadcast mode: `--slow` through the runner; `--legacy` only for a direct `forge script` that hangs | `deploy-testnet.sh` broadcasts every phase with `--slow` and pins `ETH_GAS_PRICE` to 1 gwei on this chain (#2548): the hang it fixed came from forge estimating a 1-wei gas price, which left a transaction unmined. That runner completed the 2026-10-18 fresh deploy and the 2026-10-22 `testnet-mocks` phase with `--slow`. An older note here said the Alchemy endpoint hung past 1h under `--slow`; if you invoke `forge script` directly against that endpoint and see it, `--legacy` is the workaround. Do not edit the runner's flags for it: a hung phase leaves its marker unwritten, so check the broadcast receipts before any re-run, because a re-run of `testnet-mocks` deploys a second rig. |
+| The Diamond's **WETH is a mock stand-in, never WBNB** | The `weth` the Diamond prices against is priced by an ETH/USD feed, so WBNB there would be mispriced. BNB Testnet has no canonical WETH: `DeployTestnetMocks.s.sol` requires `BNB_TESTNET_WETH` (no default) and the live Diamond uses `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`, "Wrapped Ether (bnb-testnet stand-in)". (Before 2026-10-22 this row said the retired `DeployTestnetLiquidityMocks` wired WBNB; that path is gone — see §2.) |
 | Buy adapter is **native-BNB** mode | `vpfiBuyPaymentToken = 0x0`. Users pay in tBNB; the canonical Base receiver still quotes the rate in wei-per-VPFI on its side. |
 | Funding floor | Deployer EOA needs ≥0.3 tBNB before §1; admin EOA needs ≥0.05 tBNB for handover + config + peer-wire txs. Faucets: <https://www.bnbchain.org/en/testnet-faucet>, <https://testnet.bnbchain.org/faucet-smart>. |
 
@@ -89,10 +89,11 @@ on Base Sepolia — no chain-specific tests gate this deploy.
 bash script/deploy-chain.sh bnb-testnet --fresh
 ```
 
-Note: `--slow` IS safe HERE because the only post-broadcast wait is
-the bookkeeping write to `addresses.json` — there's no extended
-receipt-polling loop in `DeployDiamond`. Subsequent steps (§2 onward)
-must drop `--slow`.
+Broadcast mode follows the one rule in the quirk table above: steps run
+through the repo's runners (this one and §2) broadcast with the runner's
+`--slow` and 1 gwei gas, unedited; the later steps that call `forge script`
+directly pass `--legacy`. (An older note here said every step from §2 on must
+drop `--slow`. That predates #2548 and no longer applies.)
 
 The script writes `chainId`, `chainSlug`, `lzEid`, `deployBlock`,
 `diamond`, `vaultImpl`, `treasury`, `admin`, and all 30 facet
@@ -108,27 +109,47 @@ exactly as in the Base Sepolia runbook §1.
 
 ---
 
-## 2. Liquidity mocks (testnet only)
+## 2. Testnet mocks (testnet only)
 
-The same `DeployTestnetLiquidityMocks.s.sol` covers Base Sepolia,
-Sepolia, and BNB Testnet. The script picks the wrapped-native asset
-per chain — WBNB on this one — and stores it as `weth` in the
-artifact (the schema field is named after the role, not the symbol).
+The faucet and oracle mock rig is the same one Base Sepolia and Arbitrum
+Sepolia run: `DeployTestnetMocks.s.sol`, through the repo's runner. Run it
+**before** `--phase configure`, which adopts the rig's oracle wiring.
+`BNB_TESTNET_WETH` is required on this chain (there is no canonical WETH)
+and must be the mock stand-in, not WBNB. Set it in `contracts/.env`, not on
+the command line: the runner loads `.env` after it starts, and a value there
+replaces one exported by the shell, so a stale `.env` entry would win over a
+command-line prefix. Read it back before running. The runner pins 1 gwei gas
+on this chain (see the broadcast-mode quirk above).
 
 ```bash
-forge script script/DeployTestnetLiquidityMocks.s.sol:DeployTestnetLiquidityMocks \
-  --rpc-url $BNB_TESTNET_RPC_URL --broadcast --legacy -vv
+# contracts/.env must hold:
+#   BNB_TESTNET_WETH=0x6D874ff9a55517c61cECE2936B8F457a3ad9102d
+grep '^BNB_TESTNET_WETH=' .env   # expect exactly that one line
+bash script/deploy-testnet.sh bnb-testnet --phase testnet-mocks
 ```
 
-Verify both mock assets classify Liquid:
+What it changes on the Diamond, so nothing is implied: it points the
+liquidity-check factory, the ETH/USD feed and the Chainlink registry at the
+rig's mocks (replacing the PancakeSwap v3 factory and the real ETH/USD feed),
+and registers a mock swap adapter after the PancakeSwap one. The rig lands
+under `.testnetMocks` in `addresses.json`; the 2026-10-22 run and its wiring
+transactions are recorded under `configChanges` in `deployment_source.json`.
+A completed run is not repeated (phase marker); see the script for the
+`FAUCET_*` reuse variables before re-running on purpose.
+
+Verify both lending assets classify Liquid:
 
 ```bash
 DIAMOND=$(jq -r .diamond deployments/bnb-testnet/addresses.json)
-MUSDC=$(jq -r .mockERC20A deployments/bnb-testnet/addresses.json)
-MWBTC=$(jq -r .mockERC20B deployments/bnb-testnet/addresses.json)
+TLIQ=$(jq -r .testnetMocks.liquidToken deployments/bnb-testnet/addresses.json)
+MUSDC=$(jq -r .testnetMocks.liquidToken2 deployments/bnb-testnet/addresses.json)
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $TLIQ --rpc-url $BNB_TESTNET_RPC_URL   # → 0
 cast call $DIAMOND "checkLiquidity(address)(uint8)" $MUSDC --rpc-url $BNB_TESTNET_RPC_URL  # → 0
-cast call $DIAMOND "checkLiquidity(address)(uint8)" $MWBTC --rpc-url $BNB_TESTNET_RPC_URL  # → 0
 ```
+
+> **History.** Before 2026-10-22 this section ran
+> `DeployTestnetLiquidityMocks.s.sol`, which wired WBNB as `weth` and wrote
+> `.mockERC20A` / `.mockERC20B`. No live BNB artifact carries those keys.
 
 ---
 
@@ -187,8 +208,9 @@ need the discount math's price-asset pointer, which we set via direct
 
 ```bash
 DIAMOND=$(jq -r .diamond deployments/bnb-testnet/addresses.json)
-WBNB=0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd
-cast send $DIAMOND "setVPFIDiscountETHPriceAsset(address)" $WBNB \
+# The Diamond's WETH stand-in (§2), never WBNB: the asset is priced by ETH/USD.
+WETH=$(jq -r .weth deployments/bnb-testnet/addresses.json)
+cast send $DIAMOND "setVPFIDiscountETHPriceAsset(address)" $WETH \
   --private-key $ADMIN_PRIVATE_KEY --rpc-url $BNB_TESTNET_RPC_URL --legacy
 ```
 
@@ -197,7 +219,7 @@ Verify:
 ```bash
 cast call $DIAMOND "getVPFIBuyConfig()(uint256,uint256,uint256,uint256,bool,address)" \
   --rpc-url $BNB_TESTNET_RPC_URL
-# Last field = 0xae13...a7cd (WBNB)
+# Last field = the WETH stand-in (0x6D87...102d on the live Diamond)
 ```
 
 ---

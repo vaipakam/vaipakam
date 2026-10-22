@@ -1099,7 +1099,11 @@ things follow:
   missing, and anyone may finalize the day "on full coverage" inside grace;
 - Base's own interest is summed into no day's global total.
 
-**Status:** candidate bug, open as #2613. The configuration is corrected
+**Status:** RESOLVED toward the spec (2026-10-22, PR for #2618/#2613): Base
+now judges coverage chain by chain over the list, only a listed chain's report
+starts grace, and a permissionless finalization refuses a list that is empty or
+leaves Base out. The Base Sepolia list was corrected on 2026-10-21. Historical
+note: the configuration was corrected
 separately, which needs an owner OK for an admin call. The keeper's day-close
 pass (#2612) judges coverage per listed chain, and alerts on a list that leaves
 Base out. That covers only the keeper's own calls, because `finalizeDay` is
@@ -1124,7 +1128,13 @@ ingress already admits a removed chain by the day's own evidence (it was
 included in, or zeroed from, that day); the chain-report ingress has no such
 standing.
 
-**Status:** candidate bug, open as #2618 (found by Codex on PR #2616). The
+**Status:** RESOLVED toward the spec (2026-10-22, PR for #2618/#2613), by
+the owner-approved approach: Base no longer refuses a day report for list
+membership at all. Every authenticated report applies what it says about the
+chain; its day figures are stored and counted only if the chain is listed when
+the day finalizes. The spec gained the "who may report vs whose figures count"
+rule to say so (owner direction 2026-10-22: improve the document where the
+better approach needs it). Historical note, found by Codex on PR #2616: the
 keeper's day-close pass (#2612) reads Base's list on each mirror it serves and
 alerts while the mirror is not on it, when the refused report can still be
 executed again by hand once the chain is listed again. That warns an operator;

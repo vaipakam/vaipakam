@@ -1004,6 +1004,12 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "newCodehash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -2303,6 +2309,11 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ExpectedSourceListUnusable",
+    "inputs": []
   },
   {
     "type": "error",

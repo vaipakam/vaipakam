@@ -106,6 +106,49 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "OfferAccepted",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "acceptor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matchAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newAmountFilled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newAccepted",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "ArmedFreshPaidAlreadyRebased",
     "inputs": []
@@ -1308,6 +1351,11 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedSourceListUnusable",
     "inputs": []
   },
   {

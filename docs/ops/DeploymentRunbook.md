@@ -73,7 +73,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `ccip-wire` | — | Runs `ConfigureCcip.s.sol` — CCIP lane/channel wiring: chain selectors, remote messengers, channel peers, per-lane VPFI TokenPool rate limits (via the bounds-checked `VpfiPoolRateGovernor`), guardian wiring, `TokenAdminRegistry` CCT registration. Run only after the `contracts` phase has landed on EVERY chain in the topology (it reads each chain's `addresses.json`). Requires `CCIP_LANE_CHAIN_IDS` + `CCIP_GUARDIAN` (refuses to run without them; #855). No DVN policy to review — CCIP's DON/RMN security is uniform for every integrator, so the LayerZero-era `--confirm-dvn-policy-reviewed` gate is gone. |
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). **Required before routing value (conformance-review L-i, decided 2026-07-11):** at least one swap adapter MUST be registered here. A forced close / liquidation on a deployment with **zero** registered adapters reverts `NoSwapAdaptersConfigured` — it does NOT silently fall through to the in-kind collateral fallback (that per-loan fallback engages only after configured routes are actually attempted and fail; spec `ProjectDetailsREADME §7`). `verify` does not check the adapter set, so confirm it is non-empty before `handover`, or every liquidation on that chain will revert. |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. **ConfigureVPFIBuy is NOT in the launch path (#884)** — the VPFI discount peg stays unset. To opt in **through a wrapper**, pass `--configure-vpfi-peg`; the wrappers deliberately force the `CONFIGURE_VPFI_PEG` env var off, so exporting it does nothing there. The env var is for invoking `DiamondConfigSpell` directly. |
-| `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
+| `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → Timelock (D1, #934), EMERGENCY_REVOKER_ROLE → governance Safe (`EMERGENCY_REVOKER_ADDRESS`, its only Diamond role), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, cross-chain contract ownership → Timelock (Ownable2Step first leg; the Timelock is the pending and final owner). ADMIN renounces every governance role; KEEPER / WATCHER / NOTIF_BILLER stay on it until the separate bot-role rotation. **Preflight runs first**: refuses if a Safe address has zero bytecode on the target chain, if the Timelock does not grant `PROPOSER_ROLE` to the governance Safe and `CANCELLER_ROLE` to the Pauser Safe, or if its delay or floor is below 48h on any chain that is not a known testnet (BNB Chain included). The second ownership leg is `acceptOwnership()` called BY THE TIMELOCK: the governance Safe queues it as a Timelock operation (it is the proposer), and anyone executes it after the delay. Calling `acceptOwnership()` from the Safe directly reverts. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-app` / `cf-www` | — | Build + `wrangler deploy` apps/app (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | `pnpm run deploy` of each Worker. All three bind the shared `vaipakam-warm` D1. Only `cf-indexer` APPLIES pending migrations (D1 Edit), verifies them, then publishes; `cf-keeper` / `cf-agent` verify the schema read-only and refuse to publish while a migration is pending — run `cf-indexer` first on a migration-bearing release (#2214 / #2409). Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
@@ -2266,25 +2266,32 @@ the deploy-script pre-flight will refuse to proceed otherwise.
 
 ### BNB Smart Chain Testnet (chainId 97, eid 40102)
 
-- **Do not pass `--slow` to `forge script` on this chain.** Alchemy's
-  BNB Testnet endpoint stalls indefinitely on `eth_getTransactionReceipt`
-  polling under `--slow`, causing `forge` to hang post-broadcast even
-  when the txs landed. We hit a 1h hang with zero receipts confirmed
-  during the first §2 mocks deploy. Use `--legacy` instead:
+- **Broadcast mode: `--slow` through the runner; `--legacy` only for a
+  direct `forge script` that hangs.** `deploy-testnet.sh` broadcasts
+  every phase with `--slow` and pins `ETH_GAS_PRICE` to 1 gwei on this
+  chain (#2548). That posture completed the 2026-10-18 fresh deploy and
+  the 2026-10-22 `testnet-mocks` phase. This bullet used to forbid
+  `--slow` here: Alchemy's BNB Testnet endpoint once stalled on
+  `eth_getTransactionReceipt` polling under it, leaving `forge` hung
+  post-broadcast for an hour with the txs already landed. If you invoke
+  `forge script` directly against that endpoint and see that hang,
+  `--legacy` is the workaround:
   ```bash
   forge script script/<Name>.s.sol:<Name> \
     --rpc-url $BNB_TESTNET_RPC_URL --broadcast --legacy -vv
   ```
-  `--legacy` sends pre-EIP-1559 txs at the gas-price returned by
-  `eth_gasPrice` (1 gwei on BNB Testnet at this writing) and Foundry
-  resumes its post-broadcast bookkeeping immediately. The deploy then
-  takes ~30s instead of timing out.
-- **Wrapped-native is WBNB, not WETH.** `DeployTestnetLiquidityMocks`
-  wires `OracleAdminFacet.setWethContract(...)` to the canonical
-  V3-fork DEX WBNB at `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd`.
-  The Diamond's price-asset machinery doesn't care about the symbol —
-  only that a Chainlink-backed feed exists and the v3-style depth
-  check resolves to a non-zero pool.
+  Do not edit the runner's flags for it. A hung phase leaves its marker
+  unwritten, so check the broadcast receipts before any re-run: a
+  second `testnet-mocks` run deploys a second rig.
+- **The Diamond's WETH is a mock stand-in, never WBNB.** BNB Testnet
+  has no canonical WETH, and the `weth` the Diamond prices against is
+  priced by an ETH/USD feed, so WBNB there would be mispriced. The mock
+  rig (`deploy-testnet.sh bnb-testnet --phase testnet-mocks`, i.e.
+  `DeployTestnetMocks.s.sol`) requires `BNB_TESTNET_WETH`, set in
+  `contracts/.env` (the runner's `.env` load replaces a shell export), and the live
+  Diamond uses the stand-in `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`.
+  This bullet used to say the retired `DeployTestnetLiquidityMocks`
+  wired WBNB; that is history (see `BNBTestnetDeploy.md` §2).
 - **Buy adapter pays in tBNB**, not tETH. *(Historical — the buy
   adapter was removed with the on-chain issuer sale, #687-A; no
   payment-token mode exists to configure any more.)* At the time, the

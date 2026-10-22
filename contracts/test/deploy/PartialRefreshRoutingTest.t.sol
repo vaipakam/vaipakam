@@ -13,6 +13,7 @@ import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
+import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -518,6 +519,35 @@ contract PartialRefreshRoutingTest is Test {
 
         RedeployFacets script = new RedeployFacets();
         vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesSlice3FillLock.selector, diamond));
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @notice #666 - the curated refresh refuses a Diamond whose OracleFacet
+    ///         predates `getAssetPriceStatus`. The fallback, discounted-liquidation
+    ///         and backstop paths it reinstalls read that view, and the script does
+    ///         not carry OracleFacet, so it could only leave them reverting
+    ///         `FunctionDoesNotExist`.
+    /// @dev    Straddle: the same script against a current Diamond runs to
+    ///         completion ({test_RedeployFacets_IsIdempotent_OnCurrentDiamond}).
+    function test_RedeployFacets_RefusesADiamondBeforeTheOraclePriceStatus() public {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = OracleFacet.getAssetPriceStatus.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the #666 marker is unrouted");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(OracleFacet.tryGetAssetPrice.selector) != address(0),
+            "fixture-live: the rest of the oracle stays routed, as on a pre-#666 Diamond"
+        );
+
+        RedeployFacets script = new RedeployFacets();
+        vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesOraclePriceStatus.selector, diamond));
         script.runWith(diamond, DEPLOYER_KEY);
     }
 

@@ -958,26 +958,17 @@ contract PrecloseFacet is
         // a follow-on transfer. The APR path above is neutralized for rentals
         // (`isErc20 == false`), so there is no double-bill (Codex #1249 r2 P2).
         if (!isErc20) {
-            // (a) Rent accrued since the last daily deduction (in-term only).
-            //     Start the clock at `max(lastDeductTime, startTime)`: a legacy/
-            //     imported rental can have `lastDeductTime == 0` while `startTime`
-            //     is set, and `remainingRentalDays` already treats
-            //     `lastDeductTime <= startTime` as zero consumed — anchoring to
-            //     `startTime` keeps the two in agreement instead of treating the
-            //     whole term as elapsed (Codex #1249 r2 P2). The `> now` guard
-            //     also covers a FUTURE clock (days prepaid via `repayPartial`):
-            //     treat that as zero catch-up rather than underflowing and
-            //     bricking the transfer (Codex #1249 r1 P2).
-            uint256 clockStart = uint256(loan.lastDeductTime) > uint256(loan.startTime)
-                ? uint256(loan.lastDeductTime)
-                : uint256(loan.startTime);
-            uint256 catchUpDays = block.timestamp > clockStart
-                ? (block.timestamp - clockStart) / LibVaipakam.ONE_DAY
-                : 0;
+            // (a) Rent accrued and not yet paid, in-term only: the one shared
+            //     rule `repayLoan` also settles by (#901,
+            //     `accruedUnpaidRentalDays`). It never bills past the agreed
+            //     term (overdue time is a late-fee concern, out of scope here),
+            //     reads a legacy/imported `lastDeductTime == 0` as nothing
+            //     consumed rather than the whole term elapsed (Codex #1249 r2
+            //     P2), and reads days prepaid ahead via `repayPartial` as zero
+            //     owed rather than underflowing and bricking the transfer
+            //     (Codex #1249 r1 P2). It never exceeds `remainingDays`.
+            uint256 catchUpDays = LibVaipakam.accruedUnpaidRentalDays(loan);
             uint256 remainingDays = LibVaipakam.remainingRentalDays(loan);
-            // Never bill past the agreed term — overdue rent is a late-fee
-            // concern (out of scope here); this settles only in-term rent.
-            if (catchUpDays > remainingDays) catchUpDays = remainingDays;
 
             // (b) Term shortfall — the UNPAID rental days after this catch-up
             //     (`remainingRentalDays - catchUpDays`, the days from the

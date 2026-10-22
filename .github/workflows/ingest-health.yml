@@ -77,13 +77,15 @@ jobs:
       keys: ${{ steps.check.outputs.keys }}
     env:
       INDEXER_ORIGIN: https://indexer.vaipakam.com
-      # Every chain the indexer still SCANS: Base Sepolia and Arbitrum Sepolia
-      # (in active testing, owner 2026-10-14) and BNB testnet, whose RPC is
-      # still configured live (apps/indexer/wrangler.jsonc) — a stall there
-      # is a stall, tested or not (#2482 r2). Sepolia is reported by the
-      # route but no longer scanned; its cursor stands still for good, so
-      # watching it would alert forever.
-      INGEST_CHAINS: '84532,421614,97'
+      # WHICH CHAINS: the probe watches the set the indexer reports it is
+      # configured to scan (`configured.chains` on /health/ingest — a
+      # deployment artifact and an RPC binding present), so a chain activated
+      # or restored there is watched with no edit here (#2498). A chain the
+      # indexer no longer scans (Sepolia has no deployment in the bundle)
+      # drops out of that set by itself. This is the explicit opt-out for a
+      # chain that is configured but intentionally idle: comma-separated chain
+      # ids, empty for none.
+      INGEST_IDLE_CHAINS: ''
       # The indexer's cron runs every minute and a healthy cursor is ~1–2 min
       # old; 15 min of standing still is a stall, not a slow tick.
       INGEST_STALE_SECONDS: '900'

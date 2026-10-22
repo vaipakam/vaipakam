@@ -515,6 +515,30 @@
   },
   {
     "type": "function",
+    "name": "getDayZeroedChains",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "recorded",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "zeroed",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getExpectedSourceChainIds",
     "inputs": [],
     "outputs": [
@@ -624,6 +648,30 @@
         "name": "reportedCumulative",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isChainIncluded",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -1240,6 +1288,25 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainReportStoredOffList",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2665,6 +2732,11 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedSourceListUnusable",
     "inputs": []
   },
   {

@@ -60,7 +60,7 @@ exposes:
 Every setter is:
 
 - **ADMIN_ROLE-gated** via `DiamondAccessControl` → routed through the 48h
-  timelock once `TransferAdminToTimelock` runs.
+  timelock once `Handover.s.sol` runs.
 - **Bounds-checked** against declared maxima: `MAX_FEE_BPS = 5000` (50%),
   `MAX_SLIPPAGE_BPS = 2500` (25%), `MAX_INCENTIVE_BPS = 2000` (20%),
   `MAX_DISCOUNT_BPS = 9000` (90%). Any value above reverts with a typed
@@ -79,14 +79,23 @@ Every setter is:
 - Proposer = multisig (Gnosis Safe). Executor default = `address(0)` (anyone
   can execute after delay — prevents a malicious multisig from stalling a
   benign scheduled change).
+- Independent canceller = the Pauser Safe (`PAUSER_ADDRESS`, required on
+  every chain, #938): it can veto a queued operation but cannot propose
+  one, so cancellation does not depend on the proposer Safe being honest.
+  The removed canceller cannot cancel its own single-call removal; a
+  proposer or another canceller can.
 - Self-administered: no EOA admin backdoor; changing delay / proposers
-  also goes through the timelock.
+  also goes through the timelock. The delay can never drop below its
+  deploy-time value (`MIN_DELAY_FLOOR`, #938).
 
-[`contracts/script/TransferAdminToTimelock.s.sol`](../contracts/script/TransferAdminToTimelock.s.sol)
-transfers the Diamond's `ADMIN_ROLE` + `DEFAULT_ADMIN_ROLE` + LibDiamond
-ownership onto the timelock address, in one multi-step ceremony. Kept
-separate from the timelock deploy so the deployer EOA can reclaim control
-cheaply if the multisig setup is wrong pre-handover.
+[`contracts/script/Handover.s.sol`](../../contracts/script/Handover.s.sol)
+transfers the Diamond's `DEFAULT_ADMIN_ROLE`, the delayed admin roles and
+LibDiamond ownership onto the timelock address, gives `PAUSER_ROLE` to the
+Pauser Safe and the revoke-only `EMERGENCY_REVOKER_ROLE` to the governance
+Safe, in one multi-step ceremony (owner decision D1, #934; #936 retired the
+older `TransferAdminToTimelock.s.sol`). Kept separate from the timelock
+deploy so the deployer EOA can reclaim control cheaply if the multisig
+setup is wrong pre-handover.
 
 ---
 
@@ -212,7 +221,7 @@ Scope:
 - Deploy Gnosis Safe multisig on every target chain (outside our repo — use
   Safe UI). **Threshold: 3-of-5.**
 - Transfer Diamond admin roles to the timelock via
-  `TransferAdminToTimelock.s.sol`.
+  `Handover.s.sol`.
 
 **Timelock configuration**:
 
@@ -220,7 +229,7 @@ Scope:
 |---|---|---|
 | Min delay | **72h (259200s)** | 3 days for users to observe + exit positions before a change lands. Longer than the default 48h because the executor is `address(0)` — any counterparty can execute after the delay, so we want the cushion. |
 | Proposer role | **Gnosis Safe multisig** (3-of-5) | Schedules + cancels proposals. |
-| Canceller role | **Same multisig** (auto-granted with Proposer in OZ v5) | Multisig can cancel any scheduled op during the 72h window — fast escape valve if a proposal is wrong. |
+| Canceller role | **The proposer multisig (auto-granted in OZ v5) AND the independent Pauser Safe** (#938, superseding the original "same multisig" decision) | Either can cancel any scheduled op during the delay window — fast escape valve if a proposal is wrong, and the Pauser Safe's veto does not depend on the proposer Safe being uncompromised. The Pauser Safe cannot propose, and cannot cancel a single-call operation that removes it as canceller. |
 | Executor role | **`address(0)` (open)** | Anyone can execute after the delay. Prevents the multisig from stalling a scheduled change. |
 | Admin role | **`address(0)` (self-administered)** | Changing the timelock's own parameters (delay, proposers) also requires going through the timelock — no EOA backdoor. |
 
@@ -231,9 +240,10 @@ Scope:
    with target = Diamond, data = encoded setter call, delay ≥ 72h).
 2. **72h min-delay elapses.** Event emitted on schedule; watcher (§6)
    alerts operator + community. Users can exit positions if they disagree.
-3. **Multisig retains cancel power** during the entire 72h window — if a
-   proposal is wrong or controversy surfaces, one multisig tx (`cancel`)
-   kills it.
+3. **The multisig and the independent Pauser Safe both retain cancel
+   power** during the entire delay window — if a proposal is wrong or
+   controversy surfaces, one `cancel` transaction from either kills it
+   (#938).
 4. **After 72h, anyone executes** via `TimelockController.execute`. No
    multisig consensus required at this point — the open-executor role
    prevents a malicious multisig from stalling benign changes.
@@ -789,7 +799,7 @@ work.
 | Multisig threshold | ✅ **3-of-5** |
 | Timelock min delay | ✅ **72h** |
 | Executor role | ✅ `address(0)` (open) — multisig retains cancel right during delay |
-| Cancel during delay | ✅ yes — multisig holds `CANCELLER_ROLE` (auto-granted with proposer in OZ v5) |
+| Cancel during delay | ✅ yes — the multisig holds `CANCELLER_ROLE` (auto-granted with proposer in OZ v5), and so does the independent Pauser Safe (#938, added after this decision) |
 | VPFI staking APR | ✅ **Flat rate, gov-adjustable.** Leverage existing `LibStakingRewards` reward-per-token accumulator. Add `checkpointGlobal()` call in `setStakingApr` so every APR era is non-retroactively preserved. No predeclared schedule; history tracked via `StakingAprSet` events (§5.2). |
 | VPFI lender yield-fee discount | ✅ **Time-weighted rollup over loan duration** — per-user `cumulativeDiscountBpsSeconds` accumulator + per-loan snapshot at offer acceptance; applied at yield-fee settlement (§5.2a). |
 | VPFI borrower initiation-fee discount | ✅ **Time-weighted rebate over loan duration** — full LIF paid up front in VPFI, borrower accumulator snapshotted at acceptance, rebate credited on proper close (§5.2b). |

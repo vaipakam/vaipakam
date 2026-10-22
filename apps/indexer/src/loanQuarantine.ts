@@ -1324,3 +1324,29 @@ export function createQuarantineAvailability(): QuarantineAvailabilityProbe {
   probe.guardColumn = () => guard;
   return probe as QuarantineAvailabilityProbe;
 }
+
+/**
+ * THE invocation's quarantine-table probe — ONE, shared by every lane that
+ * asks (#2221).
+ *
+ * The write side (`chainIndexer.ts`) and the calendar sweep used to hold one
+ * each, because they take opposite readings of `'unknown'` — the write side
+ * falls back to the legacy shape, the sweep defers itself. That is a
+ * difference in what each DOES with the answer, not in the question, and
+ * the probe's three-valued answer already carries what each needs. Two
+ * caches meant a cold pass paid two `sqlite_master` reads for one fact.
+ *
+ * The chain pass opens the pass boundary (`beginPass`) before either lane
+ * runs; a lane does not open it again, or it would throw away the answer the
+ * other lane already paid for.
+ */
+let sharedAvailability = createQuarantineAvailability();
+
+export function quarantineAvailability(): QuarantineAvailabilityProbe {
+  return sharedAvailability;
+}
+
+/** Test seam: the probe latches on a TRUE and would leak between cases. */
+export function _resetQuarantineAvailability(): void {
+  sharedAvailability = createQuarantineAvailability();
+}

@@ -86,10 +86,10 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase handover \
 #                                           --confirm-i-have-multisig-ready
 #       Runs Handover.s.sol — same role / ownership rotation as
-#       mainnet (DEFAULT_ADMIN_ROLE → governance Safe direct, five
-#       Timelock-bound roles → Timelock, PAUSER_ROLE → Pauser Safe
-#       direct, ERC-173 + every cross-chain contract's Ownable2Step → governance
-#       Safe). Practising this on testnet is the whole point of the
+#       mainnet (DEFAULT_ADMIN_ROLE → Timelock, EMERGENCY_REVOKER_ROLE
+#       → governance Safe direct, six Timelock-bound roles → Timelock,
+#       PAUSER_ROLE → Pauser Safe direct, ERC-173 + every cross-chain
+#       contract's Ownable2Step → Timelock). Practising this on testnet is the whole point of the
 #       rehearsal.
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase abi-sync
@@ -581,7 +581,7 @@ phase_preflight() {
   MISSING=()
   for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
            VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-           TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
+           TIMELOCK_PROPOSER PAUSER_ADDRESS CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
   done
   # Mirror chains need BASE_CHAIN_ID — the canonical Base EVM chain id —
@@ -1516,7 +1516,7 @@ EOF
 # Same shape as deploy-mainnet.sh's handover phase (see Handover.s.sol
 # for the full rationale). Practising it on testnet under the same
 # confirm-flag friction is the whole point of the rehearsal: any
-# misconfig in DEFAULT_ADMIN_ADDRESS / PAUSER_ADDRESS / Timelock
+# misconfig in EMERGENCY_REVOKER_ADDRESS / PAUSER_ADDRESS / Timelock
 # gets caught here, where the only cost is faucet ETH.
 
 phase_handover() {
@@ -1582,7 +1582,7 @@ EOF
   # address) would land roles on dead addresses. This gate catches
   # that out of the box.
   local missing=()
-  for label in DEFAULT_ADMIN_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
+  for label in EMERGENCY_REVOKER_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
     local addr="${!label:-}"
     if [ -z "$addr" ]; then
       missing+=("$label (env var unset)")

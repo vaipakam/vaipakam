@@ -132,5 +132,27 @@
   },
   "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
   "sanctionsOracleStandIn": "0x6be7DB253aD8e82F43e74f7B7b35B015FFbffaf0",
-  "sanctionsClearanceAttestor": "0x84B10c69144692EC67DE7BA105E09DEC5a483eF6"
+  "sanctionsClearanceAttestor": "0x84B10c69144692EC67DE7BA105E09DEC5a483eF6",
+  "weth": "0x6D874ff9a55517c61cECE2936B8F457a3ad9102d",
+  "testnetMocks": {
+    "ethUsdFeed": "0xD529514D88F2AEf7079DF46f4116Ab87870B8709",
+    "feedRegistry": "0x6309aA1217DFFeF1e71D5F595BAFfA1C3FAb1b6D",
+    "illiquidToken": "0x4D18b9c12c8AcBD3120CAbbF370F63c46705cBf3",
+    "illiquidToken2": "0x90De6FF19aCe6833fE7EB57111DE149Ec55abc93",
+    "liquidToken": "0x971BBa7e25Ae4C5371741FfF4AB0D91A49E60FCb",
+    "liquidToken2": "0x4805D6EbdCc98201e781Dd8e61d6D2e97c107633",
+    "liquidToken2UsdFeed": "0x944E802cbbe84a528Eb39B5bA1BA11D9282776D3",
+    "liquidToken2WethPool": "0x4299fae9cd2bc0380411cc2410E55cABf72e739c",
+    "liquidTokenUsdFeed": "0x432981048E5934b91F489E9D344CBc5845932BA5",
+    "liquidTokenWethPool": "0xec06745795b30310D445BfFe2BfeD069C1bbf8D2",
+    "mWeth": "0x5266B8F34d0B026a26C3081210F668C2e3eA4C6A",
+    "mWethUsdFeed": "0xD529514D88F2AEf7079DF46f4116Ab87870B8709",
+    "mWethWethPool": "0x3c976060d7E073e996B14E640C2733D44207fB9a",
+    "mockSwapAdapter": "0x8D625Ef7e1CD668a4139bF06f5fDea18dd7d5617",
+    "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+    "rentalNft": "0xF4fe115CF0538f34875da80025014472671EF027",
+    "rentalNft2": "0xBD06a5fFF1D69Ec854787Ee40e549d8CaB7C81cB",
+    "uniswapV3Factory": "0x140398f920dA801fD7e8D8F99fCE29cE29871Ba1",
+    "zeroExProxy": "0xFe6aEC06EED42bF426C2bF9EEe18714b1c8C2aC9"
+  }
 }

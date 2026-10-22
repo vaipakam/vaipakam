@@ -50,7 +50,7 @@ shipped.
 - Final DVN operator address selection (3 required + 2 optional) per the
   cross-chain security policy.
 - Mainnet runbook execution: `ConfigureLZConfig.s.sol` against every
-  (OApp, eid) pair, governance handover (`TransferAdminToTimelock`),
+  (OApp, eid) pair, governance handover (`Handover.s.sol`),
   swap-adapter registration via `AdminFacet`.
 - Third-party security audit completion (Diamond core, swap failover,
   secondary oracle quorum, cross-chain reward mesh, borrower LIF

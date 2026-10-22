@@ -20,7 +20,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *      (`docs/DesignsAndPlans/TreasuryAndFounderDistribution.md` §6)
  *      gates on a securities-lawyer sign-off. The mint step therefore
  *      only runs when `CONFIRM_TGE_FUNDING=YES` is explicitly set —
- *      mirroring the `CONFIRM_HANDOVER` gate in `TransferAdminToTimelock`.
+ *      (an explicit confirmation gate, like the one the retired
+ *      `TransferAdminToTimelock` script carried).
  *      Without it the script deploys the (empty) wallet and stops.
  *
  *      The minting caller (the broadcasting key) must hold `ADMIN_ROLE`

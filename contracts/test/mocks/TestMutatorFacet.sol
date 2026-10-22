@@ -2893,4 +2893,14 @@ contract TestMutatorFacet {
     function setPerkCreditsRaw(address user, uint256 perkId, uint256 credits) external {
         LibVaipakam.storageSlot().perkCredits[user][perkId] = credits;
     }
+
+    /// @dev #2621 test-only — store an expected-source list without the
+    ///      setter's checks, standing up a list stored before
+    ///      `setExpectedSourceChainIds` refused an empty one or one without
+    ///      Base (the case `finalizeDay` still has to refuse).
+    function setExpectedSourceChainIdsRaw(uint32[] calldata chainIds) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        delete s.expectedSourceChainIds;
+        for (uint256 i; i < chainIds.length; ++i) s.expectedSourceChainIds.push(chainIds[i]);
+    }
 }

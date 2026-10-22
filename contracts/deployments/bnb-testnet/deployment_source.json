@@ -125,5 +125,44 @@
         "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 deliberately left UNPRICED: this deployment carries no oracle-priced test assets, so no lender intent can be filled here and the fork check (design precondition 4) cannot pass on its live state. Selling a credit would sell an effect that cannot be delivered. Price it only once a fillable pair exists and the fork check passes"
       }
     }
+  ],
+  "configChanges": [
+    {
+      "kind": "testnet-mocks",
+      "tool": "contracts/script/deploy-testnet.sh bnb-testnet --phase testnet-mocks (script/DeployTestnetMocks.s.sol)",
+      "at": "2026-10-22",
+      "blocks": "138221341-138221479",
+      "transactionCount": 43,
+      "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
+      "operator": "0xf718bae5e0dc36140f16daef73289294c2372030",
+      "weth": "0x6D874ff9a55517c61cECE2936B8F457a3ad9102d (mock stand-in, not WBNB; unchanged)",
+      "replaced": {
+        "uniswapV3Factory": "PancakeSwap v3 factory 0x0BFb\u20261865 -> mock 0x140398f920dA801fD7e8D8F99fCE29cE29871Ba1",
+        "ethUsdFeed": "real ETH/USD feed 0x143d\u20268ba7 -> static mock 0xD529514D88F2AEf7079DF46f4116Ab87870B8709",
+        "chainlinkRegistry": "unset -> mock 0x6309aA1217DFFeF1e71D5F595BAFfA1C3FAb1b6D"
+      },
+      "added": {
+        "swapAdapter": "mock 0x8D625Ef7e1CD668a4139bF06f5fDea18dd7d5617, after the still-registered PancakeSwap adapter",
+        "testnetMocks": "addresses.json .testnetMocks (faucet tokens, feeds, pools, rental NFTs)"
+      },
+      "adminWiringTransactions": [
+        "0x11effb8fe8f4bfbe00ecbf518d1bcfa3b39420d5bb89dcd7107fbff6ad54c5f1 setChainlinkRegistry",
+        "0xe08b96f2a23a948bfaf31459501b334797ffbca39488cd29ec2165d1188a222f setUsdChainlinkDenominator",
+        "0x30a7126c7f7d75fddfc28e53d0caca9fec9deadb62ca7488ea78c1570722336a setEthChainlinkDenominator",
+        "0x9a187c2f30ec2505f34a2784e600f4ac724d8d07b8b841477a79600f86baefee setWethContract",
+        "0x5c426e0517b635aee6b9d6c30a3195d8a46bd00d8ac590db38f05db6d2ce1f0d setEthUsdFeed",
+        "0xe7aca3ef8101044e43b65976a9d5a71a7470d2c3792bc48833a2f8254730c158 setUniswapV3Factory",
+        "0x545cc3c49873109aa0a1a9951bd1565514d2e425a86242adf159e2970b196e43 setPaaAssets",
+        "0x6ef5659bb21042c72cf3542b89f9e9622ffbc0d1ebea3eebe674f486f45535c2 updateRiskParams",
+        "0xac103476d8f0e2711777c7fd3fee4b57aef9f09e177b025fbc608242ff9e4564 updateRiskParams",
+        "0x82e644dbe23f006b2cd263ea1d18c2073c127dee681df8b3634879875f9b51c9 updateRiskParams",
+        "0x893122461989390a6d12a9a8d9a48819072916759498aba1dacf0f561db70a66 updateRiskParams",
+        "0xcfc72a9c03c8fd972cfcbddb9761a98c676585b112234c788b28292fc6b3ee58 setZeroExProxy",
+        "0x4cadf8097a111ee6d7f9ca34c7dd1fad5f0382e3b3a029083738617d31d0c52d setallowanceTarget",
+        "0x104dc184e3c99a4d09f4813460fea804db05d74261bcc349a40da6f7d36cb32a addSwapAdapter"
+      ],
+      "verified": "tLIQ and mUSDC read Liquid via checkLiquidity, priced $2,000 and $1",
+      "supersedes": "the 2026-10-19 adminActivation note's 'no oracle-priced test assets': a fillable priced pair now exists. Perk 1 STAYS UNPRICED here until a BNB fork cell passes (#2641); pricing it is an owner-approved write"
+    }
   ]
 }

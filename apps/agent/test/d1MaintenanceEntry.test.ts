@@ -14,6 +14,10 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import worker from '../src/index';
+import { AGENT_TICK_CADENCE_MINUTES } from '../src/tickCadence';
+
+/** A scheduled time on a minute the five-minute cadence acts on. */
+const DUE_MINUTE = Date.UTC(2026, 9, 22, 8, 0, 0);
 import type { WorkerEnv } from '../src/env';
 
 /** An env with every binding absent — which is what a maintenance build has. */
@@ -104,7 +108,9 @@ describe('scheduled, on a build with no D1 binding', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const ctx = fakeCtx();
     await worker.scheduled(
-      { scheduledTime: Date.now(), cron: '* * * * *' } as ScheduledController,
+      // A DUE minute (#2236: the tick acts every five) — otherwise this would
+      // pass on a skipped tick for the wrong reason four times in five.
+      { scheduledTime: DUE_MINUTE, cron: '* * * * *' } as ScheduledController,
       NO_BINDINGS,
       ctx,
     );
@@ -115,5 +121,25 @@ describe('scheduled, on a build with no D1 binding', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.join(' ')).toContain('did NOT run');
     expect(warn.mock.calls[0]?.join(' ')).toContain('nothing was written');
+  });
+});
+
+describe('scheduled cadence (#2236)', () => {
+  it('acts only on minutes divisible by the cadence, and a skipped minute does nothing at all', async () => {
+    expect(AGENT_TICK_CADENCE_MINUTES).toBe(5);
+    for (let m = 0; m < 10; m++) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const ctx = fakeCtx();
+      await worker.scheduled(
+        { scheduledTime: DUE_MINUTE + m * 60_000, cron: '* * * * *' } as ScheduledController,
+        NO_BINDINGS,
+        ctx,
+      );
+      // On a build with no D1 binding a DUE tick says so once; a skipped one
+      // returns before even that, having touched nothing.
+      expect(warn.mock.calls.length, `minute +${m}`).toBe(m % 5 === 0 ? 1 : 0);
+      expect(ctx.waitUntil).not.toHaveBeenCalled();
+      warn.mockRestore();
+    }
   });
 });

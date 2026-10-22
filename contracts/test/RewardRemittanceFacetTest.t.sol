@@ -185,7 +185,7 @@ contract RewardRemittanceFacetTest is SetupTest {
     ///      FINALIZED still carries the reporting chain's live era: the era is
     ///      recorded, the day's figures are not applied, and nothing reverts (a
     ///      revert would roll the observation back and leave a message no retry
-    ///      could deliver). Straddle: an unexpected chain's late report still refuses.
+    ///      could deliver). Straddle: an off-list chain's late report lands its era too (#2618).
     function test_ALateB4Report_RecordsItsEra_NotItsFigures() public {
         rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
         rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
@@ -198,8 +198,12 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertFalse(agg.isChainReported(1, CHAIN_ARB), "the late figures are not applied");
         (uint256 lender, ) = agg.getChainReport(1, CHAIN_ARB);
         assertEq(lender, 0, "nothing stored for the closed day");
-        vm.expectRevert(IVaipakamErrors.SourceChainIdNotExpected.selector);
+        // #2618 — a chain off the expected list speaks for its own era too:
+        // the list decides whose day figures count, not who may report.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainReportArrivedAfterFinalization(77777, 1, 9);
         rewardMessenger.deliverChainReportB4(77777, 1, 1, 1, 9);
+        assertEq(agg.getChainCustodyEraReported(77777), 9, "an off-list chain's era is observed");
     }
 
     /// @dev #2459 r6 — a late B4 report still applies what it says about the

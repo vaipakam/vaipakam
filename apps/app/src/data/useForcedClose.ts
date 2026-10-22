@@ -105,8 +105,8 @@ export function useForcedCloseReads(opts: {
   loanId: string | number | undefined;
   /** The loan's collateral asset. `undefined` while the loan read is
    *  in flight — the liquidity read is left out of the aggregate rather
-   *  than asked of a zero address, which `checkLiquidity` rejects
-   *  outright with `InvalidAsset`. */
+   *  than asked of a zero address, which `checkLiquidityOnActiveNetwork`
+   *  rejects outright with `InvalidAsset`. */
   collateralAsset: `0x${string}` | undefined;
   /** Only mount these reads for a lender looking at an Active loan.
    *  Everything else pays RPC for an answer nothing renders. */

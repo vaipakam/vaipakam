@@ -4611,7 +4611,8 @@ contract RiskFacetTest is Test {
     //  - sequencer circuit-breaker reused
     //  - HF gate reused
     //  - Tier-0 (unclassified collateral) blocks the path
-    //  - oracle-stale (tryGetAssetPrice ok=false) blocks the path
+    //  - oracle-stale (a missing price) blocks the path
+    //  - a distrusted price refuses by name (#666)
     //  - happy path: full settlement + Defaulted transition + event
 
     /// @dev Helper — wire common mocks the discount path expects when
@@ -4645,21 +4646,22 @@ contract RiskFacetTest is Test {
         // Both legs priced at $1.00 (8-decimal feed). collateralEquivalent
         // then computes 1:1 between principal and collateral (both 18-dec
         // tokens), and the per-tier 5% discount adds 5%.
+        // #666 — `collateralEquivalent` reads the status-naming price read.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
-                OracleFacet.tryGetAssetPrice.selector,
+                OracleFacet.getAssetPriceStatus.selector,
                 mockERC20
             ),
-            abi.encode(true, uint256(1e8), uint8(8))
+            abi.encode(OracleFacet.PriceStatus.Priced, uint256(1e8), uint8(8))
         );
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
-                OracleFacet.tryGetAssetPrice.selector,
+                OracleFacet.getAssetPriceStatus.selector,
                 mockCollateralERC20
             ),
-            abi.encode(true, uint256(1e8), uint8(8))
+            abi.encode(OracleFacet.PriceStatus.Priced, uint256(1e8), uint8(8))
         );
         // Cross-facet vault withdraw + NFT update — mock-success.
         MockVaultWithdraw.deliversAll(address(diamond));
@@ -4816,22 +4818,22 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev `tryGetAssetPrice` failing on either leg →
-    ///      `LibFallback.collateralEquivalent` returns 0 → settlement
+    /// @dev A missing price on either leg →
+    ///      `LibFallback.collateralEquivalent` reports unpriced → settlement
     ///      reverts `OracleStaleForDiscount` (no fair-value math
     ///      possible). The liquidator retries when oracle clears or
     ///      falls back to `triggerLiquidation`.
     function testTriggerLiquidationDiscounted_RevertsOracleStale() public {
         uint256 loanId = createAndAcceptOffer();
         _mockDiscountPathHappy(loanId);
-        // Stamp collateral's `tryGetAssetPrice` to fail (ok=false).
+        // Stamp the collateral's price as missing.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
-                OracleFacet.tryGetAssetPrice.selector,
+                OracleFacet.getAssetPriceStatus.selector,
                 mockCollateralERC20
             ),
-            abi.encode(false, uint256(0), uint8(8))
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(0))
         );
         // Fund + approve so the safeTransferFrom doesn't fail with
         // allowance — `OracleStaleForDiscount` fires AFTER the pull.
@@ -4845,6 +4847,33 @@ contract RiskFacetTest is Test {
                 mockCollateralERC20
             )
         );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            address(this),
+            ""
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #666 — a DISTRUSTED price on a leg (every responding secondary
+    ///      oracle disagrees with Chainlink) is not a missing one: the
+    ///      discounted liquidation refuses by the divergence's own name, so
+    ///      the liquidator knows to retry once the feeds agree.
+    function testTriggerLiquidationDiscounted_RevertsOnDistrustedPrice() public {
+        uint256 loanId = createAndAcceptOffer();
+        _mockDiscountPathHappy(loanId);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPriceStatus.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(OracleFacet.PriceStatus.Divergent, uint256(0), uint8(0))
+        );
+        deal(mockERC20, address(this), 2000 ether);
+        IERC20(mockERC20).approve(address(diamond), 2000 ether);
+
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         RiskFacet(address(diamond)).triggerLiquidationDiscounted(
             loanId,
             address(this),

@@ -1305,7 +1305,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -1320,16 +1320,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         s[12] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
         // Hot-path role-revoke for incident response. Distinct from
-        // the timelocked `revokeRole` so a Pauser (or other emergency
-        // role-holder) can pull a compromised key without waiting
-        // 48h. See AccessControlFacet implementation for the role
-        // gate that scopes this.
+        // the timelocked `revokeRole` so the EMERGENCY_REVOKER_ROLE
+        // holder (the governance Safe, #934 / D1) can pull a compromised
+        // key without waiting out the Timelock delay. It can only revoke,
+        // never DEFAULT_ADMIN_ROLE and never from the Diamond owner.
         s[13] = AccessControlFacet.emergencyRevokeRole.selector;
         // Atomic role + ERC-173 ownership handover (Item 3 of the
         // 2026-05-06 rehearsal follow-ups). Replaces the legacy
         // 23-tx grant + transferOwnership + renounce sequence.
         // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
         s[14] = AccessControlFacet.transferAdmin.selector;
+        s[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -1442,7 +1443,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -1475,6 +1476,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #638 — read-only live-secondary-feed counter, consumed only by the
         // backstop oracle-coverage gate (LibBackstopOracleGate).
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        // #666 — the price read that tells a missing price from a
+        // distrusted one (LibFallback's failed-swap split reads it).
+        s[18] = OracleFacet.getAssetPriceStatus.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -3069,7 +3073,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](37);
+        s = new bytes4[](39);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3155,6 +3159,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
         s[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        s[37] = RewardAggregatorFacet.isChainIncluded.selector;
+        s[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
     }
 
     function _getRewardRemittanceSelectors()

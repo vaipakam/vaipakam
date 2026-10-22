@@ -70,9 +70,10 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase handover \
 #                                           --confirm-i-have-multisig-ready
-#       Runs Handover.s.sol — rotates DEFAULT_ADMIN_ROLE → governance
-#       Safe (direct, no Timelock delay), the five Timelock-bound
-#       roles → Timelock, PAUSER_ROLE → Pauser Safe (direct, fast
+#       Runs Handover.s.sol — rotates DEFAULT_ADMIN_ROLE → Timelock
+#       (D1, #934), EMERGENCY_REVOKER_ROLE → governance Safe (its only
+#       Diamond role; revoke-only, no Timelock delay), the six
+#       Timelock-bound roles → Timelock, PAUSER_ROLE → Pauser Safe (direct, fast
 #       incident lever), ERC-173 Diamond ownership → Timelock, and
 #       every cross-chain contract's Ownable2Step ownership → TIMELOCK
 #       (first leg only — the TIMELOCK must call acceptOwnership() on
@@ -568,7 +569,7 @@ phase_preflight() {
   MISSING=()
   for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
            VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-           TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
+           TIMELOCK_PROPOSER PAUSER_ADDRESS CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
   done
   # Mirror chains need BASE_CHAIN_ID — canonical Base's EVM chain id —
@@ -1541,7 +1542,7 @@ EOF
   # blast radius is real value, so this gate is non-negotiable.
   # See deploy-testnet.sh's identical helper for the rationale.
   local missing=()
-  for label in DEFAULT_ADMIN_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
+  for label in EMERGENCY_REVOKER_ADDRESS PAUSER_ADDRESS TIMELOCK_PROPOSER; do
     local addr="${!label:-}"
     if [ -z "$addr" ]; then
       missing+=("$label (env var unset)")

@@ -435,6 +435,7 @@ describe('/activity serves the value — and a database before 0055 still serves
   const fetchRows = async (h: ReturnType<typeof createSqliteD1>) => {
     const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}`), {
       DB: h.d1,
+      RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
     } as unknown as Env);
     expect(res.status).toBe(200);
     return ((await res.json()) as { events: Record<string, unknown>[] }).events;

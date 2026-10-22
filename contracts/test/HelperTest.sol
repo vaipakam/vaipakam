@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](264); // pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](265); // #2621 +setExpectedSourceChainIdsRaw (was 264); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -569,6 +569,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setArmingFeeRateRaw.selector; // #1219 Codex #2556 r1
         selectors[n++] = TestMutatorFacet.setPerkStateRaw.selector; // #2559 r2
         selectors[n++] = TestMutatorFacet.setPerkCreditsRaw.selector; // #2559 r5
+        selectors[n++] = TestMutatorFacet.setExpectedSourceChainIdsRaw.selector; // #2621
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -863,7 +864,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -893,6 +894,8 @@ contract HelperTest {
         selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         // #638 — live-secondary-feed counter for the backstop oracle gate.
         selectors[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        // #666 — the price read that tells a missing price from a distrusted one.
+        selectors[18] = OracleFacet.getAssetPriceStatus.selector;
         return selectors;
     }
 
@@ -1683,7 +1686,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](16);
         selectors[0] = AccessControlFacet.initializeAccessControl.selector;
         selectors[1] = AccessControlFacet.grantRole.selector;
         selectors[2] = AccessControlFacet.revokeRole.selector;
@@ -1698,6 +1701,8 @@ contract HelperTest {
         selectors[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         selectors[12] = AccessControlFacet.emergencyRevokeRole.selector;
         selectors[13] = AccessControlFacet.transferAdmin.selector;
+        selectors[14] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
+        selectors[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
         return selectors;
     }
 
@@ -2333,7 +2338,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](37);
+        selectors = new bytes4[](39);
         // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
         // lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet (EIP-170 headroom).
@@ -2416,6 +2421,9 @@ contract HelperTest {
         selectors[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         selectors[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
         selectors[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        selectors[37] = RewardAggregatorFacet.isChainIncluded.selector;
+        selectors[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
         return selectors;
     }
 

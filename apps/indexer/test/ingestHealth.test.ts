@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { handleIngestHealth, readIngestHealth } from '../src/healthRoutes';
 import { createSchemaGate } from '../src/schemaGate';
+import { configuredScanChains } from '../src/env';
 import { REQUIRED_D1_MIGRATIONS } from '../src/requiredMigrations';
 
 const DDL = [
@@ -51,7 +52,7 @@ function seeded(migrations: readonly string[]) {
 describe('readIngestHealth', () => {
   it('reports each scanned chain from the diamond cursor only, with its age', async () => {
     const h = seeded(REQUIRED_D1_MIGRATIONS);
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
     expect(out).toEqual({
       checkedAt: 1_100,
       schema: { state: 'current' },
@@ -65,6 +66,7 @@ describe('readIngestHealth', () => {
           deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, adoptedBlind: false },
         },
       ],
+      configured: { chains: [], basis: expect.stringMatching(/not resolved/) },
     });
   });
 
@@ -76,7 +78,7 @@ describe('readIngestHealth', () => {
     h.db
       .prepare('INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending) VALUES (?, ?, ?, ?, ?)')
       .run(421614, DIAMOND, 320_151_741, 1_050, 0);
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
     expect(out.chains.map((c) => c.chainId)).toEqual([97, 84532, 421614]);
     expect(out.chains[2]).toEqual({
       chainId: 421614,
@@ -96,8 +98,8 @@ describe('readIngestHealth', () => {
         return inner.prepare(sql);
       },
     };
-    await expect(readIngestHealth(faulty as never, createSchemaGate(), 1_100)).rejects.toThrow(/internal error/);
-    const res = await handleIngestHealth(faulty as never);
+    await expect(readIngestHealth(faulty as never, [], createSchemaGate(), 1_100)).rejects.toThrow(/internal error/);
+    const res = await handleIngestHealth(faulty as never, []);
     expect(res.status).toBe(503);
   });
 
@@ -107,13 +109,13 @@ describe('readIngestHealth', () => {
     const h = createSqliteD1([DDL[0], DDL[1]]);
     for (const n of REQUIRED_D1_MIGRATIONS) h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run(n);
     h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(84532, 'diamond', 500, 1_000);
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
     expect(out.chains).toEqual([{ chainId: 84532, lastBlock: 500, scannedAt: 1_000, ageSeconds: 100, deployment: null }]);
   });
 
   it('names the missing migration when the gate is the reason ingest declines', async () => {
     const h = seeded(REQUIRED_D1_MIGRATIONS.slice(0, -1));
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
     expect(out.schema).toEqual({
       state: 'pending',
       missing: [REQUIRED_D1_MIGRATIONS[REQUIRED_D1_MIGRATIONS.length - 1]],
@@ -122,13 +124,13 @@ describe('readIngestHealth', () => {
 
   it('reports the gate as unknown, not current, when the migration record cannot be read', async () => {
     const h = createSqliteD1([DDL[1]]);
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 1_100);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
     expect(out.schema).toEqual({ state: 'unknown' });
   });
 
   it('reports a cursor ahead of the clock as a NEGATIVE age, never as fresh (#2482 r2)', async () => {
     const h = seeded(REQUIRED_D1_MIGRATIONS);
-    const out = await readIngestHealth(h.d1 as never, createSchemaGate(), 900);
+    const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 900);
     // 84532 was stamped at 1_000 and 97 at 1_090: both ahead of 900.
     expect(out.chains.map((c) => c.ageSeconds)).toEqual([-190, -100]);
   });
@@ -136,7 +138,7 @@ describe('readIngestHealth', () => {
 
 describe('handleIngestHealth', () => {
   it('answers uncached with open CORS', async () => {
-    const res = await handleIngestHealth(seeded(REQUIRED_D1_MIGRATIONS).d1 as never);
+    const res = await handleIngestHealth(seeded(REQUIRED_D1_MIGRATIONS).d1 as never, []);
     expect(res.status).toBe(200);
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
@@ -145,7 +147,39 @@ describe('handleIngestHealth', () => {
   it('is a 503, never an empty 200, when the cursor cannot be read', async () => {
     // No indexer_cursor table: an empty chain list here would read as
     // "nothing is stale".
-    const res = await handleIngestHealth(createSqliteD1([DDL[0]]).d1 as never);
+    const res = await handleIngestHealth(createSqliteD1([DDL[0]]).d1 as never, []);
     expect(res.status).toBe(503);
+  });
+});
+
+describe('the configured scan set (#2498)', () => {
+  const secret = { get: async () => 'https://rpc.invalid' };
+
+  it('is every chain with a deployment and a bound RPC — no secret is read', () => {
+    let reads = 0;
+    const counted = { get: async () => { reads += 1; return 'x'; } };
+    expect(
+      configuredScanChains({ RPC_BASE_SEPOLIA: counted, RPC_ARB_SEPOLIA: counted, RPC_BNB_TESTNET: counted }),
+    ).toEqual([97, 84532, 421614]);
+    expect(reads).toBe(0);
+  });
+
+  it('drops a chain whose binding is removed, and adds it back when restored', () => {
+    expect(configuredScanChains({ RPC_BASE_SEPOLIA: secret, RPC_BNB_TESTNET: secret })).toEqual([97, 84532]);
+    expect(configuredScanChains({ RPC_BASE_SEPOLIA: secret, RPC_BNB_TESTNET: secret, RPC_ARB_SEPOLIA: secret })).toEqual([
+      97, 84532, 421614,
+    ]);
+  });
+
+  it('leaves out a bound chain this build has no deployment for', () => {
+    // RPC_SEPOLIA is bound in production; Sepolia has no deployment in the bundle.
+    expect(configuredScanChains({ RPC_SEPOLIA: secret, RPC_BASE: secret })).toEqual([]);
+  });
+
+  it('is reported by the route with what membership means', async () => {
+    const res = await handleIngestHealth(seeded(REQUIRED_D1_MIGRATIONS).d1 as never, [84532, 97]);
+    const body = (await res.json()) as { configured: { chains: number[]; basis: string } };
+    expect(body.configured.chains).toEqual([84532, 97]);
+    expect(body.configured.basis).toMatch(/not resolved/);
   });
 });

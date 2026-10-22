@@ -63,29 +63,22 @@
  * schema in `test/closedLoanSideTables.test.ts`.
  */
 
-import type { TickBudget } from './subrequestBudget';
+import { affords, plus, type Cost, type TickBudget } from './subrequestBudget';
 import { discloseQuarantineReleases, quarantineReleaseStatement } from './loanQuarantine';
 
 /** What one move costs the invocation: three batches (the snapshot, the
- *  move, the marker release after it), and every statement in them is a D1
- *  query. Callers check `orphanMoveAffordable` before starting a move, so it
- *  never runs into the ceiling half done. */
-export const ORPHAN_MOVE_SUBREQUESTS = 3;
-export const ORPHAN_MOVE_D1_QUERIES = 4 + 9 + 1;
+ *  move, the marker release after it), all of them D1 — no chain read — and
+ *  every statement in them a D1 query. Callers check `orphanMoveAffordable`
+ *  before starting a move, so it never runs into the ceiling half done. */
+export const ORPHAN_MOVE_COST: Cost = { external: 0, d1Queries: 4 + 9 + 1 };
 
 /**
  * Whether a move may START: its whole cost, and still what the caller must
- * do after it (`reserve`), in both meters. The one rule every lane that
- * withdraws an orphan applies (#2636 r4).
+ * do after it (`reserve`). The one rule every lane that withdraws an orphan
+ * applies (#2636 r4).
  */
-export function orphanMoveAffordable(
-  budget: TickBudget,
-  reserve: { subrequests: number; d1Queries: number },
-): boolean {
-  return (
-    budget.subrequests.remaining >= ORPHAN_MOVE_SUBREQUESTS + reserve.subrequests &&
-    budget.d1Queries.remaining >= ORPHAN_MOVE_D1_QUERIES + reserve.d1Queries
-  );
+export function orphanMoveAffordable(budget: TickBudget, reserve: Cost): boolean {
+  return affords(budget, plus(ORPHAN_MOVE_COST, reserve));
 }
 
 /** A column name SQLite handed back, accepted only as a plain identifier. */

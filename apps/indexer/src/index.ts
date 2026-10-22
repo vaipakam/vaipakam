@@ -73,6 +73,7 @@ import {
   getChainConfigs,
   isDoIngestEnabled,
   earlyRouteEnv,
+  configuredScanChains,
   WORKER_NAME,
   type WorkerEnv,
   type Env,
@@ -81,7 +82,7 @@ import {
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
 import {
-  MAX_SUBREQUESTS_PER_INVOCATION,
+  affords,
   createBudget,
   meterD1,
   meterEnv,
@@ -125,7 +126,7 @@ import {
   handleOffersPreflight,
 } from './offerRoutes';
 import { handleLoopClosure } from './rewardRoutes';
-import { captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
+import { BACKING_SNAPSHOT_COST, captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -214,10 +215,10 @@ export default {
     // because the ceiling it tracks is the INVOCATION's, not any one pass's.
     // Every pass below draws on this one object, so the figure reported is
     // the tick's total — which is the number the platform is comparing
-    // against 50. A per-pass budget would give each pass a fresh 50 and
+    // against its ceilings. A per-pass budget would give each pass a fresh 50 and
     // report four comfortable numbers for an invocation that had already
     // been killed (#2194 is that condition, measured rather than argued).
-    const budget = createBudget(MAX_SUBREQUESTS_PER_INVOCATION, 'cron tick');
+    const budget = createBudget('cron tick');
     // THE SCHEMA GATE (schemaGate.ts): decline the whole tick while the newest
     // migration in this build is not applied, before any pass writes D1 and
     // before the Secrets Store reads below are spent. The ingest DO runs the
@@ -243,32 +244,80 @@ export default {
     // the entry point; both passes get the plain resolved env.
     //
     // COUNTED: up to a dozen Secrets Store reads happen here, before any pass
-    // starts, and they come out of the same allowance.
+    // starts, on the same counter (the internal-services meter).
     const resolved = meterEnv(await resolveEnv(env, budget), budget);
+    // ── ORDER (#2194) ─────────────────────────────────────────────────────
+    //
+    // INGEST FIRST, then the passes that take what ingest left. They used to
+    // be registered side by side and drawn concurrently from the one
+    // allowance, and on the legacy inline path that was over by
+    // construction: the scan's ~38 requests, the backing snapshot's few and
+    // the listing sweep's up to 35 (5 rows x 7) all raced for 50, so whichever
+    // lost the race could be the scan — the dropped-event condition the
+    // round-robin exists to prevent. Now the scan runs on its own, and the
+    // snapshot and the sweep each ASK the live budget before they start
+    // (`affords`), so after a heavy scan they wait for a later tick instead of
+    // crowding it. On the DO path ingest is one ping per chain (internal
+    // requests; the scan runs in the Durable Object's own invocation), so the
+    // order costs that path nothing.
+    //
     // #757 — chain ingest. When the per-chain ingest Durable Object is bound,
     // the cron PINGS each chain's DO (target 0 ⇒ "scan to safe head"): every
-    // chain is serviced each minute (not one per round-robin tick), and the DO
+    // chain is serviced each tick (not one per round-robin tick), and the DO
     // is the single serialized writer that the webhook also routes through.
     // Without the DO binding, fall back to the legacy inline round-robin scan.
+    const ingest: Promise<unknown>[] = [];
+    if (doIngestEnabled(env) && env.CHAIN_INGEST_DO) {
+      const ns = env.CHAIN_INGEST_DO;
+      for (const chain of getChainConfigs(resolved)) {
+        const stub = ns.get(ns.idFromName(String(chain.id)));
+        // A DO ping is a request like any other, so it goes through the same
+        // counted sender rather than a second mechanism that could drift from
+        // it (#2227 r1's rule 2) — charged to the INTERNAL meter, because a
+        // Durable Object is one of Cloudflare's own services (#2221).
+        const send = meterFetch(budget, stub.fetch.bind(stub), 'internal');
+        ingest.push(
+          send('https://chain-ingest-do/trigger', {
+            method: 'POST',
+            body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
+          }).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+          }),
+        );
+      }
+    } else {
+      // Each pass is wrapped so a transient D1 / RPC blip on one pass can't
+      // wedge the next — ticks fail one-at-a-time rather than tick-wide.
+      ingest.push(
+        runChainIndexer(resolved, budget).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[indexer] runChainIndexer pass failed:', err);
+        }),
+      );
+    }
+    ingest.forEach(runPass);
+    const ingestSettled = Promise.allSettled(ingest);
+    // ONE QUEUE for everything that spends what ingest left (#2647 r1). A
+    // pass's `affords` check is only true while nothing else is spending, so
+    // two consumers each started off `ingestSettled` could both pass their
+    // check on the same headroom and then overspend it together (13 left:
+    // the snapshot's 7 and a sweep row's 7 both fit, and both ran). Chaining
+    // each consumer behind the previous one makes every check see what the
+    // earlier ones actually spent. A consumer that fails still releases the
+    // queue — its own `.catch` handles it, and the queue continues on
+    // `allSettled` semantics.
+    let afterIngest: Promise<unknown> = ingestSettled;
+    const afterIngestPass = (pass: () => unknown): void => {
+      afterIngest = afterIngest.then(pass, pass);
+      runPass(afterIngest);
+    };
+
     // #1525 — capture the retained-reserve backing snapshot for ONE chain
-    // per tick, round-robin by scheduled minute.
-    //
-    // Not a fan-out over every chain: free-tier Workers cap at 50
-    // subrequests per invocation and `chainIndexer` reserves ~38 of them
-    // for a single-chain backfill (see its round-robin note). Four RPC
-    // calls per chain across four chains would sit in the same invocation
-    // as that scan and can exhaust the budget — recreating the dropped-
-    // event condition round-robin exists to prevent. The same constraint
-    // that shaped the ingest pass shapes this one.
-    //
-    // That census is INCOMPLETE and the conclusion is still right: it
-    // omits `sweepUnpublishedListings` below, whose worst case is 35 (5
-    // rows x 7 subrequests each), so on the legacy inline path this
-    // invocation reaches ~77 against the cap of 50 — see #2194. Per-chain
-    // capture is bounded for a stronger reason than the note gives, not a
-    // weaker one.
-    //
-    // Per-chain cadence is therefore `len(chains) × tick`, which the
+    // per tick, round-robin by scheduled minute. Not a fan-out over every
+    // chain: its reads are external requests, the scarce kind, and one
+    // chain's worth (`BACKING_SNAPSHOT_COST`) is what a tick can spare after
+    // ingest. Per-chain cadence is therefore `len(chains) × tick`, which the
     // surface discloses as its capture time rather than implying live.
     const backingChains = getChainConfigs(resolved);
     if (backingChains.length > 0) {
@@ -292,44 +341,23 @@ export default {
       const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
       const ordinal = Math.floor(minute / tickMinutes);
       const target = backingChains[Math.abs(ordinal) % backingChains.length];
-      runPass(
-        captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
+      afterIngestPass(() => {
+        if (!affords(budget, BACKING_SNAPSHOT_COST)) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[indexer] backing snapshot for chain ${target.id} skipped this tick: ` +
+              `ingest left too little of the invocation's allowance. Its next turn captures it.`,
+          );
+          return;
+        }
+        return captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
           console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
-        }),
-      );
+        });
+      });
     }
 
-    if (doIngestEnabled(env) && env.CHAIN_INGEST_DO) {
-      const ns = env.CHAIN_INGEST_DO;
-      for (const chain of getChainConfigs(resolved)) {
-        const stub = ns.get(ns.idFromName(String(chain.id)));
-        // A DO ping is an outbound request like any other, so it goes through
-        // the same counted sender rather than a second mechanism that could
-        // drift from it. `meterFetch` takes the sender to wrap precisely so a
-        // non-global one can be counted (#2227 r1's rule 2).
-        const send = meterFetch(budget, stub.fetch.bind(stub));
-        runPass(
-          send('https://chain-ingest-do/trigger', {
-            method: 'POST',
-            body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
-          }).catch((err) => {
-            // eslint-disable-next-line no-console
-            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
-          }),
-        );
-      }
-    } else {
-      // Each pass is wrapped so a transient D1 / RPC blip on one pass can't
-      // wedge the next — ticks fail one-at-a-time rather than tick-wide.
-      runPass(
-        runChainIndexer(resolved, budget).catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error('[indexer] runChainIndexer pass failed:', err);
-        }),
-      );
-    }
     runPass(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
@@ -357,7 +385,10 @@ export default {
     // DROP the OpenSea retry safety net the moment an operator enables DO
     // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
     // DO remains a nice-to-have follow-up, no longer a correctness gate.)
-    runPass(
+    //
+    // #2194 — in the post-ingest queue, behind the snapshot, and it asks the
+    // live budget before each row (`sweepUnpublishedListings`).
+    afterIngestPass(() =>
       sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] sweepUnpublishedListings pass failed:', err);
@@ -496,7 +527,9 @@ export default {
     // ingest — is degraded.
     if (url.pathname === '/health/ingest') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
-      if (req.method === 'GET') return handleIngestHealth(earlyRouteEnv(env).DB);
+      if (req.method === 'GET') {
+        return handleIngestHealth(earlyRouteEnv(env).DB, configuredScanChains(env));
+      }
       return new Response('Not found', { status: 404 });
     }
 
