@@ -525,7 +525,12 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "recorded",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "zeroed",
         "type": "uint32[]",
         "internalType": "uint32[]"
       }
