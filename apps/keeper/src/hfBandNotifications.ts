@@ -452,6 +452,16 @@ export async function recordHfBandNotifications(
  *      must name THIS Diamond: entries outlive a fresh Diamond on the chain,
  *      and an old Diamond's withdrawal says nothing about the new one's ids.
  *
+ *      A marker from before `orphan_seq` existed (NULL) carries no such
+ *      record, so it is judged by the one fact that is still causal: it was
+ *      written from a `loans` row. With a withdrawal recorded for the id and
+ *      no row left, it is about the withdrawn loan and goes. With a row
+ *      present the id may already be a reissued loan, so it is kept, and this
+ *      prune stamps it with the newest withdrawal it read beforehand; from
+ *      then on it is judged like any other marker. What that cannot recover
+ *      is a stale legacy marker on an id withdrawn AND reissued before the
+ *      upgrade: nothing records which loan it was written from.
+ *
  * TWO DATABASES (#2450): the state is keeper-private and `loans` /
  * `loan_orphans` are the indexer's, and D1 cannot join across databases, so
  * this reads the markers, reads both shared tables for those ids, and deletes.
@@ -477,14 +487,19 @@ async function pruneTerminalBandState(
   const banded = markers.map((r) => r.loan_id);
   const chunks = chunkD1InList(banded, { before: [chainId] });
   const orphanChunks = chunkD1InList(banded, { before: [chainId, diamond.toLowerCase()] });
+  // Markers written before `orphan_seq` existed (keeper migration 0006).
+  const legacy = markers.filter((r) => r.orphan_seq === null).map((r) => r.loan_id);
 
   const reads = [
+    // FIRST, so it is read before the rows below: the baseline a legacy marker
+    // that survives this prune is stamped with. A withdrawal recorded after
+    // this read carries a higher id, so it still drops the marker later.
+    db.prepare(`SELECT NULL AS loan_id, NULL AS status, COALESCE(MAX(id), 0) AS seq FROM loan_orphans`),
     ...chunks.map((c) =>
       db
         .prepare(
-          `SELECT loan_id, NULL AS seq FROM loans
-            WHERE chain_id = ? AND loan_id IN (${c.placeholders})
-              AND status <> 'active'`,
+          `SELECT loan_id, status, NULL AS seq FROM loans
+            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
         )
         .bind(...c.binds),
     ),
@@ -493,20 +508,59 @@ async function pruneTerminalBandState(
     ...orphanChunks.map((c) =>
       db
         .prepare(
-          `SELECT loan_id, MAX(id) AS seq FROM loan_orphans
+          `SELECT loan_id, NULL AS status, MAX(id) AS seq FROM loan_orphans
             WHERE chain_id = ? AND diamond = ? AND loan_id IN (${c.placeholders})
             GROUP BY loan_id`,
         )
         .bind(...c.binds),
     ),
   ];
-  const seen = new Map(markers.map((r) => [r.loan_id, r.orphan_seq ?? 0]));
-  const stale = new Set<number>();
-  for (const part of await db.batch<{ loan_id: number; seq: number | null }>(reads)) {
+  const [baselinePart, ...rest] = await db.batch<{ loan_id: number | null; status: string | null; seq: number | null }>(reads);
+  const baseline = baselinePart?.results?.[0]?.seq ?? 0;
+  const status = new Map<number, string>();
+  const withdrawnSeq = new Map<number, number>();
+  for (const part of rest) {
     for (const r of part.results ?? []) {
-      if (r.seq === null) stale.add(r.loan_id); // terminal
-      else if (r.seq > (seen.get(r.loan_id) ?? 0)) stale.add(r.loan_id); // withdrawn after the marker's read
+      if (r.loan_id === null) continue;
+      if (r.status !== null) status.set(r.loan_id, r.status);
+      else if (r.seq !== null) withdrawnSeq.set(r.loan_id, r.seq);
     }
+  }
+  const stale = new Set<number>();
+  for (const m of markers) {
+    const st = status.get(m.loan_id);
+    if (st !== undefined && st !== 'active') {
+      stale.add(m.loan_id); // terminal
+      continue;
+    }
+    const w = withdrawnSeq.get(m.loan_id);
+    if (w === undefined) continue;
+    if (m.orphan_seq !== null) {
+      if (w > m.orphan_seq) stale.add(m.loan_id); // withdrawn after the marker's read
+    } else if (st === undefined) {
+      // A legacy marker has no record of which withdrawals it saw. It was
+      // written from a `loans` row, and the row is gone with a withdrawal
+      // recorded for the id: the move of that row. With a row present the id
+      // has been issued again, and the marker may describe that loan, so it is
+      // kept (Codex #2655 r2) and given the baseline below.
+      stale.add(m.loan_id);
+    }
+  }
+
+  // Stamp the legacy markers this prune keeps, once, so every later prune
+  // judges them by the record's order like any other marker.
+  const baselined = legacy.filter((id) => !stale.has(id));
+  if (baselined.length > 0) {
+    await keeper.batch(
+      chunkD1InList(baselined, { before: [baseline, chainId] }).map((c) =>
+        keeper
+          .prepare(
+            `UPDATE hf_band_state SET orphan_seq = ?
+              WHERE chain_id = ? AND orphan_seq IS NULL AND loan_id IN (${c.placeholders})`,
+          )
+          .bind(...c.binds),
+      ),
+    );
   }
   if (stale.size === 0) return;
 

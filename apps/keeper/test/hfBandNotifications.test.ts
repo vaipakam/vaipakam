@@ -416,6 +416,56 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     expect(seqs).toEqual([{ loan_id: 35, orphan_seq: newest }]);
   });
 
+  /** A marker as a build before `orphan_seq` (keeper migration 0006) left it. */
+  function legacyMarker(h: Harness, loanId: number) {
+    h.keeper.db
+      .prepare(
+        `INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
+         VALUES (?, ?, 'warn', 1400, ?, ?)`,
+      )
+      .run(CHAIN, loanId, BORROWER, NOW);
+  }
+  const seqOf = (h: Harness, loanId: number) =>
+    (h.keeper.db.prepare('SELECT orphan_seq FROM hf_band_state WHERE loan_id = ?').get(loanId) as
+      | { orphan_seq: number | null }
+      | undefined)?.orphan_seq;
+
+  it('keeps a pre-upgrade marker on an id withdrawn and since reissued, and stamps it (Codex #2655 r2)', async () => {
+    const h = harness();
+    withdraw(h, 40, NOW - 600);
+    seedLoan(h, 40); // reissued, and its marker predates the column
+    legacyMarker(h, 40);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 40n, hf: hf(1_400) }], NOW);
+    // Kept: an unchanged observation, so no duplicate warning.
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([40]);
+    expect(notifRows(h)).toHaveLength(0);
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqOf(h, 40)).toBe(newest);
+    // And from then on judged by the record's order: a later withdrawal drops it.
+    withdraw(h, 40, NOW + 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('drops a pre-upgrade marker whose loan row was withdrawn (#2638)', async () => {
+    const h = harness();
+    seedLoan(h, 41);
+    legacyMarker(h, 41);
+    withdraw(h, 41, NOW + 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('stamps a pre-upgrade marker with no withdrawal for its id, and keeps it (#2638)', async () => {
+    const h = harness();
+    withdraw(h, 99, NOW - 600); // some other id
+    seedLoan(h, 42);
+    legacyMarker(h, 42);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW);
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([42]);
+    expect(seqOf(h, 42)).toBeGreaterThan(0);
+  });
+
   it("ignores another Diamond's withdrawal of the same id (#2638)", async () => {
     const h = harness();
     seedLoan(h, 32);

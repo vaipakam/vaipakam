@@ -17,5 +17,7 @@
 -- loan it withdrew, and the prune drops it. One the marker has already seen is
 -- older, so the marker is about the loan that bears the id now, and is kept.
 -- An ordering inside the shared database, not a comparison of two machines'
--- clocks. NULL (a marker written before this column) has seen no withdrawal.
+-- clocks. NULL is a marker written before this column; the prune judges it by
+-- whether its `loans` row is still there, then stamps the ones it keeps (see
+-- `pruneTerminalBandState`).
 ALTER TABLE hf_band_state ADD COLUMN orphan_seq INTEGER;
