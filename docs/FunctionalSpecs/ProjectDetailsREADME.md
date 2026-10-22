@@ -1172,6 +1172,17 @@ sale proceeds, without weakening the lender's default rights.
 - Direct sale fills must be blocked when the borrower has become
   sanctioned between listing and fill, where an active sanctions oracle
   is configured.
+- The buyer of a collateral sale is a party to it and is screened at fill
+  time too, where an active sanctions oracle is configured: a flagged
+  account cannot buy listed collateral. The platform screens the account
+  that fills the listing and, for ERC-721 collateral, the account holding
+  the NFT once the fill has moved it; the platform's own offer-match path
+  screens the bidder before it settles. The marketplace tells the platform
+  nothing else about a fill, so two buyers stay outside this screen, and
+  the platform states this rather than implying full coverage: the
+  recipient of ERC-1155 collateral that is not the account filling the
+  listing, and the paying bidder of a marketplace match that someone else
+  assembles, when the NFT goes to an unflagged account.
 - **Fail-closed backstop for collateral-sale recipients.** The prepay /
   parallel collateral sale settles inside the marketplace fill and pays the
   live position holders (the current lender- and borrower-position owners)
