@@ -13,8 +13,9 @@ pragma solidity ^0.8.29;
  *         still the same person's account, controlled by the same private key,
  *         so a rule written as `code.length == 0` misreads it as a contract.
  *         The designator cannot be mistaken for a deployed contract: EIP-3541
- *         refuses new code starting with `0xef`, so a 23-byte account whose
- *         code starts `0xef0100` is a delegated EOA and nothing else.
+ *         refuses new code starting with `0xef`, and EIP-7702 installs only a
+ *         well-formed designator, so a 23-byte account whose code starts
+ *         `0xef0100` is a delegated EOA and nothing else.
  *
  *         Use this wherever a decision depends on "is this a person's own
  *         account" (the RL-1 reward-delivery default is the case today).

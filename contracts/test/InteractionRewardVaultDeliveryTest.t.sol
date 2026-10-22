@@ -308,15 +308,13 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
     }
 
-    /// @dev Only the exact designator reads as an EOA: the same 23 bytes with
-    ///      a different prefix, or the prefix on longer code, is a contract and
-    ///      keeps the raw wallet transfer.
-    function testWrongPrefix23ByteCodeStaysContract() public {
-        _assertContractShaped(abi.encodePacked(bytes3(0xef0101), address(0xDE1E6A7E)));
-    }
-
-    function testDesignatorPrefixOnLongerCodeStaysContract() public {
-        _assertContractShaped(abi.encodePacked(bytes3(0xef0100), address(0xDE1E6A7E), bytes1(0x00)));
+    /// @dev Only the designator reads as an EOA. Code that merely has the
+    ///      designator's LENGTH is a contract and keeps the raw wallet
+    ///      transfer. (Code that starts `0xef` but is not a valid designator
+    ///      cannot exist on an account at all: the EVM refuses it, and so does
+    ///      `vm.etch`, so there is no near-miss prefix to test.)
+    function test23ByteContractStaysContract() public {
+        _assertContractShaped(abi.encodePacked(bytes3(0x600060), address(0xDE1E6A7E)));
     }
 
     function _assertContractShaped(bytes memory code) internal {
