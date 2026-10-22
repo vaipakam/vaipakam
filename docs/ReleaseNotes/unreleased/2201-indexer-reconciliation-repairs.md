@@ -1,4 +1,4 @@
-## Indexer — reconciliation repairs: settled-head hold, orphan withdrawal, missed settlements, holder history (PR #<n>)
+## Indexer — reconciliation repairs: settled-head hold, orphan withdrawal, missed settlements, holder history (PR #2636)
 
 The indexer no longer reads the chain up to a guessed point. Each turn it asks the RPC for the chain's settled ("safe") block; when that read fails for any reason, it used to step back 32 blocks from the newest and scan up to there, and because the scan never revisits a block, a reorganisation deeper than that margin would have left wrong rows in the database for good. A turn without a settled block now holds: it scans nothing, keeps its place, keeps serving what it has, and logs which chain is held and the reason the RPC gave. The cursor's age on the ingest health page grows while it lasts. Every chain the platform indexes today answers the settled-block question, so in practice this is a one-turn pause on a timeout. Closes #2201.
 
