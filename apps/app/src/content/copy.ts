@@ -269,7 +269,7 @@ const copySource = {
     // #2535 — the security check covers a bounded head of the candidate
     // list; past it, offers are not recommended unchecked.
     matchesUnscreenedTail:
-      'More matching offers exist beyond the ones checked here. They are not recommended without a security check; the Offer Book lists them all, each with its own badge.',
+      'More matching offers exist beyond the ones checked here. They are not recommended without a security check. The Offer Book lists them all and marks those the security check warns about.',
     matchesOfferBookLink: 'Open the Offer Book',
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
@@ -1769,7 +1769,7 @@ const copySource = {
     // #2536 — the lists answered, but from the slower backup source:
     // the rows shown are real, a just-changed position's token may not be.
     sourcesDegraded:
-      'Your loans and offers were read from the backup source just now, so a token from a position opened or received in the last few minutes may be missing from this list. It fills in on the next refresh.',
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so a token from a position opened or received very recently may be missing from this list. It appears once the backup source catches up.',
     // #2536 — a part of the offer list neither source could read (held
     // offers on an older deployment, with the backup source down too).
     sourcesPartial:
@@ -4991,7 +4991,7 @@ const copySource = {
     // #2536 — the asset list comes from the wallet's positions, and one
     // of those lists was read from the slower backup source.
     sourcesDegraded:
-      'Your loans and offers were read from the backup source just now, so an asset behind a position opened or received in the last few minutes may be missing below. It fills in on the next refresh.',
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so an asset behind a position opened or received very recently may be missing below. It appears once the backup source catches up.',
     sourcesPartial:
       'Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.',
     noBalancesInWindow: tmpl(

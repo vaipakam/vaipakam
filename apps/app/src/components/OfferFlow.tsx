@@ -703,20 +703,20 @@ export function OfferFlow({ side }: { side: Side }) {
   // with a stated count, and holds an offer whose screen has not
   // answered as "checking" (shown, not choosable). The rule lives in
   // guidedMatches.ts. The screened head starts at MATCH_SCREEN_STEP and
-  // grows, bounded, when flagged offers leave it short. Reset whenever
-  // the candidate LIST changes — a new search, a different amount that
-  // reorders it, or a book refresh (Codex #2663 r1) — render-phase, like
-  // the scan windows elsewhere. Re-deepening over offers already screened
-  // costs no network: their verdicts are cached per token.
-  const [screenDepth, setScreenDepth] = useState(MATCH_SCREEN_STEP);
+  // grows, bounded, when flagged offers leave it short. The grown depth
+  // belongs to ONE candidate list — a new search, a different amount that
+  // reorders it, or a book refresh starts again from the first step
+  // (Codex #2663 r1). It is stored with the list it was grown for and read
+  // through that key, so a changed list reads as MATCH_SCREEN_STEP in the
+  // same render and nothing below can act on the old list's depth (r2: a
+  // reset queued beside a deepen could be overwritten by it). Re-deepening
+  // over offers already screened costs no network: their verdicts are
+  // cached per token.
   const screenKey = `${readChain.chainId}|${side}|${(matchCandidates ?? [])
     .map((o) => o.offerId)
     .join(',')}`;
-  const [prevScreenKey, setPrevScreenKey] = useState(screenKey);
-  if (prevScreenKey !== screenKey) {
-    setPrevScreenKey(screenKey);
-    setScreenDepth(MATCH_SCREEN_STEP);
-  }
+  const [grownDepth, setGrownDepth] = useState({ key: screenKey, depth: MATCH_SCREEN_STEP });
+  const screenDepth = grownDepth.key === screenKey ? grownDepth.depth : MATCH_SCREEN_STEP;
   const matchLegs = useMemo(
     () => (matchCandidates ?? []).slice(0, screenDepth).flatMap(offerScreenableLegs),
     [matchCandidates, screenDepth],
@@ -729,11 +729,14 @@ export function OfferFlow({ side }: { side: Side }) {
         : pickGuidedMatches(matchCandidates, matchVerdicts, screenDepth),
     [matchCandidates, matchVerdicts, screenDepth],
   );
-  // Render-phase adjustment, like the reset above: once the screened head
-  // has answered and come up short, screen the next step. Terminates —
-  // the depth only grows, and the pick stops asking at MATCH_SCREEN_MAX.
+  // Render-phase adjustment: once the screened head has answered and come
+  // up short, screen the next step of THIS list. Terminates — the depth
+  // only grows, and the pick stops asking at MATCH_SCREEN_MAX.
   if (matchPick?.deepen) {
-    setScreenDepth(Math.min(screenDepth + MATCH_SCREEN_STEP, MATCH_SCREEN_MAX));
+    setGrownDepth({
+      key: screenKey,
+      depth: Math.min(screenDepth + MATCH_SCREEN_STEP, MATCH_SCREEN_MAX),
+    });
   }
 
   // ---- Step plumbing ----------------------------------------------------

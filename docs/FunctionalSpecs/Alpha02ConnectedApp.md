@@ -1338,7 +1338,8 @@ progress.
   part of the list the check has covered are never recommended unchecked: when
   flagged offers leave the list short, more of the list is checked, up to a
   bound; past that bound the list says that more matching offers exist and
-  links to the Offer Book, which shows every offer with its own badge. The
+  links to the Offer Book, which lists every offer and marks those the check
+  warns about. The
   link is given in place because the Offer Book is not in Basic mode's
   navigation.
 - Posting the user's own offer is the explicit fallback.
@@ -4059,9 +4060,10 @@ Its intended behaviour, as the test oracle for this surface:
   restore. When the loan/offer data sources are unavailable the list
   says it can't be built completely rather than showing a partial
   picture as complete. When the wallet's loans or offers could be read
-  only from the backup source, which can lag behind the chain by a few
-  minutes, the list is still shown but says that a token from a
-  position opened or received in the last few minutes may be missing.
+  only from the backup source, which can lag behind the chain by a minute
+  or two, the list is still shown but says that a token from a very
+  recent position may be missing until that source catches up. It does
+  not promise the next refresh fixes it.
   When part of the offer list could be read from neither source, the list
   says instead that tokens from offers the wallet holds may be missing
   whatever their age, and to try again, since that gap does not close by
