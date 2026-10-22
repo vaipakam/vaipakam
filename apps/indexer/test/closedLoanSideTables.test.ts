@@ -30,6 +30,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
 import {
   _closedLoanSideTableStatements,
+  _loanSideTableStatements,
   _verifiedHolderStatements,
   processLoanLogs,
   QUARANTINE_MAINTENANCE_SUBREQUESTS,
@@ -384,6 +385,8 @@ describe('reconcileAfterScan against a real database', () => {
           // argument left it falsy and quietly dropped that statement, which
           // is how the repair path's quarantine release went untested here.
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        loanSideTableStatements: (loanId) =>
+          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
         // Wired exactly as production wires it, so the repair path's
         // disclosure is exercised here rather than only asserted structurally
         // (#2231 r9 `4036242408`). `discloseAt` lets one test push the clock
@@ -502,6 +505,8 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        loanSideTableStatements: (loanId) =>
+          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
         mutableColumns: (d: Record<string, unknown>) => ({
           assignments: ['principal = ?', 'collateral_amount = ?'],
           values: [String(d.principal), String(d.collateralAmount)],
@@ -512,5 +517,49 @@ describe('reconcileAfterScan against a real database', () => {
     );
     expect(hasListing(h, 22)).toBe(true);
     expect(hasIntent(h, 22)).toBe(true);
+  });
+
+  it('#2197 — withdraws a row the chain has no loan for: moved whole into loan_orphans, side tables cleared, marker kept', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 23);
+    seedListing(h, 23);
+    seedIntent(h, 23);
+    const before = h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = ?').get(CHAIN, 23);
+    const report = await reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        // The zero struct: the chain has never heard of loan 23.
+        readContract: (async (args: Record<string, unknown>) =>
+          args.functionName === 'getActiveLoansCount'
+            ? 0n
+            : { id: 0n, status: 0, principal: 0n, collateralAmount: 0n, lenderTokenId: 0n, borrowerTokenId: 0n }) as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        loanSideTableStatements: (loanId) =>
+          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
+        discloseSideTableBatch: () => {},
+        mutableColumns: () => ({ assignments: [], values: [] }),
+        terminalHolderStatements: async () => [],
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+    expect(report.unresolvable).toEqual([23]);
+    expect(report.withdrawn).toEqual([23]);
+    // Gone from every surface that reads `loans`…
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 23').get()).toEqual({ n: 0 });
+    expect(hasListing(h, 23)).toBe(false);
+    expect(hasIntent(h, 23)).toBe(false);
+    // …and kept whole, with the evidence, for an operator's restore.
+    const kept = h.db
+      .prepare('SELECT chain_id, loan_id, from_status, observed_block, row_json FROM loan_orphans')
+      .all() as { chain_id: number; loan_id: number; from_status: string; observed_block: number; row_json: string }[];
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ chain_id: CHAIN, loan_id: 23, from_status: 'active', observed_block: 100 });
+    expect(JSON.parse(kept[0].row_json)).toEqual(before);
   });
 });

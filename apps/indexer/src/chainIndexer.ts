@@ -1215,11 +1215,25 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
   // because nothing in this pass will ever resolve it: the read
   // succeeded, so retrying changes nothing, and it is not counted as a
   // running loan either (#2190 r6 `4006071749`).
+  //
+  // #2197 — such a row is now WITHDRAWN from publication: moved out of
+  // `loans` into `loan_orphans`, kept whole for an operator's restore. The
+  // line says which rows moved and which are still published (a move that
+  // did not land), because those are different states and the second needs
+  // the next lap.
   if (report.unresolvable.length > 0) {
+    const withdrawn = new Set(report.withdrawn);
+    const stillPublished = report.unresolvable.filter((id) => !withdrawn.has(id));
     console.error(
       `[chainIndexer] reconcile chain ${chainId}: the chain has NO SUCH LOAN for ` +
-        `indexed row(s) ${report.unresolvable.join(', ')} — orphaned rows that ` +
-        `will not resolve themselves; they are not counted as running`,
+        `indexed row(s) ${report.unresolvable.join(', ')}, orphaned rows — ` +
+        (report.withdrawn.length > 0
+          ? `withdrawn from publication into loan_orphans: ${report.withdrawn.join(', ')}` +
+            ` (kept whole there; restore by re-inserting row_json)`
+          : 'none withdrawn') +
+        (stillPublished.length > 0
+          ? `; STILL PUBLISHED, the move did not land: ${stillPublished.join(', ')} — retried next lap`
+          : ''),
     );
   }
   // An on-chain status this build does not know. Refusing to guess is
@@ -1322,6 +1336,17 @@ export function _unestablishedRows(report: ReconcileReport): number[] {
     ...report.unresolvable,
     ...report.unknownStatus.map((u) => u.loanId),
   ];
+}
+
+/**
+ * Every loan whose stored row this pass CHANGED with no event behind it — the
+ * repairs, and (#2197) the orphans it withdrew from publication. Each left the
+ * live set, so no later pass can rediscover it to announce; both endings of
+ * the pass take the ids from here, so they cannot disagree about which
+ * changes are broadcast.
+ */
+export function _changedLoanIds(report: ReconcileReport): number[] {
+  return [...report.repaired.map((r) => r.loanId), ...report.withdrawn];
 }
 
 /**
@@ -1570,10 +1595,10 @@ export async function _runLoanReconcilePass(input: {
   // read publishes an OPEN position as closed, permanently, and the
   // correction that exists to end ghost rows would be minting them.
   //
-  // Refusing here is not a claim that the guess is safe for the scan — it is
-  // not, and #2201 stays open for that half. It is that this consumer's
-  // wrong record is the worse one and is the one its own mechanism cannot
-  // revisit.
+  // The scan refuses a guessed head too (it holds its cursor, see
+  // `runChainPass`), so this refusal is normally reached only through that
+  // held tick. It stays here as this consumer's own rule: its wrong record
+  // is the worse one and is the one its own mechanism cannot revisit.
   //
   // And the refusal is SAID. A chain that cannot supply a settled point has
   // NO correction running at all; an operator must learn that from the log
@@ -1677,6 +1702,7 @@ export async function _runLoanReconcilePass(input: {
         // reaches the repair with no change here (#2190 rounds 1-3).
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements(env, chainId, loanId, quarantineAvailable),
+        loanSideTableStatements: (loanId) => _loanSideTableStatements(env, chainId, loanId),
         discloseSideTableBatch: (results, wonTheCas) =>
           // `reconciled` when this pass's own write landed, NOT `closed-out`
           // (#2231 r11 `4036569613`): the repair reaches this list from a
@@ -1739,6 +1765,11 @@ export async function _runLoanReconcilePass(input: {
           // exactly as it was — see `_verifiedHolderStatements`.
           const statements: D1PreparedStatement[] = [
             ..._verifiedHolderStatements(env, chainId, loanId, holders, fingerprint.updatedAt),
+            // #2195 — and the same verified holders into participation
+            // history, which the event path alone writes and the missed
+            // window may have skipped. Same transaction, same rule: only a
+            // side the chain named.
+            ..._verifiedParticipantStatements(env, chainId, loanId, holders, Number(settled.timestamp)),
           ];
           const rows = await planReconciledNotifications(
             env.DB,
@@ -1889,7 +1920,7 @@ export async function _runLoanReconcilePass(input: {
     // have been precisely the ones whose refetch was scoped away.
     return {
       established: true,
-      repairedLoanIds: report!.repaired.map((r) => r.loanId),
+      repairedLoanIds: _changedLoanIds(report!),
       unestablishedLoanIds: _unestablishedRows(report!),
     };
   }
@@ -1906,7 +1937,7 @@ export async function _runLoanReconcilePass(input: {
     // can rediscover them. Returning an empty set there would lose their
     // `loan.updated` frame permanently: the corrections would be in D1 and
     // announced to nobody.
-    const partial = report ? report.repaired.map((r) => r.loanId) : [];
+    const partial = report ? _changedLoanIds(report) : [];
     // ONE VARIABLE WAS ANSWERING TWO QUESTIONS, and that is the seam this
     // block kept failing at — rounds 1, 4 and 5 of #2211 are all the same
     // mistake in different clothes. `partial.length` is about REPAIRS, and
@@ -2159,15 +2190,19 @@ async function runChainPass(
   // an old node or a private RPC that lacks the tag, and equally a timeout
   // from one that has it, since the catch cannot tell those apart.
   //
-  // THE FALLBACK IS NOT SAFE HERE EITHER, AND THIS PR DOES NOT FIX IT
-  // (#2201). Do not read the correction's refusal below as "the guess is
-  // fine for the scan": the cursor advances monotonically from
-  // `lastBlock + 1`, exactly as the paragraph above says, so a
-  // reorganised-out block is never revisited and its rows stay wrong for
-  // good. What differs is severity — the correction publishes an OPEN
-  // position as closed and cannot re-examine it — not recoverability.
-  // `_CodeVsDocsAudit.md` carries the retraction of the self-correcting
-  // claim, which has had to be made more than once.
+  // THE FALLBACK IS NOT SAFE FOR THE SCAN EITHER, SO THE SCAN DOES NOT
+  // ADVANCE ON IT (#2201). The cursor advances monotonically from
+  // `lastBlock + 1`, exactly as the paragraph above says, so a block
+  // scanned on a guess and then reorganised out is never revisited and its
+  // rows stay wrong for good. So a tick whose settled read did not answer
+  // HOLDS: it scans nothing, leaves the cursor where it is, and takes the
+  // caught-up branch below for the clock-driven work, which reads D1 only
+  // up to the cursor. That is the correctness-over-liveness choice, made
+  // here rather than inherited from a `catch`: a provider that never
+  // answers `safe` never indexes that chain, and says so every tick (and
+  // the cursor's age on `/health/ingest` grows), rather than indexing it on
+  // a guess. Every chain this platform scans answers the tag (checked
+  // 2026-10-22), so in practice the hold is a timeout lasting one tick.
   const settledHead = await resolveSettledHead(client);
   const head = settledHead.block;
 
@@ -2184,7 +2219,19 @@ async function runChainPass(
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const scanFrom = lastBlock + 1n;
 
-  if (scanFrom > head) {
+  // #2201 — no settled head: hold the scan (see above). Said every tick,
+  // with the provider's own bounded reason, because a hold that repeats is a
+  // chain that is not being indexed.
+  const heldOnGuess = !settledHead.settled && scanFrom <= head;
+  if (heldOnGuess) {
+    console.warn(
+      `[chainIndexer] chain ${chainId}: no settled block could be read ` +
+        `(${settledHead.fallbackReason ?? 'no reason given'}); holding the scan ` +
+        `at cursor ${lastBlock} instead of scanning to a guessed head ` +
+        `(latest - ${SAFE_FALLBACK_BUFFER})`,
+    );
+  }
+  if (scanFrom > head || heldOnGuess) {
     // #1415 second guard: a head MATERIALLY below our own cursor is
     // never healthy on these chains (the safe-tag reorg horizon is far
     // smaller) — likelier a lagging replica or a mis-pointed RPC that
@@ -2301,9 +2348,14 @@ async function runChainPass(
     // gap a failed insert left below it has been replayed (#2489 r3).
     await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
     // #1349 M5 (loop closure) — every block up to `head` is ingested
-    // (`lastBlock >= head` here), so the settled head's time is a true
+    // when `lastBlock >= head`, so the head's time is a true
     // recorded-before moment, even when the head regressed below the cursor.
-    await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
+    // A held tick (#2201) can arrive here with the cursor BELOW the guessed
+    // head, and stamping that head's time would claim blocks nobody has
+    // read, so it is stamped only when the cursor has reached it.
+    if (lastBlock >= head) {
+      await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
+    }
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
@@ -2362,8 +2414,12 @@ async function runChainPass(
               [...quietCal.loanIds, ...quietReconciledIds, ...quietHeal.ledgerSettledLoanIds],
             )
           : undefined,
-      headBlock: head,
-      skipped: 'caught-up',
+      // A held tick learned no settled head, so it reports none: the ingest
+      // DO re-arms at once for a backlog measured against `headBlock`, and a
+      // guessed head above a lagging cursor would spin it on a provider that
+      // is not answering. The next scheduled tick retries.
+      headBlock: heldOnGuess ? undefined : head,
+      skipped: heldOnGuess ? 'settled-head-unavailable' : 'caught-up',
     };
   }
   const scanTo =
@@ -4133,9 +4189,17 @@ const CHAIN_STATUS_SETTLED = 3;
  * hand-listed set of prior statuses (and an older Worker still serving
  * through a deploy keeps that behaviour).
  *
+ * #2192 — and the edge the scan MISSED ENTIRELY: a `LoanSettled` absent from
+ * the ledger too. The chain's own status decides, so the ledger is not a
+ * filter on which rows are read; it only dates a confirmed settlement.
+ *
  * SCOPE, deliberately narrow. Only rows already in a terminal, unsettled
- * status — repaid, defaulted, liquidated, internal_matched — whose
- * `LoanSettled` the append-only ledger holds. A row ALREADY settled is never
+ * status — repaid, defaulted, liquidated, internal_matched — and only to
+ * `settled`, only when the chain reads Settled. Every other terminal→terminal
+ * edge stays refused (the chain has no `Liquidated` member, so reading it
+ * back could only lose detail). Like the event path's promotion, `settled`
+ * does not record how the loan ended; nothing is lost that the event path
+ * would have kept. A row ALREADY settled is never
  * revisited, whatever its provenance (#2476 r18, root fix): re-dating settled
  * rows was a second job on this lane, and every review round from r13 to r18
  * found another edge of it (quota starvation, orphaned blocks, rotation). A
@@ -4156,8 +4220,10 @@ const CHAIN_STATUS_SETTLED = 3;
  * the `LoanSettled` whose block becomes `terminal_block` must be one whose
  * transaction receipt the node returns AT that block (#2476 r7) — so a
  * discarded event can supply neither the status nor the provenance. The
- * ledger's candidates are tried newest first; if none is confirmed the row
- * is left exactly as it is and revisited next lap.
+ * ledger's candidates are tried newest first; a candidate that could not be
+ * READ leaves the row exactly as it is for the next lap, and when every
+ * candidate was read and none is confirmed (or there is none) the status
+ * lands with its block and time unknown.
  *
  * DATED by a fresh read of that event's block, never by the ledger's
  * `block_at`, which holds the scan's wall-clock sentinel when the original
@@ -4200,20 +4266,28 @@ export async function settleFromLedger(
         .bind(chainId, SETTLE_HEAL_CURSOR_KIND)
         .first<{ last_block: number }>()
     )?.last_block ?? 0;
-  // Each branch is driven by its own index, and the ledger probe by the
-  // per-loan one, so a tick costs the CANDIDATES, never a walk over every
-  // loan or every ledgered settlement on the chain (#2476 r13). INDEXED BY
-  // pins the plan: on a database without ANALYZE statistics SQLite would
-  // otherwise range-scan the primary key from the pointer.
+  // Each status branch is driven by the status index from the pointer, so a
+  // tick costs one page of CANDIDATES, never a walk over every loan on the
+  // chain (#2476 r13). INDEXED BY pins the plan: on a database without
+  // ANALYZE statistics SQLite would otherwise range-scan the primary key
+  // from the pointer.
+  //
+  // #2192 — NO LEDGER PREFILTER. This page used to take only rows whose
+  // ledger holds a `LoanSettled`, which healed a settlement the projection
+  // had dropped and left one the scan MISSED ENTIRELY (absent from the
+  // ledger too) reading repaid / defaulted / liquidated forever, claims
+  // outstanding on a loan the chain calls Settled. The chain read below is
+  // what decides, so every terminal-unsettled row is a candidate; the
+  // ledger is consulted only to DATE a confirmed settlement, and a
+  // settlement with no confirmed event lands with its block and time
+  // unknown (`canonicalSettlementBlock` answers 'unconfirmed'). A row the
+  // chain still calls terminal costs its one status read and is passed
+  // over until the next lap.
   const res = await env.DB.prepare(
     `SELECT l.loan_id AS loan_id FROM loans l INDEXED BY idx_loans_chain_status_loan
       WHERE l.chain_id = ?1
         AND l.status IN ('repaid', 'defaulted', 'liquidated', 'internal_matched')
         AND l.loan_id > ?2
-        AND EXISTS (
-          SELECT 1 FROM activity_events ae INDEXED BY idx_activity_chain_loan
-           WHERE ae.chain_id = ?1 AND ae.loan_id = l.loan_id AND ae.kind = 'LoanSettled'
-        )
       ORDER BY l.loan_id
       LIMIT ?3`,
   )
@@ -4562,6 +4636,16 @@ async function refreshStubLoans(
  * MAX(from_at) ordering never surfaced it. The zero address (burns) is
  * never a participant. Wallets stored lowercase (repo convention).
  */
+/** A wallet as `loan_participants` stores it — lowercase 0x-40-hex — or
+ *  null for anything that is not a holder (malformed, or the zero address a
+ *  burn transfers to). One rule for both writers of the table. */
+function participantWallet(wallet: string | null | undefined): string | null {
+  const w = (wallet || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(w)) return null;
+  if (w === '0x0000000000000000000000000000000000000000') return null;
+  return w;
+}
+
 async function recordLoanParticipant(
   env: Env,
   chainId: number,
@@ -4570,9 +4654,8 @@ async function recordLoanParticipant(
   role: 'lender' | 'borrower',
   fromAt: number,
 ): Promise<void> {
-  const w = (wallet || '').toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(w)) return;
-  if (w === '0x0000000000000000000000000000000000000000') return;
+  const w = participantWallet(wallet);
+  if (w === null) return;
   await env.DB.prepare(
     `INSERT OR IGNORE INTO loan_participants
        (chain_id, loan_id, wallet, role, from_at)
@@ -6868,14 +6951,7 @@ export function _closedLoanSideTableStatements(
    */
   quarantineAvailable: boolean,
 ): D1PreparedStatement[] {
-  const statements: D1PreparedStatement[] = [
-    env.DB.prepare(
-      `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
-    ).bind(chainId, loanId),
-    env.DB.prepare(
-      `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
-    ).bind(chainId, loanId),
-  ];
+  const statements: D1PreparedStatement[] = _loanSideTableStatements(env, chainId, loanId);
   // THE QUARANTINE MARK, RELEASED BY THE CLOSE-OUT (#2213 r1 `4011674986`).
   //
   // Without this the release could only ever come from the reconciliation
@@ -6901,6 +6977,29 @@ export function _closedLoanSideTableStatements(
     statements.push(quarantineReleaseStatement(env.DB, chainId, loanId));
   }
   return statements;
+}
+
+/**
+ * THE LIST of a loan's side tables — the rows that exist only while the loan
+ * is running and publish an action against it (a live prepay listing, a
+ * pending swap-to-repay intent). `_closedLoanSideTableStatements` adds the
+ * close-out's quarantine release to it; the orphan withdrawal (#2197) takes
+ * the list alone, because an orphan's marker must outlive the move. One list,
+ * so the two cannot come to name different tables.
+ */
+export function _loanSideTableStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+): D1PreparedStatement[] {
+  return [
+    env.DB.prepare(
+      `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+    env.DB.prepare(
+      `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?`,
+    ).bind(chainId, loanId),
+  ];
 }
 
 /**
@@ -6995,6 +7094,56 @@ export function _verifiedHolderStatements(
         `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
           WHERE chain_id = ? AND loan_id = ?`,
       ).bind(holders.borrower, updatedAt, chainId, loanId),
+    );
+  }
+  return out;
+}
+
+/**
+ * #2195 — participation history for a holder the reconciliation repair
+ * VERIFIED on chain, as statements for the repair's own transaction.
+ *
+ * The event path appends a `loan_participants` row on every position-NFT
+ * transfer. A repaired loan's missed window can have held such a transfer, so
+ * the holder the repair just read from the chain may have no row at all —
+ * and `/loans/by-participant` and the Activity ownership filter, which read
+ * this table, then leave that holder out of the loan's history for good.
+ *
+ * Two rules, both from what the repair can and cannot know:
+ *  - ONLY A SUBSTANTIATED HOLDER. A side the chain did not name (`null`:
+ *    gone, or a read that did not answer) writes nothing, exactly as
+ *    `_verifiedHolderStatements` does.
+ *  - ONLY TO FILL A GAP. `from_at` is when the participation was observed,
+ *    and the repair did not observe the acquisition: it observed the holder
+ *    AT the settled head. A wallet that already has a row for this loan and
+ *    side keeps it untouched, so a repaired old loan does not jump to the top
+ *    of the wallet's history by a time that is not its acquisition. Where
+ *    there is no row, the head block's chain time is the one honest time
+ *    available: the holder was confirmed holding then.
+ */
+export function _verifiedParticipantStatements(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  holders: { lender: string | null; borrower: string | null },
+  observedAt: number,
+): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = [];
+  for (const [role, raw] of [
+    ['lender', holders.lender],
+    ['borrower', holders.borrower],
+  ] as const) {
+    const w = participantWallet(raw);
+    if (w === null) continue;
+    out.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO loan_participants (chain_id, loan_id, wallet, role, from_at)
+         SELECT ?1, ?2, ?3, ?4, ?5
+          WHERE NOT EXISTS (
+            SELECT 1 FROM loan_participants
+             WHERE chain_id = ?1 AND loan_id = ?2 AND wallet = ?3 AND role = ?4
+          )`,
+      ).bind(chainId, loanId, w, role, observedAt),
     );
   }
   return out;

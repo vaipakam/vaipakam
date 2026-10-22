@@ -1530,6 +1530,7 @@ DELETE FROM loan_participants; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
+DELETE FROM loan_orphans; \
 DELETE FROM loans; \
 DELETE FROM offers; \
 DELETE FROM oracle_snapshot_state; \
@@ -1588,7 +1589,10 @@ not confirm it", so a fabricated entry is a silent suppression — it
 withholds a real borrower's due-date and grace reminders with nothing
 on any surface to show why. The reconciliation pass rewrites the
 table from the chain as it examines rows, so clearing it costs at
-most one rotation's worth of re-marking. #2212.)
+most one rotation's worth of re-marking. #2212.
+`loan_orphans` likewise: it holds `loans` rows the pass proved the
+chain has no loan for, moved out of publication, and the replay
+re-derives every such finding the same way. #2197.)
 
 **`notifications` is cleared with its producer state, and the loss
 boundary is stated honestly** (#1450 r33). The table has THREE

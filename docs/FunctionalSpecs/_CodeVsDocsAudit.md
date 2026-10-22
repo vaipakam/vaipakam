@@ -822,6 +822,16 @@ reporting is still a real gap.
 
 ## An unsubstantiable loan record is reported, but not withdrawn from publication (#2190 r8)
 
+**RESOLVED (#2197).** The pass now withdraws such a record: on a proven
+nonexistent read at the settled head it moves the row out of `loans` into
+`loan_orphans` (kept whole for an operator's restore, with the block the proof
+was read at) and clears its side tables in the same transaction, so every
+surface that lists or counts loans stops publishing it with no per-surface
+filter. The quarantine finding is kept, so the operator's stale report goes on
+naming it. The spec was not changed to match the code; the code moved to the
+spec, and `Alpha02ConnectedApp.md` now also states the withdrawal. The entry
+below is kept as the record of the divergence.
+
 Recorded here rather than by softening
 [`Alpha02ConnectedApp.md`](Alpha02ConnectedApp.md), per this doc set's rule
 that the spec states **intent** and that resolving a divergence by editing the
@@ -904,6 +914,14 @@ is this entry's unconditional-`catch` paragraph made operational: a timeout
 from a capable source and a source that lacks the capability are
 indistinguishable at that moment, so an asserted cause would send an operator
 to replace something that works.
+
+**SCAN HALF RESOLVED (#2201).** A tick whose settled read does not answer
+now holds the scan: it reads nothing, keeps the cursor, and says which chain
+is held and the provider's own reason, every tick. That is the
+correctness-over-liveness choice the paragraph below says must be made
+deliberately rather than inherited from a `catch`, and
+`Alpha02ConnectedApp.md` now states it. The paragraph below is kept as the
+record of why it was deferred.
 
 **The scan half remains open and #2201 stays open with it.** The entry above
 is right that the fix must cover both consumers; what stopped the scan being

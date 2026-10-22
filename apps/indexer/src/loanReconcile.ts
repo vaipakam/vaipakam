@@ -284,6 +284,12 @@ export interface ReconcileReport {
   /** Loan ids the chain says do not exist. Never retried — the read
    *  succeeded — and never counted as running. */
   unresolvable: number[];
+  /** The subset of `unresolvable` whose row this pass WITHDREW from
+   *  publication — moved out of `loans` into `loan_orphans` (#2197). An
+   *  `unresolvable` id missing from here is still published (its move did
+   *  not land, or another writer changed the row first) and the rotation
+   *  returns to it. */
+  withdrawn: number[];
   /** Loans whose on-chain status this build does not recognise. */
   unknownStatus: { loanId: number; status: number }[];
   /** Loan ids whose repair the compare-and-set declined because another
@@ -328,6 +334,11 @@ export interface ReconcileDeps {
    *  can never be retried: the row stops being live, so nothing selects it
    *  again. */
   writeRepair(chainId: number, loanId: number, repair: LoanRepair): Promise<boolean>;
+  /** #2197 — ONE transaction: move a row the chain has no loan for out of
+   *  `loans` into `loan_orphans`, and clear its side tables. A
+   *  compare-and-set on the status the rotation read (`from`); returns
+   *  whether the row was moved. */
+  withdrawOrphan(chainId: number, loanId: number, from: string): Promise<boolean>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -444,6 +455,7 @@ export async function reconcileChainLoans(
     unread: [],
     writeFailed: [],
     unresolvable: [],
+    withdrawn: [],
     unknownStatus: [],
     superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
@@ -462,6 +474,19 @@ export async function reconcileChainLoans(
         // burying it in the retry bucket would hide a row that needs a
         // person (#2190 r6 `4006071749`).
         report.unresolvable.push(row.loan_id);
+        // #2197 — and a record the chain has no loan for is not a running
+        // loan, so it is withdrawn from publication rather than only named.
+        // On a PROVEN nonexistent read only: this branch is reached by the
+        // zero struct at the settled head, never by a read that failed
+        // (that is `unread`, below). A move that did not land leaves the row
+        // live, and the rotation tries again next lap.
+        try {
+          if (await deps.withdrawOrphan(chainId, row.loan_id, row.status)) {
+            report.withdrawn.push(row.loan_id);
+          }
+        } catch {
+          // Reported by the caller as "named but still published".
+        }
         continue;
       }
       // A read that did not happen is not evidence about the loan. The
@@ -592,6 +617,11 @@ export interface ScanReconcileContext {
    *  tables a repair clears must be one list, and importing it here would
    *  make the scan module and this one mutually dependent. */
   closedLoanSideTableStatements(loanId: number): D1PreparedStatement[];
+  /** #2197 — the same side tables WITHOUT the quarantine release the
+   *  close-out list carries. An orphan's marker must outlive the move: it is
+   *  the operator's record that a row was withdrawn. One list underneath
+   *  (`_loanSideTableStatements`), so the two cannot name different tables. */
+  loanSideTableStatements(loanId: number): D1PreparedStatement[];
   /** Paired with the statements above: the module that OWNS them also owns
    *  reporting what they released. That list can carry a quarantine release,
    *  and a release nothing announces is how the close-out path came to be
@@ -815,6 +845,38 @@ export async function reconcileAfterScan(
       // header: what licenses clearing the side tables is the chain having
       // reported the loan ended, which this pass read for itself.
       return (results[0]?.meta?.changes ?? 0) > 0;
+    },
+    async withdrawOrphan(chainId, loanId, from) {
+      // The row as it stands, to keep (see migration 0065 for why the move
+      // keeps it whole). Read first because D1 cannot serialise a whole row
+      // inside a statement without naming every column.
+      const row = await ctx.db
+        .prepare(`SELECT * FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ?`)
+        .bind(chainId, loanId, from)
+        .first<Record<string, unknown> & { updated_at: number }>();
+      if (!row) return false;
+      const at = now();
+      // BOTH statements carry the same compare-and-set — the status the
+      // rotation read AND the `updated_at` of the copy being kept — so a
+      // writer that touched the row in between leaves both no-ops: nothing
+      // is deleted whose kept copy is stale, and nothing is archived that
+      // was not deleted. The INSERT runs first, while the row still exists.
+      // Written out in each statement (not interpolated) so the #1149
+      // SQL-vs-schema guard checks both against the migrated schema.
+      const guardBinds = [chainId, loanId, from, row.updated_at] as const;
+      const results = await ctx.db.batch([
+        ctx.db
+          .prepare(
+            `INSERT INTO loan_orphans (chain_id, loan_id, from_status, observed_block, withdrawn_at, row_json)
+             SELECT ?, ?, ?, ?, ?, ?
+              WHERE EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?)`,
+          )
+          .bind(chainId, loanId, from, Number(ctx.head), at, JSON.stringify(row), ...guardBinds),
+        ctx.db
+          .prepare(`DELETE FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?`).bind(...guardBinds),
+        ...ctx.loanSideTableStatements(loanId),
+      ]);
+      return (results[1]?.meta?.changes ?? 0) > 0;
     },
     async readPointer(chainId) {
       const row = await ctx.db

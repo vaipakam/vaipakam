@@ -19,9 +19,11 @@
  * What differs is severity, not recoverability. The correction's wrong
  * record is a position published as CLOSED when it is open, and it cannot
  * even be re-examined by the mechanism that wrote it, since that mechanism
- * selects only live rows. So the correction refuses a guessed head today
- * (see `_runLoanReconcilePass`); the scan's exposure is real, is NOT fixed
- * here, and stays tracked on #2201.
+ * selects only live rows. So BOTH refuse a guessed head: the correction
+ * declines (see `_runLoanReconcilePass`), and the scan holds its cursor and
+ * reads nothing that tick (#2201, see `runChainPass`). The one consumer
+ * that still captures on a guess is the recycling backing snapshot, which
+ * says so in its own log and is tracked on #2210.
  *
  * **When the fallback engages is wider than "an old node".** The `catch` is
  * unconditional, so a timeout or a momentary error from a provider that

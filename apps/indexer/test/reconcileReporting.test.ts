@@ -56,6 +56,7 @@ const report = (over: Partial<ReconcileReport> = {}): ReconcileReport => ({
   unread: [],
   writeFailed: [],
   unresolvable: [],
+  withdrawn: [],
   unknownStatus: [],
   superseded: [],
   nextPointer: 0,
@@ -116,6 +117,14 @@ describe('what the pass says out loud', () => {
     const out = captured(report({ unresolvable: [99] }));
     expect(out).toContain('99');
     expect(out.toLowerCase()).toContain('orphan');
+  });
+
+  it('#2197 — says which orphans were withdrawn and which are still published', () => {
+    const out = captured(report({ unresolvable: [98, 99], withdrawn: [98] }));
+    expect(out).toMatch(/withdrawn from publication into loan_orphans: 98\b/);
+    expect(out).toMatch(/STILL PUBLISHED[^\n]*99/);
+    const all = captured(report({ unresolvable: [99], withdrawn: [99] }));
+    expect(all).not.toContain('STILL PUBLISHED');
   });
 
   it('names a status this build cannot project, with the number', () => {

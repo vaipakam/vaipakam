@@ -118,6 +118,13 @@ const CLASSIFICATION = {
       'cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
+  loan_orphans: {
+    class: 'replay-derived',
+    reason:
+      'loan rows the reconciliation pass proved the chain has no loan for, moved out of ' +
+      '`loans` (#2197); cleared with `loans`, since the replay re-indexes from the chain ' +
+      'and the pass re-derives any orphan the replay recreates',
+  },
   loan_reconcile_quarantine: {
     class: 'replay-derived',
     reason:
