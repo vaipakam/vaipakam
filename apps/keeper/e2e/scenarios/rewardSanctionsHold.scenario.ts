@@ -30,9 +30,8 @@
  *      `getSanctionsHeldReward` then reports. The borrower, never flagged,
  *      forfeits nothing.
  *
- * NOT covered here: the staging-page retry (`resolveStagedDayPage`). Staging
- * records exist only for a claim delivered to ANOTHER chain's venue, which a
- * single canonical chain cannot open — see the COVERAGE note.
+ * NOT covered here: a claim held mid-resolution in staging. That is
+ * `rewardSanctionsStagingRetry.scenario.ts`, through a staging domain.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { formatEther } from 'viem';
