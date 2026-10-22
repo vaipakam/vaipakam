@@ -1,4 +1,4 @@
-## Thread — Sanctions-hold alerts arrive as one digest per chain (PR #<n>)
+## Thread — Sanctions-hold alerts arrive as one digest per chain (PR #2632)
 
 The keeper's sanctions-hold pass used to send each wallet's alert as a post of its own: one per wallet per condition (observation deadline at risk, held overdue, held with no observation chain, a reverted settlement, stuck staging), plus the chain-wide capacity and backlog alerts. A chain with hundreds of held wallets could fill the operators' chat with hundreds of messages a run. Each post could take up to ten seconds, so the pass had to reserve ten minutes at the end of every run for its alerts.
 
