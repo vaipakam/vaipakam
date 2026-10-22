@@ -1418,7 +1418,10 @@ progress.
   collateral added), so the review also runs the protocol's own acceptance
   check for the request, re-reads it while the review stays open, and reads it
   once more at signing, refusing to sign against a review it no longer
-  matches. When that check refuses, the review says the request
+  matches. A refresh that fails leaves the review unknown again (check
+  failed, with a retry) rather than showing the last answer as current, and a
+  request that was cancelled while the review was open is shown as one that
+  cannot be taken, never as an ordinary borrow request. When that check refuses, the review says the request
   cannot be taken right now and why, shows no lender receipt, and offers
   nothing to sign. When the deployment has no such check, the review says it
   cannot confirm the request is still takeable and that a stale request fails

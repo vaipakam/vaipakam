@@ -19,6 +19,7 @@
 import {
   BaseError,
   ContractFunctionRevertedError,
+  zeroAddress,
   type Address,
   type PublicClient,
 } from 'viem';
@@ -104,17 +105,53 @@ export function sameRefinanceReview(
   );
 }
 
+/** The target already known for an offer: the last answer this review had,
+ *  else the indexed row's tag (Codex #2668 r3). 0n when neither knows of one. */
+export function knownRefinanceTarget(
+  previous: RefinanceRequestInfo | null | undefined,
+  indexedTag: number | null | undefined,
+): bigint {
+  if (previous) return previous.targetLoanId;
+  return indexedTag && indexedTag > 0 ? BigInt(indexedTag) : 0n;
+}
+
+/**
+ * Read an offer's refinance facts and whether the request can be taken now.
+ *
+ * `knownTargetLoanId` is the target the caller already has for this offer
+ * (the indexed row's tag, or the reviewed answer) — 0n or undefined when it
+ * has none. It matters only when the offer no longer exists on-chain:
+ * cancelling deletes the offer, and a deleted offer reads back zeroed,
+ * which on its own is indistinguishable from an untagged borrow request
+ * (Codex #2668 r3). A request the caller knew as a refinance therefore
+ * comes back BLOCKED rather than as an ordinary offer.
+ */
 export async function readRefinanceRequestLive(
   client: PublicClient,
   diamond: Address,
   offerId: bigint,
+  knownTargetLoanId?: bigint,
 ): Promise<RefinanceRequestInfo | null> {
   const offer = (await client.readContract({
     address: diamond,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getOfferDetails',
     args: [offerId],
-  })) as { refinanceTargetLoanId: bigint; refinanceCarryOver: boolean };
+  })) as {
+    creator: Address;
+    refinanceTargetLoanId: bigint;
+    refinanceCarryOver: boolean;
+  };
+  if (offer.creator === zeroAddress) {
+    if (!knownTargetLoanId) return null;
+    return {
+      targetLoanId: knownTargetLoanId,
+      // The deleted record no longer says; a blocked review renders no
+      // collateral line, so nothing is stated from this placeholder.
+      carryOver: false,
+      standing: { kind: 'blocked', reason: copy.match.refinanceRequestGone },
+    };
+  }
   if (offer.refinanceTargetLoanId === 0n) return null;
   let standing: RefinanceRequestStanding;
   try {

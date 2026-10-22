@@ -77,9 +77,11 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
+  knownRefinanceTarget,
   lenderCollateralLine,
   readRefinanceRequestLive,
   sameRefinanceReview,
+  type RefinanceRequestInfo,
 } from '../data/refinanceRequestReview';
 import {
   exactUnitsOrNull,
@@ -528,26 +530,42 @@ export function OfferFlow({ side }: { side: Side }) {
   // decision). The indexer row has the tag but not that decision, so the
   // lender's review reads both live, and signing waits for the answer —
   // the fresh-borrow wording would misdescribe the deal.
+  const refinanceKey = ['offerRefinanceRequest', readChain.chainId, selected?.offerId];
   const refinanceRequest = useQuery({
-    queryKey: ['offerRefinanceRequest', readChain.chainId, selected?.offerId],
+    queryKey: refinanceKey,
     enabled:
       mode === 'accept' && side === 'lender' && Boolean(readClient) && Boolean(selected),
     // Codex #2668 r2 — the target loan can close or change while the review
-    // stays open, so the standing is re-read on the sale review's cadence;
-    // submit re-reads it once more before anything is signed.
+    // stays open, so a refinance request's standing is re-read on the sale
+    // review's cadence; submit re-reads it once more before anything is
+    // signed. An ordinary offer's answer cannot become a refinance (the tag
+    // is fixed at posting), so it is not polled.
     staleTime: 30_000,
-    refetchInterval: idleAware(60_000),
+    refetchInterval: (query) => (query.state.data ? idleAware(60_000)() : false),
     queryFn: () =>
       readRefinanceRequestLive(
         readClient!,
         readChain.diamondAddress,
         BigInt(selected!.offerId),
+        // Codex #2668 r3 — the target already known for this offer, so a
+        // cancelled (deleted) request reads as blocked, never as ordinary.
+        knownRefinanceTarget(
+          queryClient.getQueryData<RefinanceRequestInfo | null>(refinanceKey),
+          selected!.refinanceTargetLoanId,
+        ),
       ),
   });
-  const refinanceKnown =
-    mode !== 'accept' || side !== 'lender' || refinanceRequest.data !== undefined;
+  // Codex #2668 r3 — a failed refresh keeps the previous answer in `data`
+  // while the query is in error; that answer is no longer substantiated, so
+  // the review treats it as unknown (check-failed banner, retry, no
+  // receipt, not signable) until a refresh succeeds.
+  const refinanceSettled =
+    refinanceRequest.data !== undefined && !refinanceRequest.isError;
+  const refinanceKnown = mode !== 'accept' || side !== 'lender' || refinanceSettled;
   const refinanceInfo =
-    mode === 'accept' && side === 'lender' ? (refinanceRequest.data ?? null) : null;
+    mode === 'accept' && side === 'lender' && refinanceSettled
+      ? (refinanceRequest.data ?? null)
+      : null;
   // Codex #2668 r1 — the target loan moves after the request is posted: a
   // repayment or enforcement closes it, added collateral breaks a carry-over
   // match. When the contract's own acceptance check says no, the review
@@ -1870,6 +1888,7 @@ export function OfferFlow({ side }: { side: Side }) {
         publicClient,
         walletChain.diamondAddress,
         BigInt(selected.offerId),
+        refinanceInfo.targetLoanId,
       );
       if (!sameRefinanceReview(refinanceInfo, liveRefinance)) {
         queryClient.setQueryData(

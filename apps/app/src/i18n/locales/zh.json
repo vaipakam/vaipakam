@@ -563,6 +563,7 @@
       "refinanceRequestChecking": "正在检查此请求是否为进行中贷款的再融资——签名前审核必须说明这一点。",
       "refinanceRequestCheckFailed": "我们无法确认此请求是否为进行中贷款的再融资，而这会改变接受它的结果——签名将暂停，直到检查成功。",
       "refinanceRequestUnavailable": "此请求要求为贷款 #{{loanId}} 再融资，但目前无法接受。{{reason}} 接受将会失败，因此没有需要签名的内容。",
+      "refinanceRequestGone": "该请求已不在链上；取消请求会将其删除。",
       "refinanceRequestUnchecked": "本应用无法在此确认该请求是否仍可被接受：自发布以来，贷款可能已被偿还、关闭或更改。如果不可接受，链上接受将失败且不会转移任何资产，但尝试的网络费用仍会产生。",
       "graceChecking": "正在确认用于判断此交易的还款宽限窗口…",
       "graceCheckFailed": "无法确认还款宽限窗口，而审核必须显示真实窗口 — 成功前签署保持暂停。",

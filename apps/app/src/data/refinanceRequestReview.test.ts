@@ -5,9 +5,12 @@ import {
   type Abi,
 } from 'viem';
 import { describe, expect, it } from 'vitest';
+import type { PublicClient } from 'viem';
 import { copy } from '../content/copy';
 import {
+  knownRefinanceTarget,
   lenderCollateralLine,
+  readRefinanceRequestLive,
   refinanceRequestOf,
   sameRefinanceReview,
   standingFromCheckError,
@@ -122,5 +125,39 @@ describe('sameRefinanceReview (Codex #2668 r2)', () => {
     expect(sameRefinanceReview(reviewed, { ...reviewed, targetLoanId: 23n })).toBe(false);
     expect(sameRefinanceReview(reviewed, { ...reviewed, carryOver: false })).toBe(false);
     expect(sameRefinanceReview(reviewed, null)).toBe(false);
+  });
+});
+
+describe('a cancelled (deleted) request (Codex #2668 r3)', () => {
+  // A deleted offer reads back as the zeroed struct.
+  const zeroed = {
+    readContract: async () => ({
+      creator: '0x0000000000000000000000000000000000000000',
+      refinanceTargetLoanId: 0n,
+      refinanceCarryOver: false,
+    }),
+  } as unknown as PublicClient;
+  const diamond = '0x00000000000000000000000000000000000000d1';
+
+  it('reads as blocked when the review knew it as a refinance', async () => {
+    const info = await readRefinanceRequestLive(zeroed, diamond, 7n, 22n);
+    expect(info).toEqual({
+      targetLoanId: 22n,
+      carryOver: false,
+      standing: { kind: 'blocked', reason: copy.match.refinanceRequestGone },
+    });
+  });
+
+  it('stays null for an offer nobody knew as a refinance', async () => {
+    expect(await readRefinanceRequestLive(zeroed, diamond, 7n)).toBeNull();
+    expect(await readRefinanceRequestLive(zeroed, diamond, 7n, 0n)).toBeNull();
+  });
+
+  it('takes the known target from the last answer, else the indexed tag', () => {
+    const last = { targetLoanId: 22n, carryOver: true, standing: takeable };
+    expect(knownRefinanceTarget(last, 9)).toBe(22n);
+    expect(knownRefinanceTarget(undefined, 9)).toBe(9n);
+    expect(knownRefinanceTarget(null, null)).toBe(0n);
+    expect(knownRefinanceTarget(undefined, 0)).toBe(0n);
   });
 });

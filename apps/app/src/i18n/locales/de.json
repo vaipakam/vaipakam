@@ -563,6 +563,7 @@
       "refinanceRequestChecking": "Wir prüfen, ob diese Anfrage einen laufenden Kredit refinanziert — die Prüfung muss das anzeigen, bevor Sie unterschreiben können.",
       "refinanceRequestCheckFailed": "Wir konnten nicht prüfen, ob diese Anfrage einen laufenden Kredit refinanziert, und das ändert, was die Annahme bewirkt — das Unterschreiben bleibt pausiert, bis die Prüfung gelingt.",
       "refinanceRequestUnavailable": "Diese Anfrage möchte Kredit #{{loanId}} refinanzieren, kann aber gerade nicht angenommen werden. {{reason}} Eine Annahme würde fehlschlagen, daher gibt es nichts zu unterschreiben.",
+      "refinanceRequestGone": "Die Anfrage existiert on-chain nicht mehr; das Stornieren einer Anfrage entfernt sie.",
       "refinanceRequestUnchecked": "Diese App kann hier nicht prüfen, ob die Anfrage noch angenommen werden kann: Der Kredit wurde seit dem Einstellen möglicherweise zurückgezahlt, geschlossen oder geändert. Falls nicht, schlägt die Annahme on-chain fehl und nichts wird übertragen, die Netzwerkgebühr für den Versuch fällt aber trotzdem an.",
       "graceChecking": "Wir bestätigen die Rückzahlungs-Nachfrist, an der dieses Geschäft gemessen wird…",
       "graceCheckFailed": "Wir konnten die Rückzahlungs-Nachfrist nicht bestätigen, und die Prüfübersicht muss die tatsächliche anzeigen — das Signieren bleibt pausiert, bis das gelingt.",
