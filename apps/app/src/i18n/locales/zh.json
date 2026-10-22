@@ -1568,6 +1568,7 @@
       "collateralLabel": "抵押品",
       "collateralNone": "无",
       "illiquidCollateralTag": "发布时为非流动（接受时会重新检查）——若是，未还款时将原样移交",
+      "refinanceRequestTag": "再融资请求：借款人希望将贷款 #{{loanId}} 转给新的出借人",
       "collateralAtLeast": "至少 {{amount}}",
       "collateralRange": "已承诺 {{committed}}（请求下限 {{floor}}）；一笔成交锁定多少取决于成交方式",
       "collateralRangeRemaining": "仍承诺 {{remaining}}（此前成交已消耗 {{used}}；请求下限 {{floor}}）；一笔成交锁定多少取决于成交方式",

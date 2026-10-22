@@ -1568,6 +1568,7 @@
       "collateralLabel": "担保",
       "collateralNone": "なし",
       "illiquidCollateralTag": "出品時は非流動（受諾時に再確認）— その場合、返済されなければそのまま引き渡されます",
+      "refinanceRequestTag": "借り換えリクエスト：借り手はローン #{{loanId}} を新しい貸し手に移したいと考えています",
       "collateralAtLeast": "最低 {{amount}}",
       "collateralRange": "{{committed}} をコミット（依頼の下限 {{floor}}）。約定でロックされる額は約定の方法によって異なります",
       "collateralRangeRemaining": "{{remaining}} が引き続きコミット済み（以前の約定で {{used}} を消費、依頼の下限 {{floor}}）。約定でロックされる額は約定の方法によって異なります",

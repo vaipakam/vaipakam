@@ -233,7 +233,14 @@ function OfferRow({
         !offer.isSaleVehicle && hasCollateral && offer.collateralLiquidity === 1
           ? ` · ${copy.offers.illiquidCollateralTag}`
           : ''
-      }${ltvText(ltv) ? ` · ${ltvText(ltv)}` : ''}`;
+      }${ltvText(ltv) ? ` · ${ltvText(ltv)}` : ''}${
+        // #2528 — a borrow request tagged with the running loan it asks to
+        // refinance. Only on a POSITIVE tag: null is an unread tag (unknown),
+        // so its absence is never presented as "not a refinance request".
+        (offer.refinanceTargetLoanId ?? 0) > 0
+          ? ` · ${copy.offers.refinanceRequestTag(String(offer.refinanceTargetLoanId))}`
+          : ''
+      }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
   // to see before clicking through — id, rate, expiry, range bounds.

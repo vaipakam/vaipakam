@@ -1360,6 +1360,13 @@ progress.
   are loading it says so. It never shows a figure it cannot back, and never a 0%
   that only means "unknown". Rentals, offers with an NFT on either side, offers
   with no collateral, and loan-position sales state no ratio.
+- A borrow request that asks to refinance a running loan says so on its row
+  and names that loan, so a lender can tell it from an ordinary borrow request
+  before opening it. The market data records which loan a request is for, or
+  that it is not a refinance request, or that it has not been read yet; the
+  row shows the tag only when the request is known to be a refinance request,
+  and never presents an unread request as an ordinary one by stating that it
+  is not a refinance.
 - Each offer states its collateral as an amount, not only a token name, so a
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than

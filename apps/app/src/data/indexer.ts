@@ -121,6 +121,10 @@ export interface IndexedOffer {
    *  bookkeeping-not-liquidity rationale as `isSaleVehicle` on the
    *  other side of the book. Optional: older workers omit it. */
   isOffsetVehicle?: boolean;
+  /** #2528 (migration 0068) — the running loan this borrow request asks to
+   *  refinance; 0 = not a refinance request. `null` / absent = UNKNOWN (a row
+   *  the indexer has not read, or an older worker), never "not a refinance". */
+  refinanceTargetLoanId?: number | null;
 }
 
 export interface ActiveOffersPage {

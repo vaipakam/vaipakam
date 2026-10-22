@@ -3789,6 +3789,13 @@ const copySource = {
     // #2378 r2 — the flag is the offer's creation-time record; acceptance
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
+    // #2528 — a borrow request tagged with the running loan it asks to
+    // refinance. Shown only on a positive tag: an unread tag is unknown, and
+    // absence is never presented as "not a refinance request".
+    refinanceRequestTag: tmpl(
+      'refinance request: the borrower wants to move loan #{{loanId}} to a new lender',
+      ['loanId'],
+    ),
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
     // #2382 — a borrow request's collateral, once the indexer has read its
     // range. TERMS ONLY (r4): what the request commits now and its floor —
