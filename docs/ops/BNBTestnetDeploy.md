@@ -115,11 +115,17 @@ The faucet and oracle mock rig is the same one Base Sepolia and Arbitrum
 Sepolia run: `DeployTestnetMocks.s.sol`, through the repo's runner. Run it
 **before** `--phase configure`, which adopts the rig's oracle wiring.
 `BNB_TESTNET_WETH` is required on this chain (there is no canonical WETH)
-and must be the mock stand-in, not WBNB. The runner pins 1 gwei gas on this chain (see the broadcast-mode quirk above).
+and must be the mock stand-in, not WBNB. Set it in `contracts/.env`, not on
+the command line: the runner loads `.env` after it starts, and a value there
+replaces one exported by the shell, so a stale `.env` entry would win over a
+command-line prefix. Read it back before running. The runner pins 1 gwei gas
+on this chain (see the broadcast-mode quirk above).
 
 ```bash
-BNB_TESTNET_WETH=0x6D874ff9a55517c61cECE2936B8F457a3ad9102d \
-  bash script/deploy-testnet.sh bnb-testnet --phase testnet-mocks
+# contracts/.env must hold:
+#   BNB_TESTNET_WETH=0x6D874ff9a55517c61cECE2936B8F457a3ad9102d
+grep '^BNB_TESTNET_WETH=' .env   # expect exactly that one line
+bash script/deploy-testnet.sh bnb-testnet --phase testnet-mocks
 ```
 
 What it changes on the Diamond, so nothing is implied: it points the
