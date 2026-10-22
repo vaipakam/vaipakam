@@ -1,4 +1,4 @@
-## Thread — Fallback split priced honestly; rental offers single-value (PR #<n>)
+## Thread — Fallback split priced honestly; rental offers single-value (PR #2637)
 
 **The fallback split now decides "the oracle is unavailable" from the price
 reads, never from how small a converted figure is.** When every swap route
