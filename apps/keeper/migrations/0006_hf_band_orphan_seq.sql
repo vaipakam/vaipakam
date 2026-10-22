@@ -1,0 +1,21 @@
+-- apps/keeper/migrations/0006_hf_band_orphan_seq.sql
+--
+-- #2638 — which of the indexer's loan withdrawals a band marker has already
+-- seen. Additive: a nullable column the running build neither reads nor writes
+-- (its INSERT names its columns).
+--
+-- The indexer withdraws a loan record the chain has no loan for (#2197) by
+-- moving its `loans` row into the shared `loan_orphans` table, whose `id` is
+-- AUTOINCREMENT. It cannot reach this database, so a band marker for the id
+-- would outlive the loan, and a real loan the chain later issues the same id,
+-- to the same holder in the same band, would read as an unchanged observation
+-- and lose its first warning.
+--
+-- `orphan_seq` is the highest `loan_orphans.id` the pass had read BEFORE it
+-- resolved the loan's holder and wrote the marker. A withdrawal of the id with
+-- a higher `id` therefore happened after that read, so the marker is about the
+-- loan it withdrew, and the prune drops it. One the marker has already seen is
+-- older, so the marker is about the loan that bears the id now, and is kept.
+-- An ordering inside the shared database, not a comparison of two machines'
+-- clocks. NULL (a marker written before this column) has seen no withdrawal.
+ALTER TABLE hf_band_state ADD COLUMN orphan_seq INTEGER;

@@ -383,7 +383,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     expect(stateRows(h).map((r) => r.loan_id)).toEqual([30]);
   });
 
-  it("keeps a marker written after the id's withdrawal: it is about the loan the chain reissued (#2638)", async () => {
+  it("keeps a marker written after the id's withdrawal was recorded: it is about the loan the chain reissued (#2638)", async () => {
     const h = harness();
     withdraw(h, 31, NOW - 60);
     seedLoan(h, 31); // the reissued loan
@@ -392,6 +392,28 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 31n, hf: hf(1_400) }], NOW + 60);
     expect(stateRows(h).map((r) => r.loan_id)).toEqual([31]);
     expect(notifRows(h)).toHaveLength(1);
+  });
+
+  it("orders by the withdrawal record, not by either machine's clock (#2638, Codex #2655 r1)", async () => {
+    const h = harness();
+    seedLoan(h, 34);
+    // The keeper's clock runs a day ahead of the indexer's: the marker's
+    // wall-clock stamp is LATER than the withdrawal's, though it came first.
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 34n, hf: hf(1_400) }], NOW + 86_400);
+    withdraw(h, 34, NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 86_460);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('stamps each marker with the newest withdrawal its pass had read (#2638)', async () => {
+    const h = harness();
+    withdraw(h, 90, NOW - 600);
+    withdraw(h, 91, NOW - 300);
+    seedLoan(h, 35);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 35n, hf: hf(1_400) }], NOW);
+    const seqs = h.keeper.db.prepare('SELECT loan_id, orphan_seq FROM hf_band_state').all();
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqs).toEqual([{ loan_id: 35, orphan_seq: newest }]);
   });
 
   it("ignores another Diamond's withdrawal of the same id (#2638)", async () => {

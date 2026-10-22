@@ -264,6 +264,13 @@ export async function recordHfBandNotifications(
     // both the mint decision and the state commit; healthy loans only
     // ever DELETE state, which needs no recipient).
     const inBand = observed.filter((o) => o.band !== 'healthy');
+    // The newest of the indexer's loan withdrawals (#2638), read BEFORE the
+    // holders below and stamped on every marker this pass writes. A
+    // withdrawal recorded after this read carries a higher id, so the prune
+    // can tell a marker written about the withdrawn loan from one written
+    // about the loan the chain later gave the same id, without comparing this
+    // machine's clock with the indexer's. See `pruneTerminalBandState`.
+    const orphanSeq = inBand.length === 0 ? 0 : await latestOrphanSeq(db);
     const recipientByLoan = new Map<number, string>();
     for (const c of chunkD1InList(
       inBand.map((o) => o.loanId),
@@ -391,15 +398,16 @@ export async function recordHfBandNotifications(
           : keeper
               .prepare(
                 `INSERT INTO hf_band_state
-                   (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)
+                   (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at, orphan_seq)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (chain_id, loan_id) DO UPDATE SET
                    last_band = excluded.last_band,
                    last_hf_milli = excluded.last_hf_milli,
                    last_recipient = excluded.last_recipient,
-                   updated_at = excluded.updated_at`,
+                   updated_at = excluded.updated_at,
+                   orphan_seq = excluded.orphan_seq`,
               )
-              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec),
+              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec, orphanSeq),
       );
       await keeper.batch(batch);
       stateWrites += batch.length;
@@ -430,14 +438,19 @@ export async function recordHfBandNotifications(
  *      swallowed. The indexer clears its own alert memory for the id in the
  *      move; it has no binding to this database, so this is the keeper's half.
  *
- *      A marker goes only when it was last written AT OR BEFORE the
- *      withdrawal. The state is written on an edge only, never on an unchanged
- *      observation, so a marker older than the withdrawal can only be about
- *      the withdrawn loan. One written after it is about a loan that exists —
- *      the id reissued — and is kept, so the reissued loan's own edges are
- *      tracked as normal and never re-alerted every pass. The entry must name
- *      THIS Diamond: entries outlive a fresh Diamond on the chain, and an old
- *      Diamond's withdrawal says nothing about the new one's ids.
+ *      A marker goes only when the withdrawal is one it had NOT seen: an
+ *      entry whose `id` is above the marker's `orphan_seq`, the newest entry
+ *      the writing pass read before it resolved the loan's holder. A marker is
+ *      written only for a loan with a `loans` row (an unresolved holder
+ *      defers), so a withdrawal after that read is the move of the very row
+ *      the marker was written from. A withdrawal the marker had already seen
+ *      came before it, so the marker is about the loan that bears the id now
+ *      — the id reissued — and is kept: that loan's own edges are tracked as
+ *      normal and never re-alerted every pass. The order is the entries' own
+ *      AUTOINCREMENT ids, read and written through the shared database, never
+ *      this machine's clock against the indexer's (Codex #2655 r1). The entry
+ *      must name THIS Diamond: entries outlive a fresh Diamond on the chain,
+ *      and an old Diamond's withdrawal says nothing about the new one's ids.
  *
  * TWO DATABASES (#2450): the state is keeper-private and `loans` /
  * `loan_orphans` are the indexer's, and D1 cannot join across databases, so
@@ -456,9 +469,9 @@ async function pruneTerminalBandState(
   diamond: string,
 ): Promise<void> {
   const state = await keeper
-    .prepare(`SELECT loan_id, updated_at FROM hf_band_state WHERE chain_id = ?1`)
+    .prepare(`SELECT loan_id, orphan_seq FROM hf_band_state WHERE chain_id = ?1`)
     .bind(chainId)
-    .all<{ loan_id: number; updated_at: number }>();
+    .all<{ loan_id: number; orphan_seq: number | null }>();
   const markers = state.results ?? [];
   if (markers.length === 0) return;
   const banded = markers.map((r) => r.loan_id);
@@ -469,7 +482,7 @@ async function pruneTerminalBandState(
     ...chunks.map((c) =>
       db
         .prepare(
-          `SELECT loan_id, NULL AS withdrawn_at FROM loans
+          `SELECT loan_id, NULL AS seq FROM loans
             WHERE chain_id = ? AND loan_id IN (${c.placeholders})
               AND status <> 'active'`,
         )
@@ -480,19 +493,19 @@ async function pruneTerminalBandState(
     ...orphanChunks.map((c) =>
       db
         .prepare(
-          `SELECT loan_id, MAX(withdrawn_at) AS withdrawn_at FROM loan_orphans
+          `SELECT loan_id, MAX(id) AS seq FROM loan_orphans
             WHERE chain_id = ? AND diamond = ? AND loan_id IN (${c.placeholders})
             GROUP BY loan_id`,
         )
         .bind(...c.binds),
     ),
   ];
-  const writtenAt = new Map(markers.map((r) => [r.loan_id, r.updated_at]));
+  const seen = new Map(markers.map((r) => [r.loan_id, r.orphan_seq ?? 0]));
   const stale = new Set<number>();
-  for (const part of await db.batch<{ loan_id: number; withdrawn_at: number | null }>(reads)) {
+  for (const part of await db.batch<{ loan_id: number; seq: number | null }>(reads)) {
     for (const r of part.results ?? []) {
-      if (r.withdrawn_at === null) stale.add(r.loan_id); // terminal
-      else if ((writtenAt.get(r.loan_id) ?? Infinity) <= r.withdrawn_at) stale.add(r.loan_id); // withdrawn
+      if (r.seq === null) stale.add(r.loan_id); // terminal
+      else if (r.seq > (seen.get(r.loan_id) ?? 0)) stale.add(r.loan_id); // withdrawn after the marker's read
     }
   }
   if (stale.size === 0) return;
@@ -506,4 +519,13 @@ async function pruneTerminalBandState(
         .bind(...c.binds),
     ),
   );
+}
+
+/** The newest entry in the indexer's loan-withdrawal record (0 when empty).
+ *  Ids are AUTOINCREMENT, so a later withdrawal always carries a higher one. */
+async function latestOrphanSeq(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(MAX(id), 0) AS seq FROM loan_orphans`)
+    .first<{ seq: number }>();
+  return row?.seq ?? 0;
 }
